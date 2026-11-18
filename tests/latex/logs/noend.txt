@@ -3,17 +3,17 @@ error: !Emergency stop
 error: something bad happened inside XeTeX; its output follows:
 
 ===============================================================================
-(.noend.minicode.tex
+(.noend.mutible.tex
 LaTeX2e <2021-11-15> patch level 1
 L3 programming layer <2022-02-24> (article.cls
 Document Class: article 2021/10/04 v1.4n Standard LaTeX document class
 (size10.clo)) (l3backend-xetex.def)
-No file .noend.minicode.aux.
+No file .noend.mutible.aux.
 (ts1cmr.fd))
 ! Emergency stop
 *** (job aborted, no legal \end found)
 No pages of output.
-Transcript written on .noend.minicode.log.
+Transcript written on .noend.mutible.log.
 ===============================================================================
 error: the XeTeX engine had an unrecoverable error
 caused by: *** (job aborted, no legal \end found)

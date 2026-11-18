@@ -1,12 +1,12 @@
 // ControlServer.h — the control channel's socket, on the GLib main loop
 // (PARITY.md 3.1; the Mac's is mac/src/ControlServer.mm). What an agent, a script
-// or `minicode open|window|state|selection` asks arrives here as one JSON
+// or `mutible open|window|state|selection` asks arrives here as one JSON
 // object a line (ControlProtocol.h) and goes to the Dispatcher, whose
 // handlers run on the main loop; ControlCommands.cpp registers them.
 //
 // The socket is <folder>/<pid>.sock, 0600, in a 0700 folder of the user's own
-// (ControlPaths.h: $MINICODE_CONTROL_DIR, else $XDG_RUNTIME_DIR/minicode,
-// else /tmp/minicode-<uid>, which is refused when it is not the user's own
+// (ControlPaths.h: $MUTIBLE_CONTROL_DIR, else $XDG_RUNTIME_DIR/mutible,
+// else /tmp/mutible-<uid>, which is refused when it is not the user's own
 // and private). Peers of another user are refused (SO_PEERCRED). A
 // connection takes one request at a time: the next line is read once the
 // answer is out, so a client cannot queue work faster than it is answered.

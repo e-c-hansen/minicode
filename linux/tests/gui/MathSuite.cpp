@@ -1,6 +1,6 @@
 // MathSuite.cpp — typeset math in the Markdown preview
-// (`./build/minicode-guitest markdown_math`, linux/PARITY.md item 4.3, second
-// part, HANDOFF.md). tectonic is a stand-in script ($MINICODE_TECTONIC): it
+// (`./build/mutible-guitest markdown_math`, linux/PARITY.md item 4.3, second
+// part, HANDOFF.md). tectonic is a stand-in script ($MUTIBLE_TECTONIC): it
 // reads the batch's .tex, takes the run's nonce and each formula's number
 // from it, writes the log lines the core's MathTex::readLog reads (a formula
 // holding FAILME fails with TeX's complaint), and copies a PDF this suite made
@@ -22,7 +22,7 @@
 #include "MarkdownSide.h"
 #include "Math.h"
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 #include <cairo-pdf.h>
 #include <glib/gstdio.h>
 #include <cmath>
@@ -123,8 +123,8 @@ MC_GUI_SUITE(markdown_math) {
             "grep -o '\\\\mcship{[0-9]*}' \"$tex\" | wc -l | tr -d ' ' >> '" + P("batches.log") + "'\n";
         MCGuiWriteFile(P("fake-tectonic"), script);
         g_chmod(P("fake-tectonic").c_str(), 0755);
-        EnvLock::envSet("MINICODE_TECTONIC", P("fake-tectonic").c_str(), TRUE);
-        EnvLock::envSet("MINICODE_MATH_CACHE", P("math-cache").c_str(), TRUE);
+        EnvLock::envSet("MUTIBLE_TECTONIC", P("fake-tectonic").c_str(), TRUE);
+        EnvLock::envSet("MUTIBLE_MATH_CACHE", P("math-cache").c_str(), TRUE);
         MCGuiWriteFile(P("tectonic.log"), "");
         MCGuiWriteFile(P("batches.log"), "");
         MCGuiWriteFile(P("plain.md"), "# Plain\n\nNo formula here, only a price of 5 and 10 dollars.\n");
@@ -258,7 +258,7 @@ MC_GUI_SUITE(markdown_math) {
         GCHECK(ed()->sidePane()->pageText().find("stands.") != std::string::npos);
         MCGuiKey("ctrl+alt+v");
         ed()->closeAllTabs();
-        EnvLock::envSet("MINICODE_TECTONIC", P("no-such-tectonic").c_str(), TRUE);
+        EnvLock::envSet("MUTIBLE_TECTONIC", P("no-such-tectonic").c_str(), TRUE);
     });
 
     openPage("none.md");

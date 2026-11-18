@@ -10,7 +10,7 @@
 //     keys.conf said).
 //   - Shift+Cmd+N is New Folder while the tree has the keyboard (a tree
 //     command, off its menu item) and VS Code's New Window everywhere else.
-//   - `minicode install-skill` copies the skill into ~/.claude/skills.
+//   - `mutible install-skill` copies the skill into ~/.claude/skills.
 #import <objc/runtime.h>
 #import <Carbon/Carbon.h>
 
@@ -235,12 +235,12 @@ MC_GUI_SUITE(structure) {
         GCHECK_EQ_STR(MCGitDiffText([NSData data], mono).string, @"No differences to show.");
     });
 
-    // `minicode install-skill`, run from the checkout's scripts/ (the
+    // `mutible install-skill`, run from the checkout's scripts/ (the
     // bundle's copy finds its own in Contents/Resources), into a scratch home.
     NSString *repo = MCGuiBuildDir().stringByDeletingLastPathComponent;
-    NSString *launcher = [repo stringByAppendingPathComponent:@"scripts/minicode-launcher"];
+    NSString *launcher = [repo stringByAppendingPathComponent:@"scripts/mutible-launcher"];
     NSString *home = [MCGuiScratch() stringByAppendingPathComponent:@"skillhome"];
-    NSString *installed = [home stringByAppendingPathComponent:@".claude/skills/minicode/SKILL.md"];
+    NSString *installed = [home stringByAppendingPathComponent:@".claude/skills/mutible/SKILL.md"];
     NSDictionary *env = @{@"HOME": home, @"CLAUDE_CONFIG_DIR": @""};
     MCGuiAsync(@"install-skill copies the skill into ~/.claude/skills", 20, ^(MCGuiDone done) {
         GCHECK([home hasPrefix:MCGuiScratch()]);
@@ -248,10 +248,10 @@ MC_GUI_SUITE(structure) {
                         ^(int s, NSString *out, NSString *err) {
             GCHECK(s == 0);
             if (s) MCGuiNote(@"install-skill: %@%@", out, err);
-            GCHECK([out containsString:@"Installed the minicode skill"]);
+            GCHECK([out containsString:@"Installed the mutible skill"]);
             NSData *a = [NSData dataWithContentsOfFile:installed];
             NSData *b = [NSData dataWithContentsOfFile:
-                [repo stringByAppendingPathComponent:@"skills/minicode/SKILL.md"]];
+                [repo stringByAppendingPathComponent:@"skills/mutible/SKILL.md"]];
             GCHECK(a.length > 0 && [a isEqualToData:b]);
             done();
         });

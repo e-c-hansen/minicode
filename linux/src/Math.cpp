@@ -2,7 +2,7 @@
 #include "EnvLock.h"
 #include "Math.h"
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 
 #include "Latex.h"
 #include "MathTex.h"
@@ -37,7 +37,7 @@ constexpr gint64 kStallUs = 15 * G_USEC_PER_SEC, kQuietUs = 60 * G_USEC_PER_SEC,
 constexpr gint64 kRetryUs = 60 * G_USEC_PER_SEC;
 constexpr gint64 kCacheMax = 50ll * 1024 * 1024, kCacheKeep = 40ll * 1024 * 1024;
 constexpr guint kGatherMs = 50;
-const char* kIndexHeader = "minicode-math-index 1";
+const char* kIndexHeader = "mutible-math-index 1";
 
 struct Item {
     std::string key, tex;
@@ -84,8 +84,8 @@ std::atomic<int> g_runs{0};
 
 std::string cacheDir() {
     EnvLock::EnvRead env;
-    if (const char* e = g_getenv("MINICODE_MATH_CACHE"); e && *e) return e;
-    return std::string(g_get_user_cache_dir()) + "/minicode/math";
+    if (const char* e = g_getenv("MUTIBLE_MATH_CACHE"); e && *e) return e;
+    return std::string(g_get_user_cache_dir()) + "/mutible/math";
 }
 
 bool readFile(const std::string& path, std::string* out) {
@@ -167,7 +167,7 @@ Once runOnce(const std::string& tool, const std::vector<Item>& items, const std:
     g_runs++;
     std::vector<MathTex::Formula> formulas;
     for (size_t i : which) formulas.push_back({items[i].tex, items[i].display});
-    gchar* tmpl = g_dir_make_tmp("minicode-math-XXXXXX", nullptr);
+    gchar* tmpl = g_dir_make_tmp("mutible-math-XXXXXX", nullptr);
     if (!tmpl) { run.whole = "Could not make a scratch folder for the formulas."; return run; }
     const std::string dir = tmpl;
     g_free(tmpl);

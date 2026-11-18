@@ -29,10 +29,10 @@
 //     edit made meanwhile is moved past it (Ot::transform).
 //
 // One client for the process, in UTF-16 units (what NSString counts), its
-// messages dispatched on the main queue as they arrive. MINICODE_HOST=
+// messages dispatched on the main queue as they arrive. MUTIBLE_HOST=
 // loopback sends every message through the protocol's encoding and back;
-// MINICODE_HOST_DELAY_US delays each one on the host's thread;
-// MINICODE_SESSION_HOST=on turns the setting on for every tab (the GUI
+// MUTIBLE_HOST_DELAY_US delays each one on the host's thread;
+// MUTIBLE_SESSION_HOST=on turns the setting on for every tab (the GUI
 // checks' second pass).
 #pragma once
 #import <Cocoa/Cocoa.h>
@@ -44,7 +44,7 @@
 
 @class MCTab, CodeTextView;
 
-// editor.session-host, or MINICODE_SESSION_HOST=on.
+// editor.session-host, or MUTIBLE_SESSION_HOST=on.
 BOOL MCSessionHostEnabled(void);
 // The process's client, the host started with it.
 Shared::Client &MCSessionClient(void);

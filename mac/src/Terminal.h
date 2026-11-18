@@ -71,8 +71,8 @@ extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 @property(nonatomic, copy) NSArray<NSString *> *(^sessionLinkRoots)(TerminalView *terminal);
 - (instancetype)initWithDirectory:(NSString *)dir;
 // With variables added to the shell's environment, kept for a shell started
-// again after an exit. MINICODE_VENV (an environment's folder) and
-// MINICODE_VENV_PROMPT (its name) make the shell integration activate that
+// again after an exit. MUTIBLE_VENV (an environment's folder) and
+// MUTIBLE_VENV_PROMPT (its name) make the shell integration activate that
 // Python environment at the first prompt (terminal.activate-venv), as its
 // bin/activate would, running nothing of the environment's.
 - (instancetype)initWithDirectory:(NSString *)dir
@@ -85,10 +85,10 @@ extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 // characters but tabs are left out; bracketed, it goes as one paste. NO,
 // sending nothing, while the shell itself has the terminal.
 - (BOOL)sendToProgram:(NSString *)text bracketed:(BOOL)bracketed;
-// The id `minicode state` reports for this terminal, fixed for its life and
+// The id `mutible state` reports for this terminal, fixed for its life and
 // never reused in this process. Its shell, and everything run from it, has
-// it as MINICODE_TERMINAL_ID, with MINICODE_PID (this process), so a Claude
-// Code hook can say which terminal it ran in (`minicode notify --from-hook`).
+// it as MUTIBLE_TERMINAL_ID, with MUTIBLE_PID (this process), so a Claude
+// Code hook can say which terminal it ran in (`mutible notify --from-hook`).
 @property(nonatomic, readonly) NSInteger terminalID;
 - (void)setDirectory:(NSString *)dir;   // sync cwd when the open folder changes
 - (void)focusInput;                     // the input line, or the grid when shown
@@ -141,7 +141,7 @@ extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 // What a tab shows: the running program's own title (OSC 0 or 2), else
 // the command running, else the folder's name.
 @property(nonatomic, readonly, copy) NSString *title;
-// A title given from outside (`minicode term --title`), shown in place of
+// A title given from outside (`mutible term --title`), shown in place of
 // the one above; nil for none.
 @property(nonatomic, copy) NSString *fixedTitle;
 // The name the user gave it (Rename Terminal…), shown in place of both until

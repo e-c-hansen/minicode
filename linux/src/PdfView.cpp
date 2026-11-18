@@ -1,5 +1,5 @@
 // PdfView.cpp — see PdfView.h.
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 
 #include "PdfView.h"
 
@@ -63,45 +63,45 @@ GdkTexture* textureFrom(cairo_surface_t* s) {
 // A page's placeholder: as big as the page on screen, and its snapshot is the
 // view's snapshotPage. The CSS node draws the page's shadow.
 
-G_DECLARE_FINAL_TYPE(MinicodePdfPage, minicode_pdf_page, MINICODE, PDF_PAGE, GtkWidget)
+G_DECLARE_FINAL_TYPE(MutiblePdfPage, mutible_pdf_page, MUTIBLE, PDF_PAGE, GtkWidget)
 
-struct _MinicodePdfPage {
+struct _MutiblePdfPage {
     GtkWidget parent_instance;
     PdfView*  view;
     int       index;
     int       width, height;
 };
 
-G_DEFINE_FINAL_TYPE(MinicodePdfPage, minicode_pdf_page, GTK_TYPE_WIDGET)
+G_DEFINE_FINAL_TYPE(MutiblePdfPage, mutible_pdf_page, GTK_TYPE_WIDGET)
 
-static void minicode_pdf_page_measure(GtkWidget* w, GtkOrientation o, int, int* min, int* nat,
+static void mutible_pdf_page_measure(GtkWidget* w, GtkOrientation o, int, int* min, int* nat,
                                       int* minBase, int* natBase) {
-    MinicodePdfPage* self = MINICODE_PDF_PAGE(w);
+    MutiblePdfPage* self = MUTIBLE_PDF_PAGE(w);
     *min = *nat = o == GTK_ORIENTATION_HORIZONTAL ? self->width : self->height;
     *minBase = *natBase = -1;
 }
 
-static void minicode_pdf_page_snapshot(GtkWidget* w, GtkSnapshot* s) {
-    MinicodePdfPage* self = MINICODE_PDF_PAGE(w);
+static void mutible_pdf_page_snapshot(GtkWidget* w, GtkSnapshot* s) {
+    MutiblePdfPage* self = MUTIBLE_PDF_PAGE(w);
     if (self->view)
         self->view->snapshotPage(self->index, s, gtk_widget_get_width(w),
                                  gtk_widget_get_height(w));
 }
 
-static void minicode_pdf_page_class_init(MinicodePdfPageClass* klass) {
+static void mutible_pdf_page_class_init(MutiblePdfPageClass* klass) {
     GtkWidgetClass* wc = GTK_WIDGET_CLASS(klass);
-    wc->measure = minicode_pdf_page_measure;
-    wc->snapshot = minicode_pdf_page_snapshot;
+    wc->measure = mutible_pdf_page_measure;
+    wc->snapshot = mutible_pdf_page_snapshot;
 }
 
-static void minicode_pdf_page_init(MinicodePdfPage* self) {
+static void mutible_pdf_page_init(MutiblePdfPage* self) {
     self->view = nullptr;
     self->index = 0;
     self->width = self->height = 1;
 }
 
 static void setPageSize(GtkWidget* w, int width, int height) {
-    MinicodePdfPage* self = MINICODE_PDF_PAGE(w);
+    MutiblePdfPage* self = MUTIBLE_PDF_PAGE(w);
     if (self->width == width && self->height == height) return;
     self->width = width;
     self->height = height;
@@ -301,7 +301,7 @@ void PdfView::clear() {
 void PdfView::rebuildPages(int count) {
     while ((int)pages_.size() > count) {
         Page& p = pages_.back();
-        MINICODE_PDF_PAGE(p.area)->view = nullptr;
+        MUTIBLE_PDF_PAGE(p.area)->view = nullptr;
         gtk_box_remove(GTK_BOX(box_), p.area);
         g_clear_object(&p.tex);
         g_clear_object(&p.detail.tex);
@@ -309,7 +309,7 @@ void PdfView::rebuildPages(int count) {
     }
     while ((int)pages_.size() < count) {
         Page p;
-        p.area = GTK_WIDGET(g_object_new(minicode_pdf_page_get_type(), nullptr));
+        p.area = GTK_WIDGET(g_object_new(mutible_pdf_page_get_type(), nullptr));
         gtk_widget_set_halign(p.area, GTK_ALIGN_CENTER);
         gtk_widget_add_css_class(p.area, "minicode-pdf-page");
         gtk_box_append(GTK_BOX(box_), p.area);
@@ -317,7 +317,7 @@ void PdfView::rebuildPages(int count) {
     }
     // Page structs may have moved; the widgets carry the index, not a pointer.
     for (size_t i = 0; i < pages_.size(); ++i) {
-        MinicodePdfPage* w = MINICODE_PDF_PAGE(pages_[i].area);
+        MutiblePdfPage* w = MUTIBLE_PDF_PAGE(pages_[i].area);
         w->view = this;
         w->index = (int)i;
     }
@@ -1178,4 +1178,4 @@ void PdfView::onPressed(GtkGestureClick*, int n, double x, double y, gpointer se
         self->clickCb_(self->clickUser_, page, px, py, n);
 }
 
-#endif  // MINICODE_ENABLE_PDF
+#endif  // MUTIBLE_ENABLE_PDF

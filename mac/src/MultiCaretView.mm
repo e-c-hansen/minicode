@@ -941,11 +941,11 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
 }
 
 // Copy, Cut and Paste with nothing selected work on whole lines (VS Code):
-// the copy is marked with a type of minicode's own beside the text, so a
+// the copy is marked with a type of mutible's own beside the text, so a
 // paste can tell it from text copied anywhere else and put it above the
 // caret's line instead of at the caret. Another app's copy clears the mark
 // with the rest of the pasteboard.
-static NSPasteboardType const kLineCopyType = @"org.minicode.editor.line-copy";
+static NSPasteboardType const kLineCopyType = @"ai.ible.mutible.line-copy";
 
 - (BOOL)nothingSelected {
     for (const Caret &c : [self currentCarets])

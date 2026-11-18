@@ -1,5 +1,5 @@
 // SymbolsSuite.cpp — Go to Symbol in File, the palette's "@" (`./build/
-// minicode-guitest symbols`, linux/PARITY.md item 1.5), the counterpart of
+// mutible-guitest symbols`, linux/PARITY.md item 1.5), the counterpart of
 // the outline half of the Mac's tests/gui/SymbolsSuite.mm, by real keys:
 // Ctrl+Shift+O lists the file's outline in its order with the caret's
 // symbol chosen; Up and Down show each symbol in the editor while the field

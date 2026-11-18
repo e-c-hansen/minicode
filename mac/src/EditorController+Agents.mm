@@ -323,7 +323,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
             where = [NSString stringWithFormat:@"the editor, showing %@", ctx.path];
             ctx.owner = _activeTab;
         } else {
-            where = @"the minicode window";
+            where = @"the mutible window";
         }
         ctx.where = where;
         ctx.hint = @"For Claude Code, in a new terminal tab";
@@ -333,7 +333,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 
 // ----------------------------------------- Request a Change (Shift+Cmd+K)
 // See ChangePanel.h: a bar for the request, Claude Code in a terminal tab of
-// minicode's source folder, and a restart into the new build.
+// mutible's source folder, and a restart into the new build.
 - (MCChangeSession *)changeSession {
     if (!_change) _change = [[MCChangeSession alloc] initWithHost:self];
     return _change;
@@ -383,7 +383,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
                          field:[cfg background:Surface::Editor]];
 }
 
-// Restart minicode: a conversation with Claude from Request a Change, still
+// Restart mutible: a conversation with Claude from Request a Change, still
 // running here, carries over as it does after a rebuild.
 - (NSString *)changeSourceToResume {
     return [self changeTerminal] ? _change.source : nil;
@@ -750,7 +750,7 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return t;
 }
 
-// The browser pane for an agent's page (`minicode browse`,
+// The browser pane for an agent's page (`mutible browse`,
 // BrowserPages.h): made if there is none, and shown beside the editor
 // without taking the keyboard. The pages are the BrowserView's.
 - (BrowserView *)agentBrowserPane {

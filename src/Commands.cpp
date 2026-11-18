@@ -1,5 +1,6 @@
 // Commands.cpp — see Commands.h.
 #include "Commands.h"
+#include "Rename.h"
 
 #include <algorithm>
 #include <cctype>
@@ -201,7 +202,7 @@ bool parseKey(const std::string& text, Key* out, std::string* error) {
                 return fail("\"" + p + "\" is a shifted key; write shift+" + base);
             }
         }
-        if (!knownName(p)) return fail("\"" + raw + "\" is not a key minicode knows");
+        if (!knownName(p)) return fail("\"" + raw + "\" is not a key mutible knows");
         k.name = p;
     }
     if (out) *out = k;
@@ -264,28 +265,28 @@ const When A = When::Any, E = When::Editor, T = When::Terminal, R = When::Tree,
 const std::vector<Command>& all() {
     static const std::vector<Command> table = {
         // ---- the app menu
-        {"minicode.about", "About MiniCode", "minicode", "", A,
+        {"mutible.about", "About Mutible", "mutible", "", A,
          "orderFrontStandardAboutPanel:", 0, 0, nullptr},
-        {"workbench.action.openSettings", "Settings…", "minicode", "cmd+,", A, "openSettings:",
+        {"workbench.action.openSettings", "Settings…", "mutible", "cmd+,", A, "openSettings:",
          0, 0, nullptr},
-        {"workbench.action.openGlobalKeybindings", "Keyboard Shortcuts…", "minicode", "", A,
+        {"workbench.action.openGlobalKeybindings", "Keyboard Shortcuts…", "mutible", "", A,
          "openKeyboardShortcuts:", 0, 0, nullptr},
-        {"minicode.showLanguageServers", "Language Servers…", "minicode", "", A,
+        {"mutible.showLanguageServers", "Language Servers…", "mutible", "", A,
          "showLanguageServers:", 0, 0, nullptr},
-        {"minicode.restartLanguageServer", "Restart Language Server", "minicode", "", A,
+        {"mutible.restartLanguageServer", "Restart Language Server", "mutible", "", A,
          "restartLanguageServer:", 0, 0, nullptr},
-        {"python.setInterpreter", "Select Python Interpreter…", "minicode", "", A,
+        {"python.setInterpreter", "Select Python Interpreter…", "mutible", "", A,
          "selectPythonInterpreter:", 0, 0, nullptr},
-        {"minicode.forgetFolderToolsAnswer", "Ask Again About This Folder's Tools", "minicode",
+        {"mutible.forgetFolderToolsAnswer", "Ask Again About This Folder's Tools", "mutible",
          "", A, "forgetFolderToolsAnswer:", 0, 0, nullptr},
         // The waiting dots' hooks in Claude Code's settings (ClaudeHooksOffer.h).
-        {"minicode.installClaudeHooks", "Install Claude Code Hooks…", "minicode", "", A,
+        {"mutible.installClaudeHooks", "Install Claude Code Hooks…", "mutible", "", A,
          "installClaudeHooks:", 0, 0, nullptr},
-        {"minicode.requestChange", "Request a Change to minicode…", "minicode", "shift+cmd+k", A,
+        {"mutible.requestChange", "Request a Change to mutible…", "mutible", "shift+cmd+k", A,
          "requestChange:", 0, 0, nullptr},
-        {"minicode.restart", "Restart minicode", "minicode", "", A, "restartMinicode:", 0, 0,
+        {"mutible.restart", "Restart mutible", "mutible", "", A, "restartMutible:", 0, 0,
          nullptr},
-        {"workbench.action.quit", "Quit MiniCode", "minicode", "cmd+q", A, "terminate:", 0, 0,
+        {"workbench.action.quit", "Quit Mutible", "mutible", "cmd+q", A, "terminate:", 0, 0,
          nullptr},
 
         // ---- File
@@ -308,23 +309,23 @@ const std::vector<Command>& all() {
         // In the terminal's grid Ctrl+R stays the shell's history search.
         {"workbench.action.openRecent", "Open Recent…", "File", "ctrl+r", A, "openRecent:", 0, 0,
          nullptr},
-        {"minicode.latex.exportPDF", "Export PDF…", "File", "shift+cmd+s", A, "exportPDF:", 0, 0,
+        {"mutible.latex.exportPDF", "Export PDF…", "File", "shift+cmd+s", A, "exportPDF:", 0, 0,
          nullptr},
         // A Markdown file as a standalone page (VS Code has no export).
-        {"minicode.markdown.exportHtml", "Export as HTML…", "File", "", A, "exportMarkdownHtml:",
+        {"mutible.markdown.exportHtml", "Export as HTML…", "File", "", A, "exportMarkdownHtml:",
          0, 0, nullptr},
         // Safari's Add Bookmark key while the browser's page or its toolbar
         // has the keyboard: a page key, which only the pane answers, so in
         // the editor Cmd+D stays Add Next Occurrence.
-        {"minicode.browser.saveBookmark", "Save Page as Bookmark", "File", "cmd+d", P,
+        {"mutible.browser.saveBookmark", "Save Page as Bookmark", "File", "cmd+d", P,
          "saveBookmarkFromPage:", 0, 0,
          "the browser pane (File > Save Page as Bookmark, saveBrowserBookmark:, from anywhere)"},
-        {"minicode.browser.saveAllTabs", "Save All Tabs as Bookmarks", "File", "", A,
+        {"mutible.browser.saveAllTabs", "Save All Tabs as Bookmarks", "File", "", A,
          "saveBrowserTabsAsBookmarks:", 0, 0, nullptr},
-        {"minicode.browser.openBookmarks", "Open All in Browser Tabs", "File", "", A,
+        {"mutible.browser.openBookmarks", "Open All in Browser Tabs", "File", "", A,
          "openBookmarksInTabs:", 0, 0, nullptr},
         // From anywhere through the menu, with no key on the Mac: its
-        // Shift+Cmd+N is minicode.tree.newFolder's, the tree's alone.
+        // Shift+Cmd+N is mutible.tree.newFolder's, the tree's alone.
         {"explorer.newFolder", "New Folder…", "File", "", A, "newFolder:", 0, 0, nullptr},
         // Keys only while the tree has the keyboard, as in Finder and VS Code:
         // a tree command's key is never put on its menu item, which would run
@@ -334,7 +335,7 @@ const std::vector<Command>& all() {
         // The menu item is explorer.newFolder's above, with no key on the
         // Mac; on Linux that one keeps Ctrl+Alt+N everywhere, since there
         // no other command has it. Tag 1 only tells the two rows apart.
-        {"minicode.tree.newFolder", "New Folder…", "File", "shift+cmd+n", R, "newFolder:", 1, 0,
+        {"mutible.tree.newFolder", "New Folder…", "File", "shift+cmd+n", R, "newFolder:", 1, 0,
          "the file tree (File > New Folder… from anywhere)"},
         {"renameFile", "Rename…", "File", "f2", R, "renameSelected:", 0, 0, nullptr},
         {"moveFileToTrash", "Move to Trash", "File", "cmd+backspace cmd+delete", R,
@@ -348,17 +349,17 @@ const std::vector<Command>& all() {
         // Focus on Folder: the tree rooted at one folder, with a breadcrumb
         // back up (EditorController+TreeFocus.mm). No key: none of the
         // free ones says "focus" plainly.
-        {"minicode.tree.focusFolder", "Focus on Folder", "File", "", A, "focusOnFolder:", 0, 0,
+        {"mutible.tree.focusFolder", "Focus on Folder", "File", "", A, "focusOnFolder:", 0, 0,
          nullptr},
-        {"minicode.tree.showWholeFolder", "Show Whole Folder in Tree", "File", "", A,
+        {"mutible.tree.showWholeFolder", "Show Whole Folder in Tree", "File", "", A,
          "showWholeFolderInTree:", 0, 0, nullptr},
         // Add to Focus: several folders, each a root of the tree (the
         // clicked or selected folder, else the open file's). No key.
-        {"minicode.tree.addToFocus", "Add to Focus", "File", "", A, "addFolderToFocus:", 0, 0,
+        {"mutible.tree.addToFocus", "Add to Focus", "File", "", A, "addFolderToFocus:", 0, 0,
          nullptr},
-        // Add Folder to Focus…: minicode's folder picker, scoped to the
+        // Add Folder to Focus…: mutible's folder picker, scoped to the
         // window's folder (also the + on the tree's focus row). No key.
-        {"minicode.tree.addFolderToFocus", "Add Folder to Focus…", "File", "", A,
+        {"mutible.tree.addFolderToFocus", "Add Folder to Focus…", "File", "", A,
          "chooseFolderToAddToFocus:", 0, 0, nullptr},
         {"workbench.action.files.copyPathOfActiveFile", "Copy Path of Active File", "File", "", A,
          "copyActiveFilePath:", 0, 0, nullptr},
@@ -414,15 +415,15 @@ const std::vector<Command>& all() {
         {"editor.action.insertLineBefore", "Insert Line Above", "Edit", "", E, "insertLineAbove:",
          0, 0, nullptr},
         {"inlineChat.start", "Inline Agent…", "Edit", "cmd+i", A, "inlineAgent:", 0, 0, nullptr},
-        // minicode's own: Claude Code on a fresh worktree (AgentTaskBar.h),
+        // mutible's own: Claude Code on a fresh worktree (AgentTaskBar.h),
         // beside Shift+Cmd+A's Agents panel, where the task is listed.
-        {"minicode.agent.newTask", "New Agent Task…", "Edit", "alt+shift+cmd+a", A,
+        {"mutible.agent.newTask", "New Agent Task…", "Edit", "alt+shift+cmd+a", A,
          "newAgentTask:", 0, 0, nullptr},
         {"editor.action.commentLine", "Toggle Comment", "Edit", "cmd+/", E, "toggleComment:", 0,
          0, nullptr},
         // Option+C is markdown-all-in-one's key (in Markdown only, so it
         // types its character everywhere else).
-        {"minicode.markdown.toggleTask", "Toggle Task", "Edit", "alt+cmd+l alt+c", E,
+        {"mutible.markdown.toggleTask", "Toggle Task", "Edit", "alt+cmd+l alt+c", E,
          "toggleTask:", 0, 0, nullptr, "markdown"},
         // markdown-all-in-one's Cmd+B and Cmd+I are the sidebar and the
         // inline agent here, as in VS Code itself, so no key by default.
@@ -432,10 +433,10 @@ const std::vector<Command>& all() {
          "toggleItalic:", 0, 0, nullptr, "markdown"},
         {"editor.action.formatDocument", "Format Document", "Edit", "alt+shift+f", E,
          "formatDocument:", 0, 0, nullptr},
-        {"minicode.toggleFormatOnSave", "Format on Save", "Edit", "", A, "toggleFormatOnSave:", 0,
+        {"mutible.toggleFormatOnSave", "Format on Save", "Edit", "", A, "toggleFormatOnSave:", 0,
          0, nullptr},
-        {"minicode.sortLines", "Sort Lines", "Edit", "f9", E, "sortLines:", 0, 0, nullptr},
-        {"minicode.sortKeepSortedBlocks", "Sort keep-sorted Blocks", "Edit", "shift+f9", E,
+        {"mutible.sortLines", "Sort Lines", "Edit", "f9", E, "sortLines:", 0, 0, nullptr},
+        {"mutible.sortKeepSortedBlocks", "Sort keep-sorted Blocks", "Edit", "shift+f9", E,
          "fixKeepSorted:", 0, 0, nullptr},
         {"editor.action.triggerSuggest", "Complete", "Edit", "ctrl+space", E,
          "triggerCompletion:", 0, 0, nullptr},
@@ -482,7 +483,7 @@ const std::vector<Command>& all() {
          "openSearch:", 0, 0, nullptr},
         {"workbench.action.replaceInFiles", "Replace in Folder…", "Edit", "alt+shift+cmd+f", A,
          "openReplaceInFolder:", 0, 0, nullptr},
-        {"minicode.showTodos", "TODOs in Folder…", "Edit", "shift+cmd+d", A, "showTodos:", 0, 0,
+        {"mutible.showTodos", "TODOs in Folder…", "Edit", "shift+cmd+d", A, "showTodos:", 0, 0,
          nullptr},
 
         // ---- View
@@ -490,14 +491,14 @@ const std::vector<Command>& all() {
          "showCommandPalette:", 0, 0, nullptr},
         {"markdown.showPreview", "Toggle Preview", "View", "shift+cmd+v", A, "togglePreview:", 0,
          0, nullptr},
-        // VS Code's Cmd+K V. minicode has no chords: a Cmd+K chord is
+        // VS Code's Cmd+K V. mutible has no chords: a Cmd+K chord is
         // Control+Command and its second key, as the folding keys are.
         {"markdown.showPreviewToSide", "Open Preview to the Side", "View", "ctrl+cmd+v", E,
          "toggleSidePreview:", 0, 0, nullptr, "markdown"},
         // LaTeX Workshop's latex-workshop.synctex (SyncTeX from Cursor).
         {"latex-workshop.synctex", "Show Line in PDF", "View", "alt+cmd+j", A, "showLineInPDF:", 0,
          0, nullptr},
-        {"minicode.toggleShortcutHints", "Toggle Shortcut Hints", "View", "shift+cmd+h", A,
+        {"mutible.toggleShortcutHints", "Toggle Shortcut Hints", "View", "shift+cmd+h", A,
          "toggleHints:", 0, 0, nullptr},
         // In a web page or a PDF, Cmd+= and Cmd+- zoom that instead (Page
         // Zoom below), and in a terminal the terminals (Terminal > Zoom In).
@@ -511,20 +512,20 @@ const std::vector<Command>& all() {
         // pointer was last there, scrolling or clicking): Safari's keys. As
         // with the tree's, the keys are not put on the menu items, which
         // would run them from every pane; the key monitor runs them.
-        {"minicode.page.zoomIn", "Zoom In", "View > Page Zoom", "cmd+= shift+cmd+=", P,
+        {"mutible.page.zoomIn", "Zoom In", "View > Page Zoom", "cmd+= shift+cmd+=", P,
          "zoomPageIn:", 0, 0, nullptr},
-        {"minicode.page.zoomOut", "Zoom Out", "View > Page Zoom", "cmd+-", P, "zoomPageOut:", 0, 0,
+        {"mutible.page.zoomOut", "Zoom Out", "View > Page Zoom", "cmd+-", P, "zoomPageOut:", 0, 0,
          nullptr},
-        {"minicode.page.actualSize", "Actual Size", "View > Page Zoom", "cmd+0", P,
+        {"mutible.page.actualSize", "Actual Size", "View > Page Zoom", "cmd+0", P,
          "zoomPageToActualSize:", 0, 0, nullptr},
-        {"minicode.page.fitWidth", "Zoom to Fit Width", "View > Page Zoom", "", P,
+        {"mutible.page.fitWidth", "Zoom to Fit Width", "View > Page Zoom", "", P,
          "zoomPageToFitWidth:", 0, 0, nullptr},
-        {"minicode.page.fitPage", "Zoom to Fit Page", "View > Page Zoom", "", P, "zoomPageToFit:",
+        {"mutible.page.fitPage", "Zoom to Fit Page", "View > Page Zoom", "", P, "zoomPageToFit:",
          0, 0, nullptr},
         {"editor.action.toggleWordWrap", "Word Wrap", "View", "alt+z", E, "toggleWordWrap:", 0, 0,
          nullptr},
         // VS Code's git blame decoration toggle, which has no key either;
-        // minicode's knows Claude Code's sessions (EditorLineHistory.h).
+        // mutible's knows Claude Code's sessions (EditorLineHistory.h).
         {"git.blame.toggleEditorDecoration", "Show Line History", "View", "", E,
          "toggleLineHistory:", 0, 0, nullptr},
         {"editor.fold", "Fold", "View > Folding", "ctrl+cmd+[", E, "foldRegion:", 0, 0, nullptr},
@@ -563,7 +564,7 @@ const std::vector<Command>& all() {
         {"workbench.view.scm", "Toggle Source Control", "View", "shift+cmd+g ctrl+shift+g", A,
          "toggleSourceControl:", 0, 0, nullptr},
         // VS Code has these without keys.
-        {"minicode.git.reviewChanges", "Review Changes", "View > Source Control", "", A,
+        {"mutible.git.reviewChanges", "Review Changes", "View > Source Control", "", A,
          "gitReviewChanges:", 0, 0, nullptr},
         {"git.fetch", "Fetch", "View > Source Control", "", A, "gitFetch:", 0, 0, nullptr},
         {"git.pull", "Pull", "View > Source Control", "", A, "gitPull:", 0, 0, nullptr},
@@ -575,7 +576,7 @@ const std::vector<Command>& all() {
          "gitUnstageAll:", 0, 0, nullptr},
         {"git.clean", "Discard Changes…", "View > Source Control", "", A, "gitClean:", 0, 0,
          nullptr},
-        {"minicode.git.undoDiscard", "Undo Discard", "View > Source Control", "", A,
+        {"mutible.git.undoDiscard", "Undo Discard", "View > Source Control", "", A,
          "gitUndoDiscard:", 0, 0, nullptr},
         {"git.checkout", "Switch Branch…", "View > Source Control", "", A, "gitCheckout:", 0, 0,
          nullptr},
@@ -592,27 +593,27 @@ const std::vector<Command>& all() {
          0, nullptr},
         {"git.stageChange", "Stage Change", "View > Source Control", "", E, "stageChange:", 0, 0,
          nullptr},
-        {"minicode.toggleAgents", "Toggle Agents", "View", "shift+cmd+a", A, "toggleAgents:", 0,
+        {"mutible.toggleAgents", "Toggle Agents", "View", "shift+cmd+a", A, "toggleAgents:", 0,
          0, nullptr},
-        // minicode's own (VS Code has no such view): J for the jobs agents
+        // mutible's own (VS Code has no such view): J for the jobs agents
         // leave running, beside Cmd+J's terminal.
-        {"minicode.toggleProcesses", "Toggle Processes", "View", "shift+cmd+j", A,
+        {"mutible.toggleProcesses", "Toggle Processes", "View", "shift+cmd+j", A,
          "toggleProcesses:", 0, 0, nullptr},
-        {"minicode.toggleIdeLink", "Claude Code IDE Link", "View", "", A, "toggleIdeLink:", 0,
+        {"mutible.toggleIdeLink", "Claude Code IDE Link", "View", "", A, "toggleIdeLink:", 0,
          0, nullptr},
         // The browser's read-only view of the window's tabs on the session's
         // host (editor.session-host; SessionBrowser.h). No keys.
-        {"minicode.showSessionInBrowser", "Show Session in Browser…", "View", "", A,
+        {"mutible.showSessionInBrowser", "Show Session in Browser…", "View", "", A,
          "showSessionInBrowser:", 0, 0, nullptr},
-        {"minicode.copySessionBrowserLink", "Copy Session Browser Link", "View", "", A,
+        {"mutible.copySessionBrowserLink", "Copy Session Browser Link", "View", "", A,
          "copySessionBrowserLink:", 0, 0, nullptr},
         {"workbench.actions.view.problems", "Problems", "View", "shift+cmd+m", A,
          "toggleProblems:", 0, 0, nullptr},
-        {"minicode.toggleEditor", "Toggle Editor", "View", "shift+cmd+e", A, "toggleEditor:", 0,
+        {"mutible.toggleEditor", "Toggle Editor", "View", "shift+cmd+e", A, "toggleEditor:", 0,
          0, nullptr},
         // VS Code's Toggle Maximize Editor Group is a Cmd+K chord, which
-        // minicode has none of.
-        {"minicode.toggleMaximizedPane", "Maximize Pane", "View", "ctrl+cmd+m", A,
+        // mutible has none of.
+        {"mutible.toggleMaximizedPane", "Maximize Pane", "View", "ctrl+cmd+m", A,
          "toggleMaximizedPane:", 0, 0, nullptr},
         // Two editor groups side by side, with VS Code's Mac keys. Cmd+\ and
         // Ctrl+Cmd+arrows are the terminal's while it has the keyboard (its
@@ -623,25 +624,25 @@ const std::vector<Command>& all() {
          "ctrl+cmd+right", E, "moveEditorToNextGroup:", 0, 0, nullptr},
         {"workbench.action.moveEditorToPreviousGroup", "Move Editor into Previous Group", "View",
          "ctrl+cmd+left", E, "moveEditorToPreviousGroup:", 0, 0, nullptr},
-        {"minicode.toggleHiddenFiles", "Show Hidden Files", "View", "shift+cmd+.", A,
+        {"mutible.toggleHiddenFiles", "Show Hidden Files", "View", "shift+cmd+.", A,
          "toggleHiddenFiles:", 0, 0, nullptr},
-        {"minicode.tree.toggleSizes", "Show Sizes", "View", "shift+cmd+i", A, "toggleTreeColumn:",
+        {"mutible.tree.toggleSizes", "Show Sizes", "View", "shift+cmd+i", A, "toggleTreeColumn:",
          kColumnSize, 0, nullptr},
-        {"minicode.tree.toggleSaved", "Show When Last Saved", "View", "alt+shift+cmd+i", A,
+        {"mutible.tree.toggleSaved", "Show When Last Saved", "View", "alt+shift+cmd+i", A,
          "toggleTreeColumn:", kColumnSaved, 0, nullptr},
-        {"minicode.tree.toggleCreated", "Show When Created", "View", "ctrl+shift+cmd+i", A,
+        {"mutible.tree.toggleCreated", "Show When Created", "View", "ctrl+shift+cmd+i", A,
          "toggleTreeColumn:", kColumnCreated, 0, nullptr},
         // Ctrl+` from anywhere, the terminal's grid included.
         {"workbench.action.terminal.toggleTerminal", "Toggle Terminal", "View",
          "shift+cmd+t cmd+j ctrl+`", A, "toggleTerminal:", 0, Global, nullptr},
-        {"minicode.toggleBrowser", "Toggle Browser", "View", "shift+cmd+b", A, "toggleBrowser:",
+        {"mutible.toggleBrowser", "Toggle Browser", "View", "shift+cmd+b", A, "toggleBrowser:",
          0, 0, nullptr},
         // Safari's key while the browser's page or its toolbar has the
         // keyboard: a page key, which only the pane answers, so the key goes
         // on to Go to Symbol in Workspace in a PDF too.
-        {"minicode.browser.newTab", "New Browser Tab", "View", "cmd+t", P, "newBrowserTab:", 0,
+        {"mutible.browser.newTab", "New Browser Tab", "View", "cmd+t", P, "newBrowserTab:", 0,
          0, "the browser pane (View > New Browser Tab, openBrowserTab:, opens one from anywhere)"},
-        {"minicode.togglePlayback", "Play/Pause", "View", "shift+cmd+space", A,
+        {"mutible.togglePlayback", "Play/Pause", "View", "shift+cmd+space", A,
          "togglePlayback:", 0, 0, nullptr},
         {"editor.action.showContextMenu", "Show Context Menu", "View",
          "shift+f10 ctrl+enter contextmenu", A, "showContextMenu:", 0, Global, nullptr},
@@ -652,13 +653,13 @@ const std::vector<Command>& all() {
         // Terminal.app's and iTerm's new tab, while a terminal has the
         // keyboard (the owner's ask, 2026-11-14); elsewhere Cmd+T stays Go
         // to Symbol in Workspace. Only the terminal panel answers it.
-        {"minicode.terminal.newTab", "New Terminal Tab", "Terminal", "cmd+t", T,
+        {"mutible.terminal.newTab", "New Terminal Tab", "Terminal", "cmd+t", T,
          "newTerminalTab:", 0, 0, "the terminal (Terminal > New Terminal opens one from anywhere)"},
         {"workbench.action.terminal.split", "Split Terminal", "Terminal", "cmd+\\", T,
          "splitTerminal:", 0, 0, nullptr},
         // VS Code's terminal groups take one direction from the panel's
         // place; here a column stacks. No key, as VS Code has none.
-        {"minicode.terminal.splitDown", "Split Terminal Down", "Terminal", "", A,
+        {"mutible.terminal.splitDown", "Split Terminal Down", "Terminal", "", A,
          "splitTerminalDown:", 0, 0, nullptr},
         {"workbench.action.terminal.focusNext", "Next Terminal", "Terminal", "alt+cmd+]", A,
          "nextTerminal:", 0, 0, nullptr},
@@ -667,13 +668,13 @@ const std::vector<Command>& all() {
         {"workbench.action.terminal.kill", "Close Terminal", "Terminal", "ctrl+shift+w", A,
          "closeTerminal:", 0, 0, nullptr},
         // VS Code has no such command; the key is free in both.
-        {"minicode.terminal.nextWaiting", "Next Waiting Terminal", "Terminal", "ctrl+cmd+w", A,
+        {"mutible.terminal.nextWaiting", "Next Waiting Terminal", "Terminal", "ctrl+cmd+w", A,
          "nextWaitingTerminal:", 0, 0, nullptr},
         {"workbench.action.terminal.clear", "Clear Terminal", "Terminal", "cmd+k", T,
          "clearTerminal:", 0, 0, nullptr},
         // Terminal.app's Clear to Previous Mark, on its key; VS Code has no
         // such command. Cmd+L stays Select Line in the editor.
-        {"minicode.terminal.clearToPreviousMark", "Clear to Previous Mark", "Terminal", "cmd+l",
+        {"mutible.terminal.clearToPreviousMark", "Clear to Previous Mark", "Terminal", "cmd+l",
          T, "clearToPreviousMark:", 0, 0, nullptr},
         // VS Code has no key for it either.
         {"workbench.action.terminal.copyLastCommandOutput", "Copy Last Command Output",
@@ -691,9 +692,9 @@ const std::vector<Command>& all() {
         // VS Code has no Mac key for Rename; moving a tab is a drag there.
         {"workbench.action.terminal.rename", "Rename Terminal…", "Terminal", "", A,
          "renameTerminal:", 0, 0, nullptr},
-        {"minicode.terminal.moveLeft", "Move Terminal Left", "Terminal", "", A,
+        {"mutible.terminal.moveLeft", "Move Terminal Left", "Terminal", "", A,
          "moveTerminalLeft:", 0, 0, nullptr},
-        {"minicode.terminal.moveRight", "Move Terminal Right", "Terminal", "", A,
+        {"mutible.terminal.moveRight", "Move Terminal Right", "Terminal", "", A,
          "moveTerminalRight:", 0, 0, nullptr},
         // VS Code's Mac keys; the tag is the direction (MCPaneDirection).
         {"workbench.action.terminal.resizePaneLeft", "Resize Terminal Pane Left", "Terminal",
@@ -704,9 +705,9 @@ const std::vector<Command>& all() {
          "ctrl+cmd+up", T, "resizeTerminalPane:", 3, 0, nullptr},
         {"workbench.action.terminal.resizePaneDown", "Resize Terminal Pane Down", "Terminal",
          "ctrl+cmd+down", T, "resizeTerminalPane:", 4, 0, nullptr},
-        {"minicode.runFile", "Run File", "Terminal", "shift+cmd+enter", A, "runCurrentFile:", 0, 0,
+        {"mutible.runFile", "Run File", "Terminal", "shift+cmd+enter", A, "runCurrentFile:", 0, 0,
          nullptr},
-        // VS Code's Run Test at Cursor is a chord (Cmd+; C), which minicode
+        // VS Code's Run Test at Cursor is a chord (Cmd+; C), which mutible
         // has none of: no key. The ▶ beside each test is the same command
         // for one test (TestGutter.h).
         {"testing.runAtCursor", "Run Test at Cursor", "Terminal", "", E, "runTestAtCursor:", 0, 0,
@@ -737,7 +738,7 @@ const std::vector<Command>& all() {
         {"workbench.action.focusSideBar", "Focus File Tree", "Navigate", "cmd+0", NP, "focusTree:",
          0, 0, nullptr},
         // VS Code's Cmd+1 and Cmd+2 focus the first and second editor group,
-        // as minicode's Cmd+1 always focused its one editor; Cmd+2 was Focus
+        // as mutible's Cmd+1 always focused its one editor; Cmd+2 was Focus
         // Terminal, a Command-only key, which yields to VS Code's (keys.conf
         // can give it back: cmd+2 = workbench.action.terminal.focus).
         {"workbench.action.focusFirstEditorGroup", "Focus First Editor Group", "Navigate",
@@ -746,7 +747,7 @@ const std::vector<Command>& all() {
          "cmd+2", A, "focusSecondEditorGroup:", 0, 0, nullptr},
         {"workbench.action.terminal.focus", "Focus Terminal", "Navigate", "", A,
          "focusTerminal:", 0, 0, nullptr},
-        {"minicode.focusBrowser", "Focus Browser", "Navigate", "cmd+3", A, "focusBrowser:", 0, 0,
+        {"mutible.focusBrowser", "Focus Browser", "Navigate", "cmd+3", A, "focusBrowser:", 0, 0,
          nullptr},
         {"workbench.action.nextEditor", "Next Tab", "Navigate",
          "ctrl+tab shift+cmd+] alt+cmd+right", A, "selectNextTab:", 0, 0, nullptr},
@@ -789,9 +790,9 @@ const std::vector<Command>& all() {
         {"workbench.action.editor.previousChange", "Go to Previous Change", "Navigate",
          "alt+shift+f5", E, "previousChange:", 0, 0, nullptr},
         // Only while a tour is on; otherwise Option+] types its character.
-        {"minicode.tour.next", "Next Tour Stop", "Navigate", "alt+]", A, "nextTourStop:", 0,
+        {"mutible.tour.next", "Next Tour Stop", "Navigate", "alt+]", A, "nextTourStop:", 0,
          Global, nullptr},
-        {"minicode.tour.previous", "Previous Tour Stop", "Navigate", "alt+[", A,
+        {"mutible.tour.previous", "Previous Tour Stop", "Navigate", "alt+[", A,
          "previousTourStop:", 0, Global, nullptr},
 
         // ---- keys the views handle themselves (not remappable yet)
@@ -835,20 +836,20 @@ const std::vector<Command>& all() {
         {"workbench.action.terminal.selectToNextCommand", "Select to the Next Command",
          "Terminal", "shift+cmd+down", T, nullptr, 0, Fixed, "the terminal"},
         // At the shell's prompt (or a REPL's); a full-screen program gets them.
-        {"minicode.terminal.lineStart", "Go to the Start of the Prompt's Line", "Terminal",
+        {"mutible.terminal.lineStart", "Go to the Start of the Prompt's Line", "Terminal",
          "cmd+left", T, nullptr, 0, Fixed, "the terminal"},
-        {"minicode.terminal.lineEnd", "Go to the End of the Prompt's Line", "Terminal",
+        {"mutible.terminal.lineEnd", "Go to the End of the Prompt's Line", "Terminal",
          "cmd+right", T, nullptr, 0, Fixed, "the terminal"},
-        {"minicode.terminal.deleteToLineStart", "Delete to the Start of the Prompt's Line",
+        {"mutible.terminal.deleteToLineStart", "Delete to the Start of the Prompt's Line",
          "Terminal", "cmd+backspace", T, nullptr, 0, Fixed, "the terminal"},
-        {"minicode.terminal.wordLeft", "Move a Word Left at the Prompt", "Terminal", "alt+left",
+        {"mutible.terminal.wordLeft", "Move a Word Left at the Prompt", "Terminal", "alt+left",
          T, nullptr, 0, Fixed, "the terminal"},
-        {"minicode.terminal.wordRight", "Move a Word Right at the Prompt", "Terminal",
+        {"mutible.terminal.wordRight", "Move a Word Right at the Prompt", "Terminal",
          "alt+right", T, nullptr, 0, Fixed, "the terminal"},
         // Finder's keys, typing keys, so never a command's of keys.conf.
-        {"minicode.tree.quickLook", "Quick Look", "File Tree", "space", R, nullptr, 0, Fixed,
+        {"mutible.tree.quickLook", "Quick Look", "File Tree", "space", R, nullptr, 0, Fixed,
          "the file tree"},
-        {"minicode.tree.closeQuickLook", "Close Quick Look", "File Tree", "escape", R, nullptr, 0,
+        {"mutible.tree.closeQuickLook", "Close Quick Look", "File Tree", "escape", R, nullptr, 0,
          Fixed, "the file tree"},
     };
     return table;
@@ -857,6 +858,12 @@ const std::vector<Command>& all() {
 const Command* find(const std::string& id) {
     for (const Command& c : all())
         if (id == c.id) return &c;
+    // An id of the app's own in its spelling before the rename (keys.conf
+    // files written then, the Linux port's tables): src/Rename.h.
+    const std::string other = Rename::otherCommandId(id);
+    if (!other.empty())
+        for (const Command& c : all())
+            if (other == c.id) return &c;
     return nullptr;
 }
 
@@ -919,6 +926,7 @@ unsigned flagsOf(const Command& c, Platform p) {
 const std::vector<Key>& Keymap::keysOf(const std::string& id) const {
     static const std::vector<Key> none;
     auto it = keys.find(id);
+    if (it == keys.end()) it = keys.find(Rename::otherCommandId(id));
     return it == keys.end() ? none : it->second;
 }
 
@@ -1058,7 +1066,7 @@ Keymap resolve(const std::string& text, std::vector<Error>* errors, Platform pla
         }
         if (!available(*cmd, platform)) {
             err(lineNo, std::string(cmd->title) + " (" + cmd->id +
-                            ") is not in minicode for Linux yet");
+                            ") is not in mutible for Linux yet");
             continue;
         }
         if (cmd->flags & Fixed) {
@@ -1136,7 +1144,7 @@ std::string defaultFileText() { return defaultFileText(Platform::Mac); }
 std::string defaultFileText(Platform platform) {
     const bool onLinux = platform == Platform::Linux;
     std::string s =
-        "# minicode keyboard shortcuts\n"
+        "# mutible keyboard shortcuts\n"
         "#\n"
         "# Each line gives a key to a command, beside the keys it has already:\n"
         "#\n";
@@ -1183,7 +1191,7 @@ std::string defaultFileText(Platform platform) {
              "# shift or alt still run their commands, but for ctrl+shift+c and\n"
              "# ctrl+shift+v (the terminal's copy and paste), ctrl+shift+g and\n"
              "# ctrl+shift+space.\n"
-             "# Only the commands minicode for Linux has are listed.\n";
+             "# Only the commands mutible for Linux has are listed.\n";
     }
     s += "#\n"
          "# Every command, with its keys by default, follows. Uncomment a line and\n"

@@ -3,7 +3,7 @@
 // block, a diagram's cache key, the mmdc command line, and what of mmdc's
 // complaint to show.
 //
-// minicode draws no diagram itself and bundles no Mermaid code (it has no
+// mutible draws no diagram itself and bundles no Mermaid code (it has no
 // third-party code at all): a page's diagrams are drawn by mermaid-cli's
 // `mmdc` when the user has it installed, else by one pinned mermaid.js the
 // user downloads from the page (checked against kMermaidJsSha256, as
@@ -43,7 +43,7 @@ extern const char *const kDrawerMermaidJs;   // "mermaid.js <kMermaidJsVersion>"
 std::string key(const std::string &source, const std::string &theme,
                 const std::string &drawer = kDrawerMmdc);
 
-// The mermaid.js minicode downloads on request: its version, where from
+// The mermaid.js mutible downloads on request: its version, where from
 // (the npm package's file, through jsDelivr's mirror of npm), and the
 // SHA-256 of mermaid.min.js in the npm package mermaid@12.3.0, which the
 // download must match (5,537,838 bytes, checked against the registry's

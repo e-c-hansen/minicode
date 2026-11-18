@@ -1,5 +1,6 @@
 // SessionWeb.cpp — see SessionWeb.h.
 #include "SessionWeb.h"
+#include "Rename.h"
 
 #include "AutoIndent.h"
 #include "IdeLink.h"
@@ -82,7 +83,7 @@ Answer refuse(int status, const char* reason, const std::string& why) {
     a.kind = Answer::Refused;
     a.status = status;
     a.why = why;
-    a.response = httpResponse(status, reason, "text/plain; charset=utf-8", "minicode: " + why + "\n");
+    a.response = httpResponse(status, reason, "text/plain; charset=utf-8", "mutible: " + why + "\n");
     return a;
 }
 
@@ -178,7 +179,7 @@ std::string newToken() {
     }
     if (!ok) {
         // No random source: refuse to make a guessable token.
-        std::fprintf(stderr, "minicode: /dev/urandom could not be read\n");
+        std::fprintf(stderr, "mutible: /dev/urandom could not be read\n");
         std::abort();
     }
     return IdeLink::toHex(std::string((const char*)bytes, sizeof bytes));
@@ -433,12 +434,12 @@ Answer answer(const Request& r, const std::string& token, const std::string& pag
     if (origin && !sameOrigin(*origin, *host))
         return refuse(403, "Forbidden", "pages from " + *origin + " are not served");
     if (!origin && r.path == "/ws")
-        return refuse(403, "Forbidden", "the socket opens only from minicode's own page");
+        return refuse(403, "Forbidden", "the socket opens only from mutible's own page");
     auto t = r.query.find("t");
     if (t == r.query.end() || t->second.empty())
-        return refuse(403, "Forbidden", "no token: open the address minicode printed");
+        return refuse(403, "Forbidden", "no token: open the address mutible printed");
     if (token.empty() || !IdeLink::sameSecret(t->second, token))
-        return refuse(403, "Forbidden", "wrong token: open the address minicode printed");
+        return refuse(403, "Forbidden", "wrong token: open the address mutible printed");
     if (r.path == "/") {
         const std::string nonce = newToken().substr(0, 32);
         std::string body = page;
@@ -979,9 +980,9 @@ bool Server::start(const Options& o, std::string* error) {
     // The host machine's theme when its settings file says one.
     settingsPath_ = o.settingsPath;
     if (settingsPath_.empty()) {
-        if (const char* s = std::getenv("MINICODE_SETTINGS")) settingsPath_ = s;
+        if (const char* s = Rename::getenvOrOld("MUTIBLE_SETTINGS")) settingsPath_ = s;
         else if (const char* home = std::getenv("HOME"))
-            settingsPath_ = std::string(home) + "/.config/minicode/settings.conf";
+            settingsPath_ = std::string(home) + "/.config/mutible/settings.conf";
     }
     lookAtSettings(true);
     return true;
@@ -1380,7 +1381,7 @@ void Server::onSave(Conn& c, const Json& j) {
     if (!opt_.editable) return note(c, "This page only reads: it cannot save.");
     if (!session_ || !id || !session_->docs.count(id)) return;
     if (!opt_.save)
-        return note(c, "Nothing here saves to disk yet: save from the minicode window that has this "
+        return note(c, "Nothing here saves to disk yet: save from the mutible window that has this "
                        "file open.");
     // The host has every edit first, and has passed it on.
     session_->client->settle();
@@ -1469,7 +1470,7 @@ void Server::onOpen(Conn& c, const Json& j) {
     } else if (!opt_.open) {
         why = "This page cannot open files from a headless host yet.";
     } else if (!opt_.open(abs, j["keep"].asBool())) {
-        why = "The minicode window could not open that file.";
+        why = "The mutible window could not open that file.";
     } else {
         m.set("abs", Json(abs));
         m.set("ok", Json(true));
@@ -1495,7 +1496,7 @@ void Server::onBrowse(Conn& c, const Json& j) {
     } else if (!opt_.browse) {
         why = "This session has no browser pane to open addresses in.";
     } else if (!opt_.browse(url)) {
-        why = "The minicode window could not open that address.";
+        why = "The mutible window could not open that address.";
     } else {
         m.set("ok", Json(true));
         return sendJson(c, m);

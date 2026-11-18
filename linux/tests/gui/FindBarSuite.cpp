@@ -1,5 +1,5 @@
 // FindBarSuite.cpp — the editor's find and replace bar
-// (`./build/minicode-guitest find_bar`, linux/PARITY.md item 1.6), the
+// (`./build/mutible-guitest find_bar`, linux/PARITY.md item 1.6), the
 // counterpart of the Mac's tests/gui/FindBarSuite.mm, pressing real keys:
 // Ctrl+F opens it with the keyboard in the query, typing finds as you go
 // and selects the match from the caret, Enter, F3 and their Shift forms
@@ -23,7 +23,7 @@
 #include "MultiEdit.h"
 #include "TextFind.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #include <vte/vte.h>
 #endif
@@ -122,7 +122,7 @@ double replaceAllBaseline() {
 }
 int gChars = 0;
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 VteTerminal* findVte(GtkWidget* root) {
     if (!root) return nullptr;
     if (VTE_IS_TERMINAL(root)) return VTE_TERMINAL(root);
@@ -689,7 +689,7 @@ MC_GUI_SUITE(find_bar) {
             if (Document* d = ed()->documentFor(p)) ed()->closeTab(d);
     });
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // ---- the terminal keeps its Meta keys
     MCGuiStep("the terminal, with the keyboard", [] {
         // An earlier suite may have left it open.

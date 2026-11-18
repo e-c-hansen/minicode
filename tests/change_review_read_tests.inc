@@ -97,7 +97,7 @@ static void testChangeReviewRead() {
         CHECK(run(root, {"show", ":g.txt"}, "").out == "x\n");
     }
     // Not a repository.
-    CHECK(readUncommitted("/nonexistent-minicode-review", run).error == "This folder is not in a git repository.");
+    CHECK(readUncommitted("/nonexistent-mutible-review", run).error == "This folder is not in a git repository.");
     CHECK(std::system(("rm -rf " + shq(root) + " " + shq(tmpIn) + " " + shq(tmpOut) + " " + shq(tmpErr)).c_str()) == 0);
 }
 
@@ -176,7 +176,7 @@ static void testWorktreeReview() {
         CHECK(w.read.diffs[2].file.newText == u"k2\n");
         CHECK(w.read.diffs[3].file.untracked && w.read.diffs[3].file.newText == u"u\n");
     }
-    CHECK(readWorktree("/nonexistent-minicode-wt", "main", run).read.error ==
+    CHECK(readWorktree("/nonexistent-mutible-wt", "main", run).read.error ==
           "This worktree is not a git checkout any more.");
     CHECK(readWorktree(wtDir, "", run).read.error == "There is no main branch to compare with.");
 

@@ -1,5 +1,5 @@
-// AgentNotes.h — notes an agent puts over the code (`minicode open --note`,
-// `minicode tour`), the Mac's AgentNotes. A range of lines is highlighted,
+// AgentNotes.h — notes an agent puts over the code (`mutible open --note`,
+// `mutible tour`), the Mac's AgentNotes. A range of lines is highlighted,
 // scrolled to the upper third of the view, with a small box above it
 // labelled with who wrote it ("Claude"). A tour is a sequence of such
 // notes, stepped through with Alt+] and Alt+[ and counted in the box

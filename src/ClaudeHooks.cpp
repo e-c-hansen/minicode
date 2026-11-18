@@ -1,5 +1,6 @@
 // ClaudeHooks.cpp — see ClaudeHooks.h.
 #include "ClaudeHooks.h"
+#include "Rename.h"
 #include "ControlProtocol.h"
 #include <cerrno>
 #include <climits>
@@ -13,7 +14,7 @@
 
 namespace ClaudeHooks {
 
-const char *const kCommand = "minicode notify --from-hook";
+const char *const kCommand = "mutible notify --from-hook";
 
 Action actionFor(const std::string &e) {
     if (e == "Notification") return Action::Waiting;
@@ -102,11 +103,15 @@ Json entry(const std::string &command) {
 }
 
 bool isOurCommand(const std::string &c) {
-    // Any spelling that runs `minicode notify --from-hook` (a full path to
+    // Any spelling that runs `mutible notify --from-hook` (a full path to
     // the launcher, extra flags after it) counts as installed.
-    return c.find("minicode notify --from-hook") != std::string::npos ||
-           (c.find("minicode") != std::string::npos &&
-            c.find(" notify --from-hook") != std::string::npos);
+    // The command before the rename (src/Rename.h) counts too: Claude
+    // Code's settings files keep it, and it still runs.
+    for (const char *name : {"mutible", Rename::kOldName})
+        if (c.find(std::string(name) + " notify --from-hook") != std::string::npos ||
+            (c.find(name) != std::string::npos && c.find(" notify --from-hook") != std::string::npos))
+            return true;
+    return false;
 }
 
 }  // namespace
@@ -312,7 +317,7 @@ bool writeSettingsFile(const std::string &path, const std::string &text, unsigne
         // FolderSearch::writeFileAtomically does.
         if (st.st_nlink > 1) return writeInPlace(target, text, error);
     }
-    std::string tmp = target + ".minicode-XXXXXX";
+    std::string tmp = target + ".mutible-XXXXXX";
     std::vector<char> name(tmp.begin(), tmp.end());
     name.push_back('\0');
     const int fd = mkstemp(name.data());
@@ -417,9 +422,9 @@ InstallResult install(const std::string &path, const std::string &command, long 
         struct tm tm;
         localtime_r(&t, &tm);
         strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
-        std::string backup = path + ".minicode-backup-" + stamp;
+        std::string backup = path + ".mutible-backup-" + stamp;
         for (int n = 2; access(backup.c_str(), F_OK) == 0; n++)
-            backup = path + ".minicode-backup-" + stamp + "-" + std::to_string(n);
+            backup = path + ".mutible-backup-" + stamp + "-" + std::to_string(n);
         if (!writeSettingsFile(backup, text, mode, error)) {
             out.error = "could not back up " + path + ", so it was left alone: " + error;
             return out;

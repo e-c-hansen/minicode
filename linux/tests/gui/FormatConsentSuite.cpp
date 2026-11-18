@@ -1,5 +1,5 @@
 // FormatConsentSuite.cpp — Format Document and the folder's own programs
-// (`./build/minicode-guitest format_consent`, linux/PARITY.md items 2.3 and
+// (`./build/mutible-guitest format_consent`, linux/PARITY.md items 2.3 and
 // 2.4), the counterpart of the Mac's `format_consent` suite in
 // tests/gui/FormatSuite.mm, with real keys and clicks through XTest and
 // stand-in formatters (scripts that record being run):

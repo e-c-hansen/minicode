@@ -1,6 +1,6 @@
 // LspClient.h — pure C++. The client half of the Language Server Protocol:
 // message framing, the initialize/shutdown lifecycle, document sync, request
-// ids matched to their responses, and parsing of the results MiniCode uses
+// ids matched to their responses, and parsing of the results Mutible uses
 // (diagnostics, completion, hover, definition, references, rename, code
 // actions, document and workspace symbols) and the WorkspaceEdits rename and
 // code actions answer with.
@@ -705,9 +705,9 @@ std::vector<FoldingRange> parseFoldingRanges(const Json& result);
 // colors it so, over the lexer's colors, as VS Code's
 // editor.semanticHighlighting does.
 //
-// What minicode colors a token as: VS Code's default semantic token map
+// What mutible colors a token as: VS Code's default semantic token map
 // (tokenClassificationRegistry.ts: each type probes a TextMate scope) read
-// against minicode's themes, where every type whose scope the themes color
+// against mutible's themes, where every type whose scope the themes color
 // apart lands on one of these. Function is the lexer's own syntax.function;
 // the others have syntax.class, .variable, .parameter, .property and
 // .constant. None leaves the lexer's color: keywords, comments, strings,
@@ -1093,7 +1093,7 @@ public:
     // Sends `initialize`. Notifications and requests made before the server
     // answers are queued and go out, in order, right after `initialized`.
     void initialize(const std::string& rootPath, int processId,
-                    const std::string& clientName = "MiniCode");
+                    const std::string& clientName = "Mutible");
 
     // Document sync. didChange bumps the version and sends the whole text
     // (or, in the overload below, the ranges that changed); it is a no-op

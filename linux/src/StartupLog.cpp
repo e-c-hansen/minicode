@@ -62,7 +62,7 @@ void vprint(const char* format, va_list ap) {
     char what[512];
     vsnprintf(what, sizeof what, format, ap);
     std::lock_guard<std::mutex> hold(gLock);
-    fprintf(stderr, "minicode startup: %8.1f ms  cpu %7.1f ms  %s\n", wallMs(), cpuMs(), what);
+    fprintf(stderr, "mutible startup: %8.1f ms  cpu %7.1f ms  %s\n", wallMs(), cpuMs(), what);
     fflush(stderr);
 }
 
@@ -178,7 +178,7 @@ void onAfterPaint(GdkFrameClock*, gpointer fp) {
 }  // namespace
 
 bool wanted() {
-    const char* v = g_getenv("MINICODE_STARTUP_LOG");
+    const char* v = g_getenv("MUTIBLE_STARTUP_LOG");
     return v && *v && strcmp(v, "0") != 0;
 }
 

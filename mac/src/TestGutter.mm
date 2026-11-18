@@ -66,7 +66,7 @@ NSString *TipFor(NSString *label, MCTestState state) {
 - (instancetype)initWithHost:(id<MCTestGutterHost>)host {
     if ((self = [super init])) {
         _host = host;
-        _queue = dispatch_queue_create("minicode.test-gutter", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.test-gutter", DISPATCH_QUEUE_SERIAL);
         _kind = Runnables::Kind::None;
         _results = [NSMutableDictionary dictionary];
         _runs = [NSMutableArray array];

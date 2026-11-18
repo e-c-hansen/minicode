@@ -1,4 +1,4 @@
-// MultiCaretSelectSuite.cpp — `./build/minicode-guitest multicaret_select`:
+// MultiCaretSelectSuite.cpp — `./build/mutible-guitest multicaret_select`:
 // the keys that make several carets (linux/PARITY.md item 1.9, Carets.h),
 // VS Code's on Linux: Ctrl+D (the word at the caret, then each next whole
 // word, never "arrays" for "arr", and nothing more once every one is in),

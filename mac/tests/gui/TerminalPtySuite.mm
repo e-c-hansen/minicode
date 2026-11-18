@@ -258,7 +258,7 @@ MC_GUI_SUITE(terminal_pty) {
         TerminalGridView *grid = [s.term valueForKey:@"grid"];
         const double c0 = MCGuiThreadCpuMs();
         grid.onInput(bytes);   // what typing and pasting hand the pty
-        // MINICODE_HOST=loopback (CI's pass with the host) encodes every
+        // MUTIBLE_HOST=loopback (CI's pass with the host) encodes every
         // message and decodes it again on the sending thread: base64 and
         // JSON both ways, 25 to 30 ms for this megabyte on an M3.
         GCHECK_TIME(MCGuiThreadCpuMs() - c0, s.hostTerm && MCSessionLoopback() ? 120 : 50,

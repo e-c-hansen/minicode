@@ -1,12 +1,12 @@
 // Bench.h — the Linux side of scripts/membench-linux.sh (the Mac's is
 // src/Bench.mm).
 //
-// Inert unless MINICODE_BENCH is set. Then, a step every couple of seconds as
-// a person would click through, the first window opens MINICODE_BENCH_CPP,
-// shows the terminal, and loads MINICODE_BENCH_URL in the browser pane; a
-// second window opens MINICODE_BENCH_TEX, whose LaTeX preview typesets it
+// Inert unless MUTIBLE_BENCH is set. Then, a step every couple of seconds as
+// a person would click through, the first window opens MUTIBLE_BENCH_CPP,
+// shows the terminal, and loads MUTIBLE_BENCH_URL in the browser pane; a
+// second window opens MUTIBLE_BENCH_TEX, whose LaTeX preview typesets it
 // (the Mac's bench does the same; one editor slot cannot show both). Last it
-// prints "minicode bench: ready" on stderr.
+// prints "mutible bench: ready" on stderr.
 #pragma once
 
 #include <functional>

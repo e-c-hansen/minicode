@@ -92,17 +92,17 @@ static void testProcs() {
     const std::string folder = "/Users/me/proj";
     const uint64_t MB = 1024 * 1024;
 
-    // launchd, minicode, its two shells and a language server, a dev server
+    // launchd, mutible, its two shells and a language server, a dev server
     // under shell 1 (npm, then node), an editor's process elsewhere.
     auto world = [&](FakeProcs& f) {
         f.add(1, 0, 1, "launchd", "/");
-        f.add(self, 1, 10, "MiniCode", "/");
+        f.add(self, 1, 10, "Mutible", "/");
         f.add(200, self, 20, "zsh", folder);
         f.add(300, self, 30, "zsh", folder);
         f.add(210, 200, 40, "npm", folder, 50 * MB).cmd = "npm run dev";
         f.add(211, 210, 41, "node", folder, 200 * MB, 501, 210).cmd =
             "/opt/homebrew/bin/node /Users/me/proj/node_modules/.bin/vite";
-        f.add(150, self, 15, "pyright", folder, 300 * MB, 501, self);   // minicode's own
+        f.add(150, self, 15, "pyright", folder, 300 * MB, 501, self);   // mutible's own
         f.add(400, 1, 50, "Code Helper", "/");                          // elsewhere
     };
     const std::vector<Terminal> terms = {{1, "npm run dev", 200, 7, ""}, {2, "zsh", 300, 7, ""}};
@@ -146,7 +146,7 @@ static void testProcs() {
         SampleStats st = t.sample(f, 1000, terms, {folder}, self, 501);
         CHECK(st.listed == 8);
         // The dev server and its node, from terminal 1; not the shells,
-        // not minicode, not its language server, not the other app.
+        // not mutible, not its language server, not the other app.
         CHECK(tracked(t, 210) && tracked(t, 211));
         CHECK(!tracked(t, 200) && !tracked(t, 300) && !tracked(t, self) && !tracked(t, 150) &&
               !tracked(t, 400) && !tracked(t, 1));
@@ -198,7 +198,7 @@ static void testProcs() {
     }
 
     // R7.4 (AG-D8): which Claude Code session started a process, from the
-    // session `minicode notify` named in its terminal.
+    // session `mutible notify` named in its terminal.
     GROUP("procs:session");
     {
         FakeProcs f;
@@ -258,7 +258,7 @@ static void testProcs() {
         // `exec claude`: the shell itself is Claude Code, so all under it.
         FakeProcs g;
         g.add(1, 0, 1, "launchd", "/");
-        g.add(self, 1, 10, "MiniCode", "/");
+        g.add(self, 1, 10, "Mutible", "/");
         g.add(500, self, 20, "node", folder).cmd = "node /opt/claude/cli.js";
         g.add(501, 500, 30, "rg", folder);
         Tracker te;
@@ -279,7 +279,7 @@ static void testProcs() {
         const Proc* web = tracked(t, 500);
         CHECK(web && web->origin == Origin::Outside && web->cwd == folder + "/web");
         CHECK(!tracked(t, 501) && !tracked(t, 600));
-        CHECK(!tracked(t, 150));   // minicode's own language server, though in the folder
+        CHECK(!tracked(t, 150));   // mutible's own language server, though in the folder
         // It moves out of the folder: dropped, not kept as exited.
         f.find(500)->cwd = "/tmp";
         t.sample(f, 1002, terms, {folder}, self, 501);
@@ -503,7 +503,7 @@ static void testProcs() {
         CHECK(!planStop(table, Key{self, 10}, self, self, {200, 300}).ok);
         CHECK(!planStop(table, Key{1, 1}, self, self, {200, 300}).ok);
         CHECK(planStop(table, Key{211, 999}, self, self, {200, 300}).refusal == "it has already exited");
-        // A group shared with minicode (a language server): never the group.
+        // A group shared with mutible (a language server): never the group.
         p = planStop(table, Key{150, 15}, self, self, {200, 300});
         CHECK(p.ok && !p.group && p.targets.size() == 1);
     }
@@ -525,7 +525,7 @@ static void testProcs() {
         CHECK(!parseCommandLine({"procs", "--all"}, "/w", "/h", none).error.empty());
         CHECK(isSubcommand("procs") && !launchesApp("procs"));
         CHECK(usageText("procs").find("kill <pid>") != std::string::npos);
-        CHECK(usageText().find("minicode procs") != std::string::npos);
+        CHECK(usageText().find("mutible procs") != std::string::npos);
         Request r;
         CHECK(parseRequest(R"({"v":1,"id":1,"cmd":"procs","args":{"folder":"/x"}})", r, err));
         CHECK(!parseRequest(R"({"v":1,"id":1,"cmd":"procs","args":{"json":true}})", r, err));
@@ -537,7 +537,7 @@ static void testProcs() {
         // core's part stays well inside the budget.
         FakeProcs f;
         f.add(1, 0, 1, "launchd", "/");
-        f.add(self, 1, 10, "MiniCode", "/");
+        f.add(self, 1, 10, "Mutible", "/");
         f.add(200, self, 20, "zsh", folder);
         for (int i = 0; i < 200; i++) f.add(1000 + i, i ? 1000 + i - 1 : 200, 100 + i, "w", folder);
         for (int i = 0; i < 1800; i++) f.add(5000 + i, 1, 500 + i, "x", "/Applications");

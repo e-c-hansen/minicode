@@ -21,14 +21,14 @@
 NSAttributedStringKey const MCMarkdownMermaidAttribute = @"MCMarkdownMermaid";
 NSNotificationName const MCMermaidDrawnNotification = @"MCMermaidDrawnNotification";
 NSString *const MCMermaidKeysKey = @"keys";
-NSString *const MCMermaidDownloadLink = @"minicode-mermaid:download";
+NSString *const MCMermaidDownloadLink = @"mutible-mermaid:download";
 
 static NSString *NSFromStd(const std::string &s) {
     return [[NSString alloc] initWithBytes:s.data() length:s.size() encoding:NSUTF8StringEncoding] ?: @"";
 }
 
 NSString *MCMermaidPath(void) {
-    NSString *forced = MCEnv(@"MINICODE_MMDC");
+    NSString *forced = MCEnv(@"MUTIBLE_MMDC");
     if (forced.length) {
         NSString *p = forced;
         return [[NSFileManager defaultManager] isExecutableFileAtPath:p] ? p : nil;
@@ -37,10 +37,10 @@ NSString *MCMermaidPath(void) {
 }
 
 NSString *MCMermaidCacheDirectory(void) {
-    NSString *forced = MCEnv(@"MINICODE_MERMAID_CACHE");
+    NSString *forced = MCEnv(@"MUTIBLE_MERMAID_CACHE");
     if (forced.length) return forced;
     NSString *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
-    return [[caches stringByAppendingPathComponent:@"MiniCode"] stringByAppendingPathComponent:@"mermaid"];
+    return [[caches stringByAppendingPathComponent:@"Mutible"] stringByAppendingPathComponent:@"mermaid"];
 }
 
 // ------------------------------------------------------------ mermaid.js
@@ -57,11 +57,11 @@ static NSString *MCSha256(NSData *data) {
     return MCHex(digest, sizeof digest);
 }
 
-// Application Support/MiniCode/mermaid/mermaid-<version>.min.js.
+// Application Support/Mutible/mermaid/mermaid-<version>.min.js.
 static NSString *MCManagedMermaidJs(void) {
     NSString *support = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,
                                                             NSUserDomainMask, YES).firstObject;
-    NSString *dir = [[support stringByAppendingPathComponent:@"MiniCode"]
+    NSString *dir = [[support stringByAppendingPathComponent:@"Mutible"]
         stringByAppendingPathComponent:@"mermaid"];
     return [dir stringByAppendingPathComponent:
         [NSString stringWithFormat:@"mermaid-%s.min.js", MermaidDiagram::kMermaidJsVersion]];
@@ -82,7 +82,7 @@ static NSString *MCMermaidJsText(void) {
 }
 
 NSString *MCMermaidJsPath(void) {
-    NSString *forced = MCEnv(@"MINICODE_MERMAID_JS");
+    NSString *forced = MCEnv(@"MUTIBLE_MERMAID_JS");
     if (forced.length) {
         NSString *p = forced;
         return [[NSFileManager defaultManager] isReadableFileAtPath:p] ? p : nil;
@@ -118,9 +118,9 @@ void MCDownloadMermaid(void (^done)(NSString *problem)) {
     NSDictionary *env = MCEnvironment();
     NSString *urlText = @(MermaidDiagram::kMermaidJsUrl);
     NSString *want = @(MermaidDiagram::kMermaidJsSha256);
-    if ([env[@"MINICODE_MERMAID_DOWNLOAD"] length]) {   // the checks' stand-in
-        urlText = env[@"MINICODE_MERMAID_DOWNLOAD"];
-        if ([env[@"MINICODE_MERMAID_SHA256"] length]) want = env[@"MINICODE_MERMAID_SHA256"];
+    if ([env[@"MUTIBLE_MERMAID_DOWNLOAD"] length]) {   // the checks' stand-in
+        urlText = env[@"MUTIBLE_MERMAID_DOWNLOAD"];
+        if ([env[@"MUTIBLE_MERMAID_SHA256"] length]) want = env[@"MUTIBLE_MERMAID_SHA256"];
     }
     NSURL *url = [NSURL URLWithString:urlText];
     if (!url) {
@@ -223,7 +223,7 @@ int MCMermaidDrawerState(void) {
                       @"\"popup\"]},\"action\":{\"type\":\"block\"}}]";
     __weak MCMermaidWeb *weakSelf = self;
     [WKContentRuleListStore.defaultStore
-        compileContentRuleListForIdentifier:@"minicode-mermaid-no-loads"
+        compileContentRuleListForIdentifier:@"mutible-mermaid-no-loads"
                      encodedContentRuleList:rules
                           completionHandler:^(WKContentRuleList *list, NSError *error) {
         MCMermaidWeb *me = weakSelf;
@@ -366,7 +366,7 @@ static void MCMermaidSetUp(void) {
     gFailures = [NSMutableDictionary dictionary];
     gUnderWay = [NSMutableSet set];
     gQueue = [NSMutableArray array];
-    gRunQueue = dispatch_queue_create("minicode.mermaid", DISPATCH_QUEUE_SERIAL);
+    gRunQueue = dispatch_queue_create("mutible.mermaid", DISPATCH_QUEUE_SERIAL);
 }
 
 // A diagram's file: mmdc's PNG, or mermaid.js's PDF.
@@ -444,7 +444,7 @@ static void MCMermaidTrimCache(void) {
 // time limit (90 s: the first run of a new install may set one up).
 static NSData *MCMermaidRunOne(NSString *mmdc, NSString *source, NSString *theme, NSString **error) {
     NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:
-        [NSString stringWithFormat:@"MiniCode-mermaid-%d-%@", (int)getpid(), NSUUID.UUID.UUIDString]];
+        [NSString stringWithFormat:@"Mutible-mermaid-%d-%@", (int)getpid(), NSUUID.UUID.UUIDString]];
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES
                         attributes:@{NSFilePosixPermissions: @0700} error:nil]) {
@@ -701,7 +701,7 @@ static void MCMermaidAsk(NSString *key, NSString *source, NSString *theme, NSStr
         link = @"Try again";
     } else {
         text = [NSString stringWithFormat:@"The diagrams on this page show as their source: "
-                                          @"minicode draws them with mermaid.js, which is not "
+                                          @"mutible draws them with mermaid.js, which is not "
                                           @"downloaded yet (%.1f MB, once; it runs with no "
                                           @"network). ", MermaidDiagram::kMermaidJsBytes / 1e6];
         link = @"Download Mermaid";

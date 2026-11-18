@@ -1,5 +1,5 @@
 // ClaudeHooksOfferSuite.cpp — the offer of Claude Code's hooks on Linux
-// (`./build/minicode-guitest claude_hooks_offer`; the Mac's
+// (`./build/mutible-guitest claude_hooks_offer`; the Mac's
 // ClaudeHooksOffer in mac/src, over the core's ClaudeHooks):
 //   - a command that is not Claude Code puts no bar over the terminals;
 //   - Claude Code starting in a terminal (the typed command names it, or the

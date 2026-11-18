@@ -5,7 +5,7 @@
 // can be seen showing the reply before it ends. Claude Code itself never
 // runs here.
 //
-//   ./build/minicode-guitest agent_panel
+//   ./build/mutible-guitest agent_panel
 //
 // Checked: the real key opens the bar at the caret's line; the run asks for
 // stream-json with the request in the prompt; the reply shows while it is
@@ -18,7 +18,7 @@
 // Part two (the request kinds by what has the keyboard): Ctrl+I in an idle
 // terminal asks for a command and types it, running nothing (a marker file
 // the command would make stays absent); in the file tree it makes a task, a
-// 0600 prompt file in $TMPDIR/MiniCode-agent and a `cd ... && claude "$(cat
+// 0600 prompt file in $TMPDIR/Mutible-agent and a `cd ... && claude "$(cat
 // file)"` line typed in the terminal, not run; Ctrl+Enter makes an edit a
 // task; in the Markdown preview Ctrl+I is an edit of its source; the tree
 // taking the keyboard closes a bar with an edit waiting and says so; an edit

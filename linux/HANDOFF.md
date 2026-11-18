@@ -6122,3 +6122,34 @@ the note), a file that is no test file without a lane, and the results
 kept across a tab switch. Pictures of the lane were looked at
 (`MC_GUI_SNAPSHOTS`). Needs a person at the ThinkPad: the marks' look and
 the tooltip under GNOME, and real pytest, go, cargo and vitest projects.
+
+### 97. minicode is renamed mutible (done, November 2026; 1.6.0)
+
+The items above keep the names they were written with. From 1.6.0 the
+binary is `mutible`, with `mbl` and `minicode` installed beside it as
+links (run as `minicode`, it says it is now mutible), the app id is
+`ai.ible.Mutible` (desktop file and icons named for it), the shared files
+are under `$datadir/mutible`, the Meson project is `mutible-gtk` and the
+checks are `mutible-guitest`, `mutible-linux-tests` and
+`mutible-latex-sweep`. Settings, state and data move to the XDG folders
+named mutible: the first launch copies minicode's when mutible's are
+missing and leaves the old ones (`src/Rename.h`, `linuxItems`), and
+`MINICODE_*` variables are still read where the `MUTIBLE_*` name is unset.
+
+The Debian source package is `mutible` (`debian/`), still uploaded to
+`ppa:echansen/minicode`, since Launchpad cannot rename a PPA. It builds
+two binaries: `mutible`, with `Breaks` and `Replaces` on `minicode (<<
+1.6.0~)` so it takes over `/usr/bin/minicode` from an installed one, and
+`minicode`, a transitional package (all, oldlibs) that depends on mutible
+and holds only its docs, so `apt upgrade` moves PPA users over.
+`scripts/ppa.sh` refuses releases before 1.6.0 and adds the committed
+changelog's 1.6.0 entry to that upload's; `scripts/ppa-wait.sh` polls
+source `mutible`, or `minicode` for an older upload; the key id file is
+`~/.config/mutible/ppa-key-id`, the old one still read. BUILD-LINUX.md,
+"Renamed from minicode in 1.6.0", says what a user sees.
+
+Needs a person at the ThinkPad: `apt upgrade` from an installed minicode
+1.5.x once 1.6.0 is on the PPA (minicode becomes the transitional package,
+mutible comes in, `/usr/bin/minicode` stays), the first launch's copy of
+real settings and sessions, and pinning mutible to the dock in place of
+the old icon.

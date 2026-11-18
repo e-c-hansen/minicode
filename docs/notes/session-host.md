@@ -7,7 +7,7 @@ and "Stage 4b as built" say what was built. GTK's side is
 ## What it is
 
 With `editor.session-host = on` (off by default for one release), or
-`MINICODE_SESSION_HOST=on` in the environment (the GUI checks' second
+`MUTIBLE_SESSION_HOST=on` in the environment (the GUI checks' second
 pass), every tab whose text is set after the setting is on gets a document
 on the session's host: the core's `Shared::SessionHost` on a thread of its
 own in the app's process, one `Shared::Client` in UTF-16 units for the
@@ -152,8 +152,8 @@ top of a turn, never inside a text system callback.
   the host does not answer in time keeps no watcher, and its late answer
   is dropped), `settings:*` for the key.
 - CI's macOS job runs the editing suites a second time with the setting on
-  (`MINICODE_SESSION_HOST=on`, `MINICODE_HOST=loopback`,
-  `MINICODE_HOST_DELAY_US=200`), a step of its own after the halves ("GUI
+  (`MUTIBLE_SESSION_HOST=on`, `MUTIBLE_HOST=loopback`,
+  `MUTIBLE_HOST_DELAY_US=200`), a step of its own after the halves ("GUI
   checks with the session's host"): keystroke, multiedit, editor_keys,
   auto_close, save, backups, lsp_sync, snippets, format, git_conflicts and
   test_gutter.
@@ -163,10 +163,10 @@ top of a turn, never inside a text system callback.
   nothing of the host's waits to go in, and the host reported nothing
   wrong (`CheckSessionMirrors`, `MCSessionCheckTabs`). With the setting off
   no tab has a document and the check does nothing.
-- `MINICODE_HOST=loopback` puts every message through the protocol's
-  encoding and back; `MINICODE_HOST_DELAY_US` delays each one on the host's
+- `MUTIBLE_HOST=loopback` puts every message through the protocol's
+  encoding and back; `MUTIBLE_HOST_DELAY_US` delays each one on the host's
   thread. Errors the host reports go to the log (`os_log`, subsystem
-  com.minicode.editor, category session).
+  ai.ible.mutible, category session).
 
 ## Traps
 
@@ -222,8 +222,8 @@ the tty's echo flag and modes directly, and it is a fallback for a
 release. With the setting off nothing changes, MCPty included.
 
 - **Opening.** `startShell` builds the environment as before (the
-  integration's ZDOTDIR and nonce, `BROWSER`, `MINICODE_TERMINAL_ID`,
-  `MINICODE_PID`, the venv and IDE link variables) and sends it as a
+  integration's ZDOTDIR and nonce, `BROWSER`, `MUTIBLE_TERMINAL_ID`,
+  `MUTIBLE_PID`, the venv and IDE link variables) and sends it as a
   `TermSpec` (`/bin/zsh -zsh -i`, the grid's size, the scrollback, the
   nonce) under a new terminal id per shell (a restart is a new id, so an
   old shell's late `TermExited` never ends the new one). It then
@@ -290,18 +290,18 @@ the host reports (`echoOff`, `raw`, `signalsOff`).
 
 ## The headless host (stage 6, core and CLI)
 
-`minicode host --folder DIR` runs the session's host for one folder with no
-window, and `minicode attach --folder DIR --dump` is the first renderer that
-reaches it over a socket. Both are in `minicode-cli` (the Mac's
-`Contents/MacOS/minicode-cli`, and the GTK binary, which hands the control
-channel's subcommands to the same `minicodeCliMain`), built from the core
+`mutible host --folder DIR` runs the session's host for one folder with no
+window, and `mutible attach --folder DIR --dump` is the first renderer that
+reaches it over a socket. Both are in `mutible-cli` (the Mac's
+`Contents/MacOS/mutible-cli`, and the GTK binary, which hands the control
+channel's subcommands to the same `mutibleCliMain`), built from the core
 alone: `src/SessionServer.{h,cpp}` over `SessionHost`. Neither app attaches
 yet; GTK is next, after the Linux session's GTK terminals (#128).
 
 - **The socket.** `host-<FNV-1a of the resolved folder, 16 hex>.sock` in the
   first of `ControlChannel::socketFolders()` (ControlPaths.h, now shared by
-  the CLI: `$MINICODE_CONTROL_DIR`, else `$XDG_RUNTIME_DIR/minicode` or
-  `/tmp/minicode-<uid>` on Linux, `$TMPDIR/MiniCode` and the user's own
+  the CLI: `$MUTIBLE_CONTROL_DIR`, else `$XDG_RUNTIME_DIR/mutible` or
+  `/tmp/mutible-<uid>` on Linux, `$TMPDIR/Mutible` and the user's own
   temporary folder on the Mac). The folder is made 0700 and used only when
   it is a real folder of the user's that nobody else can enter; the socket
   is 0600; the server refuses a peer of another uid (`getpeereid`,
@@ -316,7 +316,7 @@ yet; GTK is next, after the Linux session's GTK terminals (#128).
   unlinking it would let a host starting at that moment lock a fresh file
   while another still holds the old inode.
 - **The wire.** One message a line, `encode()`/`decode()` of
-  SessionProtocol (terminal bytes base64), the same as `MINICODE_HOST=loopback`.
+  SessionProtocol (terminal bytes base64), the same as `MUTIBLE_HOST=loopback`.
   The server's own thread polls the listening socket, a wake pipe and every
   connection, non-blocking; the host's Sink (on the host's thread) only
   appends to a connection's buffer under a lock and wakes it. A connection
@@ -366,7 +366,7 @@ yet; GTK is next, after the Linux session's GTK terminals (#128).
   starts at launch and again whenever the last renderer goes. Ending
   destroys the `SessionHost`, which hangs every shell up (SIGKILL for one
   that stays), removes the socket and keeps the lock file.
-- **Signals.** `minicode host` blocks SIGINT, SIGTERM and SIGHUP before any
+- **Signals.** `mutible host` blocks SIGINT, SIGTERM and SIGHUP before any
   thread starts and takes them on a thread of its own with `sigwait`, which
   stops the server as the lifetime would; the shells get a clean mask
   (HostPty.cpp resets it after the fork). It runs in the foreground; detach
@@ -450,7 +450,7 @@ document, terminal (dying ones included) or window is held
 
 ## The browser's view (stage 6b)
 
-`minicode host --folder DIR --web PORT`, or `minicode attach --folder DIR
+`mutible host --folder DIR --web PORT`, or `mutible attach --folder DIR
 --web PORT` for a host already running, serves a read-only view of the
 session to a browser: `src/SessionWeb.{h,cpp}` (the server, the request
 rules, the views as data) and `src/SessionWebPage.cpp` (the one page, its
@@ -508,7 +508,7 @@ CSS and script, no third-party code). The user's side is REFERENCE.md's
   and `markdown.max-width`, `editor.word-wrap`, and `editor.font-size`,
   `terminal.font-size` and `tabs.font-size` (points as CSS pixels). The
   server reads the settings file (`Options::settingsPath`, else
-  `$MINICODE_SETTINGS`, else `~/.config/minicode/settings.conf`) at start
+  `$MUTIBLE_SETTINGS`, else `~/.config/mutible/settings.conf`) at start
   and looks at its stamp (mtime, size, inode) every second;
   `Server::reloadSettings()` (any thread) looks at once, which the Mac
   calls on `MCSettingsDidChangeNotification` with AppSettings' own path.
@@ -548,8 +548,8 @@ terminal output followed, a wrong token refused.
 
 `mac/src/SessionBrowser.{h,mm}` and `EditorController+SessionBrowser.mm`
 serve the window's tabs from the process's in-process host, with no
-`minicode host`. Two View items, no keys (`minicode.showSessionInBrowser`,
-`minicode.copySessionBrowserLink`): Show opens the address through
+`mutible host`. Two View items, no keys (`mutible.showSessionInBrowser`,
+`mutible.copySessionBrowserLink`): Show opens the address through
 `NSWorkspace openURL:` (`MCSessionBrowserOpener` in checks), Copy puts it
 on the general pasteboard. With `editor.session-host` off both run an
 NSAlert offering Turn On (`AppSettings writeValue:`), and do nothing on
@@ -617,7 +617,7 @@ a closed terminal leaving its page, the port closed once the window is).
 
 ### Editing in the browser (stage 8b)
 
-`Web::Options::editable` (the Mac's choice at Show; `minicode host --web
+`Web::Options::editable` (the Mac's choice at Show; `mutible host --web
 PORT --edit` or `attach ... --edit`): the page edits the document on show,
 undoes through the host's history, asks for a save, and types into the
 terminal on show. Read-only stays the default for the command line.
@@ -778,7 +778,7 @@ viewers, Quick Open's list) as new ops, not new messages.
   keeps the tab) and, once `opening` says ok, waits for a document with
   that `abs` in the state, then shows it (`takePending`); a viewer kind
   (image, video, audio, pdf, database, archive, bookmark) says "NAME opens
-  in the minicode window." in `#treenote` instead, and a text file with no
+  in the mutible window." in `#treenote` instead, and a text file with no
   document after 4 s says it opened in the window. The document on show's
   row is marked `current`. At 700 px and under the sidebar is hidden and
   the header's ☰ shows it over the page (a tap beside it closes it);

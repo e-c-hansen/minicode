@@ -276,7 +276,7 @@ std::vector<Interpreter> find(const Context& ctx) {
         }
     }
 
-    // The ones active where MiniCode was started.
+    // The ones active where Mutible was started.
     std::string venv = envValue(ctx, "VIRTUAL_ENV");
     if (!venv.empty()) c.env(venv, "active", baseName(stripSlash(venv)));
     std::string condaPrefix = envValue(ctx, "CONDA_PREFIX");

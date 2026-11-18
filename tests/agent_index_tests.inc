@@ -79,7 +79,7 @@ struct CountingFs {
 
 fsys::path scratch(const char *name) {
     fsys::path p = fsys::temp_directory_path() /
-                   ("minicode-agentidx-" + std::to_string((long)getpid()) + "-" + name);
+                   ("mutible-agentidx-" + std::to_string((long)getpid()) + "-" + name);
     fsys::remove_all(p);
     fsys::create_directories(p);
     return p;
@@ -416,7 +416,7 @@ static void testAgentIndex() {
         CHECK(m.agentCalls == std::vector<std::string>{"toolu_01MuAehcWya4Y9bULcWFJECM"});
         CHECK(m.spawned == std::vector<std::string>{"a1ad4e3e0a7ec7fd2"});
         CHECK(m.files.size() == 1 && m.filesTouched() == 1 &&
-              m.files[0].path == folder + "/scripts/minicode-launcher" &&
+              m.files[0].path == folder + "/scripts/mutible-launcher" &&
               m.files[0].place == Place::Main && m.files[0].writes == 1 && m.files[0].edits == 1);
         CHECK(m.worktreePath.empty() && !m.hasMeta && !m.finished);
         CHECK(m.started == AgentTranscript::parseTime("2026-11-05T01:16:34.415Z"));

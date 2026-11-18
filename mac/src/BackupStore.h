@@ -11,10 +11,10 @@
 double MCProcessStart(pid_t pid);
 
 @interface MCBackupStore : NSObject
-// nil while backups are off: under MINICODE_DEMO and MINICODE_BENCH, which
+// nil while backups are off: under MUTIBLE_DEMO and MUTIBLE_BENCH, which
 // must start the same way every time, as the tab sessions are.
 + (instancetype)shared;
-// $MINICODE_BACKUP_DIR, else ~/Library/Application Support/MiniCode/Backups
+// $MUTIBLE_BACKUP_DIR, else ~/Library/Application Support/Mutible/Backups
 // (NSHomeDirectory, so CFFIXED_USER_HOME moves it in tests).
 @property(nonatomic, readonly) NSString *directory;
 - (NSString *)newID;

@@ -18,7 +18,7 @@
 
 #include <unordered_map>
 
-#define GIT_LOG_DOMAIN "minicode-git"
+#define GIT_LOG_DOMAIN "mutible-git"
 
 namespace {
 

@@ -32,7 +32,7 @@
 @property(nonatomic, copy) NSString *emptyText;   // when nothing matches
 @end
 
-// minicode's own folder picker (Open Folder…, the Dock's Open Folder…), in
+// mutible's own folder picker (Open Folder…, the Dock's Open Folder…), in
 // place of the system's open panel; its rules are the core's FolderPicker.h.
 // It lists the recent folders, then the base folder's subfolders; a typed
 // path ("~/Code/", "/Users/", "../") lists that folder's subfolders as it is

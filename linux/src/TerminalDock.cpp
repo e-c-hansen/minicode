@@ -2,7 +2,7 @@
 #include "TerminalDock.h"
 #include "TerminalAttention.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 
 #include <algorithm>
 

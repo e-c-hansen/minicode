@@ -2,7 +2,7 @@
 // language server (PARITY.md 2.4), the Mac's Lsp+Formatting.mm:
 // textDocument/formatting, or rangeFormatting for a selection where the
 // server offers it, for a file no formatter is planned for
-// (Formatter::serverMayFormat): a kind of file minicode has no formatter
+// (Formatter::serverMayFormat): a kind of file mutible has no formatter
 // for, or Markdown, JSON, YAML and CSS in a project not set up for
 // Prettier. A project's own formatter is never replaced by a server's
 // (Formatting.cpp asks here only then). The answer is refused if the text

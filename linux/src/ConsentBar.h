@@ -11,10 +11,10 @@
 //     Again, ×.
 // The answer is the folder's (FolderConsent.h), shared with Format
 // Document's question, and every window on the folder follows it. × puts
-// the question off until minicode starts again, or until Ask Again About
+// the question off until mutible starts again, or until Ask Again About
 // This Folder's Tools takes the answer back. The install offer comes once a
 // language a launch, across windows, until ×, Don't Show Again (kept in
-// $XDG_STATE_HOME/minicode/install-hints.json, D11), or the server turning
+// $XDG_STATE_HOME/mutible/install-hints.json, D11), or the server turning
 // up (LspSession::lookAgainForMissingServer).
 #pragma once
 

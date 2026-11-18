@@ -1,4 +1,4 @@
-// ThemesSuite.cpp — `./build/minicode-guitest themes` (PARITY.md 2.11): View >
+// ThemesSuite.cpp — `./build/mutible-guitest themes` (PARITY.md 2.11): View >
 // Theme, chosen by real clicks through the menu bar, writes `theme = <id>`
 // into the settings file, and the window follows at once, read back as
 // pixels: the editor's text, the gutter, the file tree, the terminal, the
@@ -31,7 +31,7 @@
 #include "TabStrip.h"
 #include "WindowLayout.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #include "TerminalDock.h"
 #include <vte/vte.h>
@@ -57,7 +57,7 @@ GtkWidget* gPaneBefore = nullptr;    // where the keyboard was before a menu (pa
 std::string gText;
 GWeakRef gRowBefore;   // the Source Control row with the keyboard before a menu
 
-std::string settingsPath() { return g_getenv("MINICODE_SETTINGS"); }
+std::string settingsPath() { return g_getenv("MUTIBLE_SETTINGS"); }
 std::string dots(const std::string& name) { return MCGuiScratch() + "/dots/" + name; }
 Editor* ed() { return MCGuiApp().editor; }
 std::string F(const std::string& name) { return MCGuiProjectFile(name); }
@@ -252,7 +252,7 @@ std::string themeState() {
 }
 
 GtkWidget* vte() {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     std::function<GtkWidget*(GtkWidget*)> find = [&](GtkWidget* w) -> GtkWidget* {
         if (!w) return nullptr;
         if (VTE_IS_TERMINAL(w)) return w;
@@ -318,7 +318,7 @@ bool inTheme(const std::string& id) {
     // At the first row's right end: rows are clear but for the selected one
     // (the file on show, never the first: folders come first) and the hovered.
     if (!pixelIs("the tree", MCGuiApp().tree->widget(), -24, 4, sidebar)) return false;
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (!pixelIs("the terminal", vte(), -12, -12, terminal)) return false;
 #endif
     // The status bar and the tab strip past its tabs, the stylesheet's.
@@ -445,7 +445,7 @@ std::string lookPixels() {
     if (!near(red, green, blue, want))
         return "the menu bar is " + hex(red, green, blue) + ", not the titlebar color " +
                hex(want.r, want.g, want.b);
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // The terminal's + beside its strip: the strip's color.
     if (MCGuiApp().termDock && gtk_widget_get_mapped(MCGuiApp().termDock->newTabButton())) {
         graphene_rect_t b;
@@ -578,13 +578,13 @@ MC_GUI_SUITE(themes) {
         MCGuiSetKeyWindow(nullptr);
         MCGuiFocusKeyWindow();
         MCGuiOpenFileKept(F("themes.py"));
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         if (!MCGuiApp().layout->terminalShown()) MCGuiKey("ctrl+shift+t");
 #endif
     });
     MCGuiWait("both on screen", 15, [] {
         return ed()->currentPath() == F("themes.py") && ed()->codeView()->gutter()->shown()
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
                && MCGuiOnScreen(vte())
 #endif
             ;
@@ -717,7 +717,7 @@ MC_GUI_SUITE(themes) {
         for (const std::string& dir : {MCGuiScratch() + "/dots", MCGuiScratch()}) {
             GDir* d = g_dir_open(dir.c_str(), 0, nullptr);
             while (const char* name = d ? g_dir_read_name(d) : nullptr)
-                GCHECK(!strstr(name, ".minicode-"));
+                GCHECK(!strstr(name, ".mutible-"));
             if (d) g_dir_close(d);
         }
     });

@@ -1,6 +1,6 @@
-# CLAUDE.md — working notes for minicode
+# CLAUDE.md — working notes for mutible
 
-minicode is a small native macOS code editor built from scratch, no Electron,
+mutible is a small native macOS code editor built from scratch, no Electron,
 no third-party dependencies. It links only Apple system frameworks (Cocoa,
 WebKit, CoreServices, Quartz for PDFKit and Quick Look, AVKit, AVFoundation,
 CoreMedia, and Carbon for the terminal's secure keyboard entry) plus the C++ standard library, the system zlib and the system
@@ -21,6 +21,21 @@ tool) carries `-mac` in its name. Until 2026-11-14 the Mac's files were in
 `android/README.md`; this file covers the macOS app except where it says
 otherwise. Almost everything added since 1.5.0 is Mac-only, with its logic in
 the core so the ports can follow (`ROADMAP.md`).
+
+**The name** (2026-11-18): mutible was called minicode until 1.6.0 <!-- rename-mutible: keep -->
+(bundle id `ai.ible.mutible`, was `com.minicode.editor`; repo <!-- rename-mutible: keep -->
+`ible-ai/mutible`; cask `ible-ai/tap/mutible`; command `mutible`, alias
+`mbl`). Every old name the app still reads is in `src/Rename.h` and
+nowhere else: MINICODE_* variables (adopted at startup), `minicode.*` <!-- rename-mutible: keep -->
+command ids in keys.conf, an old copy's socket folder, `minicode notify <!-- rename-mutible: keep -->
+--from-hook` in Claude Code's hooks, the IDE link's old ideName, and the
+Mac's first-launch migration (`mac/src/Migration.mm`). `minicode` still <!-- rename-mutible: keep -->
+runs and says, on a terminal, that it is now mutible. Write new code with
+the new names only. The rename itself was made by
+`scripts/rename-mutible.sh` (its header says what it leaves alone: the
+"MiniCode Local Signing" certificate, the Android key and APK, the PPA,
+and the Linux and Android ports' own names, which those ports change).
+Lines marked `rename-mutible: keep` hold an old name on purpose.
 
 This file is architecture and the traps already paid for. What a commit
 checked, and its timings, is in its message (`git log`); each source file's
@@ -49,7 +64,7 @@ a trap.
   `make run` and the GTK app on the ThinkPad open windows. Never activate
   the app from a test.
 - **Kill only processes you started**, by recorded pid: never `pkill -f`
-  with a path, never the user's own minicode, clangd or another session's
+  with a path, never the user's own mutible, clangd or another session's
   processes.
 - **Never `lsregister` or `open` a build in the repo or a worktree**:
   Finder then offers that copy too (`docs/notes/opening.md`).
@@ -58,7 +73,7 @@ a trap.
 
 ## Build, test, run, release
 
-- `make` builds `MiniCode.app` (with `build/minicode-cli` copied into
+- `make` builds `Mutible.app` (with `build/mutible-cli` copied into
   `Contents/MacOS`), signed with "MiniCode Local Signing" when the login
   keychain has it, else ad hoc (Apple Silicon needs a signature).
   Why the certificate, and Info.plist's usage descriptions:
@@ -124,14 +139,14 @@ a trap.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `mac/tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
-  [SCENES="tour latex"] [POSTERS=1]`, `make membench-mac`, `make membench-linux`, `make install` (runs `minicode
-  install-skill` from the checkout: `skills/minicode/SKILL.md` to
-  `~/.claude/skills/minicode`; the bundle carries the skill in
+  [SCENES="tour latex"] [POSTERS=1]`, `make membench-mac`, `make membench-linux`, `make install` (runs `mutible
+  install-skill` from the checkout: `skills/mutible/SKILL.md` to
+  `~/.claude/skills/mutible`; the bundle carries the skill in
   `Contents/Resources/skills`, so a Homebrew copy can install it too), `make dist-zip`,
   `make dmg`.
 - `scripts/release.sh 1.2.0` cuts a release from a clean `main`: runs the
   core tests, and `make guitest` unless CI passed on that very commit, builds
-  the signed APK before anything is stamped, stamps the version into `Info.plist` and `packaging/minicode.rb` and
+  the signed APK before anything is stamped, stamps the version into `Info.plist` and `packaging/mutible.rb` and
   commits that, builds the zip as a release (`make dist-zip RELEASE=1`: no
   `Demo.mm` or `Bench.mm`, main.mm gets their stubs, checked with `nm`) and
   checks the built app reports the version,
@@ -139,8 +154,8 @@ a trap.
   then tags `v1.2.0` and pushes `main` with the tag, and runs the PPA upload
   last (skipped when no key is configured). The version on the command line is
   the only place a version is typed; never edit it by hand. Then `brew update
-  && brew upgrade --cask e-c-hansen/tap/minicode` so the user's own copy has
-  it; they run minicode from Homebrew and expect a finished, user-visible Mac
+  && brew upgrade --cask ible-ai/tap/mutible` so the user's own copy has
+  it; they run mutible from Homebrew and expect a finished, user-visible Mac
   change to reach it.
 - Linux-only releases (`scripts/release.sh --linux`), the PPA (`scripts/ppa.sh`,
   `scripts/ppa-wait.sh`, the keys) and distribution (the tap, the APK key,
@@ -195,21 +210,21 @@ adding a file or looking for where something lives.
 
 ## Conventions
 
-- **Keys**: a feature minicode shares with VS Code takes VS Code's Mac key.
-  minicode's own Shift+Command keys never move (Shift+Cmd+K Request a Change,
+- **Keys**: a feature mutible shares with VS Code takes VS Code's Mac key.
+  mutible's own Shift+Command keys never move (Shift+Cmd+K Request a Change,
   Shift+Cmd+T Toggle Terminal, Shift+Cmd+D TODOs, Shift+Cmd+E, Shift+Cmd+B,
   Shift+Cmd+H, ...); only a Command-only key yields when VS Code binds it to
   something else (Cmd+N New File, Cmd+L Select Line, Cmd+I the inline agent).
   The one exception, the owner's call (2026-11-16): Shift+Cmd+N, New Folder
   by Finder's convention, is VS Code's New Window (`When::NotTree`, keeping
   Option+Cmd+N) and New Folder only while the tree has the keyboard
-  (`minicode.tree.newFolder`, a Mac-only `Tree` row sending `newFolder:`
+  (`mutible.tree.newFolder`, a Mac-only `Tree` row sending `newFolder:`
   with tag 1; `explorer.newFolder` keeps the menu item, keyless on the Mac
   and Ctrl+Alt+N everywhere on Linux).
   Dump every menu key equivalent before adding one; no key is bound twice (the
   `keymap` suite and `commands:*` check it).
 - **A new shortcut**: a row in `src/Commands.cpp` (id in VS Code's spelling
-  where VS Code has the command, else `minicode.*`; title, menu, default keys,
+  where VS Code has the command, else `mutible.*`; title, menu, default keys,
   where it applies, selector, tag); the menu item in `main.mm` (and a
   forwarding method on AppDelegate if needed); a hints row (`appendHintsRow:`
   with `[self hk:@"id"]`, which reads the registry); a row in `docs/REFERENCE.md`'s
@@ -241,9 +256,9 @@ adding a file or looking for where something lives.
   file for every platform (split 2026-11-14, when the README was 23,000
   words).
 - README and user-facing prose: plain sentences, Oxford commas, no emoji, no
-  LLM-ish phrasing; the name is "minicode", lowercase, in prose and in every
+  LLM-ish phrasing; the name is "mutible", lowercase, in prose and in every
   port's window title (2026-11-14; the bundle, the menu bar's app name, the
-  launcher's label and folder names stay MiniCode). No labels the user did
+  launcher's label and folder names are Mutible). No labels the user did
   not choose.
 - Commits in the repo's style (the area, then why and what was checked), ending
   with the Co-Authored-By trailer.
@@ -302,7 +317,7 @@ traps already paid for there.
   and the agent workspace: `docs/notes/agents.md` (traps inside).
 - The browser pane (sessions, tabs, bookmarks, the address bar, find in
   the page): `docs/notes/browser.md` (traps inside).
-- The control channel, `minicode-cli`, notes, tours and agents checking
+- The control channel, `mutible-cli`, notes, tours and agents checking
   pages: `docs/notes/control.md` (traps inside).
 - Processes and ports: `docs/notes/processes.md` (traps inside).
 - Opening from Finder, the Dock and the command line:
@@ -328,7 +343,7 @@ session has a display. Check first.
   test-asan` (also with `CXX=g++-16`) for the sanitizers, and `make
   test-tsan` (clang; CI uses clang++-22 on Linux) for races.
 - **The Mac, committed checks**: `make guitest [SUITES=...]` builds
-  `build/guitest` (the whole app with main.mm's `main` renamed `minicode_main`,
+  `build/guitest` (the whole app with main.mm's `main` renamed `mutible_main`,
   plus `mac/tests/gui/*.mm`) and runs it offscreen; the macOS CI job runs it. The
   harness (`mac/tests/gui/Harness.{h,mm}`) re-execs into a scratch world under
   `/tmp/mcgui-*` (HOME and CFFIXED_USER_HOME, ZDOTDIR with an empty .zshrc, a

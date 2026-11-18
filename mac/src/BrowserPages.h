@@ -1,11 +1,11 @@
 // BrowserPages.h — Objective-C++. What an agent can learn from a page in
-// the browser pane (`minicode browse`, `minicode page`; the rules are in
+// the browser pane (`mutible browse`, `mutible page`; the rules are in
 // PageCheck.h). An MCPageProbe watches one web view: the HTTP status of its
 // page (from the navigation response), whether it is loading, loads to wait
 // for, and, for the agent page only, the console.
 //
 // Nothing an agent sends ever runs in a page. The few scripts here are
-// minicode's own and fixed: reading the text and the page's height run in
+// mutible's own and fixed: reading the text and the page's height run in
 // an isolated script world (WKContentWorld), which the page can neither see
 // nor change, and so does the console capture's listener, which hears
 // uncaught errors and unhandled rejections and hands everything to the app

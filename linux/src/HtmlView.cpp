@@ -1,7 +1,7 @@
 // HtmlView.cpp — see HtmlView.h.
 #include "HtmlView.h"
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 
 #include "ConsentBar.h"
 #include "FileSniff.h"
@@ -16,7 +16,7 @@ namespace {
 
 const char* const kWorld = "minicode-html";
 
-// What each file was answered, until minicode quits (the Mac's ScriptAnswers):
+// What each file was answered, until mutible quits (the Mac's ScriptAnswers):
 // 1 run, 2 do not run.
 std::map<std::string, int>& answers() {
     static std::map<std::string, int>* all = new std::map<std::string, int>();

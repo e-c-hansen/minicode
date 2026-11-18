@@ -3,10 +3,10 @@
 // workbench.action.openRecent). Kept in the app's defaults (MCAppDefaults,
 // key MCRecentFolders), 20 at most, by the path as the window spelled it;
 // folders that are gone are left out when listed. Nothing is noted under
-// MINICODE_DEMO or MINICODE_BENCH, as the tab sessions are not.
+// MUTIBLE_DEMO or MUTIBLE_BENCH, as the tab sessions are not.
 //
 // The same folders go to NSDocumentController's recent documents, which is
-// the list the Dock shows when its icon is right-clicked, minicode running
+// the list the Dock shows when its icon is right-clicked, mutible running
 // or not (Info.plist claims public.folder, so it takes folders; nothing else
 // of NSDocumentController is used). A folder chosen there arrives as an odoc
 // event at application:openURLs:. The Dock's own menu adds New Window and
@@ -21,7 +21,7 @@ void MCNoteRecentFolder(NSString *path);
 NSArray<NSString *> *MCRecentFolders(void);
 // Clears the Dock's list too.
 void MCClearRecentFolders(void);
-// At launch: when the Dock's list is empty (the first launch of a minicode
+// At launch: when the Dock's list is empty (the first launch of a mutible
 // that keeps one), give it the stored folders, oldest first.
 void MCSeedDockRecentFolders(void);
 // The Dock icon's own items: New Window (newWindow:) and Open Folder…

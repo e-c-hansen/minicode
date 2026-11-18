@@ -7,7 +7,7 @@
 // autosuggestions and key bindings work as in Terminal.app. The cell grid
 // (TerminalScreen + TerminalGridView) is the only view; it keeps a
 // scrollback above the screen. The shell integration
-// (resources/minicode-zsh-integration.zsh, ShellIntegration.h)
+// (resources/mutible-zsh-integration.zsh, ShellIntegration.h)
 // still loads the user's files and adds hooks, installed last at the first
 // prompt, that only report: OSC 133;A (prompt), B (ZLE reads input, from a
 // zle-line-init hook), C (a command runs, after an OSC 633;E with its
@@ -17,7 +17,7 @@
 // Run in Terminal) go to ZLE after a private key that runs push-input, so
 // whatever the user had typed at the prompt comes back at the next one.
 //
-// The marks are believed only with this shell's nonce (MINICODE_NONCE, read
+// The marks are believed only with this shell's nonce (MUTIBLE_NONCE, read
 // and unset by the .zshenv, never exported), since any program can print
 // them, and nothing is typed unless the shell also holds the terminal's
 // foreground (canTypeNow).
@@ -120,7 +120,7 @@ static NSColor *THex(unsigned int rgb) {
                                alpha:1.0];
 }
 
-// The shell integration (resources/minicode-zsh-integration.zsh, one script
+// The shell integration (resources/mutible-zsh-integration.zsh, one script
 // for both modes; ShellIntegration.h): the bundle's copy, or build/'s for
 // the GUI checks, read once, so every terminal of this process gets the
 // script this binary was built with, even after the bundle on disk is
@@ -154,7 +154,7 @@ static double MCProcessStartTime(pid_t pid) {
 
 // The integration folders this process's terminals use, one per mode
 // (ShellIntegration::folderName). The first call removes those of
-// minicodes that have gone (a crash, or a quit that left them) and sets up
+// mutibles that have gone (a crash, or a quit that left them) and sets up
 // the removal of this process's own when it quits.
 static NSString *IntegrationFolderPath(BOOL grid) {
     static long long start;
@@ -192,7 +192,7 @@ static NSString *IntegrationFolderPath(BOOL grid) {
 // Writes the integration folder (the script's copy and the .zshenv that
 // sources it); returns the folder, or nil on failure. Each mode has its own,
 // since terminals of both kinds can be open at once, and each process its
-// own, so a terminal never sources another minicode's script.
+// own, so a terminal never sources another mutible's script.
 static NSString *IntegrationDirectory(BOOL grid) {
     NSString *script = MCZshIntegrationScript();
     if (!script) return nil;
@@ -699,7 +699,7 @@ struct MCHostTermListener : Shared::Client::TermListener {
         // Line mode keeps its own pty: its log reads the tty's echo flag
         // and modes directly, and it is a fallback for a release.
         _onHost = !_lineMode && MCSessionHostEnabled();
-        _ioQueue = dispatch_queue_create("minicode.terminal.io",
+        _ioQueue = dispatch_queue_create("mutible.terminal.io",
                                          DISPATCH_QUEUE_SERIAL);
         self.wantsLayer = YES;
         [self buildViews];
@@ -711,7 +711,7 @@ struct MCHostTermListener : Shared::Client::TermListener {
             addObserver:self selector:@selector(applyFontSize)
                    name:MCTerminalZoomDidChangeNotification object:nil];
         if (_lineMode)
-            [self appendLine:@"MiniCode terminal — zsh on a pty. Ctrl+C interrupts, "
+            [self appendLine:@"Mutible terminal — zsh on a pty. Ctrl+C interrupts, "
                               "`clear` resets the panel."
                        color:THex(0x6A9955)];
         [self updatePrompt];
@@ -860,7 +860,7 @@ struct MCHostTermListener : Shared::Client::TermListener {
 
 // What the screen answers programs that ask (OSC 10, 11 and 12, XTVERSION,
 // DA2): the theme's text and background colors (the cursor is drawn in the
-// text's), and minicode's version.
+// text's), and mutible's version.
 - (void)tellScreenTheme {
     const Settings &cfg = [AppSettings shared].settings;
     const uint32_t fg = cfg.text(Surface::Terminal).rgb();
@@ -1461,7 +1461,7 @@ struct MCHostTermListener : Shared::Client::TermListener {
 }
 
 // Rename Terminal… (V11): the user's name wins over a program's title and
-// `minicode term --title` until an empty name clears it.
+// `mutible term --title` until an empty name clears it.
 - (void)setUserTitle:(NSString *)title {
     NSString *trimmed = [title stringByTrimmingCharactersInSet:
                          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -1471,7 +1471,7 @@ struct MCHostTermListener : Shared::Client::TermListener {
 
 - (NSString *)title {
     if (_userTitle) return _userTitle;       // Rename Terminal…
-    if (_fixedTitle) return _fixedTitle;     // minicode term --title
+    if (_fixedTitle) return _fixedTitle;     // mutible term --title
     if (_programTitle.length) return _programTitle;
     if (_runningCommand.length) {
         NSMutableArray *words = [NSMutableArray array];
@@ -2201,9 +2201,9 @@ static BOOL MCIsOtherShell(pid_t pid) {
     }
 }
 
-// What BROWSER names in every terminal (resources/minicode-browser.js, run
+// What BROWSER names in every terminal (resources/mutible-browser.js, run
 // as a shell script or by node): it hands a web page a program opens to
-// `minicode open-url`, so a local page lands in this window's browser pane.
+// `mutible open-url`, so a local page lands in this window's browser pane.
 // In the bundle's Resources, or beside the executable (build/, for the GUI
 // checks); nil when neither has it, or when its path holds a ':', which
 // Python's webbrowser would split BROWSER at.
@@ -2214,7 +2214,7 @@ static NSString *MCBrowserHelperPath(void) {
         NSBundle *b = NSBundle.mainBundle;
         NSString *exeDir = b.executablePath.stringByDeletingLastPathComponent;
         for (NSString *dir in @[b.resourcePath ?: @"", exeDir ?: @""]) {
-            NSString *p = [dir stringByAppendingPathComponent:@"minicode-browser.js"];
+            NSString *p = [dir stringByAppendingPathComponent:@"mutible-browser.js"];
             if (dir.length && [p rangeOfString:@":"].location == NSNotFound &&
                 [NSFileManager.defaultManager isExecutableFileAtPath:p]) {
                 path = p;
@@ -2255,9 +2255,9 @@ static NSString *MCBrowserHelperPath(void) {
             key == "TERM_PROGRAM_VERSION" || key == "TERM_SESSION_ID" ||
             key == "COLORTERM" ||
             key == "COLUMNS" || key == "LINES" ||
-            key == "MINICODE_USER_ZDOTDIR" || key == "MINICODE_NONCE" ||
-            key == "MINICODE_EXEC" || key == "MINICODE_TERMINAL_ID" || key == "MINICODE_PID" ||
-            key == "MINICODE_VENV" || key == "MINICODE_VENV_PROMPT" ||
+            key == "MUTIBLE_USER_ZDOTDIR" || key == "MUTIBLE_NONCE" ||
+            key == "MUTIBLE_EXEC" || key == "MUTIBLE_TERMINAL_ID" || key == "MUTIBLE_PID" ||
+            key == "MUTIBLE_VENV" || key == "MUTIBLE_VENV_PROMPT" ||
             (key == "BROWSER" && browserHelper))
             continue;
         if (key == "LANG" || key == "LC_ALL" || key == "LC_CTYPE")
@@ -2269,13 +2269,13 @@ static NSString *MCBrowserHelperPath(void) {
     // that draw a screen, so pagers are left to the user's own settings.
     env.push_back("TERM=xterm-256color");
     env.push_back("COLORTERM=truecolor");
-    env.push_back("TERM_PROGRAM=MiniCode");
-    // Which terminal this is, for `minicode notify --from-hook` (R7.1);
-    // inherited ones (minicode started from a minicode terminal) are dropped
+    env.push_back("TERM_PROGRAM=Mutible");
+    // Which terminal this is, for `mutible notify --from-hook` (R7.1);
+    // inherited ones (mutible started from a mutible terminal) are dropped
     // above.
-    env.push_back("MINICODE_TERMINAL_ID=" + std::to_string((long)_terminalID));
-    env.push_back("MINICODE_PID=" + std::to_string((int)getpid()));
-    // The caller's own (MINICODE_VENV for terminal.activate-venv), read by
+    env.push_back("MUTIBLE_TERMINAL_ID=" + std::to_string((long)_terminalID));
+    env.push_back("MUTIBLE_PID=" + std::to_string((int)getpid()));
+    // The caller's own (MUTIBLE_VENV for terminal.activate-venv), read by
     // the integration and taken out of the environment there.
     for (NSString *key in _extraEnvironment) {
         const char *k = key.UTF8String, *v = _extraEnvironment[key].UTF8String;
@@ -2304,8 +2304,8 @@ static NSString *MCBrowserHelperPath(void) {
     for (unsigned char b : raw) { nonce += hex[b >> 4]; nonce += hex[b & 15]; }
     if (_integrated) {
         env.push_back(std::string("ZDOTDIR=") + zdot.fileSystemRepresentation);
-        if (hadZdotdir) env.push_back("MINICODE_USER_ZDOTDIR=" + userZdotdir);
-        env.push_back("MINICODE_NONCE=" + nonce);
+        if (hadZdotdir) env.push_back("MUTIBLE_USER_ZDOTDIR=" + userZdotdir);
+        env.push_back("MUTIBLE_NONCE=" + nonce);
     }
     std::vector<char *> envp;
     for (std::string &s : env) envp.push_back(&s[0]);

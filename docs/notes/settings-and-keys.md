@@ -6,14 +6,14 @@ found through that list.
 
 ## Settings, themes and Adjust Settings
 
-- `AppSettings` loads `~/.config/minicode/settings.conf` (or
-  `$MINICODE_SETTINGS`), watches it, and posts the change notification. The
+- `AppSettings` loads `~/.config/mutible/settings.conf` (or
+  `$MUTIBLE_SETTINGS`), watches it, and posts the change notification. The
   command values of `lsp.*`, `format.*` and `run.*` are whole command lines up
   to a ` #` comment outside quotes, unlike other keys.
 - **Swatches**: in the settings file each color value is a swatch
-  (`NSLinkAttributeName` `minicode-color`); a click opens NSColorPanel and
+  (`NSLinkAttributeName` `mutible-color`); a click opens NSColorPanel and
   `colorPicked:` rewrites the line with `Settings::setColor` (uncommenting it),
-  saving after 150 ms. An opacity value is a `minicode-opacity` link opening
+  saving after 150 ms. An opacity value is a `mutible-opacity` link opening
   `MCOpacityPopover` (`Settings::setOpacity`, keeping a `%` form).
   `linkTextAttributes` is only a pointing-hand cursor. Trap: an NSTextView with
   `usesFontPanel` sets the shared NSColorPanel to the color under the caret
@@ -42,7 +42,7 @@ found through that list.
   solarized-dark, tomorrow-night-blue, light-modern, light-plus, quiet-light,
   solarized-light, mapped by hand from VS Code's files) gives every color; any
   color the file sets wins. Unset is dark-modern, VS Code's own default
-  (2026-11-14; until then dark-plus, minicode's look from the start):
+  (2026-11-14; until then dark-plus, mutible's look from the start):
   `Settings::theme_` starts there, every color reads the theme, and
   `settings:default-theme` holds an empty file to `theme = dark-modern`
   color for color; `defaultFileText` shows Dark Modern's values, and
@@ -54,7 +54,7 @@ found through that list.
   popovers that force DarkAqua and inline hex are unchanged.
   `selectedTextAttributes` is only a background, since after a switch AppKit
   drew selected text in its own color.
-- **minicode's own writes** to settings.conf and keys.conf (a theme, the IDE
+- **mutible's own writes** to settings.conf and keys.conf (a theme, the IDE
   link toggle, the first file of either) go through `MCWriteConfigFile`
   (AppSettings.h, over `FolderSearch::writeFileAtomically`), never
   `writeToFile:atomically:`, which replaced a symlinked dotfile with a plain
@@ -69,8 +69,10 @@ found through that list.
   `Editor`, `Terminal`, `Tree`), selector and tag, flags (`Global`: the key
   monitor runs it before any view, the grid included; `Fixed`: a view's own
   keys, listed and protected but not changeable yet). `resolve()` applies
-  `keys.conf` (`~/.config/minicode/keys.conf` or `$MINICODE_KEYS`): `key = id`
-  adds, `key = -` takes the key from every command, `key = -id` from one; a key
+  `keys.conf` (`~/.config/mutible/keys.conf` or `$MUTIBLE_KEYS`): `key = id`
+  adds, `key = -` takes the key from every command, `key = -id` from one
+  (an id from before the rename, `minicode.x`, names `mutible.x`: <!-- rename-mutible: keep -->
+  `Commands::find` and `keysOf` take either, by `Rename::otherCommandId`); a key
   given to a command leaves any that had it where both apply; two lines giving
   one key to two commands in one place are a conflict and the later is refused
   with its line number. A command may also have a language (`language`,
@@ -86,7 +88,7 @@ found through that list.
 - `Keymap.mm` reads and watches the file and puts the keys on the menu items
   found by action and tag (the first on the item, others on hidden items beside
   it, `allowsKeyEquivalentWhenHidden`). Errors join the settings errors in the
-  status bar; the hints, the palette and minicode > Keyboard Shortcuts… (which
+  status bar; the hints, the palette and mutible > Keyboard Shortcuts… (which
   writes the file, every command commented out, the first time) follow it.
 - The key monitor asks `MCKeymapHandleKeyDown` first, which runs a command
   (validated as its menu item would be) when it is Global (Ctrl+` and
@@ -97,7 +99,7 @@ found through that list.
   types); when two commands share a key in different places; and for keys a
   menu cannot show (keypad digits, the Menu key, Ctrl+Shift with punctuation);
   and for a `Tree` command (renameFile on F2, moveFileToTrash on Cmd+Delete,
-  minicode.tree.newFolder on Shift+Cmd+N, which is New Window elsewhere) while the tree has the keyboard; and for a function key whose `Any`
+  mutible.tree.newFolder on Shift+Cmd+N, which is New Window elsewhere) while the tree has the keyboard; and for a function key whose `Any`
   command something in the responder chain takes (F7 in the compare view's
   panes, plain text views that would beep at it). A `Tree` command's keys are never put on
   its menu item, since a menu key acts from every pane (Cmd+Delete once

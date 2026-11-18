@@ -88,7 +88,7 @@ Key KeyForEvent(NSEvent *e) {
             k.name = c.name;
             return k;
         }
-    return k;   // a key minicode has no name for
+    return k;   // a key mutible has no name for
 }
 
 // The item's keyEquivalent for a key; nil when a menu cannot show it.
@@ -218,10 +218,10 @@ bool MenuShows(const Commands::Command *c, const Key &k, const Commands::Keymap 
 
 - (instancetype)init {
     if ((self = [super init])) {
-        NSString *env = MCEnvironment()[@"MINICODE_KEYS"];
+        NSString *env = MCEnvironment()[@"MUTIBLE_KEYS"];
         _path = env.length ? env.stringByExpandingTildeInPath
                            : [NSHomeDirectory() stringByAppendingPathComponent:
-                                 @".config/minicode/keys.conf"];
+                                 @".config/mutible/keys.conf"];
         _errors = @[];
         _map = Commands::defaults();
         _extras = [NSHashTable weakObjectsHashTable];
@@ -244,7 +244,7 @@ bool MenuShows(const Commands::Command *c, const Key &k, const Commands::Keymap 
     for (const Commands::Error &e : errs)
         [list addObject:[NSString stringWithFormat:@"line %d: %@", e.line, NS(e.message)]];
     _errors = list;
-    for (NSString *e in list) NSLog(@"minicode keys.conf %@", e);
+    for (NSString *e in list) NSLog(@"mutible keys.conf %@", e);
     return YES;
 }
 
@@ -312,7 +312,7 @@ bool MenuShows(const Commands::Command *c, const Key &k, const Commands::Keymap 
         [self reload];
         [self watch];
     } else {
-        NSLog(@"minicode: %@", why);
+        NSLog(@"mutible: %@", why);
     }
     return ok;
 }
@@ -323,7 +323,7 @@ static void MCCollect(NSMenu *menu, NSString *path,
                       NSMutableDictionary<NSValue *, NSString *> *paths) {
     for (NSMenuItem *it in menu.itemArray) {
         if (it.hasSubmenu) {
-            NSString *name = !path ? (it.submenu.title.length ? it.submenu.title : @"minicode")
+            NSString *name = !path ? (it.submenu.title.length ? it.submenu.title : @"mutible")
                                    : [NSString stringWithFormat:@"%@ > %@", path, it.title];
             MCCollect(it.submenu, name, items, paths);
             continue;

@@ -1,4 +1,4 @@
-// TabCloseNowSuite.cpp — `./build/minicode-guitest tab_close_now`: a tab
+// TabCloseNowSuite.cpp — `./build/mutible-guitest tab_close_now`: a tab
 // opened and closed in the same turn of the main loop, before the view has
 // drawn it. GtkTextLayout kept line displays of the closed buffer, and the
 // next frame read its freed lines (signal 11, or "gtk_text_btree_line_number

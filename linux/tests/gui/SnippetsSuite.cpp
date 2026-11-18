@@ -1,4 +1,4 @@
-// SnippetsSuite.cpp — `./build/minicode-guitest snippets`: snippet
+// SnippetsSuite.cpp — `./build/mutible-guitest snippets`: snippet
 // completions with tab stops (linux/PARITY.md item 2.5; Snippet.h,
 // SnippetSession.h), the counterpart of the Mac's tests/gui/SnippetsSuite.mm,
 // with real keys, against the scripted server (build/fakelsp), which offers
@@ -18,7 +18,7 @@
 // as usual; so does the caret leaving the stop. The choice opens the list
 // with its options at both of its places (two carets), Down and Tab take
 // one at both, and Tab again goes to the end. A mirror follows what is
-// typed at its stop. $CLIPBOARD is minicode's own clipboard's text.
+// typed at its stop. $CLIPBOARD is mutible's own clipboard's text.
 #include "CompletionChecks.h"
 
 #include <string>
@@ -80,7 +80,7 @@ MC_GUI_SUITE(snippets) {
         MCGuiSetKeyWindow(nullptr);
         ed()->closeAllTabs();
         MCGuiWriteFile(F(), kOriginal);
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script()) + "\n");
         showFile(F());
     });
@@ -253,7 +253,7 @@ MC_GUI_SUITE(snippets) {
     });
 
     // ---- $CLIPBOARD
-    MCGuiStep("minicode's clipboard holds hunter2; ask at cl", [] {
+    MCGuiStep("mutible's clipboard holds hunter2; ask at cl", [] {
         gdk_clipboard_set_text(gtk_widget_get_clipboard(ed()->textView()), "hunter2");
         askAfter("    cl");
     });

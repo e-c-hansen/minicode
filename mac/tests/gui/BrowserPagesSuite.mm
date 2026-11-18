@@ -1,5 +1,5 @@
 // BrowserPagesSuite.mm — `make guitest SUITES=browserpages`: agents checking
-// pages in the browser pane (spec feature 6). `minicode browse` loads into
+// pages in the browser pane (spec feature 6). `mutible browse` loads into
 // the pane's agent page, never the user's, without taking the keyboard;
 // `--wait` prints the HTTP status; `page` reads the text, the console with
 // source lines, screenshots and the address, only of local pages; the user's
@@ -33,7 +33,7 @@ NSString *gWid;
 int gPort;
 int gListen4 = -1, gListen6 = -1;
 
-NSString *CLIPath() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"minicode-cli"]; }
+NSString *CLIPath() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"mutible-cli"]; }
 NSString *Pid() { return [NSString stringWithFormat:@"%d", getpid()]; }
 
 void CLI(NSString *name, NSArray<NSString *> *args, void (^check)(int, NSString *, NSString *)) {
@@ -350,7 +350,7 @@ MC_GUI_SUITE(browserpages) {
     MCGuiAsync(@"the page cannot reach the record: no message handler in its world", 10, ^(MCGuiDone done) {
         WKWebView *web = [Pane(c) valueForKey:@"agentWeb"];
         [web evaluateJavaScript:@"!(window.webkit && window.webkit.messageHandlers && "
-                                @"window.webkit.messageHandlers.minicodeConsole)"
+                                @"window.webkit.messageHandlers.mutibleConsole)"
                         inFrame:nil inContentWorld:WKContentWorld.pageWorld
               completionHandler:^(id v, NSError *e) {
             GCHECK(!e && [v boolValue]);
@@ -659,7 +659,7 @@ MC_GUI_SUITE(browserpages) {
         const uint64_t webEnd = Footprint(pidNow);
         const double app = ((double)memEnd - (double)memStart) / 1048576.0;
         const double web = pidNow == webPid ? ((double)webEnd - (double)webStart) / 1048576.0 : 0;
-        MCGuiNote(@"memory: minicode %.1f MB -> %.1f MB (%+.1f), the agent page's WebKit process "
+        MCGuiNote(@"memory: mutible %.1f MB -> %.1f MB (%+.1f), the agent page's WebKit process "
                   @"(pid %d) %.1f MB -> %.1f MB (%+.1f); %.1f MB before the agent page existed",
                   memStart / 1048576.0, memEnd / 1048576.0, app, (int)pidNow, webStart / 1048576.0,
                   webEnd / 1048576.0, web, memBefore / 1048576.0);

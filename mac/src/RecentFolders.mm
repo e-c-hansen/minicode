@@ -11,7 +11,7 @@ static const NSUInteger kMaxRecentFolders = 20;
 
 static BOOL MCRecentFoldersOff(void) {
     NSDictionary *env = MCEnvironment();
-    return [env[@"MINICODE_DEMO"] length] || [env[@"MINICODE_BENCH"] length];
+    return [env[@"MUTIBLE_DEMO"] length] || [env[@"MUTIBLE_BENCH"] length];
 }
 
 static NSArray<NSString *> *MCStoredFolders(void) {

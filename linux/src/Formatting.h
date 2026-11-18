@@ -10,7 +10,7 @@
 //     text, and the highlighter and the language server follow each run as
 //     they follow typing. With lines selected only those are formatted,
 //     where the formatter can (clang-format, yapf, pyink, black): VS Code's
-//     Format Selection is a chord, which minicode has none of, and the Mac
+//     Format Selection is a chord, which mutible has none of, and the Mac
 //     formats a selection's lines with the same key.
 //   - A result for text that changed meanwhile (typing, another tab) is
 //     dropped. A failure (a non-zero exit, no output, output that is not

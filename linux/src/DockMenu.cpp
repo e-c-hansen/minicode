@@ -15,7 +15,7 @@ namespace DockMenu {
 
 namespace {
 
-const char* kFileName = "org.minicode.Editor.desktop";
+const char* kFileName = "ai.ible.Mutible.desktop";
 
 struct Group {
     std::string header;                // "[Desktop Entry]"
@@ -90,11 +90,13 @@ std::string readFile(const std::string& path, bool* ok = nullptr) {
     return out;
 }
 
-bool isOurs(const std::string& text) {
+bool carries(const std::string& text, const char* marker) {
     for (const std::string& l : splitLines(text))
-        if (l == kMarker) return true;
+        if (l == marker) return true;
     return false;
 }
+
+bool isOurs(const std::string& text) { return carries(text, kMarker); }
 
 std::string dataHome() {
     const char* s = getenv("XDG_DATA_HOME");
@@ -193,7 +195,17 @@ std::string installedFile() {
 
 std::string generatedFile() { return dataHome() + "/applications/" + kFileName; }
 
+std::string oldGeneratedFile() { return dataHome() + "/applications/" + kOldFileName; }
+
+bool removeOldCopy() {
+    const std::string path = oldGeneratedFile();
+    bool exists = false;
+    const std::string text = readFile(path, &exists);
+    return exists && carries(text, kOldMarker) && g_unlink(path.c_str()) == 0;
+}
+
 void update(bool enabled) {
+    removeOldCopy();
     const std::string target = generatedFile();
     bool exists = false;
     const std::string old = readFile(target, &exists);
@@ -201,7 +213,7 @@ void update(bool enabled) {
         static std::string told;
         if (told != target) {
             told = target;
-            fprintf(stderr, "minicode: %s is not minicode's own copy (no %s), so the dock "
+            fprintf(stderr, "mutible: %s is not mutible's own copy (no %s), so the dock "
                             "menu's recent folders are left out\n", target.c_str(), kMarker);
         }
         return;
@@ -221,7 +233,7 @@ void update(bool enabled) {
     GError* err = nullptr;
     if (!g_file_set_contents_full(target.c_str(), text.data(), (gssize)text.size(),
                                   G_FILE_SET_CONTENTS_CONSISTENT, 0644, &err)) {
-        fprintf(stderr, "minicode: could not write %s: %s\n", target.c_str(),
+        fprintf(stderr, "mutible: could not write %s: %s\n", target.c_str(),
                 err ? err->message : "unknown error");
         g_clear_error(&err);
     }

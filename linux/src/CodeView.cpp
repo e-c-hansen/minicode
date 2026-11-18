@@ -14,42 +14,42 @@
 // The view owns its CodeView and deletes it first thing in dispose, before
 // GtkTextView's own dispose takes the gutter away.
 
-G_DECLARE_FINAL_TYPE(MinicodeCodeView, minicode_code_view, MINICODE, CODE_VIEW, GtkTextView)
+G_DECLARE_FINAL_TYPE(MutibleCodeView, mutible_code_view, MUTIBLE, CODE_VIEW, GtkTextView)
 
-struct _MinicodeCodeView {
+struct _MutibleCodeView {
     GtkTextView parent_instance;
     CodeView*   owner;
 };
 
-G_DEFINE_FINAL_TYPE(MinicodeCodeView, minicode_code_view, GTK_TYPE_TEXT_VIEW)
+G_DEFINE_FINAL_TYPE(MutibleCodeView, mutible_code_view, GTK_TYPE_TEXT_VIEW)
 
-static void minicode_code_view_snapshot_layer(GtkTextView* tv, GtkTextViewLayer layer,
+static void mutible_code_view_snapshot_layer(GtkTextView* tv, GtkTextViewLayer layer,
                                               GtkSnapshot* s) {
-    MinicodeCodeView* self = MINICODE_CODE_VIEW(tv);
+    MutibleCodeView* self = MUTIBLE_CODE_VIEW(tv);
     if (self->owner) self->owner->snapshotLayer(layer, s);
 }
 
-static void minicode_code_view_size_allocate(GtkWidget* w, int width, int height, int baseline) {
-    GTK_WIDGET_CLASS(minicode_code_view_parent_class)->size_allocate(w, width, height, baseline);
-    MinicodeCodeView* self = MINICODE_CODE_VIEW(w);
+static void mutible_code_view_size_allocate(GtkWidget* w, int width, int height, int baseline) {
+    GTK_WIDGET_CLASS(mutible_code_view_parent_class)->size_allocate(w, width, height, baseline);
+    MutibleCodeView* self = MUTIBLE_CODE_VIEW(w);
     if (self->owner) self->owner->allocated();
 }
 
-static void minicode_code_view_dispose(GObject* o) {
-    MinicodeCodeView* self = MINICODE_CODE_VIEW(o);
+static void mutible_code_view_dispose(GObject* o) {
+    MutibleCodeView* self = MUTIBLE_CODE_VIEW(o);
     CodeView* owner = self->owner;
     self->owner = nullptr;
     delete owner;
-    G_OBJECT_CLASS(minicode_code_view_parent_class)->dispose(o);
+    G_OBJECT_CLASS(mutible_code_view_parent_class)->dispose(o);
 }
 
-static void minicode_code_view_class_init(MinicodeCodeViewClass* klass) {
-    G_OBJECT_CLASS(klass)->dispose = minicode_code_view_dispose;
-    GTK_WIDGET_CLASS(klass)->size_allocate = minicode_code_view_size_allocate;
-    GTK_TEXT_VIEW_CLASS(klass)->snapshot_layer = minicode_code_view_snapshot_layer;
+static void mutible_code_view_class_init(MutibleCodeViewClass* klass) {
+    G_OBJECT_CLASS(klass)->dispose = mutible_code_view_dispose;
+    GTK_WIDGET_CLASS(klass)->size_allocate = mutible_code_view_size_allocate;
+    GTK_TEXT_VIEW_CLASS(klass)->snapshot_layer = mutible_code_view_snapshot_layer;
 }
 
-static void minicode_code_view_init(MinicodeCodeView* self) { self->owner = nullptr; }
+static void mutible_code_view_init(MutibleCodeView* self) { self->owner = nullptr; }
 
 namespace {
 GdkRGBA toGdk(const Rgba& c) {
@@ -60,16 +60,16 @@ GdkRGBA toGdk(const Rgba& c) {
 // ---------------------------------------------------------------- life
 
 CodeView* CodeView::create(GtkTextBuffer* buffer) {
-    GtkWidget* view = GTK_WIDGET(g_object_new(minicode_code_view_get_type(), "buffer", buffer,
+    GtkWidget* view = GTK_WIDGET(g_object_new(mutible_code_view_get_type(), "buffer", buffer,
                                               nullptr));
     CodeView* cv = new CodeView(view);
-    MINICODE_CODE_VIEW(view)->owner = cv;
+    MUTIBLE_CODE_VIEW(view)->owner = cv;
     return cv;
 }
 
 CodeView* CodeView::of(GtkWidget* view) {
-    if (!view || !G_TYPE_CHECK_INSTANCE_TYPE(view, minicode_code_view_get_type())) return nullptr;
-    return MINICODE_CODE_VIEW(view)->owner;
+    if (!view || !G_TYPE_CHECK_INSTANCE_TYPE(view, mutible_code_view_get_type())) return nullptr;
+    return MUTIBLE_CODE_VIEW(view)->owner;
 }
 
 CodeView::CodeView(GtkWidget* view) : view_(view) {

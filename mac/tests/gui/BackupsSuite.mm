@@ -23,7 +23,7 @@ NSString *Disk(NSString *path) {
 }
 // The backups in the store that name a file in the folder.
 NSUInteger BackupsOfFolder() {
-    NSString *dir = NSProcessInfo.processInfo.environment[@"MINICODE_BACKUP_DIR"];
+    NSString *dir = NSProcessInfo.processInfo.environment[@"MUTIBLE_BACKUP_DIR"];
     NSUInteger n = 0;
     for (NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil]) {
         if (![f.pathExtension isEqualToString:@"mcbackup"]) continue;

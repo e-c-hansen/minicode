@@ -27,7 +27,7 @@ const std::string& pageHtml() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>minicode</title>
+<title>mutible</title>
 <style id="theme"></style>
 <style>
 :root { --bg: #1f1f1f; --fg: #cccccc; --tbg: #181818; --tfg: #cccccc; --muted: #9d9d9d;
@@ -174,7 +174,7 @@ body:not(.editable) #caret { display: none; }
 </style>
 </head>
 <body>
-<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">minicode</span><span id="folder"></span><span id="status">connecting</span></header>
+<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">mutible</span><span id="folder"></span><span id="status">connecting</span></header>
 <div id="banner" class="hidden"></div>
 <div id="wrap">
 <aside id="side" aria-label="Files">
@@ -183,7 +183,7 @@ body:not(.editable) #caret { display: none; }
   <p id="treenote" class="hidden"></p>
 </aside>
 <div id="work">
-<div id="tabrow"><nav id="tabs" class="strip"></nav><input id="browse" class="hidden" type="text" inputmode="url" placeholder="Open an address in the window" title="Opens in the minicode window's browser pane" aria-label="Open an address in the minicode window's browser pane" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></div>
+<div id="tabrow"><nav id="tabs" class="strip"></nav><input id="browse" class="hidden" type="text" inputmode="url" placeholder="Open an address in the window" title="Opens in the mutible window's browser pane" aria-label="Open an address in the mutible window's browser pane" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></div>
 <main>
   <section id="docsec">
     <div id="docbar"><span id="docpath"></span><button id="modebtn" class="hidden" type="button"></button></div>
@@ -194,7 +194,7 @@ body:not(.editable) #caret { display: none; }
   <section id="websec" class="hidden">
     <div id="webbar"><span id="webtitle"></span><a id="webopen" target="_blank" rel="noopener noreferrer">Open in a new tab</a></div>
     <p id="webhint">Some sites refuse to be shown inside another page and stay blank here: open those in a new tab.</p>
-    <p id="webloop" class="hidden">This address is on the machine running minicode: it shows here only when this browser runs on that machine too, not through a tunnel from elsewhere.</p>
+    <p id="webloop" class="hidden">This address is on the machine running mutible: it shows here only when this browser runs on that machine too, not through a tunnel from elsewhere.</p>
     <p id="webnote" class="hidden"></p>
     <iframe id="web" title="Browser tab" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
   </section>
@@ -361,7 +361,7 @@ body:not(.editable) #caret { display: none; }
   // ---- the window's browser tabs: the one picked in a frame, with a link
   // to open it in a tab of this browser (a site that refuses frames stays
   // blank, which the page cannot always tell), and a line when the address
-  // is on the machine running minicode. Only http and https are framed.
+  // is on the machine running mutible. Only http and https are framed.
   const W = { on: false, url: "", pending: "", pendingAt: 0 };
   function hostOf(url) { try { return new URL(url).host || url; } catch (e) { return url; } }
   function browserTabs() {
@@ -393,7 +393,7 @@ body:not(.editable) #caret { display: none; }
     f.classList.toggle("hidden", !tab.web);
     open.classList.toggle("hidden", !tab.web);
     $("webhint").classList.toggle("hidden", !tab.web);
-    $("webnote").textContent = tab.web ? "" : "This tab is not an http or https page; it shows only in the minicode window.";
+    $("webnote").textContent = tab.web ? "" : "This tab is not an http or https page; it shows only in the mutible window.";
     $("webnote").classList.toggle("hidden", !!tab.web);
     $("webloop").classList.toggle("hidden", !tab.loopback);
     drawTabs();
@@ -422,7 +422,7 @@ body:not(.editable) #caret { display: none; }
   function onBrowsing(m) {
     if (!m.ok) { toast(m.why || "That address was not opened."); return; }
     $("browse").value = "";
-    toast("Opening in the minicode window's browser pane.");
+    toast("Opening in the mutible window's browser pane.");
     W.pending = m.url; W.pendingAt = Date.now();
     takeWebPending();
   }
@@ -468,7 +468,7 @@ body:not(.editable) #caret { display: none; }
   // ---- the tree: one folder's rows at a time, read by the host each time
   // a folder opens (list), folders first as the apps list them, dotfiles as
   // the window shows them, what the ignore files ignore in tree.git-ignored's
-  // color. A click on a file opens it as a tab in the minicode window (open),
+  // color. A click on a file opens it as a tab in the mutible window (open),
   // as a click in the window's own tree would (a double-click keeps it), and
   // this page shows that tab once the session's state has it. Read-only
   // pages may open files too: a tab opened or shown changes no text.
@@ -576,7 +576,7 @@ body:not(.editable) #caret { display: none; }
     if (!m.ok) { T.pending = null; treeNote(m.why); return; }
     if (kViewerKinds.has(p.kind)) {
       T.pending = null;
-      treeNote(base(m.path) + " opens in the minicode window.");
+      treeNote(base(m.path) + " opens in the mutible window.");
       return;
     }
     p.abs = m.abs;
@@ -585,7 +585,7 @@ body:not(.editable) #caret { display: none; }
     T.timer = setTimeout(() => {
       if (T.pending !== p) return;
       T.pending = null;
-      treeNote(base(p.rel) + " opened in the minicode window.");
+      treeNote(base(p.rel) + " opened in the mutible window.");
     }, 4000);
     takePending();
   }
@@ -1165,7 +1165,7 @@ body:not(.editable) #caret { display: none; }
   }
   function save() {
     if (!editable) return toast("This page only reads.");
-    if (!canSave) return toast("Nothing here saves to disk yet: save from the minicode window.");
+    if (!canSave) return toast("Nothing here saves to disk yet: save from the mutible window.");
     D.save = true;
     afterSync();
   }
@@ -1466,7 +1466,7 @@ body:not(.editable) #caret { display: none; }
       const m = JSON.parse(ev.data);
       switch (m.t) {
         case "hello":
-          $("machine").textContent = m.machine || "minicode";
+          $("machine").textContent = m.machine || "mutible";
           folder = m.folder;
           termNote = m.termNote || "";
           editable = !!m.editable;
@@ -1478,7 +1478,7 @@ body:not(.editable) #caret { display: none; }
           // Marks keep the path's slashes where they belong in a field
           // that cuts from the left.
           $("folder").textContent = "‎" + m.folder + "‎";
-          document.title = (m.machine ? m.machine + ": " : "") + base(m.folder) + " (minicode)";
+          document.title = (m.machine ? m.machine + ": " : "") + base(m.folder) + " (mutible)";
           applyPalette(m.palette);
           // The tree afresh: every folder that was open, read again (the
           // rows on show stay until the answers replace them).

@@ -135,21 +135,21 @@ static void MCAgentFSCallback(ConstFSEventStreamRef stream, void *info, size_t n
 }
 
 + (NSString *)defaultProjectsDir {
-    NSString *env = MCEnvironment()[@"MINICODE_CLAUDE_PROJECTS"];
+    NSString *env = MCEnvironment()[@"MUTIBLE_CLAUDE_PROJECTS"];
     if (env.length) return env.stringByExpandingTildeInPath;
     return [NSHomeDirectory() stringByAppendingPathComponent:@".claude/projects"];
 }
 
 + (NSString *)defaultTmpRoot {
-    NSString *env = MCEnvironment()[@"MINICODE_CLAUDE_TMP"];
+    NSString *env = MCEnvironment()[@"MUTIBLE_CLAUDE_TMP"];
     if (env.length) return env.stringByExpandingTildeInPath;
     return [NSString stringWithFormat:@"/private/tmp/claude-%u", getuid()];
 }
 
 - (instancetype)initWithFolder:(NSString *)folder {
     if ((self = [super init])) {
-        _queue = dispatch_queue_create("minicode.agents", DISPATCH_QUEUE_SERIAL);
-        _gitQueue = dispatch_queue_create("minicode.agents.git", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.agents", DISPATCH_QUEUE_SERIAL);
+        _gitQueue = dispatch_queue_create("mutible.agents.git", DISPATCH_QUEUE_SERIAL);
         _projectsDir = [MCAgentModel defaultProjectsDir];
         _tmpRoot = [MCAgentModel defaultTmpRoot];
         _sessions = @[];

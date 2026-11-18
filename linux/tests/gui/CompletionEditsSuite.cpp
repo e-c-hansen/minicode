@@ -1,4 +1,4 @@
-// CompletionEditsSuite.cpp — `./build/minicode-guitest completion_edits`:
+// CompletionEditsSuite.cpp — `./build/mutible-guitest completion_edits`:
 // what goes in with a completion besides its word (linux/PARITY.md item
 // 2.5), the counterpart of the Mac's lsp_fixes (additionalTextEdits) and
 // lsp_sync (the import that comes later) checks, with real keys, against
@@ -81,7 +81,7 @@ MC_GUI_SUITE(completion_edits) {
         gLate = lateText();
         MCGuiWriteFile(F("imports.py"), kImports);
         MCGuiWriteFile(F("late.py"), gLate);
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script(500)) + "\n");
         showFile(F("imports.py"));
     });

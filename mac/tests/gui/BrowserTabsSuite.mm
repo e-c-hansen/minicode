@@ -394,7 +394,7 @@ MC_GUI_SUITE(browser_tabs) {
         GCHECK([saved[@"active"] integerValue] == 1);
         GCHECK([tabs[2][@"url"] hasSuffix:@"b.html"]);
         GCHECK([tabs[0][@"title"] isEqualToString:@"Links"]);
-        // The tab on show is also the one page an older minicode reads.
+        // The tab on show is also the one page an older mutible reads.
         GCHECK([saved[@"url"] hasSuffix:@"c.html"]);
         if (@available(macOS 12.0, *)) {
             GCHECK([tabs[1][@"state"] isKindOfClass:NSData.class]);   // live: its record
@@ -540,7 +540,7 @@ MC_GUI_SUITE(browser_tabs) {
         }
         appAllLive = Footprint(getpid());
         allLive = web / 1048576.0;
-        MCGuiNote(@"eight live pages: %lu WebKit processes, %.1f MB; minicode %.1f MB",
+        MCGuiNote(@"eight live pages: %lu WebKit processes, %.1f MB; mutible %.1f MB",
                   (unsigned long)seen.count, allLive, appAllLive / 1048576.0);
         GCHECK(seen.count >= 2);
         b.liveLimit = 2;   // the default
@@ -561,7 +561,7 @@ MC_GUI_SUITE(browser_tabs) {
         const double twoLive = web / 1048576.0;
         const uint64_t app = Footprint(getpid());
         MCGuiNote(@"two live pages of eight: %.1f MB in WebKit (%.1f with all live); "
-                  @"minicode %.1f MB (%.1f with all live)",
+                  @"mutible %.1f MB (%.1f with all live)",
                   twoLive, allLive, app / 1048576.0, appAllLive / 1048576.0);
         GCHECK(twoLive < allLive / 2);
     });

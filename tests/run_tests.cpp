@@ -4602,7 +4602,7 @@ void testSettings() {
     {
         namespace fs = std::filesystem;
         fs::path base = fs::temp_directory_path() /
-            ("minicode-venv-test-" + std::to_string(::getpid()));
+            ("mutible-venv-test-" + std::to_string(::getpid()));
         fs::remove_all(base);
         auto python = [&](const fs::path &venv) {
             fs::create_directories(venv / "bin");
@@ -4664,7 +4664,7 @@ void testSettings() {
     {
         namespace fs = std::filesystem;
         fs::path base = fs::temp_directory_path() /
-            ("minicode-activate-test-" + std::to_string(::getpid()));
+            ("mutible-activate-test-" + std::to_string(::getpid()));
         fs::remove_all(base);
         fs::create_directories(base / "proj" / ".venv" / "bin");
         std::ofstream(base / "proj" / ".venv" / "bin" / "python") << "";
@@ -5002,7 +5002,7 @@ void testLineComments() {
     GROUP("comments:markers");
     CHECK(markerFor("a.py") == "#");
     CHECK(markerFor("settings.conf") == "#");
-    CHECK(markerFor("/Users/x/.config/minicode/settings.conf") == "#");
+    CHECK(markerFor("/Users/x/.config/mutible/settings.conf") == "#");
     CHECK(markerFor("main.CPP") == "//");
     CHECK(markerFor("App.mm") == "//");
     CHECK(markerFor("index.tsx") == "//");
@@ -7406,7 +7406,7 @@ void testPythonEnvs() {
     namespace fs = std::filesystem;
     GROUP("python-envs");
     std::random_device rd;
-    const fs::path base = fs::temp_directory_path() / ("minicode-pyenvs-" + std::to_string(rd()));
+    const fs::path base = fs::temp_directory_path() / ("mutible-pyenvs-" + std::to_string(rd()));
     // canonical, so paths compare with what realpath gives back
     fs::create_directories(base);
     const fs::path top = fs::canonical(base);
@@ -7722,10 +7722,10 @@ void testFolderSearch() {
     // ---- a real folder -------------------------------------------------
     std::random_device rd;
     const fsys::path root = fsys::temp_directory_path() /
-        ("minicode-search-test-" + std::to_string(rd()));
+        ("mutible-search-test-" + std::to_string(rd()));
     fsys::create_directories(root);
     const fsys::path outside = fsys::temp_directory_path() /
-        ("minicode-search-outside-" + std::to_string(rd()));
+        ("mutible-search-outside-" + std::to_string(rd()));
     fsys::create_directories(outside);
 
     writeFile(root / "a.txt", "hello world\nnothing here\n  Second HELLO\n");
@@ -8867,7 +8867,7 @@ void testMarkdownTasks() {
     GROUP("tasks:todo-folder");
     std::random_device rd;
     const fsys::path root = fsys::temp_directory_path() /
-        ("minicode-todo-test-" + std::to_string(rd()));
+        ("mutible-todo-test-" + std::to_string(rd()));
     fsys::create_directories(root / "sub");
     fsys::create_directories(root / "node_modules");
     writeFile(root / "a.cpp", "int x;\n// TODO: one\nint TODO = 2;\n");
@@ -10298,10 +10298,10 @@ static void testChangeRequest() {
     Context c;
     c.request = "  Make the tree's font bigger\n ";
     c.version = "1.5.2";
-    c.appPath = "/Applications/MiniCode.app";
+    c.appPath = "/Applications/Mutible.app";
     std::string p = prompt(c);
     CHECK(p.rfind("Make the tree's font bigger\n\n(Sent from", 0) == 0);
-    CHECK(p.find("minicode 1.5.2 is running from /Applications/MiniCode.app.") !=
+    CHECK(p.find("mutible 1.5.2 is running from /Applications/Mutible.app.") !=
           std::string::npos);
     CHECK(p.find("run `make`") != std::string::npos);
     CHECK(p.find("Do not commit, push, or release unless asked.") != std::string::npos);
@@ -10310,7 +10310,7 @@ static void testChangeRequest() {
     c.request = "x";
     c.version.clear();
     c.appPath.clear();
-    CHECK(prompt(c).find("(Sent from minicode's Request a Change bar. minicode is running. ") !=
+    CHECK(prompt(c).find("(Sent from mutible's Request a Change bar. mutible is running. ") !=
           std::string::npos);
 
     GROUP("change:commands");
@@ -10319,16 +10319,16 @@ static void testChangeRequest() {
     CHECK(startCommand("  claude --model opus ", "/s", "/t/r.txt") ==
           "cd /s && claude --model opus \"$(cat /t/r.txt)\"");
     CHECK(resumeCommand("claude", "/a b") == "cd '/a b' && claude --continue");
-    CHECK(std::string(kRepository) == "https://github.com/e-c-hansen/minicode.git");
-    CHECK(cloneCommand("1.5.2", "/Users/x/Library/Application Support/MiniCode/source") ==
-          "(git clone --branch v1.5.2 https://github.com/e-c-hansen/minicode.git "
-          "'/Users/x/Library/Application Support/MiniCode/source' || git clone "
-          "https://github.com/e-c-hansen/minicode.git "
-          "'/Users/x/Library/Application Support/MiniCode/source')");
-    CHECK(cloneCommand(" ", "/s") == "git clone https://github.com/e-c-hansen/minicode.git /s");
+    CHECK(std::string(kRepository) == "https://github.com/ible-ai/mutible.git");
+    CHECK(cloneCommand("1.5.2", "/Users/x/Library/Application Support/Mutible/source") ==
+          "(git clone --branch v1.5.2 https://github.com/ible-ai/mutible.git "
+          "'/Users/x/Library/Application Support/Mutible/source' || git clone "
+          "https://github.com/ible-ai/mutible.git "
+          "'/Users/x/Library/Application Support/Mutible/source')");
+    CHECK(cloneCommand(" ", "/s") == "git clone https://github.com/ible-ai/mutible.git /s");
     CHECK(cloneThenStartCommand("1.6.0", "claude", "/s", "/t/r.txt") ==
-          "(git clone --branch v1.6.0 https://github.com/e-c-hansen/minicode.git /s || "
-          "git clone https://github.com/e-c-hansen/minicode.git /s) && "
+          "(git clone --branch v1.6.0 https://github.com/ible-ai/mutible.git /s || "
+          "git clone https://github.com/ible-ai/mutible.git /s) && "
           "cd /s && claude \"$(cat /t/r.txt)\"");
 
     GROUP("change:source");
@@ -10340,21 +10340,21 @@ static void testChangeRequest() {
     CHECK(looksLikeSource("/x/mc/", exists));
     CHECK(!looksLikeSource("/y", exists));
     CHECK(!looksLikeSource("", exists));
-    CHECK(checkoutOfBundle("/x/mc/MiniCode.app") == "/x/mc");
-    CHECK(checkoutOfBundle("/x/mc/MiniCode.app/") == "/x/mc");
-    CHECK(checkoutOfBundle("/MiniCode.app").empty());
-    CHECK(builtApp("/x/mc/") == "/x/mc/MiniCode.app");
-    CHECK(buildStamp("/x/mc") == "/x/mc/MiniCode.app/Contents/_CodeSignature/CodeResources");
+    CHECK(checkoutOfBundle("/x/mc/Mutible.app") == "/x/mc");
+    CHECK(checkoutOfBundle("/x/mc/Mutible.app/") == "/x/mc");
+    CHECK(checkoutOfBundle("/Mutible.app").empty());
+    CHECK(builtApp("/x/mc/") == "/x/mc/Mutible.app");
+    CHECK(buildStamp("/x/mc") == "/x/mc/Mutible.app/Contents/_CodeSignature/CodeResources");
 
     GROUP("change:settings");
     Settings d = parseSettings("");
     CHECK(d.developCommand() == "claude" && d.developSource().empty());
     std::vector<SettingsError> e;
     Settings s = parseSettings("develop.command = claude --model opus  # mine\n"
-                               "develop.source = ~/Code/my minicode # here\n", &e);
+                               "develop.source = ~/Code/my mutible # here\n", &e);
     CHECK(e.empty());
     CHECK(s.developCommand() == "claude --model opus");
-    CHECK(s.developSource() == "~/Code/my minicode");
+    CHECK(s.developSource() == "~/Code/my mutible");
     CHECK(parseSettings("develop.source = auto\n").developSource().empty());
     std::vector<SettingsError> e2;
     parseSettings("develop.command =\n", &e2);
@@ -10891,7 +10891,7 @@ static void testCommandPalette() {
     {
         namespace fs = std::filesystem;
         const fs::path root = fs::temp_directory_path() /
-            ("minicode-palette-" + std::to_string(::getpid()));
+            ("mutible-palette-" + std::to_string(::getpid()));
         fs::remove_all(root);
         auto touch = [&](const std::string &rel) {
             fs::create_directories((root / rel).parent_path());
@@ -11251,9 +11251,10 @@ static void testMultiCaretOccurrences() {
 #include "runnables_tests.inc"
 #include "spell_check_tests.inc"
 #include "process_env_tests.inc"
+#include "rename_tests.inc"
 
 int main() {
-    std::printf("Running MiniCode core tests...\n");
+    std::printf("Running Mutible core tests...\n");
     testSyntax();
     testSyntaxLiterals();
     testIncrementalHighlight();
@@ -11426,6 +11427,7 @@ int main() {
     testLspInlayHints();
     testLspSemanticTokens();
     testProcessEnv();
+    testRename();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -1374,13 +1374,13 @@ std::string networkFailureText(int status, const std::string& out, const std::st
     if (has("terminal prompts disabled") || has("could not read Username") ||
         has("could not read Password") || has("Authentication failed") ||
         has("Invalid username or password"))
-        return t + "\nminicode never asks for a password: set up a credential helper "
+        return t + "\nmutible never asks for a password: set up a credential helper "
                    "(gh auth setup-git, or " +
                (forLinux ? "git-credential-libsecret" : "the macOS keychain") +
                "), or push once from the terminal.";
     if (has("Permission denied (publickey") || has("Host key verification failed") ||
         has("passphrase"))
-        return t + "\nminicode cannot type an ssh passphrase or accept a new host key: "
+        return t + "\nmutible cannot type an ssh passphrase or accept a new host key: "
                    "add the key to the agent (" +
                (forLinux ? "ssh-add" : "ssh-add --apple-use-keychain") +
                ") or connect once from the terminal.";

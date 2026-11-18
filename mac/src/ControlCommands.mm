@@ -37,7 +37,7 @@ NSInteger MCControlWindowID(EditorController *controller) {
 }
 
 // The terminal's own, given when it was made: its shell has it in its
-// environment (MINICODE_TERMINAL_ID) from the start.
+// environment (MUTIBLE_TERMINAL_ID) from the start.
 NSInteger MCControlTerminalID(TerminalView *terminal) { return terminal.terminalID; }
 
 // ---------------------------------------------------------------- helpers
@@ -165,7 +165,7 @@ static Json MCTerminalState(TerminalView *t) {
     NSString *cmd = t.runningCommand;
     o.set("command", cmd.length ? J(cmd) : Json());
     o.set("busy", (bool)t.busy);
-    // Its tab's mark from `minicode notify` (feature 7): "waiting", "done",
+    // Its tab's mark from `mutible notify` (feature 7): "waiting", "done",
     // or null; and the Claude Code session last seen in it.
     MCTerminalAttention *att = [MCTerminalAttention shared];
     NSString *mark = [att markNameForTerminal:t];
@@ -554,7 +554,7 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         respond(Result::failure("there is no terminal " + std::to_string(want)));
     });
 
-    // `minicode notify`: a Claude Code hook (or another tool) marks a
+    // `mutible notify`: a Claude Code hook (or another tool) marks a
     // terminal's tab as waiting or done, or clears it (feature 7).
     d.on("notify", [weakHost](const Request &req, Dispatcher::Respond respond) {
         id<MCControlAppHost> host = weakHost;
@@ -581,7 +581,7 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         respond(Result::success(r));
     });
 
-    // `minicode open-url`, which BROWSER runs in minicode's terminals: a web
+    // `mutible open-url`, which BROWSER runs in mutible's terminals: a web
     // address in the user's page of the browser pane, in the window of the
     // terminal the program runs in (else the frontmost), without taking the
     // keyboard. The client has already sent pages that are not local to the

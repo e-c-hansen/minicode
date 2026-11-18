@@ -1,4 +1,4 @@
-// TreeFocusSuite.cpp — `./build/minicode-guitest tree_focus`: Focus on
+// TreeFocusSuite.cpp — `./build/mutible-guitest tree_focus`: Focus on
 // Folder (HANDOFF.md item 94), the Mac's tree_focus suite
 // (mac/tests/gui/TreeFocusSuite.mm) as far as GTK goes. A folder's right
 // click offers it (a file's does not); taken, the tree's root is that
@@ -166,7 +166,7 @@ bool Enabled(const char* action) {
 // The focus the folder's own session keeps ("(no session)" for none).
 std::string StoredFocus() {
     const TabSessions::Sessions all =
-        TabSessions::decode(MCGuiReadFile(MCGuiScratch() + "/state/minicode/sessions.json"));
+        TabSessions::decode(MCGuiReadFile(MCGuiScratch() + "/state/mutible/sessions.json"));
     const auto it = all.find(Persistence::keyFor(gRepo));
     if (it == all.end()) return "(no session)";
     // A list since the Mac's Add to Focus; the GTK tree keeps one folder.

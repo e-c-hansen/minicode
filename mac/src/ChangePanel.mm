@@ -25,7 +25,7 @@ static NSColor *CHex(unsigned int rgb) {
 }
 
 // ------------------------------------------------------------ the bar
-// Every mode of the bar is about changing minicode itself, which nobody does
+// Every mode of the bar is about changing mutible itself, which nobody does
 // in passing, so it looks the part: an amber stripe along its top, an amber
 // tint over the sidebar color, and a DEV pill. The amber is inline hex like
 // the other accents (see the UI map in docs/notes/ui.md), not a setting.
@@ -93,7 +93,7 @@ static const CGFloat kMaxLines = 10;   // the box grows to this many, then scrol
     if (!(self = [super initWithFrame:frame])) return nil;
     self.wantsLayer = YES;
     _pill = [[MCDevPill alloc] initWithFrame:NSZeroRect];
-    _pill.toolTip = @"You are changing minicode itself: Claude Code edits its source and rebuilds it";
+    _pill.toolTip = @"You are changing mutible itself: Claude Code edits its source and rebuilds it";
     _label = [NSTextField labelWithString:@""];
     _label.font = [NSFont systemFontOfSize:12];
     _label.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -125,7 +125,7 @@ static const CGFloat kMaxLines = 10;   // the box grows to this many, then scrol
     _text.autoresizingMask = NSViewWidthSizable;
     _text.minSize = NSMakeSize(0, 0);
     _text.maxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
-    _text.placeholder = @"Describe a change to minicode. Return sends, Shift Return adds a line, Esc closes.";
+    _text.placeholder = @"Describe a change to mutible. Return sends, Shift Return adds a line, Esc closes.";
     _text.delegate = self;
     _box = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 200, 24)];
     _box.hasVerticalScroller = YES;
@@ -175,7 +175,7 @@ static const CGFloat kMaxLines = 10;   // the box grows to this many, then scrol
                   : mode == MCChangeBarWorking ? @"Show Terminal" : @"Restart";
     _action.toolTip = prompt ? @"Send the request to Claude Code (Return)" : nil;
     if (prompt) {
-        _label.stringValue = @"Change minicode";
+        _label.stringValue = @"Change mutible";
         _close.toolTip = @"Close (Esc)";
     } else {
         _label.stringValue = _message ?: @"";
@@ -279,7 +279,7 @@ static const CGFloat kMaxLines = 10;   // the box grows to this many, then scrol
     const NSSize p = _pill.intrinsicContentSize;
     const CGFloat lh = 16;
     if (_mode == MCChangeBarPrompt) {
-        // Heading: DEV, "Change minicode", the hint, ×. Under it the box,
+        // Heading: DEV, "Change mutible", the hint, ×. Under it the box,
         // with Send beside its last line.
         const CGFloat y0 = kStripe + 6;
         _close.frame = NSMakeRect(W - 8 - c.width, y0 + round((kHeadH - c.height) / 2),
@@ -374,7 +374,7 @@ static BOOL MCLooksLikeSource(NSString *dir) {
 
 NSString *MCChangeCloneFolder(void) {
     return [NSHomeDirectory() stringByAppendingPathComponent:
-            @"Library/Application Support/MiniCode/source"];
+            @"Library/Application Support/Mutible/source"];
 }
 
 NSString *MCChangeSourceFolder(NSString **problem) {
@@ -384,7 +384,7 @@ NSString *MCChangeSourceFolder(NSString **problem) {
         if (MCLooksLikeSource(dir)) return dir;
         if (problem)
             *problem = [NSString stringWithFormat:
-                @"develop.source in the settings is %@, which is not minicode's source folder.",
+                @"develop.source in the settings is %@, which is not mutible's source folder.",
                 NS(set)];
         return nil;
     }
@@ -418,11 +418,11 @@ NSDictionary *MCTakeRestartRecord(void) {
 BOOL MCLaunchAfterExit(NSString *appPath) {
     // The shell outlives this process (its own session), waits for it to
     // go, then opens the app; `open -n` so it never just reactivates a
-    // MiniCode still on its way out.
+    // Mutible still on its way out.
     NSString *pid = [NSString stringWithFormat:@"%d", getpid()];
     const char *script =
         "while kill -0 \"$1\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$2\"";
-    const char *argv[] = {"/bin/sh", "-c", script, "minicode-restart", pid.UTF8String,
+    const char *argv[] = {"/bin/sh", "-c", script, "mutible-restart", pid.UTF8String,
                           appPath.fileSystemRepresentation, NULL};
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
@@ -531,7 +531,7 @@ static double MCFileTime(NSString *path) {
     NSString *where = source
         ? [NSString stringWithFormat:@"Claude Code edits %@ and rebuilds it.",
               source.stringByAbbreviatingWithTildeInPath]
-        : problem ? @"develop.source in the settings is not minicode's source folder."
+        : problem ? @"develop.source in the settings is not mutible's source folder."
                   : [NSString stringWithFormat:@"The source is cloned into %@ first.",
                         MCChangeCloneFolder().stringByAbbreviatingWithTildeInPath];
     return where;
@@ -555,13 +555,13 @@ static double MCFileTime(NSString *path) {
         NSFileManager *fm = [NSFileManager defaultManager];
         if ([fm fileExistsAtPath:clone]) {
             [self showBar:MCChangeBarNote message:[NSString stringWithFormat:
-                @"%@ is in the way of minicode's source: move it away and try again.",
+                @"%@ is in the way of mutible's source: move it away and try again.",
                 clone.stringByAbbreviatingWithTildeInPath]];
             return;
         }
         if (!MCFindProgram(@"git")) {
             [self showBar:MCChangeBarNote message:
-                @"Building minicode needs Apple's command line tools. Install them with "
+                @"Building mutible needs Apple's command line tools. Install them with "
                 @"xcode-select --install in the terminal, then try again."];
             return;
         }
@@ -581,7 +581,7 @@ static double MCFileTime(NSString *path) {
     const std::string prompt = ChangeRequest::prompt(c);
     const std::string command = [AppSettings shared].settings.developCommand();
     // The prompt in a file the command reads, so the typed line stays short.
-    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-change"];
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"Mutible-change"];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
                                                attributes:@{NSFilePosixPermissions: @0700}
                                                     error:nil];
@@ -610,9 +610,9 @@ static double MCFileTime(NSString *path) {
     NSString *shortReq = request.length > 80
         ? [[request substringToIndex:80] stringByAppendingString:@"…"] : request;
     [self showBar:MCChangeBarWorking message:[NSString stringWithFormat:clone
-        ? @"Fetching minicode's source, then Claude starts on “%@” in the terminal. "
-          @"minicode offers a restart once it is rebuilt."
-        : @"Claude is working on “%@” in the terminal. minicode offers a restart once it is rebuilt.",
+        ? @"Fetching mutible's source, then Claude starts on “%@” in the terminal. "
+          @"mutible offers a restart once it is rebuilt."
+        : @"Claude is working on “%@” in the terminal. mutible offers a restart once it is rebuilt.",
         shortReq]];
 }
 
@@ -657,7 +657,7 @@ static double MCFileTime(NSString *path) {
     if (now > _baseline && now == before && !(_shown && _bar.mode == MCChangeBarRebuilt)) {
         NSString *app = NS(ChangeRequest::builtApp(Std(_source)));
         [self showBar:MCChangeBarRebuilt
-              message:@"The new build of minicode is ready. Restart to try the change."];
+              message:@"The new build of mutible is ready. Restart to try the change."];
         _bar.actionButton.toolTip = [NSString stringWithFormat:
             @"Quit and open %@, with every window's folder and the conversation with Claude",
             app.stringByAbbreviatingWithTildeInPath];

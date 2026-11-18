@@ -37,9 +37,9 @@ static void testBackups() {
         e.saved = 1730000100.5;
         e.ownerPid = 4242;
         e.ownerStart = 1729999999.0;
-        const std::string text = "line one\r\nline two\r\n\n\nminicode-backup 1\n";
+        const std::string text = "line one\r\nline two\r\n\n\nmutible-backup 1\n";
         const std::string data = encode(e, text);
-        CHECK(data.rfind("minicode-backup 1\n", 0) == 0);
+        CHECK(data.rfind("mutible-backup 1\n", 0) == 0);
         Entry back;
         std::string t;
         CHECK(decode(data, &back, &t));
@@ -70,9 +70,14 @@ static void testBackups() {
         CHECK(!decode(data.substr(0, data.size() - 1), &back, &t));
         CHECK(!decode(data + "x", &back, &t));
         CHECK(!decode("not a backup\n\nhello", &back, &t));
-        CHECK(!decodeHeader("minicode-backup 1\nid: x\n", &head));   // no blank line
-        CHECK(!decodeHeader("minicode-backup 1\nid: ../x\npath: /a\nbytes: 0\n\n", &head));
-        CHECK(!decodeHeader("minicode-backup 1\nid: x\nbytes: 0\n\n", &head));   // no path
+        // A backup from before 1.6.0, with the old magic, as the first launch copies it.
+        const std::string old = "minicode-backup 1\n" + data.substr(std::string("mutible-backup 1\n").size());  // rename-mutible: keep
+        CHECK(decode(old, &back, &t) && t == text && back.path == e.path);
+        CHECK(decodeHeader(old.substr(0, old.size() - text.size()), &head, &start));
+        CHECK(start == old.size() - text.size());
+        CHECK(!decodeHeader("mutible-backup 1\nid: x\n", &head));   // no blank line
+        CHECK(!decodeHeader("mutible-backup 1\nid: ../x\npath: /a\nbytes: 0\n\n", &head));
+        CHECK(!decodeHeader("mutible-backup 1\nid: x\nbytes: 0\n\n", &head));   // no path
         // Empty text, and unknown keys skipped.
         Entry z;
         z.id = "z";
@@ -113,7 +118,7 @@ static void testBackups() {
     // A scratch folder through the real POSIX Fs.
     std::random_device rd;
     const fsys::path base = fsys::temp_directory_path() /
-                            ("minicode-backups-" + std::to_string(rd()));
+                            ("mutible-backups-" + std::to_string(rd()));
     const std::string dir = (base / "Backups").string();   // made on first write
 
     GROUP("backups:store");

@@ -13,7 +13,7 @@ static dispatch_queue_t FoldQueue(void) {
     static dispatch_queue_t q;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        q = dispatch_queue_create("minicode.folding",
+        q = dispatch_queue_create("mutible.folding",
                                   dispatch_queue_attr_make_with_qos_class(
                                       DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
     });

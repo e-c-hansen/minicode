@@ -57,7 +57,7 @@ public:
     static const std::string& problem();
     // $CLAUDE_CONFIG_DIR/ide, else ~/.claude/ide.
     static std::string folder();
-    // Removes lock files minicode left behind (its own ideName, another pid,
+    // Removes lock files mutible left behind (its own ideName, another pid,
     // that pid gone); returns how many.
     static unsigned removeStaleLocks(const std::string& folder);
 

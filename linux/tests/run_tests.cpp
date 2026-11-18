@@ -20,11 +20,14 @@
 #include "WebImageRules.h"
 #include "LaunchOptions.h"
 #include "EnvLock.h"
+#include "MigrationLinux.h"
 #include <gio/gio.h>
 #include <atomic>
 #include <thread>
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <string>
@@ -492,7 +495,7 @@ static void touch(const std::string &p) {
 
 static void testTermLinkPath() {
     GROUP("TermLinkPath");
-    char tmpl[] = "/tmp/minicode-links-XXXXXX";
+    char tmpl[] = "/tmp/mutible-links-XXXXXX";
     const char *made = mkdtemp(tmpl);
     CHECK(made != nullptr);
     if (!made) return;
@@ -709,87 +712,87 @@ static void testWebImageRules() {
     CHECK(fails.size() == 300 && fails.recent("u599", 100) && !fails.recent("u0", 100));
 }
 
-// What `minicode` makes of its command line, and when it leaves the
+// What `mutible` makes of its command line, and when it leaves the
 // terminal (PARITY.md R2; the detach GUI suite runs the real binary).
 static void testLaunchOptions() {
     using namespace LaunchOptions;
     typedef std::vector<std::string> Args;
 
     GROUP("launch: options");
-    Parsed p = parse(Args{"minicode"});
+    Parsed p = parse(Args{"mutible"});
     CHECK(!p.help && !p.version && !p.foreground && p.error.empty());
-    CHECK(p.args == Args{"minicode"});
-    p = parse(Args{"/usr/bin/minicode", "notes.md"});
-    CHECK(p.args == (Args{"/usr/bin/minicode", "notes.md"}));
-    CHECK(parse(Args{"minicode", "-h"}).help && parse(Args{"minicode", "--help"}).help);
-    CHECK(parse(Args{"minicode", "-v"}).version && parse(Args{"minicode", "--version"}).version);
+    CHECK(p.args == Args{"mutible"});
+    p = parse(Args{"/usr/bin/mutible", "notes.md"});
+    CHECK(p.args == (Args{"/usr/bin/mutible", "notes.md"}));
+    CHECK(parse(Args{"mutible", "-h"}).help && parse(Args{"mutible", "--help"}).help);
+    CHECK(parse(Args{"mutible", "-v"}).version && parse(Args{"mutible", "--version"}).version);
     // --foreground anywhere, and taken out of what GApplication gets, so a
-    // running minicode is handed the path alone.
-    p = parse(Args{"minicode", "--foreground", "src"});
-    CHECK(p.foreground && p.args == (Args{"minicode", "src"}));
-    p = parse(Args{"minicode", "src", "--foreground"});
-    CHECK(p.foreground && p.args == (Args{"minicode", "src"}));
+    // running mutible is handed the path alone.
+    p = parse(Args{"mutible", "--foreground", "src"});
+    CHECK(p.foreground && p.args == (Args{"mutible", "src"}));
+    p = parse(Args{"mutible", "src", "--foreground"});
+    CHECK(p.foreground && p.args == (Args{"mutible", "src"}));
     // An option the port does not have is a usage error, as the Mac's
     // launcher says it; -n and -r are the Mac's and not the port's.
     for (const char* o : {"-n", "-r", "--reuse-window", "-x", "-hv", "--bogus"}) {
-        p = parse(Args{"minicode", o});
-        CHECK(p.error == std::string("minicode: unknown option ") + o + "\nTry 'minicode --help'.\n");
+        p = parse(Args{"mutible", o});
+        CHECK(p.error == std::string("mutible: unknown option ") + o + "\nTry 'mutible --help'.\n");
     }
     // The first unknown option is the one named.
-    CHECK(parse(Args{"minicode", "-x", "-y"}).error.find("-x") != std::string::npos);
+    CHECK(parse(Args{"mutible", "-x", "-y"}).error.find("-x") != std::string::npos);
     // "--" ends the options: what follows is a path, an option-like one
     // made relative so nothing after reads it as an option.
-    p = parse(Args{"minicode", "--", "--foreground"});
-    CHECK(!p.foreground && p.error.empty() && p.args == (Args{"minicode", "./--foreground"}));
-    p = parse(Args{"minicode", "--", "-notes.md", "/abs/-x"});
-    CHECK(p.args == (Args{"minicode", "./-notes.md", "/abs/-x"}));
+    p = parse(Args{"mutible", "--", "--foreground"});
+    CHECK(!p.foreground && p.error.empty() && p.args == (Args{"mutible", "./--foreground"}));
+    p = parse(Args{"mutible", "--", "-notes.md", "/abs/-x"});
+    CHECK(p.args == (Args{"mutible", "./-notes.md", "/abs/-x"}));
     // "-" alone is a name, as for most programs; an empty argument stays.
-    CHECK(parse(Args{"minicode", "-"}).args == (Args{"minicode", "-"}));
-    CHECK(parse(Args{"minicode", ""}).args == (Args{"minicode", ""}));
+    CHECK(parse(Args{"mutible", "-"}).args == (Args{"mutible", "-"}));
+    CHECK(parse(Args{"mutible", ""}).args == (Args{"mutible", ""}));
     // GApplication's own option goes through to it.
-    p = parse(Args{"minicode", "--gapplication-service"});
-    CHECK(p.error.empty() && p.args == (Args{"minicode", "--gapplication-service"}));
+    p = parse(Args{"mutible", "--gapplication-service"});
+    CHECK(p.error.empty() && p.args == (Args{"mutible", "--gapplication-service"}));
     // No argv[0] at all.
-    CHECK(parse(Args{}).args == Args{"minicode"});
+    CHECK(parse(Args{}).args == Args{"mutible"});
 
     GROUP("launch: when to leave the terminal");
-    const Parsed plain = parse(Args{"minicode", "src"});
+    const Parsed plain = parse(Args{"mutible", "src"});
     CHECK(shouldDetach(plain, true, nullptr));
     CHECK(!shouldDetach(plain, false, nullptr));   // the desktop's launch: no terminal
-    CHECK(!shouldDetach(parse(Args{"minicode", "--foreground"}), true, nullptr));
+    CHECK(!shouldDetach(parse(Args{"mutible", "--foreground"}), true, nullptr));
     CHECK(!shouldDetach(plain, true, "1"));
     CHECK(!shouldDetach(plain, true, "yes"));
     CHECK(shouldDetach(plain, true, ""));
     CHECK(shouldDetach(plain, true, "0"));
     // What prints and returns never forks.
-    CHECK(!shouldDetach(parse(Args{"minicode", "-h"}), true, nullptr));
-    CHECK(!shouldDetach(parse(Args{"minicode", "--version"}), true, nullptr));
-    CHECK(!shouldDetach(parse(Args{"minicode", "-q"}), true, nullptr));
+    CHECK(!shouldDetach(parse(Args{"mutible", "-h"}), true, nullptr));
+    CHECK(!shouldDetach(parse(Args{"mutible", "--version"}), true, nullptr));
+    CHECK(!shouldDetach(parse(Args{"mutible", "-q"}), true, nullptr));
 
     GROUP("launch: --open-folder");
     // The dock icon's Open Folder…: kept in what GApplication gets, so a
-    // running minicode shows the chooser, and told apart from a path.
-    p = parse(Args{"minicode", "--open-folder"});
-    CHECK(p.openFolder && p.error.empty() && p.args == (Args{"minicode", "--open-folder"}));
-    CHECK(!parse(Args{"minicode", "src"}).openFolder);
-    CHECK(!parse(Args{"minicode", "--", "--open-folder"}).openFolder);
+    // running mutible shows the chooser, and told apart from a path.
+    p = parse(Args{"mutible", "--open-folder"});
+    CHECK(p.openFolder && p.error.empty() && p.args == (Args{"mutible", "--open-folder"}));
+    CHECK(!parse(Args{"mutible", "src"}).openFolder);
+    CHECK(!parse(Args{"mutible", "--", "--open-folder"}).openFolder);
     CHECK(shouldDetach(p, true, nullptr));
     CHECK(helpText().find("--open-folder") != std::string::npos);
 
     GROUP("launch: --new-window");
     // The dock icon's New Window: kept in what GApplication gets, any order.
-    p = parse(Args{"minicode", "--new-window"});
-    CHECK(p.newWindow && p.error.empty() && p.args == (Args{"minicode", "--new-window"}));
-    p = parse(Args{"minicode", "src", "--new-window"});
-    CHECK(p.newWindow && p.args == (Args{"minicode", "src", "--new-window"}));
-    CHECK(!parse(Args{"minicode", "src"}).newWindow);
-    CHECK(!parse(Args{"minicode", "--", "--new-window"}).newWindow);
+    p = parse(Args{"mutible", "--new-window"});
+    CHECK(p.newWindow && p.error.empty() && p.args == (Args{"mutible", "--new-window"}));
+    p = parse(Args{"mutible", "src", "--new-window"});
+    CHECK(p.newWindow && p.args == (Args{"mutible", "src", "--new-window"}));
+    CHECK(!parse(Args{"mutible", "src"}).newWindow);
+    CHECK(!parse(Args{"mutible", "--", "--new-window"}).newWindow);
     CHECK(helpText().find("--new-window") != std::string::npos);
 
     GROUP("launch: help and version");
     const std::string help = helpText();
-    CHECK(help.rfind("Usage: minicode [options] [path]\n", 0) == 0);
-    for (const char* line : {"      --foreground", "MINICODE_FOREGROUND=1", "  -v, --version",
+    CHECK(help.rfind("Usage: mutible [options] [path]\n", 0) == 0);
+    for (const char* line : {"      --foreground", "MUTIBLE_FOREGROUND=1", "  -v, --version",
                              "  -h, --help", "returns"})
         CHECK(help.find(line) != std::string::npos);
     // Only what the port has.
@@ -800,15 +803,15 @@ static void testLaunchOptions() {
         widest = std::max(widest, nl - start);
     CHECK(widest <= 80);
     CHECK(help.back() == '\n');
-    CHECK(versionText("1.5.17") == "minicode 1.5.17\n");
-    CHECK(versionText("") == "minicode unknown\n");
+    CHECK(versionText("1.5.17") == "mutible 1.5.17\n");
+    CHECK(versionText("") == "mutible unknown\n");
 
     GROUP("launch: scope name");
-    CHECK(scopeName("org.minicode.Editor", 4242) == "app-minicode-org.minicode.Editor-4242.scope");
+    CHECK(scopeName("ai.ible.Mutible", 4242) == "app-mutible-ai.ible.Mutible-4242.scope");
     // systemd's escaping, as in app-gnome-org.gnome.Evolution\x2dalarm\x2dnotify-5346.scope.
     CHECK(scopeName("org.gnome.Evolution-alarm-notify", 7) ==
-          "app-minicode-org.gnome.Evolution\\x2dalarm\\x2dnotify-7.scope");
-    CHECK(scopeName(".x y", 1) == "app-minicode-\\x2ex\\x20y-1.scope");
+          "app-mutible-org.gnome.Evolution\\x2dalarm\\x2dnotify-7.scope");
+    CHECK(scopeName(".x y", 1) == "app-mutible-\\x2ex\\x20y-1.scope");
 }
 
 // A worker making launchers (each copies the environment) while the main
@@ -845,8 +848,116 @@ static void testEnvLock() {
     CHECK(g_getenv("MC_ENV_TEST_0") == nullptr);
 }
 
+// The first launch as mutible (MigrationLinux.h) in a scratch HOME: the old
+// folders are copied, the marker written and the old ones left; a second
+// run copies nothing; a new folder already there is never overwritten.
+// rename-mutible: keep-begin
+static void testMigration() {
+    GROUP("migration: minicode's folders copied to mutible's once");
+    namespace fs = std::filesystem;
+    char tmpl[] = "/tmp/mutible-migration-XXXXXX";
+    const char* made = mkdtemp(tmpl);
+    CHECK(made != nullptr);
+    if (!made) return;
+    const std::string home = made, state = home + "/xdg-state";
+    auto save = [](const char* n) {
+        const char* v = g_getenv(n);
+        return std::pair<bool, std::string>(v != nullptr, v ? v : "");
+    };
+    const auto oldHome = save("HOME"), oldConfig = save("XDG_CONFIG_HOME"),
+               oldState = save("XDG_STATE_HOME"), oldData = save("XDG_DATA_HOME"),
+               oldBench = save("MUTIBLE_BENCH");
+    auto write = [](const std::string& p, const std::string& text) {
+        fs::create_directories(fs::path(p).parent_path());
+        std::ofstream(p, std::ios::binary) << text;
+    };
+    auto read = [](const std::string& p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    // Config and data at their defaults under HOME, state where XDG says.
+    EnvLock::envSet("HOME", home.c_str());
+    EnvLock::envUnset("XDG_CONFIG_HOME");
+    EnvLock::envSet("XDG_STATE_HOME", state.c_str());
+    EnvLock::envSet("XDG_DATA_HOME", "relative/is/the/default");
+    EnvLock::envUnset("MUTIBLE_BENCH");
+    const std::string oldCfg = home + "/.config/minicode", newCfg = home + "/.config/mutible";
+    const std::string oldSt = state + "/minicode", newSt = state + "/mutible";
+    const std::string oldDat = home + "/.local/share/minicode", newDat = home + "/.local/share/mutible";
+    write(oldCfg + "/settings.conf", "theme = monokai\n");
+    write(oldCfg + "/keys.conf", "ctrl+k = minicode.toggleBrowser\n");
+    write(oldSt + "/sessions.json", "{\"a\":1}\n");
+    write(oldDat + "/Backups/0001.mcbackup", "backup text\n");
+    write(oldDat + "/bin/tectonic", "#!/bin/sh\n");
+    fs::permissions(oldDat + "/bin/tectonic", fs::perms::owner_all);
+    fs::create_symlink("settings.conf", oldCfg + "/link.conf");
+
+    MigrationLinux::Result r = MigrationLinux::migrateFromOldName();
+    CHECK(r.ran);
+    CHECK(r.done.size() == 3 && r.failed.empty());
+    CHECK(read(newCfg + "/settings.conf") == "theme = monokai\n");
+    CHECK(read(newCfg + "/keys.conf") == "ctrl+k = minicode.toggleBrowser\n");
+    CHECK(fs::is_symlink(newCfg + "/link.conf") && fs::read_symlink(newCfg + "/link.conf") == "settings.conf");
+    CHECK(read(newSt + "/sessions.json") == "{\"a\":1}\n");
+    CHECK(read(newDat + "/Backups/0001.mcbackup") == "backup text\n");
+    CHECK((fs::status(newDat + "/bin/tectonic").permissions() & fs::perms::owner_exec) != fs::perms::none);
+    CHECK(!fs::exists(newCfg + ".migrating") && !fs::exists(newDat + ".migrating"));
+    const std::string marker = newDat + "/.migrated-from-minicode";
+    CHECK(marker == Rename::linuxMarker(home, "relative"));
+    const std::string text = read(marker);
+    CHECK(text.find("mutible copied these from minicode") == 0);
+    CHECK(text.find(oldCfg + " -> " + newCfg + "\n") != std::string::npos);
+    CHECK(text.find(oldSt + " -> " + newSt + "\n") != std::string::npos);
+    CHECK(text.find(oldDat + " -> " + newDat + "\n") != std::string::npos);
+    // The old folders stay as they were.
+    CHECK(read(oldCfg + "/settings.conf") == "theme = monokai\n");
+    CHECK(read(oldDat + "/Backups/0001.mcbackup") == "backup text\n");
+    CHECK(fs::exists(oldSt + "/sessions.json"));
+
+    // A second run copies nothing while the marker is there.
+    write(oldCfg + "/settings.conf", "theme = dark-plus\n");
+    fs::remove_all(newSt);
+    r = MigrationLinux::migrateFromOldName();
+    CHECK(!r.ran && r.done.empty() && r.failed.empty());
+    CHECK(read(newCfg + "/settings.conf") == "theme = monokai\n");
+    CHECK(!fs::exists(newSt));
+    CHECK(read(marker) == text);
+
+    // Without the marker, a new folder already there is never overwritten;
+    // only the missing one is copied.
+    fs::remove(marker);
+    r = MigrationLinux::migrateFromOldName();
+    CHECK(r.ran && r.done.size() == 1 && r.failed.empty());
+    CHECK(r.done.size() == 1 && r.done[0].from == oldSt && r.done[0].to == newSt);
+    CHECK(read(newCfg + "/settings.conf") == "theme = monokai\n");
+    CHECK(read(newSt + "/sessions.json") == "{\"a\":1}\n");
+    CHECK(fs::exists(marker));
+
+    // Nothing to copy still writes the marker; MUTIBLE_BENCH runs nothing.
+    fs::remove(marker);
+    EnvLock::envSet("MUTIBLE_BENCH", "1");
+    r = MigrationLinux::migrateFromOldName();
+    CHECK(!r.ran && !fs::exists(marker));
+    EnvLock::envUnset("MUTIBLE_BENCH");
+    r = MigrationLinux::migrateFromOldName();
+    CHECK(r.ran && r.done.empty() && read(marker).find("(nothing to copy)") != std::string::npos);
+
+    auto restore = [](const char* n, const std::pair<bool, std::string>& v) {
+        if (v.first) EnvLock::envSet(n, v.second.c_str());
+        else EnvLock::envUnset(n);
+    };
+    restore("HOME", oldHome);
+    restore("XDG_CONFIG_HOME", oldConfig);
+    restore("XDG_STATE_HOME", oldState);
+    restore("XDG_DATA_HOME", oldData);
+    restore("MUTIBLE_BENCH", oldBench);
+    std::error_code ec;
+    fs::remove_all(home, ec);
+}
+// rename-mutible: keep-end
+
 int main() {
-    std::printf("Running MiniCode Linux port tests...\n\n");
+    std::printf("Running mutible Linux port tests...\n\n");
     testAscii();
     testTwoByte();
     testThreeByte();
@@ -862,6 +973,7 @@ int main() {
     testWebImageRules();
     testLaunchOptions();
     testEnvLock();
+    testMigration();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -55,7 +55,7 @@
 #include "SessionClient.h"
 #include "UndoHistory.h"
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 #include "PdfView.h"
 #endif
 
@@ -226,8 +226,8 @@ public:
     // the next file opened in preview in that group replaces it. The window's tabs keep
     // it (Editor::setPreview changes it).
     bool isPreviewTab() const { return host_->documentPreview(this) == Model::Preview::User; }
-    // One of the agents' two preview tabs, a file's (`minicode open --note`,
-    // AgentNotes.h) or a diff's (`minicode diff`): italic like the preview
+    // One of the agents' two preview tabs, a file's (`mutible open --note`,
+    // AgentNotes.h) or a diff's (`mutible diff`): italic like the preview
     // tab, replaced by the next such open of its kind, kept by an edit, a
     // save or a double-click on its title.
     bool isAgentPreview() const { return Model::isAgentPreview(host_->documentPreview(this)); }
@@ -382,7 +382,7 @@ public:
         bool haveSrcPos = false;
         double srcCaretFrac = 0.3;
         double previewEntryV = -1;
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
         bool havePdf = false;
         PdfView::Anchor pdf;
 #endif

@@ -3,7 +3,7 @@
 // tests/markdown/corpus.md and checks the headings, a real table, a footnote
 // and its way there and back, a quote inside a list item's quote, code at a
 // list item's indent and an HTML block's text left as written; ticks a task
-// box through its minicode-task: link; edits a table cell from the page and
+// box through its mutible-task: link; edits a table cell from the page and
 // finds the source changed by that one splice; and an edit made after the
 // file changed underneath ends on the clipboard with a note in the status
 // bar, not in the bin. Math is checked as its TeX (no tectonic here, or in
@@ -113,7 +113,7 @@ NSRange Changed(NSString *a, NSString *b, NSString **with) {
     return NSMakeRange(p, a.length - p - s);
 }
 
-// Web pictures without the web: https://pictures.minicode-test.invalid/
+// Web pictures without the web: https://pictures.mutible-test.invalid/
 // answers here with a tall PNG, through a URL protocol the picture
 // loader's session is given (its configuration is made by
 // ephemeralSessionConfiguration, swapped for the step that needs it). Every
@@ -128,7 +128,7 @@ NSData *gPicturePng;
 
 @implementation MCGuiPictureProtocol
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    if (![request.URL.host isEqualToString:@"pictures.minicode-test.invalid"]) return NO;
+    if (![request.URL.host isEqualToString:@"pictures.mutible-test.invalid"]) return NO;
     @synchronized(gPictureRequests) {
         [gPictureRequests addObject:request.URL.absoluteString];
     }
@@ -293,8 +293,8 @@ NSString *PicturePage(NSString *name) {
     for (int k = 0; k < 120; k++) {
         [md appendFormat:@"Para %d of the pictures page.\n\n", k];
         if (k == 3)
-            [md appendFormat:@"![a tall picture](https://pictures.minicode-test.invalid/%@)\n\n"
-                             @"![plain http](http://pictures.minicode-test.invalid/plain.png)\n\n"
+            [md appendFormat:@"![a tall picture](https://pictures.mutible-test.invalid/%@)\n\n"
+                             @"![plain http](http://pictures.mutible-test.invalid/plain.png)\n\n"
                              @"![inline](data:image/png;base64,%@)\n\n",
                              name, [gPicturePng base64EncodedStringWithOptions:0]];
     }
@@ -414,7 +414,7 @@ MC_GUI_SUITE(markdown_preview) {
         NSArray *sourceLines = [original componentsSeparatedByString:@"\n"];
         const NSUInteger n = [sourceLines indexOfObject:line];
         GCHECK(n != NSNotFound);
-        NSString *link = [NSString stringWithFormat:@"minicode-task:%lu", (unsigned long)n];
+        NSString *link = [NSString stringWithFormat:@"mutible-task:%lu", (unsigned long)n];
         const NSUInteger box = LinkAt(c, link);
         GCHECK(box != NSNotFound);
         GCHECK([Attr(c, NSAttachmentAttributeName, box) isKindOfClass:NSTextAttachment.class]);
@@ -595,11 +595,11 @@ MC_GUI_SUITE(markdown_preview) {
                              @"[^a]: Like this:\n\n    ```sh\n    make all\n    ```\n");
         EditorController *c = MCGuiController();
         GCHECK([c showFile:path]);
-        const NSUInteger box = LinkAt(c, @"minicode-task:0");
+        const NSUInteger box = LinkAt(c, @"mutible-task:0");
         GCHECK(box != NSNotFound && box >= 3);
         if (box != NSNotFound && box >= 3)
             GCHECK_EQ_STR([Text(c).string substringWithRange:NSMakeRange(box - 3, 3)], @"1. ");
-        const NSUInteger second = LinkAt(c, @"minicode-task:1");
+        const NSUInteger second = LinkAt(c, @"mutible-task:1");
         GCHECK(second != NSNotFound && second >= 3 &&
                [[Text(c).string substringWithRange:NSMakeRange(second - 3, 3)] isEqualToString:@"2. "]);
         const NSUInteger code = At(c, @"make all");
@@ -756,7 +756,7 @@ MC_GUI_SUITE(markdown_preview) {
         GCHECK(y > yBefore + 100);
         GCHECK(At(c, @"plain http") != NSNotFound);   // still its alt text
         @synchronized(gPictureRequests) {
-            GCHECK([gPictureRequests containsObject:@"https://pictures.minicode-test.invalid/tall.png"]);
+            GCHECK([gPictureRequests containsObject:@"https://pictures.mutible-test.invalid/tall.png"]);
             for (NSString *u in gPictureRequests) GCHECK(![u hasPrefix:@"http:"]);
         }
         // The picture sits where its alt text was, between paragraphs 3 and 4.
@@ -843,7 +843,7 @@ MC_GUI_SUITE(markdown_preview) {
 
     if (NSString *tectonic = NSProcessInfo.processInfo.environment[@"MC_GUI_REAL_TECTONIC"]) {
         MCGuiStep(@"with a real tectonic, a formula is typeset", ^{
-            MCSetEnv("MINICODE_TECTONIC", tectonic.fileSystemRepresentation);
+            MCSetEnv("MUTIBLE_TECTONIC", tectonic.fileSystemRepresentation);
             NSString *path = Fixture(@"math.md");
             MCGuiWriteFile(path, @"Inline $x^2 + y^2$ here.\n");
             GCHECK([MCGuiController() showFile:path]);

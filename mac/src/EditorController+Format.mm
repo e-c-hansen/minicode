@@ -128,10 +128,10 @@
     }
     a.informativeText = r.consentConfig
         ? [NSString stringWithFormat:
-              @"%@ can run code when %@ reads it, with your rights, so minicode "
+              @"%@ can run code when %@ reads it, with your rights, so mutible "
                "asks first. With Don't Allow, %@ does not run for this folder. %@",
               r.consentConfig, r.tool, r.tool, keep]
-        : [@"Programs in the folder run with your rights, so minicode asks before running one. "
+        : [@"Programs in the folder run with your rights, so mutible asks before running one. "
               stringByAppendingString:keep];
     [a addButtonWithTitle:@"Allow"];
     [a addButtonWithTitle:@"Don't Allow"];

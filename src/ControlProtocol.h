@@ -1,5 +1,5 @@
 // ControlProtocol.h — pure C++. The control channel's protocol: what an
-// agent, a script or the `minicode` command line can ask a running minicode
+// agent, a script or the `mutible` command line can ask a running mutible
 // to do, read from and written to its Unix socket (ControlServer.mm).
 //
 // One JSON object per line, request then response:
@@ -111,13 +111,13 @@ PathSpec splitPathSpec(const std::string& spec,
 std::string absolutePath(const std::string& path, const std::string& cwd,
                          const std::string& home);
 
-// Procs: `minicode procs` as a table (Procs::formatTable). Line: a string
+// Procs: `mutible procs` as a table (Procs::formatTable). Line: a string
 // result field and a line break; JsonLines: each element of a list field
 // as one line of JSON.
 enum class Output { None, Id, Json, Text, Procs, Line, JsonLines };
 
 struct CliCommand {
-    bool help = false;          // `minicode help`, or -h after a subcommand
+    bool help = false;          // `mutible help`, or -h after a subcommand
     std::string helpTopic;      // the subcommand asked about, or "" for all
     std::string cmd;            // the protocol command
     Json args = Json::object();
@@ -126,12 +126,12 @@ struct CliCommand {
     bool pretty = false;        // state --pretty
     int pid = 0;                // --pid: this process only
     std::string tourFile;       // tour: read by the caller, then tourStops()
-    std::string launchFolder;   // where a launched minicode opens (R1.4)
+    std::string launchFolder;   // where a launched mutible opens (R1.4)
     // notify --from-hook: the arguments come from stdin and the environment
     // (ClaudeHooks::notifyArgsFromHook), and nothing is ever reported.
     bool fromHook = false;
     // hooks --print or --install: "print" or "install", run by the command
-    // line itself (no minicode is asked).
+    // line itself (no mutible is asked).
     std::string hooksAction;
     std::string error;          // a usage error (exit code 2)
 };
@@ -141,17 +141,17 @@ struct CliCommand {
 CliCommand parseCommandLine(const std::vector<std::string>& argv, const std::string& cwd,
                             const std::string& home,
                             const std::function<bool(const std::string&)>& exists);
-// The subcommands, which scripts/minicode-launcher passes on to the client
+// The subcommands, which scripts/mutible-launcher passes on to the client
 // (its own list; control:launcher-words checks the two agree), and whether
 // `word` is one of them.
 const std::vector<std::string>& subcommands();
 bool isSubcommand(const std::string& word);
-// Whether the command line starts minicode when none is running. Reads
+// Whether the command line starts mutible when none is running. Reads
 // (state, selection, term-output, procs) do not: there would be nothing to read,
 // and an agent should not reopen an app the user has just quit.
 bool launchesApp(const std::string& cmd);
-// Whether `minicode open-url` (BROWSER in minicode's terminals) opens `url`
-// in minicode's browser pane: a local page (PageCheck::isLocalAddress, after
+// Whether `mutible open-url` (BROWSER in mutible's terminals) opens `url`
+// in mutible's browser pane: a local page (PageCheck::isLocalAddress, after
 // TermLinks::browserAddress turns 0.0.0.0 and [::] into localhost). Other
 // addresses go to the default browser, since sign-in pages (Google's among
 // them) refuse an embedded web view.

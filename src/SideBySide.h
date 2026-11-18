@@ -1,5 +1,5 @@
 // SideBySide.h — pure C++. Two texts lined up row by row for a side-by-side
-// diff (`minicode diff`, CompareView.mm): equal lines side by side, a changed
+// diff (`mutible diff`, CompareView.mm): equal lines side by side, a changed
 // run's lines paired off, and lines only one side has opposite an empty
 // filler row, so both panes have the same number of rows and scroll together.
 // Built on LineDiff, so the runs are the ones Format Document sees.

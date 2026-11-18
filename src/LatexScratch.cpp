@@ -14,7 +14,7 @@ namespace LatexScratch {
 
 namespace {
 
-constexpr const char* kHeader = "minicode-latex-sibling 1";
+constexpr const char* kHeader = "mutible-latex-sibling 1";
 
 bool isHex(const std::string& s) {
     if (s.empty()) return false;
@@ -85,9 +85,9 @@ bool parseFolderName(const std::string& name, Owner* out) {
 }
 
 std::string siblingName(const std::string& stem, const Owner& o) {
-    if (o.view == 0) return "." + stem + ".minicode.tex";
+    if (o.view == 0) return "." + stem + ".mutible.tex";
     return "." + stem + "." + std::to_string(o.pid) + "-" + std::to_string(o.view) +
-           ".minicode.tex";
+           ".mutible.tex";
 }
 
 bool ownerGone(const Owner& o, double startNow) {
@@ -129,10 +129,10 @@ bool parse(const std::string& text, Record* out) {
 bool isPreviewCopyName(const std::string& path) {
     const size_t slash = path.rfind('/');
     const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
-    const std::string tail = ".minicode.tex";
+    const std::string tail = ".mutible.tex";
     if (!endsWith(name, tail)) return false;
     if (name == "untitled" + tail) return true;
-    // ".<stem>.minicode.tex" with a stem of at least one character.
+    // ".<stem>.mutible.tex" with a stem of at least one character.
     return name.size() > tail.size() + 1 && name[0] == '.';
 }
 

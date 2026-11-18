@@ -7,7 +7,7 @@
 
 @protocol MCEditorPage <NSObject>
 @property(nonatomic, readonly, copy) NSString *pageTitle;   // the tab's and the window's title
-@property(nonatomic, readonly, copy) NSString *pageKind;    // for `minicode state`: "evidence", ...
+@property(nonatomic, readonly, copy) NSString *pageKind;    // for `mutible state`: "evidence", ...
 @property(nonatomic, readonly, copy) NSString *pageKey;     // the same key shows in the same tab
 @property(nonatomic, readonly) NSView *pageView;            // laid out in the editor's slot
 @property(nonatomic, readonly) NSView *pageFocusView;       // what Cmd+1 focuses

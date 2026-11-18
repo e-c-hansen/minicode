@@ -2,7 +2,7 @@
 // Linux GIFs (docs/demos/linux) by .github/workflows/demos.yml, the
 // counterpart of the Mac's mac/src/Demo.mm.
 //
-//   MC_DEMO_OUT=<folder> MC_DEMO_SOURCE=<repo>/demo ./build/minicode-guitest _demo_tour
+//   MC_DEMO_OUT=<folder> MC_DEMO_SOURCE=<repo>/demo ./build/mutible-guitest _demo_tour
 //
 // Each scene is a suite whose name starts with "_", so `meson test --suite
 // gui` never runs one. It replaces the scratch project with a copy of the
@@ -171,8 +171,8 @@ void prepareProject() {
         const std::string source = envOr("MC_DEMO_SOURCE", MCGuiBuildDir() + "/../../demo");
         const std::string script =
             "set -e; cd \"$1\"; rm -rf ./* ./.git; cp -R \"$2\"/. .;"
-            "export GIT_AUTHOR_NAME=MiniCode GIT_AUTHOR_EMAIL=demo@example.com;"
-            "export GIT_COMMITTER_NAME=MiniCode GIT_COMMITTER_EMAIL=demo@example.com;"
+            "export GIT_AUTHOR_NAME=Mutible GIT_AUTHOR_EMAIL=demo@example.com;"
+            "export GIT_COMMITTER_NAME=Mutible GIT_COMMITTER_EMAIL=demo@example.com;"
             "n=0; c() { n=$((n+1)); export GIT_AUTHOR_DATE=2026-09-0${n}T10:00:00"
             " GIT_COMMITTER_DATE=2026-09-0${n}T10:00:00; m=$1; shift; git add -A \"$@\";"
             " git commit -q -m \"$m\"; };"
@@ -498,7 +498,7 @@ MC_GUI_SUITE(_demo_settings) {
                textPoint("sidebar.background = #181818", true, &x, &y);
     });
     MCGuiPause(0.6);   // time is the condition: the lines' tint
-    label("minicode opens the settings at the keys that color the tree", 2.2);
+    label("mutible opens the settings at the keys that color the tree", 2.2);
     still("settings-3-file");
     label("Click the color's swatch", 0.2);
     MCGuiStep("click the sidebar color's swatch", [] {

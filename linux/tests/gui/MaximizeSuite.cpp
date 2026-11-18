@@ -1,4 +1,4 @@
-// MaximizeSuite.cpp — Maximize Pane (`./build/minicode-guitest maximize`,
+// MaximizeSuite.cpp — Maximize Pane (`./build/mutible-guitest maximize`,
 // linux/PARITY.md item 1.11; Ctrl+Alt+M, the Mac's Ctrl+Cmd+M), the
 // counterpart of the Maximize Pane steps of the Mac's zoomfit suite
 // (tests/gui/ZoomFitSuite.mm), by real keys and clicks in a window of its
@@ -16,14 +16,14 @@
 #include "Keys.h"
 #include "WindowLayout.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #endif
 
 #include <cmath>
 #include <string>
 
-#if defined(MINICODE_ENABLE_TERMINAL) && defined(MINICODE_ENABLE_BROWSER)
+#if defined(MUTIBLE_ENABLE_TERMINAL) && defined(MUTIBLE_ENABLE_BROWSER)
 
 namespace {
 

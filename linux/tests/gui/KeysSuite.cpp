@@ -1,10 +1,10 @@
-// KeysSuite.cpp — the registry's keys in the GTK port (`./build/minicode-guitest
+// KeysSuite.cpp — the registry's keys in the GTK port (`./build/mutible-guitest
 // keys`, linux/PARITY.md item 0.3): the menu bar and the accelerators come from
 // CommandsLinux.cpp's table and the port's actions; every key D1 moved is
 // pressed through XTest, in the editor and with the terminal focused, and
 // what it did is read back (and that its old key no longer does it); with
 // the terminal focused, plain Ctrl keys reach the program in it, read as the
-// bytes a raw `head` wrote; and keys.conf, a scratch $MINICODE_KEYS, moves
+// bytes a raw `head` wrote; and keys.conf, a scratch $MUTIBLE_KEYS, moves
 // the real accelerators, the tree's keys and the hints.
 #include "Harness.h"
 
@@ -15,7 +15,7 @@
 #include "Keys.h"
 #include "PalettePanel.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #include <algorithm>
 #include <vte/vte.h>
@@ -157,7 +157,7 @@ void walkMenu(GMenuModel* model, std::vector<std::pair<std::string, std::string>
     }
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 VteTerminal* findVte(GtkWidget* root) {
     if (!root) return nullptr;
     if (VTE_IS_TERMINAL(root)) return VTE_TERMINAL(root);
@@ -302,7 +302,7 @@ MC_GUI_SUITE(keys) {
     });
     MCGuiWait("the editor shows it", 10, [] {
         return MCGuiApp().editor->currentPath() == Keys::path() &&
-               MCGuiEditorText().rfind("# minicode keyboard shortcuts", 0) == 0;
+               MCGuiEditorText().rfind("# mutible keyboard shortcuts", 0) == 0;
     });
     MCGuiStep("every line is commented out, so the keys are the defaults", [] {
         const std::string text = MCGuiReadFile(Keys::path());
@@ -500,7 +500,7 @@ MC_GUI_SUITE(keys) {
     });
     MCGuiWait("it ran", 10, [] { return gRuns["win.hoverinfo"] == 1; });
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // ---- with the terminal focused
     MCGuiStep("Ctrl+` opens the terminal with the keyboard", [] {
         MCGuiClick(MCGuiApp().editor->textView());
@@ -607,7 +607,7 @@ MC_GUI_SUITE(keys) {
                      "ctrl+shift+v = -\n"
                      "f2 = -renameFile\n"
                      "ctrl+alt+r = renameFile\n"
-                     "cmd+k = minicode.toggleBrowser\n");
+                     "cmd+k = mutible.toggleBrowser\n");
     });
     MCGuiWait("the accelerators follow", 10, [] {
         return bound("win.togglepreview") == canon("<Ctrl><Alt>j");

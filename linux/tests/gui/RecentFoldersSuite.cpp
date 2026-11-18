@@ -1,5 +1,5 @@
 // RecentFoldersSuite.cpp — recent folders and the dock icon's menu
-// (`./build/minicode-guitest recent_folders`, linux/HANDOFF.md item 69; the
+// (`./build/mutible-guitest recent_folders`, linux/HANDOFF.md item 69; the
 // Mac's File > Open Recent).
 // Everything is in a scratch world: $XDG_STATE_HOME, $XDG_DATA_HOME and
 // $XDG_DATA_DIRS (holding a fake installed desktop file) are set to folders
@@ -8,7 +8,7 @@
 // folder chooser is answered by the check (MCGuiAnswerFolderChooser).
 //   - the list: newest first, one entry a folder by its resolved path (a
 //     symlink to a folder is that folder), 20 at most, folders that are gone
-//     left out, nothing noted under MINICODE_BENCH;
+//     left out, nothing noted under MUTIBLE_BENCH;
 //   - File > Open Recent: the submenu lists them and ends with Clear
 //     Recently Opened; an item, and Ctrl+R's pick, bring forward the window
 //     on the folder, else move the window in front to it (asking about
@@ -18,7 +18,8 @@
 //     with a space quoted, a hostile name quoted per the spec), kept
 //     current as the list changes, a file without the marker left alone,
 //     window.dock-menu = false removing the copy, no installed file and
-//     nothing written;
+//     nothing written, and the copy minicode wrote before 1.6.0 removed only
+//     while it carries the old marker;
 //   - `--open-folder` through the command line: the chooser's folder gets a
 //     window (and no window for the current folder), a cancel gets nothing;
 //   - `--new-window`: always a window, on a path, on the front window's
@@ -99,10 +100,10 @@ bool has(const std::vector<std::string>& v, const std::string& s) {
 const char* kInstalled =
     "[Desktop Entry]\n"
     "Type=Application\n"
-    "Name=MiniCode\n"
-    "Exec=/opt/mc/bin/minicode %f\n"
-    "Icon=org.minicode.Editor\n"
-    "StartupWMClass=org.minicode.Editor\n";
+    "Name=mutible\n"
+    "Exec=/opt/mc/bin/mutible %f\n"
+    "Icon=ai.ible.Mutible\n"
+    "StartupWMClass=ai.ible.Mutible\n";
 
 std::string expected(const std::vector<std::string>& folders) {
     std::string actions = "Actions=open-folder;new-window;";
@@ -112,11 +113,11 @@ std::string expected(const std::vector<std::string>& folders) {
         n++;
         actions += "recent-" + std::to_string(n) + ";";
         tail += "\n[Desktop Action recent-" + std::to_string(n) + "]\nName=" + tilde(f) +
-                "\nExec=/opt/mc/bin/minicode \"" + f + "\"\n";
+                "\nExec=/opt/mc/bin/mutible \"" + f + "\"\n";
     }
-    return std::string(kInstalled) + actions + "\nX-Minicode-Generated=true\n\n"
-           "[Desktop Action open-folder]\nName=Open Folder…\nExec=/opt/mc/bin/minicode --open-folder\n\n"
-           "[Desktop Action new-window]\nName=New Window\nExec=/opt/mc/bin/minicode --new-window\n" + tail;
+    return std::string(kInstalled) + actions + "\nX-Mutible-Generated=true\n\n"
+           "[Desktop Action open-folder]\nName=Open Folder…\nExec=/opt/mc/bin/mutible --open-folder\n\n"
+           "[Desktop Action new-window]\nName=New Window\nExec=/opt/mc/bin/mutible --new-window\n" + tail;
 }
 
 void closeExtraWindows() {
@@ -156,18 +157,18 @@ int gWant = 0;
 MC_GUI_SUITE(recent_folders) {
     MCGuiStep("a scratch world: state, data and a fake installed desktop file", [] {
         gBase = rp(MCGuiScratch()) + "/recent";
-        gDesktop = gBase + "/data/applications/org.minicode.Editor.desktop";
-        gSys = gBase + "/sys/applications/org.minicode.Editor.desktop";
+        gDesktop = gBase + "/data/applications/ai.ible.Mutible.desktop";
+        gSys = gBase + "/sys/applications/ai.ible.Mutible.desktop";
         setEnv("XDG_STATE_HOME", gBase + "/state");
         setEnv("XDG_DATA_HOME", gBase + "/data");
         setEnv("XDG_DATA_DIRS", gBase + "/sys");
-        setEnv("MINICODE_BENCH", "");
-        EnvLock::envUnset("MINICODE_BENCH");
+        setEnv("MUTIBLE_BENCH", "");
+        EnvLock::envUnset("MUTIBLE_BENCH");
         MCGuiWriteFile(gSys, kInstalled);
         MCGuiSetSettings("lsp.enabled = false\n");
         gWindows = MCGuiAppWindows().size();
         RecentList::clear();
-        GCHECK(RecentList::file() == gBase + "/state/minicode/recent-folders.json");
+        GCHECK(RecentList::file() == gBase + "/state/mutible/recent-folders.json");
         GCHECK(RecentList::folders().empty());
     });
 
@@ -214,12 +215,12 @@ MC_GUI_SUITE(recent_folders) {
         RecentList::note(gBase + "/file.txt");
         GCHECK(!has(RecentList::folders(), gBase + "/file.txt"));
     });
-    MCGuiStep("nothing is noted under MINICODE_BENCH", [] {
+    MCGuiStep("nothing is noted under MUTIBLE_BENCH", [] {
         const std::vector<std::string> before = RecentList::folders();
-        EnvLock::envSet("MINICODE_BENCH", "1");
+        EnvLock::envSet("MUTIBLE_BENCH", "1");
         RecentList::note(dir("bench"));
         GCHECK(RecentList::folders().empty());   // and none listed
-        EnvLock::envUnset("MINICODE_BENCH");
+        EnvLock::envUnset("MUTIBLE_BENCH");
         GCHECK(RecentList::folders() == before);   // the file was not written
     });
 
@@ -239,7 +240,7 @@ MC_GUI_SUITE(recent_folders) {
         RecentList::note(dir("sp ace"));
         GCHECK(DockMenu::installedFile() == gSys);
         GCHECK_EQ_STR(MCGuiReadFile(gDesktop), expected({dir("sp ace"), dir("a")}));
-        GCHECK(MCGuiReadFile(gDesktop).find("Exec=/opt/mc/bin/minicode \"" + dir("sp ace") + "\"\n") !=
+        GCHECK(MCGuiReadFile(gDesktop).find("Exec=/opt/mc/bin/mutible \"" + dir("sp ace") + "\"\n") !=
                std::string::npos);
     });
     MCGuiStep("it follows the list, ten folders at most, Clear empties the recents", [] {
@@ -281,6 +282,30 @@ MC_GUI_SUITE(recent_folders) {
         setEnv("XDG_DATA_DIRS", gBase + "/sys");
         RecentList::note(dir("b"));
         GCHECK(MCGuiFileExists(gDesktop));
+    });
+    // Before 1.6.0 the copy was minicode's (src/Rename.h).
+    MCGuiStep("minicode's old copy goes when it carries the old marker", [] {
+        const std::string old = gBase + "/data/applications/org.minicode.Editor.desktop";  // rename-mutible: keep
+        GCHECK(DockMenu::oldGeneratedFile() == old);
+        MCGuiWriteFile(old, "[Desktop Entry]\nName=MiniCode\nExec=/opt/mc/bin/minicode %f\n"  // rename-mutible: keep
+                            "Actions=new-window;\nX-Minicode-Generated=true\n");  // rename-mutible: keep
+        RecentList::note(dir("a"));
+        GCHECK(!MCGuiFileExists(old));
+        GCHECK_EQ_STR(MCGuiReadFile(gDesktop), expected({dir("a"), dir("b"), dir("c")}));
+        GCHECK(!DockMenu::removeOldCopy());   // nothing left to remove
+    });
+    MCGuiStep("an old file without the marker is the user's own and stays", [] {
+        const std::string old = DockMenu::oldGeneratedFile();
+        const std::string mine = "[Desktop Entry]\nName=Mine\nExec=/mine\n";
+        MCGuiWriteFile(old, mine);
+        RecentList::note(dir("b"));
+        GCHECK(!DockMenu::removeOldCopy());
+        GCHECK_EQ_STR(MCGuiReadFile(old), mine);
+        MCGuiSetSettings("lsp.enabled = false\nwindow.dock-menu = false\n");
+        GCHECK_EQ_STR(MCGuiReadFile(old), mine);
+        MCGuiSetSettings("lsp.enabled = false\n");
+        g_remove(old.c_str());
+        GCHECK_EQ_STR(MCGuiReadFile(gDesktop), expected({dir("b"), dir("a"), dir("c")}));
     });
 
     // ---- File > Open Recent
@@ -425,7 +450,7 @@ MC_GUI_SUITE(recent_folders) {
         GCHECK_EQ_STR(MCGuiReadFile(gDesktop), expected({}));
     });
 
-    // ---- minicode --open-folder
+    // ---- mutible --open-folder
     MCGuiStep("--open-folder asks the chooser, which starts in the home folder", [] {
         closeExtraWindows();
     });
@@ -462,7 +487,7 @@ MC_GUI_SUITE(recent_folders) {
         GCHECK(RecentList::folders()[0] == dir("chosen"));
     });
 
-    // ---- minicode --new-window
+    // ---- mutible --new-window
     MCGuiStep("--new-window adds a window on the folder a window already shows", [] {
         closeExtraWindows();
     });
@@ -505,12 +530,12 @@ MC_GUI_SUITE(recent_folders) {
     MCGuiStep("still four", [] { GCHECK(MCGuiAppWindows().size() == gWindows + 4); });
     MCGuiStep("the dock's New Window runs it, also from an installed file's own action", [] {
         const std::string text = MCGuiReadFile(gDesktop);
-        GCHECK(text.find("[Desktop Action new-window]\nName=New Window\nExec=/opt/mc/bin/minicode "
+        GCHECK(text.find("[Desktop Action new-window]\nName=New Window\nExec=/opt/mc/bin/mutible "
                          "--new-window\n") != std::string::npos);
         const std::string own = std::string(kInstalled) +
-            "Actions=new-window;\n\n[Desktop Action new-window]\nName=Nouvelle\nExec=/opt/mc/bin/minicode\n";
+            "Actions=new-window;\n\n[Desktop Action new-window]\nName=Nouvelle\nExec=/opt/mc/bin/mutible\n";
         const std::string out = DockMenu::render(own, {}, "/home/u");
-        GCHECK(out.find("Exec=/opt/mc/bin/minicode --new-window\n") != std::string::npos);
+        GCHECK(out.find("Exec=/opt/mc/bin/mutible --new-window\n") != std::string::npos);
         GCHECK(out.find("Name=Nouvelle") == std::string::npos);
         GCHECK(out.find("[Desktop Action new-window]") == out.rfind("[Desktop Action new-window]"));
         GCHECK(out.find("Actions=open-folder;new-window;\n") != std::string::npos);

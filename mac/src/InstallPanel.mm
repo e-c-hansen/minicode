@@ -23,12 +23,12 @@ static NSString *NS(const std::string &s) { return [NSString stringWithUTF8Strin
 static std::string Std(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 
 NSPasteboard *MCInstallPasteboard(void) {
-    NSString *name = MCEnvironment()[@"MINICODE_PASTEBOARD"];
+    NSString *name = MCEnvironment()[@"MUTIBLE_PASTEBOARD"];
     return name.length ? [NSPasteboard pasteboardWithName:name] : [NSPasteboard generalPasteboard];
 }
 
 BOOL MCInstallerAvailable(NSString *program) {
-    NSString *fake = MCEnvironment()[@"MINICODE_INSTALL_HAVE"];
+    NSString *fake = MCEnvironment()[@"MUTIBLE_INSTALL_HAVE"];
     if (fake) return [[fake componentsSeparatedByString:@","] containsObject:program];
     return MCFindProgram(program) != nil;
 }
@@ -227,7 +227,7 @@ static void CollectText(NSView *v, NSMutableArray<NSString *> *out) {
         }
         [stack addArrangedSubview:Text(
             @"Run in Terminal types the command into the terminal; press Return there to run "
-            @"it. minicode finds the program by itself once it is installed, with no restart.",
+            @"it. mutible finds the program by itself once it is installed, with no restart.",
             Small(), IHex(0x9D9D9D), inner)];
         [stack addArrangedSubview:Link(@"", [NSString stringWithFormat:@"%@'s website",
                                                                        NS(tool->name)],
@@ -368,7 +368,7 @@ const CGFloat kMCInstallBarHeight = 30;
     _close = [NSButton buttonWithTitle:@"×" target:self action:@selector(close:)];
     _close.bordered = NO;
     _close.font = [NSFont systemFontOfSize:15];
-    _close.toolTip = @"Close (it stays closed until minicode starts again)";
+    _close.toolTip = @"Close (it stays closed until mutible starts again)";
     _line = [NSView new];
     _line.wantsLayer = YES;
     _line.layer.backgroundColor = IHex(0x333333).CGColor;
@@ -390,7 +390,7 @@ const CGFloat kMCInstallBarHeight = 30;
         language];
     _label.toolTip = _label.stringValue;
     [self setButtons:@"Install…" mute:@"Don't Show Again"
-               close:@"Close (it stays closed until minicode starts again)"];
+               close:@"Close (it stays closed until mutible starts again)"];
 }
 
 - (void)setConsentEnvironment:(NSString *)env {
@@ -403,16 +403,16 @@ const CGFloat kMCInstallBarHeight = 30;
     _label.toolTip = [NSString stringWithFormat:
         @"Without it, completions and checks do not see the packages installed in %@. "
          "The answer is kept for this folder; Ask Again About This Folder's Tools in the "
-         "minicode menu takes it back.", env];
+         "mutible menu takes it back.", env];
     [self setButtons:@"Use It" mute:@"Don't Use It"
-               close:@"Ask again next time minicode starts"];
+               close:@"Ask again next time mutible starts"];
 }
 
 - (void)askAboutEnvironment:(NSString *)env question:(NSString *)question {
     self.consentEnvironment = env;
     if (!env || !question.length) return;
     _label.stringValue = question;
-    _label.toolTip = NS(FolderTools::environmentTooltip(Std(env), "minicode"));
+    _label.toolTip = NS(FolderTools::environmentTooltip(Std(env), "mutible"));
 }
 
 - (void)askAboutServer:(NSString *)key question:(NSString *)question {
@@ -423,9 +423,9 @@ const CGFloat kMCInstallBarHeight = 30;
     _label.toolTip = [NSString stringWithFormat:
         @"%@ Until then it runs without what would run the folder's code, or waits. The answer "
          "is kept for this folder, as for its .venv and node_modules; Ask Again About This "
-         "Folder's Tools in the minicode menu takes it back.", question ?: @""];
+         "Folder's Tools in the mutible menu takes it back.", question ?: @""];
     [self setButtons:@"Allow" mute:@"Don't Allow"
-               close:@"Ask again next time minicode starts"];
+               close:@"Ask again next time mutible starts"];
 }
 
 - (void)showMessage:(NSString *)text tip:(NSString *)tip button:(NSString *)button

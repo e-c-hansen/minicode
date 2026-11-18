@@ -2,11 +2,11 @@
 // Mac's tests/gui/Harness.h.
 //
 //   meson test -C build --suite gui          every suite
-//   ./build/minicode-guitest save tabs       some, with the output as it comes
+//   ./build/mutible-guitest save tabs       some, with the output as it comes
 //   SUITES="save tabs" meson test ...        the same through Meson
 //
-// build/minicode-guitest is the whole app (every object of the minicode
-// target, with main.cpp's main renamed minicode_main) plus the suites named
+// build/mutible-guitest is the whole app (every object of the mutible
+// target, with main.cpp's main renamed mutible_main) plus the suites named
 // in tests/gui/suites.txt. It runs in two stages, in one program:
 //
 //   - The wrapper (Wrapper.cpp, the program as started) makes a scratch
@@ -21,7 +21,7 @@
 //     scratch folders are deleted (MC_GUI_KEEP=1 keeps them).
 //   - The checks (Harness.cpp, MC_GUI_CHILD set) first refuse any display
 //     but that Xvfb: the peer of DISPLAY's socket must be the very process
-//     the wrapper started, and it must be an Xvfb. Then minicode_main runs
+//     the wrapper started, and it must be an Xvfb. Then mutible_main runs
 //     with the scratch project folder as its argument, so the window opens
 //     as it would for a user, and the suites are played from the GLib main
 //     loop once it is on screen.
@@ -164,12 +164,12 @@ bool MCGuiCheckTime(double ms, double bound, const std::string& what, const char
 std::string MCGuiScratch();                              // the scratch root
 std::string MCGuiProject();                              // the folder the first window shows
 std::string MCGuiProjectFile(const std::string& name);   // a path in it
-std::string MCGuiBuildDir();                             // where minicode-guitest is
+std::string MCGuiBuildDir();                             // where mutible-guitest is
 void MCGuiWriteFile(const std::string& path, const std::string& text);   // makes folders
 std::string MCGuiReadFile(const std::string& path);      // "" when unreadable
 bool MCGuiFileExists(const std::string& path);
 void MCGuiSetSettings(const std::string& text);          // writes the file, has the app read it
-void MCGuiSetKeys(const std::string& text);              // keys.conf ($MINICODE_KEYS), the same
+void MCGuiSetKeys(const std::string& text);              // keys.conf ($MUTIBLE_KEYS), the same
 // The text of the editor's buffer (the newest window's).
 std::string MCGuiEditorText();
 // A picture of a widget as drawn, written as <name>.png into
@@ -313,7 +313,7 @@ void MCGuiRunChild(const std::string& suite, const std::string& folder,
                    std::function<void(int status, std::string out)> done);
 // Another process's windows on this display (Input.cpp, by _NET_WM_PID):
 // a program the check started that is not this app, such as the real
-// build/minicode the detach suite runs.
+// build/mutible the detach suite runs.
 struct MCGuiOtherWindow {
     unsigned long id = 0;
     bool viewable = false;   // mapped, and every parent mapped

@@ -1,4 +1,4 @@
-// FoldingSuite.cpp — `./build/minicode-guitest folding`: code folding in the
+// FoldingSuite.cpp — `./build/mutible-guitest folding`: code folding in the
 // editor (linux/PARITY.md item 1.10, src/Folds.h), the counterpart of the
 // Mac's tests/gui/FoldingSuite.mm, with real keys and clicks through XTest:
 // Ctrl+Shift+[ folding the innermost region and then the next one out, the
@@ -24,7 +24,7 @@
 #include "PalettePanel.h"
 #include "Zoom.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #include <vte/vte.h>
 #endif
@@ -153,7 +153,7 @@ void bufferToWidget(int bx, int by, int* wx, int* wy) {
     gtk_text_view_buffer_to_window_coords(tv(), GTK_TEXT_WINDOW_WIDGET, bx, by, wx, wy);
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 VteTerminal* findVte(GtkWidget* root) {
     if (!root) return nullptr;
     if (VTE_IS_TERMINAL(root)) return VTE_TERMINAL(root);
@@ -577,7 +577,7 @@ MC_GUI_SUITE(folding) {
                shows("1 2 3 4 5 6 7 8 9 10 11 12 13 14 15");
     });
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // ---- the terminal keeps the keys (editor commands, D1)
     MCGuiStep("the caret in def f's body; the terminal, with the keyboard", [] {
         caretAt(L(5) + 9);

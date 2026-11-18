@@ -1,7 +1,7 @@
-// ShellIntegration.h — pure C++, header only. What minicode puts in the
+// ShellIntegration.h — pure C++, header only. What mutible puts in the
 // folder its terminals' zsh gets as ZDOTDIR (one per process and mode,
 // folderName): a copy of the integration script
-// (resources/minicode-zsh-integration.zsh, in the bundle's Resources and
+// (resources/mutible-zsh-integration.zsh, in the bundle's Resources and
 // beside the executable in build/) and a .zshenv that names the
 // terminal's mode and sources that copy. The script's protocol (the marks,
 // their nonce, the private keys below) is the app's, so the copy is the
@@ -13,7 +13,7 @@
 // The Linux port's terminal is VTE, which reads no OSC 133 or 633, so the
 // session's host reads them (SESSION-DESIGN.md stage 5): it owns the pty
 // and feeds VTE what the shell writes, and the marks of this script and the
-// bash one (linux/resources/minicode-bash-integration.bash) come from the
+// bash one (linux/resources/mutible-bash-integration.bash) come from the
 // same bytes, before VTE sees them (Shared::TermShell, SessionHost.h).
 #pragma once
 #include <cstddef>
@@ -23,23 +23,23 @@
 namespace ShellIntegration {
 
 // The folder, in the user's temporary folder, that a process's terminals of
-// one mode get as ZDOTDIR: "MiniCode-zsh-grid-<pid>-<start>" (grid mode) or
-// "MiniCode-zsh-<pid>-<start>" (line mode), with the time the process
+// one mode get as ZDOTDIR: "Mutible-zsh-grid-<pid>-<start>" (grid mode) or
+// "Mutible-zsh-<pid>-<start>" (line mode), with the time the process
 // started in whole seconds, against pid reuse. One per process, so two
-// minicodes running at once (the Homebrew copy and a build, or the old and
+// mutibles running at once (the Homebrew copy and a build, or the old and
 // new process of a restart) never source each other's script (older
-// minicodes all wrote their copy into one shared folder).
+// mutibles all wrote their copy into one shared folder).
 inline std::string folderName(bool grid, long long pid, long long start) {
-    return std::string(grid ? "MiniCode-zsh-grid-" : "MiniCode-zsh-") + std::to_string(pid) +
+    return std::string(grid ? "Mutible-zsh-grid-" : "Mutible-zsh-") + std::to_string(pid) +
            "-" + std::to_string(start);
 }
 
 // The process a folder's name gives; false for any other name (the shared
-// folders older minicodes write, "MiniCode-zsh-grid" and "MiniCode-zsh",
+// folders older mutibles write, "Mutible-zsh-grid" and "Mutible-zsh",
 // included: an older process may still be using them).
 inline bool parseFolderName(const std::string& name, long long* pid, long long* start) {
     std::string rest;
-    for (const char* prefix : {"MiniCode-zsh-grid-", "MiniCode-zsh-"}) {
+    for (const char* prefix : {"Mutible-zsh-grid-", "Mutible-zsh-"}) {
         const std::string p = prefix;
         if (name.compare(0, p.size(), p) == 0) { rest = name.substr(p.size()); break; }
     }
@@ -66,9 +66,9 @@ inline bool ownerGone(long long start, double startNow) {
 }
 
 // The script's file name, in Resources (or build/) and in the ZDOTDIR folder.
-inline const char *const kZshScriptName = "minicode-zsh-integration.zsh";
+inline const char *const kZshScriptName = "mutible-zsh-integration.zsh";
 // The Linux port's bash script (bash --rcfile), beside the zsh one.
-inline const char *const kBashScriptName = "minicode-bash-integration.bash";
+inline const char *const kBashScriptName = "mutible-bash-integration.bash";
 
 // Grid mode's private keys, sent only while ZLE reads input; the script
 // binds each in emacs, viins and vicmd (zsh_integration checks it).
@@ -87,8 +87,8 @@ inline const char *const kZleClearKey = "\x1b[9995~";
 // The .zshenv zsh reads first from ZDOTDIR. It is read with ZDOTDIR at its
 // own folder, which is where the script's copy is.
 inline std::string zshenvStub(bool grid) {
-    std::string s = "# Written by minicode for its terminal panel. Safe to delete.\n";
-    s += "typeset -g __minicode_mode=";
+    std::string s = "# Written by mutible for its terminal panel. Safe to delete.\n";
+    s += "typeset -g __mutible_mode=";
     s += grid ? "grid" : "line";
     s += "\nbuiltin source \"$ZDOTDIR/";
     s += kZshScriptName;
@@ -96,7 +96,7 @@ inline std::string zshenvStub(bool grid) {
     return s;
 }
 
-// A shell's nonce as the scripts get it in MINICODE_NONCE: the bytes (16,
+// A shell's nonce as the scripts get it in MUTIBLE_NONCE: the bytes (16,
 // so 128 random bits) as lower-case hex.
 inline std::string nonceHex(const unsigned char* raw, size_t n) {
     static const char hex[] = "0123456789abcdef";

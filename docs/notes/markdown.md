@@ -37,7 +37,7 @@ found through that list.
   before the side page's split (`MCFoldedRuns`), so a click changes the
   folded runs and the side page rebuilds just those pieces. State is
   `MCTab detailsOpen` by tag line; the summary's link is
-  `minicode-details:<tag line>:<run line>:<open>`, the run line giving a
+  `mutible-details:<tag line>:<run line>:<open>`, the run line giving a
   kept side piece's shift (`toggleMarkdownDetails:atIndex:inPage:`).
   Quotes carry `quoteDepth` and, inside a list item, `quoteIndent`; a quote
   keeps its own list stack (`quoteList`), and a fence in an item its depth.
@@ -193,7 +193,7 @@ found through that list.
   `attachmentCell` set in init reads back nil, so it is an override. **Web
   pictures** (`MCWebImageLoader`): https only (redirects too), one ephemeral
   NSURLSession (no cookies, credentials or cache; 15 s idle, 30 s total;
-  `User-Agent: MiniCode/<version>`), `data:image/` decoded in place,
+  `User-Agent: Mutible/<version>`), `data:image/` decoded in place,
   `markdown.web-images = false` off. The render never waits: alt text stands in
   (`kMarkdownWebImage`), the address joins `_awaitedWebImages`, and the
   notification queues one re-render 0.1 s later through
@@ -203,7 +203,7 @@ found through that list.
   nothing on disk. NSImage draws SVG; an SVG's `<image href>` is never fetched.
   Checked without the web: `markdown_preview` gives the loader's session (made
   at its first fetch from `ephemeralSessionConfiguration`, swapped for the
-  step) a URL protocol answering `https://pictures.minicode-test.invalid/`
+  step) a URL protocol answering `https://pictures.mutible-test.invalid/`
   half a second late, in both previews, and sees http never asked for.
 - **Video and audio** (2026-11-15, `MarkdownMedia.{h,mm}`, `md:media`):
   `MdRun::media` (1 video, 2 audio) from `<video>`/`<audio>` (src, else the
@@ -223,7 +223,7 @@ found through that list.
   preview render (a formula or picture arriving) does. The GUI checks make
   their own clip with AVAssetWriter (guitest links CoreVideo for it).
 - **Task lists** (all ports): `MdRun::task`; the Mac's box is an `MCTaskBox`
-  with `NSLinkAttributeName` `minicode-task:<line>` (`clickedOnCell:` never
+  with `NSLinkAttributeName` `mutible-task:<line>` (`clickedOnCell:` never
   fired), applied as a preview edit, never saved by itself (the user ruled out
   autosaving preview edits); a double-click's second click on a box is
   swallowed. Done text takes `markdown.done`. Toggle Task is Option+Cmd+L
@@ -295,8 +295,8 @@ false`) a formula shows as its TeX in the code style.
   formula fails them for 60 s with the reason at the page's top (`firstError`
   reads tectonic's panic when the bundle is out of reach). Failures stay in
   memory.
-- **Cache**: whole PDFs under `~/Library/Caches/MiniCode/math`
-  (`$MINICODE_MATH_CACHE`) with a `.idx`; formulas of a run share fonts (a PDF
+- **Cache**: whole PDFs under `~/Library/Caches/Mutible/math`
+  (`$MUTIBLE_MATH_CACHE`) with a `.idx`; formulas of a run share fonts (a PDF
   each was far bigger). Key: SHA-256 of `kVersion`, display or inline, and the
   TeX (pages stay vector, so no size). Past 50 MB, down to 40 MB.
 - **Drawing** (`MCMathAttachment`): vectors filled with the text color in
@@ -325,10 +325,10 @@ false`) a formula shows as its TeX in the code style.
 ### Mermaid in the preview (Mac)
 
 ```mermaid blocks go to the user's mermaid-cli (`mmdc`, MCFindProgram, or
-`$MINICODE_MMDC`), one run at a time off the main thread, each its own
+`$MUTIBLE_MMDC`), one run at a time off the main thread, each its own
 process group with 90 s (a run starts a headless browser, about 2.5 s):
 a transparent PNG at scale 2 in the preview's theme (dark or default),
-kept in memory and `~/Library/Caches/MiniCode/mermaid` (`$MINICODE_MERMAID_CACHE`;
+kept in memory and `~/Library/Caches/Mutible/mermaid` (`$MUTIBLE_MERMAID_CACHE`;
 50 MB). Chosen over a renderer of our own (flowchart and sequence alone are
 a layout engine) and over mermaid.js (third-party code). PNG, not PDF or
 SVG: mmdc 12 makes PDFs fit by default and refuses the older `--pdfFit`,
@@ -347,8 +347,8 @@ offers Download Mermaid (`MCMermaidDownloadLink`, `downloadMermaidForPreview`):
 one pinned `mermaid.min.js` (`MermaidDiagram::kMermaidJsVersion`, 12.3.0,
 from jsDelivr's npm mirror, `kMermaidJsSha256` checked against the npm
 tarball's file) into Application Support, refused unless its SHA-256 matches
-(`$MINICODE_MERMAID_DOWNLOAD` and `$MINICODE_MERMAID_SHA256` for checks;
-`$MINICODE_MERMAID_JS` uses a file as it is), and checked again once a
+(`$MUTIBLE_MERMAID_DOWNLOAD` and `$MUTIBLE_MERMAID_SHA256` for checks;
+`$MUTIBLE_MERMAID_JS` uses a file as it is), and checked again once a
 launch. `MCMermaidWeb` draws: one WKWebView never in a window, a
 non-persistent data store, the script as a user script, a content rule list
 blocking every subresource and a navigation delegate refusing every load

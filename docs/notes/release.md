@@ -14,10 +14,13 @@ found through that list.
   or cask, so Homebrew and Obtainium stay on the last full release. Ubuntu
   users get Linux changes only through a release of one kind or the other.
 - `scripts/ppa.sh VERSION [N]` builds the Ubuntu source package (`debian/`,
-  versions like `1.4.12-1~ppa1~resolute1`) in an ubuntu:26.04 container, signs
-  it on the Mac with the gpg key named in `~/.config/minicode/ppa-key-id`, and
+  versions like `1.6.0-1~ppa1~resolute1`) in an ubuntu:26.04 container, signs
+  it on the Mac with the gpg key named in `~/.config/mutible/ppa-key-id` (the
+  old `~/.config/minicode/ppa-key-id` is read while that is missing), and
   uploads it to `ppa:echansen/minicode` (`--dry-run` and `--simulate` send
-  nothing). Setup is in `packaging/PPA.md`. Account `echansen`, key
+  nothing). From 1.6.0 the source package is `mutible`, building `mutible`
+  and `minicode`, a transitional package that moves PPA users over (the PPA <!-- rename-mutible: keep -->
+  keeps its name; `packaging/PPA.md`, "What the packages hold"). Setup is in `packaging/PPA.md`. Account `echansen`, key
   340F7652...1F40 in the Mac's gpg with its passphrase in the Keychain;
   Launchpad builds amd64 about 35 minutes after an upload, and ppa.sh (so
   release.sh too) waits for it (`scripts/ppa-wait.sh VERSION [N]`, the PPA's
@@ -31,16 +34,28 @@ found through that list.
 
 ## Distribution
 
-- `e-c-hansen/minicode` (public); each `vX.Y.Z` GitHub Release carries the zip
+- `ible-ai/mutible` (public); each `vX.Y.Z` GitHub Release carries the zip
   and the signed APK.
-- `e-c-hansen/homebrew-tap` holds only `Casks/minicode.rb`, written by
-  `release.sh` from `packaging/minicode.rb` (the only copy anyone edits). The
+- `ible-ai/homebrew-tap` holds only `Casks/mutible.rb`, written by
+  `release.sh` from `packaging/mutible.rb` (the only copy anyone edits). The
   cask clears the quarantine flag in `postflight_steps` (Homebrew 7 deprecated
   `postflight`; `{{appdir}}` is the token); check edits with `brew style` in
-  `/opt/homebrew/Library/Taps/e-c-hansen/homebrew-tap`. Homebrew is the only
+  `/opt/homebrew/Library/Taps/ible-ai/homebrew-tap`. Homebrew is the only
   updater, so the cask must not declare `auto_updates` (a plain `brew upgrade`
   would skip it). Homebrew runs `lsregister` only when it reopens apps it quit;
   macOS registers a new bundle in /Applications itself.
+- The rename (1.6.0): the app was minicode, in `e-c-hansen/minicode` with <!-- rename-mutible: keep -->
+  the cask `e-c-hansen/tap/minicode`. That cask stays in the old tap as <!-- rename-mutible: keep -->
+  `packaging/minicode.rb`, deprecated (`deprecate!` with <!-- rename-mutible: keep -->
+  `replacement_cask: "ible-ai/tap/mutible"`, and caveats saying how to
+  move), never stamped again; `release.sh` writes it into the old tap when
+  it differs. The new cask links `mutible`, `mbl` and `minicode`, so it <!-- rename-mutible: keep -->
+  `conflicts_with` the old one, which links `minicode` too. The cask's <!-- rename-mutible: keep -->
+  `desc` is "Take back your space" (brew style refuses a full stop).
+  The Android APK keeps its name and key, and the PPA its name, through
+  the rename. Both casks load with
+  `brew ruby -e 'Cask::CaskLoader::FromPathLoader.new(Pathname(ARGV[0])).load(config: nil)' <file>`
+  (`brew info` refuses a path).
 - Not notarized (that needs the paid Apple Developer Program);
   `scripts/sign-and-notarize.sh` is ready.
 - The APK is signed with `~/.config/minicode/release.keystore` (password in the

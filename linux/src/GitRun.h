@@ -10,7 +10,7 @@
 // it started along with it; a command that talks to a remote
 // (Git::talksToRemote: fetch, pull, push) gets a session of its own too, as
 // the Mac's POSIX_SPAWN_SETSID gives it, so it has no controlling terminal:
-// ssh cannot ask for a passphrase or a host key on the terminal minicode was
+// ssh cannot ask for a passphrase or a host key on the terminal mutible was
 // started from, and fails at once instead, as git does for a password with
 // GIT_TERMINAL_PROMPT=0 (GitUi::gitEnvironment).
 #pragma once

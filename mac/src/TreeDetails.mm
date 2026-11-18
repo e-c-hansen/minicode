@@ -15,7 +15,7 @@ NSUserDefaults *MCAppDefaults(void) {
     // getenv, not NSProcessInfo's environment, which builds the whole
     // dictionary on every call: this runs for every terminal and editor font
     // lookup (the zoom), and was most of a terminal frame's drawing time.
-    const char *env = getenv("MINICODE_DEFAULTS_SUITE");
+    const char *env = getenv("MUTIBLE_DEFAULTS_SUITE");
     if (!env || !*env) return [NSUserDefaults standardUserDefaults];
     NSString *suite = @(env);
     static NSUserDefaults *scratch;
@@ -229,7 +229,7 @@ NSString *MCSavedPhrase(NSDate *date, NSDate *now) {
     if ((self = [super init])) {
         _cache = std::make_shared<FolderSizes::SizeCache>();
         _stop = std::make_shared<std::atomic<bool>>(false);
-        _queue = dispatch_queue_create("org.minicode.folder-sizes", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("ai.ible.mutible.folder-sizes", DISPATCH_QUEUE_SERIAL);
         dispatch_set_target_queue(_queue, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
         _pending = [NSMutableArray array];
         _lastKnown = [NSMutableDictionary dictionary];

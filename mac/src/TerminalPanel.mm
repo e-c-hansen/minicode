@@ -194,7 +194,7 @@ static const int kResizeCells = 4;
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(applySettings)
                    name:MCSettingsDidChangeNotification object:nil];
-        // A terminal marked waiting or done (`minicode notify`): its tab's dot.
+        // A terminal marked waiting or done (`mutible notify`): its tab's dot.
         [[NSNotificationCenter defaultCenter]
             addObserver:self selector:@selector(reloadStrip)
                    name:MCTerminalAttentionDidChangeNotification object:nil];
@@ -562,7 +562,7 @@ static NSString *MCAskTerminalName(TerminalView *t) {
 }
 - (void)tabMenuClose:(NSMenuItem *)item { [self closeTabAsking:(NSUInteger)item.tag]; }
 
-// Cmd+T while a terminal has the keyboard (minicode.terminal.newTab, run by
+// Cmd+T while a terminal has the keyboard (mutible.terminal.newTab, run by
 // the key monitor): a new terminal in a new tab, as Terminal.app's.
 - (void)newTerminalTab:(id)sender {
     (void)sender;

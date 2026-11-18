@@ -1,6 +1,6 @@
 // PreviewsSuite.mm — `make guitest SUITES=previews`: previews and editors
 // for more kinds of file (FileViewers.h): Quick Look in the editor's slot
-// for what minicode has no viewer for, Space in the tree for the Quick Look
+// for what mutible has no viewer for, Space in the tree for the Quick Look
 // panel, binary files never opened as text, and the acceptance checks of a
 // PDF, a .mov, a .docx and a .heic opened from Finder. Every fixture is
 // made here, in the scratch project: a PDF with PDFKit, PNG and HEIC with
@@ -837,7 +837,7 @@ namespace {
 
 NSString *const kJsonText =
     @"{\n"
-    @"  \"name\": \"minicode\",\n"
+    @"  \"name\": \"mutible\",\n"
     @"  \"tags\": [\"editor\", \"mac\"],\n"
     @"  \"nested\": {\"deep\": {\"k\": 1}}\n"
     @"}\n";
@@ -881,7 +881,7 @@ static void JsonSteps(void) {
         NSArray *rows = OutlineRows(p);
         GCHECK(rows.count == 4);
         GCHECK_EQ_STR(rows.count ? rows[0] : nil, @"root {3}");
-        GCHECK_EQ_STR(rows.count > 1 ? rows[1] : nil, @"name \"minicode\"");
+        GCHECK_EQ_STR(rows.count > 1 ? rows[1] : nil, @"name \"mutible\"");
         GCHECK_EQ_STR(rows.count > 2 ? rows[2] : nil, @"tags [2]");
         GCHECK_EQ_STR(rows.count > 3 ? rows[3] : nil, @"nested {1}");
         GCHECK_EQ_STR(p.statusText, @"8 values");
@@ -893,7 +893,7 @@ static void JsonSteps(void) {
         [c.window makeFirstResponder:p.outline];
         [p selectRow:1];
         NSTextView *tv = EditorText(c);
-        GCHECK_EQ_STR([tv.string substringWithRange:tv.selectedRange], @"\"name\": \"minicode\"");
+        GCHECK_EQ_STR([tv.string substringWithRange:tv.selectedRange], @"\"name\": \"mutible\"");
         GCHECK(c.window.firstResponder == p.outline);
         [p selectRow:2];
         GCHECK_EQ_STR([tv.string substringWithRange:tv.selectedRange],

@@ -9,14 +9,14 @@
 // - Read only. Nothing here writes, moves or deletes anything; the Fs has no
 //   way to.
 // - The format is Claude Code's own and will change. A `Format` turns one line
-//   into a `Line` of the few things MiniCode uses (who wrote it, when, in
+//   into a `Line` of the few things Mutible uses (who wrote it, when, in
 //   which folder, and its text, tool calls and tool results); anything else in
 //   the line is ignored, and a line that is not one well-formed JSON object is
 //   skipped and counted, never fatal. `claudeCode()` is the only format so
 //   far; another agent's transcripts would be a second Format, and the index
 //   and evidence code would not change.
 // - Nothing large is kept. A line is skimmed, not parsed into a tree: values
-//   MiniCode does not need (a Write's whole file, a Bash command's output, the
+//   Mutible does not need (a Write's whole file, a Bash command's output, the
 //   copies of each request Claude Code logs) are stepped over without being
 //   decoded. A tool result's output is remembered as a `Span`, its place in
 //   the file, and read back on demand by `readOutput`, which reads only the
@@ -81,7 +81,7 @@ struct Block {
     // ToolUse: the call's id and tool name. ToolResult: the id it answers.
     std::string id;
     std::string name;
-    // ToolUse input, only the fields MiniCode uses, each cut at kInputCap:
+    // ToolUse input, only the fields Mutible uses, each cut at kInputCap:
     // file_path (or notebook_path), command, description.
     std::string filePath;
     std::string command;

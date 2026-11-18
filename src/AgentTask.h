@@ -6,7 +6,7 @@
 // AgentTaskBar.mm drives it.
 //
 // The flow: the user types a prompt (and keeps or edits the name made from
-// it); minicode adds a worktree from HEAD at <folder>/.claude/worktrees/<name>
+// it); mutible adds a worktree from HEAD at <folder>/.claude/worktrees/<name>
 // on a new branch <name>, where Claude Code's own worktrees are and where the
 // Agents panel and the file tree's Worktrees node look, then opens a
 // terminal tab running `cd <worktree> && <agent.command> <prompt>`. The
@@ -40,7 +40,7 @@ std::string uniqueName(const std::string &base,
 std::string worktreePath(const std::string &folder, const std::string &name);
 
 // Whether `path` is in Claude Code's own folder, <home>/.claude, which
-// minicode never writes (a window on the home folder would put its tasks
+// mutible never writes (a window on the home folder would put its tasks
 // there). Paths compared as given, with or without a trailing '/'.
 bool insideClaudeHome(const std::string &path, const std::string &home);
 

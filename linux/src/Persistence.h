@@ -5,8 +5,8 @@
 //
 // Sessions. A window opening on a folder gets that folder's tabs back: their
 // files in order, the one on show, the preview tab (as one), and each tab's
-// selection and view. They are kept in $XDG_STATE_HOME/minicode/sessions.json
-// (~/.local/state/minicode), keyed by the folder's resolved path, for the 50
+// selection and view. They are kept in $XDG_STATE_HOME/mutible/sessions.json
+// (~/.local/state/mutible), keyed by the folder's resolved path, for the 50
 // folders used most recently (TabSessions.h). Only the tab on show is read
 // then; the others are read when first shown, and one holding no plain file,
 // or one over 16 MB, is never the one put on show at launch. Files gone are
@@ -86,11 +86,11 @@ public:
 
     // A folder's key: its path with symlinks resolved, as the Mac's.
     static std::string keyFor(const std::string& root);
-    // $XDG_STATE_HOME/minicode/sessions.json.
+    // $XDG_STATE_HOME/mutible/sessions.json.
     static std::string sessionsFile();
     // `s` as the session of the folder keyed `key` in that file (none when
     // it has no tabs), the other folders' entries kept: read and written
-    // back under a lock, since every minicode process saves into the one
+    // back under a lock, since every mutible process saves into the one
     // file.
     static void putSession(const std::string& key, const TabSessions::Session& s);
     // The windows a launch that opens nothing brings back, front first, kept

@@ -6,7 +6,7 @@ the Kotlin checks, and the Android release APK) and a seventh, **CI passed**,
 which is green only when all six are. **Android is frozen** (owner,
 2026-11-17): its two jobs run only when CI is started by hand (Actions >
 CI > Run workflow), CI passed waits for the other four, and releases go
-out without an APK (release.sh sets `MINICODE_NO_APK=1` unless it is
+out without an APK (release.sh sets `MUTIBLE_NO_APK=1` unless it is
 set to the empty string). The comment above the jobs in
 ci.yml says how to unfreeze. CLAUDE.md ("Build, test, run,
 release" and "Verification reality", with the rest in
@@ -319,6 +319,11 @@ merged only once **CI passed** is green on that exact commit, never with
 from a commit whose CI already passed. A pull request with no run (one the
 Demos workflow opened before `scripts/demos-propose.sh` started CI itself)
 gets one by hand: `gh workflow run CI --ref <branch>`.
+
+Since the rename (1.6.0) the repo is `ible-ai/mutible`; GitHub redirects
+the old `e-c-hansen/minicode` URLs. Branch protection moves with the repo, <!-- rename-mutible: keep -->
+but check it is still on after the move (`gh api
+repos/ible-ai/mutible/branches/main/protection`).
 
 A run took about 21 minutes until 2026-11-17 (see "What makes a run
 quick" for now), and a merge waits that long after the last push to its

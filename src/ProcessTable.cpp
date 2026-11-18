@@ -81,7 +81,7 @@ SampleStats Tracker::sample(Source& source, double now, const std::vector<Termin
     for (const Terminal& t : terminals)
         if (t.shellPid > 0) shells.insert(t.shellPid);
 
-    // minicode's own tree (its shells, language servers, git): never "not
+    // mutible's own tree (its shells, language servers, git): never "not
     // started here".
     std::set<int> appTree;
     {
@@ -621,7 +621,7 @@ StopPlan planStop(const std::vector<Basic>& table, const Key& target, int selfPi
     }
     if (!t) { plan.refusal = "it has already exited"; return plan; }
     if (t->pid <= 1) { plan.refusal = "launchd and the kernel are never stopped"; return plan; }
-    if (t->pid == selfPid) { plan.refusal = "that is minicode itself"; return plan; }
+    if (t->pid == selfPid) { plan.refusal = "that is mutible itself"; return plan; }
     if (shells.count(t->pid)) {
         plan.refusal = "that is a terminal's shell: close the terminal instead";
         return plan;

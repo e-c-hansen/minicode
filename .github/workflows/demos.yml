@@ -111,7 +111,7 @@ jobs:
         working-directory: linux
         run: |
           meson setup build -Dterminal=enabled -Dbrowser=enabled -Dpdf=enabled
-          meson compile -C build minicode-guitest
+          meson compile -C build mutible-guitest
 
       # Each scene is a "_demo_" suite of linux/tests/gui/DemoSuite.cpp,
       # played on the harness's own Xvfb while ffmpeg records the window.
@@ -129,7 +129,7 @@ jobs:
           for s in tour terminal markdown git files settings; do
             if [ -n "$WANTED" ] && ! printf ' %s ' "$WANTED" | grep -q " $s "; then continue; fi
             echo "== $s"
-            ./build/minicode-guitest "_demo_$s" || { echo "demos: $s failed" >&2; status=1; }
+            ./build/mutible-guitest "_demo_$s" || { echo "demos: $s failed" >&2; status=1; }
           done
           exit $status
 

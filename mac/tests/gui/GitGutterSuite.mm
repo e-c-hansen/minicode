@@ -239,7 +239,7 @@ MC_GUI_SUITE(git_gutter) {
 
     MCGuiStep(@"editor.git-gutter off: no lane, no bars", ^{
         savedSettings = [NSString stringWithContentsOfFile:
-                             NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"]
+                             NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"]
                                                   encoding:NSUTF8StringEncoding error:nil] ?: @"";
         GCHECK([c showFile:g]);
         MCGuiSetSettings([savedSettings stringByAppendingString:@"\neditor.git-gutter = off\n"]);

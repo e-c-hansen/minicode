@@ -773,7 +773,7 @@ MC_GUI_SUITE(inlay_hints) {
         GCHECK([(id)item.target validateMenuItem:item] && item.state == NSControlStateValueOn);
         GCHECK([NSApp sendAction:item.action to:item.target from:item]);
         NSString *file = [NSString stringWithContentsOfFile:
-            NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"]
+            NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"]
                                                   encoding:NSUTF8StringEncoding error:NULL];
         GCHECK([file containsString:@"editor.inlay-hints = off"]);
     });

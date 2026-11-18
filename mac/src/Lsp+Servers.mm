@@ -452,10 +452,10 @@ static NSString *StateText(MCLspState state) {
     // A server registered or dropped file watchers: the folders watched
     // follow, once the request it came in has been answered.
     c.setFileWatching(true);
-    // MINICODE_LSP_SYNC_CHECK=1: after every ranged didChange the whole
+    // MUTIBLE_LSP_SYNC_CHECK=1: after every ranged didChange the whole
     // buffer is compared with the copy the server was given (a debugging
     // switch; the copy is otherwise trusted between saves).
-    if (getenv("MINICODE_LSP_SYNC_CHECK")) c.setCheckSync(true);
+    if (getenv("MUTIBLE_LSP_SYNC_CHECK")) c.setCheckSync(true);
     c.onWatchersChanged = [weakSelf] {
         dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateFileWatcher]; });
     };
@@ -477,7 +477,7 @@ static NSString *StateText(MCLspState state) {
         if (s && !s.stopping) [weakSelf progressChanged:s];
     };
     c.onProtocolError = [weakServer](const std::string &problem) {
-        NSLog(@"MiniCode: %@: %s", weakServer.name, problem.c_str());
+        NSLog(@"Mutible: %@: %s", weakServer.name, problem.c_str());
     };
     server.onExit = ^(MCLspServer *s) { [weakSelf serverExited:s]; };
     // The folder as the server sees it is spelled as didOpen spells files
@@ -580,7 +580,7 @@ static NSString *StateText(MCLspState state) {
     if (-[server.started timeIntervalSinceNow] > kCrashForgiven) e.crashes = 0;
     e.crashes++;
     e.message = server.exitDescription;
-    NSLog(@"MiniCode: %@ %@", server.name, server.exitDescription);
+    NSLog(@"Mutible: %@ %@", server.name, server.exitDescription);
     if (e.crashes <= kMaxAutomaticRestarts) {
         e.state = MCLspStateRestarting;
         NSUInteger gen = ++e.generation;

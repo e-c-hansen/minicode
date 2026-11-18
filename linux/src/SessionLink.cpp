@@ -36,18 +36,18 @@ gboolean dispatchOnMain(gpointer) {
     gDispatchQueued = false;
     gClient->dispatch();
     for (const std::string& e : gClient->takeErrors())
-        g_printerr("minicode: the session's host: %s\n", e.c_str());
+        g_printerr("mutible: the session's host: %s\n", e.c_str());
     return G_SOURCE_REMOVE;
 }
 
 void start() {
-    const char* mode = std::getenv("MINICODE_HOST");
+    const char* mode = std::getenv("MUTIBLE_HOST");
     gLoopback = mode && std::string(mode) == "loopback";
-    const char* delay = std::getenv("MINICODE_HOST_DELAY_US");
+    const char* delay = std::getenv("MUTIBLE_HOST_DELAY_US");
     const unsigned delayUs = delay ? (unsigned)std::strtoul(delay, nullptr, 10) : 0;
     if (gLoopback)
-        g_printerr("minicode: the session's host: every message through the protocol's encoding\n");
-    if (delayUs) g_printerr("minicode: the session's host: each message %u us late\n", delayUs);
+        g_printerr("mutible: the session's host: every message through the protocol's encoding\n");
+    if (delayUs) g_printerr("mutible: the session's host: each message %u us late\n", delayUs);
     gClient = new Shared::Client(Model::Unit::CodePoint, "gtk");
     // The host's messages arrive on its thread; the main loop dispatches
     // them, once per batch.
@@ -59,7 +59,7 @@ void start() {
     gId = gHost->connect();
     gClient->connect([](Shared::Message&& m) { gHost->post(gId, wire(std::move(m))); });
     // The Welcome, with the base of this renderer's ids (Client::newId).
-    if (!gClient->settle()) g_printerr("minicode: the session's host did not answer\n");
+    if (!gClient->settle()) g_printerr("mutible: the session's host did not answer\n");
 }
 
 std::uint64_t hostWindow(std::uint64_t window) {

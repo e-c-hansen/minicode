@@ -116,7 +116,7 @@ static void testFormatCoverage() {
 
     GROUP("format:fallback-rule");
     {
-        // A kind of file minicode formats nothing of: the server may.
+        // A kind of file mutible formats nothing of: the server may.
         CHECK(serverMayFormat("", Plan()));
         // Markdown with no Prettier set up: the server may.
         CHECK(serverMayFormat("markdown", plan("markdown", "", "/w/a.md", "/w", none)));
@@ -136,9 +136,9 @@ static void testFormatCoverage() {
                                         std::string("shell"), std::string("latex")})
             CHECK(!serverMayFormat(lang, plan(lang, "", "/w/a", "/w", none)));
         // The notes.
-        CHECK(unplannedMessage("", "toml") == "minicode has no formatter for .toml files.");
+        CHECK(unplannedMessage("", "toml") == "mutible has no formatter for .toml files.");
         CHECK(unplannedMessage("markdown", "md") ==
-              "minicode formats Markdown files only in projects set up for Prettier, or when "
+              "mutible formats Markdown files only in projects set up for Prettier, or when "
               "the settings say format.markdown = prettier (your own Prettier) or give a "
               "command of your own.");
         CHECK(unplannedMessage("css", "css").find("Prettier or Biome") != std::string::npos);

@@ -30,7 +30,7 @@ found through that list.
   when it shows, else the tab; the last tab calls `onEmpty`, which hides the
   pane), `selectNextTab:`/`selectPreviousTab:`/`selectTabNumber:` (with one
   tab passed on to the window's controller). Cmd+T is
-  `minicode.browser.newTab`, a page key whose selector only the pane
+  `mutible.browser.newTab`, a page key whose selector only the pane
   answers, so in a PDF, the editor or after a scroll in a page the key goes
   on to Go to Symbol in Workspace (now `NotPage`); View > New Browser Tab
   is `openBrowserTab:` from anywhere. A Command- or middle-clicked link
@@ -53,7 +53,7 @@ found through that list.
   address is shown again (`BrowserView openAddresses:`), and the tree's
   Open as Text skips that once (`gOpenBookmarkAsText`). The browser window
   is the window rooted at `browser.bookmarks` (~/Bookmarks): Finder's
-  bookmarks and `minicode https://...` go there (the launcher writes a
+  bookmarks and `mutible https://...` go there (the launcher writes a
   `web` request file, `MCTakeOpenRequest` reads it), made with the folder
   when missing, the page over the editor's side while no file is open.
   Save Page as Bookmark is Cmd+D, a page key whose selector only the pane
@@ -71,7 +71,7 @@ found through that list.
   palette now calls before reading a menu), a bookmark loading in the tab
   on show (`BrowserView showAddress:inNewTab:`, Command for a new tab).
   Finder keeps sending .url files to the default browser unless the
-  user picks minicode in Get Info (Info.plist only offers it, Alternate).
+  user picks mutible in Get Info (Info.plist only offers it, Alternate).
 - **The address bar** (2026-11-15, `PageCheck::typedAddress`,
   `page:typed-address`, the `browser_tabs` suite): one line
   (`usesSingleLineMode`, not wrapping, truncated in the middle while not

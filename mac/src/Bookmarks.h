@@ -1,8 +1,8 @@
 // Bookmarks.h — web bookmarks as files on the Mac (the rules are the core's
 // WebBookmark.h): where the bookmark folder is, reading a .url or .webloc
 // file's address, and writing a new .url file. A bookmark opened anywhere
-// (the tree, Finder, `minicode file.url`) loads in a browser tab, and
-// `minicode https://...` opens the window on the bookmark folder, the
+// (the tree, Finder, `mutible file.url`) loads in a browser tab, and
+// `mutible https://...` opens the window on the bookmark folder, the
 // browser window, with the page in a tab (EditorController+Bookmarks.mm).
 #import <Foundation/Foundation.h>
 

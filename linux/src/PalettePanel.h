@@ -8,7 +8,7 @@
 //         whose action is enabled when the palette opens (Ctrl+Shift+P, F1)
 //   ":"   a line of the file on show, "42", "42:7" or "42,7" (Ctrl+G)
 //   "@"   a symbol of the file on show, from its language server when one
-//         lists them, else minicode's own outline (SymbolOutline.h), "@:"
+//         lists them, else mutible's own outline (SymbolOutline.h), "@:"
 //         grouped by kind (Ctrl+Shift+O)
 //   "#"   a symbol anywhere in the folder, from every language server
 //         running in the window (Ctrl+T)
@@ -33,7 +33,7 @@
 // listFiles: Find in Folder's skips and ignore files, dotfiles listed,
 // symlinked folders once, at most 20,000), which closing the palette stops.
 // The commands run lately and the files Quick Open opened persist in
-// $XDG_STATE_HOME/minicode/palette.json (PARITY.md D11), for every window.
+// $XDG_STATE_HOME/mutible/palette.json (PARITY.md D11), for every window.
 //
 // A pick list (showPick) puts a caller's own rows in place of the modes, as
 // VS Code's quick picks and the Mac's MCPalettePick: the branch picker

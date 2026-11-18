@@ -298,7 +298,7 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
     }
     RunFile::Activation act;
     if (!python || !RunFile::activationFor(StdOf(python), &act)) return nil;
-    return @{@"MINICODE_VENV": NSOf(act.prefix), @"MINICODE_VENV_PROMPT": NSOf(act.prompt)};
+    return @{@"MUTIBLE_VENV": NSOf(act.prefix), @"MUTIBLE_VENV_PROMPT": NSOf(act.prompt)};
 }
 
 @end

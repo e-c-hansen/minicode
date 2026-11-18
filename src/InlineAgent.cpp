@@ -99,7 +99,7 @@ std::string editPrompt(const EditRequest& r) {
     const std::string& t = r.text;
     const size_t selStart = std::min(r.selStart, t.size());
     const size_t selEnd = std::max(selStart, std::min(r.selEnd, t.size()));
-    std::string p = "You are the inline agent of minicode, a code editor. The user pressed "
+    std::string p = "You are the inline agent of mutible, a code editor. The user pressed "
                     "Cmd+I in the file " + r.path + " and asked:\n\n" +
                     trim(r.request) + "\n\n" + earlierText(r.earlier);
 
@@ -758,7 +758,7 @@ bool sameChange(const std::u16string& base, const std::u16string& pending,
 }
 
 std::string commandPrompt(const CommandRequest& r) {
-    std::string p = "You are the inline agent in minicode's terminal. The user pressed Cmd+I in "
+    std::string p = "You are the inline agent in mutible's terminal. The user pressed Cmd+I in "
                     "a terminal running zsh on macOS, in the folder " + r.directory +
                     ", and asked:\n\n" + trim(r.request) + "\n\n" + earlierText(r.earlier);
     if (!trim(r.screen).empty()) {
@@ -807,7 +807,7 @@ std::string commandFrom(const std::string& output, std::string* note) {
 std::string taskPrompt(const TaskRequest& r) {
     const std::string req = trim(r.request);
     if (req.empty()) return "";
-    std::string p = req + "\n\n(Asked from minicode with Cmd+I";
+    std::string p = req + "\n\n(Asked from mutible with Cmd+I";
     if (!r.where.empty()) p += ", in " + r.where;
     p += ".";
     if (!r.path.empty() && r.where.find(r.path) == std::string::npos)

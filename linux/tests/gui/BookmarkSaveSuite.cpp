@@ -1,4 +1,4 @@
-// BookmarkSaveSuite.cpp — saving pages as bookmarks (`./build/minicode-guitest
+// BookmarkSaveSuite.cpp — saving pages as bookmarks (`./build/mutible-guitest
 // bookmark_save`, PARITY.md 4.8, second part; the Mac's bookmarks suite).
 // Pages come from a server inside this process on 127.0.0.1 and the
 // bookmark folder is a scratch one, so nothing leaves this machine and

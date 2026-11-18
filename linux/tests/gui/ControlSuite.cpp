@@ -1,7 +1,7 @@
-// ControlSuite.cpp — the control channel, part one (`./build/minicode-guitest
+// ControlSuite.cpp — the control channel, part one (`./build/mutible-guitest
 // control`, linux/PARITY.md item 3.1; the Mac's tests/gui/ControlSuite.mm).
 //
-// The client is the real build/minicode (`minicode open|window|state|
+// The client is the real build/mutible (`mutible open|window|state|
 // selection`), run as a subprocess the main loop keeps turning for, since the
 // server is this very process: a client run on the loop's thread would wait
 // for an answer the loop cannot give. What is checked:
@@ -15,7 +15,7 @@
 //   - a missing file and the commands of later items answer a
 //     clear error and exit 1, never a crash; a request line cut short and
 //     a peer that goes away leave the app answering;
-//   - with no minicode running `state` exits 3 at once;
+//   - with no mutible running `state` exits 3 at once;
 //   - sockets of dead processes, and of live pids where nothing listens, are
 //     removed at startup, and one with a listener behind it is kept.
 // The refusal of another user's peer (SO_PEERCRED) is one comparison in the
@@ -50,7 +50,7 @@ Editor* ed() { return MCGuiApp().editor; }
 size_t gTabs = 0;
 
 std::string folder() {
-    return ControlChannel::socketFolder(getenv("MINICODE_CONTROL_DIR"), getenv("XDG_RUNTIME_DIR"),
+    return ControlChannel::socketFolder(getenv("MUTIBLE_CONTROL_DIR"), getenv("XDG_RUNTIME_DIR"),
                                         getenv("TMPDIR"), (unsigned)getuid());
 }
 
@@ -67,10 +67,10 @@ std::shared_ptr<Run> runClient(const std::vector<std::string>& args, const char*
         (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE));
     if (runtimeDir) {
         g_subprocess_launcher_setenv(l, "XDG_RUNTIME_DIR", runtimeDir, TRUE);
-        g_subprocess_launcher_unsetenv(l, "MINICODE_CONTROL_DIR");
+        g_subprocess_launcher_unsetenv(l, "MUTIBLE_CONTROL_DIR");
     }
     std::vector<const char*> argv = {nullptr};
-    const std::string exe = MCGuiBuildDir() + "/minicode";
+    const std::string exe = MCGuiBuildDir() + "/mutible";
     argv[0] = exe.c_str();
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -238,7 +238,7 @@ MC_GUI_SUITE(control) {
     MCGuiWait("the editor does not have the keyboard", 5, [] {
         return !gtk_widget_has_focus(ed()->textView());
     });
-    MCGuiStep("minicode open a.txt:3:6", [] { gRun = runClient({"open", F("a.txt") + ":3:6"}); });
+    MCGuiStep("mutible open a.txt:3:6", [] { gRun = runClient({"open", F("a.txt") + ":3:6"}); });
     MCGuiWait("the client returns", 20, [] { return gRun->done; });
     MCGuiStep("it exited 0 and printed no error", [] {
         GCHECK(gRun->exitCode == 0);
@@ -253,7 +253,7 @@ MC_GUI_SUITE(control) {
     });
 
     // ---- state and selection
-    MCGuiStep("minicode state", [] { gRun = runClient({"state"}); });
+    MCGuiStep("mutible state", [] { gRun = runClient({"state"}); });
     MCGuiWait("state returns", 20, [] { return gRun->done; });
     MCGuiStep("state names the window, its tab and the caret", [] {
         GCHECK(gRun->exitCode == 0);
@@ -273,7 +273,7 @@ MC_GUI_SUITE(control) {
         GCHECK(w["selection"]["text"].asString().empty());
         GCHECK(w["terminals"].size() == 1);
     });
-    MCGuiStep("minicode state --pretty is indented", [] { gRun = runClient({"state", "--pretty"}); });
+    MCGuiStep("mutible state --pretty is indented", [] { gRun = runClient({"state", "--pretty"}); });
     MCGuiWait("pretty state returns", 20, [] { return gRun->done; });
     MCGuiStep("pretty state has line breaks and parses", [] {
         GCHECK(gRun->exitCode == 0);
@@ -302,7 +302,7 @@ MC_GUI_SUITE(control) {
     MCGuiWait("the window is active with the keyboard in the text", 10, [] {
         return gtk_window_is_active(MCGuiApp().window) && gtk_widget_has_focus(ed()->textView());
     });
-    MCGuiStep("minicode open b.txt:2:2 --to 3:3 while the keyboard is in the editor", [] {
+    MCGuiStep("mutible open b.txt:2:2 --to 3:3 while the keyboard is in the editor", [] {
         GCHECK(gtk_widget_has_focus(ed()->textView()));
         gRun = runClient({"open", F("b.txt") + ":2:2", "--to", "3:3"});
     });
@@ -317,8 +317,8 @@ MC_GUI_SUITE(control) {
     });
 
 
-    // ---- minicode diff, as a real client
-    MCGuiStep("minicode diff a b while the keyboard is in the editor", [] {
+    // ---- mutible diff, as a real client
+    MCGuiStep("mutible diff a b while the keyboard is in the editor", [] {
         MCGuiWriteFile(F("d1.txt"), "one\ntwo\nthree\n");
         MCGuiWriteFile(F("d2.txt"), "one\n2\nthree\nfour\n");
         gTabs = (size_t)ed()->tabCount();
@@ -341,7 +341,7 @@ MC_GUI_SUITE(control) {
             GCHECK(d->compare()->hunks.size() == 2);
         }
     });
-    MCGuiStep("minicode diff of a committed file against HEAD, with the keyboard in the tree", [] {
+    MCGuiStep("mutible diff of a committed file against HEAD, with the keyboard in the tree", [] {
         gtk_widget_grab_focus(MCGuiApp().tree->widget());
         const std::string repo = F("repo");
         MCGuiWriteFile(repo + "/f.txt", "alpha\nbeta\n");
@@ -391,7 +391,7 @@ MC_GUI_SUITE(control) {
         gtk_widget_grab_focus(MCGuiApp().tree->widget());
     });
     MCGuiWait("the editor no longer has it", 5, [] { return !gtk_widget_has_focus(ed()->textView()); });
-    MCGuiStep("minicode open b.txt:2:2 --to 3:3 again", [] {
+    MCGuiStep("mutible open b.txt:2:2 --to 3:3 again", [] {
         gRun = runClient({"open", F("b.txt") + ":2:2", "--to", "3:3"});
     });
     MCGuiWait("the third open returns", 20, [] { return gRun->done; });
@@ -411,7 +411,7 @@ MC_GUI_SUITE(control) {
     });
 
     // ---- window
-    MCGuiStep("minicode window", [] { gRun = runClient({"window"}); });
+    MCGuiStep("mutible window", [] { gRun = runClient({"window"}); });
     MCGuiWait("window returns", 20, [] { return gRun->done; });
     MCGuiStep("it prints the window's id", [] {
         GCHECK(gRun->exitCode == 0);
@@ -481,7 +481,7 @@ MC_GUI_SUITE(control) {
     });
 
     // ---- errors through the client
-    MCGuiStep("minicode open of a file that is not there", [] {
+    MCGuiStep("mutible open of a file that is not there", [] {
         gRun = runClient({"open", F("missing.txt")});
     });
     MCGuiWait("that returns", 20, [] { return gRun->done; });
@@ -489,18 +489,18 @@ MC_GUI_SUITE(control) {
         GCHECK(gRun->exitCode == 1);
         GCHECK(gRun->err.find("no such file") != std::string::npos);
     });
-    MCGuiStep("minicode split --right open (refused)", [] { gRun = runClient({"split", "--right", "open", "/etc/hostname"}); });
+    MCGuiStep("mutible split --right open (refused)", [] { gRun = runClient({"split", "--right", "open", "/etc/hostname"}); });
     MCGuiWait("term returns", 20, [] { return gRun->done; });
     MCGuiStep("exit 1, the editor has one pane", [] {
         GCHECK(gRun->exitCode == 1);
         GCHECK(gRun->err.find("the editor has one pane") != std::string::npos);
     });
-    MCGuiStep("minicode open with no path is a usage error", [] { gRun = runClient({"open"}); });
+    MCGuiStep("mutible open with no path is a usage error", [] { gRun = runClient({"open"}); });
     MCGuiWait("usage error returns", 20, [] { return gRun->done; });
     MCGuiStep("exit 2", [] { GCHECK(gRun->exitCode == 2); });
 
-    // ---- no minicode running
-    MCGuiStep("minicode state with no minicode running", [] {
+    // ---- no mutible running
+    MCGuiStep("mutible state with no mutible running", [] {
         const std::string empty = MCGuiScratch() + "/control-empty";
         g_mkdir_with_parents(empty.c_str(), 0700);
         gRun = runClient({"state"}, empty.c_str());
@@ -521,7 +521,7 @@ MC_GUI_SUITE(control) {
     });
     MCGuiStep("a start removes the first two and keeps the one that listens", [] {
         const int removed = ControlServer::removeStale(folder(), (int)getpid());
-        GCHECK(removed >= 2);   // others left by earlier suites' minicodes may go too
+        GCHECK(removed >= 2);   // others left by earlier suites' mutibles may go too
         GCHECK(!exists(folder() + "/4194000.sock"));
         GCHECK(!exists(folder() + "/1.sock"));
         GCHECK(exists(folder() + "/" + std::to_string((int)getppid()) + ".sock"));
@@ -529,18 +529,18 @@ MC_GUI_SUITE(control) {
         if (gListener >= 0) close(gListener);
         unlink((folder() + "/" + std::to_string((int)getppid()) + ".sock").c_str());
     });
-    // ---- minicode install-skill (PARITY.md 3.1): the skill, copied, never into the real ~/.claude
-    MCGuiStep("minicode install-skill --dir copies the skill that ships", [] {
-        gRun = runClient({"install-skill", "--dir", F("skill-home/skills/minicode")});
+    // ---- mutible install-skill (PARITY.md 3.1): the skill, copied, never into the real ~/.claude
+    MCGuiStep("mutible install-skill --dir copies the skill that ships", [] {
+        gRun = runClient({"install-skill", "--dir", F("skill-home/skills/mutible")});
     });
     MCGuiWait("install-skill returns", 20, [] { return gRun->done; });
     MCGuiStep("it exited 0, said so, and the file is the shipped one", [] {
         GCHECK(gRun->exitCode == 0);
-        GCHECK(gRun->out.find("Installed the minicode skill in") != std::string::npos);
-        const std::string shipped = MCGuiReadFile(MCGuiBuildDir() + "/../../skills/minicode/SKILL.md");
+        GCHECK(gRun->out.find("Installed the mutible skill in") != std::string::npos);
+        const std::string shipped = MCGuiReadFile(MCGuiBuildDir() + "/../../skills/mutible/SKILL.md");
         GCHECK(!shipped.empty());
-        GCHECK(MCGuiReadFile(F("skill-home/skills/minicode/SKILL.md")) == shipped);
-        gRun = runClient({"install-skill", "--dir", F("skill-home/skills/minicode")});
+        GCHECK(MCGuiReadFile(F("skill-home/skills/mutible/SKILL.md")) == shipped);
+        gRun = runClient({"install-skill", "--dir", F("skill-home/skills/mutible")});
     });
     MCGuiWait("the second run returns", 20, [] { return gRun->done; });
     MCGuiStep("a second run finds it up to date; a stray word is a usage error", [] {

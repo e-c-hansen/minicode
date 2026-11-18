@@ -18,8 +18,8 @@ own copy of every rule. The Mac passes its own date format (`DateFormat`,
 the user's locale). A rule or wording changes there, once. The GTK port
 (`linux/src/GitPanel`) and Android (`GitPanel.kt`, `git_jni.cpp`, git in
 Termux through one bash loop) follow the same rules and wording (`linux/HANDOFF.md` item 10; `android/README.md`, "Source
-control"). Logging: `G_MESSAGES_DEBUG=minicode-git` on Linux, `adb shell
-setprop log.tag.MiniCodeGit DEBUG` on Android.
+control"). Logging: `G_MESSAGES_DEBUG=mutible-git` on Linux, `adb shell
+setprop log.tag.MutibleGit DEBUG` on Android.
 
 - **What runs**: status, diff, add, restore --staged, commit -m, rm --cached
   --force before the first commit, and for the graph for-each-ref, log,

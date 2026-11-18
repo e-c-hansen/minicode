@@ -14,7 +14,7 @@ rebuilds incrementally. The image is about 1.8 GB.
 
 Inside the container:
 
-- `/tools/launch.sh` starts (or restarts) MiniCode on a virtual 1280x800 X
+- `/tools/launch.sh` starts (or restarts) Mutible on a virtual 1280x800 X
   display with a compositor, using a scratch home in `/t/home` and a small
   project in `/t/proj`. Set `GTK_CSD=1` to see GTK's own title bar, since
   there is no window manager.

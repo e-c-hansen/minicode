@@ -1,7 +1,7 @@
 // InstallHintsSuite.cpp — the install offer for a missing language server
-// (`./build/minicode-guitest install_hints`, linux/PARITY.md item 2.8), the
+// (`./build/mutible-guitest install_hints`, linux/PARITY.md item 2.8), the
 // counterpart of the Mac's install bar, with real clicks through XTest.
-// $MINICODE_INSTALL_HAVE fakes the installers (uv here). lsp.python names a
+// $MUTIBLE_INSTALL_HAVE fakes the installers (uv here). lsp.python names a
 // server that is not there yet:
 //   - the bar offers Install…; its popover shows the first way's command;
 //   - Copy puts that command on the clipboard;
@@ -21,7 +21,7 @@
 
 #include <glib/gstdio.h>
 #include <sys/stat.h>
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include <vte/vte.h>
 #endif
 
@@ -53,7 +53,7 @@ bool readClipboard() {
     return !gClip.empty();
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 VteTerminal* findVte(GtkWidget* root) {
     if (!root) return nullptr;
     if (VTE_IS_TERMINAL(root)) return VTE_TERMINAL(root);
@@ -79,7 +79,7 @@ void openPython() {
 
 MC_GUI_SUITE(install_hints) {
     MCGuiStep("a Python file, lsp.python naming a server that is not installed", [] {
-        EnvLock::envSet("MINICODE_INSTALL_HAVE", "uv", TRUE);
+        EnvLock::envSet("MUTIBLE_INSTALL_HAVE", "uv", TRUE);
         ConsentBar::setInstallMuted("python", false);
         ConsentBar::forgetInstallOffers();
         MCGuiWriteFile(F("a.py"), "x = 1\n");
@@ -111,7 +111,7 @@ MC_GUI_SUITE(install_hints) {
     MCGuiStep("Copy copied the command", [] {
         GCHECK(gClip.find("uv tool install") != std::string::npos);
     });
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     MCGuiStep("Run in Terminal, a real click", [] {
         MCGuiClick(bar()->installView()->runButton());
     });
@@ -178,7 +178,7 @@ MC_GUI_SUITE(install_hints) {
     MCGuiPause(0.8);   // negative check
     // Format Document's note offers the formatter's install command.
     MCGuiStep("a Python file, no formatter anywhere on PATH, Format Document", [] {
-        EnvLock::envSet("MINICODE_INSTALL_HAVE", "uv", TRUE);
+        EnvLock::envSet("MUTIBLE_INSTALL_HAVE", "uv", TRUE);
         MCGuiSetSettings("lsp.enabled = false\n");
         gPathKept = g_getenv("PATH") ? g_getenv("PATH") : "";
         EnvLock::envSet("PATH", "/mc-no-such-bin", TRUE);
@@ -200,7 +200,7 @@ MC_GUI_SUITE(install_hints) {
     });
     MCGuiWait("the formatter's command is on the clipboard", 5, readClipboard);
     MCGuiStep("Copy copied it", [] { GCHECK(gClip.find("pyink") != std::string::npos); });
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     MCGuiStep("Run in Terminal, a real click", [] {
         MCGuiClick(MCGuiApp().format->installView()->runButton());
     });
@@ -221,7 +221,7 @@ MC_GUI_SUITE(install_hints) {
         GCHECK(hidden());
         ConsentBar::setInstallMuted("python", false);
         ConsentBar::forgetInstallOffers();
-        EnvLock::envUnset("MINICODE_INSTALL_HAVE");
+        EnvLock::envUnset("MUTIBLE_INSTALL_HAVE");
         MCGuiSetSettings("lsp.enabled = false\n");
         if (Document* d = ed()->documentFor(F("a.py"))) ed()->closeTab(d);
         g_remove(F("a.py").c_str());

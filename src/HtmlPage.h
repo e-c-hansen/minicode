@@ -5,7 +5,7 @@
 // Scripts follow `html.scripts` (Settings.h): `on` and `off` apply unasked;
 // `ask` (the default) lets a page that has nothing to run load as it is, and
 // asks about one that does (FileSniff::htmlMayRunScripts), once for each file
-// until minicode quits unless the answer is remembered in the settings file.
+// until mutible quits unless the answer is remembered in the settings file.
 //
 // A page loads from its own file only. Anything the page tries to open in
 // its main frame (a link, window.open, a script's location change) is not

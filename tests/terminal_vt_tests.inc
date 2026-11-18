@@ -46,13 +46,13 @@ void testTerminalVt() {
         s.feed("\x1b[>c\x1b[>0c\x1b[>1c");
         CHECK(s.takeReplies() == "\x1b[>1;10508;0c\x1b[>1;10508;0c");
         s.feed("\x1b[>q\x1b[>0q\x1b[>1q");
-        CHECK(s.takeReplies() == "\x1bP>|minicode 1.5.8\x1b\\\x1bP>|minicode 1.5.8\x1b\\");
+        CHECK(s.takeReplies() == "\x1bP>|mutible 1.5.8\x1b\\\x1bP>|mutible 1.5.8\x1b\\");
         s.setVersion("2.10");
         s.feed("\x1b[>c");
         CHECK(s.takeReplies() == "\x1b[>1;21000;0c");
         s.setVersion("");
         s.feed("\x1b[>q");
-        CHECK(s.takeReplies() == "\x1bP>|minicode\x1b\\");
+        CHECK(s.takeReplies() == "\x1bP>|mutible\x1b\\");
         CHECK(s.text().empty());                    // nothing printed
     }
     {

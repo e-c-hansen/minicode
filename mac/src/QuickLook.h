@@ -1,7 +1,7 @@
-// QuickLook.h — Quick Look in minicode, two ways:
+// QuickLook.h — Quick Look in mutible, two ways:
 //
 //   - MCQuickLookSlot: a read-only preview of a file in the editor's slot
-//     (QLPreviewView), for anything minicode has no viewer of its own for:
+//     (QLPreviewView), for anything mutible has no viewer of its own for:
 //     Office and iWork documents, archives, fonts, binaries (which Quick
 //     Look shows as an icon with the name and size, as Finder does).
 //   - MCQuickLookPanel: the floating Quick Look panel (QLPreviewPanel) that
@@ -24,7 +24,7 @@
 
 @interface MCQuickLookPanel : NSObject <QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 + (instancetype)shared;
-// Open (as minicode asked for it, not whether the window server shows it).
+// Open (as mutible asked for it, not whether the window server shows it).
 @property(nonatomic, readonly) BOOL shown;
 @property(nonatomic, readonly, copy) NSArray<NSURL *> *items;
 // Space in `owner` (a tree): open on `urls` (when there are any), or close

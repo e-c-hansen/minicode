@@ -38,7 +38,7 @@ static NSColor *Muted(void) {
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.wantsLayer = YES;
-        _queue = dispatch_queue_create("minicode.json-outline", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.json-outline", DISPATCH_QUEUE_SERIAL);
         _status = [NSTextField labelWithString:@""];
         _status.font = [NSFont systemFontOfSize:11];
         _status.textColor = Muted();

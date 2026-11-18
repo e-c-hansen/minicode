@@ -1,7 +1,7 @@
 // WebBookmark.h — web bookmarks kept as files, the browser's side of
-// minicode: a page saved from the browser pane is a `.url` file (the
+// mutible: a page saved from the browser pane is a `.url` file (the
 // Internet Shortcut every browser and file manager knows), and opening one,
-// from the tree, Finder or `minicode https://...`, loads its address in a
+// from the tree, Finder or `mutible https://...`, loads its address in a
 // browser tab. Safari's and Chrome's `.webloc` files (a property list with a
 // URL key) open too. The folder of them (~/Bookmarks unless
 // `browser.bookmarks` says otherwise) is the bookmark manager: folders,
@@ -21,7 +21,7 @@ namespace WebBookmark {
 // in any case.
 bool isBookmarkPath(const std::string &path);
 
-// Whether `url` is an address a bookmark or `minicode <address>` may open:
+// Whether `url` is an address a bookmark or `mutible <address>` may open:
 // http:// or https:// (the scheme in any case), a host after it, no spaces
 // or control characters, at most 8,192 bytes. Nothing else (file:,
 // javascript:, a custom scheme) is ever opened from a file.

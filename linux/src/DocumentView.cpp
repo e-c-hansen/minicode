@@ -17,7 +17,7 @@
 #include "MarkdownTasks.h"
 #include "StartupLog.h"
 #include "Utf8Offsets.h"
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 #include "Latex.h"
 #endif
 
@@ -182,7 +182,7 @@ Document::~Document() {
     if (taskTimer_) g_source_remove(taskTimer_);
     taskTimer_ = 0;
     cancelDeferred();
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     delete latexPreview_;
 #endif
     latexPreview_ = nullptr;
@@ -246,7 +246,7 @@ void Document::loadText(const std::string& path, const std::string& content) {
     path_ = path;
     ext_ = extensionOf(path);
     markdown_ = ext_ == "md" || ext_ == "markdown";
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
 #endif
     sniffCsv(content);
@@ -273,7 +273,7 @@ void Document::sniffCsv(const std::string& text) {
     if (!showsTable_) csv_ = 0;
     json_ = k == FileSniff::Kind::Json && text.size() <= kMaxOutlineBytes;
     notebook_ = k == FileSniff::Kind::Notebook;
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     html_ = k == FileSniff::Kind::Html;
     showsPage_ = html_ && !text.empty();   // an empty file opens in its source
 #endif
@@ -356,7 +356,7 @@ void Document::restoreText(const std::string& path, const std::string& text,
     path_ = path;
     ext_ = extensionOf(path);
     markdown_ = ext_ == "md" || ext_ == "markdown";
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
 #endif
     sniffCsv(text);
@@ -610,7 +610,7 @@ Document::UndoResult Document::takeStep(bool undoing) {
     const Shared::Outcome o = c.undo(id_, !undoing);
     if (o == Shared::Outcome::Nothing) return UndoResult::Nothing;
     if (o == Shared::Outcome::Refused) {
-        g_printerr("MiniCode: %s in %s refused: the text it would change is not what it left "
+        g_printerr("mutible: %s in %s refused: the text it would change is not what it left "
                    "there, so the history was forgotten\n",
                    undoing ? "undo" : "redo", path_.empty() ? "a new file" : path_.c_str());
         return UndoResult::Refused;
@@ -753,7 +753,7 @@ void Document::setPath(const std::string& path) {
         // to x.md may show its page, and a preview whose file stops being
         // Markdown or LaTeX goes back to the source.
         markdown_ = ext == "md" || ext == "markdown";
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
         latex_ = ext == "tex" || ext == "ltx" || ext == "latex";
 #endif
         if (showsPreview_ && !markdown_ && !latex_ && !notebook_) showsPreview_ = false;
@@ -778,7 +778,7 @@ void Document::setPath(const std::string& path) {
 // -checkExternalChange), comparing modification dates. Here the file is also
 // watched, so a change made in the terminal panel under the editor shows up
 // without leaving the window, and the check compares contents: an atomic save
-// by MiniCode itself, or a tool that rewrites the file unchanged, is then no
+// by mutible itself, or a tool that rewrites the file unchanged, is then no
 // change at all, whatever the dates say. Every document watches its own file,
 // so a clean tab in the background follows its file too, as on the Mac.
 
@@ -786,7 +786,7 @@ void Document::watch() {
     if (path_.empty() || monitor_) return;
     GFile* f = g_file_new_for_path(path_.c_str());
     // WATCH_MOVES, so a save that renames a temporary file over this one
-    // (what MiniCode and most tools do) arrives as a rename, not a deletion.
+    // (what mutible and most tools do) arrives as a rename, not a deletion.
     monitor_ = g_file_monitor_file(f, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
     g_object_unref(f);
     if (monitor_) g_signal_connect(monitor_, "changed", G_CALLBACK(onFileChanged), this);

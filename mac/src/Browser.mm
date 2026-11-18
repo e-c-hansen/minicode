@@ -92,7 +92,7 @@
 // process behind it) while it is on show or was used just before
 // (BrowserTabs::livePages); otherwise it is suspended to its address, its
 // title and WebKit's record of its history and scroll, and loads again
-// when shown. Its probe stays, so `minicode page --yours` follows the tab.
+// when shown. Its probe stays, so `mutible page --yours` follows the tab.
 @interface MCBrowserTab : NSObject
 @property(nonatomic, strong) MCWebView *web;      // nil while suspended
 @property(nonatomic, strong) MCPageProbe *probe;
@@ -133,7 +133,7 @@
 - (NSString *)view:(NSView *)view stringForToolTip:(NSToolTipTag)tag point:(NSPoint)point
           userData:(void *)data {
     (void)view; (void)tag; (void)point; (void)data;
-    NSString *key = MCKeymapGlyphs(@"minicode.browser.newTab");
+    NSString *key = MCKeymapGlyphs(@"mutible.browser.newTab");
     return key.length ? [NSString stringWithFormat:@"New tab (%@)", key] : @"New tab";
 }
 - (void)setFrameSize:(NSSize)size {
@@ -262,7 +262,7 @@ static id MCRecordFromData(NSData *data, BOOL archived) {
 
 // Every tab: its address, title and, within the budget (BrowserTabs::
 // keptRecords), WebKit's record of its history and scroll; and which one
-// showed. The tab on show is also written as the one page older minicodes
+// showed. The tab on show is also written as the one page older mutibles
 // keep (url, state). The agent page is never kept.
 - (NSDictionary *)savedState {
     std::vector<size_t> sizes;
@@ -308,7 +308,7 @@ static id MCRecordFromData(NSData *data, BOOL archived) {
     return s;
 }
 
-// The tabs as savedState wrote them, or the one page an older minicode
+// The tabs as savedState wrote them, or the one page an older mutible
 // kept. Only the tab on show loads; the others wait to be shown.
 - (void)restoreState:(NSDictionary *)state {
     if (![state isKindOfClass:NSDictionary.class]) return;
@@ -457,7 +457,7 @@ static id MCRecordFromData(NSData *data, BOOL archived) {
     self.switcher.font = [NSFont systemFontOfSize:11];
     self.switcher.selectedSegment = 0;
     self.switcher.hidden = YES;
-    self.switcher.toolTip = @"Your page, or the page an agent loaded with minicode browse";
+    self.switcher.toolTip = @"Your page, or the page an agent loaded with mutible browse";
     [self addSubview:self.switcher];
     self.closeAgent = [self navButton:@"✕" action:@selector(closeAgentPage:)];
     self.closeAgent.font = [NSFont systemFontOfSize:11];
@@ -899,7 +899,7 @@ static const CGFloat kBrowserBarHeight = 36;
 // ------------------------------------- keys, while the pane has the keyboard
 // The pane is in the responder chain of whatever in it has the keyboard, so
 // the menu's actions reach it before the window's controller: Cmd+T (the
-// registry's page key, minicode.browser.newTab) opens a tab, Cmd+W closes
+// registry's page key, mutible.browser.newTab) opens a tab, Cmd+W closes
 // the page on show, Ctrl+Tab, Shift+Cmd+] and [ and Ctrl+1 to 9 move
 // between tabs. With one tab those last go on to the editor's tabs, as
 // before the pane had tabs.
@@ -909,7 +909,7 @@ static const CGFloat kBrowserBarHeight = 36;
     [self focusURLBar];
 }
 
-// Cmd+D (minicode.browser.saveBookmark, a page key): the window's
+// Cmd+D (mutible.browser.saveBookmark, a page key): the window's
 // controller writes the bookmark (File > Save Page as Bookmark).
 - (void)saveBookmarkFromPage:(id)sender {
     [self passOn:@selector(saveBrowserBookmark:) from:sender];
@@ -1141,7 +1141,7 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        queue = dispatch_queue_create("minicode.bookmarks.lookup", DISPATCH_QUEUE_SERIAL);
+        queue = dispatch_queue_create("mutible.bookmarks.lookup", DISPATCH_QUEUE_SERIAL);
     });
     __weak BrowserView *weakSelf = self;
     dispatch_async(queue, ^{

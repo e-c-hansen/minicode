@@ -23,7 +23,9 @@
 #import "TerminalAttention.h"
 #import "ClaudeHooksOffer.h"
 #import "RecentFolders.h"
+#import "Migration.h"
 #include "ProcessEnv.h"
+#include "Rename.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -49,7 +51,7 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
 
 @implementation AppDelegate
 
-// Set up before any window can open: when Finder launches MiniCode to open
+// Set up before any window can open: when Finder launches Mutible to open
 // something, application:openURLs: arrives before didFinishLaunching.
 - (void)applicationWillFinishLaunching:(NSNotification *)note {
     self.controllers = [NSMutableArray array];
@@ -98,12 +100,12 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
         return MCKeymapHandleKeyDown(e) ? nil : e;
     }];
 
-    // The control channel (`minicode open`, `state`, ...; ControlServer.h).
+    // The control channel (`mutible open`, `state`, ...; ControlServer.h).
     MCControlServerStart(self);
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
-    // The Dock's recent folders, for a first launch of a minicode that keeps
+    // The Dock's recent folders, for a first launch of a mutible that keeps
     // them (RecentFolders.h).
     dispatch_async(dispatch_get_main_queue(), ^{ MCSeedDockRecentFolders(); });
     // After whichever windows this launch opens: folders whose unsaved
@@ -130,7 +132,7 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
         return;
     }
     // Launched with nothing to open (the Dock, Finder, `open -a`, the
-    // reopening after a `brew upgrade`): every window open when minicode
+    // reopening after a `brew upgrade`): every window open when mutible
     // last quit, as it was (VS Code's window.restoreWindows "all"). A first
     // launch, or one after the record was lost, opens the cwd as before.
     if (args.count < 2 && [self restoreOpenWindows]) {
@@ -154,7 +156,7 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
         } else {
             NSString *parent = arg.stringByDeletingLastPathComponent;
             if ([fm fileExistsAtPath:parent isDirectory:&dir] && dir) root = parent;
-            fprintf(stderr, "minicode: %s: no such file or directory\n",
+            fprintf(stderr, "mutible: %s: no such file or directory\n",
                     [args[1] UTF8String]);
         }
     }
@@ -163,11 +165,11 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     if (file && [c showFile:file]) [c focusActiveDocument];
     // A benchmark runs in the background, so it never takes the keyboard.
     if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
-    MCDemoStart(c);   // no-op unless MINICODE_DEMO is set (make demos)
-    MCBenchStart(c);  // no-op unless MINICODE_BENCH is set (make membench-mac)
+    MCDemoStart(c);   // no-op unless MUTIBLE_DEMO is set (make demos)
+    MCBenchStart(c);  // no-op unless MUTIBLE_BENCH is set (make membench-mac)
 }
 
-// The windows open when minicode last quit (EditorController's
+// The windows open when mutible last quit (EditorController's
 // saveOpenWindows), each as it was, the front one in front; nil when there
 // were none to bring back.
 - (EditorController *)restoreOpenWindows {
@@ -225,7 +227,7 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     for (EditorController *c in self.controllers)
         [running addObjectsFromArray:restarting ? [c runningTerminalCommandsExceptChange]
                                                 : [c runningTerminalCommands]];
-    if (!MCConfirmClosingRunning(running, restarting ? @"Restart minicode?" : @"Quit MiniCode?",
+    if (!MCConfirmClosingRunning(running, restarting ? @"Restart mutible?" : @"Quit Mutible?",
                                  restarting ? @"Restart" : @"Quit"))
         return NSTerminateCancel;
     for (EditorController *c in [self.controllers copy]) {
@@ -320,17 +322,17 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
 }
 
 // ------------------------------------------- opening from Finder and the Dock
-// `minicode -r` cannot say "reuse the window" through Launch Services, which
+// `mutible -r` cannot say "reuse the window" through Launch Services, which
 // only passes paths, so it writes its request to a file in
-// $TMPDIR/MiniCode-open and opens that: "minicode-open-1", "reuse", then the
+// $TMPDIR/Mutible-open and opens that: "mutible-open-1", "reuse", then the
 // paths, each ended by a NUL. Only files in that folder of this user's own
 // temporary folder are read, and each is deleted once read.
-// A request may instead be "web" and web addresses (`minicode
+// A request may instead be "web" and web addresses (`mutible
 // https://...`), which go to `web`, the browser window's.
 static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
                                               NSMutableArray<NSString *> *web) {
-    if (!url.isFileURL || ![url.pathExtension isEqualToString:@"minicode-open"]) return nil;
-    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-open"]
+    if (!url.isFileURL || ![url.pathExtension isEqualToString:@"mutible-open"]) return nil;
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"Mutible-open"]
                         .stringByResolvingSymlinksInPath;
     NSString *path = url.path.stringByResolvingSymlinksInPath;
     if (![path.stringByDeletingLastPathComponent isEqualToString:dir]) return nil;
@@ -340,7 +342,7 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
     const unichar nul = 0;
     NSArray<NSString *> *fields =
         [text componentsSeparatedByString:[NSString stringWithCharacters:&nul length:1]];
-    if (fields.count < 2 || ![fields[0] isEqualToString:@"minicode-open-1"]) return @[];
+    if (fields.count < 2 || ![fields[0] isEqualToString:@"mutible-open-1"]) return @[];
     if ([fields[1] isEqualToString:@"web"]) {
         for (NSUInteger i = 2; i < fields.count; i++)
             if (MCIsWebAddress(fields[i])) [web addObject:fields[i]];
@@ -354,9 +356,9 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
 }
 
 // Launch Services sends every open here: Open With, a double-click on a file
-// MiniCode is the default app for, and a drop on the Dock icon. Handling it
-// keeps AppKit from passing it to NSDocumentController, which MiniCode does
-// not use and which answered "MiniCode cannot open files in the “Markdown”
+// Mutible is the default app for, and a drop on the Dock icon. Handling it
+// keeps AppKit from passing it to NSDocumentController, which Mutible does
+// not use and which answered "Mutible cannot open files in the “Markdown”
 // format".
 - (void)application:(NSApplication *)app openURLs:(NSArray<NSURL *> *)urls {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -408,7 +410,7 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
 
     // Files from one folder share a window, each in a tab, the last one on
     // show. A file no window's folder holds becomes a tab of the window in
-    // front (or of the folder just opened), as in VS Code: `minicode x.py`
+    // front (or of the folder just opened), as in VS Code: `mutible x.py`
     // typed in a window's terminal opens it there. Only with no window at
     // all does a new one open on the file's folder. (showFile: no longer
     // refuses, since a tab with unsaved changes simply stays open, but a
@@ -440,7 +442,7 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
     if (web.count) [self openWebAddressesInBrowserWindow:web];
 }
 
-// `minicode https://...` and bookmarks opened from Finder: tabs in the
+// `mutible https://...` and bookmarks opened from Finder: tabs in the
 // browser window, the window on the bookmark folder (made, with the
 // folder, when there is none). Should the folder not be made, the window
 // in front's browser pane takes them.
@@ -452,14 +454,14 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
         NSString *dir = MCComparablePath(folder);
         c = [self controllerRootedAt:dir] ?: [self openWindowAtPath:dir];
     } else {
-        NSLog(@"minicode: no bookmark folder (%@): %@", folder, err);
+        NSLog(@"mutible: no bookmark folder (%@): %@", folder, err);
         c = self.controllers.count ? [self current] : [self openWindowAtPath:NSHomeDirectory()];
     }
     [c.window makeKeyAndOrderFront:nil];
     [c showWebAddresses:urls focusPage:YES];
 }
 
-// MiniCode has no untitled documents. Now that Info.plist declares document
+// Mutible has no untitled documents. Now that Info.plist declares document
 // types, AppKit would otherwise ask NSDocumentController for one on every
 // launch that opens nothing.
 - (BOOL)applicationShouldOpenUntitledFile:(NSApplication *)sender {
@@ -657,7 +659,7 @@ static BOOL MCWindowTabAction(SEL a) {
     (void)sender;
     return MCDockMenu(self);
 }
-// The Dock's Open Folder…: minicode's folder picker over the window in
+// The Dock's Open Folder…: mutible's folder picker over the window in
 // front (PalettePanel.h, MCFolderPick), then the window on that folder comes
 // forward or a new one opens on it, as for a folder dropped on the Dock
 // icon. The window in front keeps its own folder. With no window open, and
@@ -692,7 +694,7 @@ static BOOL MCWindowTabAction(SEL a) {
     panel.canChooseFiles = NO;
     panel.allowsMultipleSelection = NO;
     panel.prompt = @"Open";
-    panel.message = @"Choose a folder to open in a minicode window.";
+    panel.message = @"Choose a folder to open in a mutible window.";
     if ([panel runModal] == NSModalResponseOK && panel.URL)
         [self application:NSApp openURLs:@[ panel.URL ]];
 }
@@ -734,7 +736,7 @@ static BOOL MCWindowTabAction(SEL a) {
     NSString *err = nil;
     if (!MCEnsureBookmarksFolder(folder, &err)) {
         NSBeep();
-        NSLog(@"minicode: no bookmark folder (%@): %@", folder, err);
+        NSLog(@"mutible: no bookmark folder (%@): %@", folder, err);
         return;
     }
     NSString *dir = MCComparablePath(folder);
@@ -941,11 +943,11 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)goToBracket:(id)sender     { [[self current] goToBracket:sender]; }
 - (void)inlineAgent:(id)sender     { [[self current] inlineAgent:sender]; }
 - (void)newAgentTask:(id)sender    { [[self current] newAgentTask:sender]; }
-// Restart minicode, as after a rebuild from Request a Change but on demand:
+// Restart mutible, as after a rebuild from Request a Change but on demand:
 // the same questions, then the same bundle opened again with every window's
 // folder, its tabs, unsaved changes and browser page. A conversation with
 // Claude from Request a Change still running in a window goes on there.
-- (void)restartMinicode:(id)sender {
+- (void)restartMutible:(id)sender {
     (void)sender;
     NSString *app = NSBundle.mainBundle.bundlePath;
     if (![app.pathExtension isEqualToString:@"app"]) { NSBeep(); return; }
@@ -991,7 +993,7 @@ static void BuildMenu(void) {
     NSMenuItem *appItem = [[NSMenuItem alloc] init];
     [menubar addItem:appItem];
     NSMenu *appMenu = [[NSMenu alloc] init];
-    [appMenu addItemWithTitle:@"About MiniCode"
+    [appMenu addItemWithTitle:@"About Mutible"
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
@@ -999,7 +1001,7 @@ static void BuildMenu(void) {
                        action:@selector(openSettings:)
                 keyEquivalent:@","];
     // keys.conf (Keymap.h), written with every command when there is none.
-    // VS Code's key is a Cmd+K chord, and minicode has no chords; the
+    // VS Code's key is a Cmd+K chord, and mutible has no chords; the
     // palette finds it.
     [appMenu addItemWithTitle:@"Keyboard Shortcuts…"
                        action:@selector(openKeyboardShortcuts:)
@@ -1026,20 +1028,20 @@ static void BuildMenu(void) {
                        action:@selector(installClaudeHooks:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    // Hands a change to Claude Code in a terminal of minicode's own source
+    // Hands a change to Claude Code in a terminal of mutible's own source
     // folder, then restarts into the build (ChangePanel.h).
-    NSMenuItem *change = [[NSMenuItem alloc] initWithTitle:@"Request a Change to minicode…"
+    NSMenuItem *change = [[NSMenuItem alloc] initWithTitle:@"Request a Change to mutible…"
                                                     action:@selector(requestChange:)
                                              keyEquivalent:@"k"];
     change.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [appMenu addItem:change];
     // Ad hoc, as VS Code's Reload Window: no key of its own (Cmd+R refreshes
     // the file tree); the palette and the status bar's ↻ reach it.
-    [appMenu addItemWithTitle:@"Restart minicode"
-                       action:@selector(restartMinicode:)
+    [appMenu addItemWithTitle:@"Restart mutible"
+                       action:@selector(restartMutible:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [appMenu addItemWithTitle:@"Quit MiniCode"
+    [appMenu addItemWithTitle:@"Quit Mutible"
                        action:@selector(terminate:)
                 keyEquivalent:@"q"];
     appItem.submenu = appMenu;
@@ -1411,7 +1413,7 @@ static void BuildMenu(void) {
     [editMenu addItem:replaceInFolder];
     // Shift+Cmd+D ("to do"): Shift+Cmd+L is VS Code's Select All
     // Occurrences, and VS Code's Shift+Cmd+D opens its debugger, which
-    // minicode has no counterpart for.
+    // mutible has no counterpart for.
     NSMenuItem *todos =
         [[NSMenuItem alloc] initWithTitle:@"TODOs in Folder…"
                                    action:@selector(showTodos:) keyEquivalent:@"d"];
@@ -1528,9 +1530,9 @@ static void BuildMenu(void) {
     [viewMenu addItemWithTitle:@"Show Line History" action:@selector(toggleLineHistory:)
                  keyEquivalent:@""];
 
-    // Folding (FoldView.h). VS Code's Option+Cmd+[ and ] are minicode's
+    // Folding (FoldView.h). VS Code's Option+Cmd+[ and ] are mutible's
     // previous and next terminal, and its other folding keys are Cmd+K
-    // chords, which minicode has none of; so Control+Command with the
+    // chords, which mutible has none of; so Control+Command with the
     // chord's second key: [ fold, ] unfold, L toggle, 0 fold all, J unfold
     // all, / fold comments, 1 to 7 a level. Answered by the editor's text
     // view while it has the keyboard.
@@ -1634,7 +1636,7 @@ static void BuildMenu(void) {
     [viewMenu addItem:agents];
 
     // What this window's terminals started and what runs in its folder, in
-    // the sidebar's place (ProcessesPanel.h). Shift+Cmd+J, minicode's own.
+    // the sidebar's place (ProcessesPanel.h). Shift+Cmd+J, mutible's own.
     NSMenuItem *processes =
         [[NSMenuItem alloc] initWithTitle:@"Toggle Processes"
                                    action:@selector(toggleProcesses:)
@@ -2082,7 +2084,7 @@ static void BuildMenu(void) {
                                                  keyEquivalent:f5];
     prevChange.keyEquivalentModifierMask = NSEventModifierFlagOption | NSEventModifierFlagShift;
     [navMenu addItem:prevChange];
-    // An agent's tour (`minicode tour`): enabled only while one is on, and
+    // An agent's tour (`mutible tour`): enabled only while one is on, and
     // the key monitor takes the keys only then, so Option+] still types ‘.
     [navMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *nextStop = [[NSMenuItem alloc] initWithTitle:@"Next Tour Stop"
@@ -2116,12 +2118,16 @@ static void BuildMenu(void) {
 
 int main(int argc, const char *argv[]) {
     (void)argc; (void)argv;   // args are read via NSProcessInfo
+    // The old names of the environment's variables, still read (src/Rename.h).
+    Rename::adoptOldEnvironment();
     // The environment's one read of environ before threads start programs
     // (src/ProcessEnv.h): every later reader takes this snapshot.
     ProcessEnv::refresh();
     @autoreleasepool {
-        if (MCDemoListScenes()) return 0;   // MINICODE_DEMO=list
-        // A path on the command line (the minicode launcher, make run) is read
+        if (MCDemoListScenes()) return 0;   // MUTIBLE_DEMO=list
+        // The first launch since the rename copies what the old name kept.
+        MCMigrateFromOldName();
+        // A path on the command line (the mutible launcher, make run) is read
         // in applicationDidFinishLaunching. Left to AppKit, it would also be
         // taken as a file to open and handed on a second time.
         [[NSUserDefaults standardUserDefaults]

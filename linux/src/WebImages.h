@@ -5,10 +5,10 @@
 // session has no cookie jar and no cache, and the kept pictures go with the
 // process. The rules and limits are in WebImageRules.h.
 //
-// Built without libsoup (no MINICODE_ENABLE_WEB_IMAGES), available() is
+// Built without libsoup (no MUTIBLE_ENABLE_WEB_IMAGES), available() is
 // false and nothing is ever fetched; the preview shows alt text, as before.
 //
-// G_MESSAGES_DEBUG=minicode-web logs every request, redirect, failure and
+// G_MESSAGES_DEBUG=mutible-web logs every request, redirect, failure and
 // what the cache holds.
 #pragma once
 

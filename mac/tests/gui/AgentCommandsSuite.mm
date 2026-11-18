@@ -44,7 +44,7 @@ namespace {
 NSString *gDir;   // the suite's folder
 NSString *gWid;   // its window's id, for --window
 
-NSString *CLIPath() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"minicode-cli"]; }
+NSString *CLIPath() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"mutible-cli"]; }
 
 // The command line against this process and the suite's window.
 void CLI(NSString *name, NSArray<NSString *> *args, void (^check)(int, NSString *, NSString *)) {
@@ -490,15 +490,15 @@ MC_GUI_SUITE(agentcommands) {
     });
 
     // ------------------------------------------------- the command line
-    MCGuiAsync(@"a read never launches minicode", 30, ^(MCGuiDone done) {
+    MCGuiAsync(@"a read never launches mutible", 30, ^(MCGuiDone done) {
         NSString *empty = [MCGuiScratch() stringByAppendingPathComponent:@"no-app-2"];
         [fm createDirectoryAtPath:empty withIntermediateDirectories:YES attributes:nil error:nil];
         MCGuiRunProcess(@[CLIPath(), @"state"],
-                        @{@"TMPDIR": empty, @"MINICODE_CONTROL_DIR": [empty stringByAppendingPathComponent:@"MiniCode"],
-                          @"MINICODE_LAUNCHER_DRYRUN": @"1", @"MINICODE_CLI_WAIT": @"0.4"},
+                        @{@"TMPDIR": empty, @"MUTIBLE_CONTROL_DIR": [empty stringByAppendingPathComponent:@"Mutible"],
+                          @"MUTIBLE_LAUNCHER_DRYRUN": @"1", @"MUTIBLE_CLI_WAIT": @"0.4"},
                         ^(int s, NSString *out, NSString *err) {
             GCHECK(s == 3);
-            if (![err containsString:@"does not answer"]) {   // no older minicode on this Mac
+            if (![err containsString:@"does not answer"]) {   // no older mutible on this Mac
                 GCHECK(out.length == 0);   // no "open -a" printed: nothing launched
                 GCHECK([err containsString:@"not running"]);
             }
@@ -513,7 +513,7 @@ MC_GUI_SUITE(agentcommands) {
         GCHECK(BindDeadSocket([loose stringByAppendingFormat:@"/%d.sock", getpid()]));
     });
     MCGuiAsync(@"is not looked in", 30, ^(MCGuiDone done) {
-        MCGuiRunProcess(@[CLIPath(), @"state"], @{@"MINICODE_CONTROL_DIR": loose},
+        MCGuiRunProcess(@[CLIPath(), @"state"], @{@"MUTIBLE_CONTROL_DIR": loose},
                         ^(int s, NSString *, NSString *err) {
             GCHECK(s == 3);
             if (![err containsString:@"does not answer"]) GCHECK([err containsString:@"not running"]);
@@ -529,8 +529,8 @@ MC_GUI_SUITE(agentcommands) {
         leftover = [MCControlSocketFolder() stringByAppendingFormat:@"/%d.sock", sleeper.processIdentifier];
         GCHECK(BindDeadSocket(leftover));
     });
-    MCGuiAsync(@"the command line moves on to the live minicode", 30, ^(MCGuiDone done) {
-        MCGuiRunProcess(@[CLIPath(), @"state"], @{@"MINICODE_CONTROL_DIR": MCControlSocketFolder()},
+    MCGuiAsync(@"the command line moves on to the live mutible", 30, ^(MCGuiDone done) {
+        MCGuiRunProcess(@[CLIPath(), @"state"], @{@"MUTIBLE_CONTROL_DIR": MCControlSocketFolder()},
                         ^(int s, NSString *out, NSString *err) {
             GCHECK(s == 0);
             if (s) MCGuiNote(@"%@", err);
@@ -641,8 +641,8 @@ MC_GUI_SUITE(agentcommands) {
     });
 
     // --------------------------------------------------- prompt files
-    MCGuiStep(@"prompt files of a minicode that has quit go; this one's stay", ^{
-        NSString *dir = [MCGuiScratch() stringByAppendingPathComponent:@"MiniCode-agent"];
+    MCGuiStep(@"prompt files of a mutible that has quit go; this one's stay", ^{
+        NSString *dir = [MCGuiScratch() stringByAppendingPathComponent:@"Mutible-agent"];
         [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
         pid_t dead = fork();
         if (dead == 0) _exit(0);
@@ -660,7 +660,7 @@ MC_GUI_SUITE(agentcommands) {
     });
 
     // ------------------------------------------- the restart record
-    MCGuiStep(@"a restart record naming a folder that is not minicode's source runs nothing", ^{
+    MCGuiStep(@"a restart record naming a folder that is not mutible's source runs nothing", ^{
         const NSUInteger before = [c controlTerminals].count;
         [[c changeSession] resumeWithSource:gDir command:@"touch /tmp/should-not-run &&"];
         GCHECK([c controlTerminals].count == before);

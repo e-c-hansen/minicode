@@ -1,14 +1,14 @@
 // ProcessesSuite.mm — processes and ports per folder (spec feature 5):
 //   make guitest SUITES=processes
 // A web server started in a terminal shows under that terminal with its
-// port, in the panel and in `minicode procs`; with `disown` and the terminal
+// port, in the panel and in `mutible procs`; with `disown` and the terminal
 // closed it moves to the orphans, and Stop ends it without asking. A sleep
 // in a second terminal: Reveal Origin shows its terminal, and Stop asks
 // first (Cancel keeps it). The close question is a sheet on the window,
 // whose Show in Processes selects the job it names and keeps the terminal
 // (not an earlier job of that terminal that has exited); running rows lead
 // their group and exited helpers fold into one "N exited" row below them; the
-// orphan's row has a Stop button; Shift+Cmd+J toggles the panel. A server started outside minicode in the folder
+// orphan's row has a Stop button; Shift+Cmd+J toggles the panel. A server started outside mutible in the folder
 // is "not started here". The time a look takes is measured with at least
 // 200 processes on the machine. Every process here is one this suite
 // started, and only those are signalled.
@@ -54,7 +54,7 @@
 
 namespace {
 
-NSString *CLI() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"minicode-cli"]; }
+NSString *CLI() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"mutible-cli"]; }
 NSString *Pid() { return [NSString stringWithFormat:@"%d", getpid()]; }
 
 int FreePort() {
@@ -259,8 +259,8 @@ MC_GUI_SUITE(processes) {
         if (s.earlyPid > 1) [s.started addObject:@(s.earlyPid)];
     });
 
-    // ------------------------------------------------------ minicode procs
-    CLIStep(s, @"minicode procs --json lists it under the terminal", @[@"procs", @"--json"],
+    // ------------------------------------------------------ mutible procs
+    CLIStep(s, @"mutible procs --json lists it under the terminal", @[@"procs", @"--json"],
             ^(int status, NSString *out, NSString *err) {
         GCHECK(status == 0);
         NSDictionary *j = JSONOf(out);
@@ -281,7 +281,7 @@ MC_GUI_SUITE(processes) {
         GCHECK([j[@"window"] integerValue] == MCControlWindowID(s.c));
         if (!g) MCGuiNote(@"procs: %@ %@", out, err);
     });
-    CLIStep(s, @"minicode procs prints a table", @[@"procs"], ^(int status, NSString *out, NSString *) {
+    CLIStep(s, @"mutible procs prints a table", @[@"procs"], ^(int status, NSString *out, NSString *) {
         GCHECK(status == 0);
         GCHECK([out containsString:@" process"] &&
                [out containsString:[@" in " stringByAppendingString:MCProcessRealPath(s.root)]]);
@@ -529,7 +529,7 @@ MC_GUI_SUITE(processes) {
         GCHECK([menu itemWithTitle:@"Stop"] != nil);   // no question for an orphan
         GCHECK(![menu itemWithTitle:@"Reveal Origin"].enabled);
     });
-    CLIStep(s, @"minicode procs has it as an orphan", @[@"procs", @"--json"], ^(int st, NSString *out, NSString *) {
+    CLIStep(s, @"mutible procs has it as an orphan", @[@"procs", @"--json"], ^(int st, NSString *out, NSString *) {
         GCHECK(st == 0);
         GCHECK([GroupWithPid(JSONOf(out), s.serverPid)[@"kind"] isEqualToString:@"orphans"]);
     });
@@ -555,7 +555,7 @@ MC_GUI_SUITE(processes) {
     MCGuiWait(@"the server ends", 6, ^BOOL { return !Alive(s.serverPid); });
 
     // --------------------------------------------------- not started here
-    MCGuiAsync(@"a server started outside minicode, in the folder", 10, ^(MCGuiDone done) {
+    MCGuiAsync(@"a server started outside mutible, in the folder", 10, ^(MCGuiDone done) {
         NSString *web = [s.root stringByAppendingPathComponent:@"web"];
         [NSFileManager.defaultManager createDirectoryAtPath:web withIntermediateDirectories:YES
                                                 attributes:nil error:nil];
@@ -573,7 +573,7 @@ MC_GUI_SUITE(processes) {
     MCGuiWait(@"it shows under not started here, with its port", 15, ^BOOL {
         return GroupHasPort(s.panel, @"G outside", s.port2);
     });
-    CLIStep(s, @"and in minicode procs", @[@"procs", @"--json"], ^(int st, NSString *out, NSString *) {
+    CLIStep(s, @"and in mutible procs", @[@"procs", @"--json"], ^(int st, NSString *out, NSString *) {
         GCHECK(st == 0);
         NSDictionary *g = GroupWithPid(JSONOf(out), s.outsidePid);
         GCHECK([g[@"kind"] isEqualToString:@"outside"] && [g[@"title"] isEqualToString:@"Not started here"]);
@@ -630,7 +630,7 @@ MC_GUI_SUITE(processes) {
             for (const Procs::Node &n : g.roots)
                 if (Procs::displayName(n.proc) == "sh") [s.started addObject:@(n.proc.key.pid)];
     });
-    CLIStep(s, @"minicode procs --json carries it", @[@"procs", @"--json"], ^(int st, NSString *out, NSString *) {
+    CLIStep(s, @"mutible procs --json carries it", @[@"procs", @"--json"], ^(int st, NSString *out, NSString *) {
         GCHECK(st == 0);
         NSUInteger withSession = 0;
         for (NSDictionary *g in JSONOf(out)[@"groups"])

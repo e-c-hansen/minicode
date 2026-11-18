@@ -85,7 +85,7 @@ static void PCollect(NSMenu *menu, NSString *path, NSMutableArray<MCPaletteComma
             if (!path) {
                 // The app menu has no title of its own (its item's is the
                 // placeholder "NSMenuItem").
-                name = it.submenu.title.length ? it.submenu.title : @"minicode";
+                name = it.submenu.title.length ? it.submenu.title : @"mutible";
             } else {
                 name = [NSString stringWithFormat:@"%@ > %@", path, it.title];
             }

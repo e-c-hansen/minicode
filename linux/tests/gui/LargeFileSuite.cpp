@@ -1,4 +1,4 @@
-// LargeFileSuite.cpp — `./build/minicode-guitest large_file`: big files and
+// LargeFileSuite.cpp — `./build/mutible-guitest large_file`: big files and
 // long lines (linux/PARITY.md item 1.12, LargeFileView.h), the counterpart of
 // the Mac's tests/gui/LargeFileSuite.mm.
 //

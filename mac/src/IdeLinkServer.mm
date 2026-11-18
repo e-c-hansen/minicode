@@ -186,7 +186,7 @@ static NSUInteger MCCloseOfferedDiffs(EditorController *c, NSString *name);
 
 - (BOOL)fail:(NSString *)problem {
     gProblem = problem;
-    NSLog(@"minicode: Claude Code IDE link off: %@", problem);
+    NSLog(@"mutible: Claude Code IDE link off: %@", problem);
     return NO;
 }
 
@@ -424,7 +424,7 @@ static const NSUInteger kMaxConnections = 8;
         IdeLink::Handshake h = IdeLink::readHandshake(c->in, _authToken.UTF8String ?: "");
         if (h.state == IdeLink::Handshake::Incomplete) return;
         if (h.state == IdeLink::Handshake::Refused) {
-            NSLog(@"minicode: IDE link refused a connection: %s", h.error.c_str());
+            NSLog(@"mutible: IDE link refused a connection: %s", h.error.c_str());
             c->closing = true;
             [self send:c bytes:h.response];
             return;
@@ -1038,7 +1038,7 @@ NSArray<NSString *> *MCIdeLinkTerminalEnvironment(NSString *dir) {
     }
     if (!on && MCIdeLinkProblem()) {
         NSBeep();
-        NSLog(@"minicode: Claude Code IDE link: %@", MCIdeLinkProblem());
+        NSLog(@"mutible: Claude Code IDE link: %@", MCIdeLinkProblem());
     }
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {

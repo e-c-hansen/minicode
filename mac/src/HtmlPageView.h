@@ -13,7 +13,7 @@
 // holds anything that would run (FileSniff::htmlMayRunScripts) shows with
 // scripts off under a bar asking whether to run them, with a box to
 // remember the answer in the settings file; an answer not remembered
-// lasts for that file until minicode quits. Once answered, the bar stays
+// lasts for that file until mutible quits. Once answered, the bar stays
 // as a line saying what was chosen (with a close box) until another file
 // shows, so the page does not move up under the pointer. The web view is an MCWebView
 // (Browser.h), so the page never takes the keyboard by itself, and its

@@ -4,8 +4,8 @@
 // is written and when; this writes it, on a thread of its own, and answers
 // what a window opening a folder brings back.
 //
-// The folder is $MINICODE_BACKUP_DIR, else $XDG_DATA_HOME/minicode/Backups
-// (~/.local/share/minicode/Backups), made 0700; each backup is one file,
+// The folder is $MUTIBLE_BACKUP_DIR, else $XDG_DATA_HOME/mutible/Backups
+// (~/.local/share/mutible/Backups), made 0700; each backup is one file,
 // 0600, written to a temporary name, fsync'd and renamed, as the core does.
 //
 // A backup names the process holding its buffer (pid and start time): one

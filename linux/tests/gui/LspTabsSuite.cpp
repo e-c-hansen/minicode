@@ -1,4 +1,4 @@
-// LspTabsSuite.cpp — `./build/minicode-guitest lsp_tabs`: every tab's file
+// LspTabsSuite.cpp — `./build/mutible-guitest lsp_tabs`: every tab's file
 // stays open on its language server (linux/PARITY.md item 2.0, the Mac's
 // syncOpenDocuments, checked there by tests/gui/LspFixesSuite.mm), against
 // the scripted server (build/fakelsp) taking ranged changes. Three Python
@@ -112,7 +112,7 @@ MC_GUI_SUITE(lsp_tabs) {
         MCGuiWriteFile(F("b.py"), kB);
         MCGuiWriteFile(F("c.py"), kC);
         MCGuiWriteFile(F("x.go"), kX);
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         gPython = MCGuiFakeLsp(kServer, script());
         gPython2 = MCGuiFakeLsp(kServer2, script());
         gGo = MCGuiFakeLsp(kGo, script());

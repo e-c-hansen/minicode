@@ -42,7 +42,7 @@ enum class Kind {
 // The extension in lower case, without the dot ("" for none).
 std::string extensionOf(const std::string &path);
 
-// Documents with no viewer of minicode's own that Quick Look previews:
+// Documents with no viewer of mutible's own that Quick Look previews:
 // Office, iWork, OpenDocument, ePub, Rich Text Format Directory and the like.
 bool isQuickLookDocument(const std::string &ext);
 

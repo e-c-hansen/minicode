@@ -11,7 +11,7 @@
 //   - closing asks only when a program runs; the last tab closing hides the
 //     dock and showing it again starts a shell;
 //   - Run File goes to the active terminal, and to a new tab when it is
-//     busy; `minicode term` makes a tab with its title and command.
+//     busy; `mutible term` makes a tab with its title and command.
 #include "Harness.h"
 #include "AppSeam.h"
 #include "Editor.h"
@@ -77,7 +77,7 @@ std::shared_ptr<CliRun> gCli;
 
 void runCli(const std::vector<std::string>& args) {
     gCli = std::make_shared<CliRun>();
-    const std::string exe = MCGuiBuildDir() + "/minicode";
+    const std::string exe = MCGuiBuildDir() + "/mutible";
     std::vector<const char*> argv = {exe.c_str()};
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -303,7 +303,7 @@ MC_GUI_SUITE(terminal_tabs) {
         GCHECK(got.find("ran-in-" + std::to_string(dock()->at(1)->shellPid())) == 0);
     });
     MCGuiWait("sleep 5 finished, in the hidden tab", 20, [] { return ready(gA); });
-    MCGuiStep("minicode term makes a tab with its title and runs the command there", [] {
+    MCGuiStep("mutible term makes a tab with its title and runs the command there", [] {
         runCli({"term", "--title", "cli", "--run", "echo termcli > \"$HOME/tc.out\""});
     });
     MCGuiWait("term answered", 30, [] { return gCli->done; });

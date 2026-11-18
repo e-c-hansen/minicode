@@ -31,12 +31,12 @@ struct Env {
     // A path with its symlinks resolved; the path itself when that fails.
     // Identity when not given.
     std::function<std::string(const std::string&)> realPath;
-    // $VIRTUAL_ENV where minicode started ("" for none): activated by the
+    // $VIRTUAL_ENV where mutible started ("" for none): activated by the
     // user, so its bin is trusted, as the servers trust it.
     std::string virtualEnv;
     std::string home;   // a file above the folder is named from "~"
     // Where Ask Again About This Folder's Tools is, for the messages.
-    std::string askAgainMenu = "minicode";
+    std::string askAgainMenu = "mutible";
 };
 
 enum class Kind {

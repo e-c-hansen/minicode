@@ -139,7 +139,7 @@ struct IdeLinkServer::Impl {
     // ------------------------------------------------------------ lock file
     bool fail(const std::string& why) {
         gProblem = why;
-        g_printerr("minicode: Claude Code IDE link off: %s\n", why.c_str());
+        g_printerr("mutible: Claude Code IDE link off: %s\n", why.c_str());
         return false;
     }
 
@@ -391,7 +391,7 @@ struct IdeLinkServer::Impl {
             IdeLink::Handshake h = IdeLink::readHandshake(c->in, self->token_);
             if (h.state == IdeLink::Handshake::Incomplete) return;
             if (h.state == IdeLink::Handshake::Refused) {
-                g_printerr("minicode: IDE link refused a connection: %s\n", h.error.c_str());
+                g_printerr("mutible: IDE link refused a connection: %s\n", h.error.c_str());
                 c->closing = true;
                 send(c, h.response);
                 return;

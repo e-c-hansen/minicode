@@ -4,10 +4,10 @@
 // and SyncTex in ../src). Used by Latex.cpp and by the sweep harness
 // (tests/latex_sweep.cpp), so both click through exactly the same code.
 //
-// Compiled only with MINICODE_ENABLE_PDF.
+// Compiled only with MUTIBLE_ENABLE_PDF.
 #pragma once
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 
 #include <poppler.h>
 #include <string>
@@ -20,4 +20,4 @@ PageText pageTextOf(PopplerPage* page);
 // The whole of a gzip file, decompressed; empty if it cannot be read.
 std::string readGzipFile(const std::string& path);
 
-#endif  // MINICODE_ENABLE_PDF
+#endif  // MUTIBLE_ENABLE_PDF

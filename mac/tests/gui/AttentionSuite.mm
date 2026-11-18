@@ -1,17 +1,17 @@
 // AttentionSuite.mm — `make guitest SUITES=attention`: "Waiting for you" on
 // the right terminal tab (spec feature 7). Every terminal's environment
-// (MINICODE_TERMINAL_ID, MINICODE_PID), `minicode notify --from-hook` run
+// (MUTIBLE_TERMINAL_ID, MUTIBLE_PID), `mutible notify --from-hook` run
 // from inside a terminal and from outside, the tab's orange and green dots
 // and its tooltip, the Dock badge across windows, typing clearing a mark,
 // Ctrl+Cmd+W, the session recorded for the Agents panel's Show Terminal and
-// for paths the session printed, and `minicode hooks --install` on a
+// for paths the session printed, and `mutible hooks --install` on a
 // scratch settings file; and the app's own offer of the hooks: the bar a
 // stand-in `claude` brings over the terminals, Turn On's question and its
 // write with a backup, a second press that changes nothing, and the Agents
 // panel's line.
 //
 // The world is scratch: its own folder and window, a transcripts folder and
-// temp root named through MINICODE_CLAUDE_PROJECTS and MINICODE_CLAUDE_TMP,
+// temp root named through MUTIBLE_CLAUDE_PROJECTS and MUTIBLE_CLAUDE_TMP,
 // Claude Code's settings under the harness's scratch HOME (and a scratch
 // CLAUDE_CONFIG_DIR). The real ~/.claude is never read or written.
 #import "Harness.h"
@@ -38,7 +38,7 @@ namespace {
 NSString *gDir, *gReal, *gProjects, *gTmp, *gPad, *gOther;
 NSString *const kSid = @"5e55a0b1-7a1e-4c3e-9f00-000000000777";
 
-NSString *CLI() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"minicode-cli"]; }
+NSString *CLI() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"mutible-cli"]; }
 
 NSString *Real(NSString *p) {
     char buf[PATH_MAX];
@@ -86,8 +86,8 @@ NSString *Quote(NSString *s) {
                                                                            withString:@"'\\''"]];
 }
 
-// The environment a hook run outside any minicode terminal would have.
-NSDictionary *NoVariables() { return @{@"MINICODE_TERMINAL_ID": @"", @"MINICODE_PID": @""}; }
+// The environment a hook run outside any mutible terminal would have.
+NSDictionary *NoVariables() { return @{@"MUTIBLE_TERMINAL_ID": @"", @"MUTIBLE_PID": @""}; }
 
 void BuildWorld() {
     gDir = [MCGuiScratch() stringByAppendingPathComponent:@"attention-proj"];
@@ -111,8 +111,8 @@ void BuildWorld() {
     MCGuiWriteFile([gPad stringByAppendingPathComponent:@"notes/r.md"], @"one\ntwo\nthree\n");
     MCGuiWriteFile([gDir stringByAppendingPathComponent:@".claude/worktrees/agent-zz/notes/r.md"],
                    @"another agent's\n");
-    MCSetEnv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
-    MCSetEnv("MINICODE_CLAUDE_TMP", gTmp.fileSystemRepresentation);
+    MCSetEnv("MUTIBLE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
+    MCSetEnv("MUTIBLE_CLAUDE_TMP", gTmp.fileSystemRepresentation);
 }
 
 NSString *ReadTrimmed(NSString *path) {
@@ -145,12 +145,12 @@ MC_GUI_SUITE(attention) {
     MCGuiWait(@"their shells start", 20, ^BOOL { return t1.atPrompt && t2.atPrompt && t3.atPrompt; });
 
     // ------------------------------------------------------------ R7.1
-    MCGuiStep(@"each shell has its own MINICODE_TERMINAL_ID, and MINICODE_PID", ^{
+    MCGuiStep(@"each shell has its own MUTIBLE_TERMINAL_ID, and MUTIBLE_PID", ^{
         for (TerminalView *t in @[t1, t2]) {
             NSString *out = [MCGuiScratch() stringByAppendingFormat:@"/attention-env-%ld",
                              (long)t.terminalID];
             [t runCommand:[NSString stringWithFormat:
-                @"printf '%%s %%s\\n' \"$MINICODE_TERMINAL_ID\" \"$MINICODE_PID\" > %@", Quote(out)]];
+                @"printf '%%s %%s\\n' \"$MUTIBLE_TERMINAL_ID\" \"$MUTIBLE_PID\" > %@", Quote(out)]];
         }
     });
     MCGuiWait(@"they wrote them", 10, ^BOOL {
@@ -160,7 +160,7 @@ MC_GUI_SUITE(attention) {
                 return NO;
         return YES;
     });
-    MCGuiAsync(@"the same ids `minicode state` reports", 20, ^(MCGuiDone done) {
+    MCGuiAsync(@"the same ids `mutible state` reports", 20, ^(MCGuiDone done) {
         for (TerminalView *t in @[t1, t2]) {
             NSString *got = ReadTrimmed([MCGuiScratch() stringByAppendingFormat:@"/attention-env-%ld",
                                          (long)t.terminalID]);
@@ -215,7 +215,7 @@ MC_GUI_SUITE(attention) {
         MCGuiSnapshot(Strip(c), @"attention-waiting");
         GCHECK([[[MCTerminalAttention shared] sessionIdForTerminal:t2] isEqualToString:kSid]);
     });
-    MCGuiAsync(@"`minicode state` reports the mark and the session", 20, ^(MCGuiDone done) {
+    MCGuiAsync(@"`mutible state` reports the mark and the session", 20, ^(MCGuiDone done) {
         MCGuiRunProcess(@[CLI(), @"state", @"--pid", [NSString stringWithFormat:@"%d", getpid()]], nil,
                         ^(int, NSString *out, NSString *) {
             NSDictionary *state = [NSJSONSerialization
@@ -231,8 +231,8 @@ MC_GUI_SUITE(attention) {
     });
     MCGuiAsync(@"approving: PostToolUse clears the dot and the badge, quietly", 20, ^(MCGuiDone done) {
         CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
-        NSDictionary *env = @{@"MINICODE_TERMINAL_ID": [NSString stringWithFormat:@"%ld", (long)t2.terminalID],
-                              @"MINICODE_PID": [NSString stringWithFormat:@"%d", getpid()]};
+        NSDictionary *env = @{@"MUTIBLE_TERMINAL_ID": [NSString stringWithFormat:@"%ld", (long)t2.terminalID],
+                              @"MUTIBLE_PID": [NSString stringWithFormat:@"%d", getpid()]};
         NSString *cmd = [NSString stringWithFormat:@"%@ notify --from-hook < %@", Quote(CLI()),
                          Quote(HookFile(@"p", @"PostToolUse", nil))];
         MCGuiRunProcess(@[@"/bin/sh", @"-c", cmd], env, ^(int status, NSString *out, NSString *err) {
@@ -245,8 +245,8 @@ MC_GUI_SUITE(attention) {
         });
     });
     MCGuiAsync(@"Stop: a green dot, not counted in the badge", 20, ^(MCGuiDone done) {
-        NSDictionary *env = @{@"MINICODE_TERMINAL_ID": [NSString stringWithFormat:@"%ld", (long)t2.terminalID],
-                              @"MINICODE_PID": [NSString stringWithFormat:@"%d", getpid()]};
+        NSDictionary *env = @{@"MUTIBLE_TERMINAL_ID": [NSString stringWithFormat:@"%ld", (long)t2.terminalID],
+                              @"MUTIBLE_PID": [NSString stringWithFormat:@"%d", getpid()]};
         NSString *cmd = [NSString stringWithFormat:@"%@ notify --from-hook < %@", Quote(CLI()),
                          Quote(HookFile(@"s", @"Stop", nil))];
         MCGuiRunProcess(@[@"/bin/sh", @"-c", cmd], env, ^(int status, NSString *out, NSString *) {
@@ -274,7 +274,7 @@ MC_GUI_SUITE(attention) {
                    [Item(c, 1).toolTip hasPrefix:@"Waiting for you\n"]);
             NSString *cmd = [NSString stringWithFormat:@"%@ notify --from-hook < %@", Quote(CLI()),
                              Quote(HookFile(@"u", @"UserPromptSubmit", nil))];
-            MCGuiRunProcess(@[@"/bin/sh", @"-c", cmd], @{@"MINICODE_TERMINAL_ID": id2, @"MINICODE_PID": pid},
+            MCGuiRunProcess(@[@"/bin/sh", @"-c", cmd], @{@"MUTIBLE_TERMINAL_ID": id2, @"MUTIBLE_PID": pid},
                             ^(int s2, NSString *, NSString *) {
                 GCHECK(s2 == 0 && Item(c, 1).attention == MCTabAttentionNone);
                 done();
@@ -283,7 +283,7 @@ MC_GUI_SUITE(attention) {
     });
 
     // ------------------------------------------------------- never noisy
-    MCGuiAsync(@"echo '{}' | minicode notify --from-hook outside minicode: exit 0, nothing printed",
+    MCGuiAsync(@"echo '{}' | mutible notify --from-hook outside mutible: exit 0, nothing printed",
                20, ^(MCGuiDone done) {
         NSString *cmd = [NSString stringWithFormat:@"echo '{}' | %@ notify --from-hook", Quote(CLI())];
         MCGuiRunProcess(@[@"/bin/sh", @"-c", cmd], NoVariables(), ^(int status, NSString *out, NSString *err) {
@@ -291,12 +291,12 @@ MC_GUI_SUITE(attention) {
             done();
         });
     });
-    MCGuiAsync(@"and with variables naming a minicode that is gone, or a terminal that is not there",
+    MCGuiAsync(@"and with variables naming a mutible that is gone, or a terminal that is not there",
                20, ^(MCGuiDone done) {
         NSString *cmd = [NSString stringWithFormat:
-            @"MINICODE_TERMINAL_ID=1 MINICODE_PID=99999999 %1$@ notify --from-hook < %2$@ && "
-            @"MINICODE_TERMINAL_ID=4242 MINICODE_PID=%3$d %1$@ notify --from-hook < %2$@ && "
-            @"echo garbage | MINICODE_TERMINAL_ID=1 MINICODE_PID=%3$d %1$@ notify --from-hook && "
+            @"MUTIBLE_TERMINAL_ID=1 MUTIBLE_PID=99999999 %1$@ notify --from-hook < %2$@ && "
+            @"MUTIBLE_TERMINAL_ID=4242 MUTIBLE_PID=%3$d %1$@ notify --from-hook < %2$@ && "
+            @"echo garbage | MUTIBLE_TERMINAL_ID=1 MUTIBLE_PID=%3$d %1$@ notify --from-hook && "
             @"%1$@ notify --from-hook --what < /dev/null",
             Quote(CLI()), Quote(HookFile(@"n2", @"Notification", @"x")), getpid()];
         MCGuiRunProcess(@[@"/bin/sh", @"-c", cmd], nil, ^(int status, NSString *out, NSString *err) {
@@ -307,7 +307,7 @@ MC_GUI_SUITE(attention) {
     });
     MCGuiAsync(@"the launcher without a client in its bundle exits 0 too", 20, ^(MCGuiDone done) {
         NSString *launcher = [[MCGuiBuildDir() stringByDeletingLastPathComponent]
-            stringByAppendingPathComponent:@"scripts/minicode-launcher"];
+            stringByAppendingPathComponent:@"scripts/mutible-launcher"];
         NSString *cmd = [NSString stringWithFormat:@"echo '{}' | /bin/bash %@ notify --from-hook",
                          Quote(launcher)];
         MCGuiRunProcess(@[@"/bin/sh", @"-c", cmd], nil, ^(int status, NSString *out, NSString *err) {
@@ -443,7 +443,7 @@ MC_GUI_SUITE(attention) {
             GCHECK(status == 0);
             GCHECK(([[j[@"hooks"] allKeys] sortedArrayUsingSelector:@selector(compare:)].count == 4));
             GCHECK([j[@"hooks"][@"Notification"][0][@"hooks"][0][@"command"]
-                       isEqual:@"minicode notify --from-hook"]);
+                       isEqual:@"mutible notify --from-hook"]);
             done();
         });
     });
@@ -479,7 +479,7 @@ MC_GUI_SUITE(attention) {
             NSUInteger ours = 0;
             for (NSDictionary *e in h[ev])
                 for (NSDictionary *x in e[@"hooks"])
-                    ours += [x[@"command"] isEqual:@"minicode notify --from-hook"];
+                    ours += [x[@"command"] isEqual:@"mutible notify --from-hook"];
             GCHECK(ours == 1);
         }
         GCHECK([h[@"Stop"][0][@"hooks"][0][@"command"] isEqual:@"say done"] && [h[@"Stop"] count] == 2);
@@ -490,7 +490,7 @@ MC_GUI_SUITE(attention) {
         NSString *dir = settings.stringByDeletingLastPathComponent;
         NSArray *backups = [[NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil]
             filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:
-                @"SELF BEGINSWITH 'settings.json.minicode-backup-'"]];
+                @"SELF BEGINSWITH 'settings.json.mutible-backup-'"]];
         GCHECK(backups.count == 1);
         if (backups.count == 1)
             GCHECK([[NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:backups[0]]
@@ -548,7 +548,7 @@ MC_GUI_SUITE(attention) {
     MCGuiStep(@"it says what it offers, under the strip, above the panes", ^{
         MCInstallBar *bar = (MCInstallBar *)Panel(c).noticeBar;
         GCHECK([bar isKindOfClass:MCInstallBar.class]);
-        GCHECK([bar.text isEqualToString:@"minicode can show which Claude Code session is waiting on you."]);
+        GCHECK([bar.text isEqualToString:@"mutible can show which Claude Code session is waiting on you."]);
         GCHECK([bar.installButton.title isEqualToString:@"Turn On…"]);
         GCHECK(NSMaxY(t1.frame) <= NSMinY(bar.frame) + 0.5);
         GCHECK(NSMaxY(bar.frame) <= NSMinY(Strip(c).frame) + 0.5);
@@ -564,7 +564,7 @@ MC_GUI_SUITE(attention) {
     MCGuiWait(@"the question was asked", 5, ^BOOL { return MCGuiAlertsShown().count > alertsBefore; });
     MCGuiStep(@"Cancel wrote nothing and kept the bar", ^{
         GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore],
-                      @"Add minicode's hooks to Claude Code's settings?");
+                      @"Add mutible's hooks to Claude Code's settings?");
         GCHECK([[NSString stringWithContentsOfFile:offerSettings encoding:NSUTF8StringEncoding error:nil]
                    isEqualToString:offerOriginal]);
         GCHECK(Panel(c).noticeBar != nil);
@@ -589,7 +589,7 @@ MC_GUI_SUITE(attention) {
         }
         NSArray *backups = [[NSFileManager.defaultManager contentsOfDirectoryAtPath:offerCfg error:nil]
             filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:
-                @"SELF BEGINSWITH 'settings.json.minicode-backup-'"]];
+                @"SELF BEGINSWITH 'settings.json.mutible-backup-'"]];
         GCHECK(backups.count == 1);
         if (backups.count == 1)
             GCHECK([[NSString stringWithContentsOfFile:[offerCfg stringByAppendingPathComponent:backups[0]]
@@ -598,7 +598,7 @@ MC_GUI_SUITE(attention) {
         GCHECK(MCClaudeHooksInstalled() && MCClaudeHooksPreview() == nil);
         GCHECK(Panel(c).noticeBar == nil);
         alertsBefore = MCGuiAlertsShown().count;
-        // A second press, from the minicode menu: says so, writes nothing.
+        // A second press, from the mutible menu: says so, writes nothing.
         NSMenuItem *item = nil;
         for (NSMenuItem *top in NSApp.mainMenu.itemArray)
             for (NSMenuItem *i in top.submenu.itemArray)
@@ -629,8 +629,8 @@ MC_GUI_SUITE(attention) {
         c = nil;
         t1 = t2 = t3 = nil;
         MCGuiSetKeyWindow(nil);
-        MCSetEnv("MINICODE_CLAUDE_PROJECTS", nullptr);
-        MCSetEnv("MINICODE_CLAUDE_TMP", nullptr);
+        MCSetEnv("MUTIBLE_CLAUDE_PROJECTS", nullptr);
+        MCSetEnv("MUTIBLE_CLAUDE_TMP", nullptr);
         GCHECK(Win(gDir) == nil);
         GCHECK_EQ_STR(Badge(), @"");
     });

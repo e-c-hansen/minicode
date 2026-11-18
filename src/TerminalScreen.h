@@ -13,7 +13,7 @@
 // Conformance, as xterm's control sequence document and the kitty keyboard
 // protocol's specification describe them (term:vt-conformance tests each):
 // DA1 answers a VT220-class terminal with ANSI color ("CSI ? 62 ; 22 c"),
-// DA2 "CSI > 1 ; version ; 0 c", XTVERSION "DCS > | minicode version ST";
+// DA2 "CSI > 1 ; version ; 0 c", XTVERSION "DCS > | mutible version ST";
 // OSC 4, 10, 11 and 12 with "?" answer the palette and the host's
 // foreground, background and cursor colors (setThemeColors); DECRQM
 // answers every mode kept; DECSCUSR's cursor shapes; SGR 8 (hidden), 4:0

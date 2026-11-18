@@ -503,7 +503,7 @@ bool sameProcess(long pid, double start, const Process &p) {
 }
 
 namespace {
-// Another minicode's window that one running now holds open.
+// Another mutible's window that one running now holds open.
 bool heldElsewhere(const Window &w, const Process &me, IsRunning running, void *context) {
     return w.ownerPid > 0 && !sameProcess(w.ownerPid, w.ownerStart, me) && running &&
            running(w.ownerPid, w.ownerStart, context);

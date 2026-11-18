@@ -1,8 +1,8 @@
 #!/bin/bash
 # Wait for Launchpad to build an upload to the PPA, and fail loudly unless it
 # built.
-#   scripts/ppa-wait.sh 1.5.15        waits for 1.5.15-1~ppa1~resolute1
-#   scripts/ppa-wait.sh 1.5.15 2      the second upload of 1.5.15, ~ppa2
+#   scripts/ppa-wait.sh 1.6.0         waits for 1.6.0-1~ppa1~resolute1
+#   scripts/ppa-wait.sh 1.6.0 2       the second upload of 1.6.0, ~ppa2
 #
 # ppa.sh runs this after every real upload (and release.sh through it), so a
 # release only says the PPA is done once Launchpad has built the package; it
@@ -12,8 +12,10 @@
 #
 # It reads the PPA's public build records (no login, read only):
 #   https://api.launchpad.net/1.0/~OWNER/+archive/ubuntu/NAME
-#       ?ws.op=getBuildRecords&source_name=minicode
-# and waits until every build of this exact version has ended. Exit status:
+#       ?ws.op=getBuildRecords&source_name=mutible
+# and waits until every build of this exact version has ended. The source
+# package is mutible from 1.6.0; for an upload from before, minicode, as it
+# was then. Exit status:
 #   0  every build of it is "Successfully built"
 #   1  a build ended any other way ("Failed to build", "Dependency wait",
 #      "Chroot problem", "Failed to upload", "Cancelled build", ...); its
@@ -42,7 +44,7 @@ set -euo pipefail
 VERSION="${1:-}"
 REV="${2:-1}"
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || ! [[ "$REV" =~ ^[1-9][0-9]*$ ]]; then
-    echo "usage: scripts/ppa-wait.sh <version> [ppa revision]   e.g. 1.5.15" >&2
+    echo "usage: scripts/ppa-wait.sh <version> [ppa revision]   e.g. 1.6.0" >&2
     exit 2
 fi
 SERIES="${MINICODE_PPA_SERIES:-resolute}"
@@ -54,6 +56,13 @@ PPA_OWNER="${BASH_REMATCH[1]}"
 PPA_NAME="${BASH_REMATCH[2]}"
 # As ppa.sh numbers it (packaging/PPA.md, "Version numbers").
 PKGVER="$VERSION-1~ppa$REV~${SERIES}1"
+# The source package's name: minicode until 1.6.0, mutible since.
+IFS=. read -r MAJOR MINOR _ <<< "$VERSION"
+if (( 10#$MAJOR > 1 || (10#$MAJOR == 1 && 10#$MINOR >= 6) )); then
+    SOURCE=mutible
+else
+    SOURCE=minicode   # rename-mutible: keep
+fi
 for n in MINICODE_PPA_POLL_SECONDS MINICODE_PPA_ACCEPT_MINUTES MINICODE_PPA_WAIT_MINUTES; do
     if [ -n "${!n:-}" ] && ! [[ "${!n}" =~ ^[0-9]+$ ]]; then
         echo "error: $n must be a whole number, got '${!n}'" >&2; exit 2
@@ -63,17 +72,17 @@ done
 AGAIN="scripts/ppa-wait.sh $VERSION"
 [ "$REV" = 1 ] || AGAIN="$AGAIN $REV"
 
-exec python3 -I - "$PKGVER" "$PPA_OWNER" "$PPA_NAME" "$AGAIN" <<'PY'
+exec python3 -I - "$PKGVER" "$PPA_OWNER" "$PPA_NAME" "$AGAIN" "$SOURCE" <<'PY'
 import json, os, subprocess, sys, time
 
-pkgver, owner, name, again = sys.argv[1:5]
+pkgver, owner, name, again, source = sys.argv[1:6]
 poll = int(os.environ.get("MINICODE_PPA_POLL_SECONDS") or 60)
 accept_limit = 60 * int(os.environ.get("MINICODE_PPA_ACCEPT_MINUTES") or 30)
 wait_limit = 60 * int(os.environ.get("MINICODE_PPA_WAIT_MINUTES") or 240)
 answers = os.environ.get("MINICODE_PPA_ANSWERS") or ""
 page = f"https://launchpad.net/~{owner}/+archive/ubuntu/{name}/+packages"
 url = (f"https://api.launchpad.net/1.0/~{owner}/+archive/ubuntu/{name}"
-       "?ws.op=getBuildRecords&source_name=minicode&ws.size=50")
+       f"?ws.op=getBuildRecords&source_name={source}&ws.size=50")
 
 # Launchpad's BuildStatus titles for a build that has not ended. Every other
 # state is an end, and only "Successfully built" a good one, so a state this
@@ -132,7 +141,7 @@ def wait():
 def minutes(seconds):
     return f"{int(seconds // 60)} min"
 
-say(f"==> Waiting for Launchpad to build minicode {pkgver}")
+say(f"==> Waiting for Launchpad to build {source} {pkgver}")
 say(f"    {page}")
 say(f"    (Ctrl+C stops the wait, not the build; {again} waits again)")
 failures = 0
@@ -151,7 +160,7 @@ while True:
     else:
         failures = 0
         mine = [e for e in entries
-                if e.get("source_package_name") == "minicode"
+                if e.get("source_package_name") == source
                 and e.get("source_package_version") == pkgver]
         states = {e.get("arch_tag") or "?": e.get("buildstate") or "?" for e in mine}
         for arch, state in sorted(states.items()):

@@ -31,7 +31,7 @@ FormatOffer::FormatOffer(Host host) : host_(std::move(host)) {
     mute_ = gtk_button_new_with_label("Don't Ask Again");
     close_ = gtk_button_new_with_label("×");
     gtk_widget_add_css_class(close_, "flat");
-    gtk_widget_set_tooltip_text(close_, "Close (asked again after minicode starts again)");
+    gtk_widget_set_tooltip_text(close_, "Close (asked again after mutible starts again)");
     for (GtkWidget* w : {label_, turnOn_, mute_, close_}) gtk_box_append(GTK_BOX(box_), w);
     for (GtkWidget* b : {turnOn_, mute_, close_}) gtk_widget_set_valign(b, GTK_ALIGN_CENTER);
     g_signal_connect_swapped(turnOn_, "clicked",

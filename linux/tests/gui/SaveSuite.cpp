@@ -1,5 +1,5 @@
 // SaveSuite.cpp — the path every edit takes to the disk, by real input
-// (`./build/minicode-guitest save`): a click on a row in the tree opens the
+// (`./build/mutible-guitest save`): a click on a row in the tree opens the
 // file, a click in the text and key presses edit it, and Ctrl+S goes through
 // GTK's own accelerator matching to win.save. The disk is read directly.
 #include "Harness.h"

@@ -33,11 +33,11 @@ bool writeConfigFile(const std::string& path, const std::string& text, bool chec
 }
 
 AppSettings::AppSettings() {
-    const char* env = g_getenv("MINICODE_SETTINGS");
+    const char* env = g_getenv("MUTIBLE_SETTINGS");
     if (env && *env) {
         path_ = env;
     } else {
-        char* p = g_build_filename(g_get_user_config_dir(), "minicode",
+        char* p = g_build_filename(g_get_user_config_dir(), "mutible",
                                    "settings.conf", nullptr);
         path_ = p;
         g_free(p);
@@ -67,7 +67,7 @@ bool AppSettings::load() {
     errors_.clear();
     for (const SettingsError& e : errs) {
         errors_.push_back("line " + std::to_string(e.line) + ": " + e.message);
-        std::fprintf(stderr, "MiniCode settings %s\n", errors_.back().c_str());
+        std::fprintf(stderr, "mutible settings %s\n", errors_.back().c_str());
     }
     return true;
 }
@@ -116,7 +116,7 @@ bool AppSettings::ensureFileExists() {
     // replaced the link with a plain file.
     std::string why;
     if (!writeConfigFile(path_, Settings::defaultFileText(), false, &why)) {
-        std::fprintf(stderr, "minicode: %s\n", why.c_str());
+        std::fprintf(stderr, "mutible: %s\n", why.c_str());
         return false;
     }
     // Watching a path in a directory that didn't exist yet may have failed.
@@ -136,12 +136,12 @@ std::string AppSettings::fileText() const {
     return text;
 }
 
-// The file rewritten by minicode itself, refused while a tab holds it with
+// The file rewritten by mutible itself, refused while a tab holds it with
 // unsaved changes, and applied at once rather than when the monitor notices.
 bool AppSettings::rewriteFileWith(const std::string& text, std::string* why) {
     std::string problem;
     if (!writeConfigFile(path_, text, true, &problem)) {
-        std::fprintf(stderr, "minicode: %s\n", problem.c_str());
+        std::fprintf(stderr, "mutible: %s\n", problem.c_str());
         if (why) *why = problem;
         return false;
     }

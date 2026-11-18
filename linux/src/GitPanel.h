@@ -174,7 +174,7 @@ public:
     // A hunk action from the diff view (GitDiffView::onHunk).
     void runHunkOp(GitUi::HunkOp op, size_t first, size_t last, bool lines);
 
-    // ---- for the checks and the debug log (G_MESSAGES_DEBUG=minicode-git)
+    // ---- for the checks and the debug log (G_MESSAGES_DEBUG=mutible-git)
     // focusPending: focus() is still waiting for git's first answer to put
     // the keyboard on the first file or the graph.
     bool focusPending() const { return focusPending_; }

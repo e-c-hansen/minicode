@@ -13,7 +13,7 @@ static std::string env(const char* name) {
     return v && *v ? v : "";
 }
 
-bool active() { return !env("MINICODE_BENCH").empty(); }
+bool active() { return !env("MUTIBLE_BENCH").empty(); }
 
 namespace {
 struct Step {
@@ -23,15 +23,15 @@ struct Step {
 
 gboolean run(gpointer p) {
     Step* s = static_cast<Step*>(p);
-    const std::string cpp = env("MINICODE_BENCH_CPP"), tex = env("MINICODE_BENCH_TEX"),
-                      url = env("MINICODE_BENCH_URL");
+    const std::string cpp = env("MUTIBLE_BENCH_CPP"), tex = env("MUTIBLE_BENCH_TEX"),
+                      url = env("MUTIBLE_BENCH_URL");
     switch (s->n++) {
         case 0: if (!cpp.empty()) s->hooks.openFile(cpp); return G_SOURCE_CONTINUE;
         case 1: s->hooks.showTerminal(); return G_SOURCE_CONTINUE;
         case 2: if (!url.empty()) s->hooks.showAddress(url); return G_SOURCE_CONTINUE;
         case 3: if (!tex.empty()) s->hooks.openInNewWindow(tex); return G_SOURCE_CONTINUE;
         default:
-            std::fprintf(stderr, "minicode bench: ready\n");
+            std::fprintf(stderr, "mutible bench: ready\n");
             delete s;
             return G_SOURCE_REMOVE;
     }

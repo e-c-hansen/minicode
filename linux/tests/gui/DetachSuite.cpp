@@ -1,18 +1,18 @@
-// DetachSuite.cpp — `minicode` started from a terminal gives the terminal
-// back and is not tied to it (`./build/minicode-guitest detach`,
+// DetachSuite.cpp — `mutible` started from a terminal gives the terminal
+// back and is not tied to it (`./build/mutible-guitest detach`,
 // linux/PARITY.md R2, src/Detach.h).
 //
-// Not this app: the real build/minicode, run on pseudo-terminals the suite
+// Not this app: the real build/mutible, run on pseudo-terminals the suite
 // opens, each with /bin/sh as the terminal's shell (it runs the command,
-// prints "[minicode exited N]" when the command returns, then waits), on
+// prints "[mutible exited N]" when the command returns, then waits), on
 // the checks' Xvfb, in a scratch home of its own:
-//   - `minicode --version` and `minicode -h` print and return 0;
-//   - `minicode <folder>` returns 0 while its window stays up, in a process
+//   - `mutible --version` and `mutible -h` print and return 0;
+//   - `mutible <folder>` returns 0 while its window stays up, in a process
 //     in a session of its own with no controlling terminal and /dev/null on
 //     its standard streams; it asked systemd for a scope of its own, and a
 //     refusal did not stop it; the terminal hanging up (its master closed,
 //     SIGHUP to its session) leaves it running;
-//   - a second `minicode <file>` is handed to it and returns 0, and its
+//   - a second `mutible <file>` is handed to it and returns 0, and its
 //     window shows the file;
 //   - with its streams sent elsewhere (`</dev/null >log 2>&1`), still the
 //     terminal's job, it leaves as well, keeping the log file;
@@ -20,22 +20,22 @@
 //     the terminal;
 //   - started as the desktop starts it (no terminal), it does not fork:
 //     its window is the process started;
-//   - `minicode --foreground <folder>` holds the terminal while it runs, in
+//   - `mutible --foreground <folder>` holds the terminal while it runs, in
 //     the terminal's session, and goes when the terminal hangs up: the old
 //     behaviour, now asked for.
 //
-// The real minicode gets a session bus of its own, a dbus-daemon started
+// The real mutible gets a session bus of its own, a dbus-daemon started
 // with the harness's dbus.conf: on the harness's bus this app owns
-// org.minicode.Editor, and the real binary would hand its command line to
+// ai.ible.Mutible, and the real binary would hand its command line to
 // it and exit. On that bus the suite answers as org.freedesktop.systemd1,
 // recording StartTransientUnit and refusing it. The real binary's browser
 // pane loads DuckDuckGo (the checks' own build has about:blank), so its
 // http and https proxies are a listener here that answers nothing, and no
 // check reaches the network.
 //
-// Every process the real minicode runs as, or starts, carries a token in
+// Every process the real mutible runs as, or starts, carries a token in
 // its environment; the suite stops them all by PID at the end, with the
-// shells, the bus and anything below the minicodes.
+// shells, the bus and anything below the mutibles.
 #include "Harness.h"
 
 #include "LaunchOptions.h"
@@ -61,15 +61,15 @@
 
 extern char** environ;
 
-#ifndef MINICODE_VERSION
-#define MINICODE_VERSION ""
+#ifndef MUTIBLE_VERSION
+#define MUTIBLE_VERSION ""
 #endif
 
 namespace {
 
 std::string World() { return MCGuiScratch() + "/detach"; }
 std::string Project() { return World() + "/project"; }
-std::string Binary() { return MCGuiBuildDir() + "/minicode"; }
+std::string Binary() { return MCGuiBuildDir() + "/mutible"; }
 double Now() { return MCGuiNowMs() / 1000; }
 
 // ------------------------------------------------------------------ /proc
@@ -139,7 +139,7 @@ std::vector<pid_t> allPids() {
 std::string gToken;
 
 // The live processes whose environment holds this run's token: the real
-// minicodes, the launchers, and what they started.
+// mutibles, the launchers, and what they started.
 std::vector<pid_t> withToken() {
     std::vector<pid_t> out;
     const std::string want = "MC_GUI_DETACH_TOKEN=" + gToken;
@@ -160,8 +160,8 @@ std::vector<pid_t> withToken() {
     return out;
 }
 
-// The real minicodes among them, by their program.
-std::vector<pid_t> minicodes() {
+// The real mutibles among them, by their program.
+std::vector<pid_t> mutibles() {
     char real[PATH_MAX];
     const std::string binary = realpath(Binary().c_str(), real) ? real : Binary();
     std::vector<pid_t> out;
@@ -202,10 +202,10 @@ void remember(pid_t pid) {
     gStarted.push_back(Proc{pid, s.start});
 }
 
-// The minicodes and everything theirs, noted before any is signalled.
-void rememberMinicodesAndTheirs() {
+// The mutibles and everything theirs, noted before any is signalled.
+void rememberMutiblesAndTheirs() {
     for (pid_t pid : withToken()) remember(pid);
-    for (pid_t m : minicodes())
+    for (pid_t m : mutibles())
         for (pid_t d : descendantsOf(m)) remember(d);
 }
 
@@ -237,9 +237,9 @@ void makeEnvironment(const std::string& busAddress, int proxyPort) {
         {"XDG_CACHE_HOME", World() + "/cache"},
         {"XDG_DATA_HOME", World() + "/data"},
         {"XDG_STATE_HOME", World() + "/state"},
-        {"MINICODE_SETTINGS", World() + "/settings.conf"},
-        {"MINICODE_KEYS", World() + "/keys.conf"},
-        {"MINICODE_BACKUP_DIR", World() + "/backups"},
+        {"MUTIBLE_SETTINGS", World() + "/settings.conf"},
+        {"MUTIBLE_KEYS", World() + "/keys.conf"},
+        {"MUTIBLE_BACKUP_DIR", World() + "/backups"},
         {"DBUS_SESSION_BUS_ADDRESS", busAddress},
         {"MC_GUI_DETACH_TOKEN", gToken},
         {"http_proxy", proxy},
@@ -249,7 +249,7 @@ void makeEnvironment(const std::string& busAddress, int proxyPort) {
         {"all_proxy", proxy},
         {"ALL_PROXY", proxy},
     };
-    const std::set<std::string> drop = {"MC_GUI_CHILD", "no_proxy", "NO_PROXY", "MINICODE_FOREGROUND",
+    const std::set<std::string> drop = {"MC_GUI_CHILD", "no_proxy", "NO_PROXY", "MUTIBLE_FOREGROUND",
                                         "DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE"};
     gEnv.clear();
     for (char** e = environ; *e; e++) {
@@ -270,9 +270,9 @@ struct PtyShell {
 };
 
 // What the terminal's shell runs: the command, as typed, then a line when
-// it returns. `redirect` follows the command, as in `minicode x >log`.
+// it returns. `redirect` follows the command, as in `mutible x >log`.
 std::string shellScript(const std::string& redirect) {
-    return "\"$0\" \"$@\" " + redirect + "; echo \"[minicode exited $?]\"; exec sleep 300";
+    return "\"$0\" \"$@\" " + redirect + "; echo \"[mutible exited $?]\"; exec sleep 300";
 }
 
 std::shared_ptr<PtyShell> onTerminal(const std::vector<std::string>& args,
@@ -298,7 +298,7 @@ std::shared_ptr<PtyShell> onTerminal(const std::vector<std::string>& args,
     const pid_t pid = forkpty(&master, slave, nullptr, &size);
     if (pid == 0) {
         // As a terminal starts its shell: default signal handling and an
-        // empty mask (a SIGHUP ignored here would be ignored in minicode
+        // empty mask (a SIGHUP ignored here would be ignored in mutible
         // too, and pass the hang-up check without the fix), and nothing of
         // this process but the terminal.
         struct sigaction dfl;
@@ -313,7 +313,7 @@ std::shared_ptr<PtyShell> onTerminal(const std::vector<std::string>& args,
         _exit(127);
     }
     if (pid < 0) {
-        MCGuiCheck(false, "a pseudo-terminal for the real minicode", __FILE__, __LINE__);
+        MCGuiCheck(false, "a pseudo-terminal for the real mutible", __FILE__, __LINE__);
         return t;
     }
     fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK);
@@ -335,7 +335,7 @@ void pump(PtyShell& t) {
             t.out.append(buf, (size_t)n);
         }
     }
-    if (t.returned == 0 && t.out.find("[minicode exited ") != std::string::npos) t.returned = Now();
+    if (t.returned == 0 && t.out.find("[mutible exited ") != std::string::npos) t.returned = Now();
 }
 
 bool returned(PtyShell& t) {
@@ -343,10 +343,10 @@ bool returned(PtyShell& t) {
     return t.returned > 0;
 }
 
-// "[minicode exited N]", or "" while the command runs.
+// "[mutible exited N]", or "" while the command runs.
 std::string exitLine(PtyShell& t) {
     pump(t);
-    const size_t at = t.out.find("[minicode exited ");
+    const size_t at = t.out.find("[mutible exited ");
     if (at == std::string::npos) return "";
     const size_t end = t.out.find(']', at);
     return end == std::string::npos ? "" : t.out.substr(at, end + 1 - at);
@@ -421,7 +421,7 @@ struct ScopeCall {
 };
 std::vector<ScopeCall> gScopeCalls;
 
-// The scopes minicode asked for itself. The rest are VTE's, one for each
+// The scopes mutible asked for itself. The rest are VTE's, one for each
 // shell its terminal panel starts (vte-spawn-<uuid>.scope).
 std::vector<ScopeCall> appScopes() {
     std::vector<ScopeCall> out;
@@ -608,16 +608,16 @@ bool startProxy() {
 
 // ---------------------------------------------------------- the suite
 bool gReady = false;
-pid_t gApp = -1;   // the detached minicode
+pid_t gApp = -1;   // the detached mutible
 pid_t gForeground = -1;
 std::shared_ptr<PtyShell> gVersion, gHelp, gDetached, gSecond, gRedirected, gNoDisplay, gHeld;
 pid_t gRedirectedApp = -1;
 pid_t gDesktop = -1;   // started as the desktop starts it
 bool gDesktopReaped = false;
 
-// The one real minicode with a window up, or -1.
-pid_t windowedMinicode() {
-    const std::vector<pid_t> found = minicodes();
+// The one real mutible with a window up, or -1.
+pid_t windowedMutible() {
+    const std::vector<pid_t> found = mutibles();
     if (found.size() != 1) return -1;
     for (const MCGuiOtherWindow& w : MCGuiWindowsOfProcess(found[0]))
         if (w.viewable) return found[0];
@@ -649,10 +649,10 @@ std::string titlesOf(pid_t pid) {
     return out;
 }
 
-// The real minicodes running and their windows, for a wait that failed.
-std::string describeMinicodes() {
+// The real mutibles running and their windows, for a wait that failed.
+std::string describeMutibles() {
     std::string out;
-    for (pid_t pid : minicodes()) {
+    for (pid_t pid : mutibles()) {
         const Stat s = statOf(pid);
         out += (out.empty() ? "" : "; ") + std::to_string(pid) + " (parent " + std::to_string(s.ppid) +
                ", session " + std::to_string(s.session) + ", windows " + titlesOf(pid) + ")";
@@ -663,7 +663,7 @@ std::string describeMinicodes() {
 }  // namespace
 
 MC_GUI_SUITE(detach) {
-    MCGuiStep("makes the real minicode's world, its bus, a systemd that refuses and a proxy", [] {
+    MCGuiStep("makes the real mutible's world, its bus, a systemd that refuses and a proxy", [] {
         gReady = GCHECK(access(Binary().c_str(), X_OK) == 0);
         if (!gReady) return;
         gToken = std::to_string(getpid()) + "-" + std::to_string(g_random_int());
@@ -676,32 +676,32 @@ MC_GUI_SUITE(detach) {
     });
 
     // ---- printing and returning
-    MCGuiStep("runs minicode --version on a terminal", [] {
+    MCGuiStep("runs mutible --version on a terminal", [] {
         if (gReady) gVersion = onTerminal({"--version"});
     });
     MCGuiWait("it prints the version and returns", 20, [] { return !gVersion || returned(*gVersion); });
     MCGuiStep("checks what it printed", [] {
         if (!gVersion) return;
-        GCHECK_EQ_STR(exitLine(*gVersion), "[minicode exited 0]");
-        const std::string want = std::string("minicode ") + MINICODE_VERSION + "\r\n";
+        GCHECK_EQ_STR(exitLine(*gVersion), "[mutible exited 0]");
+        const std::string want = std::string("mutible ") + MUTIBLE_VERSION + "\r\n";
         if (!GCHECK(gVersion->out.find(want) != std::string::npos))
             MCGuiNote("it printed: %s", gVersion->out.c_str());
         hangUp(*gVersion);
     });
-    MCGuiStep("runs minicode -h on a terminal", [] {
+    MCGuiStep("runs mutible -h on a terminal", [] {
         if (gReady) gHelp = onTerminal({"-h"});
     });
     MCGuiWait("it prints the help and returns", 20, [] { return !gHelp || returned(*gHelp); });
     MCGuiStep("checks the help", [] {
         if (!gHelp) return;
-        GCHECK_EQ_STR(exitLine(*gHelp), "[minicode exited 0]");
-        GCHECK(gHelp->out.find("Usage: minicode [options] [path]") != std::string::npos);
+        GCHECK_EQ_STR(exitLine(*gHelp), "[mutible exited 0]");
+        GCHECK(gHelp->out.find("Usage: mutible [options] [path]") != std::string::npos);
         GCHECK(gHelp->out.find("--foreground") != std::string::npos);
         hangUp(*gHelp);
     });
 
     // ---- the terminal given back
-    MCGuiStep("runs minicode <folder> on a terminal", [] {
+    MCGuiStep("runs mutible <folder> on a terminal", [] {
         if (gReady) gDetached = onTerminal({Project()});
     });
     // The product stops waiting for the window after 30 s and returns 0
@@ -710,26 +710,26 @@ MC_GUI_SUITE(detach) {
     MCGuiWait("the command returns", 25, [] { return !gDetached || returned(*gDetached); });
     MCGuiStep("it returned 0, with nothing printed", [] {
         if (!gDetached) return;
-        GCHECK_EQ_STR(exitLine(*gDetached), "[minicode exited 0]");
+        GCHECK_EQ_STR(exitLine(*gDetached), "[mutible exited 0]");
         GCHECK(gDetached->out.find("still starting") == std::string::npos);
         if (gDetached->returned > 0)
             MCGuiNote("returned %.2f s after it started", gDetached->returned - gDetached->started);
         // What the app printed before its window, which the terminal shows
         // (Mesa's DRI3 complaint on this display); nothing of the launcher's.
-        const std::string before = gDetached->out.substr(0, gDetached->out.find("[minicode exited "));
+        const std::string before = gDetached->out.substr(0, gDetached->out.find("[mutible exited "));
         if (!before.empty()) {
             gchar* shown = g_strescape(before.c_str(), nullptr);
             MCGuiNote("the terminal showed before it returned: %s", shown);
             g_free(shown);
         }
     });
-    MCGuiWait("a minicode window is up", 20, [] {
+    MCGuiWait("a mutible window is up", 20, [] {
         if (!gDetached) return true;
-        gApp = windowedMinicode();
+        gApp = windowedMutible();
         return gApp > 0;
     });
     MCGuiStep("it runs in a session of its own, with nothing of the terminal", [] {
-        if (gDetached && gApp <= 0) MCGuiNote("running: %s", describeMinicodes().c_str());
+        if (gDetached && gApp <= 0) MCGuiNote("running: %s", describeMutibles().c_str());
         if (gApp <= 0) return;
         const Stat s = statOf(gApp);
         GCHECK(s.ok);
@@ -743,15 +743,15 @@ MC_GUI_SUITE(detach) {
             GCHECK(to != gDetached->slave);
             GCHECK_EQ_STR(to, "/dev/null");
         }
-        // The primary instance on its bus: what a second `minicode` finds.
-        GCHECK(ownerOf("org.minicode.Editor") == gApp);
+        // The primary instance on its bus: what a second `mutible` finds.
+        GCHECK(ownerOf("ai.ible.Mutible") == gApp);
     });
     MCGuiWait("it asked systemd for a scope of its own", 10, [] { return gApp <= 0 || !appScopes().empty(); });
     MCGuiStep("the scope it asked for", [] {
         if (gApp <= 0 || appScopes().empty()) return;
         GCHECK(appScopes().size() == 1);
         const ScopeCall c = appScopes()[0];
-        GCHECK_EQ_STR(c.name, LaunchOptions::scopeName("org.minicode.Editor", gApp));
+        GCHECK_EQ_STR(c.name, LaunchOptions::scopeName("ai.ible.Mutible", gApp));
         GCHECK_EQ_STR(c.mode, "fail");
         GCHECK(c.pids.size() == 1 && c.pids[0] == (guint32)gApp);
         GCHECK_EQ_STR(c.collect, "inactive-or-failed");
@@ -764,51 +764,51 @@ MC_GUI_SUITE(detach) {
     // A negative check: the hang-up and the SIGHUP to the session have
     // reached whatever they were going to reach well within this time.
     MCGuiPause(1.5);
-    MCGuiStep("minicode is still running, its window up", [] {
+    MCGuiStep("mutible is still running, its window up", [] {
         if (gApp <= 0) return;
         GCHECK(alive(gApp));
         GCHECK(hasWindow(gApp));
-        GCHECK(ownerOf("org.minicode.Editor") == gApp);
+        GCHECK(ownerOf("ai.ible.Mutible") == gApp);
     });
 
-    // ---- a second minicode hands its path over
-    MCGuiStep("runs minicode notes.txt on a second terminal", [] {
+    // ---- a second mutible hands its path over
+    MCGuiStep("runs mutible notes.txt on a second terminal", [] {
         if (gApp > 0) gSecond = onTerminal({Project() + "/notes.txt"});
     });
     MCGuiWait("it returns", 25, [] { return !gSecond || returned(*gSecond); });
     MCGuiStep("it returned 0", [] {
-        if (gSecond) GCHECK_EQ_STR(exitLine(*gSecond), "[minicode exited 0]");
+        if (gSecond) GCHECK_EQ_STR(exitLine(*gSecond), "[mutible exited 0]");
     });
-    MCGuiWait("the running minicode shows the file", 10, [] {
+    MCGuiWait("the running mutible shows the file", 10, [] {
         return !gSecond || hasWindow(gApp, "notes.txt");
     });
-    MCGuiStep("no second minicode stayed, and it asked for no scope", [] {
+    MCGuiStep("no second mutible stayed, and it asked for no scope", [] {
         if (!gSecond) return;
         if (!hasWindow(gApp, "notes.txt")) MCGuiNote("its windows: %s", titlesOf(gApp).c_str());
-        const std::vector<pid_t> found = minicodes();
+        const std::vector<pid_t> found = mutibles();
         GCHECK(found.size() == 1 && found[0] == gApp);
         GCHECK(appScopes().size() == 1);
         hangUp(*gSecond);
     });
 
-    // ---- the detached minicode is stopped, by its PID
-    MCGuiStep("stops the detached minicode and what it started", [] {
-        rememberMinicodesAndTheirs();
+    // ---- the detached mutible is stopped, by its PID
+    MCGuiStep("stops the detached mutible and what it started", [] {
+        rememberMutiblesAndTheirs();
         if (gApp > 0) kill(gApp, SIGTERM);
     });
     MCGuiWait("it has gone", 10, [] { return gApp <= 0 || !alive(gApp); });
-    // The next minicode must find no primary instance: the bus lets go of
+    // The next mutible must find no primary instance: the bus lets go of
     // a dead process's name a moment after it has gone.
-    MCGuiWait("its name on the bus is free", 10, [] { return !gReady || ownerOf("org.minicode.Editor") < 0; });
+    MCGuiWait("its name on the bus is free", 10, [] { return !gReady || ownerOf("ai.ible.Mutible") < 0; });
 
     // ---- its streams sent elsewhere: still the terminal's job, so it leaves
-    MCGuiStep("runs minicode <folder> </dev/null >log 2>&1 on a terminal", [] {
+    MCGuiStep("runs mutible <folder> </dev/null >log 2>&1 on a terminal", [] {
         if (gReady) gRedirected = onTerminal({Project()}, {}, "</dev/null >\"$HOME/out.log\" 2>&1");
     });
     MCGuiWait("the command returns", 25, [] { return !gRedirected || returned(*gRedirected); });
     MCGuiWait("its window is up", 20, [] {
         if (!gRedirected) return true;
-        gRedirectedApp = windowedMinicode();
+        gRedirectedApp = windowedMutible();
         return gRedirectedApp > 0;
     });
     MCGuiWait("it asked for a scope of its own too", 10, [] {
@@ -816,10 +816,10 @@ MC_GUI_SUITE(detach) {
     });
     MCGuiStep("it left the terminal and kept its log file", [] {
         if (gRedirected && gRedirectedApp <= 0)
-            MCGuiNote("%s; running: %s", exitLine(*gRedirected).c_str(), describeMinicodes().c_str());
+            MCGuiNote("%s; running: %s", exitLine(*gRedirected).c_str(), describeMutibles().c_str());
         if (gRedirectedApp <= 0) return;
         GCHECK(appScopes().size() == 2 && appScopes()[1].pids == std::vector<guint32>{(guint32)gRedirectedApp});
-        GCHECK_EQ_STR(exitLine(*gRedirected), "[minicode exited 0]");
+        GCHECK_EQ_STR(exitLine(*gRedirected), "[mutible exited 0]");
         const Stat s = statOf(gRedirectedApp);
         GCHECK(s.session == gRedirectedApp);
         GCHECK(s.ttyNr == 0);
@@ -828,42 +828,42 @@ MC_GUI_SUITE(detach) {
         GCHECK_EQ_STR(linkOf(fd + "0"), "/dev/null");
         GCHECK_EQ_STR(linkOf(fd + "1"), log);   // a regular file the user chose stays
         GCHECK_EQ_STR(linkOf(fd + "2"), log);
-        rememberMinicodesAndTheirs();
+        rememberMutiblesAndTheirs();
         kill(gRedirectedApp, SIGTERM);
         hangUp(*gRedirected);
     });
     MCGuiWait("it has gone", 10, [] { return gRedirectedApp <= 0 || !alive(gRedirectedApp); });
-    MCGuiWait("its name on the bus is free", 10, [] { return !gReady || ownerOf("org.minicode.Editor") < 0; });
+    MCGuiWait("its name on the bus is free", 10, [] { return !gReady || ownerOf("ai.ible.Mutible") < 0; });
 
     // ---- a failure before the window is said in the terminal
-    MCGuiStep("runs minicode <folder> on a terminal, with no display to open", [] {
+    MCGuiStep("runs mutible <folder> on a terminal, with no display to open", [] {
         if (gReady) gNoDisplay = onTerminal({Project()}, {{"DISPLAY", NoDisplay()}});
     });
     MCGuiWait("the command returns", 25, [] { return !gNoDisplay || returned(*gNoDisplay); });
-    MCGuiStep("with minicode's status, and GTK's message in the terminal", [] {
+    MCGuiStep("with mutible's status, and GTK's message in the terminal", [] {
         if (!gNoDisplay) return;
-        GCHECK_EQ_STR(exitLine(*gNoDisplay), "[minicode exited 1]");
+        GCHECK_EQ_STR(exitLine(*gNoDisplay), "[mutible exited 1]");
         // GTK 4.22 says "Failed to open display", older ones "cannot open display".
         if (!GCHECK(gNoDisplay->out.find("open display") != std::string::npos))
             MCGuiNote("it printed: %s", gNoDisplay->out.c_str());
-        GCHECK(minicodes().empty());
+        GCHECK(mutibles().empty());
         hangUp(*gNoDisplay);
     });
 
     // ---- the desktop's launch: no terminal, so no fork
-    MCGuiStep("starts minicode <folder> as the desktop does, with no terminal", [] {
+    MCGuiStep("starts mutible <folder> as the desktop does, with no terminal", [] {
         if (gReady) GCHECK((gDesktop = startWithoutTerminal({Project()})) > 0);
     });
     // The window's _NET_WM_PID is the very process started: it did not fork.
     MCGuiWait("its window is up", 25, [] { return gDesktop <= 0 || hasWindow(gDesktop); });
     MCGuiStep("it is the process started, still running, with no scope asked for", [] {
-        if (gDesktop > 0 && !hasWindow(gDesktop)) MCGuiNote("running: %s", describeMinicodes().c_str());
+        if (gDesktop > 0 && !hasWindow(gDesktop)) MCGuiNote("running: %s", describeMutibles().c_str());
         if (gDesktop <= 0) return;
         GCHECK(waitpid(gDesktop, nullptr, WNOHANG) == 0);   // still running, as this process's child
-        const std::vector<pid_t> found = minicodes();
+        const std::vector<pid_t> found = mutibles();
         GCHECK(found.size() == 1 && found[0] == gDesktop);
         GCHECK(appScopes().size() == 2);   // none for this one
-        rememberMinicodesAndTheirs();
+        rememberMutiblesAndTheirs();
         kill(gDesktop, SIGTERM);
     });
     MCGuiWait("it has gone", 10, [] {
@@ -871,19 +871,19 @@ MC_GUI_SUITE(detach) {
         gDesktopReaped = waitpid(gDesktop, nullptr, WNOHANG) == gDesktop;
         return gDesktopReaped;
     });
-    MCGuiWait("its name on the bus is free", 10, [] { return !gReady || ownerOf("org.minicode.Editor") < 0; });
+    MCGuiWait("its name on the bus is free", 10, [] { return !gReady || ownerOf("ai.ible.Mutible") < 0; });
 
     // ---- --foreground: the old way, asked for
-    MCGuiStep("runs minicode --foreground <folder> on a third terminal", [] {
+    MCGuiStep("runs mutible --foreground <folder> on a third terminal", [] {
         if (gReady) gHeld = onTerminal({"--foreground", Project()});
     });
     MCGuiWait("its window is up", 25, [] {
         if (!gHeld) return true;
-        gForeground = windowedMinicode();
+        gForeground = windowedMutible();
         return gForeground > 0;
     });
     MCGuiStep("it runs in the terminal's session, on the terminal", [] {
-        if (gHeld && gForeground <= 0) MCGuiNote("running: %s", describeMinicodes().c_str());
+        if (gHeld && gForeground <= 0) MCGuiNote("running: %s", describeMutibles().c_str());
         if (gForeground <= 0) return;
         const Stat s = statOf(gForeground);
         GCHECK(s.session == gHeld->shell);
@@ -898,14 +898,14 @@ MC_GUI_SUITE(detach) {
         if (!gHeld) return;
         GCHECK(!returned(*gHeld));
         GCHECK(alive(gForeground));
-        rememberMinicodesAndTheirs();
+        rememberMutiblesAndTheirs();
         hangUp(*gHeld);
     });
-    MCGuiWait("minicode goes with its terminal", 10, [] { return gForeground <= 0 || !alive(gForeground); });
+    MCGuiWait("mutible goes with its terminal", 10, [] { return gForeground <= 0 || !alive(gForeground); });
 
     // ---- the end: everything started here is stopped by PID
     MCGuiStep("stops every process the suite started", [] {
-        rememberMinicodesAndTheirs();
+        rememberMutiblesAndTheirs();
         signalRemembered(SIGTERM);
     });
     MCGuiWait("they have all gone", 10, [] {
@@ -933,7 +933,7 @@ MC_GUI_SUITE(detach) {
             g_socket_listener_close(G_SOCKET_LISTENER(gProxy));
             g_clear_object(&gProxy);
         }
-        // Where the real minicode's browser pane went instead of the network.
+        // Where the real mutible's browser pane went instead of the network.
         if (!gProxyAsked.empty())
             MCGuiNote("the proxy was asked %d times, first: %s", (int)gProxyAsked.size(),
                       gProxyAsked[0].c_str());

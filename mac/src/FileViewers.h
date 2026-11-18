@@ -1,6 +1,6 @@
 // FileViewers.h — the viewers that take the editor's slot for files that
 // are not plain text, beyond the image, PDF and media viewers in
-// EditorController: Quick Look for anything minicode has no viewer for,
+// EditorController: Quick Look for anything mutible has no viewer for,
 // and a table for CSV and TSV files. EditorController keeps one
 // MCFileViewers per window and calls it from a few hooks (loading and
 // showing a tab, laying out the slot, letting go); which viewer a file gets

@@ -1,9 +1,9 @@
-// StartupSuite.cpp — the time to a usable window (`./build/minicode-guitest
-// startup`, linux/PARITY.md R3). The owner found minicode taking seconds to
+// StartupSuite.cpp — the time to a usable window (`./build/mutible-guitest
+// startup`, linux/PARITY.md R3). The owner found mutible taking seconds to
 // open on the ThinkPad where the Mac takes under one. A second app opens a
 // folder whose session brings back five tabs (a C++ file on show, four of
 // 3 MB behind it) with a language server set for C++, and the startup log
-// on (MINICODE_STARTUP_LOG, src/StartupLog.h). It checks, in the app:
+// on (MUTIBLE_STARTUP_LOG, src/StartupLog.h). It checks, in the app:
 //
 //   - the first frame within a bound of main-thread CPU from main, and a
 //     wall-time bound with room for a loaded machine;
@@ -33,10 +33,10 @@
 #include "TabSessions.h"
 #include "WindowLayout.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 #include "Browser.h"
 #include <webkit/webkit.h>
 #endif
@@ -187,7 +187,7 @@ MC_GUI_SUITE(startup) {
         s.active = 2;
         TabSessions::Sessions all;
         TabSessions::put(all, Persistence::keyFor(Folder()), s, 1762700000.0);
-        MCGuiWriteFile(ChildState() + "/minicode/sessions.json", TabSessions::encode(all));
+        MCGuiWriteFile(ChildState() + "/mutible/sessions.json", TabSessions::encode(all));
 
         const std::string server = MCGuiFakeLsp("startup", "{}");
         MCGuiWriteFile(ChildSettings(), "lsp.enabled = true\nlsp.cpp = " + server + "\n");
@@ -196,9 +196,9 @@ MC_GUI_SUITE(startup) {
         // The second app has this process's environment, as it is now.
         std::string oldSettings, oldState, oldLog;
         bool hadSettings = false, hadState = false, hadLog = false;
-        SetEnv("MINICODE_SETTINGS", ChildSettings(), &oldSettings, &hadSettings);
+        SetEnv("MUTIBLE_SETTINGS", ChildSettings(), &oldSettings, &hadSettings);
         SetEnv("XDG_STATE_HOME", ChildState(), &oldState, &hadState);
-        SetEnv("MINICODE_STARTUP_LOG", "1", &oldLog, &hadLog);
+        SetEnv("MUTIBLE_STARTUP_LOG", "1", &oldLog, &hadLog);
         MCGuiRunChild("_startup", Folder(), [done](int status, std::string out) {
             gStatus = status;
             gOut = out;
@@ -208,15 +208,15 @@ MC_GUI_SUITE(startup) {
                 if (end == std::string::npos) end = out.size();
                 const std::string line = out.substr(at, end - at);
                 at = end + 1;
-                if (line.find("minicode startup:") != std::string::npos) gLog.push_back(line);
+                if (line.find("mutible startup:") != std::string::npos) gLog.push_back(line);
                 // The second app's notes (its numbers), for the run's log.
                 else if (line.rfind("    ", 0) == 0) MCGuiNote("second app:%s", line.c_str() + 3);
             }
             done();
         });
-        PutBack("MINICODE_SETTINGS", oldSettings, hadSettings);
+        PutBack("MUTIBLE_SETTINGS", oldSettings, hadSettings);
         PutBack("XDG_STATE_HOME", oldState, hadState);
-        PutBack("MINICODE_STARTUP_LOG", oldLog, hadLog);
+        PutBack("MUTIBLE_STARTUP_LOG", oldLog, hadLog);
     });
     MCGuiStep("it passed its own checks", [] {
         GCHECK(gStatus == 0);
@@ -254,11 +254,11 @@ MC_GUI_SUITE(_startup) {
         const std::vector<std::string> started = Started();
         MCGuiNote("started below the app: %s", Joined(started).c_str());
         GCHECK(!AnyShellOrWebKit(started));
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         GCHECK(MCGuiApp().terminal && !MCGuiApp().terminal->made());
         GCHECK(!MCGuiApp().layout->terminalShown());
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
         GCHECK(MCGuiApp().browser && !MCGuiApp().browser->webView());
         GCHECK(!MCGuiApp().layout->browserShown());
 #endif
@@ -267,7 +267,7 @@ MC_GUI_SUITE(_startup) {
         return Has(Started(), "fakelsp") && MCGuiFakeLspReceived("startup", "textDocument/didOpen",
                                                                 "main.cpp") > 0;
     });
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     MCGuiStep("the terminal shown", [] {
         gWindowControllers = Controllers(GTK_WIDGET(MCGuiApp().window));
         MCGuiSetKeyWindow(nullptr);
@@ -284,7 +284,7 @@ MC_GUI_SUITE(_startup) {
         GCHECK(Controllers(GTK_WIDGET(MCGuiApp().window)) == gWindowControllers + 1);
     });
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     MCGuiStep("the browser shown", [] { MCGuiKey("ctrl+shift+b"); });
     MCGuiWait("made, on its home page, its web process running", 30, [] {
         GtkWidget* web = MCGuiApp().browser->webView();

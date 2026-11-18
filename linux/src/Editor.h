@@ -190,7 +190,7 @@ public:
     // A tab for `path` at the end of the row, not put on show, its file not
     // read until it first is (a session coming back, Persistence.h).
     Document* addTab(const std::string& path);
-    // A file for the agent (`minicode open --note`, AgentNotes.h): in the
+    // A file for the agent (`mutible open --note`, AgentNotes.h): in the
     // agent's preview tab when `preview` (each such open replaces the last
     // one, in its place; an edit keeps it), else a kept tab, just right of
     // the active one (Model::Window::add). With `quiet` it is only added
@@ -377,7 +377,7 @@ public:
     bool exportPdf(GtkWindow* parent);
     // File > Export as HTML…: the active Markdown file (unsaved changes
     // included) as a standalone page, chosen in a save dialog, or at
-    // $MINICODE_HTML_EXPORT_PATH when that is set (the checks).
+    // $MUTIBLE_HTML_EXPORT_PATH when that is set (the checks).
     bool exportHtml(GtkWindow* parent);
     // The page written to `path` through the atomic writer; false with `error`.
     bool exportHtmlTo(const std::string& path, std::string* error);
@@ -397,7 +397,7 @@ public:
     GitDiffView* diffView() const { return diff_; }
     // A comparison of two texts in a tab of its own (CompareView.h): lined up
     // and colored on a thread, the tab opening when that is done (`done`, if
-    // given, is called then with the tab's document). `minicode diff`, Compare
+    // given, is called then with the tab's document). `mutible diff`, Compare
     // with Main and the IDE link's openDiff come in later items.
     void showComparison(const CompareSpec& spec, std::function<void(Document*)> done = nullptr);
     // A page (EditorPage.h) in a tab of its own, reused by its key.

@@ -74,7 +74,7 @@ found through that list.
   files) is the opt-in for the user's own Prettier: the project's config
   where there is one, else `--prose-wrap preserve --config-precedence
   prefer-file`.
-- `format.on-save`: Cmd+S (non-nil sender) formats then saves; minicode's own
+- `format.on-save`: Cmd+S (non-nil sender) formats then saves; mutible's own
   saves and Save All never format. A Cmd+S is never lost (`_formatSaveTab`:
   leaving the tab saves it unformatted). **Three values** (2026-11-16,
   JOBS C2): false, true (whatever Format Document runs, Google's style
@@ -82,7 +82,7 @@ found through that list.
   project's configuration chose or format.<lang> names; never the Google
   default or a server; `MCFormatText`'s and `FormatRun::decide`'s
   `projectOnly`, so the GTK port follows). Edit > Format on Save
-  (`FormatOnSave.{h,mm}`, `minicode.toggleFormatOnSave`) is checked for
+  (`FormatOnSave.{h,mm}`, `mutible.toggleFormatOnSave`) is checked for
   either on value and writes false or `project`. **The offer**: a Cmd+S
   that wrote the file, with format.on-save off, asks
   `MCFindFormatOnSaveOffer` off the main thread (`Formatter::offersOnSave`:
@@ -106,14 +106,14 @@ found through that list.
   `uv tool install basedpyright`, which brings its own Node; Homebrew's node
   broke pyright here). `suggest` picks the first way whose installer
   `MCInstallerAvailable` finds, else adds `brew install uv` or a link;
-  `$MINICODE_INSTALL_HAVE` fakes installers. `install:readme` ties it to
+  `$MUTIBLE_INSTALL_HAVE` fakes installers. `install:readme` ties it to
   `docs/REFERENCE.md`.
 - `MCInstallBar` under the strip when a wanted server is `NotInstalled`, once
   per language per launch (`MCInstallBarTakeOffer`), until ×, Don't Show Again
   (`MCInstallHintsMuted`), or the server appearing. `MCInstallView` (command,
   Copy, Run in Terminal, alternatives) is in the status item's popover, the
   servers card and Format Document's note. Run in Terminal only types
-  (`typeCommand:`). Copy uses `MCInstallPasteboard()` (`$MINICODE_PASTEBOARD`).
+  (`typeCommand:`). Copy uses `MCInstallPasteboard()` (`$MUTIBLE_PASTEBOARD`).
   `lookAgainForMissingServer` runs on window key and
   `MCTerminalCommandDidFinishNotification`, so no restart is needed.
 

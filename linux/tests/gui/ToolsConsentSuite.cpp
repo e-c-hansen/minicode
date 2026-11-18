@@ -1,5 +1,5 @@
 // ToolsConsentSuite.cpp — the folder's own Python environment and the
-// language servers (`./build/minicode-guitest tools_consent`,
+// language servers (`./build/mutible-guitest tools_consent`,
 // linux/PARITY.md item 2.3), the counterpart of the Mac's
 // tests/gui/ToolsConsentSuite.mm, with real clicks and keys through XTest.
 // A .venv in the window's folder holds the only Python server (a script
@@ -8,7 +8,7 @@
 //     and Ask Again About This Folder's Tools is off (and not in the
 //     palette);
 //   - Use It: the server from the .venv runs, the servers get its python,
-//     and the answer is kept in $XDG_STATE_HOME/minicode/folder-tools.json;
+//     and the answer is kept in $XDG_STATE_HOME/mutible/folder-tools.json;
 //   - Ask Again from the palette: the answer goes, the bar asks again, and
 //     the servers leave the .venv alone again;
 //   - Don't Use It: kept as "deny", nothing from the .venv;
@@ -96,7 +96,7 @@ MC_GUI_SUITE(tools_consent) {
         ConsentBar::setInstallMuted("python", true);
         g_remove(marker().c_str());
         script(F(".venv/bin/python"), "#!/bin/sh\nexit 0\n");
-        // Records that it ran, and reads what it is sent until minicode
+        // Records that it ran, and reads what it is sent until mutible
         // closes its input.
         script(F(".venv/bin/mc-tools-server"),
                "#!/bin/sh\n/usr/bin/touch '" + marker() + "'\nexec /bin/cat > /dev/null\n");

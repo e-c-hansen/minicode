@@ -32,7 +32,7 @@ static NSString *GitText(MCGitResult *r) {
 
 // ------------------------------------------------------------ the bar
 // Blue where Request a Change is amber: an ordinary task in this folder,
-// not a change to minicode. Inline hex like the other accents
+// not a change to mutible. Inline hex like the other accents
 // (docs/notes/ui.md).
 static const unsigned kTaskBlue = 0x4EA1F7;
 static const unsigned kProblemRed = 0xF14C4C;
@@ -417,7 +417,7 @@ static TaskRepoLook MCLookAtRepository(NSString *root) {
     if ((self = [super init])) {
         _host = host;
         _model = model;
-        _queue = dispatch_queue_create("minicode.agent-task", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.agent-task", DISPATCH_QUEUE_SERIAL);
     }
     return self;
 }
@@ -532,7 +532,7 @@ static TaskRepoLook MCLookAtRepository(NSString *root) {
     }
     if (AgentTask::insideClaudeHome(AgentTask::worktreePath(TStd(root), "x"), TStd(NSHomeDirectory()))) {
         [self setProblem:@"A task's worktree would go in ~/.claude, Claude Code's own folder, which "
-                         @"minicode never writes. Open the project's folder instead."];
+                         @"mutible never writes. Open the project's folder instead."];
         [self finish];
         return;
     }
@@ -595,7 +595,7 @@ static TaskRepoLook MCLookAtRepository(NSString *root) {
                         if (![[now componentsSeparatedByString:@"\n"] containsObject:pattern]) {
                             [fm createDirectoryAtPath:exclude.stringByDeletingLastPathComponent
                           withIntermediateDirectories:YES attributes:nil error:nil];
-                            NSString *add2 = [NSString stringWithFormat:@"%@%@# minicode's agent tasks\n%@\n",
+                            NSString *add2 = [NSString stringWithFormat:@"%@%@# mutible's agent tasks\n%@\n",
                                               now, (now.length && ![now hasSuffix:@"\n"]) ? @"\n" : @"",
                                               pattern];
                             [add2 writeToFile:exclude atomically:YES encoding:NSUTF8StringEncoding error:nil];
@@ -622,7 +622,7 @@ static TaskRepoLook MCLookAtRepository(NSString *root) {
     NSString *file = @"";
     if (!AgentTask::promptFitsOnLine(prompt)) {
         // A long prompt is read from a file, as Request a Change's is.
-        NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-task"];
+        NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"Mutible-task"];
         [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
                                                    attributes:@{NSFilePosixPermissions: @0700}
                                                         error:nil];

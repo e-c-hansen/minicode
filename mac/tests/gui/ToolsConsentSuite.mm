@@ -2,7 +2,7 @@
 // folder's answer about running its own tools (its .venv for the language
 // servers, its .venv or node_modules for Format Document).
 //
-//   - Ask Again About This Folder's Tools, in the minicode menu (and so the
+//   - Ask Again About This Folder's Tools, in the mutible menu (and so the
 //     palette), is enabled only while the folder has an answer;
 //   - from the menu, an Allow is forgotten: the servers stop using the
 //     folder's environment and the bar over a Python file asks again;
@@ -111,7 +111,7 @@ MC_GUI_SUITE(tools_consent) {
         item = ItemWithAction(NSApp.mainMenu, @selector(forgetFolderToolsAnswer:));
     });
     MCGuiWait(@"no server of an earlier suite's runs", 10, ^BOOL { return !Session(c).hasServer; });
-    MCGuiStep(@"the command is in the minicode menu, off while there is no answer", ^{
+    MCGuiStep(@"the command is in the mutible menu, off while there is no answer", ^{
         // An earlier suite (language) may have put the question off with ×
         // for this folder; an answer taken back brings it back.
         MCSetFolderToolsConsent(c.rootPath, NO);

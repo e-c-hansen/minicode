@@ -1,5 +1,5 @@
 #!/bin/bash
-# Measure how much memory minicode needs for a day-to-day workload on Linux,
+# Measure how much memory mutible needs for a day-to-day workload on Linux,
 # and how much the usual alternative needs for the same work: VS Code, plus
 # Chrome for the web page and GNOME's Papers for the typeset PDF. The Linux
 # twin of scripts/membench-mac.sh; the two workloads are the same.
@@ -19,7 +19,7 @@
 #   - demo/paper/notes.tex typeset by tectonic, and the PDF on screen
 #   - one web page open
 #
-# minicode does all of it with its own editor, terminal, browser pane and
+# mutible does all of it with its own editor, terminal, browser pane and
 # LaTeX preview (a release build, linux/build-bench; the LaTeX preview is in
 # a second window, as on the Mac). The other side is VS Code (the snap) with
 # a scratch profile and only the clangd extension, a Chrome with a fresh
@@ -48,12 +48,18 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PROCMEM="$REPO/build/procmem-linux"
-MINICODE="$REPO/linux/build-bench/minicode"
+MUTIBLE="$REPO/linux/build-bench/mutible"
 CODE="/snap/bin/code"
 CHROME="$(command -v google-chrome || true)"
 PAPERS="$(command -v papers || true)"
 CLANGD="$(command -v clangd || true)"
-TECTONIC="${MINICODE_TECTONIC:-$HOME/.local/share/minicode/bin/tectonic}"
+# The tectonic mutible downloads, else (before mutible's first launch copied
+# it) the one minicode did.
+TECTONIC="${MUTIBLE_TECTONIC:-${MINICODE_TECTONIC:-$HOME/.local/share/mutible/bin/tectonic}}"   # rename-mutible: keep
+if [ -z "${MUTIBLE_TECTONIC:-}${MINICODE_TECTONIC:-}" ] && ! [ -e "$TECTONIC" ] &&   # rename-mutible: keep
+   [ -e "$HOME/.local/share/minicode/bin/tectonic" ]; then   # rename-mutible: keep
+    TECTONIC="$HOME/.local/share/minicode/bin/tectonic"   # rename-mutible: keep
+fi
 TECTONIC_CACHE="${TECTONIC_CACHE_DIR:-$HOME/.cache/tectonic}"
 SETTLE="${SETTLE:-60}"
 SAMPLES="${SAMPLES:-5}"
@@ -78,7 +84,7 @@ if [ "${BUILD:-}" != skip ]; then
 fi
 mkdir -p "$REPO/build"
 cc -O2 -Wall -Wextra "$REPO/tools/procmem-linux.c" -o "$PROCMEM"
-[ -x "$MINICODE" ] || { echo "membench: missing $MINICODE" >&2; exit 1; }
+[ -x "$MUTIBLE" ] || { echo "membench: missing $MUTIBLE" >&2; exit 1; }
 
 started=()   # pids this script launched; the only ones it will stop
 members=()   # every pid seen in a counted setup, for the final sweep
@@ -167,7 +173,7 @@ own() {
                 else if (cmd[i] ~ /alt-launch\.sh/ && p ~ /bash$/) c = "harness"
                 else if (p ~ /\/(bash|zsh|dash|sh)$/) c = "shell"
                 else if (p ~ /WebKit/ || p ~ /\/webkit/) c = "WebKit (web page, PDF)"
-                else if (p ~ /build-bench\/minicode$/) c = "minicode"
+                else if (p ~ /build-bench\/mutible$/) c = "mutible"
                 else if (p ~ /\/snap\/code\// || p ~ /\/code$/) c = "VS Code"
                 else if (p ~ /\/chrome/ || p ~ /google-chrome/) c = "Chrome"
                 else if (p ~ /\/papers/) c = "Papers"
@@ -233,28 +239,28 @@ has() {   # has <category> <root...>: the setup owns a process of that category
     own "$@" | grep -q "^$cat"
 }
 
-# ---------------------------------------------------------------- minicode
+# ---------------------------------------------------------------- mutible
 
-if [ -z "${SKIP_MINICODE:-}" ]; then
-echo "== minicode: launching (settles for ${SETTLE}s)"
-setupenv "$WORK/home-mc" MINICODE_SETTINGS="$WORK/home-mc/settings.conf" \
-    MINICODE_TECTONIC="$TECTONIC" MINICODE_FOREGROUND=1 \
-    MINICODE_BENCH=1 MINICODE_BENCH_CPP="$P/tests/run_tests.cpp" \
-    MINICODE_BENCH_TEX="$P/demo/paper/notes.tex" MINICODE_BENCH_URL="$URL" \
-    dbus-run-session -- "$MINICODE" "$P" >"$WORK/minicode.log" 2>&1 &
+if [ -z "${SKIP_MUTIBLE:-}" ]; then
+echo "== mutible: launching (settles for ${SETTLE}s)"
+setupenv "$WORK/home-mc" MUTIBLE_SETTINGS="$WORK/home-mc/settings.conf" \
+    MUTIBLE_TECTONIC="$TECTONIC" MUTIBLE_FOREGROUND=1 \
+    MUTIBLE_BENCH=1 MUTIBLE_BENCH_CPP="$P/tests/run_tests.cpp" \
+    MUTIBLE_BENCH_TEX="$P/demo/paper/notes.tex" MUTIBLE_BENCH_URL="$URL" \
+    dbus-run-session -- "$MUTIBLE" "$P" >"$WORK/mutible.log" 2>&1 &
 mc=$!; started+=("$mc")
-wait_for 90 "minicode's workload" grep -q "minicode bench: ready" "$WORK/minicode.log"
-wait_for 90 "clangd under minicode" has clangd "$mc"
-wait_for 30 "a shell under minicode" has shell "$mc"
+wait_for 90 "mutible's workload" grep -qE "(mutible|minicode) bench: ready" "$WORK/mutible.log"   # rename-mutible: keep
+wait_for 90 "clangd under mutible" has clangd "$mc"
+wait_for 30 "a shell under mutible" has shell "$mc"
 # The preview keeps its PDF in the runtime folder, not beside the source.
 pdf_made() { [ -n "$(find "$WORK/runtime" -name '*.pdf' -size +1k 2>/dev/null | head -n1)" ]; }
 wait_for 60 "the LaTeX preview's PDF" pdf_made
 sleep "$SETTLE"
-echo "== minicode: measuring"
-measure minicode "$mc"
+echo "== mutible: measuring"
+measure mutible "$mc"
 stop "$mc"
-if [ "${ONLY:-}" = minicode ]; then
-    awk -F'\t' '{printf "  %-26s %6.0f MB\n", $1, $2 / 1048576}' "$WORK/results/minicode"
+if [ "${ONLY:-}" = mutible ]; then
+    awk -F'\t' '{printf "  %-26s %6.0f MB\n", $1, $2 / 1048576}' "$WORK/results/mutible"
     exit 0
 fi
 fi
@@ -287,7 +293,7 @@ EOF
 BENCHEXT="$WORK/vscode/bench-ext"
 mkdir -p "$BENCHEXT"
 cat >"$BENCHEXT/package.json" <<EOF
-{ "name": "membench", "publisher": "minicode", "version": "0.0.1",
+{ "name": "membench", "publisher": "mutible", "version": "0.0.1",
   "engines": { "vscode": "^1.80.0" }, "main": "extension.js",
   "activationEvents": ["onStartupFinished"] }
 EOF
@@ -339,19 +345,19 @@ total() { awk -F'\t' '{s += $2} END {print s}' "$1" | mb; }
 row() { sort -t$'\t' -k2 -nr "$1" | awk -F'\t' '{printf "  %-26s %6.0f MB\n", $1, $2 / 1048576}'; }
 vers() { grep -A1 CFBundleShortVersionString "$REPO/Info.plist" | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p' | head -n1; }
 {
-    echo "minicode membench (Linux), $(date '+%Y-%m-%d %H:%M')"
+    echo "mutible membench (Linux), $(date '+%Y-%m-%d %H:%M')"
     echo "$(. /etc/os-release; echo "$PRETTY_NAME"), kernel $(uname -r), $(awk -F': ' '/model name/ {print $2; exit}' /proc/cpuinfo), $(nproc) cores, $(awk '/MemTotal/ {printf "%.0f", $2 / 1048576}' /proc/meminfo) GB"
-    echo "minicode $(vers) ($(git -C "$REPO" rev-parse --short HEAD), release build), VS Code $("$CODE" --version 2>/dev/null | head -n1) (snap), $("$CHROME" --version 2>/dev/null), $("$PAPERS" --version 2>/dev/null | head -n1), $(clangd --version | head -n1)"
+    echo "mutible $(vers) ($(git -C "$REPO" rev-parse --short HEAD), release build), VS Code $("$CODE" --version 2>/dev/null | head -n1) (snap), $("$CHROME" --version 2>/dev/null), $("$PAPERS" --version 2>/dev/null | head -n1), $(clangd --version | head -n1)"
     echo "Display: $([ "$MODE" = xvfb ] && echo 'private Xvfb, no GPU (software drawing)' || echo 'the session desktop')"
     echo "Settled ${SETTLE}s, median of ${SAMPLES} samples, PSS"
     echo
-    echo "minicode: $(total "$WORK/results/minicode") MB"
-    row "$WORK/results/minicode"
+    echo "mutible: $(total "$WORK/results/mutible") MB"
+    row "$WORK/results/mutible"
     echo
     echo "VS Code + Chrome + Papers: $(total "$WORK/results/others") MB"
     row "$WORK/results/others"
 } | tee "$REPO/build/membench-linux.txt"
-cp "$WORK/results/minicode.procs" "$REPO/build/membench-linux-minicode.procs"
+cp "$WORK/results/mutible.procs" "$REPO/build/membench-linux-mutible.procs"
 cp "$WORK/results/others.procs" "$REPO/build/membench-linux-others.procs"
 echo
 echo "Saved to build/membench-linux.txt (processes: build/membench-linux-*.procs)"

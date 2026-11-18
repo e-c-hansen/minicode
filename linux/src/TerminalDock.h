@@ -9,10 +9,10 @@
 // a fresh terminal whose shell starts when the dock is shown again, so there
 // is always one to ask.
 //
-// Compiled only with MINICODE_ENABLE_TERMINAL.
+// Compiled only with MUTIBLE_ENABLE_TERMINAL.
 #pragma once
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 
 #include <gtk/gtk.h>
 

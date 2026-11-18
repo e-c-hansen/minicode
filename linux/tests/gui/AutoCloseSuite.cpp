@@ -1,4 +1,4 @@
-// AutoCloseSuite.cpp — `./build/minicode-guitest auto_close`: brackets and
+// AutoCloseSuite.cpp — `./build/mutible-guitest auto_close`: brackets and
 // quotes closing as they are typed (editor.auto-close, linux/PARITY.md item
 // 1.8, AutoCloseInput.h), the counterpart of the Mac's AutoCloseSuite, with
 // every key real (XTest through the view's own key handling): print( gives

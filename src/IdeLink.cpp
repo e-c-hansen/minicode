@@ -1,5 +1,6 @@
 // IdeLink.cpp — see IdeLink.h.
 #include "IdeLink.h"
+#include "Rename.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -10,7 +11,7 @@ namespace IdeLink {
 const char *const kAuthHeader = "X-Claude-Code-Ide-Authorization";
 const char *const kSubprotocol = "mcp";
 const char *const kProtocolVersion = "2025-06-18";
-const char *const kIdeName = "minicode";
+const char *const kIdeName = "mutible";
 
 // ------------------------------------------------------------------ SHA-1
 // FIPS 180-4. Only the handshake uses it, as RFC 6455 says to; nothing here
@@ -567,7 +568,9 @@ bool parseLockFile(const std::string &text, LockInfo &out) {
 }
 
 bool isStaleOwnLock(const LockInfo &info, int ourPid, bool pidAlive) {
-    return info.ideName == kIdeName && info.pid > 0 && info.pid != ourPid && !pidAlive;
+    // An old copy's, by its name before the rename (src/Rename.h), too.
+    const bool ours = info.ideName == kIdeName || info.ideName == Rename::kOldName;
+    return ours && info.pid > 0 && info.pid != ourPid && !pidAlive;
 }
 
 // ------------------------------------------------------------ tool shapes

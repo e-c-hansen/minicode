@@ -29,7 +29,7 @@ std::string bytesOf(GBytes* b) {
 // leads a process group of its own, so a time limit stops what it started
 // along with it.
 void ownProcessGroup(gpointer) { setpgid(0, 0); }
-// A command that talks to a remote also leaves minicode's session, so ssh
+// A command that talks to a remote also leaves mutible's session, so ssh
 // finds no terminal to ask on (its group is then the same, led by git).
 void ownSession(gpointer) { setsid(); }
 
@@ -137,7 +137,7 @@ GitResult runGitWithin(const std::string& dir, const std::vector<std::string>& a
         return r;
     }
     // The group's id is git's pid. Never 0 below: kill(0, ...) would signal
-    // minicode's own group.
+    // mutible's own group.
     const char* id = g_subprocess_get_identifier(p);
     const pid_t pid = id ? (pid_t)std::atol(id) : 0;
     auto killGroup = [pid](int sig) {

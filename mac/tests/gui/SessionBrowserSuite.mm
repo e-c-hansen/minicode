@@ -440,13 +440,13 @@ MC_GUI_SUITE(session_browser) {
     MCGuiStep(@"typing in the window", ^{
         NSTextView *tv = TV(gC);
         MCGuiUndoGroup(tv.undoManager, ^{
-            [tv insertText:@"# typed in minicode\n" replacementRange:NSMakeRange(0, 0)];
+            [tv insertText:@"# typed in mutible\n" replacementRange:NSMakeRange(0, 0)];
         });
-        GCHECK([tv.string hasPrefix:@"# typed in minicode\n"]);
+        GCHECK([tv.string hasPrefix:@"# typed in mutible\n"]);
     });
     MCGuiWait(@"reaches the browser", 20, ^BOOL { return gBrowser->text() == Text(gC); });
     MCGuiStep(@"the scripted browser leaves, and the page loads in WebKit", ^{
-        GCHECK(gBrowser->text().find("# typed in minicode") == 0);
+        GCHECK(gBrowser->text().find("# typed in mutible") == 0);
         gBrowser->finish();
         delete gBrowser;
         gBrowser = nullptr;
@@ -481,7 +481,7 @@ MC_GUI_SUITE(session_browser) {
         GCHECK(Active(gC).dirty);
         NSTextView *tv = TV(gC);
         MCGuiUndoGroup(tv.undoManager, ^{
-            [tv insertText:@"# from minicode\n" replacementRange:NSMakeRange(0, 0)];
+            [tv insertText:@"# from mutible\n" replacementRange:NSMakeRange(0, 0)];
         });
     });
     MCGuiWait(@"reaches the page, which shows the file's dirty dot", 20, ^BOOL {
@@ -489,7 +489,7 @@ MC_GUI_SUITE(session_browser) {
         return [gSeen[@"text"] isEqualToString:TV(gC).string] && [gSeen[@"dirty"] boolValue];
     });
     MCGuiStep(@"Return in the page takes the core's indentation", ^{
-        GCHECK([gSeen[@"lines"] hasPrefix:@"# from minicode\n"]);
+        GCHECK([gSeen[@"lines"] hasPrefix:@"# from mutible\n"]);
         Keys([NSString stringWithFormat:@"[[\"ArrowDown\", {metaKey: true}], %@, [\"Enter\"], %@]",
                                         Typed(@"def g():"), Typed(@"pass")]);
     });
@@ -552,7 +552,7 @@ MC_GUI_SUITE(session_browser) {
     });
     MCGuiWait(@"says it opens in the window", 20, ^BOOL {
         Read();
-        return [gSeen[@"note"] isEqualToString:@"logo.png opens in the minicode window."];
+        return [gSeen[@"note"] isEqualToString:@"logo.png opens in the mutible window."];
     });
     MCGuiStep(@"the editable page has an address field; javascript: typed into it", ^{
         GCHECK([gSeen[@"browseField"] boolValue]);

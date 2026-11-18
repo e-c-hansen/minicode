@@ -153,7 +153,7 @@ static MCGitResult *MCGitRun(NSString *dir, NSArray<NSString *> *args, NSTimeInt
     }
     for (int fd : {outFds[0], outFds[1], errFds[0], errFds[1], inFds[0], inFds[1]})
         if (fd >= 0) fcntl(fd, F_SETFD, FD_CLOEXEC);
-    // A git that stops reading early must not kill minicode with SIGPIPE.
+    // A git that stops reading early must not kill mutible with SIGPIPE.
     if (inFds[1] >= 0) fcntl(inFds[1], F_SETNOSIGPIPE, 1);
 
     posix_spawn_file_actions_t fa;
@@ -180,7 +180,7 @@ static MCGitResult *MCGitRun(NSString *dir, NSArray<NSString *> *args, NSTimeInt
     // A group of its own, led by git. A command that talks to a remote gets
     // a session of its own too (its group is then the same), so it has no
     // controlling terminal: ssh cannot ask for a passphrase or a host key on
-    // the terminal minicode was started from, and fails at once instead.
+    // the terminal mutible was started from, and fails at once instead.
     short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT;
     if (Git::talksToRemote(MCGitStdArgs(args))) {
         flags |= POSIX_SPAWN_SETSID;
@@ -392,7 +392,7 @@ static NSUInteger MCGitLineOf(NSString *s, NSUInteger index) {
     return lines;
 }
 
-static NSString *const kMCHunkLink = @"minicode-hunk:";
+static NSString *const kMCHunkLink = @"mutible-hunk:";
 
 NSAttributedString *MCGitCommitText(NSData *show, NSFont *font) {
     return MCGitStyledText(GitUi::commitText(Bytes(show), MCGitNow(), MCGitDate), font);
@@ -941,7 +941,7 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 - (instancetype)initWithRoot:(NSString *)root {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 260, 400)])) {
         _root = [root copy];
-        _queue = dispatch_queue_create("minicode.git", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.git", DISPATCH_QUEUE_SERIAL);
         _rows = @[];
         _graphLimit = kGraphBatch;
         self.wantsLayer = YES;
@@ -2676,7 +2676,7 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
 + (NSURL *)trashCopyOf:(NSString *)path failure:(NSString **)failure {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:
-        [@"MiniCode-git-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+        [@"Mutible-git-" stringByAppendingString:NSUUID.UUID.UUIDString]];
     NSString *copy = [dir stringByAppendingPathComponent:path.lastPathComponent];
     NSError *error = nil;
     NSURL *into = nil;

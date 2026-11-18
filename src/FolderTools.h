@@ -21,13 +21,13 @@ namespace FolderTools {
 // none in the file's folders up to the window's, the folder has an answer
 // (`consent` "allow" or "deny"), the user chose an interpreter of their own
 // (`userChose`: python.interpreter, runnable), or the environment is the
-// one active where minicode started ($VIRTUAL_ENV, trusted). `ctx` is the
+// one active where mutible started ($VIRTUAL_ENV, trusted). `ctx` is the
 // servers' context (PythonEnvs.h: fileDir, root, env).
 std::string environmentToAsk(const PythonEnvs::Context& ctx, const std::string& consent,
                              bool userChose);
 
 // The bar's words for the environment question, and its tooltip.
-// `askAgainMenu`: where Ask Again About This Folder's Tools is ("minicode"
+// `askAgainMenu`: where Ask Again About This Folder's Tools is ("mutible"
 // on the Mac, "Edit" on Linux).
 std::string environmentQuestion(const std::string& env);
 std::string environmentTooltip(const std::string& env, const std::string& askAgainMenu);

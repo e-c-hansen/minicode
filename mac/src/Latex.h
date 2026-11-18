@@ -109,8 +109,8 @@ void MCDownloadTectonic(void (^done)(NSString *problem));
 BOOL MCTectonicDownloading(void);
 
 // Where previews typeset: each preview gets a folder of its own under
-// MCLatexWorkRoot() (MiniCode-latex in the temporary folder, or
-// $MINICODE_LATEX_WORK), named for the document's resolved path and the
+// MCLatexWorkRoot() (Mutible-latex in the temporary folder, or
+// $MUTIBLE_LATEX_WORK), named for the document's resolved path and the
 // preview (this process and the preview's number, `view`), so two files of
 // one name, or two previews of one file, never share a PDF. The folder goes
 // with its preview; one a crashed process left goes at the next launch.

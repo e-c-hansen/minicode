@@ -7,7 +7,7 @@
 // It starts when the app finishes launching (no hook needed elsewhere) and
 // asks every editor window for its folder and terminals at each look, on the
 // main thread (a few microseconds). Stopping is only ever asked for: by the
-// panel's Stop, after its question. `minicode procs` is registered here too.
+// panel's Stop, after its question. `mutible procs` is registered here too.
 #import <Cocoa/Cocoa.h>
 #include "ControlProtocol.h"
 #include "ProcessTable.h"
@@ -55,5 +55,5 @@ extern NSNotificationName const MCProcessMonitorDidSampleNotification;
 // working folder), or the path as given when it does not exist.
 NSString *MCProcessRealPath(NSString *path);
 
-// `minicode procs [--folder D] [--json]` (ControlCommands.mm calls this).
+// `mutible procs [--folder D] [--json]` (ControlCommands.mm calls this).
 void MCProcessesRegisterCommand(ControlChannel::Dispatcher &dispatcher, id<MCControlAppHost> host);

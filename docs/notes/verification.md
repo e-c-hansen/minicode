@@ -31,7 +31,7 @@ found through that list.
   artifact, a folder per half.
 - **Two harnesses at once** (2026-11-17, CI's halves): each process makes
   its own world, so nothing a suite touches is shared. Mac: `/tmp/mcgui-*`
-  by mkdtemp, home, TMPDIR (so control sockets; `MINICODE_CONTROL_DIR`
+  by mkdtemp, home, TMPDIR (so control sockets; `MUTIBLE_CONTROL_DIR`
   is only set by suites, inside their scratch), the defaults suite and
   pasteboard named by pid, `CLAUDE_CONFIG_DIR`; the Python interpreter
   choice was the one app state in the standard defaults (the `guitest`
@@ -81,8 +81,8 @@ found through that list.
   (`MCGuiSetKeyWindow(nil)`); cd terminal suites into `MCGuiProject()`;
   `MCGuiPause` is timed from when it is reached; never browse non-file URLs.
   Language servers are off in the harness; a check that needs one points
-  `MINICODE_LSP_LOG` at a scratch log and kills only the PIDs it started (the
-  user's own minicode and other sessions run clangd too). Older traps: an arrow
+  `MUTIBLE_LSP_LOG` at a scratch log and kills only the PIDs it started (the
+  user's own mutible and other sessions run clangd too). Older traps: an arrow
   key event needs the function-key character (U+F701...) as `characters`, and
   an empty string makes `-[NSMenu performKeyEquivalent:]` throw; Shift+Cmd+H
   matches only with `charactersIgnoringModifiers` "h"; with `groupsByEvent`
@@ -109,7 +109,7 @@ found through that list.
   `+[NSFont monospacedSystemFontOfSize:weight:]` directly: it returns nil now
   and then while other threads make fonts, and a nil in an attributes
   literal threw inside the git panel's row drawing.
-- **Ad hoc**: a temporary `getenv("MINICODE_*TEST")` block run headless with a
+- **Ad hoc**: a temporary `getenv("MUTIBLE_*TEST")` block run headless with a
   poll-and-kill loop (no `timeout` on macOS), removed by exact text. Read state
   by KVC; drag NSSplitView by posting drag and up events, then calling
   `mouseDown:`; `hitTest:` measures grab areas.
@@ -128,16 +128,16 @@ found through that list.
   the window is up, `dbus-run-session` stops its bus, and the app quits:
   `linux/HANDOFF.md` item 23).
   Drive with `xdotool`, capture with `import -window root` (dotted debris is
-  xcompmgr's). `pkill -x minicode`, never `pkill -f` with a path (it kills the
+  xcompmgr's). `pkill -x mutible`, never `pkill -f` with a path (it kills the
   `docker exec`). The image is about 1.8 GB on a tight disk. **Docker trap**:
   `open -g -a Docker` raised an administrator password prompt and the daemon
   never started; never start Docker unattended.
 - **GTK on the ThinkPad** (Ubuntu 26.04, GNOME on Wayland; check
   `$WAYLAND_DISPLAY`): `meson test -C build`; `setsid gtk-launch
-  org.minicode.Editor &` then `pgrep -a minicode` (a real window: say so, leave
-  none behind); `systemctl --user list-units --type=scope | grep minicode`
-  (`app-gnome-org.minicode.Editor-*.scope` proves the dock association,
-  `app-minicode-org.minicode.Editor-*.scope` a start from a terminal, a
+  ai.ible.Mutible &` then `pgrep -a mutible` (a real window: say so, leave
+  none behind); `systemctl --user list-units --type=scope | grep mutible`
+  (`app-gnome-ai.ible.Mutible-*.scope` proves the dock association,
+  `app-mutible-ai.ible.Mutible-*.scope` a start from a terminal, a
   nested `vte-spawn-*.scope` the terminal); `journalctl --user --since "-15
   min"`. Real input: a private rootful Xwayland driven by XTest
   (`linux/HANDOFF.md`, "How to work on it"); prefer it to hooks, which passed

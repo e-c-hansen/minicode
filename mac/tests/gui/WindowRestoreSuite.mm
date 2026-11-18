@@ -8,14 +8,14 @@
 // Cmd+Q does; the second (_restore_reader) is launched with no folder, as
 // the Dock launches it, and finds every one of those back.
 //
-// The suite's own process is a third minicode on the same sessions.json,
-// with windows of its own, and it writes them down as every minicode does
+// The suite's own process is a third mutible on the same sessions.json,
+// with windows of its own, and it writes them down as every mutible does
 // (three seconds after a tab or window changes). Until 2026-11-17 each
-// minicode wrote its windows over the whole record, so a write of the
+// mutible wrote its windows over the whole record, so a write of the
 // parent's landing between the children's (CI, 44044357638: utf16 closed
 // its window three seconds before the reader ran) left the parent's window
 // where the restored folder's should be: the same loss a user running two
-// minicodes at once met. The parent now writes at every point between the
+// mutibles at once met. The parent now writes at every point between the
 // children on purpose, and each time the children's windows must stay.
 #import "Harness.h"
 #import "EditorController.h"
@@ -142,7 +142,7 @@ MC_GUI_SUITE(window_restore) {
         for (const TabSessions::Window &w : store.windows)
             if (w.root == Real(Folder()).UTF8String) GCHECK(w.ownerPid != (long)getpid());
     });
-    MCGuiStep(@"an older minicode's user defaults are carried over as they were", ^{
+    MCGuiStep(@"an older mutible's user defaults are carried over as they were", ^{
         NSString *root = @"/old/proj";
         NSData *record = [@"history" dataUsingEncoding:NSUTF8StringEncoding];
         NSDictionary *folders = @{

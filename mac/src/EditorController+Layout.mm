@@ -12,7 +12,7 @@
     NSRect frame = NSMakeRect(0, 0, 1100, 720);
     NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                        NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
-                       // Content runs under the title bar, so MiniCode can draw
+                       // Content runs under the title bar, so Mutible can draw
                        // it (see applySettings); layoutContainer keeps the
                        // panels below it.
                        NSWindowStyleMaskFullSizeContentView;
@@ -21,7 +21,7 @@
                                               styleMask:style
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
-    self.window.title = @"minicode";
+    self.window.title = @"mutible";
     // ARC owns the window through the strong `window` property. NSWindow defaults
     // to releasedWhenClosed=YES, which adds a legacy unbalanced release on close;
     // combined with the ARC release that's a double-free that crashes on close.
@@ -117,7 +117,7 @@
     // owner's report, 2026-11-14); VS Code pastes exactly what was copied.
     self.textView.smartInsertDeleteEnabled = NO;
     self.textView.usesFindBar = NO;                // Cmd+F is MCEditorFind's bar
-    // Not the Font panel: MiniCode sets its own fonts, and a text view that
+    // Not the Font panel: Mutible sets its own fonts, and a text view that
     // uses it also pushes the color under the caret into the shared color
     // panel whenever the selection moves. With the panel picking a color for
     // the settings file (colorPicked:), that push came back as a pick and
@@ -956,7 +956,7 @@ static NSString *MCFormatDuration(double seconds) {
     [self updateLargeFileNote];
     // With no file open, the folder's name.
     NSString *name = self.currentPath.lastPathComponent ?: _root.path.lastPathComponent;
-    if (!name.length) name = @"minicode";
+    if (!name.length) name = @"mutible";
     if (_activeTab.gone) name = [name stringByAppendingString:@" (deleted)"];
     if (self.isDiff)
         name = _activeTab.page ? (_activeTab.page.pageTitle ?: @"")
@@ -991,7 +991,7 @@ static NSString *MCFormatDuration(double seconds) {
         if (c.total > 0)
             mode = [mode stringByAppendingFormat:@"  %d of %d done", c.done, c.total];
     }
-    self.window.title = [NSString stringWithFormat:@"%@%@ — minicode%@",
+    self.window.title = [NSString stringWithFormat:@"%@%@ — mutible%@",
                          flag, name, mode];
     // The close button's dot: unsaved changes in any tab.
     self.window.documentEdited = [self hasUnsavedChanges];

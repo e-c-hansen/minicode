@@ -89,7 +89,7 @@ Snippet::Context snippetContext(GtkWidget* view, const std::u16string& text, siz
     ctx.lineIndex = lineIndex;
     // The clipboard only when the snippet names $CLIPBOARD, read once. GTK
     // reads another program's clipboard only asynchronously, so this is
-    // minicode's own clipboard (a copy made in it), else nothing.
+    // mutible's own clipboard (a copy made in it), else nothing.
     auto clipboard = std::make_shared<std::pair<bool, std::string>>();
     GdkClipboard* clip = gtk_widget_get_clipboard(view);
     ctx.readClipboard = [clipboard, clip] {

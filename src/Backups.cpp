@@ -16,7 +16,7 @@
 
 namespace Backups {
 
-static const char *const kMagic = "minicode-backup 1";
+static const char *const kMagic = "mutible-backup 1";
 static const char *const kSuffix = ".mcbackup";
 
 std::string lineEndingsOf(const std::string &text) {
@@ -104,9 +104,18 @@ std::string encode(const Entry &e, const std::string &text) {
     return h;
 }
 
+// rename-mutible: keep-begin
+// The magic before 1.6.0 (src/Rename.h): the first launch copies minicode's
+// Backups folder, and the unsaved tabs in it come back as they would have.
+static const char *const kOldMagic = "minicode-backup 1";
+// rename-mutible: keep-end
+
 bool decodeHeader(const std::string &data, Entry *e, size_t *textStart) {
-    const std::string magic = std::string(kMagic) + "\n";
-    if (data.compare(0, magic.size(), magic) != 0) return false;
+    std::string magic = std::string(kMagic) + "\n";
+    if (data.compare(0, magic.size(), magic) != 0) {
+        magic = std::string(kOldMagic) + "\n";
+        if (data.compare(0, magic.size(), magic) != 0) return false;
+    }
     const size_t end = data.find("\n\n", magic.size() - 1);
     if (end == std::string::npos) return false;
     Entry out;
@@ -137,7 +146,7 @@ bool decodeHeader(const std::string &data, Entry *e, size_t *textStart) {
             out.bytes = std::strtoull(v.c_str(), &stop, 10);
             haveBytes = true;
         }
-        // Unknown keys are skipped, so a later minicode can add some.
+        // Unknown keys are skipped, so a later mutible can add some.
     }
     if (!haveId || !haveBytes || !validId(out.id) || out.path.empty()) return false;
     *e = out;

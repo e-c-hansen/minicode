@@ -151,7 +151,7 @@ private:
     void replyError(const Json &id, int code, const std::string &message);
 };
 
-// The protocol versions minicode has seen Claude Code ask for answer with
+// The protocol versions mutible has seen Claude Code ask for answer with
 // the one asked; anything else gets this.
 extern const char *const kProtocolVersion;   // "2025-06-18"
 
@@ -165,12 +165,12 @@ std::string lockFileName(int port);              // "<port>.lock"
 int portFromLockName(const std::string &name);   // 0 when not one
 std::string lockFileText(const LockInfo &info);
 bool parseLockFile(const std::string &text, LockInfo &out);
-// The name minicode writes as ideName.
-extern const char *const kIdeName;               // "minicode"
-// Whether a lock file found at start is one minicode left behind and may
-// remove: minicode's own name, another pid than ours, and that pid gone.
+// The name mutible writes as ideName.
+extern const char *const kIdeName;               // "mutible"
+// Whether a lock file found at start is one mutible left behind and may
+// remove: mutible's own name, another pid than ours, and that pid gone.
 // Anyone else's lock file (VS Code's, a JetBrains IDE's, a running
-// minicode's) is left alone.
+// mutible's) is left alone.
 bool isStaleOwnLock(const LockInfo &info, int ourPid, bool pidAlive);
 
 // ---- what the tools answer with

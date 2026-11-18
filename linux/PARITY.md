@@ -6,6 +6,14 @@ from it. This file is the plan for that work, and its list of items is the
 one place that says what is done. An agent starting on the ThinkPad needs
 only this file and what it points to.
 
+Renamed from minicode in 1.6.0: what follows says mutible, `mutible`,
+`ai.ible.Mutible`, `MUTIBLE_*` and folders named mutible, where the items
+were written with minicode's names (the owner's own words are quoted as
+said). The `minicode` command is a link that says the app is now mutible,
+`mbl` another, the first launch copies minicode's XDG folders, and
+`MINICODE_*` variables are still read (`../src/Rename.h`;
+`../BUILD-LINUX.md`, "Renamed from minicode in 1.6.0").
+
 ## Picking up an item
 
 1. Read this file, then `linux/HANDOFF.md` ("How to work on it" and "Traps
@@ -51,17 +59,17 @@ These hold for every agent, in addition to `../CLAUDE.md`'s conventions.
   offscreen display of item 0.1. `HANDOFF.md`'s Xephyr and Xwayland routes
   open a window, so ask first.
 - **Kill only processes you started, by PID.** The owner runs the packaged
-  minicode and works on this machine; `pkill -x minicode` has cost them
+  mutible and works on this machine; `pkill -x mutible` has cost them
   unsaved work.
 - **Writes outside the repo.** Never write to `~/.claude`. Ask before writing
-  the owner's configuration, such as `~/.config/minicode`; checks use a
+  the owner's configuration, such as `~/.config/mutible`; checks use a
   scratch home.
 - **Ask the owner before** a release, a PPA upload, or anything needing sudo.
 - **No new dependencies** beyond what the distribution ships. No debugger:
   the owner decided against one.
 - **Logic goes in `../src` with tests**, and the GTK code only shows it. A
   feature goes in its own files; `main.cpp` and `Editor.cpp` gain only hooks.
-- **Prose**: plain sentences, Oxford commas, no emoji, and "minicode" in
+- **Prose**: plain sentences, Oxford commas, no emoji, and "mutible" in
   lowercase.
 
 ## Environment
@@ -76,7 +84,7 @@ Then, once, from `linux/`: `meson setup build -Dterminal=enabled
 -Dbrowser=enabled -Dpdf=enabled`.
 
 The GUI checks (item 0.1) are `meson test -C build --suite gui` from
-`linux/`, about 8 seconds in November 2026 (3 before the `keys` suite); `./build/minicode-guitest
+`linux/`, about 8 seconds in November 2026 (3 before the `keys` suite); `./build/mutible-guitest
 <suite>...` runs some with their output as it comes. They start their own
 Xvfb and session bus, so several agents can run them at once, and they put
 nothing on the owner's screen. `HANDOFF.md` ("How to work on it" and the GUI
@@ -98,11 +106,11 @@ a small throwaway test before building on it, and write the result here.
 are a table of their own, `src/CommandsLinux.cpp`: command id to default keys
 in the same notation. The Mac's rows do not change. The rule follows the
 Mac's:
-- A feature minicode shares with VS Code takes VS Code's Linux key.
-- minicode's own Shift+Cmd key is the same letter with Ctrl+Shift, and does
+- A feature mutible shares with VS Code takes VS Code's Linux key.
+- mutible's own Shift+Cmd key is the same letter with Ctrl+Shift, and does
   not move.
-- minicode's own Cmd-only key is the same letter with Ctrl, unless VS Code's
-  Linux keys use it for something else; then minicode's yields.
+- mutible's own Cmd-only key is the same letter with Ctrl, unless VS Code's
+  Linux keys use it for something else; then mutible's yields.
 - While the terminal has the keyboard, plain Ctrl keys are the program's
   unless the command is Global (`updateShellKeys`), so a terminal command
   takes Ctrl+Shift, as VS Code's do.
@@ -132,7 +140,7 @@ Choices item 0.3 made where D1 left room, each by the rule:
   Ctrl+K Ctrl+I), and the task key Ctrl+Alt+L. Alt+C, markdown-all-in-one's
   task key on every platform, stays as on the Mac, in Markdown files only.
 - Open Folder stays Ctrl+O: VS Code's Linux Open Folder is a chord, and its
-  Ctrl+O opens a file, which minicode has no command for.
+  Ctrl+O opens a file, which mutible has no command for.
 - Toggle Terminal is Ctrl+Shift+T and Ctrl+` without the Mac's Cmd+J: it is
   Global, and Ctrl+J would be taken from the shell, which ends a line with it.
 - Ctrl+0, Ctrl+1 and Ctrl+Tab are Global, as the port's pane keys always
@@ -190,7 +198,7 @@ Choices item 1.6 made, by the same rules:
   and Ctrl+Alt keys are unchanged.
 - Replace in Folder is Ctrl+Alt+Shift+F, the Mac's Option+Shift+Cmd+F with
   Ctrl+Alt for Option+Cmd, as Reopen Closed Tab's: VS Code's Ctrl+Shift+H
-  is the shortcut hints' (minicode's own Shift key). Ctrl+Shift+1 on a row
+  is the shortcut hints' (mutible's own Shift key). Ctrl+Shift+1 on a row
   replaces its match alone, VS Code's key in its search view.
 - Select all matches (VS Code's Alt+Enter) waits for several carets (1.9).
 
@@ -228,7 +236,7 @@ Choices item 1.10 made, by the same rules:
   matches them as the braces Shift makes on a US layout (`<Ctrl>braceleft`,
   through `linuxAccelerators`), so on a layout where Shift+[ is no brace
   they follow that layout's character.
-- VS Code's other folding keys are Ctrl+K chords, which minicode has none
+- VS Code's other folding keys are Ctrl+K chords, which mutible has none
   of, so they are Ctrl+Alt with the chord's second key, as the Mac's are
   Control+Command with it: Fold Recursively Ctrl+Alt+[, Unfold Recursively
   Ctrl+Alt+], Fold All Ctrl+Alt+0, Unfold All Ctrl+Alt+J, Fold All Comments
@@ -312,9 +320,9 @@ Choices items 2.3 and 2.4 made, by the same rules:
   default.
 - Format Selection is Format Document with lines selected, as on the Mac:
   VS Code's Linux Format Selection is a chord (Ctrl+K Ctrl+F), which
-  minicode has none of.
+  mutible has none of.
 - Ask Again About This Folder's Tools has no key, as on the Mac, and is in
-  the Edit menu with Settings, since the port has no minicode menu.
+  the Edit menu with Settings, since the port has no mutible menu.
 
 **D2. One `GtkTextView`, one `GtkTextBuffer` per tab.** Split `Editor` into
 the view and slot, and a `Document` holding what is per file: the buffer, its
@@ -581,7 +589,7 @@ and `vte.cwd=...` did nothing), so the built-in shell termprops can never be
 trusted, and only a `vte.ext.<app>` string carrying the nonce is
 checkable. A forged plain OSC 133 changes nothing, since VTE ignores it.
 **The nonce is readable by the user's own programs, as on the Mac:**
-after `unset MINICODE_NONCE` it is still in `/proc/<pid>/environ` for any
+after `unset MUTIBLE_NONCE` it is still in `/proc/<pid>/environ` for any
 same-user process, as the Mac's shell's exec-time environment is through
 `KERN_PROCARGS2` (`ps -E`). That is within the nonce's purpose, which is
 to refuse marks that are only printed (a file shown with `cat`, a remote
@@ -593,7 +601,7 @@ tried). `CURRENT_DIRECTORY_URI`
 that URI at once, and the termprop OSC cannot set it.
 
 **Recipe, if it goes ahead:** the zsh hooks print `ESC ] 666 ;
-vte.ext.minicode.mark=p=<n>;x=<n>;d=<n>;s=<status>;c=<command>;mc=<nonce>
+vte.ext.mutible.mark=p=<n>;x=<n>;d=<n>;s=<status>;c=<command>;mc=<nonce>
 ESC \`, where p, x and d count precmd, preexec and finished commands (a
 lost mark shows as a jump, and the value is never equal twice); the app
 installs the string termprop at startup, drops any value without its
@@ -608,7 +616,7 @@ with one correction: VTE splits OSC 666 at `;`, so the value's fields are
 written apart with `\s`, which VTE unescapes to `;` (`\\` for a backslash);
 a value over 1,024 characters or with a bad escape leaves the termprop
 unset. bash is started with `--rcfile` (PROMPT_COMMAND and PS0, no DEBUG
-trap), zsh with the Mac's script and `__minicode_term=vte` in its .zshenv.
+trap), zsh with the Mac's script and `__mutible_term=vte` in its .zshenv.
 Seen in the suite: a command's output in the same read as its start mark
 hides the start, as the probe found for marks.
 
@@ -619,9 +627,9 @@ screen a command started, and an approximate row could put a mark on the
 wrong line. Item 4.7 keeps the rest.
 
 **D11. Where state lives.** Sessions and the window's other remembered
-state are JSON (`Json`) under `$XDG_STATE_HOME/minicode` (default
-`~/.local/state/minicode`); backups under `$XDG_DATA_HOME/minicode/Backups`.
-`MINICODE_BACKUP_DIR` overrides as on the Mac, and every one of these moves
+state are JSON (`Json`) under `$XDG_STATE_HOME/mutible` (default
+`~/.local/state/mutible`); backups under `$XDG_DATA_HOME/mutible/Backups`.
+`MUTIBLE_BACKUP_DIR` overrides as on the Mac, and every one of these moves
 with the harness's scratch home.
 Items 1.2 and 1.3 made it `sessions.json` (the core's `TabSessions`, one
 object keyed by the folder's resolved path), and a backup's owner start is
@@ -795,7 +803,7 @@ Sizes are estimates of new GTK code. `[ ]` open, `[~] branch` under way,
   (Export PDF until a LaTeX file shows, the zoom keys); "tog term" and
   "hidden" rank first, Return runs them on the next turn (an app action
   too), and the command comes first next time, from
-  `$XDG_STATE_HOME/minicode/palette.json`. Escape, a click outside (which
+  `$XDG_STATE_HOME/mutible/palette.json`. Escape, a click outside (which
   goes no further), and running a row give the keyboard back, the find
   bar's selection included; Ctrl+0 closes it, leaving the keyboard in the
   tree. Ctrl+P lists the folder off the main thread by Find in Folder's
@@ -1135,7 +1143,7 @@ its server comes first here (2.0).
   or before 2.4.
   *Verified in Xvfb, 2026-11-10:* `folder-tools:*` hold the servers'
   question, its words and the answers file
-  (`$XDG_STATE_HOME/minicode/folder-tools.json`), and `format-run:*` the
+  (`$XDG_STATE_HOME/mutible/folder-tools.json`), and `format-run:*` the
   formatters' side (below); the `tools_consent` suite clicks the bar under
   the tabs for real: with a `.venv` holding the only Python server (a
   script recording that it ran), unasked the bar asks, nothing from it runs
@@ -1223,7 +1231,7 @@ its server comes first here (2.0).
   palette with the panel hidden, said in the status bar; the right click's
   four, Sync Changes, Publish Branch, Amend asking for a pushed commit, the
   picker tracking `origin/topic`, a push whose ssh wants a key failing in
-  0.2 s with ssh's words, in a session apart from minicode's; autofetch's
+  0.2 s with ssh's words, in a session apart from mutible's; autofetch's
   three minutes, the period, backoff after failures and recovery, no remote
   never fetched), `git_actions` (Stage All, Unstage All, Discard asking,
   restoring from the index not HEAD, untracked to the Trash, a deletion
@@ -1278,7 +1286,7 @@ its server comes first here (2.0).
   never listed (colored at the next look, not at once as on the Mac).
 - [x] **2.11 Themes from a menu and Adjust Settings.** The owner's words
   (2026-11-09): "no 'change settings' when right clicking on some portion
-  of the GUI. This should point to the relevant part of the minicode
+  of the GUI. This should point to the relevant part of the mutible
   config." `HANDOFF.md` item 31 says how a new part adds its item.
   *Verified in Xvfb, 2026-11-10:* `settings:adjust-addition` and
   `settings:surface-key-lines` hold the core's text and lines to the
@@ -1346,9 +1354,9 @@ its server comes first here (2.0).
 
 3.1 and D10's test come first. The rest may run in parallel.
 
-- [x] **3.1 The control channel and `minicode` commands.** `ControlProtocol`,
+- [x] **3.1 The control channel and `mutible` commands.** `ControlProtocol`,
   a socket under `$XDG_RUNTIME_DIR`, 0600 in a 0700 folder. Mac:
-  `ControlServer`, `ControlCommands`, `tools/minicode-cli.cpp`.
+  `ControlServer`, `ControlCommands`, `tools/mutible-cli.cpp`.
   Part one (done, November 2026; `HANDOFF.md` item 38): the server, the
   client (the Mac's CLI, shared) and `open`, `window`, `state`, `selection`
   and `ping`, with the user's typing protected (`"background"`); the `control`
@@ -1369,7 +1377,7 @@ its server comes first here (2.0).
   syntax colors, changed rows and words marked, panes scrolling together, F7
   and Shift+F7. Part two done (HANDOFF item 39): a comparison with a
   decision (`CompareDecision`: a check and a cross per hunk in a gutter, the
-  bar, `lastChoiceGrace` with Send Now, `acceptedText`) and `minicode diff`.
+  bar, `lastChoiceGrace` with Send Now, `acceptedText`) and `mutible diff`.
   Compare with Main is done (3.5, HANDOFF items 44 and 85: one scroll, with
   Apply to Main);
   the IDE link's openDiff is done (3.9). Also the Mac's diff preview tab that each `diff` replaces (every
@@ -1504,15 +1512,15 @@ These may run in parallel.
   *Tabs done:* `TerminalDock` over a `TabStrip` and a +: New, Next,
   Previous and Close Terminal, Rename, Move Left and Right, a drag, a close
   question for a busy terminal, the last tab hiding the dock, Run File into a
-  new tab when busy, `minicode term` making a tab (HANDOFF item 59,
+  new tab when busy, `mutible term` making a tab (HANDOFF item 59,
   `terminal_tabs`). *Splits done:* `TerminalGroup` panes over `TerminalLayout`
   (Split Terminal Ctrl+Shift+5, Split Terminal Down, keyboard resize and
-  bar drags, closing a pane, `minicode split`; HANDOFF item 60,
+  bar drags, closing a pane, `mutible split`; HANDOFF item 60,
   `terminal_splits`). *Find done:* find in the terminal (VTE's search, a bar
   at the pane's top right, no match count), Clear Terminal (Ctrl+L at the
   prompt, no key) and Up and Down on a lone pane resizing the dock (HANDOFF
   item 62, `terminal_find`). *Ids done:* every terminal has an id of its
-  own, made with it (`MINICODE_TERMINAL_ID`), found through `Terminal::byId`;
+  own, made with it (`MUTIBLE_TERMINAL_ID`), found through `Terminal::byId`;
   `state`, `notify`, `term-output`, `open-url`, the board's marks, the tab
   strip's mark and the process monitor all use it (HANDOFF item 63,
   `terminal_ids`). Command marks came with stage 5 (HANDOFF item 90, `terminal_marks`):
@@ -1531,7 +1539,7 @@ These may run in parallel.
     and https addresses ever open (`WebBookmark::isWebAddress`); a file
     with any other opens as text.
   - The bookmark folder is `browser.bookmarks` (~/Bookmarks), the browser
-    window is the window rooted there, and `minicode https://...` opens
+    window is the window rooted there, and `mutible https://...` opens
     the page in a tab of it (several addresses, several tabs; later ones
     join the same window).
   - A `.url` clicked in the tree loads in that window's browser (a tab at
@@ -1548,7 +1556,7 @@ These may run in parallel.
     the folder (folders first as submenus with Open All in Tabs,
     `WebBookmark::menuTitle`), a bookmark loading in the tab on show, or
     a new tab with the modifier held; the command palette finds them.
-  - The desktop file could offer minicode for `application/x-mswinurl`
+  - The desktop file could offer mutible for `application/x-mswinurl`
     (a `.url` file's type), as the Mac's Info.plist offers it to Finder
     without becoming the default.
   Decide the Linux key for Save Page as Bookmark (Ctrl+D is Add Next
@@ -1628,12 +1636,12 @@ fixed on its own branch, with a GUI check that fails without the fix.
   button was down opened the file put in under the pointer, or nothing; it
   now keeps row objects. The `tree_clicks` suite checks both and fails
   without either fix.
-- [x] **R2. `minicode` from a terminal holds the terminal** (2026-11-10):
+- [x] **R2. `mutible` from a terminal holds the terminal** (2026-11-10):
   "if I launch a minicode application instance from the terminal on mac,
   it doesn't block. If I close that terminal, the process is not bound and
   I'm not warned that closing the terminal window will also kill the
   minicode instance. On linux, it is bound and does block the terminal."
-  Started from a terminal, `minicode` gives the terminal back at once and
+  Started from a terminal, `mutible` gives the terminal back at once and
   is not tied to it, as on the Mac and as VS Code's `code` on Linux;
   `--foreground` keeps the old way.
   *Done, 2026-11-10 (`HANDOFF.md` item 23):* `main` first calls
@@ -1641,25 +1649,25 @@ fixed on its own branch, with a GUI check that fails without the fix.
   `src/LaunchOptions.{h,cpp}`), which forks with a terminal on hand: the
   child takes a session of its own and runs the app, the parent returns
   once the child's first window is made, or with the child's status when
-  it ends first (a second `minicode` handing its path over, no display).
+  it ends first (a second `mutible` handing its path over, no display).
   The child then puts `/dev/null` on its standard streams, keeping a file
   the user sent them to, and asks systemd for
-  `app-minicode-org.minicode.Editor-<pid>.scope`. `-h`, `-v`,
+  `app-mutible-ai.ible.Mutible-<pid>.scope`. `-h`, `-v`,
   `--foreground`, and `--` are the port's options; the Mac's `-n` and `-r`
   are refused, since the port has neither behaviour. GNOME Terminal never
   stops a shell's scope (libvte 0.84 has no StopUnit), so only the
-  hang-up's SIGHUP had closed minicode. The `detach` suite runs the real
-  `build/minicode` on pseudo-terminals, on the checks' Xvfb and a session
+  hang-up's SIGHUP had closed mutible. The `detach` suite runs the real
+  `build/mutible` on pseudo-terminals, on the checks' Xvfb and a session
   bus of its own (58 checks, about 5 s; 33 fail with the old `main`): it
   returns 0 in under half a second with its window up, in its own session
   with no controlling terminal and nothing of the terminal open, outlives
-  the terminal's hang-up, hands a second `minicode notes.txt` over, keeps
+  the terminal's hang-up, hands a second `mutible notes.txt` over, keeps
   a log file it was sent to, returns 1 with GTK's message when there is no
   display, does not fork when started as the desktop starts it, and with
   `--foreground` holds the terminal and goes with it. Needs the owner:
-  closing a real GNOME Terminal window with minicode started from it, that
+  closing a real GNOME Terminal window with mutible started from it, that
   GNOME Terminal asks nothing first, and `systemctl --user list-units
-  'app-minicode-*'` while it runs (the checks answered for systemd).
+  'app-mutible-*'` while it runs (the checks answered for systemd).
 - Right-clicking a part of the window offers no Adjust Settings (the same
   day): that is item 2.11, done.
 - [x] **R3. "It takes multiple seconds to open minicode on ubuntu and
@@ -1668,7 +1676,7 @@ fixed on its own branch, with a GUI check that fails without the fix.
   to a usable window goes, cut what need not happen before it as the Mac
   does, and bound it with a check.
   *Measured and fixed on the ThinkPad's Xvfb, 2026-11-10* (`HANDOFF.md`
-  item 24): `MINICODE_STARTUP_LOG=1` prints each phase of the start with
+  item 24): `MUTIBLE_STARTUP_LOG=1` prints each phase of the start with
   the time since main and the main thread's CPU. Every window made its
   hidden terminal and browser at once: VTE started the shell, and the
   WebKitWebView started WebKit's network and web processes in bwrap
@@ -1701,7 +1709,7 @@ fixed on its own branch, with a GUI check that fails without the fix.
   add; and whether the window now opens in well under a second there.
 - [x] **R4. A useless welcome page instead of an empty editor**
   (2026-11-11). With no file to show, the window showed hard-coded text
-  ("MiniCode — a native C++ editor, now on GTK4 ..."). The Mac shows an
+  ("minicode — a native C++ editor, now on GTK4 ..."). The Mac shows an
   empty read-only editor there. *Done* (`HANDOFF.md` item 47): the editor's
   buffer for no tab is empty, with no text anywhere (a new window, the last
   tab closed, Open Folder), read-only, with no gutter, as before. The

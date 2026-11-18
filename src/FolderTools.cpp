@@ -10,7 +10,7 @@ std::string environmentToAsk(const PythonEnvs::Context& ctx, const std::string& 
                              bool userChose) {
     if (consent == "allow" || consent == "deny" || userChose) return "";
     const std::string project = PythonEnvs::projectInterpreter(ctx.fileDir, ctx.root);
-    // The same one active where minicode started ($VIRTUAL_ENV) is trusted.
+    // The same one active where mutible started ($VIRTUAL_ENV) is trusted.
     if (project.empty() || PythonEnvs::automatic(ctx, false) == project) return "";
     // bin/python's environment folder, as the window's folder names it.
     std::string env = project;
@@ -45,13 +45,13 @@ std::string environmentBarQuestion(const std::string& env, const std::string& se
     if (serverReadsEnvironment(server, env)) return "";
     if (server.empty() || server == "other") return environmentQuestion(env);
     return "Completions and checks do not see the packages in " + env +
-           " until you allow minicode to run its Python.";
+           " until you allow mutible to run its Python.";
 }
 
 std::string environmentPopoverText(const std::string& env, const std::string& server,
                                    bool terminal) {
     if (serverReadsEnvironment(server, env))
-        return server + " already reads the packages in " + env + ". minicode runs " + env +
+        return server + " already reads the packages in " + env + ". mutible runs " + env +
                "'s own Python only if you allow it: the servers then get its exact import "
                "paths" +
                (terminal ? ", and new terminals start with it active." : ".");

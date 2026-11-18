@@ -14,36 +14,36 @@
 // Its measure and snapshot are the Gutter's; the view owns it (as its left
 // gutter), and the Gutter clears `owner` before it goes.
 
-G_DECLARE_FINAL_TYPE(MinicodeGutter, minicode_gutter, MINICODE, GUTTER, GtkWidget)
+G_DECLARE_FINAL_TYPE(MutibleGutter, mutible_gutter, MUTIBLE, GUTTER, GtkWidget)
 
-struct _MinicodeGutter {
+struct _MutibleGutter {
     GtkWidget parent_instance;
     Gutter*   owner;
 };
 
-G_DEFINE_FINAL_TYPE(MinicodeGutter, minicode_gutter, GTK_TYPE_WIDGET)
+G_DEFINE_FINAL_TYPE(MutibleGutter, mutible_gutter, GTK_TYPE_WIDGET)
 
-static void minicode_gutter_measure(GtkWidget* w, GtkOrientation o, int, int* min, int* nat,
+static void mutible_gutter_measure(GtkWidget* w, GtkOrientation o, int, int* min, int* nat,
                                     int* minBase, int* natBase) {
-    MinicodeGutter* self = MINICODE_GUTTER(w);
+    MutibleGutter* self = MUTIBLE_GUTTER(w);
     *min = *nat = 0;
     *minBase = *natBase = -1;
     if (self->owner) self->owner->measure(o, min, nat);
 }
 
-static void minicode_gutter_snapshot(GtkWidget* w, GtkSnapshot* s) {
-    MinicodeGutter* self = MINICODE_GUTTER(w);
+static void mutible_gutter_snapshot(GtkWidget* w, GtkSnapshot* s) {
+    MutibleGutter* self = MUTIBLE_GUTTER(w);
     if (self->owner) self->owner->snapshot(s, gtk_widget_get_width(w), gtk_widget_get_height(w));
 }
 
-static void minicode_gutter_class_init(MinicodeGutterClass* klass) {
+static void mutible_gutter_class_init(MutibleGutterClass* klass) {
     GtkWidgetClass* wc = GTK_WIDGET_CLASS(klass);
-    wc->measure = minicode_gutter_measure;
-    wc->snapshot = minicode_gutter_snapshot;
+    wc->measure = mutible_gutter_measure;
+    wc->snapshot = mutible_gutter_snapshot;
     gtk_widget_class_set_css_name(wc, "minicode-gutter");
 }
 
-static void minicode_gutter_init(MinicodeGutter* self) { self->owner = nullptr; }
+static void mutible_gutter_init(MutibleGutter* self) { self->owner = nullptr; }
 
 namespace {
 
@@ -69,8 +69,8 @@ size_t offsetOf(const GtkTextIter* it) { return (size_t)gtk_text_iter_get_offset
 // ---------------------------------------------------------------- life
 
 Gutter::Gutter(GtkTextView* view) : view_(view) {
-    widget_ = GTK_WIDGET(g_object_new(minicode_gutter_get_type(), nullptr));
-    MINICODE_GUTTER(widget_)->owner = this;
+    widget_ = GTK_WIDGET(g_object_new(mutible_gutter_get_type(), nullptr));
+    MUTIBLE_GUTTER(widget_)->owner = this;
     gtk_widget_add_css_class(widget_, "minicode-gutter");
     gtk_widget_set_cursor_from_name(widget_, "default");
     diagTags_ = {{"lsp-error", 1}, {"lsp-warning", 2}, {"latex-error", 1}, {"latex-warning", 2}};
@@ -143,7 +143,7 @@ Gutter::~Gutter() {
         g_object_unref(buffer_);
     }
     attachAdjustment(nullptr);
-    MINICODE_GUTTER(widget_)->owner = nullptr;
+    MUTIBLE_GUTTER(widget_)->owner = nullptr;
 }
 
 BufferLines* Gutter::lines() const { return BufferLines::of(buffer_); }

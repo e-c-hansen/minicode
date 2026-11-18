@@ -27,8 +27,8 @@ const char *rememberedValue(bool run) { return run ? "on" : "off"; }
 
 std::string answeredLine(bool run, bool settingAsks) {
     if (!settingAsks) return run ? "This page's scripts run." : "This page's scripts stay off.";
-    return run ? "This page's scripts run, until minicode quits."
-               : "This page's scripts stay off, until minicode quits.";
+    return run ? "This page's scripts run, until mutible quits."
+               : "This page's scripts stay off, until mutible quits.";
 }
 
 static std::string trimSlashes(std::string s) {

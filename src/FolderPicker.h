@@ -1,4 +1,4 @@
-// FolderPicker.h — the decisions of minicode's own folder picker, the
+// FolderPicker.h — the decisions of mutible's own folder picker, the
 // palette that Open Folder… shows in place of the system's open panel: what
 // the typed text asks for, which rows to list and in what order, and what
 // Tab makes of the text.
@@ -93,7 +93,7 @@ enum class RowKind { Folder, OpenTyped, ChooseInFinder };
 struct Row {
     RowKind kind = RowKind::Folder;
     std::string path;              // absolute; "" for ChooseInFinder
-    std::u16string label;          // the path abbreviated ("~/Code/minicode")
+    std::u16string label;          // the path abbreviated ("~/Code/mutible")
     size_t nameAt = 0;             // where the last component starts in label
     std::vector<size_t> positions; // label's matched UTF-16 units
     bool recent = false;

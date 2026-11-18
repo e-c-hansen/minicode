@@ -27,7 +27,7 @@ static void testLspClangdFlags() {
     // Nothing anywhere: clangd guesses.
     const std::string dir = "/Users/me/code/repo/mac/src";
     CHECK(!Lsp::clangdHasCompileFlags(dir, clangd, exists, read, &found));
-    // At the repository's top, two folders up (minicode's own `make`).
+    // At the repository's top, two folders up (mutible's own `make`).
     files = {"/Users/me/code/repo/compile_commands.json"};
     CHECK(Lsp::clangdHasCompileFlags(dir, clangd, exists, read, &found));
     CHECK(found == "/Users/me/code/repo/compile_commands.json");

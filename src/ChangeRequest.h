@@ -1,12 +1,12 @@
-// ChangeRequest.h — the parts of "Request a Change to minicode" that need no
+// ChangeRequest.h — the parts of "Request a Change to mutible" that need no
 // GUI: the prompt Claude Code is given, the commands typed into the terminal
-// to start and to resume it, and how minicode's own source folder and its
+// to start and to resume it, and how mutible's own source folder and its
 // fresh build are recognised. The Mac's ChangePanel.mm drives it.
 //
 // The flow: the user describes a change in a bar over the editor; a terminal
-// tab opens in minicode's source folder running Claude Code with that
-// request; Claude edits the source and runs `make`; minicode sees the new
-// MiniCode.app there and offers to restart into it, reopening its windows
+// tab opens in mutible's source folder running Claude Code with that
+// request; Claude edits the source and runs `make`; mutible sees the new
+// Mutible.app there and offers to restart into it, reopening its windows
 // and resuming the conversation (`--continue`) in a terminal.
 #pragma once
 
@@ -17,12 +17,12 @@ namespace ChangeRequest {
 
 struct Context {
     std::string request;   // what the user typed
-    std::string version;   // the running minicode's version, "1.5.2"
-    std::string appPath;   // where the running app is, "/Applications/MiniCode.app"
+    std::string version;   // the running mutible's version, "1.5.2"
+    std::string appPath;   // where the running app is, "/Applications/Mutible.app"
 };
 
 // The request, trimmed, then a paragraph telling Claude where it is and
-// what minicode expects: change this repository, rebuild with `make`, and
+// what mutible expects: change this repository, rebuild with `make`, and
 // leave committing, pushing, and releasing to the user. "" for a request
 // that is only whitespace.
 std::string prompt(const Context &c);
@@ -34,9 +34,9 @@ std::string prompt(const Context &c);
 // typed as written.
 std::string startCommand(const std::string &command, const std::string &source,
                          const std::string &promptFile);
-// minicode's public repository, which a copy installed without its source
+// mutible's public repository, which a copy installed without its source
 // clones on first use.
-extern const char *const kRepository;   // "https://github.com/e-c-hansen/minicode.git"
+extern const char *const kRepository;   // "https://github.com/ible-ai/mutible.git"
 
 // `(git clone --branch v<version> <repo> <dir> || git clone <repo> <dir>)`:
 // the source of the release that is running, or the default branch when
@@ -53,19 +53,19 @@ std::string cloneThenStartCommand(const std::string &version, const std::string 
 // folder, after a restart.
 std::string resumeCommand(const std::string &command, const std::string &source);
 
-// The prompt files minicode writes for Claude Code to read as it starts
+// The prompt files mutible writes for Claude Code to read as it starts
 // ("request-<pid>-<n>.txt" for Request a Change, "task-<pid>-<n>.txt" for
 // the inline agent's tasks): one may go once the process that wrote it has
 // gone, or a day after it was written. Other names are never stale.
 bool promptFileIsStale(const std::string &name, double ageSeconds,
                        const std::function<bool(int)> &alive);
 
-// A folder holding minicode's source: a Makefile and mac/src/EditorController.mm
+// A folder holding mutible's source: a Makefile and mac/src/EditorController.mm
 // (src/ in a checkout from before 2026-11-14).
 bool looksLikeSource(const std::string &dir,
                      const std::function<bool(const std::string &)> &exists);
-// The folder an app bundle was built in ("/x/minicode" for
-// "/x/minicode/MiniCode.app"), where `make` puts it; "" for a bundle at
+// The folder an app bundle was built in ("/x/mutible" for
+// "/x/mutible/Mutible.app"), where `make` puts it; "" for a bundle at
 // the root.
 std::string checkoutOfBundle(const std::string &bundlePath);
 // The bundle `make` builds in `source`, and the file codesign writes last,

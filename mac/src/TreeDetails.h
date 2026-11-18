@@ -6,8 +6,8 @@
 #import <Cocoa/Cocoa.h>
 #include "FileDetails.h"
 
-// The user defaults MiniCode keeps its own state in: a scratch suite when
-// MINICODE_DEFAULTS_SUITE is set (tests), else the standard ones.
+// The user defaults Mutible keeps its own state in: a scratch suite when
+// MUTIBLE_DEFAULTS_SUITE is set (tests), else the standard ones.
 NSUserDefaults *MCAppDefaults(void);
 
 // The columns at the right of the tree's rows, each switched on its own:

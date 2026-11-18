@@ -51,7 +51,7 @@ static void testFormatRun() {
         FakeMachine m;
         FormatRun::Decision d = FormatRun::decide("/w/notes.txt", "/w", "", "", 0, 0, m.env());
         CHECK(d.kind == Kind::Unavailable && d.serverMayFormat);
-        CHECK(d.message == "minicode has no formatter for .txt files.");
+        CHECK(d.message == "mutible has no formatter for .txt files.");
         d = FormatRun::decide("/w/Makefile", "/w", "", "", 0, 0, m.env());
         CHECK(d.kind == Kind::Unavailable && d.message.find(".Makefile") != std::string::npos);
         // Markdown in a project not set up for Prettier: a server may.
@@ -366,7 +366,7 @@ static void testFolderTools() {
             CHECK(FolderTools::environmentToAsk(ctx, "allow", false).empty());
             CHECK(FolderTools::environmentToAsk(ctx, "deny", false).empty());
             CHECK(FolderTools::environmentToAsk(ctx, "", true).empty());
-            // Active where minicode started: trusted, not asked about.
+            // Active where mutible started: trusted, not asked about.
             ctx.env["VIRTUAL_ENV"] = root + "/.venv";
             CHECK(FolderTools::environmentToAsk(ctx, "", false).empty());
             ctx.env.clear();
@@ -393,7 +393,7 @@ static void testFolderTools() {
         CHECK(FolderTools::environmentBarQuestion(".venv", "basedpyright").empty());
         CHECK(FolderTools::environmentBarQuestion(".venv", "pylsp") ==
               "Completions and checks do not see the packages in .venv until you allow "
-              "minicode to run its Python.");
+              "mutible to run its Python.");
         CHECK(FolderTools::environmentBarQuestion("env", "basedpyright").find("do not see") !=
               std::string::npos);
         CHECK(FolderTools::environmentBarQuestion(".venv", "") ==

@@ -1,4 +1,4 @@
-// TreeGitColorsSuite.cpp — `./build/minicode-guitest tree_git_colors`: the
+// TreeGitColorsSuite.cpp — `./build/mutible-guitest tree_git_colors`: the
 // file tree's git colors (TreeGitColors.h, the core's Git::Decorations),
 // PARITY.md item 2.10, the git half of the Mac's tests/gui/TreeSuite.mm,
 // on a scratch repository with real git, every change made on the disk as

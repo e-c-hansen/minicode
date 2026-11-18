@@ -1,11 +1,11 @@
-// IdeLinkSuite.cpp — `./build/minicode-guitest idelink`: the Claude Code IDE
+// IdeLinkSuite.cpp — `./build/mutible-guitest idelink`: the Claude Code IDE
 // link (src/IdeLinkServer.h, linux/PARITY.md item 3.9; the Mac's
 // tests/gui/IdeLinkSuite.mm) driven as Claude Code drives it. A WebSocket
 // client (non-blocking, read by the waits so the main loop keeps turning,
 // built on the core's frame code) dials the window's port from its lock file
 // under the scratch CLAUDE_CONFIG_DIR, never ~/.claude. What is checked:
 //   - the lock file: mode 0600, the token, the folder, the pid; a stale one
-//     of minicode's own (a dead pid) removed at start, another IDE's left;
+//     of mutible's own (a dead pid) removed at start, another IDE's left;
 //   - a wrong token, no token and a Host off the loopback refused, and
 //     nothing said before the token;
 //   - ide_connected, initialize, tools/list (saveDocument and executeCode
@@ -275,12 +275,12 @@ MC_GUI_SUITE(idelink) {
         GCHECK_EQ_STR(ide()->lockPath(), lockDir() + "/" + std::to_string(gPort) + ".lock");
         IdeLink::LockInfo info;
         GCHECK(IdeLink::parseLockFile(readLock(), info));
-        GCHECK(info.pid == (int)getpid() && info.ideName == "minicode" && info.transport == "ws");
+        GCHECK(info.pid == (int)getpid() && info.ideName == "mutible" && info.transport == "ws");
         GCHECK_EQ_STR(info.authToken, gToken);
         bool folder = false;
         for (const std::string& f : info.workspaceFolders) folder = folder || real(f) == real(MCGuiProject());
         GCHECK(folder);
-        GCHECK(!MCGuiFileExists(lockDir() + "/40001.lock"));   // minicode's own, pid gone
+        GCHECK(!MCGuiFileExists(lockDir() + "/40001.lock"));   // mutible's own, pid gone
         GCHECK(MCGuiFileExists(lockDir() + "/40002.lock"));    // another IDE's stays
         // HOME is the scratch world's (guitest-XXXXXX, beside the binary or
         // under MC_GUI_ROOT), so nothing reached the real ~/.claude.
@@ -324,7 +324,7 @@ MC_GUI_SUITE(idelink) {
     MCGuiWait("initialize is answered", 5, [] { return answered(1); });
     MCGuiStep("it names itself and the protocol", [] {
         Json r = gA.answer(1)["result"];
-        GCHECK_EQ_STR(r["serverInfo"]["name"].asString(), "minicode");
+        GCHECK_EQ_STR(r["serverInfo"]["name"].asString(), "mutible");
         GCHECK(!r["protocolVersion"].asString().empty());
         gA.notify("notifications/initialized", Json::object());
         gA.notify("ide_connected", args({{"pid", (int)getpid()}}));
@@ -504,7 +504,7 @@ MC_GUI_SUITE(idelink) {
     });
     MCGuiWait("the link stops and the lock file goes", 10, [] { return !ide()->running(); });
     MCGuiStep("the file says off, the lock file is gone, the client was dropped", [] {
-        GCHECK(MCGuiReadFile(getenv("MINICODE_SETTINGS")).find("agent.ide-link = off") != std::string::npos);
+        GCHECK(MCGuiReadFile(getenv("MUTIBLE_SETTINGS")).find("agent.ide-link = off") != std::string::npos);
         GCHECK(!MCGuiFileExists(lockDir() + "/" + std::to_string(gPort) + ".lock"));
         GCHECK(ide()->terminalEnvironment().empty());
     });
@@ -515,7 +515,7 @@ MC_GUI_SUITE(idelink) {
     });
     MCGuiWait("listening again", 10, [] { return ide()->running(); });
     MCGuiStep("a lock file again, 0600", [] {
-        GCHECK(MCGuiReadFile(getenv("MINICODE_SETTINGS")).find("agent.ide-link = on") != std::string::npos);
+        GCHECK(MCGuiReadFile(getenv("MUTIBLE_SETTINGS")).find("agent.ide-link = on") != std::string::npos);
         struct stat st;
         GCHECK(stat(ide()->lockPath().c_str(), &st) == 0 && (st.st_mode & 0777) == 0600);
         GCHECK(ide()->authToken() != gToken);

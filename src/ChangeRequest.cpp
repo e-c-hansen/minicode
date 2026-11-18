@@ -23,15 +23,15 @@ static std::string stripSlashes(std::string s) {
 std::string prompt(const Context &c) {
     std::string request = trim(c.request);
     if (request.empty()) return "";
-    std::string running = "minicode";
+    std::string running = "mutible";
     if (!c.version.empty()) running += " " + c.version;
     if (!c.appPath.empty()) running += " is running from " + c.appPath;
     else running += " is running";
     return request +
-           "\n\n(Sent from minicode's Request a Change bar. " + running +
+           "\n\n(Sent from mutible's Request a Change bar. " + running +
            ". Make the change in this repository, following CLAUDE.md. When it "
            "builds, run `make` (and `make test` if you changed the C++ core) so that "
-           "MiniCode.app in this folder is rebuilt: minicode watches for the new "
+           "Mutible.app in this folder is rebuilt: mutible watches for the new "
            "build and offers to restart into it, reopening its windows and this "
            "conversation. Do not commit, push, or release unless asked.)";
 }
@@ -42,7 +42,7 @@ std::string startCommand(const std::string &command, const std::string &source,
            RunFile::shellQuote(promptFile) + ")\"";
 }
 
-const char *const kRepository = "https://github.com/e-c-hansen/minicode.git";
+const char *const kRepository = "https://github.com/ible-ai/mutible.git";
 
 std::string cloneCommand(const std::string &version, const std::string &dir) {
     const std::string repo = RunFile::shellQuote(kRepository);
@@ -104,7 +104,7 @@ std::string checkoutOfBundle(const std::string &bundlePath) {
 }
 
 std::string builtApp(const std::string &source) {
-    return stripSlashes(source) + "/MiniCode.app";
+    return stripSlashes(source) + "/Mutible.app";
 }
 
 std::string buildStamp(const std::string &source) {

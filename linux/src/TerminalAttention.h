@@ -1,7 +1,7 @@
 // TerminalAttention.h — "Waiting for you" on Linux (PARITY.md item 3.6; the
 // Mac's TerminalAttention.mm). One AttentionBoard for every window, kept by
 // terminal id (a window has one terminal here, so its id is the window's
-// control id). `minicode notify` marks a terminal, typing in it or closing it
+// control id). `mutible notify` marks a terminal, typing in it or closing it
 // clears the mark, and the app draws the board: a dot over the terminal with
 // a tooltip, a count in the window titles, and the "Next Waiting Terminal"
 // command. This file holds the board and nothing of GTK.

@@ -1,4 +1,4 @@
-// GitActionsSuite.cpp — `./build/minicode-guitest git_actions` (PARITY.md
+// GitActionsSuite.cpp — `./build/mutible-guitest git_actions` (PARITY.md
 // 2.9), the counterpart of the Mac's git_actions in tests/gui/
 // GitPanelSuite.mm, by real keys and clicks: Stage All Changes from the
 // palette and Unstage All from the panel's right click, which with nothing

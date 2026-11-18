@@ -1,4 +1,4 @@
-// SemanticTokensSuite.cpp — `./build/minicode-guitest semantic_tokens`: a
+// SemanticTokensSuite.cpp — `./build/mutible-guitest semantic_tokens`: a
 // language server's semantic tokens painted over the lexer's colors
 // (editor.semantic-highlighting, linux/PARITY.md item 2.6, SemanticColors.h
 // and LspSessionSemantic.cpp), against the scripted server (build/fakelsp)
@@ -165,7 +165,7 @@ MC_GUI_SUITE(semantic_tokens) {
         MCGuiSetKeyWindow(nullptr);
         ed()->closeAllTabs();
         MCGuiWriteFile(F(), fileText());
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         gBase = "lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script()) +
                 "\neditor.auto-close = off\n";
         MCGuiSetSettings(gBase);

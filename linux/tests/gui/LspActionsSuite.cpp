@@ -1,4 +1,4 @@
-// LspActionsSuite.cpp — `./build/minicode-guitest lsp_actions`: rename,
+// LspActionsSuite.cpp — `./build/mutible-guitest lsp_actions`: rename,
 // references and quick fixes (linux/PARITY.md item 2.1, the Mac's
 // Lsp+Actions.mm and Lsp+WorkspaceEdit.mm, checked there by
 // tests/gui/LspFixesSuite.mm), against the scripted server (build/fakelsp),
@@ -32,7 +32,7 @@
 #include "Keys.h"
 #include "Lsp.h"
 #include "NavHistoryUi.h"
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #endif
 
@@ -260,7 +260,7 @@ bool answeredApplied() {
 bool renameBoxReady() { return lsp()->renameBoxVisible() && lsp()->renameEntry(); }
 
 std::string gSettings;
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 bool gTerminalWasOpen = false;
 #endif
 
@@ -280,7 +280,7 @@ MC_GUI_SUITE(lsp_actions) {
         MCGuiWriteFile(F("d.py"), kD);
         MCGuiWriteFile(F("docs.txt"), kDocs);
         MCGuiWriteFile(F("notes.md"), kNotes);
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script()) + "\n");
         showTab("b.py");
     });
@@ -574,7 +574,7 @@ MC_GUI_SUITE(lsp_actions) {
     MCGuiWait("the question goes", 10, [] {
         return MCGuiFindLabel(GTK_WIDGET(MCGuiApp().window), "Rename to") == nullptr;
     });
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     MCGuiStep("the terminal with the keyboard", [] {
         gTerminalWasOpen = gtk_widget_get_mapped(MCGuiApp().terminal->widget());
         if (gTerminalWasOpen) MCGuiApp().terminal->focus();

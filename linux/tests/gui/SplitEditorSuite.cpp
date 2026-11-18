@@ -1,4 +1,4 @@
-// SplitEditorSuite.cpp — `./build/minicode-guitest split_editor`: the split
+// SplitEditorSuite.cpp — `./build/mutible-guitest split_editor`: the split
 // editor (linux/PARITY.md 4.6, Groups.cpp), VS Code's two editor groups as
 // the Mac's suite of the same name checks them, by real keys, clicks and a
 // drag. Ctrl+\ opens the file on show in a second group on the right, one
@@ -108,7 +108,7 @@ bool Keyboard() { return gtk_widget_has_focus(ed()->textView()); }
 
 TabSessions::Session SavedFor(const std::string& folder) {
     const TabSessions::Sessions all = TabSessions::decode(
-        MCGuiReadFile(MCGuiScratch() + "/state/minicode/sessions.json"));
+        MCGuiReadFile(MCGuiScratch() + "/state/mutible/sessions.json"));
     const auto it = all.find(Persistence::keyFor(folder));
     return it == all.end() ? TabSessions::Session() : it->second;
 }

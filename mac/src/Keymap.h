@@ -1,5 +1,5 @@
 // Keymap.h — Objective-C++. The command registry (Commands.h) on the Mac:
-// reads ~/.config/minicode/keys.conf (or $MINICODE_KEYS), watches it as
+// reads ~/.config/mutible/keys.conf (or $MUTIBLE_KEYS), watches it as
 // AppSettings watches settings.conf, and puts the keys in effect on the
 // main menu's items, so a saved change rebinds them at once.
 //

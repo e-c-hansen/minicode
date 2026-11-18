@@ -436,7 +436,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     for (const std::string &p : plan.restat) [restat addObject:@(p.c_str())];
     if (!list.count && !restat.count && !reshowRoot) return;
     if (!_treeListQueue)
-        _treeListQueue = dispatch_queue_create("minicode.tree-list",
+        _treeListQueue = dispatch_queue_create("mutible.tree-list",
                                                dispatch_queue_attr_make_with_qos_class(
                                                    DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
     _treeListing = YES;
@@ -1042,7 +1042,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 // ------------------------------------------------------------- open folder
-// minicode's own folder picker (PalettePanel.h, MCFolderPick): the recent
+// mutible's own folder picker (PalettePanel.h, MCFolderPick): the recent
 // folders, then this folder's subfolders, and any path typed. The window
 // moves to the folder chosen, asking about unsaved tabs first (after the
 // choice, so a cancelled pick asks nothing). Choose in Finder… is the
@@ -1067,7 +1067,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         [self switchToFolder:panel.URLs.firstObject.path];
 }
 
-// `minicode -r folder`: this window moves to the folder, asking about
+// `mutible -r folder`: this window moves to the folder, asking about
 // unsaved tabs first as Open Folder does.
 - (BOOL)switchToFolder:(NSString *)dir {
     if ([_root.path.stringByResolvingSymlinksInPath
@@ -1100,7 +1100,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 // ----------------------------------------------------- the control channel
-// What ControlCommands.mm asks of a window (`minicode open`, `term`, `state`
+// What ControlCommands.mm asks of a window (`mutible open`, `term`, `state`
 // and the rest), and what the agent notes need (MCAgentNotesHost). None of
 // it moves the keyboard: an agent's command lands beside the user's work,
 // never in its way, so whatever had the keyboard has it again afterwards.

@@ -1,6 +1,6 @@
 // shell_bash_tests.inc — the `shell:*` and `bash:*` groups of
 // run_tests.cpp: the Linux port's bash integration
-// (linux/resources/minicode-bash-integration.bash) in a real bash reading a
+// (linux/resources/mutible-bash-integration.bash) in a real bash reading a
 // pipe, as zsh_integration_tests.inc runs zsh (its runZsh, which this file
 // follows into run_tests.cpp; skipped where /bin/bash is older than 4.4, as
 // on the Mac). Its marks are the zsh script's (OSC 133, 633;E and 7 with
@@ -46,13 +46,13 @@ void testShellBash() {
     {
         const unsigned char raw[] = {0x00, 0x0f, 0xa5, 0xff};
         CHECK(nonceHex(raw, 4) == "000fa5ff");
-        CHECK(zshenvStub(true).find("typeset -g __minicode_mode=grid\n") != std::string::npos);
-        CHECK(zshenvStub(false).find("typeset -g __minicode_mode=line\n") != std::string::npos);
-        CHECK(zshenvStub(true).find("__minicode_term") == std::string::npos);
+        CHECK(zshenvStub(true).find("typeset -g __mutible_mode=grid\n") != std::string::npos);
+        CHECK(zshenvStub(false).find("typeset -g __mutible_mode=line\n") != std::string::npos);
+        CHECK(zshenvStub(true).find("__mutible_term") == std::string::npos);
     }
 
     std::random_device rd;
-    const zfs::path root = zfs::temp_directory_path() / ("minicode-shell-" + std::to_string(rd()));
+    const zfs::path root = zfs::temp_directory_path() / ("mutible-shell-" + std::to_string(rd()));
     zfs::create_directories(root / "home");
     struct Cleanup {
         zfs::path p;
@@ -60,11 +60,11 @@ void testShellBash() {
     } cleanup{root};
 
     GROUP("bash:integration");
-    const std::string bashScript = readFile("linux/resources/minicode-bash-integration.bash");
+    const std::string bashScript = readFile("linux/resources/mutible-bash-integration.bash");
     const int bashV = bashScript.empty() ? 0 : bashVersion(root);
     if (bashV < 404) {
         std::printf("  (no bash 4.4 or later at /bin/bash, or no "
-                    "linux/resources/minicode-bash-integration.bash here; bash checks skipped)\n");
+                    "linux/resources/mutible-bash-integration.bash here; bash checks skipped)\n");
     } else {
         // As Terminal.cpp starts it: bash --rcfile <the script>, the nonce in
         // the environment. The user's .bashrc is read (its PROMPT_COMMAND
@@ -75,11 +75,11 @@ void testShellBash() {
         writeFile(root / "home" / ".bashrc",
                   "exec 2>&1\nPROMPT_COMMAND='echo \"user-pc:$?\"'\nalias hi='echo hi-alias'\n");
         const std::vector<std::string> env = {"HOME=" + (root / "home").string(), "PATH=/usr/bin:/bin",
-                                              "TERM=dumb", "MINICODE_NONCE=n0nce"};
+                                              "TERM=dumb", "MUTIBLE_NONCE=n0nce"};
         ZshRun r = runZsh(root, {"--rcfile", (root / "script.bash").string(), "-i"}, env,
                           "hi\nfalse\ntrue; true; true\n"
                           "printf '\\e]133;A;mc=bad\\a\\e]133;D;9\\a'\n"
-                          "echo \"nonce:${MINICODE_NONCE-unset}\"\n"
+                          "echo \"nonce:${MUTIBLE_NONCE-unset}\"\n"
                           "echo 'a;b\\c'\n",
                           "/bin/bash");
         CHECK(printed(r.out, "user-pc") == "0");
@@ -89,7 +89,7 @@ void testShellBash() {
         const std::string want =
             "1 0 0 - | 1 1 0 - hi | 2 1 1 0 | 2 2 1 0 false | 3 2 2 1 | 3 3 2 1 true; true; true | "
             "4 3 3 0 | 4 4 3 0 printf '\\e]133;A;mc=bad\\a\\e]133;D;9\\a' | "
-            "5 4 4 0 | 5 5 4 0 echo \"nonce:${MINICODE_NONCE-unset}\" | 6 5 5 0 | "
+            "5 4 4 0 | 5 5 4 0 echo \"nonce:${MUTIBLE_NONCE-unset}\" | 6 5 5 0 | "
             "6 6 5 0 echo 'a;b\\c' | 7 6 6 0";
         const std::string got = hostStates(r.out, "n0nce");
         CHECK(got == want);

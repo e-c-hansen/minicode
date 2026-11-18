@@ -441,7 +441,7 @@ bool openOne(const ControlHost& host, const ControlWindow& w, const std::string&
 }
 
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 // ---- browse and page (PARITY.md 3.7)
 
 // Whether an agent may read the page at `url`.
@@ -545,7 +545,7 @@ void registerPageCommands(Dispatcher& d, const ControlHost& host) {
         PageProbe* probe = !b ? nullptr : yours ? b->userProbe() : b->agentProbe();
         if (!probe) {
             respond(Result::failure(yours ? "the browser pane is not open"
-                                          : "there is no agent page: minicode browse opens one"));
+                                          : "there is no agent page: mutible browse opens one"));
             return;
         }
         if (action == "url") {
@@ -655,7 +655,7 @@ void registerPageCommands(Dispatcher& d, const ControlHost& host) {
         });
     });
 
-    // `minicode open-url`, which BROWSER runs in minicode's terminals: a web
+    // `mutible open-url`, which BROWSER runs in mutible's terminals: a web
     // address in the user's page, in the window of the terminal the program
     // runs in (a window has one terminal, so its id), else the front one.
     d.on("open-url", [host](const Request& req, Dispatcher::Respond respond) {
@@ -679,7 +679,7 @@ void registerPageCommands(Dispatcher& d, const ControlHost& host) {
                     if (ct.id == want) win = cw.id;
             if (!win) {
                 respond(Result::failure("there is no terminal " + std::to_string(want) +
-                                        " (terminal ids are in `minicode state`)"));
+                                        " (terminal ids are in `mutible state`)"));
                 return;
             }
             t.set("window", win);
@@ -699,7 +699,7 @@ void registerPageCommands(Dispatcher& d, const ControlHost& host) {
         respond(Result::success(r));
     });
 }
-#endif  // MINICODE_ENABLE_BROWSER
+#endif  // MUTIBLE_ENABLE_BROWSER
 
 }  // namespace
 
@@ -707,8 +707,8 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
     d.on("ping", [](const Request&, Dispatcher::Respond respond) {
         Json r = Json::object();
         r.set("pid", (int)getpid());
-#ifdef MINICODE_VERSION
-        r.set("version", MINICODE_VERSION);
+#ifdef MUTIBLE_VERSION
+        r.set("version", MUTIBLE_VERSION);
 #else
         r.set("version", "");
 #endif
@@ -1082,7 +1082,7 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
         }).detach();
     });
 
-    // `minicode notify`: a Claude Code hook (or another tool) marks a
+    // `mutible notify`: a Claude Code hook (or another tool) marks a
     // terminal as waiting or done, or clears it (PARITY.md 3.6). A window has
     // one terminal here, so its id is the window's.
     d.on("notify", [host](const Request& req, Dispatcher::Respond respond) {
@@ -1094,7 +1094,7 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
                 if (ct.id == want) found = true;
         if (!found) {
             respond(Result::failure("there is no terminal " + std::to_string(want) +
-                                    " (terminal ids are in `minicode state`)"));
+                                    " (terminal ids are in `mutible state`)"));
             return;
         }
         std::string error;
@@ -1110,11 +1110,11 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
         respond(Result::success(r));
     });
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     registerPageCommands(d, host);
 #endif
 
-    // `minicode term` (PARITY.md 3.1): a window has one terminal (no tabs
+    // `mutible term` (PARITY.md 3.1): a window has one terminal (no tabs
     // yet, item 4.7), so it is the terminal used, when its shell is at a
     // prompt; busy, or not reporting (another shell, ssh), is an error that
     // says why, and nothing is typed. --run goes through the shell's history,

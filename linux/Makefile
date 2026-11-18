@@ -17,7 +17,7 @@ CXXFLAGS ?= -std=c++17 -Wall -Wextra -O2
 # Deliberately not `build`: that is Meson's directory, and `make clean` would
 # delete it out from under a Meson tree in the same checkout.
 BUILD    := build-make
-BIN      := $(BUILD)/minicode
+BIN      := $(BUILD)/mutible
 
 # Shared portable core (never copied — compiled straight from ../src). Keep it
 # the same list as core_sources in meson.build: CI builds only with Meson, so
@@ -72,12 +72,12 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp src/EnvLock.cpp \
        src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/TestGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
        src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp \
-       src/BackupStore.cpp src/Persistence.cpp src/RecentList.cpp src/DockMenu.cpp src/WindowLayout.cpp \
+       src/BackupStore.cpp src/Persistence.cpp src/RecentList.cpp src/DockMenu.cpp src/MigrationLinux.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
        src/Bench.cpp src/StartupLog.cpp src/WhenDrawn.cpp \
        src/Zoom.cpp src/NavHistoryUi.cpp \
-       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/minicode-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/ChangeReviewPage.cpp
+       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/mutible-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/ChangeReviewPage.cpp
 
 SRCS := $(GUI) $(CORE)
 
@@ -85,23 +85,23 @@ PKGS   := gtk4 sqlite3
 # The version the User-Agent of web picture fetches carries, from the Mac's
 # Info.plist, which the release script stamps.
 VERSION := $(shell sed -n '/CFBundleShortVersionString/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' ../Info.plist)
-DEFS   := -DMINICODE_VERSION='"$(VERSION)"'
+DEFS   := -DMUTIBLE_VERSION='"$(VERSION)"'
 
 ifeq ($(TERMINAL),1)
   PKGS += vte-2.91-gtk4
-  DEFS += -DMINICODE_ENABLE_TERMINAL
+  DEFS += -DMUTIBLE_ENABLE_TERMINAL
 endif
 ifeq ($(BROWSER),1)
   PKGS += webkitgtk-6.0
-  DEFS += -DMINICODE_ENABLE_BROWSER
+  DEFS += -DMUTIBLE_ENABLE_BROWSER
 endif
 ifeq ($(PDF),1)
   PKGS += poppler-glib
-  DEFS += -DMINICODE_ENABLE_PDF
+  DEFS += -DMUTIBLE_ENABLE_PDF
 endif
 ifeq ($(WEBIMAGES),1)
   PKGS += libsoup-3.0
-  DEFS += -DMINICODE_ENABLE_WEB_IMAGES
+  DEFS += -DMUTIBLE_ENABLE_WEB_IMAGES
 endif
 
 # Lazily expanded (=, not :=) so `make test`, which needs no GTK, does not
@@ -134,7 +134,7 @@ test:
 	    src/PageWords.cpp ../src/LatexDoc.cpp ../src/SyncTex.cpp \
 	    ../src/TermLinks.cpp src/TermLinkPath.cpp \
 	    ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
-	    src/WebImageRules.cpp src/LaunchOptions.cpp src/EnvLock.cpp \
+	    src/WebImageRules.cpp src/LaunchOptions.cpp src/EnvLock.cpp src/MigrationLinux.cpp \
 	    $(shell pkg-config --cflags --libs gio-2.0) -pthread \
 	    -o $(TEST_BIN)
 	@$(TEST_BIN)

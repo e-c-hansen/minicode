@@ -235,7 +235,7 @@ struct PalettePanel::ListJob {
 };
 
 std::string PalettePanel::statePath() {
-    return std::string(g_get_user_state_dir()) + "/minicode/palette.json";
+    return std::string(g_get_user_state_dir()) + "/mutible/palette.json";
 }
 
 // ------------------------------------------------------------ building
@@ -821,7 +821,7 @@ bool PalettePanel::caretPosition(Document* d, Lsp::Position* p) const {
     return true;
 }
 
-// minicode's own outline of a file, and the symbol the caret is in.
+// mutible's own outline of a file, and the symbol the caret is in.
 std::vector<Lsp::Symbol> PalettePanel::outlineSymbols(Document* d, int* caret) const {
     std::vector<Lsp::Symbol> syms = Outline::outline(baseName(d->path()), Lsp::toUtf16(d->text()));
     Lsp::Position p;

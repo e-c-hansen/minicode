@@ -20,7 +20,7 @@
 
 @interface MCProcessesPanel : NSView
 - (instancetype)init;
-// The window's id (`minicode state`'s) and folder, asked at each reload.
+// The window's id (`mutible state`'s) and folder, asked at each reload.
 @property(nonatomic, copy) NSInteger (^windowID)(void);
 @property(nonatomic, copy) NSString *(^folder)(void);
 @property(nonatomic, copy) void (^onOpenURL)(NSString *url);

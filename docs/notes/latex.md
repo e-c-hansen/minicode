@@ -6,31 +6,31 @@ found through that list.
 
 ## LaTeX preview (read before touching it)
 
-- **tectonic**: `MINICODE_TECTONIC`, then `~/Library/Application
-  Support/MiniCode/bin` (0.17.0 is there; its cache,
+- **tectonic**: `MUTIBLE_TECTONIC`, then `~/Library/Application
+  Support/Mutible/bin` (0.17.0 is there; its cache,
   `~/Library/Caches/TectonicProject.Tectonic`, has text fonts but no math
   fonts), then PATH and Homebrew; missing, the panel offers the pinned
   download, checked against GitHub's published SHA-256 (`kTectonicSha256`,
   as the Linux port's) before it is unpacked, and only its `tectonic` file
-  moved into place (`MINICODE_TECTONIC_DOWNLOAD` points the GUI check at a
+  moved into place (`MUTIBLE_TECTONIC_DOWNLOAD` points the GUI check at a
   file:// stand-in, held to the same hash).
 - **The buffer is typeset from a hidden sibling**
-  `.<name>.<pid>-<view>.minicode.tex` in the document's folder, so relative
+  `.<name>.<pid>-<view>.mutible.tex` in the document's folder, so relative
   paths resolve and the user's file is never written; deleted when tectonic
   exits. Before it is written, a `sibling.record` (pid, start time, size,
   SHA-256; `LatexScratch`) goes in the output folder, so the first typeset of
   a launch removes a copy a crashed process left, and only when it is still
   exactly those bytes. tectonic runs `--untrusted`. Output in
-  `NSTemporaryDirectory()/MiniCode-latex/<16 hex of the resolved path's
+  `NSTemporaryDirectory()/Mutible-latex/<16 hex of the resolved path's
   SHA-256>-<pid>-<start>-<view>` (`MCLatexWorkFolder`, `LatexView
-  workFolder`; `$MINICODE_LATEX_WORK` in the checks). **Each preview has its
+  workFolder`; `$MUTIBLE_LATEX_WORK` in the checks). **Each preview has its
   own sibling and folder** (`LatexScratch::Owner`, 2026-11-08, DO-D5): two
   windows on one file with different unsaved text once shared both, so one
   typeset's end removed the other's sibling and they overwrote one PDF. The
   folder goes with its preview (`stopPreview` on window close, dealloc on tab
   close); a folder whose process has gone (`ownerGone`) is removed by the
   first typeset of a launch; folders named by the hash alone (older
-  minicodes) are left to their own records. `make guitest SUITES=latex` runs
+  mutibles) are left to their own records. `make guitest SUITES=latex` runs
   a stand-in tectonic.
 - Compiles are debounced (0.6 s) and generation-counted; a run has 5 minutes,
   then SIGTERM and SIGKILL, with a log line (a looping document spun a core and
@@ -74,7 +74,7 @@ found through that list.
   tectonic 0.17.0) with no tectonic, and fails on a wrong answer or a rate
   under `tests/latex/sweep_bound.txt`; raise the bound when a change raises
   the rate, and typeset the fixture again (`--synctex --untrusted`, the
-  sibling named `.torture.minicode.tex`, Input paths rewritten to
+  sibling named `.torture.mutible.tex`, Input paths rewritten to
   `/fixture`) only with the tectonic the app pins. `build/latex-sweep` links
   the app's objects (the old one-line clang build had lost frameworks).
   Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices down a
@@ -119,7 +119,7 @@ found through that list.
   message` summary (TeX's `! ...` blocks with `l.N` and the open-file
   parentheses only when no summary placed anything); the sibling's name is
   the document, an `\input` name is found as TeX finds it. The failure panel
-  lists them above the log, each place a `minicode-latex-problem:<n>` link
+  lists them above the log, each place a `mutible-latex-problem:<n>` link
   (`onOpenProblem`, goToLine); while the source shows and is still the text
   last typeset, they are `CodeTextView buildMarks`, gutter dots that follow
   edits and that no language server's publish replaces. **Warnings** too,
@@ -138,7 +138,7 @@ found through that list.
   a script keeping a `.dtx`'s code lines made the `.sty`. Spacing differs from
   Overleaf by design (XeTeX; compare with Overleaf set to XeLaTeX).
 - Headless: drive `openEditorForPage:point:`, `startAddItem:`, `commitEdit:`
-  with points from `[PDFDocument findString:]`, on scratch `MINICODE_TECTONIC`
+  with points from `[PDFDocument findString:]`, on scratch `MUTIBLE_TECTONIC`
   and `TECTONIC_CACHE_DIR`.
 - Linux (`Latex.cpp`, `PageWords.cpp`, `LatexClick.cpp`, poppler) differs on
   purpose (`linux/HANDOFF.md` item 7); `tests/latex/sweep-linux.sh` found the

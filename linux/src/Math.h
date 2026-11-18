@@ -10,10 +10,10 @@
 // `-Z continue-on-errors --untrusted --print --keep-logs --reruns 0` in a
 // folder of its own, 15 s without output once in the formulas, 60 s before),
 // and the PDF is cut into one picture per formula with poppler. The whole
-// PDFs are kept in $MINICODE_MATH_CACHE or $XDG_CACHE_HOME/minicode/math with
+// PDFs are kept in $MUTIBLE_MATH_CACHE or $XDG_CACHE_HOME/mutible/math with
 // an index (50 MB, trimmed to 40), so a reopen runs nothing. A picture is the
 // page's ink as a mask filled with the text color asked for, so a formula
-// takes the color around it. Needs poppler (MINICODE_ENABLE_PDF); without it
+// takes the color around it. Needs poppler (MUTIBLE_ENABLE_PDF); without it
 // available() is false and a formula stays its TeX.
 #pragma once
 
@@ -23,7 +23,7 @@
 
 namespace Math {
 
-// tectonic is found (MINICODE_TECTONIC, the downloaded copy, PATH) and poppler
+// tectonic is found (MUTIBLE_TECTONIC, the downloaded copy, PATH) and poppler
 // is built in.
 bool available();
 

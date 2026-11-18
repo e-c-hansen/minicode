@@ -1,3 +1,20 @@
+mutible (1.6.0-1~local0) UNRELEASED; urgency=medium
+
+  * minicode is now mutible (https://mut.ible.ai). The source package and the
+    app's package are named mutible; minicode is a transitional package that
+    brings in mutible and can be removed.
+  * The command is mutible, also installed as mbl, and as minicode, which
+    starts mutible and says it has been renamed. The app id is now
+    ai.ible.Mutible, so a launcher pinned to the dock under the old name
+    has to be pinned again.
+  * On its first launch mutible copies what minicode kept in
+    ~/.config/minicode, ~/.local/state/minicode and ~/.local/share/minicode
+    to the same folders named mutible, and leaves the old ones in place.
+  * MINICODE_* environment variables are still read where the MUTIBLE_*
+    name is not set.
+
+ -- Eric Hansen <eric.calvin.hansen@gmail.com>  Wed, 18 Nov 2026 12:00:00 +0000
+
 minicode (0~local-0) UNRELEASED; urgency=medium
 
   * Placeholder for a build straight from a checkout (dpkg-buildpackage -b),

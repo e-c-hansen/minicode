@@ -274,7 +274,7 @@ static void testFileDetails() {
     GROUP("sizes:measure");
     namespace fsys = std::filesystem;
     const fsys::path root = fsys::temp_directory_path() /
-        ("minicode-sizes-" + std::to_string(::getpid()));
+        ("mutible-sizes-" + std::to_string(::getpid()));
     std::error_code ec;
     fsys::remove_all(root, ec);
     fsys::create_directories(root / "a" / "deep", ec);
@@ -383,12 +383,12 @@ static void testFileDetails() {
 
         CHECK(parent("mac/src/a.mm") == "mac/src" && parent("a.txt") == "" && parent("") == "");
 
-        std::vector<Part> parts = breadcrumb("minicode", "mac/src");
+        std::vector<Part> parts = breadcrumb("mutible", "mac/src");
         CHECK(parts.size() == 3);
-        CHECK(parts[0].label == "minicode" && parts[0].focus.empty());
+        CHECK(parts[0].label == "mutible" && parts[0].focus.empty());
         CHECK(parts[1].label == "mac" && parts[1].focus == "mac");
         CHECK(parts[2].label == "src" && parts[2].focus == "mac/src");
-        CHECK(breadcrumb("minicode", "").size() == 1);
+        CHECK(breadcrumb("mutible", "").size() == 1);
         CHECK(breadcrumb("m", "/a//b/").size() == 3 && breadcrumb("m", "/a//b/")[2].focus == "a/b");
 
         // Inside the focus: no change. Outside: the nearest folder above both.

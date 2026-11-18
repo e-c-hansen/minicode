@@ -2,9 +2,9 @@
 // (PARITY.md 2.8), the Mac's MCInstallView (InstallPanel.mm): what the tool
 // gives, the command to run with Copy and Run in Terminal, how to get the
 // installer first when it is missing too, the other ways (each with Copy),
-// and a note that minicode finds the tool once it is installed. The
+// and a note that mutible finds the tool once it is installed. The
 // commands are the core's (InstallHints.h), Linux's ways, the first this
-// computer can run first. minicode never runs them: Copy puts one on the
+// computer can run first. mutible never runs them: Copy puts one on the
 // clipboard, and Run in Terminal hands it to the window, which types it
 // into the terminal for the user to press Return.
 //
@@ -64,6 +64,6 @@ private:
 };
 
 // Is an installer (uv, pipx, npm, apt, go, cargo, rustup, snap) here?
-// LspFindProgram, or, for checks, membership in $MINICODE_INSTALL_HAVE
+// LspFindProgram, or, for checks, membership in $MUTIBLE_INSTALL_HAVE
 // (comma-separated), as on the Mac.
 bool InstallerAvailable(const std::string& program);

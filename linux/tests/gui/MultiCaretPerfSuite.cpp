@@ -1,4 +1,4 @@
-// MultiCaretPerfSuite.cpp — `./build/minicode-guitest multicaret_perf`:
+// MultiCaretPerfSuite.cpp — `./build/mutible-guitest multicaret_perf`:
 // typing at 1,000 carets spread over a 100,000-line Python file (linux/
 // PARITY.md item 1.9 and D7), within a bound of the main thread's CPU time,
 // the colors right afterwards. The counterpart of the Mac's MultiEditSuite's

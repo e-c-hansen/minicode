@@ -103,7 +103,7 @@ void ignoreSigpipeHere() {
     sigaction(SIGPIPE, &sa, nullptr);
 }
 
-// In the server, between fork and exec: if MiniCode dies without shutting
+// In the server, between fork and exec: if mutible dies without shutting
 // it down (a crash, SIGKILL), the server gets SIGTERM. EOF on its stdin is
 // the other backstop.
 void childSetup(gpointer) {
@@ -135,14 +135,14 @@ std::shared_ptr<Server> Server::start(const std::string& key,
     }
 
     // stderr must go somewhere that never fills up: clangd logs every request
-    // there, and a full pipe would stall it mid-reply. MINICODE_LSP_LOG gets
+    // there, and a full pipe would stall it mid-reply. MUTIBLE_LSP_LOG gets
     // it instead, along with all the traffic, opened O_APPEND so several
     // servers can share the file.
     int errFd = -1;
     std::string logPathText;
     {
         EnvLock::EnvRead env;
-        if (const char* v = g_getenv("MINICODE_LSP_LOG")) logPathText = v;
+        if (const char* v = g_getenv("MUTIBLE_LSP_LOG")) logPathText = v;
     }
     const char* logPath = logPathText.c_str();
     if (logPath && *logPath) {
@@ -174,7 +174,7 @@ std::shared_ptr<Server> Server::start(const std::string& key,
     s->proc_ = g_subprocess_launcher_spawnv(l, av.data(), &err);
     g_object_unref(l);   // closes the child's ends of the pipes
     if (!s->proc_) {
-        g_printerr("MiniCode: could not start %s: %s\n", argv[0].c_str(),
+        g_printerr("mutible: could not start %s: %s\n", argv[0].c_str(),
                    err ? err->message : "?");
         g_clear_error(&err);
         close(toServer[1]);

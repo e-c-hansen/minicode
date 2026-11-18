@@ -45,7 +45,7 @@ void write(const std::vector<std::string>& list) {
     GError* err = nullptr;
     if (!g_file_set_contents_full(path.c_str(), text.data(), (gssize)text.size(),
                                   G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err)) {
-        fprintf(stderr, "minicode: could not write %s: %s\n", path.c_str(),
+        fprintf(stderr, "mutible: could not write %s: %s\n", path.c_str(),
                 err ? err->message : "unknown error");
         g_clear_error(&err);
     }
@@ -93,12 +93,12 @@ std::string tilded(const std::string& path, const std::string& home) {
     return path;
 }
 
-bool enabled() { return !flagSet("MINICODE_BENCH") && !flagSet("MINICODE_DEMO"); }
+bool enabled() { return !flagSet("MUTIBLE_BENCH") && !flagSet("MUTIBLE_DEMO"); }
 
 std::string file() {
     const char* s = getenv("XDG_STATE_HOME");
     std::string base = (s && *s) ? s : std::string(g_get_home_dir()) + "/.local/state";
-    return base + "/minicode/recent-folders.json";
+    return base + "/mutible/recent-folders.json";
 }
 
 void note(const std::string& folder) {

@@ -28,10 +28,10 @@ NSString *MCClaudeSettingsPath(void) {
 }
 
 NSString *MCClaudeHooksCommand(void) {
-    if (MCFindProgram(@"minicode")) return HNS(ClaudeHooks::kCommand);
-    // A copy of the app put somewhere by hand: no `minicode` on the PATH
+    if (MCFindProgram(@"mutible")) return HNS(ClaudeHooks::kCommand);
+    // A copy of the app put somewhere by hand: no `mutible` on the PATH
     // Claude Code's hooks see, so the launcher in this bundle by its path.
-    NSString *launcher = [NSBundle.mainBundle pathForResource:@"minicode" ofType:nil];
+    NSString *launcher = [NSBundle.mainBundle pathForResource:@"mutible" ofType:nil];
     BOOL dir = NO;
     if (!launcher || ![NSFileManager.defaultManager fileExistsAtPath:launcher isDirectory:&dir] || dir)
         return HNS(ClaudeHooks::kCommand);
@@ -118,17 +118,17 @@ void MCInstallClaudeHooks(NSWindow *window, void (^done)(BOOL installed)) {
     }
     if (!plan.changed) {
         RunAlert(Notice(@"The hooks are already on",
-                        [NSString stringWithFormat:@"%@ already runs %@ for every hook minicode "
+                        [NSString stringWithFormat:@"%@ already runs %@ for every hook mutible "
                                                     "needs; nothing was changed.", Tilde(path),
                                                     command]),
                  window, ^(NSModalResponse) { if (done) done(YES); });
         return;
     }
     NSAlert *ask = [[NSAlert alloc] init];
-    ask.messageText = @"Add minicode's hooks to Claude Code's settings?";
+    ask.messageText = @"Add mutible's hooks to Claude Code's settings?";
     ask.informativeText = [NSString stringWithFormat:
         @"This adds the lines below to %@: Claude Code's %@ hooks then run `%@`, which marks the "
-         "minicode terminal a session runs in when it waits for you or has finished. Your own "
+         "mutible terminal a session runs in when it waits for you or has finished. Your own "
          "settings and hooks stay as they are, and the file is backed up first.",
         Tilde(path), HNS(ClaudeHooks::eventList(plan.added)), command];
     ask.accessoryView =
@@ -157,7 +157,7 @@ void MCInstallClaudeHooks(NSWindow *window, void (^done)(BOOL installed)) {
                 : [NSString stringWithFormat:@"The file as it was is in %@.", Tilde(HNS(r.backup))];
             told = Notice(@"The hooks are on",
                           [NSString stringWithFormat:@"Written to %@. %@ Claude Code sessions "
-                                                      "started from now on in minicode's terminals "
+                                                      "started from now on in mutible's terminals "
                                                       "mark their tabs: orange while one waits for "
                                                       "you, green when it has finished.",
                                                       Tilde(path), backup]);
@@ -204,15 +204,15 @@ BOOL MCOfferClaudeHooksForTerminal(TerminalView *terminal) {
     if (MCInstallBarMuted(MCClaudeHooksOfferKey) || MCClaudeHooksInstalled()) return NO;
     if (!MCInstallBarTakeOffer(MCClaudeHooksOfferKey)) return NO;
     MCInstallBar *bar = [[MCInstallBar alloc] initWithFrame:NSMakeRect(0, 0, 400, kMCInstallBarHeight)];
-    [bar showMessage:@"minicode can show which Claude Code session is waiting on you."
+    [bar showMessage:@"mutible can show which Claude Code session is waiting on you."
                  tip:@"Claude Code's hooks then put an orange dot on a terminal's tab while its "
                       "session waits for you and a green one when it has finished. Turn On shows "
                       "what goes into Claude Code's settings before anything is written. Not Now "
-                      "stops this offer; minicode > Install Claude Code Hooks… and the Agents "
+                      "stops this offer; mutible > Install Claude Code Hooks… and the Agents "
                       "panel keep it."
               button:@"Turn On…"
                 mute:@"Not Now"
-               close:@"Close (it stays closed until minicode starts again)"];
+               close:@"Close (it stays closed until mutible starts again)"];
     ColorBar(bar);
     __weak MCInstallBar *weakBar = bar;
     bar.onInstall = ^(NSButton *sender) {

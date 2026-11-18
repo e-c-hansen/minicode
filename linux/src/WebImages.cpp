@@ -6,15 +6,15 @@
 #include <utility>
 #include <vector>
 
-#ifdef MINICODE_ENABLE_WEB_IMAGES
+#ifdef MUTIBLE_ENABLE_WEB_IMAGES
 #include <libsoup/soup.h>
 #endif
 
-#ifndef MINICODE_VERSION
-#define MINICODE_VERSION "dev"
+#ifndef MUTIBLE_VERSION
+#define MUTIBLE_VERSION "dev"
 #endif
 
-#define WEB_LOG_DOMAIN "minicode-web"
+#define WEB_LOG_DOMAIN "mutible-web"
 
 WebImages::Picture::~Picture() {
     if (texture) g_object_unref(texture);
@@ -23,7 +23,7 @@ WebImages::Picture::~Picture() {
 
 bool WebImages::isFetchable(const std::string& src) { return WebImageRules::isFetchable(src); }
 
-#ifndef MINICODE_ENABLE_WEB_IMAGES
+#ifndef MUTIBLE_ENABLE_WEB_IMAGES
 
 bool WebImages::available() { return false; }
 WebImages::PicturePtr WebImages::cached(const std::string&) { return nullptr; }
@@ -47,7 +47,7 @@ namespace R = WebImageRules;
 SoupSession* session() {
     static SoupSession* s = nullptr;
     if (!s)
-        s = soup_session_new_with_options("user-agent", "MiniCode/" MINICODE_VERSION,
+        s = soup_session_new_with_options("user-agent", "Mutible/" MUTIBLE_VERSION,
                                           "timeout", (guint)R::kTimeoutSeconds, nullptr);
     return s;
 }
@@ -334,4 +334,4 @@ void WebImages::fetch(const std::string& url, std::function<void(PicturePtr)> do
     }, f, nullptr);
 }
 
-#endif  // MINICODE_ENABLE_WEB_IMAGES
+#endif  // MUTIBLE_ENABLE_WEB_IMAGES

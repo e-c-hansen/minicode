@@ -1,5 +1,5 @@
 // JsonOutlineSuite.cpp — a JSON file's outline beside its text, and notebooks
-// (`./build/minicode-guitest json_outline`, linux/PARITY.md item 4.1, part two):
+// (`./build/mutible-guitest json_outline`, linux/PARITY.md item 4.1, part two):
 // the nodes of a nested file, a row chosen selecting the right text with
 // non-ASCII text before it (a real click on a row), the caret choosing its row,
 // an edit parsed again 0.3 s later, a broken edit keeping the old outline

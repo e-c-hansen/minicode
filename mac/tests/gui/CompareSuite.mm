@@ -282,7 +282,7 @@ MC_GUI_SUITE(compare) {
 
     // A big review: 50,000 lines of Python, a word changed in every tenth.
     // Lining up, coloring and word diffs are prepare's (off the main thread
-    // for `minicode diff` and openDiff); showing is the main thread's. CPU
+    // for `mutible diff` and openDiff); showing is the main thread's. CPU
     // time of this thread, not wall time, so a loaded machine still passes.
     MCGuiStep(@"a 50,000-line comparison with 5,000 changes is prepared and shown in bounded time", ^{
         NSMutableString *a = [NSMutableString string], *b = [NSMutableString string];

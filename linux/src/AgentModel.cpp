@@ -36,12 +36,12 @@ double nowSeconds() { return (double)time(nullptr); }
 }  // namespace
 
 std::string AgentModel::defaultProjectsDir() {
-    if (const char* e = getenv("MINICODE_CLAUDE_PROJECTS"); e && *e) return e;
+    if (const char* e = getenv("MUTIBLE_CLAUDE_PROJECTS"); e && *e) return e;
     return homeDir() + "/.claude/projects";
 }
 
 std::string AgentModel::defaultTmpRoot() {
-    if (const char* e = getenv("MINICODE_CLAUDE_TMP"); e && *e) return e;
+    if (const char* e = getenv("MUTIBLE_CLAUDE_TMP"); e && *e) return e;
     return "/tmp/claude-" + std::to_string((unsigned)getuid());
 }
 

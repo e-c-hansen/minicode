@@ -1,10 +1,10 @@
 // StartupLog.h — where the time to a usable window goes (PARITY.md R3).
 //
-// With MINICODE_STARTUP_LOG=1 in the environment, minicode prints a line to
+// With MUTIBLE_STARTUP_LOG=1 in the environment, mutible prints a line to
 // stderr for each phase of its start, with the time since main began and the
 // main thread's CPU time then:
 //
-//   minicode startup:    41.2 ms  cpu   30.1 ms  gtk: started
+//   mutible startup:    41.2 ms  cpu   30.1 ms  gtk: started
 //
 // The first line also says how long the process ran before main (loading
 // its libraries). The phases are the application's startup and command
@@ -19,9 +19,9 @@
 // recorded either way, for the GUI checks (StartupSuite.cpp).
 //
 // Run from a build folder on the desktop, the owner's numbers:
-//   MINICODE_STARTUP_LOG=1 ./build/minicode ~/minicode
+//   MUTIBLE_STARTUP_LOG=1 ./build/mutible ~/mutible
 // A run with the log stays in the foreground, as with --foreground: a
-// detached minicode puts /dev/null on its stderr once its window is made
+// detached mutible puts /dev/null on its stderr once its window is made
 // (Detach.h), which would cut the log short.
 #pragma once
 
@@ -29,7 +29,7 @@
 
 namespace StartupLog {
 
-// Whether MINICODE_STARTUP_LOG asks for the log (set, and not "" or "0").
+// Whether MUTIBLE_STARTUP_LOG asks for the log (set, and not "" or "0").
 bool wanted();
 // First thing in main, in the process that runs the app: the clocks start.
 void begin();

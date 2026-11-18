@@ -1,7 +1,7 @@
 // TerminalGroup.cpp — see TerminalGroup.h.
 #include "TerminalGroup.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 
 #include <algorithm>
 #include <cmath>

@@ -739,7 +739,7 @@ static void testSessionTerminals() {
         r.pid = 0;
         r.received = 0;
         r.out.clear();
-        r.open(7, r.spec("yes", {"yes", "minicode"}));
+        r.open(7, r.spec("yes", {"yes", "mutible"}));
         CHECK(r.wait([&] { return r.received > 200000; }));
         const int yes = r.pid;
         fd = r.fd(7);

@@ -1,5 +1,5 @@
 // BrowserFindSuite.cpp — find in the page and the page's zoom per site
-// (`./build/minicode-guitest browser_find`, PARITY.md 4.5; the Mac's
+// (`./build/mutible-guitest browser_find`, PARITY.md 4.5; the Mac's
 // browser_find). Pages are files in the project folder.
 //   - Ctrl+F with the keyboard in the page opens the page's bar, not the
 //     editor's; typing finds and counts; Enter and Shift+Enter step; Esc
@@ -127,14 +127,14 @@ MC_GUI_SUITE(browser_find) {
     });
     MCGuiStep("back to the first tab (tab 2 and 1 live), then the state file", [] {
         browser()->selectTab(0);
-        const std::string f = MCGuiReadFile(std::string(g_get_user_state_dir()) + "/minicode/browser-zoom.txt");
+        const std::string f = MCGuiReadFile(std::string(g_get_user_state_dir()) + "/mutible/browser-zoom.txt");
         GCHECK(f.find("file\t1.15") != std::string::npos);
     });
     MCGuiWait("the first tab is still at 115%", 30, [] { return zoomIs(1.15); });
     MCGuiStep("Ctrl+Alt+0 forgets it", [] { browser()->zoom(0); });
     MCGuiWait("100%", 30, [] { return zoomIs(1.0); });
     MCGuiStep("the state file no longer names the site", [] {
-        const std::string f = MCGuiReadFile(std::string(g_get_user_state_dir()) + "/minicode/browser-zoom.txt");
+        const std::string f = MCGuiReadFile(std::string(g_get_user_state_dir()) + "/mutible/browser-zoom.txt");
         GCHECK(f.find("file\t") == std::string::npos);
         GCHECK(Browser::siteZoom("file") == 1.0);
     });

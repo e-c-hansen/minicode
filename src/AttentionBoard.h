@@ -1,10 +1,10 @@
 // AttentionBoard.h — pure C++. Which terminals are waiting for the user and
 // which have finished (spec feature 7), and which Claude Code session runs
-// in which terminal, as `minicode notify` reports them. The app keeps one
+// in which terminal, as `mutible notify` reports them. The app keeps one
 // board for all its windows (TerminalAttention.mm) and only draws it: the
 // dot on a terminal's tab, its tooltip, the Dock badge, Ctrl+Cmd+W.
 //
-// Terminals are the control channel's ids (`minicode state`). A mark stays
+// Terminals are the control channel's ids (`mutible state`). A mark stays
 // until a later event clears it, the user types in that terminal, or the
 // terminal closes (forget).
 #pragma once

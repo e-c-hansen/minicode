@@ -161,7 +161,7 @@ static void testAgentEdits() {
         if (fsys::exists(mainT)) {
             // A Write over a file that was there, then an Edit.
             FileHistory h =
-                collect(fs, mainT, "/Users/user/Code/public/minicode/scripts/minicode-launcher");
+                collect(fs, mainT, "/Users/user/Code/public/minicode/scripts/mutible-launcher");
             CHECK(h.changes.size() == 2);
             if (h.changes.size() == 2) {
                 CHECK(h.changes[0].tool == Tool::Write && !h.changes[0].created);

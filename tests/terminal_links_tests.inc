@@ -1,7 +1,7 @@
 // terminal_links_tests.inc — the `hyperlinks:` groups of run_tests.cpp:
 // OSC 8 hyperlinks in TerminalScreen (ids on cells, the table, its limits),
 // what TermLinks makes of a hyperlink's address, the 0.0.0.0 and [::]
-// rewrite, and `minicode open-url` (what BROWSER runs in the terminals).
+// rewrite, and `mutible open-url` (what BROWSER runs in the terminals).
 
 namespace {
 

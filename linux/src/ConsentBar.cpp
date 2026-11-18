@@ -32,8 +32,8 @@ void installCss() {
     g_object_unref(p);
 }
 
-const char* kInstallClose = "Close (it stays closed until minicode starts again)";
-const char* kConsentClose = "Ask again next time minicode starts";
+const char* kInstallClose = "Close (it stays closed until mutible starts again)";
+const char* kConsentClose = "Ask again next time mutible starts";
 
 // The offer is made once a language a launch, across windows (the Mac's
 // MCInstallBarTakeOffer).
@@ -45,7 +45,7 @@ std::set<std::string>& offered() {
 bool takeOffer(const std::string& key) { return offered().insert(key).second; }
 
 std::string mutedFile() {
-    gchar* p = g_build_filename(g_get_user_state_dir(), "minicode", "install-hints.json", nullptr);
+    gchar* p = g_build_filename(g_get_user_state_dir(), "mutible", "install-hints.json", nullptr);
     std::string out = p;
     g_free(p);
     return out;
@@ -79,7 +79,7 @@ void ConsentBar::setInstallMuted(const std::string& key, bool muted) {
     GError* err = nullptr;
     if (!g_file_set_contents_full(path.c_str(), text.data(), (gssize)text.size(),
                                   G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err)) {
-        fprintf(stderr, "minicode: could not write %s: %s\n", path.c_str(),
+        fprintf(stderr, "mutible: could not write %s: %s\n", path.c_str(),
                 err ? err->message : "unknown error");
         g_clear_error(&err);
     }
@@ -221,7 +221,7 @@ void ConsentBar::fillInstallPopover() {
     const std::string message =
         setting.empty() ? ""
                         : "lsp." + installing_ + " in the settings runs " + setting +
-                              ", which was not found. The server minicode suggests is below.";
+                              ", which was not found. The server mutible suggests is below.";
     InstallView* view = InstallView::forServer(installing_, message, host_.runInTerminal);
     GtkWidget* menu = install_;
     view->onDone = [menu] { gtk_menu_button_popdown(GTK_MENU_BUTTON(menu)); };
@@ -245,7 +245,7 @@ void ConsentBar::deny() {
     answer(false);
 }
 
-// ×: the question until minicode starts again, or the install offer, which
+// ×: the question until mutible starts again, or the install offer, which
 // is made once a launch.
 void ConsentBar::putOff() {
     if (!installing_.empty()) {

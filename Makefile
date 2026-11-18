@@ -1,7 +1,7 @@
-# MiniCode — native macOS editor. No third-party dependencies.
+# Mutible — native macOS editor. No third-party dependencies.
 # Only Apple system frameworks + the C++ standard library.
 
-APP      := MiniCode
+APP      := Mutible
 BUNDLE   := $(APP).app
 BIN      := build/$(APP)
 # The Mac app (mac/src) over the shared core (src), which the Linux and
@@ -70,7 +70,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
 # one file rebuilds that file and relinks. A change to the compiler or the
 # flags rebuilds everything (build/obj/flags.txt keeps the last command).
 OBJDIR   := build/obj
-# What `minicode host` and `minicode attach` (the headless session host,
+# What `mutible host` and `mutible attach` (the headless session host,
 # SessionServer.h) need of the core, linked into the command line's client.
 SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.cpp \
             src/SessionProtocol.cpp src/Ot.cpp src/HostPty.cpp src/TerminalScreen.cpp \
@@ -126,10 +126,10 @@ all: app compile_commands.json
 $(BIN): $(APP_OBJ) $(OBJDIR)/variant.txt
 	$(CXX) $(CXXFLAGS) $(APP_OBJ) $(LDFLAGS) -o $(BIN)
 
-# The control channel's client (`minicode open`, `state`, ...): the launcher
+# The control channel's client (`mutible open`, `state`, ...): the launcher
 # hands it every subcommand. Only the protocol and JSON from the core.
-CLI     := build/minicode-cli
-CLI_OBJ := $(OBJDIR)/tools/minicode-cli.cpp.o $(OBJDIR)/ControlProtocol.cpp.o $(OBJDIR)/Json.cpp.o \
+CLI     := build/mutible-cli
+CLI_OBJ := $(OBJDIR)/tools/mutible-cli.cpp.o $(OBJDIR)/ControlProtocol.cpp.o $(OBJDIR)/Json.cpp.o \
            $(OBJDIR)/ProcessTable.cpp.o $(OBJDIR)/ClaudeHooks.cpp.o \
            $(OBJDIR)/PageCheck.cpp.o $(OBJDIR)/TermLinks.cpp.o \
            $(patsubst src/%,$(OBJDIR)/%.o,$(SESSION_HOST_SRC))
@@ -141,12 +141,12 @@ $(OBJDIR)/tools/%.cpp.o: tools/%.cpp $(OBJDIR)/flags.txt
 $(CLI): $(CLI_OBJ)
 	$(CXX) $(CXXFLAGS) $(CLI_OBJ) -o $@
 
-# What BROWSER names in minicode's terminals (Terminal.mm): a script that
+# What BROWSER names in mutible's terminals (Terminal.mm): a script that
 # is shell and JavaScript at once, beside the client (in the bundle it is
 # in Resources, the client in MacOS; the GUI checks use build/'s copy).
-BROWSER_HELPER := build/minicode-browser.js
+BROWSER_HELPER := build/mutible-browser.js
 
-$(BROWSER_HELPER): resources/minicode-browser.js
+$(BROWSER_HELPER): resources/mutible-browser.js
 	@mkdir -p $(@D)
 	@cp $< $@
 	@chmod +x $@
@@ -154,9 +154,9 @@ $(BROWSER_HELPER): resources/minicode-browser.js
 # The terminals' zsh integration (Terminal.mm, ShellIntegration.h), read
 # from the bundle's Resources, or from beside the executable for the GUI
 # checks.
-ZSH_INTEGRATION := build/minicode-zsh-integration.zsh
+ZSH_INTEGRATION := build/mutible-zsh-integration.zsh
 
-$(ZSH_INTEGRATION): resources/minicode-zsh-integration.zsh
+$(ZSH_INTEGRATION): resources/mutible-zsh-integration.zsh
 	@mkdir -p $(@D)
 	@cp $< $@
 
@@ -188,9 +188,9 @@ SIGN_IDENTITY ?= $(shell security find-certificate -c "MiniCode Local Signing" >
 # their dates alone (Request a Change takes a newer CodeResources for a
 # fresh build).
 APP_STAMP := $(BUNDLE)/Contents/_CodeSignature/CodeResources
-APP_FILES := $(BIN) $(CLI) Info.plist resources/AppIcon.icns scripts/minicode-launcher \
-             skills/minicode/SKILL.md resources/minicode-browser.js \
-             resources/minicode-zsh-integration.zsh
+APP_FILES := $(BIN) $(CLI) Info.plist resources/AppIcon.icns scripts/mutible-launcher \
+             skills/mutible/SKILL.md resources/mutible-browser.js \
+             resources/mutible-zsh-integration.zsh
 
 app: $(APP_STAMP)
 
@@ -201,16 +201,16 @@ $(APP_STAMP): $(APP_FILES)
 	@cp Info.plist $(BUNDLE)/Contents/Info.plist
 	@echo "APPL????" > $(BUNDLE)/Contents/PkgInfo
 	@cp resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
-	@cp scripts/minicode-launcher $(BUNDLE)/Contents/Resources/minicode
-	@chmod +x $(BUNDLE)/Contents/Resources/minicode
-	@cp resources/minicode-browser.js $(BUNDLE)/Contents/Resources/minicode-browser.js
-	@chmod +x $(BUNDLE)/Contents/Resources/minicode-browser.js
-	@cp resources/minicode-zsh-integration.zsh $(BUNDLE)/Contents/Resources/minicode-zsh-integration.zsh
-	@# The Claude Code skill, for `minicode install-skill` (a Homebrew copy
+	@cp scripts/mutible-launcher $(BUNDLE)/Contents/Resources/mutible
+	@chmod +x $(BUNDLE)/Contents/Resources/mutible
+	@cp resources/mutible-browser.js $(BUNDLE)/Contents/Resources/mutible-browser.js
+	@chmod +x $(BUNDLE)/Contents/Resources/mutible-browser.js
+	@cp resources/mutible-zsh-integration.zsh $(BUNDLE)/Contents/Resources/mutible-zsh-integration.zsh
+	@# The Claude Code skill, for `mutible install-skill` (a Homebrew copy
 	@# has no checkout to `make install` from).
-	@mkdir -p $(BUNDLE)/Contents/Resources/skills/minicode
-	@cp skills/minicode/SKILL.md $(BUNDLE)/Contents/Resources/skills/minicode/SKILL.md
-	@cp $(CLI) $(BUNDLE)/Contents/MacOS/minicode-cli
+	@mkdir -p $(BUNDLE)/Contents/Resources/skills/mutible
+	@cp skills/mutible/SKILL.md $(BUNDLE)/Contents/Resources/skills/mutible/SKILL.md
+	@cp $(CLI) $(BUNDLE)/Contents/MacOS/mutible-cli
 	@# Signed with "MiniCode Local Signing" when the login keychain has it
 	@# (scripts/make-signing-identity.sh makes it, once), so macOS keeps
 	@# what the app was allowed (folders, the microphone) from one build to
@@ -220,11 +220,11 @@ $(APP_STAMP): $(APP_FILES)
 	@# the Gatekeeper download warning, which only notarization does.
 	@# The client in Contents/MacOS is signed first, as nested code must be.
 	@if [ -n "$(SIGN_IDENTITY)" ] && \
-	    codesign --force --sign "$(SIGN_IDENTITY)" $(BUNDLE)/Contents/MacOS/minicode-cli 2>/dev/null && \
+	    codesign --force --sign "$(SIGN_IDENTITY)" $(BUNDLE)/Contents/MacOS/mutible-cli 2>/dev/null && \
 	    codesign --force --sign "$(SIGN_IDENTITY)" $(BUNDLE) 2>/dev/null; then \
 	    echo "Signed with $(SIGN_IDENTITY)"; \
 	else \
-	    codesign --force --sign - $(BUNDLE)/Contents/MacOS/minicode-cli 2>/dev/null || true; \
+	    codesign --force --sign - $(BUNDLE)/Contents/MacOS/mutible-cli 2>/dev/null || true; \
 	    codesign --force --sign - $(BUNDLE) 2>/dev/null || true; \
 	    echo "Signed ad hoc (scripts/make-signing-identity.sh keeps permissions across builds)"; \
 	fi
@@ -334,7 +334,7 @@ $(TSANDIR)/%.cpp.o: src/%.cpp $(TSANDIR)/flags.txt
 	$(CXX) $(TSANFLAGS) -MMD -MP -c $< -o $@
 
 # GUI checks (mac/tests/gui, see mac/tests/gui/Harness.h): the whole app, main.mm
-# included as minicode_main, driven offscreen by a harness that never puts
+# included as mutible_main, driven offscreen by a harness that never puts
 # a window on screen or activates the app. `make guitest SUITES=control`
 # runs one suite.
 GUIDIR  := build/gui-obj
@@ -344,7 +344,7 @@ GUI_OBJ := $(patsubst mac/tests/gui/%,$(GUIDIR)/%.o,$(GUI_SRC)) $(GUIDIR)/main.m
 
 $(GUIDIR)/main.mm.o: mac/src/main.mm $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -Dmain=minicode_main -MMD -MP -c $< -o $@
+	$(CXX) $(CXXFLAGS) -Dmain=mutible_main -MMD -MP -c $< -o $@
 
 $(GUIDIR)/%.mm.o: mac/tests/gui/%.mm $(OBJDIR)/flags.txt
 	@mkdir -p $(@D)
@@ -398,23 +398,20 @@ build/latex-sweep: $(SWEEP_OBJ) $(filter-out $(OBJDIR)/main.mm.o,$(OBJ))
 latex-sweep: build/latex-sweep
 	@tests/latex/sweep.sh --fixture
 
-# The agent skill (skills/minicode) for Claude Code, in ~/.claude/skills,
-# the same as `minicode install-skill` does from the app's bundle.
+# The agent skill (skills/mutible) for Claude Code, in ~/.claude/skills,
+# the same as `mutible install-skill` does from the app's bundle.
 install:
-	@bash scripts/minicode-launcher install-skill
+	@bash scripts/mutible-launcher install-skill
 
-# Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m.
+# Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m,
+# which draws every size itself (the 16 and 32 px images are hand-tuned, not
+# the 1024 shrunk). tools/makebrand-mac.m draws the other images from the
+# same mark: docs/brand/, the Linux icons and demo/images/icon.png.
 icon:
 	@mkdir -p build
 	@clang -framework Cocoa tools/makeicon.m -o build/makeicon
-	@./build/makeicon /tmp/mc_icon.png
-	@rm -rf /tmp/mc.iconset && mkdir -p /tmp/mc.iconset
-	@for sz in 16 32 64 128 256 512; do \
-		sips -z $$sz $$sz /tmp/mc_icon.png --out /tmp/mc.iconset/icon_$${sz}x$${sz}.png >/dev/null; \
-		d=$$((sz*2)); \
-		sips -z $$d $$d /tmp/mc_icon.png --out /tmp/mc.iconset/icon_$${sz}x$${sz}@2x.png >/dev/null; \
-	done
-	@cp /tmp/mc_icon.png /tmp/mc.iconset/icon_512x512@2x.png
+	@rm -rf /tmp/mc.iconset
+	@./build/makeicon --iconset /tmp/mc.iconset
 	@iconutil -c icns /tmp/mc.iconset -o resources/AppIcon.icns
 	@echo "Regenerated resources/AppIcon.icns"
 
@@ -455,7 +452,7 @@ clean:
 # needs), mac/src's the same with -fobjc-arc, the tests' TESTFLAGS, and the
 # GUI suites -Imac/tests/gui. Files run_tests.cpp includes (the *.inc
 # groups, *Tests.cpp) have no entry: clangd takes them from it.
-COMPDB_APP_SRC  = $(SRC) tools/minicode-cli.cpp tests/latex/sweep.mm
+COMPDB_APP_SRC  = $(SRC) tools/mutible-cli.cpp tests/latex/sweep.mm
 COMPDB_TEST_SRC = tests/run_tests.cpp tests/fakelsp/fakelsp.cpp
 compdb_entry = '  {"directory": "$(CURDIR)", "file": "$(2)", "command": "$(1) -c $(2)"},'
 COMPDB_LINES = $(foreach f,$(COMPDB_APP_SRC),$(call compdb_entry,$(APPCMD),$(f))) \
@@ -470,7 +467,7 @@ compile_commands.json: FORCE
 
 FORCE:
 
-# Memory used by MiniCode for a day-to-day workload, against VS Code plus
+# Memory used by Mutible for a day-to-day workload, against VS Code plus
 # Chrome plus Preview doing the same work; see scripts/membench-mac.sh. Windows
 # appear on screen while it runs, for a few minutes.
 build/procmem-mac: tools/procmem-mac.c

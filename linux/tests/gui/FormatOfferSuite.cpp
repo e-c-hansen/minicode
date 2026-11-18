@@ -1,4 +1,4 @@
-// FormatOfferSuite.cpp — `./build/minicode-guitest format_offer`: the offer of
+// FormatOfferSuite.cpp — `./build/mutible-guitest format_offer`: the offer of
 // format on save and Edit > Format on Save, the counterpart of the Mac's
 // FormatOnSave.mm (FormatOffer.h), with real keys and clicks:
 //   - a stand-in ruff on PATH and a pyproject.toml with [tool.ruff]: after
@@ -6,7 +6,7 @@
 //     "This project formats Python files with ruff, set up in
 //     pyproject.toml. Format them each time you save?"; Save All does not
 //     offer it;
-//   - × closes it until minicode starts again (not offered twice a launch);
+//   - × closes it until mutible starts again (not offered twice a launch);
 //   - Turn On writes format.on-save = project and says so in the status bar;
 //   - Don't Ask Again is kept with the install bar's (install-hints.json) and
 //     the offer never comes again, even in a new launch;
@@ -32,7 +32,7 @@ FormatOffer* offer() { return MCGuiApp().formatOffer; }
 
 std::string F(const std::string& name) { return MCGuiProjectFile("foff/" + name); }
 std::string bin() { return MCGuiScratch() + "/foffbin"; }
-std::string settingsFile() { return MCGuiReadFile(g_getenv("MINICODE_SETTINGS")); }
+std::string settingsFile() { return MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS")); }
 
 const char* kQuestion =
     "This project formats Python files with ruff, set up in pyproject.toml. "
@@ -176,7 +176,7 @@ MC_GUI_SUITE(format_offer) {
         GMenuModel* bar = Keys::menuBar();
         GCHECK(hasItem(bar, "Format on Save", "app.formatonsave"));
         g_object_unref(bar);
-        GCHECK(Keys::label("minicode.toggleFormatOnSave").empty());
+        GCHECK(Keys::label("mutible.toggleFormatOnSave").empty());
     });
     MCGuiStep("Edit > Format on Save turns it off", [] {
         g_action_group_activate_action(G_ACTION_GROUP(MCGuiApplication()), "formatonsave", nullptr);

@@ -1,4 +1,4 @@
-// SwatchesSuite.cpp — `./build/minicode-guitest swatches` (PARITY.md 2.11):
+// SwatchesSuite.cpp — `./build/mutible-guitest swatches` (PARITY.md 2.11):
 // in the settings file a color value is a swatch of itself, and a real click
 // on one opens GTK's color chooser at that color, never at the color of the
 // line the caret is on (the Mac's colorPicked: trap: the shared color panel
@@ -19,7 +19,7 @@
 
 namespace {
 
-std::string settingsPath() { return g_getenv("MINICODE_SETTINGS"); }
+std::string settingsPath() { return g_getenv("MUTIBLE_SETTINGS"); }
 Editor* ed() { return MCGuiApp().editor; }
 
 const char* kFile = "lsp.enabled = false\n"

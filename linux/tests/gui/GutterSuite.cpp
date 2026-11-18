@@ -1,4 +1,4 @@
-// GutterSuite.cpp — `./build/minicode-guitest gutter`: the line numbers
+// GutterSuite.cpp — `./build/mutible-guitest gutter`: the line numbers
 // beside the editor (linux/PARITY.md item 1.4, Gutter.h), the Linux
 // counterparts of the Mac's gutter checks (MultiEditSuite's and
 // AgentPlacesSuite's lineOfCharacter, FoldingSuite's shown gutter,

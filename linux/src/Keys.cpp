@@ -23,7 +23,7 @@ const std::vector<Action>& actions() {
     static const std::vector<Action> table = {
         {"workbench.action.openSettings", "win.settings", true},
         {"workbench.action.openGlobalKeybindings", "win.keyboardshortcuts", false},
-        {"minicode.forgetFolderToolsAnswer", "win.forgetfoldertools", false},
+        {"mutible.forgetFolderToolsAnswer", "win.forgetfoldertools", false},
         {"workbench.action.quit", "app.quit", false},
         {"explorer.newFile", "win.newfile", false},
         {"workbench.action.newWindow", "win.newwindow", false},
@@ -31,18 +31,18 @@ const std::vector<Action>& actions() {
         {"workbench.action.files.save", "win.save", true},
         {"workbench.action.files.saveAll", "win.saveall", false},
         {"workbench.action.openRecent", "win.openrecent", false},
-        {"minicode.latex.exportPDF", "win.exportpdf", false},
+        {"mutible.latex.exportPDF", "win.exportpdf", false},
         {"latex-workshop.synctex", "win.latexsynctex", false},
-        {"minicode.markdown.exportHtml", "win.exporthtml", false},
-        {"minicode.browser.saveBookmark", "win.savebookmark", false},
-        {"minicode.browser.saveAllTabs", "win.savebrowsertabs", false},
+        {"mutible.markdown.exportHtml", "win.exporthtml", false},
+        {"mutible.browser.saveBookmark", "win.savebookmark", false},
+        {"mutible.browser.saveAllTabs", "win.savebrowsertabs", false},
         {"explorer.newFolder", "win.newfolder", true},
         {"renameFile", "win.rename", false},
         {"moveFileToTrash", "win.trash", false},
         {"revealFileInOS", "win.reveal", true},
         {"copyFilePath", "win.copypath", false},
-        {"minicode.tree.focusFolder", "win.focusfolder", true},
-        {"minicode.tree.showWholeFolder", "win.showwholefolder", false},
+        {"mutible.tree.focusFolder", "win.focusfolder", true},
+        {"mutible.tree.showWholeFolder", "win.showwholefolder", false},
         {"workbench.action.files.copyPathOfActiveFile", "win.copyactivepath", true},
         {"workbench.action.files.revealActiveFileInWindows", "win.revealactive", false},
         {"workbench.files.action.showActiveFileInExplorer", "win.revealactiveintree", false},
@@ -61,11 +61,11 @@ const std::vector<Action>& actions() {
         {"editor.action.deleteLines", "win.deleteline", false},
         {"inlineChat.start", "win.inlineagent", false},
         {"editor.action.commentLine", "win.togglecomment", true},
-        {"minicode.markdown.toggleTask", "win.toggletask", false},
+        {"mutible.markdown.toggleTask", "win.toggletask", false},
         {"editor.action.formatDocument", "win.formatdocument", false},
-        {"minicode.toggleFormatOnSave", "app.formatonsave", false},
-        {"minicode.sortLines", "win.sortlines", false},
-        {"minicode.sortKeepSortedBlocks", "win.fixkeepsorted", false},
+        {"mutible.toggleFormatOnSave", "app.formatonsave", false},
+        {"mutible.sortLines", "win.sortlines", false},
+        {"mutible.sortKeepSortedBlocks", "win.fixkeepsorted", false},
         {"editor.action.triggerSuggest", "win.complete", true},
         {"editor.action.showHover", "win.hoverinfo", false},
         {"editor.action.rename", "win.renamesymbol", false},
@@ -84,17 +84,17 @@ const std::vector<Action>& actions() {
         {"toggleFindInSelection", "win.findinselection", false},
         {"workbench.action.findInFiles", "win.findinfolder", true},
         {"workbench.action.replaceInFiles", "win.replaceinfolder", false},
-        {"minicode.showTodos", "win.todos", false},
+        {"mutible.showTodos", "win.todos", false},
         {"workbench.action.showCommands", "win.showcommands", false},
         {"markdown.showPreview", "win.togglepreview", true},
         {"markdown.showPreviewToSide", "win.togglesidepreview", false},
-        {"minicode.toggleShortcutHints", "win.togglehints", false},
+        {"mutible.toggleShortcutHints", "win.togglehints", false},
         {"editor.action.fontZoomIn", "win.editorzoomin", true},
         {"editor.action.fontZoomOut", "win.editorzoomout", false},
         {"editor.action.fontZoomReset", "win.editorzoomreset", false},
-        {"minicode.page.zoomIn", "win.zoomin", true},
-        {"minicode.page.zoomOut", "win.zoomout", false},
-        {"minicode.page.fitWidth", "win.zoomfit", false},
+        {"mutible.page.zoomIn", "win.zoomin", true},
+        {"mutible.page.zoomOut", "win.zoomout", false},
+        {"mutible.page.fitWidth", "win.zoomfit", false},
         {"editor.action.toggleWordWrap", "win.togglewordwrap", false},
         // View > Folding (Folds.h adds the actions).
         {"editor.fold", "win.fold", true},
@@ -114,10 +114,10 @@ const std::vector<Action>& actions() {
         {"editor.foldLevel7", "win.foldlevel7", false},
         {"workbench.action.toggleSidebarVisibility", "win.togglesidebar", true},
         {"workbench.view.scm", "win.togglegit", false},
-        {"minicode.toggleProcesses", "win.toggleprocesses", false},
-        {"minicode.toggleIdeLink", "app.idelink", false},
-        {"minicode.toggleAgents", "win.toggleagents", false},
-        {"minicode.git.reviewChanges", "win.gitreview", false},
+        {"mutible.toggleProcesses", "win.toggleprocesses", false},
+        {"mutible.toggleIdeLink", "app.idelink", false},
+        {"mutible.toggleAgents", "win.toggleagents", false},
+        {"mutible.git.reviewChanges", "win.gitreview", false},
         {"git.fetch", "win.gitfetch", false},
         {"git.pull", "win.gitpull", false},
         {"git.push", "win.gitpush", false},
@@ -125,7 +125,7 @@ const std::vector<Action>& actions() {
         {"git.stageAll", "win.gitstageall", false},
         {"git.unstageAll", "win.gitunstageall", false},
         {"git.clean", "win.gitclean", false},
-        {"minicode.git.undoDiscard", "win.gitundodiscard", false},
+        {"mutible.git.undoDiscard", "win.gitundodiscard", false},
         {"git.checkout", "win.gitcheckout", false},
         {"git.commitAmend", "win.gitamend", false},
         {"git.undoCommit", "win.gitundocommit", false},
@@ -134,27 +134,27 @@ const std::vector<Action>& actions() {
         {"git.revertChange", "win.revertchange", true},
         {"git.stageChange", "win.stagechange", false},
         {"workbench.actions.view.problems", "win.problems", false},
-        {"minicode.toggleEditor", "win.toggleeditor", false},
-        {"minicode.toggleMaximizedPane", "win.togglemaximize", false},
+        {"mutible.toggleEditor", "win.toggleeditor", false},
+        {"mutible.toggleMaximizedPane", "win.togglemaximize", false},
         {"workbench.action.splitEditor", "win.spliteditor", false},
         {"workbench.action.moveEditorToNextGroup", "win.moveeditornext", false},
         {"workbench.action.moveEditorToPreviousGroup", "win.moveeditorprevious", false},
-        {"minicode.toggleHiddenFiles", "app.showhidden", false},
+        {"mutible.toggleHiddenFiles", "app.showhidden", false},
         {"workbench.action.terminal.toggleTerminal", "win.toggleterminal", false},
-        {"minicode.toggleBrowser", "win.togglebrowser", false},
-        {"minicode.browser.newTab", "win.newbrowsertab", false},
-        {"minicode.togglePlayback", "win.playpause", true},
-        {"minicode.terminal.nextWaiting", "win.nextwaiting", false},
+        {"mutible.toggleBrowser", "win.togglebrowser", false},
+        {"mutible.browser.newTab", "win.newbrowsertab", false},
+        {"mutible.togglePlayback", "win.playpause", true},
+        {"mutible.terminal.nextWaiting", "win.nextwaiting", false},
         {"workbench.action.terminal.new", "win.newterminal", false},
         {"workbench.action.terminal.split", "win.splitterminal", false},
-        {"minicode.terminal.splitDown", "win.splitterminaldown", false},
+        {"mutible.terminal.splitDown", "win.splitterminaldown", false},
         {"workbench.action.terminal.focusNext", "win.nextterminal", false},
         {"workbench.action.terminal.focusPrevious", "win.previousterminal", false},
         {"workbench.action.terminal.kill", "win.closeterminal", false},
         {"workbench.action.terminal.clear", "win.clearterminal", false},
         {"workbench.action.terminal.rename", "win.renameterminal", false},
-        {"minicode.terminal.moveLeft", "win.moveterminalleft", false},
-        {"minicode.terminal.moveRight", "win.moveterminalright", false},
+        {"mutible.terminal.moveLeft", "win.moveterminalleft", false},
+        {"mutible.terminal.moveRight", "win.moveterminalright", false},
         {"workbench.action.terminal.resizePaneLeft", "win.resizeterminalleft", false},
         {"workbench.action.terminal.resizePaneRight", "win.resizeterminalright", false},
         {"workbench.action.terminal.resizePaneUp", "win.resizeterminalup", false},
@@ -162,7 +162,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.terminal.fontZoomIn", "win.terminalzoomin", false},
         {"workbench.action.terminal.fontZoomOut", "win.terminalzoomout", false},
         {"workbench.action.terminal.fontZoomReset", "win.terminalzoomreset", false},
-        {"minicode.runFile", "win.runfile", false},
+        {"mutible.runFile", "win.runfile", false},
         {"testing.runAtCursor", "win.runtestatcursor", false},
         {"workbench.action.quickOpen", "win.quickopen", false},
         {"workbench.action.gotoLine", "win.gotoline", false},
@@ -191,8 +191,8 @@ const std::vector<Action>& actions() {
         {"editor.action.marker.prev", "win.previousproblem", false},
         {"workbench.action.editor.nextChange", "win.nextchange", true},
         {"workbench.action.editor.previousChange", "win.previouschange", false},
-        {"minicode.tour.next", "win.tournext", false},
-        {"minicode.tour.previous", "win.tourprevious", false},
+        {"mutible.tour.next", "win.tournext", false},
+        {"mutible.tour.previous", "win.tourprevious", false},
         {"editor.action.moveLinesDownAction", "win.movelinesdown", true},
         {"editor.action.moveLinesUpAction", "win.movelinesup", false},
         {"editor.action.copyLinesDownAction", "win.copylinesdown", false},
@@ -262,7 +262,7 @@ bool load() {
     s.errors.clear();
     for (const Commands::Error& e : errs) {
         s.errors.push_back("line " + std::to_string(e.line) + ": " + e.message);
-        std::fprintf(stderr, "MiniCode keys.conf %s\n", s.errors.back().c_str());
+        std::fprintf(stderr, "mutible keys.conf %s\n", s.errors.back().c_str());
     }
     return true;
 }
@@ -305,16 +305,16 @@ void init(GtkApplication* app, std::function<void()> changed) {
     State& s = S();
     s.app = app;
     s.changed = std::move(changed);
-    const char* env = g_getenv("MINICODE_KEYS");
+    const char* env = g_getenv("MUTIBLE_KEYS");
     if (env && *env) {
         s.path = env;
     } else {
-        gchar* p = g_build_filename(g_get_user_config_dir(), "minicode", "keys.conf", nullptr);
+        gchar* p = g_build_filename(g_get_user_config_dir(), "mutible", "keys.conf", nullptr);
         s.path = p;
         g_free(p);
     }
     for (const std::string& problem : tableProblems())
-        g_warning("minicode keys: %s", problem.c_str());
+        g_warning("mutible keys: %s", problem.c_str());
     load();
     watch();
     applyAccels();
@@ -342,7 +342,7 @@ bool ensureFileExists() {
     // dotfiles folder stays a link (PARITY.md 2.11).
     std::string why;
     if (!writeConfigFile(s.path, Commands::defaultFileText(Platform::Linux), false, &why)) {
-        std::fprintf(stderr, "minicode: %s\n", why.c_str());
+        std::fprintf(stderr, "mutible: %s\n", why.c_str());
         return false;
     }
     // Watching a path in a folder that did not exist yet may have failed.

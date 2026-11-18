@@ -32,11 +32,11 @@
 // Points on a page are PDF points (1/72 inch) from the page's top-left, y
 // growing downwards, which is both poppler's convention and SyncTeX's.
 //
-// Compiled only with MINICODE_ENABLE_PDF (poppler-glib found by Meson, or
+// Compiled only with MUTIBLE_ENABLE_PDF (poppler-glib found by Meson, or
 // `make PDF=1`).
 #pragma once
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 
 #include <gtk/gtk.h>
 #include <poppler.h>
@@ -251,4 +251,4 @@ private:
     void*   shownUser_ = nullptr;
 };
 
-#endif  // MINICODE_ENABLE_PDF
+#endif  // MUTIBLE_ENABLE_PDF

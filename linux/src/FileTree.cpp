@@ -1325,7 +1325,7 @@ void FileTree::askName(const std::string& prompt, const std::string& initial,
 // What a drag carries is a GdkFileList, so files dragged in from a file
 // manager arrive the same way. A drag that began in this process (any
 // window's tree: nothing else here drags files) is a move; anything else is a
-// copy, so a file manager never loses its file to MiniCode.
+// copy, so a file manager never loses its file to mutible.
 
 namespace {
 // The rows a tree is dragging right now. A drop target in this process reads

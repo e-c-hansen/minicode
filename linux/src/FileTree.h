@@ -27,7 +27,7 @@ public:
     // Receives the name typed into askName's popover, trimmed and non-empty.
     using NameCb = std::function<void(const std::string& name)>;
     // Called when something is dropped on the tree: `paths` go into the
-    // folder `dir`. `move` is true for a row dragged within MiniCode (any
+    // folder `dir`. `move` is true for a row dragged within mutible (any
     // window's tree) and false for files dragged in from another program,
     // which are copied. The drop has already been checked: no folder into
     // itself or below itself, nothing into the folder it is already in.

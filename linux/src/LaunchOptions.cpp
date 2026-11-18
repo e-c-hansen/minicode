@@ -7,7 +7,7 @@ namespace LaunchOptions {
 
 Parsed parse(const std::vector<std::string>& argv) {
     Parsed out;
-    out.args.push_back(argv.empty() ? "minicode" : argv[0]);
+    out.args.push_back(argv.empty() ? "mutible" : argv[0]);
     bool options = true;
     for (size_t i = 1; i < argv.size(); i++) {
         const std::string& a = argv[i];
@@ -22,7 +22,7 @@ Parsed parse(const std::vector<std::string>& argv) {
             // GLib's, for a D-Bus activated start; the port's desktop entry
             // does not ask for one today, but GApplication still offers it.
             else if (a == "--gapplication-service") out.args.push_back(a);
-            // The dock icon's Open Folder…: the running minicode, or this one,
+            // The dock icon's Open Folder…: the running mutible, or this one,
             // shows the system's folder chooser (main.cpp, handleCommandLine).
             else if (a == "--open-folder") {
                 out.openFolder = true;
@@ -34,7 +34,7 @@ Parsed parse(const std::vector<std::string>& argv) {
                 out.args.push_back(a);
             }
             else if (out.error.empty())
-                out.error = "minicode: unknown option " + a + "\nTry 'minicode --help'.\n";
+                out.error = "mutible: unknown option " + a + "\nTry 'mutible --help'.\n";
             continue;
         }
         out.args.push_back(a.size() > 1 && a[0] == '-' ? "./" + a : a);
@@ -50,20 +50,20 @@ bool shouldDetach(const Parsed& parsed, bool fromTerminal, const char* foregroun
 }
 
 std::string helpText() {
-    return "Usage: minicode [options] [path]\n"
+    return "Usage: mutible [options] [path]\n"
            "\n"
-           "Opens a folder or a file in minicode. With no path, opens the current folder.\n"
+           "Opens a folder or a file in mutible. With no path, opens the current folder.\n"
            "\n"
-           "  minicode              open the current folder\n"
-           "  minicode ~/project    open a folder, or bring forward the window showing it\n"
-           "  minicode notes.md     open a file, in the window showing its folder, else in\n"
+           "  mutible              open the current folder\n"
+           "  mutible ~/project    open a folder, or bring forward the window showing it\n"
+           "  mutible notes.md     open a file, in the window showing its folder, else in\n"
            "                        a new window on that folder\n"
-           "  minicode https://example.com\n"
+           "  mutible https://example.com\n"
            "                        open the page in a browser tab of the bookmark window\n"
            "                        (several addresses, several tabs)\n"
            "\n"
-           "A minicode that is already running opens the path, and the command returns\n"
-           "at once. Started from a terminal, minicode returns as soon as its window is\n"
+           "A mutible that is already running opens the path, and the command returns\n"
+           "at once. Started from a terminal, mutible returns as soon as its window is\n"
            "up and runs apart from the terminal: closing the terminal leaves it open, and\n"
            "what it prints goes nowhere, unless sent to a file.\n"
            "\n"
@@ -73,16 +73,16 @@ std::string helpText() {
            "      --new-window   open a new window, never bringing one forward: on the\n"
            "                     path's folder, else on the front window's, else on the\n"
            "                     home folder (the dock icon's New Window)\n"
-           "      --foreground   stay in the terminal until minicode quits, as any program\n"
+           "      --foreground   stay in the terminal until mutible quits, as any program\n"
            "                     run there does, with its output in the terminal; closing\n"
-           "                     the terminal then closes minicode (MINICODE_FOREGROUND=1\n"
+           "                     the terminal then closes mutible (MUTIBLE_FOREGROUND=1\n"
            "                     does the same)\n"
            "  -v, --version      print the version\n"
            "  -h, --help         print this help\n";
 }
 
 std::string versionText(const std::string& version) {
-    return "minicode " + (version.empty() ? std::string("unknown") : version) + "\n";
+    return "mutible " + (version.empty() ? std::string("unknown") : version) + "\n";
 }
 
 std::string scopeName(const std::string& appId, long pid) {
@@ -101,7 +101,7 @@ std::string scopeName(const std::string& appId, long pid) {
             id += hex;
         }
     }
-    return "app-minicode-" + id + "-" + std::to_string(pid) + ".scope";
+    return "app-mutible-" + id + "-" + std::to_string(pid) + ".scope";
 }
 
 }  // namespace LaunchOptions

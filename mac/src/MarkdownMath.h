@@ -3,7 +3,7 @@
 // Every formula a page shows is typeset in one background tectonic run, one
 // page per formula (MathTex writes the document and reads the log), and
 // kept as a vector PDF page with its baseline: in memory, and on disk under
-// ~/Library/Caches/MiniCode/math (each run's PDF as tectonic wrote it, with
+// ~/Library/Caches/Mutible/math (each run's PDF as tectonic wrote it, with
 // an index of its pages), so a page opened again draws at once. The
 // preview shows a formula's TeX until its picture arrives, as it does a web
 // picture's alt text, and a formula TeX cannot read keeps its TeX, with
@@ -81,8 +81,8 @@ BOOL MCTectonicCacheIsEmpty(void);
 // succeeds. Main thread only.
 void MCMathWarmUp(void);
 
-// Where typeset formulas are kept: $MINICODE_MATH_CACHE, or
-// ~/Library/Caches/MiniCode/math. At most 50 MB, the runs used longest ago
+// Where typeset formulas are kept: $MUTIBLE_MATH_CACHE, or
+// ~/Library/Caches/Mutible/math. At most 50 MB, the runs used longest ago
 // going first.
 NSString *MCMathCacheDirectory(void);
 

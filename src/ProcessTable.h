@@ -8,11 +8,11 @@
 //
 // A Tracker samples a Source now and then and keeps what it found, keyed by
 // (pid, start time), so a pid used again is never taken for the old process:
-//   - every descendant of a minicode terminal's shell, with that terminal as
+//   - every descendant of a mutible terminal's shell, with that terminal as
 //     its origin, kept after it is re-parented to launchd (a daemon, or a job
 //     left behind when its terminal closed); its own children follow it.
 //     A process that detaches between two samples is missed;
-//   - every process of the user's not started from minicode (nor by minicode
+//   - every process of the user's not started from mutible (nor by mutible
 //     itself: language servers, git) whose working folder is inside a
 //     watched folder ("not started here"), while it stays there;
 //   - for each: memory (the physical footprint Activity Monitor shows), CPU
@@ -73,13 +73,13 @@ public:
     virtual bool detail(int pid, Detail& out) = 0;
 };
 
-// A minicode terminal, as the app sees it now.
+// A mutible terminal, as the app sees it now.
 struct Terminal {
-    int id = 0;               // `minicode state`'s terminal id
+    int id = 0;               // `mutible state`'s terminal id
     std::string title;
     int shellPid = 0;         // 0 while it has no shell
-    int window = 0;           // `minicode state`'s window id
-    // The Claude Code session last named in it by `minicode notify` (the
+    int window = 0;           // `mutible state`'s window id
+    // The Claude Code session last named in it by `mutible notify` (the
     // attention board's), and when that notify came, in microseconds since
     // 1970 as process start times are; empty and 0 when none came.
     std::string session;
@@ -125,7 +125,7 @@ public:
     static constexpr size_t kMaxOutside = 2000;  // "not started here" kept at most
 
     // One look at the table. `folders` are the watched folders (every open
-    // window's), resolved; `selfPid` is minicode's own; `uid` the user's.
+    // window's), resolved; `selfPid` is mutible's own; `uid` the user's.
     SampleStats sample(Source& source, double now, const std::vector<Terminal>& terminals,
                        const std::vector<std::string>& folders, int selfPid, uint32_t uid);
 
@@ -191,7 +191,7 @@ View buildView(const std::vector<Proc>& procs, const std::vector<Terminal>& term
 // processes that never listened on a port and have nothing running under
 // them move from the rows into `exited` (one "N exited" row); one that
 // listened (a stopped server) keeps its own row, below the running ones.
-// `minicode procs` lists everything unfolded.
+// `mutible procs` lists everything unfolded.
 void foldExited(View& view);
 // How many processes nodes hold, their trees included ("N exited").
 int countProcs(const std::vector<Node>& nodes);
@@ -211,7 +211,7 @@ std::string displayName(const Proc& p);
 // Is `path` the folder or inside it (both resolved, no trailing slash)?
 bool isInside(const std::string& path, const std::string& folder);
 
-// For `minicode procs`: the view as JSON (groups with their processes
+// For `mutible procs`: the view as JSON (groups with their processes
 // flattened in tree order, each with a depth), and the text the command
 // prints without --json.
 Json toJson(const View& view, const std::string& folder, int window);
@@ -223,7 +223,7 @@ const char* helpText();
 // What Stop signals: the process group when every live member of it is
 // the process or one of its descendants (so a group the process shares
 // with whatever started it, such as Claude Code, is never signalled), else
-// the process and its descendants one by one. Never minicode itself, its
+// the process and its descendants one by one. Never mutible itself, its
 // process group, a terminal's shell, launchd or the kernel.
 struct StopPlan {
     bool ok = false;

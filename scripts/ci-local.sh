@@ -115,13 +115,13 @@ if step build make app; then
     if [ "$release" = 1 ]; then
         release_checks() {
             make dist-zip RELEASE=1 || return 1
-            if nm MiniCode.app/Contents/MacOS/MiniCode | grep -q 'MCDemoStart\|MCBenchStart'; then
+            if nm Mutible.app/Contents/MacOS/Mutible | grep -q 'MCDemoStart\|MCBenchStart'; then
                 echo "error: the release build still has the demo scenes or the benchmark in it"
                 return 1
             fi
-            unzip -l MiniCode.zip | grep -q ' MiniCode.app/Contents/MacOS/MiniCode$' || return 1
-            unzip -l MiniCode.zip | grep -q ' MiniCode.app/Contents/MacOS/minicode-cli$' || return 1
-            scripts/check-minos.sh MiniCode.app
+            unzip -l Mutible.zip | grep -q ' Mutible.app/Contents/MacOS/Mutible$' || return 1
+            unzip -l Mutible.zip | grep -q ' Mutible.app/Contents/MacOS/mutible-cli$' || return 1
+            scripts/check-minos.sh Mutible.app
         }
         step release-zip release_checks
         # Put the development build back, so `make run` is what it was.

@@ -4,6 +4,21 @@ Area notes moved out of `CLAUDE.md` (see its "Area notes" list). The text
 below is as it stood there; section names quoted in it ("see ...") are
 found through that list.
 
+## The rename (2026-11-18)
+
+minicode becomes mutible in 1.6.0 (CLAUDE.md, "The name"). The Mac side, <!-- rename-mutible: keep -->
+the core and the docs moved on the `rename-mutible` branch, and the Linux
+side on top of it: app id `ai.ible.Mutible`, `mutible` with `mbl` and <!-- rename-mutible: keep -->
+`minicode` as links, the XDG folders copied on first launch <!-- rename-mutible: keep -->
+(`linux/src/MigrationLinux`, over `Rename::linuxItems`), and the PPA's
+new `mutible` source with a transitional `minicode` package in the same <!-- rename-mutible: keep -->
+PPA (linux/HANDOFF.md item 97). Android is frozen under its old name. What needs the user's
+eyes after 1.6.0: the first launch's migration on their own Mac (the
+tabs, backups, settings, and browser sign-ins come back), macOS asking
+again for folder and microphone access (it keeps those by bundle id),
+and `brew uninstall --cask minicode && brew install --cask <!-- rename-mutible: keep -->
+ible-ai/tap/mutible`.
+
 ## Current state (2026-11-15)
 
 - **Released: 1.5.26** (2026-11-14), and the user's Homebrew copy is on it.
@@ -28,9 +43,9 @@ found through that list.
   and Return in completion, inlay hints that leave the caret alone, the
   hints panel, Markdown's measure); 1.5.17 Markdown tables and code
   backgrounds as drawn, Cmd+F in the browser; 1.5.18 and 1.5.19 Linux
-  only; 1.5.20 web bookmarks and the browser window (`minicode
+  only; 1.5.20 web bookmarks and the browser window (`mutible
   https://...`); 1.5.21 Linux only; 1.5.22 the browser toolbar's star,
-  the bookmark folder as a menu, and saving a page once; 1.5.23 `minicode
+  the bookmark folder as a menu, and saving a page once; 1.5.23 `mutible
   page --paste` (the page-paste branch of 2026-11-10, merged late: the
   owner's settings already had `control.page-input`, which the status bar
   called unknown); 1.5.24 Linux only (bookmarks); 1.5.25 the Dock
@@ -39,16 +54,16 @@ found through that list.
   terminal Cmd+L (Clear to Previous Mark), Cmd+T and a scroll bar that
   takes the mouse, with the Mac's files moved to `mac/`; 1.5.26 Dark
   Modern as the default theme on every port (`theme = dark-plus` for the
-  old look), VS Code's muted grays, "minicode" as the window title, Linux
+  old look), VS Code's muted grays, "mutible" as the window title, Linux
   double-clicks recognized when busy and layout waits, and the README split
   into a short front page and `docs/REFERENCE.md`, with GIFs the Demos
   workflow records. Every release from 1.5.7 on has notes of what
   changed on GitHub (`gh release view v1.5.17`), written for users and
-  given to release.sh as `MINICODE_RELEASE_NOTES`.
+  given to release.sh as `MUTIBLE_RELEASE_NOTES`.
 - **PPA**: current at 1.5.26 (`1.5.26-1~ppa1~resolute1`, built by
   Launchpad 2026-11-15, uploaded from the ThinkPad from the v1.5.26 tag).
   Uploads go from the ThinkPad (`ssh thinkpad`, checkout
-  `~/minicode`), since the Mac has no Docker; unlock its gpg key first
+  `~/mutible`), since the Mac has no Docker; unlock its gpg key first
   (`echo test | gpg --clearsign -u EEF9635EDB7F9335`), or signing fails
   once the passphrase cache has expired (1.5.14 was skipped for that
   reason). ppa.sh then waits for Launchpad's build (see "Build, test, run,
@@ -71,10 +86,10 @@ found through that list.
   Code's Shift+Return, vim with the mouse; real F2, F8, F9, Shift+F12 (fn on
   a laptop), the Control+Command folding keys, Shift+Option+O; a real crash
   or force quit with unsaved tabs; a real Request a Change end to end and
-  its relaunch; Finder's Open With, double-click and Dock drops; `minicode
+  its relaunch; Finder's Open With, double-click and Dock drops; `mutible
   -r` against the running app; the LaTeX popover's placement; Ctrl+Space
   with several input sources; the waiting dots once the user has run
-  `minicode hooks --install`; push, pull and autofetch against a real
+  `mutible hooks --install`; push, pull and autofetch against a real
   remote (ssh keys, a credential helper); Mermaid with a real mmdc; BROWSER
   with Claude Code's links and `vite --open`; page zoom and Zoom to Fit on a
   trackpad. From 1.5.9 to 1.5.15: the secure-input lock with a real sudo;
@@ -95,7 +110,7 @@ found through that list.
   stale margins never reproduced offscreen); the look of the browser's
   find bar and of WebKit's selected match. From 1.5.25 and 1.5.26: the
   terminal's scroll bar, Cmd+L in a terminal, `tabs.font-size`, the Dock
-  menu, the bookmark star's Trash, `minicode page --paste --all` in a
+  menu, the bookmark star's Trash, `mutible page --paste --all` in a
   real code pad; Dark Modern as a whole (the status bar, title bar and
   tree now share #181818), and the inline colors left from Dark+ beside
   it (popups at #252526, now lighter than the window; the #4EA1F7
@@ -110,7 +125,7 @@ found through that list.
   and keys in the player, and for web pictures a badge link, the scroll
   staying put and the toggle making no requests (then delete
   `/sdcard/mc-test/web-test`).
-- The Reddit drafts are a Claude Doc, "MiniCode Reddit drafts"
+- The Reddit drafts are a Claude Doc, "Mutible Reddit drafts"
   (https://claude.ai/code/artifact/06496ec8-70b7-443d-af5c-9c53f3996ffe).
 
 ## Traps

@@ -1,6 +1,6 @@
-// NotesSuite.cpp — notes and tours (`./build/minicode-guitest notes`,
+// NotesSuite.cpp — notes and tours (`./build/mutible-guitest notes`,
 // linux/PARITY.md item 3.4; the Mac's AgentNotes). The client is the real
-// build/minicode, run as a subprocess the main loop keeps turning for. What
+// build/mutible, run as a subprocess the main loop keeps turning for. What
 // is checked:
 //   - `open --note` puts the file in the agent's preview tab, highlights the
 //     lines, shows the box with its text and label, moves the caret there,
@@ -46,7 +46,7 @@ std::shared_ptr<Run> runClient(const std::vector<std::string>& args) {
     GSubprocessLauncher* l = g_subprocess_launcher_new(
         (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE));
     std::vector<const char*> argv = {nullptr};
-    const std::string exe = MCGuiBuildDir() + "/minicode";
+    const std::string exe = MCGuiBuildDir() + "/mutible";
     argv[0] = exe.c_str();
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -163,7 +163,7 @@ MC_GUI_SUITE(notes) {
     MCGuiWait("it is out of the text", 5, [] { return !gtk_widget_has_focus(ed()->textView()); });
 
     // ---- a note: where, what, and that it is display only
-    keepRun("minicode open n.txt:10 --to 12 --note", {"open", F("n.txt") + ":10", "--to", "12",
+    keepRun("mutible open n.txt:10 --to 12 --note", {"open", F("n.txt") + ":10", "--to", "12",
                                                        "--note", "check this\x01 loop\xE2\x80\xAE",
                                                        "--from", "Claude"});
     MCGuiStep("it exited 0", [] {
@@ -358,7 +358,7 @@ MC_GUI_SUITE(notes) {
     });
 
     // ---- a tour
-    keepRun("minicode tour", {"tour", F("tour.json")});
+    keepRun("mutible tour", {"tour", F("tour.json")});
     MCGuiStep("exit 0", [] {
         if (gRun->exitCode != 0) MCGuiNote("tour said: %s", gRun->err.c_str());
         GCHECK(gRun->exitCode == 0);
@@ -410,7 +410,7 @@ MC_GUI_SUITE(notes) {
     // ---- state names the note and the tour
     keepRun("a note, then state", {"open", F("t2.txt") + ":2", "--note", "in state"});
     MCGuiWait("it shows", 10, [] { return notes()->shown(); });
-    keepRun("minicode state", {"state"});
+    keepRun("mutible state", {"state"});
     MCGuiStep("the window's note", [] {
         GCHECK(gRun->exitCode == 0);
         GCHECK(gRun->out.find("\"note\":{") != std::string::npos);

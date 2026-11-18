@@ -25,7 +25,7 @@ void Script(NSString *path, NSString *body) {
     chmod(path.fileSystemRepresentation, 0755);
 }
 NSString *SettingsText() {
-    return Disk(NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"]) ?: @"";
+    return Disk(NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"]) ?: @"";
 }
 NSMenuItem *EditMenuItem(NSString *title) {
     for (NSMenuItem *top in NSApp.mainMenu.itemArray)

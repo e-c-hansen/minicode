@@ -514,7 +514,7 @@ static void testInlineAgent() {
         t.request = "  explain this folder\n";
         t.where = "the file tree, with src/ selected";
         CHECK(taskPrompt(t) ==
-              "explain this folder\n\n(Asked from minicode with Cmd+I, in the file tree, with src/ "
+              "explain this folder\n\n(Asked from mutible with Cmd+I, in the file tree, with src/ "
               "selected.)\n");
         t.where = "the editor";
         t.path = "src/a.cpp";

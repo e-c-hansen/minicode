@@ -1,5 +1,5 @@
 // TabViewersSuite.cpp — what takes the text view's place, in tabs
-// (`./build/minicode-guitest tab_viewers`, linux/PARITY.md item 1.1): a
+// (`./build/mutible-guitest tab_viewers`, linux/PARITY.md item 1.1): a
 // picture and a PDF each in a tab of its own, shown again when their tab
 // is, with nothing to save; a LaTeX file's preview its tab's own, kept while
 // another tab shows and taken off the slot with its tab; and diffs and
@@ -14,7 +14,7 @@
 #include "TabStrip.h"
 
 #include <cairo.h>
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 #include <cairo-pdf.h>
 #endif
 
@@ -43,7 +43,7 @@ std::string titles() {
 
 std::string title() { return gtk_window_get_title(MCGuiApp().window); }
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 LatexPreview* gLatex = nullptr;
 #endif
 int gSlotChildren = 0;
@@ -62,7 +62,7 @@ MC_GUI_SUITE(tab_viewers) {
         cairo_destroy(cr);
         cairo_surface_write_to_png(png, F("v-pic.png").c_str());
         cairo_surface_destroy(png);
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
         cairo_surface_t* pdf = cairo_pdf_surface_create(F("v-doc.pdf").c_str(), 300, 400);
         cairo_t* pc = cairo_create(pdf);
         cairo_show_page(pc);
@@ -87,7 +87,7 @@ MC_GUI_SUITE(tab_viewers) {
         GCHECK(!ed()->canSave() && !ed()->dirty() && !ed()->isSource());
         GCHECK(ed()->active()->kind() == Document::Kind::Media);
     });
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     MCGuiStep("the PDF", [] { MCGuiOpenFileKept(F("v-doc.pdf")); });
     MCGuiWait("its pages on show", 10, [] {
         return ed()->media()->kind() == MediaView::Kind::Pdf && ed()->showingPdf();
@@ -111,7 +111,7 @@ MC_GUI_SUITE(tab_viewers) {
                title().find("v-pic.png  40 × 30") != std::string::npos;
     });
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     // ---- the LaTeX preview is its tab's own
     MCGuiStep("the LaTeX file", [] {
         gSlotChildren = slotChildren();

@@ -1,9 +1,9 @@
-// ControlServer.h — the control channel's socket. Each running minicode
-// listens on $TMPDIR/MiniCode/<pid>.sock (mode 0600, in a 0700 folder) for
-// the `minicode` command line (tools/minicode-cli.cpp), an agent, or a script
+// ControlServer.h — the control channel's socket. Each running mutible
+// listens on $TMPDIR/Mutible/<pid>.sock (mode 0600, in a 0700 folder) for
+// the `mutible` command line (tools/mutible-cli.cpp), an agent, or a script
 // the user asked for. Peers running as another user are turned away
 // (getpeereid). The socket goes when the app quits, and sockets left by a
-// minicode that died (kill -9) are removed when the next one starts.
+// mutible that died (kill -9) are removed when the next one starts.
 //
 // Requests are read off the main thread and handled on it, one JSON line in,
 // one out (ControlProtocol.h for the protocol, ControlCommands.mm for what
@@ -30,16 +30,16 @@
 @end
 
 // Starts listening (applicationWillFinishLaunching). Stale sockets of dead
-// processes are removed first. Does nothing under MINICODE_CONTROL=off.
+// processes are removed first. Does nothing under MUTIBLE_CONTROL=off.
 void MCControlServerStart(id<MCControlAppHost> host);
 // Stops listening and removes the socket (applicationWillTerminate, and an
 // atexit handler for any other way out).
 void MCControlServerStop(void);
 // The socket's path, or nil when not listening.
 NSString *MCControlSocketPath(void);
-// The folder the sockets live in: $TMPDIR/MiniCode (Launch Services sets
+// The folder the sockets live in: $TMPDIR/Mutible (Launch Services sets
 // TMPDIR to the user's own temporary folder, which the command line always
-// looks in too), else that folder from confstr; $MINICODE_CONTROL_DIR in
+// looks in too), else that folder from confstr; $MUTIBLE_CONTROL_DIR in
 // tests.
 NSString *MCControlSocketFolder(void);
 // Removes sockets in `folder` whose process is gone, or whose pid now

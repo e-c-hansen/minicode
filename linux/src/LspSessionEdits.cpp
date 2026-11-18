@@ -206,7 +206,7 @@ int LspSession::applyEdit(const Lsp::WorkspaceEdit& we, Server* server,
             Document* d = documentForPath(files[*k].path);
             if (d) d->undo();
             if (!d || d->text() != files[*k].text) {
-                g_printerr("MiniCode: could not put %s back after a failed edit\n",
+                g_printerr("mutible: could not put %s back after a failed edit\n",
                            files[*k].path.c_str());
                 why += "; " + baseName(files[*k].path) +
                        " was changed and could not be put back, so check it before saving";

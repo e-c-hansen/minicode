@@ -1,5 +1,5 @@
 // FormatCoverageSuite.cpp — which files Format Document formats, and with
-// what (`./build/minicode-guitest format_coverage`, linux/PARITY.md item
+// what (`./build/mutible-guitest format_coverage`, linux/PARITY.md item
 // 2.4), the counterpart of the Mac's `format_coverage` suite in
 // tests/gui/FormatSuite.mm, with real keys through XTest, a stand-in
 // Prettier on PATH and the scripted language server (build/fakelsp):
@@ -11,7 +11,7 @@
 //   - with no Prettier set up, the file's server formats it
 //     (textDocument/formatting, with the file's indentation) as one undo
 //     step, unsaved;
-//   - a kind of file minicode has no formatter for (lsp.notes with
+//   - a kind of file mutible has no formatter for (lsp.notes with
 //     lsp.notes.extensions = notes) is formatted by its server, also
 //     before Ctrl+S writes it with format.on-save.
 #include "Harness.h"
@@ -179,7 +179,7 @@ MC_GUI_SUITE(format_coverage) {
     MCGuiWait("one Ctrl+Z takes it back, clean again", 10,
               [] { return sourceText() == "#  Title\n" && !dirty(); });
 
-    // A kind of file minicode has no formatter for.
+    // A kind of file mutible has no formatter for.
     MCGuiStep("a.notes, its server named in the settings", [] {
         MCGuiWriteFile(F("a.notes"), "a=1\n");
     });

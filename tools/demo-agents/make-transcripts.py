@@ -4,9 +4,9 @@
     make-transcripts.py ROOT OUT
 
 ROOT is the demo folder as the app sees it (the sessions' cwd) and OUT the
-folder standing in for ~/.claude/projects (MINICODE_CLAUDE_PROJECTS). The
+folder standing in for ~/.claude/projects (MUTIBLE_CLAUDE_PROJECTS). The
 lines have the shape Claude Code 2.1 writes (see tests/fixtures/claude), with
-only the fields minicode reads, and times under a few hours before now, so the
+only the fields mutible reads, and times under a few hours before now, so the
 panel says "48 min ago" rather than a date.
 """
 import datetime
@@ -46,13 +46,13 @@ def session(sid, title, prompt, steps, reply, start):
         add("user", [{"tool_use_id": tid, "type": "tool_result", "content": output,
                       "is_error": error}])
     add("assistant", [{"type": "text", "text": reply}])
-    folder = os.path.join(out, "-private-tmp-minicode-demo-demo")
+    folder = os.path.join(out, "-private-tmp-mutible-demo-demo")
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, sid + ".jsonl")
     with open(path, "w") as f:
         for line in lines:
             f.write(json.dumps(line) + "\n")
-    # The file's own date is the session's last activity to minicode (a
+    # The file's own date is the session's last activity to mutible (a
     # transcript written in the last minutes is a session still running).
     last = (now - datetime.timedelta(minutes=t)).timestamp()
     os.utime(path, (last, last))

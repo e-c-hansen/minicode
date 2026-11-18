@@ -323,7 +323,7 @@ static void testTextFind() {
 static void testFolderReplace() {
     using namespace FolderSearch;
     const fsys::path root = fsys::temp_directory_path() /
-                            ("minicode-replace-test-" + std::to_string(::getpid()));
+                            ("mutible-replace-test-" + std::to_string(::getpid()));
     std::error_code ec;
     fsys::remove_all(root, ec);
     writeFile(root / "a.txt", "foo bar\nFoo foo food\n");
@@ -482,7 +482,7 @@ static void testFolderReplace() {
         // No temporary left beside it.
         int extra = 0;
         for (const auto &e : fsys::directory_iterator(root))
-            if (e.path().filename().string().find(".minicode-") != std::string::npos) extra++;
+            if (e.path().filename().string().find(".mutible-") != std::string::npos) extra++;
         CHECK(extra == 0);
         // A symlink stays a link, and its target changes.
         const fsys::path link = root / "link.txt";
@@ -537,9 +537,9 @@ static void testSavingToDisk() {
     using namespace FolderSearch;
 #ifndef _WIN32
     const fsys::path root = fsys::temp_directory_path() /
-                            ("minicode-save-test-" + std::to_string(::getpid()));
+                            ("mutible-save-test-" + std::to_string(::getpid()));
     const fsys::path outside = fsys::temp_directory_path() /
-                               ("minicode-save-outside-" + std::to_string(::getpid()));
+                               ("mutible-save-outside-" + std::to_string(::getpid()));
     std::error_code ec;
     fsys::remove_all(root, ec);
     fsys::remove_all(outside, ec);
@@ -640,8 +640,8 @@ static void testSavingToDisk() {
         // stay, though the file is a new one (another inode).
         const fsys::path f = root / "m.txt";
         writeFile(f, "old");
-        const char tag[] = "minicode-test";
-        CHECK(::setxattr(f.c_str(), "com.minicode.test", tag, sizeof tag, 0, 0) == 0);
+        const char tag[] = "mutible-test";
+        CHECK(::setxattr(f.c_str(), "ai.ible.mutible.test", tag, sizeof tag, 0, 0) == 0);
         struct stat st0;
         ::stat(f.c_str(), &st0);
         // A modification date before the creation date moves the creation
@@ -651,7 +651,7 @@ static void testSavingToDisk() {
         std::string err;
         CHECK(writeFileAtomically(f.string(), "new", &err));
         char back[64] = {};
-        CHECK(::getxattr(f.c_str(), "com.minicode.test", back, sizeof back, 0, 0) ==
+        CHECK(::getxattr(f.c_str(), "ai.ible.mutible.test", back, sizeof back, 0, 0) ==
                   (ssize_t)sizeof tag && std::string(back) == tag);
         struct stat st1;
         ::stat(f.c_str(), &st1);

@@ -1,6 +1,6 @@
 // TreeStallSuite.cpp — the file tree never holds the main loop
-// (`./build/minicode-guitest tree_stall`), R1 in linux/PARITY.md: GNOME said
-// "minicode is not responding" while the owner clicked around the tree.
+// (`./build/mutible-guitest tree_stall`), R1 in linux/PARITY.md: GNOME said
+// "mutible is not responding" while the owner clicked around the tree.
 //
 // The tree patched a folder's rows for each event its GFileMonitor reported,
 // through a sort model that costs about a quarter of a millisecond a change

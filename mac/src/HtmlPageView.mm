@@ -469,8 +469,8 @@ static NSURL *WithoutFragment(NSURL *url) {
                                NSHeight(run.frame));
     } else if (noting) {
         _question.stringValue = self.runsScripts
-            ? @"This page's scripts run, until minicode quits."
-            : @"This page's scripts stay off, until minicode quits.";
+            ? @"This page's scripts run, until mutible quits."
+            : @"This page's scripts stay off, until mutible quits.";
         if ([AppSettings shared].settings.htmlScripts() != Settings::HtmlScripts::Ask)
             _question.stringValue = self.runsScripts ? @"This page's scripts run."
                                                      : @"This page's scripts stay off.";

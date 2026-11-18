@@ -31,7 +31,7 @@ struct TermColor {
     bool operator!=(const TermColor& o) const { return !(*this == o); }
 
     // 0xRRGGBB for an Indexed or RGB color (not meaningful for Default).
-    // Indexes 0-15 use MiniCode's dark-theme palette; 16-255 are the standard
+    // Indexes 0-15 use Mutible's dark-theme palette; 16-255 are the standard
     // xterm color cube and gray ramp.
     uint32_t rgb() const;
 };
@@ -174,7 +174,7 @@ constexpr size_t kTermMaxCellBytes = 64;
 std::string termCleanTitle(const std::string& text, size_t maxBytes = 256);
 
 // The DEC/ANSI escape-sequence parser (the state machine Paul Williams
-// documented on vt100.net), trimmed to what MiniCode needs. It decodes UTF-8,
+// documented on vt100.net), trimmed to what Mutible needs. It decodes UTF-8,
 // recognizes every sequence so none leaks into the text, and hands each piece
 // to a Handler. Input may be split anywhere across feed() calls.
 class TermParser {

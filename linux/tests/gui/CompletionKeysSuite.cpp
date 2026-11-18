@@ -1,4 +1,4 @@
-// CompletionKeysSuite.cpp — `./build/minicode-guitest completion_keys`: Tab
+// CompletionKeysSuite.cpp — `./build/mutible-guitest completion_keys`: Tab
 // and Return take the completion list's selected item whenever the list
 // shows, as VS Code's do (editor.acceptSuggestionOnEnter "on", Tab
 // accepting), linux/PARITY.md item 2.5, the counterpart of the Mac's
@@ -46,7 +46,7 @@ MC_GUI_SUITE(completion_keys) {
         MCGuiSetKeyWindow(nullptr);
         ed()->closeAllTabs();
         MCGuiWriteFile(F(), kText);
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script()) + "\n");
         showFile(F());
     });

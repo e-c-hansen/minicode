@@ -1,5 +1,5 @@
 // zsh_integration_tests.inc — the `zsh:*` groups of run_tests.cpp: the
-// terminals' shell integration (resources/minicode-zsh-integration.zsh)
+// terminals' shell integration (resources/mutible-zsh-integration.zsh)
 // run in a real zsh, started as the app starts it (ShellIntegration.h's
 // .zshenv in ZDOTDIR beside a copy of the script), with commands on stdin.
 // An interactive zsh reading a pipe runs precmd and preexec for each line,
@@ -93,7 +93,7 @@ std::vector<std::string> zshEnv(const zfs::path &root, bool grid, const char *no
         "HOME=" + (root / "home").string(),
         "ZDOTDIR=" + (root / (grid ? "zdot-grid" : "zdot-line")).string(),
         "PATH=/usr/bin:/bin", "TERM=dumb", "LANG=en_US.UTF-8"};
-    if (nonce) env.push_back(std::string("MINICODE_NONCE=") + nonce);
+    if (nonce) env.push_back(std::string("MUTIBLE_NONCE=") + nonce);
     return env;
 }
 
@@ -140,14 +140,14 @@ std::string printed(const std::string &out, const std::string &key) {
 
 void testZshIntegration() {
     GROUP("zsh:script");
-    const std::string script = readFile("resources/minicode-zsh-integration.zsh");
+    const std::string script = readFile("resources/mutible-zsh-integration.zsh");
     if (script.empty() || access("/bin/zsh", X_OK) != 0) {
-        std::printf("  (/bin/zsh or resources/minicode-zsh-integration.zsh not found here; "
+        std::printf("  (/bin/zsh or resources/mutible-zsh-integration.zsh not found here; "
                     "zsh integration checks skipped)\n");
         return;
     }
     std::random_device rd;
-    const zfs::path root = zfs::temp_directory_path() / ("minicode-zsh-" + std::to_string(rd()));
+    const zfs::path root = zfs::temp_directory_path() / ("mutible-zsh-" + std::to_string(rd()));
     zfs::create_directories(root / "home");
     writeIntegration(root, script, true);
     writeIntegration(root, script, false);
@@ -171,27 +171,27 @@ void testZshIntegration() {
         };
         {
         // Each process's own integration folder (round 6's terminal defect
-        // 6: every minicode wrote its copy into one shared folder, so two
+        // 6: every mutible wrote its copy into one shared folder, so two
         // running at once sourced each other's script), and which folders
         // the sweep at startup may take: only ones naming a process that
         // has gone.
-        CHECK(ShellIntegration::folderName(true, 812, 1793900000) == "MiniCode-zsh-grid-812-1793900000");
-        CHECK(ShellIntegration::folderName(false, 812, 1793900000) == "MiniCode-zsh-812-1793900000");
+        CHECK(ShellIntegration::folderName(true, 812, 1793900000) == "Mutible-zsh-grid-812-1793900000");
+        CHECK(ShellIntegration::folderName(false, 812, 1793900000) == "Mutible-zsh-812-1793900000");
         long long pid = 0, start = 0;
-        CHECK(ShellIntegration::parseFolderName("MiniCode-zsh-grid-812-1793900000", &pid, &start) &&
+        CHECK(ShellIntegration::parseFolderName("Mutible-zsh-grid-812-1793900000", &pid, &start) &&
               pid == 812 && start == 1793900000);
-        CHECK(ShellIntegration::parseFolderName("MiniCode-zsh-77-5", &pid, &start) && pid == 77 &&
+        CHECK(ShellIntegration::parseFolderName("Mutible-zsh-77-5", &pid, &start) && pid == 77 &&
               start == 5);
-        for (const char *other : {"MiniCode-zsh-grid", "MiniCode-zsh", "MiniCode-zsh-grid-12",
-                                  "MiniCode-zsh-grid-12-", "MiniCode-zsh-grid--5", "MiniCode-zsh-a-5",
-                                  "MiniCode-zsh-grid-1-2-3", "MiniCode-latex", "MiniCode-zsh-0-5"})
+        for (const char *other : {"Mutible-zsh-grid", "Mutible-zsh", "Mutible-zsh-grid-12",
+                                  "Mutible-zsh-grid-12-", "Mutible-zsh-grid--5", "Mutible-zsh-a-5",
+                                  "Mutible-zsh-grid-1-2-3", "Mutible-latex", "Mutible-zsh-0-5"})
             CHECK(!ShellIntegration::parseFolderName(other, &pid, &start));
         CHECK(ShellIntegration::ownerGone(100, 0));          // no such process
         CHECK(ShellIntegration::ownerGone(100, 500));        // the pid is someone else's now
         CHECK(!ShellIntegration::ownerGone(100, 100.4));     // still running
     }
     CHECK(script.find("for m in emacs viins vicmd; do") != std::string::npos);
-        CHECK(bound(ShellIntegration::kZlePushKey, "__minicode_push"));
+        CHECK(bound(ShellIntegration::kZlePushKey, "__mutible_push"));
         CHECK(bound(ShellIntegration::kZleLineStartKey, "beginning-of-line"));
         CHECK(bound(ShellIntegration::kZleLineEndKey, "end-of-line"));
         CHECK(bound(ShellIntegration::kZleKillToStartKey, "backward-kill-line"));
@@ -207,7 +207,7 @@ void testZshIntegration() {
         // out of the environment.
         writeFile(root / "home" / ".zshenv", "print -r -- \"user-zshenv:${ZDOTDIR-unset}\"\n");
         ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"),
-                          "echo one\nfalse\nprint -r -- \"nonce:${MINICODE_NONCE-unset}\"\n");
+                          "echo one\nfalse\nprint -r -- \"nonce:${MUTIBLE_NONCE-unset}\"\n");
         std::remove((root / "home" / ".zshenv").c_str());
         CHECK(r.status == 0);
         CHECK(printed(r.out, "user-zshenv") == "unset");
@@ -222,7 +222,7 @@ void testZshIntegration() {
             "7 133;A "
             "633;E;echo one 133;C 133;D;0 7 133;A "
             "633;E;false 133;C 133;D;1 7 133;A "
-            "633;E;print -r -- \"nonce:${MINICODE_NONCE-unset}\" 133;C 133;D;0 7 133;A";
+            "633;E;print -r -- \"nonce:${MUTIBLE_NONCE-unset}\" 133;C 133;D;0 7 133;A";
         CHECK(joinMarks(m) == want);
         if (joinMarks(m) != want) std::printf("    marks: %s\n    err: %s\n", joinMarks(m).c_str(), r.err.c_str());
     }
@@ -276,9 +276,9 @@ void testZshIntegration() {
     GROUP("zsh:exec-nonce");
     {
         // What an exec's program gets, case by case, in the real shell
-        // (__minicode_exec_env with exec's arguments, as the function named
+        // (__mutible_exec_env with exec's arguments, as the function named
         // exec calls it): ZDOTDIR back at the integration's folder with
-        // MINICODE_EXEC, and the nonce only for a zsh that reads our
+        // MUTIBLE_EXEC, and the nonce only for a zsh that reads our
         // startup file and so takes it out of its environment: not one
         // that reads none (TE-D1), nor one emulating sh or ksh, which
         // reads .profile instead (round 6's terminal defect 1: `exec -a sh
@@ -326,11 +326,11 @@ void testZshIntegration() {
         std::string input;
         int n = 0;
         for (const Case &c : cases) {
-            input += "__minicode_exec_env " + std::string(c.args) + "; print -r -- \"case" +
+            input += "__mutible_exec_env " + std::string(c.args) + "; print -r -- \"case" +
                      std::to_string(n) +
-                     ":${MINICODE_NONCE-none}:${MINICODE_EXEC-none}:${ZDOTDIR-none}\"; "
-                     "__minicode_exec_restore; print -r -- \"after" + std::to_string(n) +
-                     ":${MINICODE_NONCE-none}:${MINICODE_EXEC-none}:${ZDOTDIR-none}\"\n";
+                     ":${MUTIBLE_NONCE-none}:${MUTIBLE_EXEC-none}:${ZDOTDIR-none}\"; "
+                     "__mutible_exec_restore; print -r -- \"after" + std::to_string(n) +
+                     ":${MUTIBLE_NONCE-none}:${MUTIBLE_EXEC-none}:${ZDOTDIR-none}\"\n";
             n++;
         }
         ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"), input);
@@ -373,10 +373,10 @@ void testZshIntegration() {
         std::string input;
         int n = 0;
         for (const Case &c : cases) {
-            input += "__minicode_exec_hook '" + std::string(c.line) + "'; print -r -- \"case" +
-                     std::to_string(n) + ":${+functions[exec]}:${MINICODE_NONCE-none}:${MINICODE_EXEC-none}\"; "
-                     "__minicode_exec_undo; print -r -- \"undone" + std::to_string(n) +
-                     ":${+functions[exec]}:${MINICODE_NONCE-none}:${MINICODE_EXEC-none}:${ZDOTDIR-none}\"\n";
+            input += "__mutible_exec_hook '" + std::string(c.line) + "'; print -r -- \"case" +
+                     std::to_string(n) + ":${+functions[exec]}:${MUTIBLE_NONCE-none}:${MUTIBLE_EXEC-none}\"; "
+                     "__mutible_exec_undo; print -r -- \"undone" + std::to_string(n) +
+                     ":${+functions[exec]}:${MUTIBLE_NONCE-none}:${MUTIBLE_EXEC-none}:${ZDOTDIR-none}\"\n";
             n++;
         }
         ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"), input);
@@ -398,11 +398,11 @@ void testZshIntegration() {
         const zfs::path envFile = root / "make-env.txt";
         ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"),
                           "/usr/bin/env > '" + envFile.string() + "' && exec /bin/zsh -i\n"
-                          "print -r -- \"after:${MINICODE_NONCE-unset}\"\n");
+                          "print -r -- \"after:${MUTIBLE_NONCE-unset}\"\n");
         const std::string env = readFile(envFile.c_str());
         CHECK(!env.empty());
         CHECK(env.find("n0nce") == std::string::npos);
-        CHECK(env.find("MINICODE_EXEC") == std::string::npos);
+        CHECK(env.find("MUTIBLE_EXEC") == std::string::npos);
         CHECK(env.find("zdot-grid") == std::string::npos);
         if (env.find("n0nce") != std::string::npos) std::printf("    env before exec:\n%s\n", env.c_str());
         CHECK(printed(r.out, "after") == "unset");
@@ -419,7 +419,7 @@ void testZshIntegration() {
                           "exec /nonexistent/zsh; /usr/bin/env > '" + envFile.string() + "'\n"
                           "print -r -- \"fn:${+functions[exec]}\"\n");
         const std::string env2 = readFile(envFile.c_str());
-        CHECK(env2.find("n0nce") == std::string::npos && env2.find("MINICODE_EXEC") == std::string::npos);
+        CHECK(env2.find("n0nce") == std::string::npos && env2.find("MUTIBLE_EXEC") == std::string::npos);
         CHECK(printed(f.out, "fn") == "0" || f.out.find("fn:") == std::string::npos);
     }
     {
@@ -428,7 +428,7 @@ void testZshIntegration() {
         // take it out again.
         for (const char *line : {"exec -a sh /bin/zsh -i", "exec /bin/zsh --emulate sh -i"}) {
             ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"),
-                              std::string(line) + "\nprint -r -- \"sh:${MINICODE_NONCE-unset}\"\n");
+                              std::string(line) + "\nprint -r -- \"sh:${MUTIBLE_NONCE-unset}\"\n");
             CHECK(printed(r.out, "sh") == "unset");
             if (printed(r.out, "sh") != "unset")
                 std::printf("    %s: %s\n    err: %s\n", line, printed(r.out, "sh").c_str(), r.err.c_str());
@@ -439,13 +439,13 @@ void testZshIntegration() {
         // cannot take the nonce out of its environment; it must never get
         // it. Before the fix the rc-less zsh printed the nonce here.
         ZshRun r = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"),
-                          "exec /bin/zsh -f -i\nprint -r -- \"after-f:${MINICODE_NONCE-unset}\"\n");
+                          "exec /bin/zsh -f -i\nprint -r -- \"after-f:${MUTIBLE_NONCE-unset}\"\n");
         CHECK(printed(r.out, "after-f") == "unset");
         // And a zsh that does read them (`exec zsh -i`) takes it, loads the
         // integration, says the exec finished (D;0 at its first prompt) and
         // marks with the nonce; it is out of the environment again.
         ZshRun s = runZsh(root, {"-d", "-i"}, zshEnv(root, true, "n0nce"),
-                          "exec /bin/zsh -i\nprint -r -- \"after:${MINICODE_NONCE-unset}\"\n");
+                          "exec /bin/zsh -i\nprint -r -- \"after:${MUTIBLE_NONCE-unset}\"\n");
         CHECK(printed(s.out, "after") == "unset");
         const std::string marks = joinMarks(marksIn(s.out, "n0nce"));
         CHECK(marks.find("633;E;exec /bin/zsh -i 133;C 133;D;0 7 133;A") != std::string::npos);

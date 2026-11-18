@@ -115,8 +115,8 @@ MC_GUI_SUITE(agent_task) {
             @"\"$ts\" \"$(pwd -P)\" > \"$d/%@.jsonl\"\n"
             @"esac\n", projects, sid, sid]);
         chmod(fake.fileSystemRepresentation, 0755);
-        MCSetEnv("MINICODE_CLAUDE_PROJECTS", projects.fileSystemRepresentation);
-        MCSetEnv("MINICODE_CLAUDE_TMP", [base stringByAppendingPathComponent:@"tmp"].fileSystemRepresentation);
+        MCSetEnv("MUTIBLE_CLAUDE_PROJECTS", projects.fileSystemRepresentation);
+        MCSetEnv("MUTIBLE_CLAUDE_TMP", [base stringByAppendingPathComponent:@"tmp"].fileSystemRepresentation);
         settings(fake);
         NSUInteger before = MCGuiControllers().count;
         [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
@@ -276,8 +276,8 @@ MC_GUI_SUITE(agent_task) {
         [c.window close];
         c = nil;
         MCGuiSetKeyWindow(nil);
-        MCSetEnv("MINICODE_CLAUDE_PROJECTS", nullptr);
-        MCSetEnv("MINICODE_CLAUDE_TMP", nullptr);
+        MCSetEnv("MUTIBLE_CLAUDE_PROJECTS", nullptr);
+        MCSetEnv("MUTIBLE_CLAUDE_TMP", nullptr);
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
 }

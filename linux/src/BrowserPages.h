@@ -1,4 +1,4 @@
-// BrowserPages.h — what `minicode browse` and `minicode page` need of a page
+// BrowserPages.h — what `mutible browse` and `mutible page` need of a page
 // in the browser pane (PARITY.md 3.7; the Mac's BrowserPages.mm): its address,
 // title, HTTP status and whether it is loading, the console record of the
 // agent page, a wait for a load, the page's text and a screenshot. The rules
@@ -10,10 +10,10 @@
 // console.* that relays each call through a DOM event, so the page cannot
 // forge anything but a console call.
 //
-// Compiled only with MINICODE_ENABLE_BROWSER.
+// Compiled only with MUTIBLE_ENABLE_BROWSER.
 #pragma once
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 
 #include <gtk/gtk.h>
 #include <webkit/webkit.h>
@@ -85,4 +85,4 @@ private:
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
-#endif  // MINICODE_ENABLE_BROWSER
+#endif  // MUTIBLE_ENABLE_BROWSER

@@ -44,7 +44,7 @@ std::string ReadFixture() {
 // output 16 KB at a time.
 std::vector<std::string> Pieces(const std::string &all, size_t *agentPieces) {
     std::vector<std::string> out;
-    const std::string marker = "\x1b]1337;minicode-fixture-build\x07";
+    const std::string marker = "\x1b]1337;mutible-fixture-build\x07";
     const std::string end = "\x1b[?2026l";
     size_t split = all.find(marker);
     std::string agent = all.substr(0, split);

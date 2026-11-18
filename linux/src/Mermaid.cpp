@@ -62,7 +62,7 @@ std::string mmdcPath() {
     std::string fixed;
     {
         EnvLock::EnvRead env;
-        if (const char* e = g_getenv("MINICODE_MMDC"); e && *e) fixed = e;
+        if (const char* e = g_getenv("MUTIBLE_MMDC"); e && *e) fixed = e;
     }
     if (!fixed.empty())
         return g_file_test(fixed.c_str(), G_FILE_TEST_IS_EXECUTABLE) ? fixed : "";
@@ -71,8 +71,8 @@ std::string mmdcPath() {
 
 std::string cacheDir() {
     EnvLock::EnvRead env;
-    if (const char* e = g_getenv("MINICODE_MERMAID_CACHE"); e && *e) return e;
-    return std::string(g_get_user_cache_dir()) + "/minicode/mermaid";
+    if (const char* e = g_getenv("MUTIBLE_MERMAID_CACHE"); e && *e) return e;
+    return std::string(g_get_user_cache_dir()) + "/mutible/mermaid";
 }
 
 bool readFile(const std::string& path, std::string* out) {
@@ -111,7 +111,7 @@ Done runOne(const Job& job) {
     Done done;
     done.key = job.key;
     g_runs++;
-    gchar* tmpl = g_dir_make_tmp("minicode-mermaid-XXXXXX", nullptr);
+    gchar* tmpl = g_dir_make_tmp("mutible-mermaid-XXXXXX", nullptr);
     if (!tmpl) { done.why = "could not make a scratch folder"; return done; }
     const std::string tmp = tmpl;
     g_free(tmpl);

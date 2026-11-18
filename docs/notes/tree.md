@@ -141,7 +141,7 @@ found through that list.
   record's folders outside it (`windowRecordNow` lists those too). Not on
   the Worktrees node or a worktree row. The GTK port has it too (2026-11-17,
   `linux/src/FileTree.cpp`'s "Focus on Folder" section, `linux/HANDOFF.md`
-  item 94, `./build/minicode-guitest tree_focus`): its tree makes its model
+  item 94, `./build/mutible-guitest tree_focus`): its tree makes its model
   again from the focused folder (`makeTreeModel`, `replaceModel` on the
   same selection and list view), so the folders' watches, the dotfile
   filter, git colors and drops start there with no code of their own;
@@ -175,15 +175,15 @@ found through that list.
   (`TreeFocus::revealed`; with one folder it is still `widened`), so the
   set only grows; a file at the top of the window's folder adds "" and so
   shows the whole folder. Add to Focus (`addFolderToFocus:`,
-  `minicode.tree.addToFocus`, the File menu, a folder row's right click)
+  `mutible.tree.addToFocus`, the File menu, a folder row's right click)
   takes the clicked row's folder on a right click, else the selected
   row's, else the open file's, the first not shown yet
   (`folderToAddToFocus`). **Add Folder to Focus…** (2026-11-18,
-  `chooseFolderToAddToFocus:`, `minicode.tree.addFolderToFocus`, the File
+  `chooseFolderToAddToFocus:`, `mutible.tree.addFolderToFocus`, the File
   menu, the palette, and the bar's + (`addRect`, `onAdd`, before the last
   ×, on the breadcrumb and the label row alike), since with the tree
   focused every row is inside a focused folder and nothing is left to
-  right click): minicode's folder picker (`MCFolderPick`) with
+  right click): mutible's folder picker (`MCFolderPick`) with
   `scopeFolder` the window's folder, so the core's `FolderPicker` (its
   `scope`: `parse`'s fourth argument, `inScope`, `folderpick:scope`)
   offers only folders strictly inside it, labels them by their path from

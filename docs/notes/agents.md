@@ -41,7 +41,7 @@ found through that list.
   Commands are typed, never run. `make guitest SUITES=agent_panel` streams
   `tests/fixtures/claude/stream` (written to the SDK's message shapes, not
   recorded) through a stand-in script; never run the real Claude Code there. Tasks write the prompt to
-  `$TMPDIR/MiniCode-agent/` and run `cd <root> && <agent.command> "$(cat
+  `$TMPDIR/Mutible-agent/` and run `cd <root> && <agent.command> "$(cat
   file)"` in a new terminal tab. Traps: `NSTextView string` is the live
   storage, so "the text before" must be a copy; the bar's place uses line
   fragments up to the caret only (the first Cmd+I once laid out the whole file:
@@ -54,40 +54,40 @@ found through that list.
   (`heightForWidth:`). Return sends, Shift or Option+Return adds a line, Esc
   (`complete:`) closes. The prompt (`ChangeRequest::prompt`: the request, then
   asking for `make`, CLAUDE.md, and no commit, push or release) goes to
-  `$TMPDIR/MiniCode-change/request-<pid>-<n>.txt`, and `cd <source> &&
+  `$TMPDIR/Mutible-change/request-<pid>-<n>.txt`, and `cd <source> &&
   <develop.command> "$(cat <file>)"` is typed into a new terminal tab (or
   Claude's previous idle one), focused; the whole prompt on the line had
   flooded it, the tab title and zsh's history. Source folder
   (`MCChangeSourceFolder`): `develop.source`, else the checkout the bundle was
   built in, else `MCChangeCloneFolder()` (`~/Library/Application
-  Support/MiniCode/source`), cloned on first use by one typed line (`(git clone
+  Support/Mutible/source`), cloned on first use by one typed line (`(git clone
   --branch v<version> <repo> <dir> || git clone <repo> <dir>) && cd <dir> &&
   claude ...`). "Source" means a Makefile and `mac/src/EditorController.mm`. A 2 s
-  timer watches `<source>/MiniCode.app/Contents/_CodeSignature/CodeResources`
+  timer watches `<source>/Mutible.app/Contents/_CodeSignature/CodeResources`
   (codesign is `make app`'s last step, and that file is its target, so a
   `make` with nothing to do leaves it alone) and offers Restart once it is
   newer and stable. Prompt files whose writer has quit, or a day old, are removed as
   the next is written (`MCRemoveStalePromptFiles`, the inline agent's too).
 - **Restart** (`AppDelegate restartIntoApp:resumingIn:source:command:`,
-  `MCRestarting`): the quit questions titled "Restart minicode?", leaving
+  `MCRestarting`): the quit questions titled "Restart mutible?", leaving
   Claude's terminal out; unsaved tabs come back from backups;
   `applicationWillTerminate` writes `MCRestart` and `MCLaunchAfterExit` spawns
   a detached `/bin/sh` that waits for our pid and runs `open -n
-  <source>/MiniCode.app`; the new process takes a record under two minutes old
+  <source>/Mutible.app`; the new process takes a record under two minutes old
   (`reopenAfterRestart:`), brings every window back from sessions.json
   (written by that same quit; see "Every window comes back") and runs `develop.command --continue` in the
   resuming window (never the record's command, and only in a folder that
   looks like the source). After a restart the user runs the repo's build until the next `brew
-  upgrade`. Restart minicode (minicode menu, the status bar's ↻,
-  `restartMinicode:`; no key, Cmd+R is Refresh) uses
+  upgrade`. Restart mutible (mutible menu, the status bar's ↻,
+  `restartMutible:`; no key, Cmd+R is Refresh) uses
   `NSBundle.mainBundle.bundlePath` (beeps when not a .app).
 - `mc-dev` (the user's `~/Code/dotfiles/shell/aliases.sh`) runs the repo's
   build; launching a build registers it with Launch Services, so Finder may
-  offer two minicodes (`lsregister -u` it).
+  offer two mutibles (`lsregister -u` it).
 
 ## New Agent Task (Mac, A8, 2026-11-18)
 
-- Edit > New Agent Task… (`minicode.agent.newTask`, Option+Shift+Cmd+A,
+- Edit > New Agent Task… (`mutible.agent.newTask`, Option+Shift+Cmd+A,
   beside Shift+Cmd+A's panel; Mac only, no Linux row yet). Core
   `AgentTask.{h,cpp}` (`agenttask:*`): `nameFromPrompt` (first four words
   that say something, ASCII, 32 bytes), `sanitizeName` (a branch and a
@@ -99,7 +99,7 @@ found through that list.
   `worktreeAddArgs` (`worktree add -b <name> <path> HEAD`), and
   `startCommand`: `cd <wt> && <agent.command> '<prompt>'` when the prompt
   is one line of at most 160 bytes, else `"$(cat <file>)"` from
-  `$TMPDIR/MiniCode-task/task-<pid>-<n>.txt` (Request a Change's lesson:
+  `$TMPDIR/Mutible-task/task-<pid>-<n>.txt` (Request a Change's lesson:
   a long line floods the terminal, its title and history). The
   `agenttask:shell` group runs the line through /bin/sh with printf for
   claude: quotes, `$( )`, backticks and `!` arrive as one argument and
@@ -138,7 +138,7 @@ found through that list.
   `compareWorktreeAt:`).
 - Checked by `make guitest SUITES=agent_task` (a stand-in claude script;
   the transcript it writes for a SESSION prompt goes to the suite's
-  scratch MINICODE_CLAUDE_PROJECTS). Not run against a real Claude Code
+  scratch MUTIBLE_CLAUDE_PROJECTS). Not run against a real Claude Code
   session: its folder-trust question for the new worktree is answered in
   the terminal.
 
@@ -167,7 +167,7 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   compares the answer's uri with the one it sent, so answer under that
   spelling). It shows the model only getDiagnostics and executeCode. It uses
   openDiff only when its global `diffTool` is "auto". It auto-connects when
-  CLAUDE_CODE_SSE_PORT is the port (minicode's terminals get it,
+  CLAUDE_CODE_SSE_PORT is the port (mutible's terminals get it,
   `MCIdeLinkTerminalEnvironment`), else /ide lists lock files whose folders
   hold its cwd (unresolved, so the lock lists the folder as spelled and
   resolved); it skips the pid check outside VS Code and JetBrains terminals,
@@ -176,7 +176,7 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   be loopback, nothing said before the token; writes nothing under ~/.claude
   but its own lock file (temp file and rename, removed on window close,
   setting off and atexit); removes at start only lock files with ideName
-  minicode, another pid, that pid gone. openFile goes through
+  mutible, another pid, that pid gone. openFile goes through
   `openTabForAgent:preview:quiet:` (beside the user while they type) and
   highlights startText..endText with an empty note; openDiff is a
   comparison tab (`showComparison:preview:NO quiet:YES`) with a decision bar
@@ -230,8 +230,8 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   of its Agent call). A command keeps `toolUseResult.stderr`
   (`stderrLineCount`: Claude Code appends it to the output). Entry text is
   cut at 16 KB. Paths: `~/.claude/projects`
-  (`$MINICODE_CLAUDE_PROJECTS`), the `/private/tmp/claude-<uid>` scratchpads
-  (`$MINICODE_CLAUDE_TMP`). Fixtures: `tests/fixtures/claude`.
+  (`$MUTIBLE_CLAUDE_PROJECTS`), the `/private/tmp/claude-<uid>` scratchpads
+  (`$MUTIBLE_CLAUDE_TMP`). Fixtures: `tests/fixtures/claude`.
 - **The panel's column** stays the list's width (`autoresizesOutlineColumn`
   off, `fitColumn` on layout, expansion and the clip view's frame
   changes), so a title's "…" is at the pane's edge once rows expand
@@ -270,12 +270,12 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   box tinted as a Markdown code block, stderr, an exit line, a tool's
   error and a failed hook in the diagnostics' error color, the rest muted.
 - **Waiting for you** (spec feature 7, 2026-11-06): a terminal's id
-  (`TerminalView terminalID`, what `minicode state` reports) is given when it
+  (`TerminalView terminalID`, what `mutible state` reports) is given when it
   is made, not on first use, because its shell gets it as
-  `MINICODE_TERMINAL_ID`, with `MINICODE_PID` (inherited ones are dropped).
-  `minicode hooks --install` (run by the user only; backs up, merges, a second
+  `MUTIBLE_TERMINAL_ID`, with `MUTIBLE_PID` (inherited ones are dropped).
+  `mutible hooks --install` (run by the user only; backs up, merges, a second
   run changes nothing; a symlinked settings.json stays a link and a
-  hard-linked one is written in place, `ClaudeHooks::writeSettingsFile`) adds `minicode notify --from-hook` to Claude Code's
+  hard-linked one is written in place, `ClaudeHooks::writeSettingsFile`) adds `mutible notify --from-hook` to Claude Code's
   Notification, Stop, UserPromptSubmit and PostToolUse hooks. **The app
   offers it too** (2026-11-15, `ClaudeHooksOffer.{h,mm}`, the owner's yes
   to writing ~/.claude/settings.json on the user's two presses): the
@@ -287,15 +287,15 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   noticeBar`, an `MCInstallBar` in `showMessage:` form) offers Turn On…
   once per launch (`MCInstallBarTakeOffer`), muted for good by Not Now
   (`MCInstallBarMuted("claude-hooks")`), never once the hooks are in;
-  minicode > Install Claude Code Hooks… (`minicode.installClaudeHooks`)
+  mutible > Install Claude Code Hooks… (`mutible.installClaudeHooks`)
   and the Agents panel header's line (shown while they are missing) run
   the same `MCInstallClaudeHooks`: a question with the JSON to be added,
   then `ClaudeHooks::install` (the CLI's code, moved to the core), then
   where it wrote and the backup. The command is `commandFor`'s: plain
-  `minicode notify --from-hook` when `MCFindProgram(@"minicode")` finds
+  `mutible notify --from-hook` when `MCFindProgram(@"mutible")` finds
   it, else the bundle's launcher by its quoted path. The harness gives
   every run a scratch `CLAUDE_CONFIG_DIR`; tests never touch ~/.claude; notify never
-  starts minicode and with --from-hook prints nothing and exits 0 whatever
+  starts mutible and with --from-hook prints nothing and exits 0 whatever
   happens. Core: `ClaudeHooks` (hook JSON, the settings merge) and
   `AttentionBoard` (marks, sessions); Mac: `MCTerminalAttention` draws it
   (the tab's dot and tooltip, the Dock badge, Ctrl+Cmd+W, Show Terminal in

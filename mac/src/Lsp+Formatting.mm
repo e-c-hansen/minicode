@@ -1,7 +1,7 @@
 // Lsp+Formatting.mm — Objective-C++. LspSession (Formatting): Format
 // Document through the file's language server (textDocument/formatting,
 // or rangeFormatting for selected lines), for a file no formatter is
-// planned for (Formatter::serverMayFormat): a kind of file minicode has no
+// planned for (Formatter::serverMayFormat): a kind of file mutible has no
 // formatter for, such as TOML with taplo running, or Markdown, JSON, YAML
 // and CSS in a project not set up for Prettier. A project's own formatter
 // is never replaced by a server's, which would format in a style the

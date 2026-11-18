@@ -70,7 +70,7 @@ static void testAgentEvidence() {
                      TestTool::Go);
     CHECK(s.found && s.format == "go" && s.passed == 2 && s.failed == 1);
     CHECK(!parseSummary("ok  \tx\t0.1s\n", TestTool::Make).found);   // go lines only for go test
-    s = parseSummary("Running MiniCode core tests...\n\n4466 passed, 0 failed\n");
+    s = parseSummary("Running Mutible core tests...\n\n4466 passed, 0 failed\n");
     CHECK(s.found && s.format == "count" && s.passed == 4466 && s.failed == 0);
     s = parseSummary("  FAIL [x] tests/run_tests.cpp:10  cond\n\n3630 passed, 1 failed");
     CHECK(s.failed == 1 && s.passed == 3630);

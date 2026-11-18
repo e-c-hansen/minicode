@@ -81,7 +81,7 @@ MC_GUI_SUITE(spell_check) {
         GCHECK(c != nil);
         MCGuiSetKeyWindow(c.window);
         saved = [NSString stringWithContentsOfFile:NSProcessInfo.processInfo.environment[
-                                                       @"MINICODE_SETTINGS"]
+                                                       @"MUTIBLE_SETTINGS"]
                                           encoding:NSUTF8StringEncoding
                                              error:nil] ?: @"";
         GCHECK([c showFile:md]);

@@ -1,4 +1,4 @@
-// PreviewTabsSuite.cpp — `./build/minicode-guitest preview_tabs`: VS Code's
+// PreviewTabsSuite.cpp — `./build/mutible-guitest preview_tabs`: VS Code's
 // preview tab (workbench.enable-preview, EditorTabs.h "The preview tab"), as
 // the Mac's suite of the same name checks it, by real clicks. A single click
 // on a file in the tree opens it in the preview tab, its title in italics,

@@ -1,4 +1,4 @@
-// GitConflictsSuite.cpp — `./build/minicode-guitest git_conflicts`: merge
+// GitConflictsSuite.cpp — `./build/mutible-guitest git_conflicts`: merge
 // conflicts resolved in the editor (EditorConflicts.h) and on the review
 // page (ChangeReviewPage.h), the counterpart of the Mac's git_conflicts in
 // mac/tests/gui/GitPanelSuite.mm, with real clicks and keys.

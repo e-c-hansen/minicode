@@ -37,12 +37,12 @@
 // or middle-clicked opens in a new tab behind, and a page a script or a
 // target=_blank link opens comes up in a new tab beside its opener.
 //
-// Beside them, once an agent has loaded one (`minicode browse`), is the
+// Beside them, once an agent has loaded one (`mutible browse`), is the
 // agent page, with a switcher in the toolbar showing "Yours" and "Agent".
 // An agent never navigates the user's pages; closing the agent page (its
 // x) shows the user's tab as it was. The toolbar's back, forward and
 // reload act on the page on show; an address typed in it, or a link from
-// elsewhere in minicode, loads in the user's tab on show.
+// elsewhere in mutible, loads in the user's tab on show.
 @interface BrowserView : NSView
 - (instancetype)initWithHomeURL:(NSString *)url;
 // Find in the page on show (Cmd+F while the pane has the keyboard, the
@@ -67,7 +67,7 @@
 - (NSArray<NSString *> *)tabTitles;
 - (NSArray<NSString *> *)tabAddresses;
 - (NSArray<NSString *> *)tabPageTitles;
-// Opens each address in a tab of its own (bookmarks, `minicode
+// Opens each address in a tab of its own (bookmarks, `mutible
 // https://...`): a tab already at that address is used again, the empty
 // tab on show (a pane just made, or left by closing the last tab) takes
 // the first, and the rest go right of the one on show, in order. The first

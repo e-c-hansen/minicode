@@ -127,7 +127,7 @@ static NSString *MCStringOf(const std::string &s) {
 // and never for a language whose bar said Don't Show Again; it stays over
 // that language's files in this window until closed or the server turns up.
 // Folders whose question about their own Python environment was put off
-// with × in this launch: it comes back when minicode starts again.
+// with × in this launch: it comes back when mutible starts again.
 static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     static NSMutableSet<NSString *> *roots;
     if (!roots) roots = [NSMutableSet set];
@@ -299,7 +299,7 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     std::string setting = [AppSettings shared].settings.lspCommand(Utf8String(key));
     NSString *message = setting.empty() ? nil
         : [NSString stringWithFormat:@"lsp.%@ in the settings runs %@, which was not found. "
-                                     @"The server minicode suggests is below.",
+                                     @"The server mutible suggests is below.",
                                      key, @(setting.c_str())];
     __weak EditorController *weakSelf = self;
     MCInstallView *view = [[MCInstallView alloc]
@@ -350,7 +350,7 @@ static NSMutableSet<NSString *> *EnvironmentQuestionPutOff(void) {
     [EnvironmentQuestionPutOff() removeObject:self.lsp.root ?: @""];
     MCForgetFolderToolsConsent(self.rootPath);
     [self updateInstallBar];
-    [self showStatusNote:@"minicode will ask before running this folder's own tools again"];
+    [self showStatusNote:@"mutible will ask before running this folder's own tools again"];
 }
 
 @end
