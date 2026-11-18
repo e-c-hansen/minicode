@@ -6,10 +6,12 @@
 // EnvLock); a second renderer over the socket (a Client here) attaches to
 // it with a view far larger than the window's and types, so the pty takes
 // its size (the size rule, #166) and the window's VTE is drawn at it,
-// clipped. Lines printed to the bottom of that larger grid: the part on
-// show follows the cursor (Terminal::panRow), VTE moved up under the
-// scroller by as much; the other renderer gone, the pty is the window's
-// again and nothing is panned.
+// clipped by its frame (TerminalFrame.h). Lines printed to the bottom of
+// that larger grid: the part on show follows the cursor (Terminal::panRow),
+// VTE laid out up in its frame by as much, with no margins; the other
+// renderer gone, the pty is the window's again and nothing is panned.
+// GTK warns of nothing meanwhile (the negative margins VTE was grown by
+// before the frame drew a Gtk-WARNING on every pan).
 #include "Harness.h"
 
 #include "Editor.h"
@@ -19,6 +21,7 @@
 #include "SessionServer.h"
 #include "Terminal.h"
 #include "TerminalDock.h"
+#include "TerminalFrame.h"
 #include "WindowLayout.h"
 
 #include <glib/gstdio.h>
@@ -29,6 +32,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -60,7 +64,7 @@ bool aliveP(int pid) {
 }
 
 // The cursor's row on the program's screen, and whether it is inside the
-// part of VTE the scroller shows.
+// part of VTE its frame shows.
 bool cursorOnShow(Terminal* t) {
     GtkWidget* vte = t ? t->vteWidget() : nullptr;
     if (!vte) return false;
@@ -71,11 +75,11 @@ bool cursorOnShow(Terminal* t) {
     const long top = adj ? (long)gtk_adjustment_get_upper(adj) - vte_terminal_get_row_count(v) : 0;
     const double ch = (double)vte_terminal_get_char_height(v);
     graphene_rect_t b;
-    GtkWidget* scroller = gtk_widget_get_parent(vte);
-    if (!gtk_widget_compute_bounds(vte, scroller, &b)) return false;
-    // The cursor's cell, in the scroller's coordinates.
+    GtkWidget* frame = gtk_widget_get_parent(vte);
+    if (!gtk_widget_compute_bounds(vte, frame, &b)) return false;
+    // The cursor's cell, in the frame's coordinates.
     const double y = b.origin.y + (double)(row - top) * ch;
-    return y >= -1 && y + ch <= gtk_widget_get_height(scroller) + 1;
+    return y >= -1 && y + ch <= gtk_widget_get_height(frame) + 1;
 }
 
 }  // namespace
@@ -104,6 +108,7 @@ MC_GUI_SUITE(host_pan) {
                gtk_widget_get_mapped(t->vteWidget());
     });
     MCGuiStep("another renderer attaches with a far larger view and types", [] {
+        MCGuiLogWatchStart();   // GTK's warnings, from here to the end of the panning
         SessionLink::Link* l = MCGuiApp().editor->sessionLink();
         GCHECK(l && l->kind() == SessionLink::Link::Kind::Socket);
         if (!l) return;
@@ -129,7 +134,7 @@ MC_GUI_SUITE(host_pan) {
         if (gClient) gClient->dispatch();
         Terminal* t = MCGuiApp().terminal;
         VteTerminal* v = t ? VTE_TERMINAL(t->vteWidget()) : nullptr;
-        return v && t->clipped() && vte_terminal_get_row_count(v) == 120 &&
+        return v && t->atPtySize() && vte_terminal_get_row_count(v) == 120 &&
                vte_terminal_get_column_count(v) == 300;
     });
     MCGuiWait("the lines printed, the part on show following the cursor down", 30, [] {
@@ -138,14 +143,26 @@ MC_GUI_SUITE(host_pan) {
         return t && t->recentText(400).find("pan-line-200") != std::string::npos && t->panRow() > 0 &&
                cursorOnShow(t);
     });
-    MCGuiStep("VTE moved up under the scroller by the rows panned", [] {
+    MCGuiStep("VTE laid out up in its frame by the rows panned, larger than it, with no margins", [] {
         Terminal* t = MCGuiApp().terminal;
         GtkWidget* vte = t->vteWidget();
-        GCHECK(gtk_widget_get_margin_top(vte) < 0);
+        GtkWidget* frame = t->frameWidget();
+        GCHECK(frame && gtk_widget_get_parent(vte) == frame);
+        if (!frame) return;
+        GCHECK(gtk_widget_get_margin_top(vte) == 0 && gtk_widget_get_margin_bottom(vte) == 0 &&
+               gtk_widget_get_margin_start(vte) == 0 && gtk_widget_get_margin_end(vte) == 0);
         graphene_rect_t b;
-        GCHECK(gtk_widget_compute_bounds(vte, gtk_widget_get_parent(vte), &b));
+        GCHECK(gtk_widget_compute_bounds(vte, frame, &b));
         const double ch = (double)vte_terminal_get_char_height(VTE_TERMINAL(vte));
+        MCGuiNote("panned %d rows; VTE at y %.0f, %.0f x %.0f in a frame of %d x %d", t->panRow(), b.origin.y,
+                  b.size.width, b.size.height, gtk_widget_get_width(frame), gtk_widget_get_height(frame));
         GCHECK(b.origin.y <= -(t->panRow() * ch) + 1 && b.origin.y >= -(t->panRow() * ch) - 1);
+        GCHECK(b.size.width > gtk_widget_get_width(frame) && b.size.height > gtk_widget_get_height(frame));
+        // The scroll bar is still VTE's: the scroller's adjustment is VTE's.
+        GtkWidget* scroller = gtk_widget_get_parent(frame);
+        GCHECK(GTK_IS_SCROLLED_WINDOW(scroller) &&
+               gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller)) ==
+                   gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(vte)));
     });
     MCGuiStep("the other renderer goes", [] {
         if (gClient) gClient->detachTerminal(gTerm);
@@ -156,8 +173,18 @@ MC_GUI_SUITE(host_pan) {
     });
     MCGuiWait("the pty the window's again: nothing clipped or panned", 30, [] {
         Terminal* t = MCGuiApp().terminal;
-        return t && !t->clipped() && t->panRow() == 0 && t->panCol() == 0 &&
-               gtk_widget_get_margin_top(t->vteWidget()) == 0;
+        if (!t || t->atPtySize() || t->panRow() != 0 || t->panCol() != 0) return false;
+        const graphene_rect_t r = terminalFrameChildRect(t->frameWidget());
+        return r.origin.x == 0 && r.origin.y == 0 && (int)r.size.width == gtk_widget_get_width(t->frameWidget()) &&
+               (int)r.size.height == gtk_widget_get_height(t->frameWidget());
+    });
+    MCGuiStep("no Gtk-WARNING or Gtk-CRITICAL while it panned", [] {
+        int gtk = 0;
+        for (const std::string& line : MCGuiLogWatchStop()) {
+            MCGuiNote("logged: %s", line.c_str());
+            if (line.rfind("Gtk-", 0) == 0) gtk++;
+        }
+        GCHECK(gtk == 0);
     });
     MCGuiStep("the window closes; the host ended by its pid", [] {
         MCGuiApp().termDock->closePane(MCGuiApp().terminal, false);
