@@ -223,6 +223,15 @@ public:
     // Hangs the shell up; the listener hears nothing more.
     void closeTerminal(TermId t);
 
+    // ---- the workspace (SessionFiles.h): reads in the session's folder,
+    // or in `window`'s when the host serves no one folder. Sent at once,
+    // never behind an edit in flight.
+    // The answer as readAnswer(req) once the host's answers are dispatched.
+    std::uint64_t requestRead(std::uint64_t window, Json request);
+    bool readAnswer(std::uint64_t req, Json* out);
+    // The same, waiting: null when the host did not answer in time.
+    Json read(std::uint64_t window, Json request, int timeoutMs = 10000);
+
     // ---- windows
     void windowTabs(std::uint64_t window, Json tabs);
     void windowClosed(std::uint64_t window);

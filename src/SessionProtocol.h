@@ -36,7 +36,12 @@
 // Offsets are in the receiving renderer's unit, named in its Hello (code
 // points for GTK, UTF-16 for the Mac); `ops16` is the same edit in UTF-16
 // for a renderer keeping a copy of the host's text (DocWatch: the GTK
-// port's language server sync reads it). Pure C++17, no I/O.
+// port's language server sync reads it).
+//
+// The workspace (stage 7's first read, SessionFiles.h): FsRead {req,
+// window, json: {"op", ...}} asks the host to read in the session's folder,
+// and FsData {req, json} answers; "list" lists one folder for a tree. A new
+// read is a new "op", not a new message. Pure C++17, no I/O.
 #pragma once
 
 #include <cstdint>
@@ -105,6 +110,11 @@ enum class Kind {
     TermExited,  // term, flag: the shell's wait status (-1 unknown), name: why it never started
     TermReplay,  // term, bytes, v: as TermOutput
     DocGone,     // doc: to a renderer that only reads: the document is closed, or never was
+    // the workspace (stage 7, SessionFiles.h): a read, answered by FsData
+    FsRead,      // renderer → host: req, window (whose folder; a headless host's own
+                 // folder first), json: the request ({"op": "list", "path", "hidden"});
+                 // changes nothing, so a renderer that only reads may send it
+    FsData,      // host → renderer: req, json: the answer (or {"error"})
 };
 
 const char* kindName(Kind k);

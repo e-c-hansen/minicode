@@ -3,6 +3,7 @@
 
 #import "AppSettings.h"
 #import "EditorTab.h"
+#import "FileTree.h"   // gShowHidden
 #import "SessionLink.h"
 
 #include <memory>
@@ -95,6 +96,16 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
             return true;
         };
     }
+    if (_open) {
+        void (^open)(NSString *, BOOL) = _open;
+        o.open = [open](const std::string &path, bool keep) {
+            NSString *p = [NSString stringWithUTF8String:path.c_str()];
+            if (!p) return false;
+            dispatch_async(dispatch_get_main_queue(), ^{ open(p, keep); });
+            return true;
+        };
+    }
+    o.showHidden = gShowHidden;
     o.folder = _folder.fileSystemRepresentation ?: "";
     o.window = _windowId;
     o.termNote = MCSessionBrowserTermNote.UTF8String;

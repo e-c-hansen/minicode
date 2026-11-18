@@ -4,7 +4,8 @@
 // ivars, and it stops itself when the window closes. Show asks whether the
 // page may edit, the last answer first (editable until one is given), and
 // remembers it; Copy uses the remembered one. A page's save is the tab's
-// own Cmd+S, its questions about the disk included.
+// own Cmd+S, its questions about the disk included. A click on a file in
+// the page's tree opens it here as a click in the window's tree would.
 #import "EditorController+Private.h"
 #import "AppSettings.h"
 #import "SessionBrowser.h"
@@ -79,6 +80,16 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     }
 }
 
+// A click on a file in the page's tree: the same tab a click in this
+// window's tree gives (the preview tab, or a kept one for a double-click),
+// the file selected in the tree too, which stays focused as it is.
+- (void)openSessionPath:(NSString *)path keep:(BOOL)keep {
+    [self revealPath:path
+                open:YES
+                from:keep ? EditorTabs::OpenFrom::TreeCommandClick : EditorTabs::OpenFrom::TreeClick
+               widen:NO];
+}
+
 // The window's server, started now (editable or not) if it is not yet; nil,
 // said in the status bar, when it cannot be.
 - (MCSessionBrowser *)startedSessionBrowser:(BOOL)editable {
@@ -102,6 +113,7 @@ static BOOL MCSessionBrowserEditableChoice(void) {
                 return on;
             }];
         b.save = ^(uint64_t docId) { [weakSelf saveSessionDocument:docId]; };
+        b.open = ^(NSString *path, BOOL keep) { [weakSelf openSessionPath:path keep:keep]; };
         objc_setAssociatedObject(self, &kSessionBrowserKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     b.editable = editable;

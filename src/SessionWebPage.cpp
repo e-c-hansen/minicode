@@ -1,8 +1,10 @@
 // SessionWebPage.cpp — the one page a browser's view of a session loads
 // (SessionWeb.h): its CSS and script, no third-party code. The script draws
 // only what the server describes (tabs, lines with the highlighter's spans,
-// a Markdown page, terminal rows of styled runs). Read-only, it sends only
-// which document and terminal it shows. Editable, it is a small editor of
+// a Markdown page, terminal rows of styled runs, the folder's tree in a
+// sidebar, listed by the host one folder at a time). Read-only, it sends
+// only which document and terminal it shows, which folders to list, and
+// which file to open in the window. Editable, it is a small editor of
 // its own: a caret and selection drawn over the lines, a hidden field at the
 // caret for keys, input methods and the clipboard, edits made on its lines
 // at once and sent with the version they were made on (moved past others'
@@ -27,6 +29,7 @@ const std::string& pageHtml() {
 <style id="theme"></style>
 <style>
 :root { --bg: #1f1f1f; --fg: #cccccc; --tbg: #181818; --tfg: #cccccc; --muted: #9d9d9d;
+        --sbg: #181818; --sfg: #cccccc; --ign: #8c8c8c;
         --line: #2b2b2b; --accent: #4ea1f7; --lh: 1.4em; --hbg: #181818; --hfg: #cccccc;
         --gutter: #1f1f1f; --ln: #6e7681; --lnact: #cccccc; --efs: 13px; --tfs: 12px;
         --sfs: 13px; --selbg: rgba(38, 79, 120, .9); }
@@ -53,6 +56,34 @@ header { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px;
 .strip button.dirty::before { content: "\25CF "; font-size: 9px; vertical-align: middle; }
 .strip button.busy::after { content: " \2026"; }
 .strip .empty { color: var(--muted); padding: 6px 12px; }
+#wrap { flex: 1; display: flex; min-height: 0; position: relative; }
+#side { flex: none; width: clamp(180px, 22vw, 320px); display: flex; flex-direction: column;
+        background: var(--sbg); color: var(--sfg); border-right: 1px solid var(--line);
+        min-height: 0; }
+body.sideclosed #side { display: none; }
+#sidebar { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; flex: none;
+           font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+#sidename { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            font-weight: 600; }
+.iconbtn { background: none; border: 0; color: inherit; font: inherit; font-size: 14px;
+           padding: 0 6px; cursor: pointer; opacity: .75; line-height: 1.4; }
+.iconbtn:hover { opacity: 1; }
+#sidebtn { color: var(--hfg); font-size: 15px; padding: 0 4px; align-self: center; }
+#tree { flex: 1; overflow: auto; min-height: 0; padding-bottom: 1em; }
+#tree .row { display: flex; align-items: center; white-space: nowrap; cursor: pointer;
+             line-height: 22px; padding-right: 8px; user-select: none; }
+#tree .row:hover { background: rgba(127, 127, 127, .12); }
+#tree .row.current { background: rgba(127, 127, 127, .24); }
+#tree .chev { flex: none; width: 16px; text-align: center; font-size: 11px; opacity: .75; }
+#tree .name { overflow: hidden; text-overflow: ellipsis; }
+#tree .row.ignored .name { color: var(--ign); }
+#tree .row.outside { cursor: default; opacity: .55; }
+#tree .row.link .name { font-style: italic; }
+#tree .more, #tree .err { color: var(--muted); font-size: 12px; line-height: 20px;
+                          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#treenote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none;
+            border-top: 1px solid var(--line); }
+#work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #docsec { flex: 3; display: flex; flex-direction: column; min-height: 0; }
 #termsec { flex: 2; display: flex; flex-direction: column; min-height: 0;
@@ -114,12 +145,24 @@ body:not(.editable) #caret { display: none; }
   #code .l::before { width: 3.4em; padding-right: .6em; text-indent: 0; }
   #docsec { flex: 1.3; }
   #termsec { flex: 1; }
+  /* The tree is behind the header's button, over the page while open. */
+  #side { display: none; position: absolute; left: 0; top: 0; bottom: 0; z-index: 20;
+          width: min(85vw, 340px); box-shadow: 2px 0 12px rgba(0, 0, 0, .35); }
+  body.sideopen #side { display: flex; }
+  #tree .row { line-height: 30px; }
 }
 </style>
 </head>
 <body>
-<header><span id="machine">minicode</span><span id="folder"></span><span id="status">connecting</span></header>
+<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">minicode</span><span id="folder"></span><span id="status">connecting</span></header>
 <div id="banner" class="hidden"></div>
+<div id="wrap">
+<aside id="side" aria-label="Files">
+  <div id="sidebar"><span id="sidename">Files</span><button id="refresh" class="iconbtn" type="button" title="Refresh the tree" aria-label="Refresh the tree">&#8635;</button></div>
+  <div id="tree" role="tree"></div>
+  <p id="treenote" class="hidden"></p>
+</aside>
+<div id="work">
 <nav id="tabs" class="strip"></nav>
 <main>
   <section id="docsec">
@@ -134,6 +177,8 @@ body:not(.editable) #caret { display: none; }
   </section>
 </main>
 <p id="termnote" class="hidden"></p>
+</div>
+</div>
 <div id="toast" class="hidden" role="status"></div>
 <script nonce="{{NONCE}}">
 "use strict";
@@ -162,6 +207,9 @@ body:not(.editable) #caret { display: none; }
     set("--bg", p.background); set("--fg", p.text);
     set("--tbg", p.terminalBackground); set("--tfg", p.terminalText);
     set("--hbg", title.background); set("--hfg", title.text);
+    const side = sf.sidebar || {};
+    set("--sbg", side.background); set("--sfg", side.text);
+    set("--ign", p.treeIgnored);
     set("--gutter", p.gutter); set("--ln", p.lineNumber); set("--lnact", p.lineNumberActive);
     set("--muted", p.dark ? "#9d9d9d" : "#616161");
     set("--line", p.dark ? "#2b2b2b" : "#e5e5e5");
@@ -295,8 +343,157 @@ body:not(.editable) #caret { display: none; }
       sendShow();
     }
     drawTabs();
+    markCurrent();
   }
   function showTerm(id) { if (id !== want.term) { want.term = id; sendShow(); } drawTermTabs(); }
+
+
+  // ---- the tree: one folder's rows at a time, read by the host each time
+  // a folder opens (list), folders first as the apps list them, dotfiles as
+  // the window shows them, what the ignore files ignore in tree.git-ignored's
+  // color. A click on a file opens it as a tab in the minicode window (open),
+  // as a click in the window's own tree would (a double-click keeps it), and
+  // this page shows that tab once the session's state has it. Read-only
+  // pages may open files too: a tab opened or shown changes no text.
+  const T = { root: "", open: new Set([""]), kids: new Map(), more: new Map(), err: new Map(),
+              pending: null, timer: 0 };
+  const kViewerKinds = new Set(["image", "video", "audio", "pdf", "database", "archive", "bookmark"]);
+  const narrow = window.matchMedia("(max-width: 700px)");
+  function listFolder(rel) { post({ t: "list", path: rel }); }
+  function refreshTree() { for (const rel of T.open) listFolder(rel); }
+  function treeNote(text) {
+    const n = $("treenote");
+    n.textContent = text || "";
+    n.classList.toggle("hidden", !text);
+  }
+  function joinRel(dir, name) { return dir ? dir + "/" + name : name; }
+  function currentRel() {
+    if (!state || !T.root || !want.doc) return null;
+    const d = state.docs.find((x) => x.id === want.doc);
+    return d && d.path.startsWith(T.root + "/") ? d.path.slice(T.root.length + 1) : null;
+  }
+  function treeRow(e, rel, depth) {
+    const r = document.createElement("div");
+    r.className = "row" + (e.dir ? " dir" : "") + (e.ignored ? " ignored" : "") +
+                  (e.outside ? " outside" : "") + (e.link ? " link" : "");
+    r.dataset.path = rel;
+    r.setAttribute("role", "treeitem");
+    r.style.paddingLeft = (4 + depth * 12) + "px";
+    const chev = document.createElement("span");
+    chev.className = "chev";
+    if (e.dir && !e.outside) {
+      chev.textContent = T.open.has(rel) ? "▾" : "▸";
+      r.setAttribute("aria-expanded", T.open.has(rel) ? "true" : "false");
+    }
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = e.name;
+    r.title = e.outside ? e.name + " leads out of this folder" : rel;
+    r.append(chev, name);
+    r._entry = e;
+    return r;
+  }
+  function treeLine(cls, text, depth) {
+    const d = document.createElement("div");
+    d.className = cls;
+    d.style.paddingLeft = (20 + depth * 12) + "px";
+    d.textContent = text;
+    return d;
+  }
+  function drawTree() {
+    const tree = $("tree"), top = tree.scrollTop;
+    const frag = document.createDocumentFragment();
+    const cur = currentRel();
+    const add = (dir, depth) => {
+      if (T.err.has(dir)) { frag.appendChild(treeLine("err", T.err.get(dir), depth)); return; }
+      const kids = T.kids.get(dir);
+      if (!kids) return;
+      for (const e of kids) {
+        const rel = joinRel(dir, e.name);
+        const row = treeRow(e, rel, depth);
+        if (rel === cur) row.classList.add("current");
+        frag.appendChild(row);
+        if (e.dir && !e.outside && T.open.has(rel)) add(rel, depth + 1);
+      }
+      if (T.more.get(dir)) frag.appendChild(treeLine("more", "… " + T.more.get(dir) + " more", depth));
+    };
+    add("", 0);
+    tree.textContent = "";
+    tree.appendChild(frag);
+    tree.scrollTop = top;
+  }
+  // The row of the document on show, marked as the window's tree marks it.
+  function markCurrent() {
+    const cur = currentRel();
+    for (const r of $("tree").querySelectorAll(".row"))
+      r.classList.toggle("current", r.dataset.path === cur);
+  }
+  function onTree(m) {
+    if (m.error !== undefined) {
+      T.kids.delete(m.path);
+      T.more.delete(m.path);
+      if (m.path) {
+        // Gone, or no longer the folder's: closed, with what was open in it.
+        for (const k of [...T.open]) if (k === m.path || k.startsWith(m.path + "/")) T.open.delete(k);
+      } else {
+        T.err.set("", m.error === "no folder to read in" ? "This window has no folder." : m.error);
+      }
+    } else {
+      T.err.delete(m.path);
+      if (m.root) T.root = m.root;
+      T.kids.set(m.path, m.entries || []);
+      if (m.more) T.more.set(m.path, m.more); else T.more.delete(m.path);
+      if (!m.path) $("sidename").textContent = base(T.root) || "Files";
+    }
+    drawTree();
+  }
+  function openFile(rel, e, keep) {
+    treeNote("");
+    T.pending = { rel: rel, kind: e.kind || "text", abs: "" };
+    if (!post({ t: "open", path: rel, keep: !!keep })) { T.pending = null; return; }
+    if (narrow.matches) setSide(false);
+  }
+  function onOpening(m) {
+    const p = T.pending;
+    if (!p || p.rel !== m.path) return;
+    if (!m.ok) { T.pending = null; treeNote(m.why); return; }
+    if (kViewerKinds.has(p.kind)) {
+      T.pending = null;
+      treeNote(base(m.path) + " opens in the minicode window.");
+      return;
+    }
+    p.abs = m.abs;
+    clearTimeout(T.timer);
+    // A file the window shows in a viewer of its own has no document here.
+    T.timer = setTimeout(() => {
+      if (T.pending !== p) return;
+      T.pending = null;
+      treeNote(base(p.rel) + " opened in the minicode window.");
+    }, 4000);
+    takePending();
+  }
+  // The clicked file's tab, once the session's state has it.
+  function takePending() {
+    const p = T.pending;
+    if (!p || !p.abs || !state) return;
+    const d = state.docs.find((x) => x.path === p.abs);
+    if (!d) return;
+    T.pending = null;
+    clearTimeout(T.timer);
+    followDoc = d.id === sessionDoc();
+    showDoc(d.id);
+  }
+  function sideOpen() {
+    return narrow.matches ? document.body.classList.contains("sideopen")
+                          : !document.body.classList.contains("sideclosed");
+  }
+  // The sidebar beside the page; at phone width, over it behind the button.
+  function setSide(open) {
+    if (narrow.matches) document.body.classList.toggle("sideopen", open);
+    else document.body.classList.toggle("sideclosed", !open);
+    $("sidebtn").setAttribute("aria-expanded", open ? "true" : "false");
+    drawSelection();
+  }
 
   function onState(m) {
     state = m;
@@ -310,6 +507,8 @@ body:not(.editable) #caret { display: none; }
     sendShow();
     drawTabs(); drawTermTabs();
     if (!want.doc) showNote("No document is on show.");
+    takePending();
+    markCurrent();
   }
 
   // ---- a document. `shadow` is the server's lines at `version`; `flight`
@@ -1161,6 +1360,10 @@ body:not(.editable) #caret { display: none; }
           $("folder").textContent = "‎" + m.folder + "‎";
           document.title = (m.machine ? m.machine + ": " : "") + base(m.folder) + " (minicode)";
           applyPalette(m.palette);
+          // The tree afresh: every folder that was open, read again (the
+          // rows on show stay until the answers replace them).
+          T.err.clear();
+          refreshTree();
           break;
         case "palette": applyPalette(m.palette); break;
         case "state": onState(m); break;
@@ -1177,6 +1380,8 @@ body:not(.editable) #caret { display: none; }
         case "term": onTerm(m); break;
         case "termd": onTermDelta(m); break;
         case "ended": ended = true; banner(m.why); setStatus("ended"); break;
+        case "tree": onTree(m); break;
+        case "opening": onOpening(m); break;
       }
     };
     ws.onclose = () => {
@@ -1249,6 +1454,27 @@ body:not(.editable) #caret { display: none; }
     showMode();
     if (D.mode === "code") focusEditor();
   });
+  $("tree").addEventListener("click", (ev) => {
+    const row = ev.target.closest(".row");
+    if (!row || !row._entry) return;
+    const e = row._entry, rel = row.dataset.path;
+    if (e.outside) return;
+    if (e.dir) {
+      if (T.open.has(rel)) T.open.delete(rel);
+      else { T.open.add(rel); listFolder(rel); }   // read afresh as it opens
+      drawTree();
+      return;
+    }
+    // The second click of a double-click, or Command (Control) with it,
+    // keeps the tab, as in the window's tree.
+    openFile(rel, e, ev.detail >= 2 || ev.metaKey || ev.ctrlKey);
+  });
+  $("refresh").addEventListener("click", refreshTree);
+  $("sidebtn").addEventListener("click", () => setSide(!sideOpen()));
+  // At phone width a tap beside the open tree closes it.
+  $("work").addEventListener("pointerdown", () => { if (narrow.matches && sideOpen()) setSide(false); });
+  // Back to the page after a while: the folders may have changed meanwhile.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshTree(); });
   $("term").addEventListener("keydown", onTermKey);
   $("term").addEventListener("paste", (e) => {
     if (!editable || !want.term) return;
@@ -1261,6 +1487,8 @@ body:not(.editable) #caret { display: none; }
     text: () => D.lines.map((l) => l.t + l.b).join(""),
     selection: () => [D.a, D.h], synced: () => synced(), version: () => D.version,
     focus: focusEditor,
+    tree: () => [...$("tree").querySelectorAll(".row")].map((r) => r.dataset.path),
+    treeNote: () => $("treenote").textContent,
   };
   connect();
 })();

@@ -3,12 +3,15 @@
 // DIR --web PORT`, or `minicode attach --folder DIR --web PORT` for a host
 // already running, serves one page on 127.0.0.1:PORT, never another
 // interface. The page's script opens a WebSocket back to the same address
-// and draws what the host describes: the session's tabs, the document on
-// show as lines with the core highlighter's spans, a Markdown document as
-// MarkdownHtml's page, and each terminal's screen and scrollback as rows of
-// styled runs from a headless TerminalScreen. Nothing is drawn from pixels.
-// Read-only (the default), the browser can change nothing: its only message
-// says which document and terminal it is looking at. Editable
+// and draws what the host describes: the session's tabs, the folder's
+// tree (read by the host one folder at a time, SessionFiles.h), the
+// document on show as lines with the core highlighter's spans, a Markdown
+// document as MarkdownHtml's page, and each terminal's screen and
+// scrollback as rows of styled runs from a headless TerminalScreen. Nothing
+// is drawn from pixels. Read-only (the default), the browser can change
+// nothing: it says which document and terminal it is looking at, lists
+// folders, and asks the window to open a file of the folder (a tab opened
+// changes no text). Editable
 // (Options::editable), it also types into the document on show and its
 // terminal, undoes through the host's history, and asks for a save.
 //
@@ -75,8 +78,16 @@
 //   termd   {id, hist, rows: [[row, line], ...], cursor, alt, title}: lines
 //           that went into the scrollback since, and rows that changed
 //   ended   {why}: the host went
+//   tree    {path, root, entries, more | error}: one folder's listing
+//           (SessionFiles.h's "list" answer), for a `list`
+//   opening {path, abs, ok, why}: a file a page clicked is opening in the
+//           window (`abs` its path as the tabs spell it), or why it is not
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
+//   list    {path}: one folder of the tree ("" the session's folder), read
+//           by the host (FsRead), each time a folder is opened or refreshed
+//   open    {path, keep}: a file the tree's row names, opened as a tab in
+//           the window (Options::open), read-only pages included
 // and, only when editable:
 //   edit    {doc, base, seq, ops, step {name, coalesce, fresh}, before, after,
 //           cmd, at}: an edit of the document on show; cmd "newline", "tab",
@@ -298,6 +309,15 @@ struct Options {
     // the host has every edit the pages made; false when it cannot. Unset:
     // a page's save is answered with a note.
     std::function<bool(DocId)> save;
+    // Opens a file of the folder (the path held inside it, spelled under
+    // `folder`) as a click in the window's own tree does: `keep` for a kept
+    // tab rather than the preview tab. Called on the server's thread; false
+    // when it cannot. Pages that only read may open files too: a tab opened
+    // or shown changes no text. Unset (a headless host, which decides no
+    // tabs): a page's click on a file says so.
+    std::function<bool(const std::string& path, bool keep)> open;
+    // Dotfiles in the tree (the window's Show Hidden Files).
+    bool showHidden = false;
     int port = 0;             // 0: any free port (checks)
     std::string token;        // "" for a fresh one
     int pollMs = 500;         // how often the session's state is looked at
@@ -361,6 +381,9 @@ private:
     void onUndo(Conn& c, const Json& j);
     void onSave(Conn& c, const Json& j);
     void onTermInput(Conn& c, const std::string& type, const Json& j);
+    void onList(Conn& c, const Json& j);
+    void onOpen(Conn& c, const Json& j);
+    void takeReads();
     void note(Conn& c, const std::string& text);
     void refuseEdit(Conn& c, DocId doc, std::uint64_t seq, const std::string& why, bool resync);
     void takeOutcomes();

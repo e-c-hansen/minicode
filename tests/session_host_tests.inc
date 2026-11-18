@@ -8,15 +8,51 @@
 // renderer's mirror, and every copy of the host's text, must be the host's
 // text. Included there, after undo_history_tests.inc.
 
+#include <filesystem>
 #include <random>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "EditorTabs.h"
 #include "Ot.h"
 #include "SessionClient.h"
 #include "SessionHost.h"
+#include "SessionFiles.h"
 #include "SessionProtocol.h"
 
 namespace {
+
+// A folder for the workspace reads: /tmp/mc-fs-XXXXXX.
+std::string fsScratch() {
+    char tmpl[] = "/tmp/mc-fs-XXXXXX";
+    const char* made = mkdtemp(tmpl);
+    return made ? made : "";
+}
+void fsWrite(const std::string& path, const std::string& text) {
+    if (FILE* f = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(text.data(), 1, text.size(), f);
+        std::fclose(f);
+    }
+}
+// A listing's names, joined by spaces, folders marked with a trailing '/'.
+std::string fsNames(const Json& listing) {
+    std::string s;
+    for (const Json& e : listing["entries"].elements())
+        s += (s.empty() ? "" : " ") + e["name"].asString() + (e["dir"].asBool() ? "/" : "");
+    return s;
+}
+const Json* fsEntry(const Json& listing, const std::string& name) {
+    for (const Json& e : listing["entries"].elements())
+        if (e["name"].asString() == name) return &e;
+    return nullptr;
+}
+Json fsList(const std::string& path, bool hidden = false) {
+    Json r = Json::object();
+    r.set("op", Json("list"));
+    r.set("path", Json(path));
+    if (hidden) r.set("hidden", Json(true));
+    return r;
+}
 
 using Shared::Message;
 using Model::Unit;
@@ -971,5 +1007,130 @@ static void testSessionHost() {
         CHECK(net.host.undoInfo(9).undoName == "Typing");
         CHECK(net.host.logSize(9) <= 1);
         CHECK_TIME(ms, 1500);
+    }
+
+    // Stage 7's first read (SessionFiles.h): a folder listed one level at
+    // a time for a browser's tree, as the apps' trees list it, confined to
+    // the session's folder.
+    GROUP("host:fs-list");
+    {
+        const std::string root = fsScratch(), elsewhere = fsScratch();
+        CHECK(!root.empty() && !elsewhere.empty());
+        fsWrite(root + "/.gitignore", "build/\n*.log\n");
+        fsWrite(root + "/.hidden", "x");
+        fsWrite(root + "/Zeta.txt", "z");
+        fsWrite(root + "/alpha.py", "print(1)\n");
+        fsWrite(root + "/app.log", "log");
+        fsWrite(root + "/pic.png", "");
+        ::mkdir((root + "/beta").c_str(), 0755);
+        fsWrite(root + "/beta/inner.c", "int x;\n");
+        ::mkdir((root + "/build").c_str(), 0755);
+        fsWrite(root + "/build/out.o", "");
+        ::mkdir((root + "/sub").c_str(), 0755);
+        ::mkdir((root + "/sub/deep").c_str(), 0755);
+        fsWrite(root + "/sub/deep/x.txt", "x");
+        fsWrite(elsewhere + "/secret.txt", "not yours");
+        CHECK(::symlink((root + "/beta").c_str(), (root + "/link-in").c_str()) == 0);
+        CHECK(::symlink(elsewhere.c_str(), (root + "/link-out").c_str()) == 0);
+        CHECK(::symlink((elsewhere + "/secret.txt").c_str(), (root + "/secret-link").c_str()) == 0);
+
+        // Read by the host of a folder (a headless host's).
+        Net net(true, true);
+        net.host.setFolder(root);
+        Net::Link& a = net.add(Unit::Utf16, "browser");
+        Json top = a.client->read(0, fsList(""));
+        // Folders first, then files, names without case; no dotfiles.
+        CHECK(fsNames(top) == "beta/ build/ link-in/ link-out/ sub/ alpha.py app.log pic.png "
+                              "secret-link Zeta.txt");
+        if (fsNames(top).empty()) std::printf("  host:fs-list: %s\n", top.dump().c_str());
+        CHECK(top["root"].asString() == root && top["path"].asString() == "" && !top.has("error"));
+        // What the ignore files ignore is listed and marked, as the trees
+        // color it; a symlink out of the folder is marked and never entered.
+        const Json* build = fsEntry(top, "build");
+        CHECK(build && (*build)["ignored"].asBool() && (*build)["dir"].asBool());
+        CHECK(fsEntry(top, "app.log") && (*fsEntry(top, "app.log"))["ignored"].asBool());
+        CHECK(fsEntry(top, "alpha.py") && !fsEntry(top, "alpha.py")->has("ignored"));
+        CHECK(fsEntry(top, "link-in") && (*fsEntry(top, "link-in"))["link"].asBool() &&
+              !fsEntry(top, "link-in")->has("outside"));
+        CHECK(fsEntry(top, "link-out") && (*fsEntry(top, "link-out"))["outside"].asBool());
+        CHECK(fsEntry(top, "secret-link") && (*fsEntry(top, "secret-link"))["outside"].asBool());
+        CHECK(fsEntry(top, "alpha.py") && (*fsEntry(top, "alpha.py"))["kind"].asString() == "code");
+        CHECK(fsEntry(top, "pic.png") && (*fsEntry(top, "pic.png"))["kind"].asString() == "image");
+        CHECK(fsEntry(top, "beta") && !fsEntry(top, "beta")->has("kind"));
+        // Dotfiles when asked for, as Show Hidden Files.
+        const Json all = a.client->read(0, fsList("", true));
+        CHECK(fsNames(all) == "beta/ build/ link-in/ link-out/ sub/ .gitignore .hidden alpha.py "
+                              "app.log pic.png secret-link Zeta.txt");
+        // One level at a time; inside an ignored folder everything is.
+        CHECK(fsNames(a.client->read(0, fsList("beta"))) == "inner.c");
+        CHECK(fsNames(a.client->read(0, fsList("sub/deep"))) == "x.txt");
+        CHECK(fsNames(a.client->read(0, fsList("link-in"))) == "inner.c");
+        const Json out = a.client->read(0, fsList("build"));
+        CHECK(fsEntry(out, "out.o") && (*fsEntry(out, "out.o"))["ignored"].asBool());
+
+        // Confined: nothing outside the folder is listed, however asked.
+        for (const char* bad : {"..", "../", "beta/../..", "/etc", "/", "./beta", "beta//inner.c",
+                                "beta/", "link-out", "link-out/", "missing", "alpha.py"}) {
+            const Json r = a.client->read(0, fsList(bad));
+            const bool refused = r.has("error") && r["entries"].isNull();
+            if (!refused) std::printf("  host:fs-list: \"%s\" listed: %s\n", bad, r.dump().c_str());
+            CHECK(refused);
+        }
+        std::string abs, why;
+        CHECK(Shared::confinedPath(root, "beta/inner.c", &abs, &why) && abs == root + "/beta/inner.c");
+        CHECK(Shared::confinedPath(root, "", &abs, &why) && abs == root);
+        CHECK(Shared::confinedPath(root, "link-in/inner.c", &abs, &why));
+        CHECK(!Shared::confinedPath(root, "../" + elsewhere.substr(5) + "/secret.txt", &abs, &why) &&
+              why == "a path that leaves the folder");
+        CHECK(!Shared::confinedPath(root, elsewhere + "/secret.txt", &abs, &why) && why == "an absolute path");
+        CHECK(!Shared::confinedPath(root, "secret-link", &abs, &why) &&
+              why == "a path that leads out of the folder");
+        CHECK(!Shared::confinedPath(root, "link-out/secret.txt", &abs, &why));
+        CHECK(!Shared::confinedPath(root, std::string("beta\0x", 6), &abs, &why));
+        CHECK(!Shared::confinedPath("", "alpha.py", &abs, &why));
+        CHECK(!Shared::confinedPath("relative/root", "alpha.py", &abs, &why));
+        // A read the host does not have.
+        Json unknown = Json::object();
+        unknown.set("op", Json("format-disk"));
+        CHECK(a.client->read(0, unknown)["error"].asString().find("no read") != std::string::npos);
+
+        // An app's own host serves no one folder: a read is in the folder
+        // the named window reported, and with none there is nothing to read.
+        Net app(true, true);
+        Net::Link& w = app.add(Unit::Utf16, "mac");
+        Json tabs = Json::object();
+        tabs.set("root", Json(root));
+        tabs.set("groups", Json::array());
+        w.client->windowTabs(5, tabs);
+        CHECK(fsNames(w.client->read(5, fsList("beta"))) == "inner.c");
+        CHECK(w.client->read(6, fsList(""))["error"].asString() == "no folder to read in");
+        CHECK(w.client->read(0, fsList(""))["error"].asString() == "no folder to read in");
+        // A renderer that only reads (a browser's view) may read the folder:
+        // it changes nothing.
+        app.links.push_back(std::make_unique<Net::Link>());
+        Net::Link& v = *app.links.back();
+        v.id = app.host.connect();
+        v.client = std::make_unique<Shared::Client>(Unit::Utf16, "viewer");
+        v.client->setReadOnly(true);
+        v.client->connect([&app, &v](Message&& m) { app.host.handle(v.id, app.wire(std::move(m))); });
+        CHECK(fsNames(v.client->read(5, fsList(""))).find("alpha.py") != std::string::npos);
+        CHECK(v.client->takeErrors().empty());
+        // The messages on the wire.
+        Message q;
+        q.kind = Shared::Kind::FsRead;
+        q.req = 3;
+        q.window = 5;
+        q.json = fsList("sub");
+        Message back;
+        CHECK(Shared::decode(Shared::encode(q), &back) && back.kind == Shared::Kind::FsRead &&
+              back.req == 3 && back.window == 5 && back.json == q.json);
+        CHECK(std::string(Shared::kindName(Shared::Kind::FsData)) == "fs.data");
+        // A folder over the cap names kMaxListed entries and counts the rest.
+        const std::string many = fsScratch();
+        for (std::size_t i = 0; i < Shared::kMaxListed + 3; i++) fsWrite(many + "/f" + std::to_string(i), "");
+        const Json big = Shared::readWorkspace(many, fsList(""));
+        CHECK(big["entries"].size() == Shared::kMaxListed && big["more"].asInt() == 3);
+        std::error_code ec;
+        for (const std::string& d : {root, elsewhere, many}) std::filesystem::remove_all(d, ec);
     }
 }

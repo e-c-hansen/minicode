@@ -1398,4 +1398,143 @@ static void testSessionWeb() {
         ro.stop();
         roThread.join();
     }
+
+    // The page's tree (stage 7's first read): the host lists one folder a
+    // time over the socket, confined to its folder; a click on a file asks
+    // the app to open it (Options::open), read-only pages included; nothing
+    // of it is reachable without the token or outside the socket.
+    GROUP("sessionweb:tree");
+    {
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        const std::string root = rig.proj, elsewhere = scratchFolder();
+        writeText(root + "/.gitignore", "*.log\n");
+        writeText(root + "/main.py", "print(1)\n");
+        writeText(root + "/run.log", "x\n");
+        ::mkdir((root + "/src").c_str(), 0755);
+        writeText(root + "/src/util.c", "int u;\n");
+        writeText(elsewhere + "/secret.txt", "not yours\n");
+        CHECK(::symlink(elsewhere.c_str(), (root + "/away").c_str()) == 0);
+        std::mutex openedMu;
+        std::vector<std::pair<std::string, bool>> opened;
+        Web::Server web;   // read-only, as the command line's default
+        Web::Options o;
+        o.hostSocket = rig.path();
+        o.folder = root;
+        o.pollMs = 100;
+        o.open = [&](const std::string& path, bool keep) {
+            std::lock_guard<std::mutex> lk(openedMu);
+            opened.push_back({path, keep});
+            return true;
+        };
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        Web::Server headless;   // no window to open files in
+        Web::Options h = o;
+        h.open = nullptr;
+        h.port = 0;
+        CHECK(headless.start(h, &error));
+        std::thread headlessThread([&] { headless.run(); });
+        const int port = web.port();
+        {
+            // No way in but the socket with the token: no listing over
+            // plain HTTP, and no socket without the token.
+            PageClient p;
+            std::string r = p.exchange(port, "GET /list?t=" + web.token() + "&path= HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            CHECK(r.compare(0, 12, "HTTP/1.1 404") == 0);
+            r = p.exchange(port, "GET /list?path= HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            CHECK(r.compare(0, 12, "HTTP/1.1 403") == 0);
+            std::string head;
+            CHECK(!p.upgrade(port, "/ws", &head) && head.compare(0, 12, "HTTP/1.1 403") == 0);
+            p.close();
+            CHECK(!p.upgrade(port, "/ws?t=" + web.token(), &head, "http://evil.example") &&
+                  head.compare(0, 12, "HTTP/1.1 403") == 0);
+            p.close();
+
+            CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+            Json state;
+            std::map<std::string, Json> trees;
+            std::vector<Json> opens;
+            auto take = [&](const Json& m) {
+                const std::string t = m["t"].asString();
+                if (t == "state") state = m;
+                else if (t == "tree") trees[m["path"].asString()] = m;
+                else if (t == "opening") opens.push_back(m);
+            };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            // The folder, as the apps' trees list it.
+            p.sendText("{\"t\":\"list\",\"path\":\"\"}");
+            CHECK(p.pump(take, [&] { return trees.count(""); }));
+            const Json& top = trees[""];
+            CHECK(top["root"].asString() == root);
+            std::string names;
+            for (const Json& e : top["entries"].elements())
+                names += e["name"].asString() + (e["dir"].asBool() ? "/" : "") +
+                         (e["ignored"].asBool() ? "(ignored)" : "") +
+                         (e["outside"].asBool() ? "(outside)" : "") + " ";
+            CHECK(names == "away/(outside) src/ main.py run.log(ignored) ");
+            if (names != "away/(outside) src/ main.py run.log(ignored) ") std::printf("  sessionweb:tree: %s\n", names.c_str());
+            p.sendText("{\"t\":\"list\",\"path\":\"src\"}");
+            CHECK(p.pump(take, [&] { return trees.count("src"); }));
+            CHECK(trees["src"]["entries"].size() == 1 && trees["src"]["entries"][0]["name"].asString() == "util.c");
+            // Out of the folder: refused, nothing listed.
+            for (const char* bad : {"..", "/etc", "away", "src/../.."}) {
+                p.sendText(std::string("{\"t\":\"list\",\"path\":\"") + bad + "\"}");
+                CHECK(p.pump(take, [&] { return trees.count(bad); }));
+                CHECK(trees[bad].has("error") && !trees[bad].has("entries"));
+            }
+            // A click on a file: the app opens it, even from a page that
+            // only reads; a folder, or a path out of the folder, is not.
+            p.sendText("{\"t\":\"open\",\"path\":\"src/util.c\"}");
+            p.sendText("{\"t\":\"open\",\"path\":\"main.py\",\"keep\":true}");
+            p.sendText("{\"t\":\"open\",\"path\":\"src\"}");
+            p.sendText("{\"t\":\"open\",\"path\":\"../" + elsewhere.substr(5) + "/secret.txt\"}");
+            p.sendText("{\"t\":\"open\",\"path\":\"away/secret.txt\"}");
+            CHECK(p.pump(take, [&] { return opens.size() == 5; }));
+            if (opens.size() == 5) {
+                CHECK(opens[0]["ok"].asBool() && opens[0]["abs"].asString() == root + "/src/util.c");
+                CHECK(opens[1]["ok"].asBool() && opens[1]["abs"].asString() == root + "/main.py");
+                for (int i = 2; i < 5; i++) CHECK(!opens[i]["ok"].asBool() && !opens[i]["why"].asString().empty());
+            }
+            {
+                std::lock_guard<std::mutex> lk(openedMu);
+                CHECK(opened.size() == 2);
+                if (opened.size() == 2) {
+                    CHECK(opened[0].first == root + "/src/util.c" && !opened[0].second);
+                    CHECK(opened[1].first == root + "/main.py" && opened[1].second);
+                }
+            }
+            p.close();
+
+            // A host with no window to open files in says so.
+            PageClient q;
+            CHECK(q.upgrade(headless.port(), "/ws?t=" + headless.token()));
+            Json hstate;
+            std::vector<Json> hopens;
+            bool listed = false;
+            auto htake = [&](const Json& m) {
+                const std::string t = m["t"].asString();
+                if (t == "state") hstate = m;
+                else if (t == "tree") listed = m["entries"].size() == 4;
+                else if (t == "opening") hopens.push_back(m);
+            };
+            CHECK(q.pump(htake, [&] { return hstate.isObject(); }));
+            q.sendText("{\"t\":\"list\",\"path\":\"\"}");
+            q.sendText("{\"t\":\"open\",\"path\":\"main.py\"}");
+            CHECK(q.pump(htake, [&] { return listed && hopens.size() == 1; }));
+            CHECK(hopens.size() == 1 && !hopens[0]["ok"].asBool() &&
+                  hopens[0]["why"].asString().find("headless") != std::string::npos);
+            q.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0 && headless.browsers() == 0; }));
+        }
+        web.stop();
+        webThread.join();
+        headless.stop();
+        headlessThread.join();
+        // The page carries the tree and its sidebar.
+        const std::string& page = Web::pageHtml();
+        CHECK(page.find("id=\"tree\"") != std::string::npos && page.find("id=\"sidebtn\"") != std::string::npos);
+        CHECK(Web::paletteJson().has("treeIgnored"));
+    }
 }

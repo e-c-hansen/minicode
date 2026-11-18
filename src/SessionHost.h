@@ -40,6 +40,11 @@
 // host's screen. busyReason() says whether anything would be lost if the
 // host went now.
 //
+// Stage 7's first read (SessionFiles.h): FsRead lists one folder of the
+// session's (the headless host's own folder, else the folder its window's
+// renderer reported), confined to it, for a browser's tree. It runs on the
+// host's thread, so a listing is capped (kMaxListed).
+//
 // Pure C++17 and POSIX: SessionHost's thread polls the ptys (poll(2)) and a
 // pipe that wakes it for messages; Host does the I/O only when the loop
 // calls it (readable, writable, tick).
@@ -264,6 +269,10 @@ private:
     void onForget(ClientId c, Message& m);
     void onWatch(ClientId c, Message& m);
     void onQuery(ClientId c, Message& m);
+    // The workspace (SessionFiles.h): a read in the folder of the session
+    // (a headless host's own), else of the window the request names.
+    void onRead(ClientId c, Message& m);
+    std::string readRoot(std::uint64_t window) const;
 };
 
 // A Host on a thread of its own. Messages from renderers go in with post()

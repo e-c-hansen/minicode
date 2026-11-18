@@ -14,7 +14,11 @@
 // indentation), typing in the window reaches the page, Cmd+Z in the page is
 // the host's undo, Cmd+S in it saves the file through the window, and the
 // page's tab shows the file's dirty dot until then; page and window end on
-// one text. Closing the window stops the server. No browser window opens.
+// one text. The page's tree lists the window's folder through the host: a
+// click on a folder opens it, a click on a file in it opens that file in
+// the window's tab, which the page then shows, and a picture says it opens
+// in the window. Closing the window stops the server. No browser window
+// opens.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 #import "EditorController.h"
@@ -218,7 +222,23 @@ NSString *const kRead =
     @" synced: window.mcSessionView ? window.mcSessionView.synced() : false,"
     @" lines: [...document.querySelectorAll('#code .l')].map(l => l.textContent).join('\\n'),"
     @" dirty: !!document.querySelector('#tabs button.shown.dirty'),"
-    @" shown: !!document.querySelector('#tabs button.shown')})";
+    @" shown: !!document.querySelector('#tabs button.shown'),"
+    @" tree: window.mcSessionView ? window.mcSessionView.tree().join('|') : '',"
+    @" note: window.mcSessionView ? window.mcSessionView.treeNote() : ''})";
+
+// A click on the page's tree row for `rel`.
+void ClickRow(NSString *rel) {
+    NSData *quoted = [NSJSONSerialization dataWithJSONObject:@[ rel ] options:0 error:nil];
+    NSString *js = [NSString stringWithFormat:
+        @"(() => { const want = %@[0];"
+        @" const r = [...document.querySelectorAll('#tree .row')].find(x => x.dataset.path === want);"
+        @" if (r) r.click(); return !!r; })()",
+        [[NSString alloc] initWithData:quoted encoding:NSUTF8StringEncoding]];
+    [gPage evaluateJavaScript:js inFrame:nil inContentWorld:WKContentWorld.pageWorld
+            completionHandler:^(id value, NSError *error) {
+                if (error || ![value boolValue]) MCGuiNote(@"no tree row %@ to click", rel);
+            }];
+}
 
 void Read() {
     [gPage evaluateJavaScript:kRead inFrame:nil inContentWorld:WKContentWorld.pageWorld
@@ -268,6 +288,14 @@ MC_GUI_SUITE(session_browser) {
                                                  attributes:nil error:nil];
         gFile = [dir stringByAppendingPathComponent:@"calc.py"];
         MCGuiWriteFile(gFile, @"def total(xs):\n    return sum(xs)\n");
+        [NSFileManager.defaultManager createDirectoryAtPath:[dir stringByAppendingPathComponent:@"pkg"]
+                                withIntermediateDirectories:YES attributes:nil error:nil];
+        MCGuiWriteFile([dir stringByAppendingPathComponent:@"pkg/util.py"], @"def helper():\n    return 42\n");
+        // A real 1x1 picture, so the window's viewer has something to show.
+        NSData *png = [[NSData alloc] initWithBase64EncodedString:
+            @"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                                                         options:0];
+        [png writeToFile:[dir stringByAppendingPathComponent:@"logo.png"] atomically:YES];
         MCSessionBrowserOpener = ^(NSURL *url) { gOpened = url; };
         NSUInteger before = MCGuiControllers().count;
         [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
@@ -457,11 +485,38 @@ MC_GUI_SUITE(session_browser) {
         Read();
         return gSeen[@"dirty"] && ![gSeen[@"dirty"] boolValue];
     });
-    MCGuiStep(@"page, window, host and disk on one text; the window closes, and the server with it", ^{
+    MCGuiStep(@"page, window, host and disk on one text", ^{
         NSString *disk = [NSString stringWithContentsOfFile:gFile encoding:NSUTF8StringEncoding error:nil];
         GCHECK_EQ_STR(gSeen[@"text"], TV(gC).string);
         GCHECK_EQ_STR(disk, TV(gC).string);
         GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
+    });
+    MCGuiWait(@"the page's tree lists the window's folder, folders first", 20, ^BOOL {
+        Read();
+        return [gSeen[@"tree"] isEqualToString:@"pkg|calc.py|logo.png"];
+    });
+    MCGuiStep(@"a click on the folder in the page's tree", ^{ ClickRow(@"pkg"); });
+    MCGuiWait(@"opens it, read by the host", 20, ^BOOL {
+        Read();
+        return [gSeen[@"tree"] isEqualToString:@"pkg|pkg/util.py|calc.py|logo.png"];
+    });
+    MCGuiStep(@"a click on a file in it", ^{ ClickRow(@"pkg/util.py"); });
+    MCGuiWait(@"opens the file in the window's tab", 20, ^BOOL {
+        return [Active(gC).currentPath hasSuffix:@"/pkg/util.py"] && Active(gC).session != nil;
+    });
+    MCGuiWait(@"and the page shows that tab", 20, ^BOOL {
+        Read();
+        return [gSeen[@"text"] isEqualToString:TV(gC).string] && [TV(gC).string hasPrefix:@"def helper"];
+    });
+    MCGuiStep(@"a picture in the page's tree", ^{
+        GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
+        ClickRow(@"logo.png");
+    });
+    MCGuiWait(@"says it opens in the window", 20, ^BOOL {
+        Read();
+        return [gSeen[@"note"] isEqualToString:@"logo.png opens in the minicode window."];
+    });
+    MCGuiStep(@"the window closes, and the server with it", ^{
         [gPage stopLoading];
         gPage = nil;
         gSeen = nil;
