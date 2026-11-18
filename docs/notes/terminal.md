@@ -542,8 +542,12 @@ SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
   where the bytes come from and go: `startShell` sends the same argv and
   environment as a `TermSpec`, and waits (`settle`) for the shell's pid;
   `MCHostTermListener` hands output to the backlog, acknowledged as each
-  slice is parsed; `sendBytes` (keys, pastes, typed commands, the screen's
-  replies) is `terminalInput`; `updateWindowSize` is `resizeTerminal`.
+  slice is parsed; `sendBytes` (keys, pastes, typed commands) is
+  `terminalInput`, and the screen's replies go apart as answers
+  (`sendReplies:`, flag 1); `updateWindowSize` is `resizeTerminal`, and
+  the screen takes the pty's size from `TermShell` where it came in the
+  output, the grid clipped or padded to the view (`placeGrid`;
+  docs/notes/session-host.md, "Terminals on the host", **Size**).
   What read the master (`tcgetpgrp`, `tcgetattr` for ICANON, ECHO and
   ISIG) reads the host's `TermShell` through `ptyForeground`, `ptyRaw`,
   `ptyHidesInput` and `ptySignalsOff`. Line mode keeps MCPty.
