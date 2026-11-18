@@ -1257,8 +1257,10 @@ its server comes first here (2.0).
   (a button beside the branch, View > Source Control, the palette) opens one
   tab of every uncommitted change, each block with Stage and Discard
   (Unstage), whole files with Stage File, Unstage File, Discard File, Side by
-  Side and Open, Undo Discard at its top; `git_review` presses them. Left to
-  do: F7, the right click on selected lines, conflicts' Keep buttons, the
+  Side and Open, Undo Discard at its top; `git_review` presses them. A
+  conflict's Keep Current, Keep Incoming and Keep Both, in the editor and
+  on the review page, with Mark Resolved, are done (`HANDOFF.md` item 95,
+  `git_conflicts`). Left to do: F7, the right click on selected lines, the
   commit page. A worktree's page with Apply to Main is done (`HANDOFF.md`
   item 85): the tree's Compare with Main opens the review page in its
   worktree mode.

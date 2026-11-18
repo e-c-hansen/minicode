@@ -6,6 +6,7 @@
 #include "CodeView.h"
 #include "DocumentView.h"
 #include "Editor.h"
+#include "EditorConflicts.h"
 #include "GitRun.h"
 #include "Gutter.h"
 #include "MultiEdit.h"
@@ -136,6 +137,9 @@ GitGutter::GitGutter(Editor* editor) : editor_(editor), view_(editor->textView()
     g_signal_connect(view_, "unrealize", G_CALLBACK(onUnrealize), this);
     if (Gutter* g = gutter())
         g->onChangeBar = [this](int index, const graphene_rect_t& rect) { showChange(index, rect); };
+    // A file with merge conflicts has no bars (its index entry is no single
+    // blob): Next and Previous Change step between its conflicts instead.
+    if (EditorConflicts* c = editor_->conflicts()) c->onBlocksChanged = [this] { updateActions(); };
     attachBuffer();
 }
 
@@ -150,6 +154,7 @@ GitGutter::~GitGutter() {
     detachBuffer();
     g_signal_handlers_disconnect_by_data(view_, this);
     if (Gutter* g = gutter()) g->onChangeBar = nullptr;
+    if (EditorConflicts* c = editor_->conflicts()) c->onBlocksChanged = nullptr;
     if (actions_) {
         for (const char* name : {"nextchange", "previouschange", "revertchange", "stagechange"})
             if (GAction* a = g_action_map_lookup_action(actions_, name))
@@ -408,6 +413,9 @@ int GitGutter::barAtCaret() const {
 }
 
 bool GitGutter::goToNextChange(bool forward) {
+    // In a file with merge conflicts (which has no bars), to the next or
+    // previous conflict, as on the Mac.
+    if (EditorConflicts* c = editor_->conflicts(); c && c->count() > 0) return c->goToNext(forward);
     GtkTextBuffer* b = viewBuffer();
     BufferLines* l = BufferLines::of(b);
     const std::vector<QuickDiff::Bar>& bs = bars();
@@ -544,8 +552,9 @@ void GitGutter::enable(const char* action, bool on) {
 void GitGutter::updateActions() {
     if (!actions_) return;
     const bool any = on_ && !bars().empty() && !pathToLook().empty();
-    enable("nextchange", any);
-    enable("previouschange", any);
+    const bool conflicts = editor_->conflicts() && editor_->conflicts()->count() > 0;
+    enable("nextchange", any || conflicts);
+    enable("previouschange", any || conflicts);
     const bool here = any && barAtCaret() >= 0;
     enable("revertchange", here);
     enable("stagechange", here);

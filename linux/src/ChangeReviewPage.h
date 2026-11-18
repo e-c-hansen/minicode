@@ -31,10 +31,20 @@
 // Show in Source Control beside it; the button then reads "Applied to Main"
 // until the worktree's changes differ from those brought in.
 //
-// Left to the Mac for now: the Keep Current, Keep Incoming and Keep Both
-// choices of a conflict's blocks (a conflicted file shows its blocks and has
-// Open), the right click on a selection's lines, F7 and Shift+F7, a commit's
-// page.
+// A conflicted file in Changes (the Mac's, 2026-11-16) is read from the
+// work tree and laid out by ChangeReview::conflictFile: each block whole,
+// its markers kept, its current side, ancestor and incoming side tinted in
+// editor.merge-current, gray and editor.merge-incoming (the markers more
+// strongly), with Keep Current, Keep Incoming and Keep Both on its first
+// row. A choice writes the file through the atomic writer once its bytes
+// are checked to be as read (no Trash copy; a tab with unsaved text for it
+// refuses), and a tab open on it follows the disk. The header has Side by
+// Side (every current side against every incoming one) and Open, and once
+// no block is left, Mark Resolved, which stages the file without the
+// panel's question about conflict marks.
+//
+// Left to the Mac for now: the right click on a selection's lines (and the
+// Keep choices in it), F7 and Shift+F7, a commit's page.
 #pragma once
 #include <gtk/gtk.h>
 
@@ -73,6 +83,9 @@ public:
     std::function<void(const CompareSpec&)> onShowComparison;
     std::function<bool(const std::string& path)> hasUnsavedText;
     std::function<Rgba(int style)> syntaxColor;
+    // editor.merge-current (false) and editor.merge-incoming (true): a
+    // conflict block's tints.
+    std::function<Rgba(bool incoming)> mergeColor;
     // After Apply to Main: show the main checkout's changes (the path of the
     // main checkout).
     std::function<void(const std::string& mainPath)> onShowSourceControl;
@@ -132,7 +145,8 @@ public:
 
 private:
     struct Data;
-    enum class Act { Stage, Unstage, Discard, Side, Open, DiscardFile, StageFile, UnstageFile };
+    enum class Act { Stage, Unstage, Discard, Side, Open, DiscardFile, StageFile, UnstageFile,
+                     KeepCurrent, KeepIncoming, KeepBoth, MarkResolved };
     struct Button {
         Act act;
         size_t row;
@@ -152,7 +166,10 @@ private:
                     const GitUi::ActionPlan& plan);
     void writeDiscard(std::u16string text, size_t fi, std::shared_ptr<Data> d,
                       const GitUi::ActionPlan& plan);
-    void stageFile(size_t fi);
+    // `done`: what to say once staged ("" for "Staged x.").
+    void stageFile(size_t fi, const std::string& done = std::string());
+    void keepConflict(MergeConflicts::Keep keep, size_t fi, long block);
+    void markResolved(size_t fi);
     void sideBySide(size_t fi);
     void openFile(size_t fi);
     void runApply(std::shared_ptr<Data> d, const std::string& mainName);

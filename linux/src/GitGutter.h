@@ -69,7 +69,9 @@ public:
     void installActions(GActionMap* window);
 
     // Next Change and Previous Change: the caret to the next or previous
-    // bar, wrapping; false (and a bell) with none.
+    // bar, wrapping; false (and a bell) with none. In a file with merge
+    // conflicts, which has no bars, to the next or previous conflict
+    // (EditorConflicts.h).
     bool goToNextChange(bool forward);
     // The bar on the caret's line, or -1.
     int barAtCaret() const;

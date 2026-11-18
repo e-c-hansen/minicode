@@ -21,8 +21,9 @@
 // interrupts (that one starts again). Lines end at "\n", a "\r" before it
 // part of the break, so CRLF files read as LF ones do.
 //
-// The Mac's editor (EditorConflicts.h) tints and offers the three choices
-// over each block, and the review page (ChangeReview::conflictFile) shows a
+// The Mac's editor (EditorConflicts.h) and the GTK port's
+// (linux/src/EditorConflicts.h) tint and offer the three choices over each
+// block, and the review page (ChangeReview::conflictFile) shows a
 // conflicted file's blocks with the same choices. Tested in
 // tests/merge_conflicts_tests.inc (`conflicts:*`).
 #pragma once

@@ -7,8 +7,11 @@
 #include "GitPanel.h"
 #include "GitRun.h"
 #include "GitTrash.h"
+#include "MergeConflicts.h"
+#include "QuickDiff.h"
 #include "SyntaxHighlighter.h"
 
+using ChangeReview::ConflictPart;
 using ChangeReview::FileDiff;
 using ChangeReview::Op;
 using ChangeReview::PageRow;
@@ -74,6 +77,10 @@ const char* ChangeReviewPage::titleOf(Act a) {
     case Act::DiscardFile: return "Discard File";
     case Act::StageFile: return "Stage File";
     case Act::UnstageFile: return "Unstage File";
+    case Act::KeepCurrent: return "Keep Current";
+    case Act::KeepIncoming: return "Keep Incoming";
+    case Act::KeepBoth: return "Keep Both";
+    case Act::MarkResolved: return "Mark Resolved";
     }
     return "";
 }
@@ -202,6 +209,12 @@ void ChangeReviewPage::build() {
     tag("file", "paragraph-background", rgbaCss(0x808080, 0.18));
     tag("gap", "paragraph-background", rgbaCss(0x808080, 0.08));
     tag("conflict", "paragraph-background", rgbaCss(0xE2C08D, 0.12));
+    // A conflict block's parts (ChangeReview::ConflictPart), colored from
+    // editor.merge-current and editor.merge-incoming in applySettings: the
+    // markers' lines at two and a half times the alpha, the ancestor gray.
+    for (const char* name : {"conflict-current-marker", "conflict-current", "conflict-base-marker",
+                             "conflict-base", "conflict-incoming", "conflict-incoming-marker"})
+        tag(name, nullptr, "");
     tag("wordremoved", "background", rgbaCss(0xF14C4C, 0.35));
     tag("wordadded", "background", rgbaCss(0x73C991, 0.35));
     GtkTextTag* bold = tag("bold", nullptr, "");
@@ -217,6 +230,28 @@ void ChangeReviewPage::build() {
 }
 
 void ChangeReviewPage::applySettings() {
+    {
+        const Settings fallback;
+        auto css = [](const Rgba& c, double times) {
+            const double a = times == 1 ? c.a : std::min(1.0, std::max(0.25, c.a * times));
+            char b[64];
+            snprintf(b, sizeof b, "rgba(%d,%d,%d,%.3f)", (int)c.r, (int)c.g, (int)c.b, a);
+            return std::string(b);
+        };
+        const Rgba cur = mergeColor ? mergeColor(false) : fallback.mergeCurrentColor();
+        const Rgba inc = mergeColor ? mergeColor(true) : fallback.mergeIncomingColor();
+        Rgba base = cur;
+        base.r = base.g = base.b = 0x60;
+        base.a = 0x29 / 255.0;
+        const std::pair<const char*, std::string> parts[] = {
+            {"conflict-current-marker", css(cur, 2.5)}, {"conflict-current", css(cur, 1)},
+            {"conflict-base-marker", css(base, 2.5)},   {"conflict-base", css(base, 1)},
+            {"conflict-incoming", css(inc, 1)},         {"conflict-incoming-marker", css(inc, 2.5)}};
+        GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer_);
+        for (const auto& [name, value] : parts)
+            if (GtkTextTag* t = gtk_text_tag_table_lookup(table, name))
+                g_object_set(t, "paragraph-background", value.c_str(), nullptr);
+    }
     for (int i = 0; i < kTokenStyleCount; i++) {
         GtkTextTag* t = gtk_text_tag_table_lookup(gtk_text_buffer_get_tag_table(buffer_),
                                                   ("syn" + std::to_string(i)).c_str());
@@ -399,7 +434,18 @@ void ChangeReviewPage::fill() {
         case RowKind::Added: tag = "added"; break;
         case RowKind::File: tag = "file"; break;
         case RowKind::Gap: tag = "gap"; break;
-        case RowKind::Conflict: tag = "conflict"; break;
+        case RowKind::Conflict:
+            switch (r.part) {
+            case ConflictPart::CurrentMarker: tag = "conflict-current-marker"; break;
+            case ConflictPart::Current: tag = "conflict-current"; break;
+            case ConflictPart::BaseMarker: tag = "conflict-base-marker"; break;
+            case ConflictPart::Base: tag = "conflict-base"; break;
+            case ConflictPart::Incoming: tag = "conflict-incoming"; break;
+            case ConflictPart::IncomingMarker: tag = "conflict-incoming-marker"; break;
+            case ConflictPart::Separator: break;   // untinted, as on the Mac
+            default: tag = "conflict"; break;
+            }
+            break;
         default: break;
         }
         const int end = i + 1 < p.rows.size() ? base[i + 1] : ch[t.size()];
@@ -443,6 +489,22 @@ void ChangeReviewPage::fill() {
             GtkWidget* b = gtk_button_new_with_label(titleOf(a));
             gtk_widget_add_css_class(b, "flat");
             gtk_widget_add_css_class(b, "minicode-review-button");
+            // A conflict's choices say what they keep, as on the Mac.
+            if (a == Act::KeepCurrent || a == Act::KeepIncoming || a == Act::KeepBoth) {
+                const PageRow& r = p.rows[i];
+                const FileDiff& fd = data_->read.diffs[r.file];
+                if (r.block >= 0 && (size_t)r.block < fd.conflicts.size()) {
+                    using MergeConflicts::Keep;
+                    const Keep k = a == Act::KeepCurrent    ? Keep::Current
+                                   : a == Act::KeepIncoming ? Keep::Incoming
+                                                            : Keep::Both;
+                    gtk_widget_set_tooltip_text(
+                        b, MergeConflicts::tooltip(k, fd.conflicts[(size_t)r.block]).c_str());
+                }
+            } else if (a == Act::MarkResolved) {
+                gtk_widget_set_tooltip_text(
+                    b, "Stage the file, which tells git its conflicts are resolved");
+            }
             struct Press {
                 ChangeReviewPage* page;
                 std::shared_ptr<bool> alive;
@@ -520,6 +582,15 @@ std::vector<ChangeReviewPage::Act> ChangeReviewPage::actsFor(size_t row) const {
     const FileDiff& fd = data_->read.diffs[pr.file];
     const ChangeReview::File& f = fd.file;
     if (pr.kind == RowKind::File) {
+        if (f.conflict && f.section == Section::Changes &&
+            (ChangeReview::canMarkResolved(fd) || !fd.conflicts.empty())) {
+            // A conflict read as text: its blocks have the choices, and once
+            // none is left, Mark Resolved stages it.
+            if (!fd.conflicts.empty()) out.push_back(Act::Side);
+            out.push_back(Act::Open);
+            if (ChangeReview::canMarkResolved(fd)) out.push_back(Act::MarkResolved);
+            return out;
+        }
         if (f.conflict) {
             if (f.section == Section::Changes && f.newExists) out.push_back(Act::Open);
             return out;
@@ -535,7 +606,13 @@ std::vector<ChangeReviewPage::Act> ChangeReviewPage::actsFor(size_t row) const {
         } else if (f.section == Section::Staged) {
             out.push_back(Act::UnstageFile);
         }
-    } else if (pr.kind != RowKind::Conflict && pr.blockStart &&
+    } else if (pr.kind == RowKind::Conflict) {
+        if (pr.blockStart && f.section == Section::Changes) {
+            out.push_back(Act::KeepCurrent);
+            out.push_back(Act::KeepIncoming);
+            out.push_back(Act::KeepBoth);
+        }
+    } else if (pr.blockStart &&
                ChangeReview::wholeOnlyReason(f).empty()) {
         if (f.section == Section::Changes) {
             out.push_back(Act::Stage);
@@ -590,6 +667,10 @@ void ChangeReviewPage::act(Act a, size_t row) {
         break;
     case Act::StageFile:
     case Act::UnstageFile: stageFile(fi); break;
+    case Act::KeepCurrent: keepConflict(MergeConflicts::Keep::Current, fi, pr.block); break;
+    case Act::KeepIncoming: keepConflict(MergeConflicts::Keep::Incoming, fi, pr.block); break;
+    case Act::KeepBoth: keepConflict(MergeConflicts::Keep::Both, fi, pr.block); break;
+    case Act::MarkResolved: markResolved(fi); break;
     }
 }
 
@@ -780,18 +861,19 @@ void ChangeReviewPage::writeDiscard(std::u16string text, size_t fi, std::shared_
     });
 }
 
-void ChangeReviewPage::stageFile(size_t fi) {
+void ChangeReviewPage::stageFile(size_t fi, const std::string& done) {
     auto d = data_;
     if (!d || fi >= d->read.diffs.size()) return;
     const ChangeReview::Extra x = d->read.extras[fi];
     const std::vector<std::string> args = GitUi::stageArgs(x.row, d->read.initial);
     const std::string top = d->read.top, name = nameOf(x.row.path);
-    panel_->runOnGitThread([this, args, top, name, staged = x.row.staged, alive = alive_] {
+    panel_->runOnGitThread([this, args, top, name, done, staged = x.row.staged, alive = alive_] {
         GitResult r = runGit(top, args);
         if (!*alive) return;
+        const std::string said =
+            done.empty() ? std::string(staged ? "Unstaged " : "Staged ") + name + "." : done;
         const std::string text =
-            r.ok() ? std::string(staged ? "Unstaged " : "Staged ") + name + "."
-                   : (gitFailure(r).empty() ? std::string("git failed.") : gitFailure(r));
+            r.ok() ? said : (gitFailure(r).empty() ? std::string("git failed.") : gitFailure(r));
         const bool ok = r.ok();
         onMain(alive, this, [text, ok](ChangeReviewPage* p) { p->finish(text, ok); });
     });
@@ -823,13 +905,90 @@ void ChangeReviewPage::sideBySide(size_t fi) {
         c.leftLabel = (staged ? "HEAD: " : "Staged or HEAD: ") + oldPath;
         c.rightLabel = (staged ? "Staged: " : "") + f.path;
     }
-    c.leftText = utf8(f.oldText);
-    c.rightText = utf8(f.newText);
+    const FileDiff& fd = data_->read.diffs[fi];
+    const bool sides = f.conflict && !fd.conflicts.empty();
+    if (sides) {
+        // A conflict's two sides: every block as the current side keeps it
+        // against every block as the incoming side does.
+        const MergeConflicts::Block& b0 = fd.conflicts[0];
+        c.title = nameOf(f.path) + " (current and incoming)";
+        c.leftLabel = "Current" + (b0.currentLabel.empty() ? "" : " (" + b0.currentLabel + ")") +
+                      ": " + f.path;
+        c.rightLabel = "Incoming" +
+                       (b0.incomingLabel.empty() ? "" : " (" + b0.incomingLabel + ")") + ": " +
+                       f.path;
+        c.leftText = utf8(MergeConflicts::resolvedAll(f.newText, fd.conflicts,
+                                                      MergeConflicts::Keep::Current));
+        c.rightText = utf8(MergeConflicts::resolvedAll(f.newText, fd.conflicts,
+                                                       MergeConflicts::Keep::Incoming));
+    } else {
+        c.leftText = utf8(f.oldText);
+        c.rightText = utf8(f.newText);
+    }
     c.fileName = f.path;
-    if (f.section == Section::Changes || (f.section == Section::Plain && f.newExists))
+    // (Neither side of a conflict's comparison is the file on disk.)
+    if ((f.section == Section::Changes && !sides) || (f.section == Section::Plain && f.newExists))
         c.path = data_->read.top + "/" + f.path;
     onShowComparison(c);
 }
+
+// Mark Resolved: a conflicted file with no blocks left staged as it is,
+// which is what tells git its conflict is resolved (the panel's question
+// about conflict marks is not needed: none are left).
+void ChangeReviewPage::markResolved(size_t fi) {
+    if (!data_ || fi >= data_->read.diffs.size() ||
+        !ChangeReview::canMarkResolved(data_->read.diffs[fi])) {
+        gtk_widget_error_bell(root_);
+        return;
+    }
+    stageFile(fi, "Marked " + nameOf(data_->read.diffs[fi].file.path) + " resolved.");
+}
+
+// Keep Current, Keep Incoming or Keep Both on a conflict: the work tree's
+// file with that block replaced, written through the atomic writer once it
+// is checked to be as read (a tab open on it follows the disk as one undo
+// step). A tab with unsaved text for it is left alone.
+void ChangeReviewPage::keepConflict(MergeConflicts::Keep keep, size_t fi, long block) {
+    auto d = data_;
+    if (!d || fi >= d->read.diffs.size()) return;
+    const FileDiff& fd = d->read.diffs[fi];
+    if (block < 0 || (size_t)block >= fd.conflicts.size()) {
+        gtk_widget_error_bell(root_);
+        return;
+    }
+    const ChangeReview::Extra x = d->read.extras[fi];
+    const std::string rel = x.row.path;
+    const std::string path = d->read.top + "/" + rel;
+    const std::string name = nameOf(path);
+    if (hasUnsavedText && hasUnsavedText(path)) {
+        finish(name + " has unsaved changes in a tab: resolve the conflict there, or save the tab "
+                      "first.",
+               false);
+        return;
+    }
+    const std::u16string text = ChangeReview::conflictResult(fd, (size_t)block, keep);
+    const std::string bytes = FolderSearch::encodeFileText(utf8(text), x.workEnc, x.workBom);
+    const size_t left = fd.conflicts.size() - 1;
+    const std::string done = left == 0
+                                 ? "No conflicts left in " + name + ". Mark Resolved stages it."
+                                 : MergeConflicts::resolvedNote(name, left);
+    const std::string read = x.workBytes;
+    panel_->runOnGitThread([this, path, rel, name, bytes, read, done, alive = alive_] {
+        std::string failure, now, error;
+        FolderSearch::FileStamp stamp;
+        if (FolderSearch::readFileStable(path, ChangeReview::kMaxSideBytes, &now, &stamp) !=
+                FolderSearch::ReadStatus::Ok ||
+            now != read)
+            failure = ChangeReview::staleText(rel, false);
+        else if (!FolderSearch::writeFileAtomically(path, bytes, &error))
+            failure = name + " could not be written (" + error + ").";
+        if (!*alive) return;
+        onMain(alive, this, [failure, done](ChangeReviewPage* p) {
+            p->finish(failure.empty() ? done : failure, failure.empty());
+        });
+    });
+}
+
 
 void ChangeReviewPage::undoDiscard() {
     panel_->undoDiscard();
