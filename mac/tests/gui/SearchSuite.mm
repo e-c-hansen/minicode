@@ -6,9 +6,12 @@
 // line under the results naming files left out takes its room under
 // them; the results stop at 20,000 lines and the status says so; a
 // pattern left to std::regex that runs past its time stops the search
-// with a reason.
+// with a reason. Each hit shows its line number and the lines just above
+// and below (one a neighbouring hit shows already, once), and opens at its
+// own line.
 #import "Harness.h"
 #import "EditorController.h"
+#import "EditorController+Private.h"
 #import "Search.h"
 #include "TextFind.h"
 
@@ -206,6 +209,95 @@ MC_GUI_SUITE(search) {
         GCHECK([latin isEqualToData:[NSData dataWithBytes:"caf\xE9 needle\n" length:12]]);
         p.replaceField.stringValue = @"";
         p.includeField.stringValue = scopeInclude ?: @"";
+    });
+
+    // ---- each hit in its excerpt (C3, 2026-11-18: a bare line each): its
+    // line number, the lines just above and below with theirs, muted, the
+    // match highlighted, and a line two hits share shown once
+    MCGuiStep(@"a file whose hits have lines around them", ^{
+        MCGuiWriteFile([dir stringByAppendingPathComponent:@"excerpt.txt"],
+                       @"alpha\nbravo\ncharlie needle\ndelta\necho\nfoxtrot needle\nneedle golf\nhotel\n");
+        SearchPanel *p = Panel(c);
+        p.includeField.stringValue = [scopeInclude.length ? [scopeInclude stringByAppendingString:@"/"] : @""
+                                         stringByAppendingString:@"excerpt.txt"];
+        [p runSearch:nil];
+    });
+    MCGuiWait(@"its three hits", 10, ^BOOL {
+        return !Panel(c).busy && Hits(c).count == 3 &&
+               [[Hits(c).firstObject valueForKey:@"path"] hasSuffix:@"/excerpt.txt"];
+    });
+    MCGuiStep(@"each hit's number and the lines around it; the match highlighted", ^{
+        SearchPanel *p = Panel(c);
+        NSArray *hits = Hits(c);
+        NSArray *wantBefore = @[@[@"bravo"], @[@"echo"], @[]];
+        NSArray *wantAfter = @[@[@"delta"], @[], @[@"hotel"]];
+        for (NSUInteger i = 0; i < 3; i++) {
+            MCGuiNote(@"hit %lu, line %@: before %@, after %@", (unsigned long)i,
+                      [hits[i] valueForKey:@"line"], [hits[i] valueForKey:@"before"],
+                      [hits[i] valueForKey:@"after"]);
+            GCHECK([[hits[i] valueForKey:@"before"] isEqualToArray:wantBefore[i]]);
+            GCHECK([[hits[i] valueForKey:@"after"] isEqualToArray:wantAfter[i]]);
+        }
+        // The tree: the file's row, then a row per hit as tall as its lines.
+        NSTableView *t = p.table;
+        GCHECK(t.numberOfRows == 4);
+        if (t.numberOfRows != 4) return;
+        GCHECK(NSHeight([t rectOfRow:0]) == 22);
+        GCHECK(NSHeight([t rectOfRow:1]) == 58);   // above, the line, below
+        GCHECK(NSHeight([t rectOfRow:2]) == 40);
+        GCHECK(NSHeight([t rectOfRow:3]) == 40);
+        NSView *cell = [t viewAtColumn:0 row:1 makeIfNecessary:YES];
+        [cell layoutSubtreeIfNeeded];
+        NSTextField *number = [cell valueForKey:@"number"];
+        NSTextField *name = [cell valueForKey:@"name"];
+        NSArray<NSTextField *> *numbers = [cell valueForKey:@"contextNumbers"];
+        NSArray<NSTextField *> *texts = [cell valueForKey:@"contextTexts"];
+        GCHECK_EQ_STR(number.stringValue, @"3");
+        GCHECK_EQ_STR(name.stringValue, @"charlie needle");
+        GCHECK(numbers.count == 2 && texts.count == 2);
+        if (numbers.count != 2 || texts.count != 2) return;
+        GCHECK(!texts[0].hidden && !texts[1].hidden);
+        GCHECK_EQ_STR(numbers[0].stringValue, @"2");
+        GCHECK_EQ_STR(texts[0].stringValue, @"bravo");
+        GCHECK_EQ_STR(numbers[1].stringValue, @"4");
+        GCHECK_EQ_STR(texts[1].stringValue, @"delta");
+        // Top down: the line above, the line, the line below; the numbers
+        // in a gutter left of the text.
+        GCHECK(NSMinY(texts[0].frame) < NSMinY(name.frame) && NSMinY(name.frame) < NSMinY(texts[1].frame));
+        GCHECK(NSMaxX(number.frame) < NSMinX(name.frame) && NSMinX(texts[0].frame) == NSMinX(name.frame));
+        // The match highlighted in the line itself.
+        NSAttributedString *a = name.attributedStringValue;
+        const NSRange at = [a.string rangeOfString:@"needle"];
+        GCHECK(at.location != NSNotFound &&
+               [a attribute:NSBackgroundColorAttributeName atIndex:at.location effectiveRange:NULL] != nil);
+        GCHECK([a attribute:NSBackgroundColorAttributeName atIndex:0 effectiveRange:NULL] == nil);
+        // The last hit: nothing above (the hit before shows its line), the
+        // line below shown.
+        NSView *last = [t viewAtColumn:0 row:3 makeIfNecessary:YES];
+        [last layoutSubtreeIfNeeded];
+        NSArray<NSTextField *> *lastTexts = [last valueForKey:@"contextTexts"];
+        GCHECK_EQ_STR([[last valueForKey:@"number"] stringValue], @"7");
+        GCHECK(lastTexts.count == 2 && lastTexts[0].hidden && !lastTexts[1].hidden);
+        if (lastTexts.count == 2) GCHECK_EQ_STR(lastTexts[1].stringValue, @"hotel");
+        MCGuiSnapshot(p.window.contentView, @"search-excerpts");
+        // Opened, a hit goes to its own line, not a line around it.
+        [t selectRowIndexes:[NSIndexSet indexSetWithIndex:3] byExtendingSelection:NO];
+        [NSApp sendAction:t.doubleAction to:t.target from:t];
+    });
+    MCGuiWait(@"the file open at the last hit's line", 10, ^BOOL {
+        return [c.currentPath hasSuffix:@"/excerpt.txt"];
+    });
+    MCGuiStep(@"the caret on line 7", ^{
+        NSString *text = c.textView.string;
+        const NSUInteger at = MIN(c.textView.selectedRange.location, text.length);
+        NSUInteger line = 1;
+        for (NSUInteger i = 0; i < at; i++)
+            if ([text characterAtIndex:i] == '\n') line++;
+        MCGuiNote(@"caret at %lu, line %lu", (unsigned long)at, (unsigned long)line);
+        GCHECK(line == 7);
+        [NSFileManager.defaultManager removeItemAtPath:[dir stringByAppendingPathComponent:@"excerpt.txt"]
+                                                 error:nil];
+        Panel(c).includeField.stringValue = scopeInclude ?: @"";
     });
 
     // ---- 20,000 lines at most

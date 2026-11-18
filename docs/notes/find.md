@@ -69,7 +69,20 @@ found through that list.
   and replace with their toggles inside, Replace All beside, files to
   include/exclude (`FolderSearch::PathFilter`, VS Code's queryBuilder rules)
   behind "...", and an NSOutlineView of files (count badges) over lines (the
-  match highlighted, or struck through beside its replacement). `hits`
+  match highlighted, or struck through beside its replacement). **Each
+  line's row is its excerpt** (2026-11-18, C3: a bare line each): its
+  number in a gutter (as wide as the file's largest number, so they line
+  up) and `kContextLines` (1) above and below, muted, with theirs, from
+  `FolderSearchOptions::contextLines` (`FolderSearchMatch::before` and
+  `after`, display text as the line's; the core keeps them for the rows
+  found only, crosses a large file's pieces both ways, `search:context`
+  comparing them with a whole read, and `dropRepeatedContext` leaves out a
+  line a neighbouring row of the file shows, so consecutive hits read as
+  one excerpt); the row is `4 + 18 × lines` high
+  (`heightOfRowByItem:`), `MCSearchCell` flipped with the actions beside
+  the line itself, and a click or Return opens the hit's line. The TODO
+  list asks for none (numbers only). GTK and Android ask for none yet.
+  `hits`
   stays the flat list of lines that tests and `replaceMatchAtRow:` index.
   Find in Folder on a subfolder puts `./sub` in files to include.
 - Find in Folder uses `FolderSearch::search` (two characters, one for an

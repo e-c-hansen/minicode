@@ -391,6 +391,120 @@ static void testFolderSearchParallel() {
         fsys::remove_all(dir, ec);
     }
 
+    GROUP("search:context");
+    {
+        // With contextLines, each row carries the lines just above and
+        // below (display text, as its own), as Zed and VS Code show a hit
+        // in its excerpt; a line a neighbouring row shows already is left
+        // out, so consecutive hits read as one excerpt.
+        const fsys::path dir = root / "context";
+        auto ctx = [](const FolderSearchResult& r) {
+            std::string s;
+            for (const FolderSearchMatch& m : r.matches) {
+                s += m.relativePath + ":" + std::to_string(m.line) + " [";
+                for (const std::string& b : m.before) s += b + "|";
+                s += "] " + m.text + " [";
+                for (const std::string& a : m.after) s += a + "|";
+                s += "]\n";
+            }
+            return s;
+        };
+        writeFile(dir / "a.txt", "one\ntwo\nthree needle\nfour\nfive\n");
+        FolderSearchOptions o;
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) == "a.txt:3 [] three needle []\n");
+        o.contextLines = 1;
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) == "a.txt:3 [two|] three needle [four|]\n");
+        o.contextLines = 2;
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) ==
+              "a.txt:3 [one|two|] three needle [four|five|]\n");
+        o.contextLines = 3;   // no phantom line after the last line break
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) ==
+              "a.txt:3 [one|two|] three needle [four|five|]\n");
+        o.contextLines = 1;
+        // The first and last lines; every kind of line break; display text
+        // (trimmed, escapes and controls gone).
+        fsys::remove_all(dir, ec);
+        writeFile(dir / "b.txt", "needle first\nsecond\nlast needle");
+        writeFile(dir / "c.txt", "a\r\nb needle\rc\xE2\x80\xA9" "d needle\n");
+        writeFile(dir / "d.txt", "   indented \x1b[31mred\x1b[0m  \n\tneedle\n\n");
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) ==
+              "b.txt:1 [] needle first [second|]\n"
+              "b.txt:3 [] last needle []\n"
+              "c.txt:2 [a|] b needle [c|]\n"
+              "c.txt:4 [] d needle []\n"
+              "d.txt:2 [indented red|] needle [|]\n");
+        // Neighbours: next to each other, one line apart, two apart.
+        fsys::remove_all(dir, ec);
+        writeFile(dir / "e.txt", "x\nneedle a\nneedle b\ny\nneedle c\nz\nw\nneedle d\nv\n");
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)) ==
+              "e.txt:2 [x|] needle a []\n"
+              "e.txt:3 [] needle b [y|]\n"
+              "e.txt:5 [] needle c [z|]\n"
+              "e.txt:8 [w|] needle d [v|]\n");
+        // A Latin-1 file's lines around are decoded too; the TODO list has
+        // none.
+        writeFile(dir / "f.txt", "caf\xE9\nneedle\nna\xEFve\n");
+        CHECK(ctx(search(dir.string(), "needle", nullptr, o)).find(
+                  "f.txt:2 [caf\xC3\xA9|] needle [na\xC3\xAFve|]") != std::string::npos);
+        writeFile(dir / "g.txt", "above\n// TODO: x\nbelow\n");
+        const FolderSearchResult todos = findTodos(dir.string(), nullptr, o);
+        CHECK(!todos.matches.empty());
+        for (const FolderSearchMatch& m : todos.matches) CHECK(m.before.empty() && m.after.empty());
+        fsys::remove_all(dir, ec);
+
+        // dropRepeatedContext on rows as a front end might join them.
+        std::vector<FolderSearchMatch> rows(4);
+        rows[0].path = rows[1].path = rows[2].path = "p";
+        rows[3].path = "q";
+        rows[0].line = 10; rows[0].before = {"8", "9"}; rows[0].after = {"11", "12"};
+        rows[1].line = 12; rows[1].before = {"10", "11"}; rows[1].after = {"13", "14"};
+        rows[2].line = 17; rows[2].before = {"15", "16"}; rows[2].after = {"18"};
+        rows[3].line = 18; rows[3].before = {"16", "17"};
+        dropRepeatedContext(rows);
+        CHECK(rows[0].before.size() == 2 && rows[0].after == std::vector<std::string>{"11"});
+        CHECK(rows[1].before.empty() && rows[1].after.size() == 2);
+        const std::vector<std::string> fifteen = {"15", "16"};
+        CHECK(rows[2].before == fifteen && rows[2].after.size() == 1);
+        CHECK(rows[3].before.size() == 2);   // another file
+
+        // Read in pieces (a large file), the same context as read whole,
+        // for every piece size, limit and number of lines: across a
+        // piece's end both ways, and finishing a row's lines after when
+        // the limit came in its piece.
+        std::mt19937 crng(20261118);
+        std::string big;
+        for (int i = 0; i < 400; ++i) {
+            const int kind = static_cast<int>(crng() % 9);
+            big += kind == 0 ? "needle " + std::to_string(i) : kind == 1 ? "" :
+                   std::string(1 + crng() % 40, static_cast<char>('a' + crng() % 26));
+            big += (crng() % 7 == 0) ? "\r\n" : "\n";
+        }
+        writeFile(dir / "big.txt", big);
+        writeFile(dir / "big2.txt", big + "tail needle");   // no last line break
+        int compared = 0, differ = 0;
+        for (std::size_t lines : {std::size_t(1), std::size_t(2), std::size_t(3)})
+            for (std::size_t limit : {std::size_t(1), std::size_t(7), std::size_t(2000)}) {
+                FolderSearchOptions whole;
+                whole.contextLines = lines;
+                whole.maxMatches = limit;
+                const std::string want = ctx(search(dir.string(), "needle", nullptr, whole));
+                for (std::size_t piece : {std::size_t(16), std::size_t(64), std::size_t(1000)}) {
+                    FolderSearchOptions pieces = whole;
+                    pieces.maxFileSize = 0;
+                    pieces.streamPiece = piece;
+                    const std::string got = ctx(search(dir.string(), "needle", nullptr, pieces));
+                    ++compared;
+                    if (got != want && ++differ < 3)
+                        std::printf("  context in pieces of %zu, %zu lines, limit %zu:\n%s\n--\n%s\n",
+                                    piece, lines, limit, got.c_str(), want.c_str());
+                }
+            }
+        CHECK(differ == 0);
+        std::printf("  search: %d streamed searches gave the lines around as whole-file ones\n",
+                    compared);
+        fsys::remove_all(dir, ec);
+    }
+
     GROUP("search:utf16");
     {
         // UTF-16 with a byte order mark is decoded and searched, as ripgrep

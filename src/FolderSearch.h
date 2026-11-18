@@ -97,6 +97,13 @@ struct FolderSearchMatch {
                                  // line; GtkTextBuffer's "line index"
     std::size_t byteLength = 0;  // bytes the match covers in the raw line
     std::string text;          // the line for display: cleaned, trimmed, capped
+    // With FolderSearchOptions::contextLines, the lines just above and
+    // below, for display as `text` is (in file order: before.back() is
+    // line - 1, after.front() line + 1). Fewer at the file's start or end,
+    // and none that a neighbouring row of the same file shows already:
+    // its own line, or a line of its context (search() leaves them out,
+    // so consecutive hits read as one excerpt, as Zed and VS Code show).
+    std::vector<std::string> before, after;
     // Matches on the line, counted as Replace in Folder counts them (a row
     // is a line, so "a = a" is one row and two matches). 1 for a TODO.
     std::size_t count = 1;
@@ -112,6 +119,10 @@ struct FolderSearchOptions {
     std::size_t   streamPiece = 4 * 1024 * 1024;
     std::size_t   maxStreamedLine = 64 * 1024 * 1024;
     std::size_t   maxLineChars = 200;           // display text cap, in characters
+    // Lines of context kept above and below each row (FolderSearchMatch::
+    // before and after): 0 for none (the GTK port and Android), 1 on the
+    // Mac. Only the rows found pay for them.
+    std::size_t   contextLines = 0;
     bool          caseSensitive = false;        // the Mac panel is insensitive
     // VS Code's other two options (TextFind.h has the rules). With either
     // set the line is matched by TextFind; a regex is not trimmed and needs
@@ -345,6 +356,13 @@ bool replaceMatchInText(const std::string& content, const std::string& query,
                         const std::string& replacement, const FolderSearchOptions& options,
                         int line, std::size_t byteColumn, std::string* out,
                         const std::string* expectedText = nullptr);
+
+// Context shown once: for each two rows of one file one after the other,
+// the first's lines after are cut where the second's line or its lines
+// before begin, and the second's lines before where the first's line or
+// lines after end. search() does it to its result; for a front end that
+// joins results itself.
+void dropRepeatedContext(std::vector<FolderSearchMatch>& rows);
 
 // Line `line` (1-based) of `content`, its line break left off, with lines
 // ending as search() ends them. False past the last line.
