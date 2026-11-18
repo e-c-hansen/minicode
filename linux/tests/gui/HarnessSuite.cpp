@@ -129,8 +129,17 @@ MC_GUI_SUITE(harness) {
     // that answers JavaScript has a live process, and the process tree says
     // whether it is in the sandbox. The web view is made when the pane is
     // first shown (R3), so the pane is shown first, and hidden again after.
-    MCGuiStep("the browser pane shown", [] {
+    // An earlier suite may have left the pane shown, and its web view made.
+    static bool hadWebView = false;
+    MCGuiStep("the browser pane hidden, if an earlier suite left it shown", [] {
         MCGuiSetKeyWindow(nullptr);
+        GCHECK(MCGuiApp().browser != nullptr);
+        hadWebView = browserWebView() != nullptr;
+        if (MCGuiApp().layout->browserShown())
+            g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
+    });
+    MCGuiWait("the pane hidden", 10, [] { return !MCGuiApp().layout->browserShown(); });
+    MCGuiStep("the browser pane shown", [] {
         GCHECK(MCGuiApp().browser && !MCGuiApp().layout->browserShown());
         MCGuiKey("ctrl+shift+b");
     });
@@ -146,7 +155,17 @@ MC_GUI_SUITE(harness) {
         // opening in a check reaches the network.
         const char* uri = webkit_web_view_get_uri(web);
         const std::string page = uri ? uri : "";
-        GCHECK_EQ_STR(page, "about:blank");
+        if (!hadWebView) {
+            GCHECK_EQ_STR(page, "about:blank");
+        } else {
+            // An earlier suite's page, which must not be on the web either.
+            const bool local = page.rfind("about:", 0) == 0 || page.rfind("file://", 0) == 0 ||
+                               page.rfind("http://127.0.0.1", 0) == 0 ||
+                               page.rfind("http://localhost", 0) == 0 ||
+                               page.rfind("http://[::1]", 0) == 0;
+            if (!local) MCGuiNote("the page an earlier suite left: %s", page.c_str());
+            GCHECK(local);
+        }
         webkit_web_view_evaluate_javascript(
             web, "6 * 7", -1, nullptr, nullptr, nullptr,
             [](GObject* src, GAsyncResult* res, gpointer data) {
