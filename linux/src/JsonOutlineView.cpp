@@ -10,11 +10,9 @@ namespace {
 constexpr guint kDebounceMs = 300;
 constexpr size_t kMaxNodes = 200000;
 
-std::string oneLine(std::string s) {
-    for (char& c : s)
-        if (c == '\n' || c == '\r' || c == '\t') c = ' ';
-    return s;
-}
+// A row is one line: line breaks and tabs as escapes, a long value cut
+// (JsonOutline::oneLine, as on the Mac, which draws the escapes dimmed).
+std::string oneLine(const std::string& s) { return JsonOutline::oneLine(s).text; }
 
 long nodeOf(gpointer item) {
     return item ? (long)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(item), "node")) - 1 : -1;

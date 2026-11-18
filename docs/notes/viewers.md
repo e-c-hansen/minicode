@@ -86,6 +86,20 @@ found through that list.
   typing, the last good outline kept under an error line, dimmed and
   selecting nothing (`stale`: its offsets are off). `.jsonc`, tsconfig*.json,
   `.vscode/*.json` and the like allow comments (`JsonOutline::allowsComments`).
+  Every row is one line of constant height (2026-11-18): the label and the
+  summary go through `JsonOutline::oneLine` (line breaks, tabs and other
+  control characters as `\n`, `\t`, `\u2028` escapes the Mac draws dimmed,
+  cut at `kLineChars` characters with an ellipsis before any layout), the
+  attributed string carries a truncating-tail paragraph style, and the field
+  is `usesSingleLineMode`. The row's tooltip (`JsonOutline::tooltip`) gives
+  a string's value decoded from the text (`decodeString`, to
+  `kTooltipChars`, longer than the preview and with its line breaks) and a
+  key the row had to escape or cut. GTK's rows use the same `oneLine` text
+  (escapes not dimmed there). Trap: an attributed string's own default
+  paragraph style word-wraps and overrides the field's `lineBreakMode`, so
+  a long value (or one with line breaks) wrapped inside its fixed-height row
+  and drew over the rows below; `previews` checks every row's field sits in
+  its row and needs one line (`cellSizeForBounds:`).
 - **Notebooks** (`Notebook`): nbformat 4 (and 3's cells) to Markdown, rendered
   read-only (`showsRenderedMarkdown`); text outputs as blocks fenced
   ```output (`Notebook::kOutputLanguage`), which the Mac draws unboxed with
@@ -131,4 +145,5 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).
 - Viewers in the editor's slot (Mac): Trap: laying both panes out to size them took 1.5 s on the main thread for 50,000 lines a side; every row has one fixed height (a paragraph style), so sizes and row rects are arithmetic and layout is non-contiguous.
