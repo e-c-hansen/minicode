@@ -59,6 +59,7 @@
 #include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "FileDetails.h"   // TreeFocus (Focus on Folder)
 #include "Folds.h"
 #include "ThemeCss.h"
 #include "Palette.h"
@@ -203,6 +204,7 @@ struct Shared {
     AppSettings*    settings = nullptr;   // one file, watched once
     GtkCssProvider* css = nullptr;        // one stylesheet for the display
     GMenuModel*     treeMenu = nullptr;   // the file tree's right-click menu
+    GMenuModel*     focusBarMenu = nullptr;   // the tree's breadcrumb row's (Focus on Folder)
     GMenu*          recentMenu = nullptr;     // File > Open Recent's folders, refilled from RecentList
     int             recentListener = 0;
     GMenu*          bookmarksMenu = nullptr;   // the menu bar's Bookmarks, refilled from the folder
@@ -1913,7 +1915,7 @@ static void revealInTree(App* app, const std::string& path) {
     if (app->procsShown) act_toggle_processes(nullptr, nullptr, app);
     if (app->agentsShown) act_toggle_agents(nullptr, nullptr, app);
     if (!app->layout->sidebarShown()) act_toggle_sidebar(nullptr, nullptr, app);
-    app->tree->revealPath(path);
+    app->tree->revealPath(path, true);   // a reveal widens a focus
     app->tree->focus();
 }
 
@@ -2114,7 +2116,7 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
         if (app->gitShown) act_toggle_git(nullptr, nullptr, app);   // the tree back
         if (app->procsShown) act_toggle_processes(nullptr, nullptr, app);
         if (app->agentsShown) act_toggle_agents(nullptr, nullptr, app);
-        app->tree->revealPath(path);
+        app->tree->revealPath(path, true);
         return;
     }
     if (insideRoot) app->tree->revealPath(path);
@@ -2155,12 +2157,13 @@ static void openEditorLink(App* app, const Editor::Link& link) {
 // revealPath selects what an action made.
 
 // Where New File and New Folder put things: the selected folder, the selected
-// file's folder, or the root when nothing is selected (-targetDirectory).
+// file's folder, or the tree's top when nothing is selected (the root, or the
+// focused folder; -targetDirectory).
 static std::string targetDirectory(App* app) {
     const std::string folder = app->tree->selectedDir();
     if (!folder.empty()) return folder;
     const std::string sel = app->tree->selectedPath();   // a file, or nothing
-    if (sel.empty()) return app->rootDir;
+    if (sel.empty()) return app->tree->top();
     char* dir = g_path_get_dirname(sel.c_str());
     std::string out = dir;
     g_free(dir);
@@ -2208,7 +2211,7 @@ static void act_new_file(GSimpleAction*, GVariant*, gpointer userp) {
         }
         g_output_stream_close(G_OUTPUT_STREAM(out), nullptr, nullptr);
         g_object_unref(out);
-        app->tree->revealPath(path);
+        app->tree->revealPath(path, true);
         openFileCb(path, app);
     });
 }
@@ -2228,7 +2231,7 @@ static void act_new_folder(GSimpleAction*, GVariant*, gpointer userp) {
             g_clear_error(&err);
             return;
         }
-        app->tree->revealPath(path);
+        app->tree->revealPath(path, true);
     });
 }
 
@@ -2271,7 +2274,7 @@ static void act_rename(GSimpleAction*, GVariant*, gpointer userp) {
             return;
         }
         followMove(src, dst);
-        app->tree->revealPath(dst);
+        app->tree->revealPath(dst, true);
     });
 }
 
@@ -2358,7 +2361,7 @@ static void dropOnTree(App* app, const std::vector<std::string>& paths,
                 return;
             }
             followMove(src, dst);
-            app->tree->revealPath(dst);
+            app->tree->revealPath(dst, true);
         }
         return;
     }
@@ -2370,7 +2373,7 @@ static void dropOnTree(App* app, const std::vector<std::string>& paths,
         auto* j = static_cast<CopyJob*>(g_task_get_task_data(G_TASK(res)));
         App* a = j->app;
         if (!a->dead) {
-            if (!j->copied.empty()) a->tree->revealPath(j->copied.back());
+            if (!j->copied.empty()) a->tree->revealPath(j->copied.back(), true);
             if (!j->taken.empty()) showTaken(a, j->taken, j->dir, "Nothing was copied over it.");
             if (!j->failed.empty()) showError(a, "Could not copy “" + j->failed + "”", j->why);
         }
@@ -2464,16 +2467,81 @@ static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {
 static void act_reveal(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     std::string path = app->tree->selectedPath();
-    if (path.empty()) path = app->rootDir;
+    if (path.empty()) path = app->tree->top();
     openContainingFolder(app, path);
 }
 
-// The selected item's absolute path, else the open folder's, as plain text.
+// The selected item's absolute path, else the tree's top's (the open folder,
+// or the focused one), as plain text.
 static void act_copy_path(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     std::string path = app->tree->selectedPath();
-    if (path.empty()) path = app->rootDir;
+    if (path.empty()) path = app->tree->top();
     gdk_clipboard_set_text(gtk_widget_get_clipboard(app->window), path.c_str());
+}
+
+// ------------------------------------------------------ Focus on Folder
+//
+// The tree rooted at one folder (FileTree.h, the Mac's
+// EditorController+TreeFocus.mm). The window's folder never changes.
+
+// The folder Focus on Folder roots the tree at, as a path from the window's
+// folder: the selected folder, a selected file's folder, else the open
+// file's folder. False for none (a worktree's row, a file outside).
+static bool folderToFocus(App* app, std::string* rel) {
+    const std::string sel = app->tree->selectedPath();
+    if (!sel.empty()) {
+        if (app->tree->isWorktreeRow(sel)) return false;
+        std::string folder = app->tree->selectedDir();
+        if (folder.empty()) {
+            char* dir = g_path_get_dirname(sel.c_str());
+            folder = dir;
+            g_free(dir);
+        }
+        return app->tree->relative(folder, rel);
+    }
+    std::string fromRoot;
+    if (!app->tree->relative(app->editor->currentPath(), &fromRoot)) return false;
+    *rel = TreeFocus::parent(fromRoot);
+    return true;
+}
+
+// The two that depend on the tree: Focus on Folder on a folder's row in its
+// right click menu (a file's has none), Show Whole Folder in Tree while the
+// tree is focused (the menu bar's too). Hidden in the menu while disabled.
+static void updateTreeFocusActions(App* app) {
+    if (app->dead || !app->tree) return;
+    auto enable = [app](const char* name, bool on) {
+        if (GAction* a = g_action_map_lookup_action(G_ACTION_MAP(app->window), name))
+            g_simple_action_set_enabled(G_SIMPLE_ACTION(a), on);
+    };
+    const std::string dir = app->tree->selectedDir();
+    std::string rel;
+    enable("focusfolderrow", !dir.empty() && !app->tree->isWorktreeRow(dir) &&
+                                 app->tree->relative(dir, &rel) && app->tree->inTree(rel));
+    enable("showwholefolder", !app->tree->focusPath().empty());
+}
+
+static void act_focus_folder(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    std::string rel;
+    if (!folderToFocus(app, &rel)) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    if (!app->tree->setFocus(rel)) {
+        gtk_widget_error_bell(app->window);
+        flashStatus(app, "That folder is not in the tree");
+    }
+}
+
+static void act_show_whole_folder(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->tree->focusPath().empty()) {
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    app->tree->setFocus("");
 }
 
 // Focus File Tree: the tree, or the Source Control panel's list while it is
@@ -2634,7 +2702,7 @@ static void act_toggle_git(GSimpleAction*, GVariant*, gpointer userp) {
         app->git->setActive(true);
         app->git->focus();
     } else {
-        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->widget());
+        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->container());
         app->git->setActive(false);
         app->tree->focus();
     }
@@ -2679,7 +2747,7 @@ static void act_toggle_processes(GSimpleAction*, GVariant*, gpointer userp) {
         app->procs->setActive(true);
         app->procs->focus();
     } else {
-        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->widget());
+        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->container());
         app->procs->setActive(false);
         app->tree->focus();
     }
@@ -2861,7 +2929,7 @@ static void act_toggle_agents(GSimpleAction*, GVariant*, gpointer userp) {
         app->agents->setActive(true);
         app->agents->focus();
     } else {
-        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->widget());
+        gtk_stack_set_visible_child(GTK_STACK(app->sidebar), app->tree->container());
         app->agents->setActive(false);
         app->tree->focus();
     }
@@ -3825,6 +3893,29 @@ static void initShared() {
     // with Adjust Settings… for the tree's keys.
     g.treeMenu = Keys::menuOf({"explorer.newFile", "explorer.newFolder", "", "renameFile",
                                "moveFileToTrash", "", "revealFileInOS", "copyFilePath"});
+    {   // Focus on Folder on a folder's row, Show Whole Folder in Tree while
+        // the tree is focused, each hidden otherwise (updateTreeFocusActions),
+        // as the Mac's menu hides them; the breadcrumb's own menu has the
+        // second.
+        auto title = [](const char* id) {
+            const Commands::Command* c = Commands::find(id);
+            return c ? Commands::titleOf(*c, Commands::Platform::Linux) : id;
+        };
+        auto item = [](GMenu* menu, const char* label, const char* action) {
+            GMenuItem* mi = g_menu_item_new(label, action);
+            g_menu_item_set_attribute(mi, "hidden-when", "s", "action-disabled");
+            g_menu_append_item(menu, mi);
+            g_object_unref(mi);
+        };
+        GMenu* focus = g_menu_new();
+        item(focus, title("minicode.tree.focusFolder"), "win.focusfolderrow");
+        item(focus, title("minicode.tree.showWholeFolder"), "win.showwholefolder");
+        g_menu_append_section(G_MENU(g.treeMenu), nullptr, G_MENU_MODEL(focus));
+        g_object_unref(focus);
+        GMenu* bar = g_menu_new();
+        g_menu_append(bar, title("minicode.tree.showWholeFolder"), "win.showwholefolder");
+        g.focusBarMenu = G_MENU_MODEL(bar);
+    }
     {   // the bookmark items, enabled by the row (updateBookmarkActions)
         GMenu* marks = g_menu_new();
         g_menu_append(marks, "Open as Text", "win.openbookmarkastext");
@@ -4149,7 +4240,15 @@ static App* newWindow(const std::string& root, const std::string& file,
                 w->terminalTab = 0;
             }
         },
-        [] { saveOpenWindows(); }});
+        [] { saveOpenWindows(); },
+        // The tree's focused folder (Focus on Folder). Asked as the window
+        // closes too, while the tree still exists.
+        [app] { return app->tree ? app->tree->focusPath() : std::string(); },
+        [app](const std::string& saved) {
+            if (app->dead || !app->tree) return;
+            app->tree->restoreFocus(saved);
+            updateTreeFocusActions(app);
+        }});
     app->editor->onDocumentsChanged = [app](Document* d) {
         if (!app->dead && app->persist) app->persist->changed(d);
     };
@@ -4219,7 +4318,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     // the terminal below both, as on the Mac (WindowLayout.h). The terminal
     // and the browser start hidden.
     app->sidebar = gtk_stack_new();
-    gtk_stack_add_named(GTK_STACK(app->sidebar), app->tree->widget(), "tree");
+    gtk_stack_add_named(GTK_STACK(app->sidebar), app->tree->container(), "tree");
     app->layout = new WindowLayout(app->sidebar, editorPane, app->editor->strip()->widget(),
                                    browserPane, terminalPane);
     app->layout->focusEditor = [app] {
@@ -4435,8 +4534,26 @@ static App* newWindow(const std::string& root, const std::string& file,
     addAction(app, "reveal",         G_CALLBACK(act_reveal));
     addAction(app, "openbookmarkastext", G_CALLBACK(act_open_bookmark_as_text));
     addAction(app, "openbookmarkstabs",  G_CALLBACK(act_open_bookmarks_in_tabs));
-    app->tree->onContextMenu = [app] { updateBookmarkActions(app); };
     addAction(app, "copypath",       G_CALLBACK(act_copy_path));
+    // Focus on Folder: the menu bar's and the palette's, the folder row's in
+    // the tree's right click menu, and back to the whole folder.
+    addAction(app, "focusfolder",    G_CALLBACK(act_focus_folder));
+    addAction(app, "focusfolderrow", G_CALLBACK(act_focus_folder));
+    addAction(app, "showwholefolder", G_CALLBACK(act_show_whole_folder));
+    app->tree->onContextMenu = [app] {
+        updateBookmarkActions(app);
+        updateTreeFocusActions(app);
+    };
+    app->tree->onFocusChanged = [app] {
+        if (app->dead) return;
+        updateTreeFocusActions(app);
+        if (app->persist) app->persist->saveSession();   // kept in the folder's session at once
+    };
+    app->tree->onNote = [app](const std::string& note) {
+        if (!app->dead) flashStatus(app, note);
+    };
+    app->tree->setFocusBarMenu(g.focusBarMenu);
+    updateTreeFocusActions(app);
     addAction(app, "find",           G_CALLBACK(act_find));
     addAction(app, "replace",        G_CALLBACK(act_replace));
     addAction(app, "findnext",       G_CALLBACK(act_find_next));

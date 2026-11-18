@@ -1557,6 +1557,16 @@ These may run in parallel.
   Save Page as Bookmark on Ctrl+D (D14) and Save All Tabs (65), and the
   toolbar's star, the book, the Bookmarks menu and the palette's rows (66).
   Checked by the `bookmarks`, `bookmark_save` and `bookmark_menu` suites.
+- [x] **4.9 Focus on Folder.** `TreeFocus` (core, `FileDetails.h`,
+  `tree:focus`) and `TabSessions::Session.treeFocus`. Added to the Mac on
+  2026-11-17, after this file was written: "Focus on Folder" in
+  `../docs/notes/tree.md`, `mac/src/EditorController+TreeFocus.mm`,
+  `mac/src/TreeFocusBar.mm`, the `tree_focus` GUI suite. The tree rooted
+  at one folder with a breadcrumb row back up, Show Whole Folder in Tree,
+  reveals widening and opens not, the focus in the window's record and the
+  folder's session, a focused folder gone falling back to the whole one.
+  No keys on either system. *Done* (`HANDOFF.md` item 94), checked by the
+  `tree_focus` suite.
 
 ## Reported by the owner
 

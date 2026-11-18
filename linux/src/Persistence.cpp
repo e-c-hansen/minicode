@@ -194,6 +194,7 @@ TabSessions::Session Persistence::savedSession() const {
 TabSessions::Session Persistence::session() {
     TabSessions::Session s;
     if (host_.browserTabs) s.browser = host_.browserTabs(&s.browserActive);
+    if (host_.treeFocus) s.treeFocus = host_.treeFocus();
     auto isFile = [](Document* d) {
         return d->kind() != Document::Kind::Diff && !d->path().empty();
     };
@@ -271,6 +272,9 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
         const auto found = all.find(key_);
         if (found != all.end()) saved = found->second;
     }
+    // The tree's focus first, as the Mac's restoreSession sets it: a focus
+    // alone keeps a session, so it comes back with no tab too.
+    if (host_.restoreTreeFocus) host_.restoreTreeFocus(saved.treeFocus);
     const EditorTabs::Session plain = TabSessions::files(saved);
 
     // Unsaved buffers kept from a crash, a SIGKILL or a power loss: a file of

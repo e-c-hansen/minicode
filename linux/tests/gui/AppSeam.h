@@ -96,6 +96,12 @@ void MCGuiCloseAllWindows();
 // A new window on `folder`, as a second `minicode <folder>` opens one (the
 // Mac's suites open theirs through application:openURLs:).
 void MCGuiOpenWindow(const std::string& folder);
+// A window's record as a launch keeps it (Persistence::windowRecord, written
+// as TabSessions::encodeWindows writes the list), and a new window on
+// `folder` brought back from such a record, as a launch that opens nothing
+// brings its windows back (the Mac's openWindowAtPath:restoring:).
+std::string MCGuiWindowRecord(GtkWindow* window);
+void MCGuiOpenWindowRestoring(const std::string& folder, const std::string& record);
 // What `minicode <args...>` does in the running app (args without argv[0]);
 // what it would print for the terminal is appended to `*errors`.
 void MCGuiCommandLine(const std::vector<std::string>& args, const std::string& cwd,

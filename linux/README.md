@@ -30,7 +30,8 @@ how each finished item was built and the traps it paid for.
 - `src/FileTree.{h,cpp}` — the sidebar file browser (a list per folder +
   GtkTreeListModel + GtkListView), lazy-loaded and live-refreshing from a
   GFileMonitor per folder (GtkDirectoryList's own monitoring reports nothing
-  on GTK 4.22; see `HANDOFF.md`, "Traps").
+  on GTK 4.22; see `HANDOFF.md`, "Traps"), and Focus on Folder's
+  breadcrumb row over it (`HANDOFF.md` item 94).
 - `src/Editor.{h,cpp}` — the GtkTextView editor: file loading, syntax
   highlighting via GtkTextTags, the Markdown preview toggle, reloading when
   the file changes on disk, and the live color picker for the settings file.

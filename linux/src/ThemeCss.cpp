@@ -206,6 +206,22 @@ std::string stylesheet(const Settings& s) {
     // The folder arrows, which otherwise take the desktop theme's text color
     // (black under a light theme, nearly invisible on the dark sidebar).
     css += ".minicode-tree expander { color: " + fg(Surface::Sidebar) + "; }";
+    // Focus on Folder's breadcrumb row over the tree (FileTree.h), as the
+    // Mac's TreeFocusBar draws it: the sidebar's colors, the folders above
+    // dimmed and underlined under the pointer, the tree's root in full, a
+    // hairline under it.
+    css += ".minicode-tree-focus-bar { background-color: " + bg(Surface::Sidebar) +
+           "; border-bottom: 1px solid " + tinted(0.12) + "; min-height: 24px; padding-left: 8px; }";
+    css += ".minicode-tree-focus-part, .minicode-tree-focus-sep { color: " + tinted(0.6) +
+           "; font-size: 0.9em; }";
+    css += ".minicode-tree-focus-part:hover { color: " + fg(Surface::Sidebar) +
+           "; text-decoration-line: underline; }";
+    css += ".minicode-tree-focus-part.minicode-tree-focus-current { color: " +
+           fg(Surface::Sidebar) + "; font-weight: 600; text-decoration-line: none; }";
+    css += "button.minicode-tree-focus-close { color: " + tinted(0.6) +
+           "; background: none; box-shadow: none; border: none; min-height: 0; min-width: 0;"
+           " padding: 0 7px; margin: 0; }";
+    css += "button.minicode-tree-focus-close:hover { color: " + fg(Surface::Sidebar) + "; }";
     // The Source Control panel, in the tree's place: the sidebar's colors,
     // painted once by the panel. Its accents are the Mac's inline hex.
     css += ".minicode-git { background-color: " + bg(Surface::Sidebar) + "; color: " +

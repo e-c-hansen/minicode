@@ -128,7 +128,18 @@ found through that list.
   `finishRestoringWindow` re-expands from the top and remembers the
   record's folders outside it (`windowRecordNow` lists those too). Not on
   the Worktrees node or a worktree row. Pinning several folders is a
-  possible follow-up. The GTK port follows (its tree has no focus yet).
+  possible follow-up. The GTK port has it too (2026-11-17,
+  `linux/src/FileTree.cpp`'s "Focus on Folder" section, `linux/HANDOFF.md`
+  item 94, `./build/minicode-guitest tree_focus`): its tree makes its model
+  again from the focused folder (`makeTreeModel`, `replaceModel` on the
+  same selection and list view), so the folders' watches, the dotfile
+  filter, git colors and drops start there with no code of their own;
+  monitors on the folders from the window's folder down to the focused
+  folder's parent see it deleted or renamed; `revealPath(path, widen)`
+  and `showsPath` are the Mac's reveal rule; Persistence keeps the focus
+  through its `treeFocus` and `restoreTreeFocus` hooks. The breadcrumb is
+  labels laid out by `TreeFocus::fit` in a `GtkCustomLayout`. It keeps no
+  open folders in a window's record, so a window brought back opens none.
 
 ## Traps
 

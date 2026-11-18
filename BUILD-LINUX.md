@@ -1387,6 +1387,13 @@ Displays.
 - [ ] A large file (below): "Opening…" while it reads, the status bar's
   "Large file: features off", and "… N more characters" after the shown
   part of a long line.
+- [ ] Focus on Folder (`linux/HANDOFF.md` item 94): right click a folder
+  two levels down in the tree and choose Focus on Folder. The row above
+  the tree reads like "minicode › linux › src", the last part bold, a ×
+  at its right, a thin line under it; the folders above dim, underlined
+  with a pointing hand under the pointer. Narrow the sidebar until the
+  middle parts give way to "…". Click a part, then the ×, and see the
+  folders you had open still open.
 
 ### Mouse and touchpad
 
