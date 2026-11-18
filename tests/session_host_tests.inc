@@ -738,11 +738,11 @@ static void testSessionHost() {
         deaf.connect([](Message&&) {});
         CHECK(deaf.newId(50) == 0 && deaf.idBase() == 0);
         // A host on its own thread, as the apps have it: newId() straight
-        // after connect() settles and takes the Welcome first.
-        Shared::Client* target = nullptr;
-        Shared::SessionHost host([&](Shared::ClientId, Message&& m) { target->deliver(std::move(m)); });
+        // after connect() settles and takes the Welcome first. The client
+        // outlives the host's thread, which may still be in deliver() when
+        // the client has what it waited for (TSan saw it destroyed there).
         Shared::Client app(Unit::Utf16, "app");
-        target = &app;
+        Shared::SessionHost host([&](Shared::ClientId, Message&& m) { app.deliver(std::move(m)); });
         const Shared::ClientId id = host.connect();
         app.connect([&](Message&& m) { host.post(id, Shared::roundTrip(m)); });
         const std::uint64_t first = app.newId();
