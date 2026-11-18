@@ -362,6 +362,7 @@ MC_GUI_SUITE(tabs) {
         GCHECK(stripAgrees());
         GCHECK(!ed()->dirty());
         GCHECK(title().find(" *") == std::string::npos);
+        if (!GCHECK(ed()->tabCount() == 3)) return;   // as above: a crash ends the run
         GCHECK_EQ_STR(ed()->document(0)->text(), kA + "A typed");
         GCHECK_EQ_STR(ed()->document(1)->text(), "B typed " + kB);
     });

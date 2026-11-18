@@ -476,7 +476,7 @@ MC_GUI_SUITE(agents) {
     MCGuiWait("the worktree row says how it stands", 15, [] { GtkWidget* l = treeLabel("agent-wt"); return l && MCGuiOnScreen(l); });
     MCGuiStep("named for its folder with the badge; select it", [] {
         GtkWidget* l = treeLabel("agent-wt");
-        GCHECK(l != nullptr);
+        if (!GCHECK(l != nullptr)) return;   // a null label's text throws
         GCHECK(has(gtk_label_get_text(GTK_LABEL(l)), "1 ahead · modified"));
         GCHECK(!gtk_widget_has_css_class(l, "minicode-git-modified") &&
                !gtk_widget_has_css_class(l, "minicode-git-untracked"));
