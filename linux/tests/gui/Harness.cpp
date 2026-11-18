@@ -780,8 +780,16 @@ void checkWhatSuiteLeft() {
         leak("left " + std::to_string(now.windows) + " app window(s) where it found " +
              std::to_string(was.windows));
     if (now.otherOnTop && !was.otherOnTop) {
-        const char* title = gtk_window_get_title(MCGuiTopWindow());
+        GtkWindow* top = MCGuiTopWindow();
+        const char* title = gtk_window_get_title(top);
         leak(std::string("left another window on top of the app's: \"") + (title ? title : "") + "\"");
+        // Closed, as Esc would: a modal question left up holds the app's
+        // keys, so every suite after it failed (claude_hooks_offer's, before
+        // idelink, browser_pages and agents, 2026-11-18).
+        if (putBack && top && top != MCGuiApp().window) {
+            gtk_window_close(top);
+            MCGuiFocusKeyWindow();
+        }
     }
     // A suite may turn the question off while it closes terminals, but must
     // put it back: terminal_ids did not, and a busy terminal closed unasked in
