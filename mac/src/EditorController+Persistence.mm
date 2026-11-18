@@ -126,6 +126,7 @@ static EditorTabs::GroupsSession MCGroupsSession(NSDictionary *state);
         session.split = true;
         session.groups = MCGroupsSession(groups);
     }
+    session.treeFocus = Utf8String(self.treeFocus);   // Focus on Folder's folder, "" for none
     MCSessionsPutFolder(Utf8String(key), session);   // none: the folder goes
     // And every window, a moment later (one write for a burst of switches),
     // so a crash or a force quit loses little of them.
@@ -183,6 +184,8 @@ static EditorTabs::GroupsSession MCGroupsSession(NSDictionary *state);
         // A window brought back has its own tabs, not the folder's: two
         // windows on one folder each get theirs.
         const TabSessions::Session &ws = restoring ? record.tabs : folder;
+        // The tree's focused folder first, while it still is one.
+        [self restoreTreeFocus:@(ws.treeFocus.c_str())];
         saved = TabSessions::files(ws);
         NSMutableSet *side = [NSMutableSet set];
         for (const TabSessions::Tab &t : ws.tabs) {
@@ -449,6 +452,7 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
         s.groups.fraction = [groups[@"fraction"] doubleValue];
         s.split = !s.groups.groups[0].empty() && !s.groups.groups[1].empty();
     }
+    s.treeFocus = Utf8String(self.treeFocus);
     // The sidebar, the editor, Problems and the terminal dock.
     w.sidebar = self.processesVisible ? "processes" : self.agentsVisible ? "agents"
               : self.gitPanelVisible ? "git" : "tree";
@@ -462,12 +466,18 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
         w.terminal = self.terminalVisible && !w.terminals.empty();
         w.terminalHeight = self.terminalHeight;
     }
-    // The tree: its open folders, the selected row, the scroll.
+    // The tree: its open folders (focused on one, those open outside it
+    // too), the selected row, the scroll.
     NSOutlineView *o = self.outline;
+    std::set<std::string> open;
     for (NSInteger r = 0; r < o.numberOfRows; r++) {
         FileItem *it = [o itemAtRow:r];
-        if ([o isItemExpanded:it] && it.path) w.expanded.push_back(Utf8String(it.path));
+        if ([o isItemExpanded:it] && it.path && open.insert(Utf8String(it.path)).second)
+            w.expanded.push_back(Utf8String(it.path));
     }
+    for (NSString *p in [[self treeFocusRememberedExpanded].allObjects
+                         sortedArrayUsingSelector:@selector(compare:)])
+        if (open.insert(Utf8String(p)).second) w.expanded.push_back(Utf8String(p));
     if (o.selectedRow >= 0) w.selected = Utf8String([(FileItem *)[o itemAtRow:o.selectedRow] path]);
     w.treeScroll = self.sidebarScroll.contentView.bounds.origin.y;
     return w;
@@ -522,8 +532,12 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
     // file on show, and its scroll.
     NSMutableSet<NSString *> *expanded = [NSMutableSet set];
     for (const std::string &e : w.expanded) [expanded addObject:@(e.c_str())];
-    [self reExpand:_root usingSet:expanded];
-    if (_worktreesItem && [expanded containsObject:_worktreesItem.path]) {
+    // Focused on a folder (restoreSession set it): its rows, and the
+    // folders open outside it kept for when it widens.
+    FileItem *top = [self treeTop];
+    [self reExpand:top usingSet:expanded];
+    [self rememberTreeExpanded:expanded];
+    if (top == _root && _worktreesItem && [expanded containsObject:_worktreesItem.path]) {
         [self.outline expandItem:_worktreesItem];
         [self reExpand:_worktreesItem usingSet:expanded];
     }

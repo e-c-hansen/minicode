@@ -300,7 +300,8 @@
     }
     // Selected in the tree when the tree lists it, and opened either way (a
     // file in a worktree under the hidden .claude folder, a dotfile).
-    if (inside) [self revealPath:path andOpen:NO];
+    // (Opened, not revealed: a focused tree keeps its focus.)
+    if (inside) [self revealPath:path open:NO from:EditorTabs::OpenFrom::Other widen:NO];
     [self openFileAtPath:path];
     // Opening can be refused ("Save changes?" answered Cancel), and an image
     // or PDF has no lines to go to.

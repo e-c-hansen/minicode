@@ -14,6 +14,9 @@
 //     rows and when a changing folder is listed again.
 //   - FileIcon: what a click on a file opens, by its extension, for the
 //     row's icon (a picture, a film, a table, ...).
+//   - TreeFocus: Focus on Folder, the tree rooted at one folder inside the
+//     window's: the breadcrumb's parts, a saved focus checked, a focus
+//     widened to show a path, and which parts fit the bar.
 //
 // The Mac's EditorController and TreeDetails.mm use it, and the GTK port's
 // FileTree.cpp its TreeRefresh; nothing here touches a GUI. measure() reads
@@ -21,6 +24,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -316,3 +320,62 @@ bool isVideoExtension(const std::string &ext);
 bool isAudioExtension(const std::string &ext);
 
 }  // namespace FileIcon
+
+namespace TreeFocus {
+
+// Focus on Folder: the tree shows one folder inside the window's folder as
+// its root, with a breadcrumb row back up. A focus is that folder's path
+// from the window's folder, its names joined by '/' ("mac/src"), and ""
+// for the whole folder. Only the tree's view narrows: the window's folder,
+// and everything that covers it (search, Quick Open, terminals, git,
+// agents, the session), stays as it was.
+
+// A focus as kept: empty and "." names dropped, no '/' at either end; ""
+// for one that would leave the folder (a ".." name, which a saved record
+// could hold).
+std::string normalize(const std::string &focus);
+
+// `path` from `root`, both absolute and spelled the same way (the tree's
+// spelling): "" for the root itself. false when `path` is outside `root`.
+bool relative(const std::string &root, const std::string &path, std::string *out);
+
+// Whether `rel`, a path from the window's folder, is `focus` or inside it.
+// Every path is inside the whole folder ("").
+bool contains(const std::string &focus, const std::string &rel);
+
+// The folder `rel` is in ("" at the top, and for "" itself).
+std::string parent(const std::string &rel);
+
+// One part of the breadcrumb: what it says and the focus a click on it
+// gives ("" for the window's folder, the first part).
+struct Part {
+    std::string label;
+    std::string focus;
+};
+// The window's folder (named `rootName`), then every folder down to the
+// focus, the focus last: "minicode › mac › src" for "mac/src". The whole
+// folder gives the one part.
+std::vector<Part> breadcrumb(const std::string &rootName, const std::string &focus);
+
+// The focus under which `rel` shows as a row: `focus` when `rel` is inside
+// it, else the nearest folder above both (the nearest common ancestor of
+// `focus` and `rel`'s folder), so "mac/src" widens to "mac" for
+// "mac/tests/gui/X.mm" and to "" for "src/Json.cpp". The focused folder
+// itself is no row, so revealing it widens to its parent.
+std::string widened(const std::string &focus, const std::string &rel);
+
+// What a saved focus comes back as: itself, normalized, while it still
+// names a folder (`isFolder`, asked with the focus), else "" (the whole
+// folder).
+std::string restored(const std::string &saved,
+                     const std::function<bool(const std::string &)> &isFolder);
+
+// Which parts a bar `available` points wide shows, from each part's width,
+// a separator's and an ellipsis's: all of them when they fit; else the
+// first, an ellipsis (-1) and as many of the last parts as fit; when not
+// even the last one fits beside the first, the first, the ellipsis (with
+// three parts or more) and the last, which the bar cuts short.
+std::vector<int> fit(const std::vector<double> &widths, double separator, double ellipsis,
+                     double available);
+
+}  // namespace TreeFocus

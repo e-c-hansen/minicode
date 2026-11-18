@@ -114,6 +114,18 @@ static void testTabSessions() {
         // A session with no tab takes the folder out.
         put(all, "/new", Session(), 3000);
         CHECK(!all.count("/new"));
+        // ...unless the tree was focused on a folder there (Focus on
+        // Folder), which comes back with the folder; it reads back too.
+        Session focused;
+        focused.treeFocus = "mac/src";
+        put(all, "/new", focused, 3001);
+        CHECK(all.count("/new") && all.at("/new").treeFocus == "mac/src");
+        Sessions back = decode(encode(all));
+        CHECK(back.count("/new") && back.at("/new").treeFocus == "mac/src");
+        CHECK(back.at("/f5").treeFocus.empty());
+        CHECK(encode(Sessions{{"/f", one}}).find("treeFocus") == std::string::npos);
+        put(all, "/new", Session(), 3002);
+        CHECK(!all.count("/new"));
         // Indices past the tabs are dropped.
         Session bad = one;
         bad.active = 3;

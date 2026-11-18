@@ -188,6 +188,20 @@
 - (void)refreshTree:(id)sender;
 @end
 
+// EditorController+TreeFocus.mm: Focus on Folder, the tree rooted at one
+// folder inside the window's (the selected folder, or the selected file's
+// or the active file's folder), with a breadcrumb back up; and back to the
+// whole folder. Only the tree narrows: the window's folder is unchanged.
+@interface EditorController (TreeFocus)
+- (void)focusOnFolder:(id)sender;
+- (void)showWholeFolderInTree:(id)sender;
+// The focus as a path from the window's folder ("mac/src"), "" for none;
+// and setting one (NO when that folder is not in the tree: gone, or hidden
+// with hidden files off).
+@property(nonatomic, readonly) NSString *treeFocus;
+- (BOOL)focusTreeOn:(NSString *)focus;
+@end
+
 // EditorController+TreeDetails.mm
 @interface EditorController (TreeDetails)
 - (void)toggleTreeColumn:(id)sender;  // the tree's size, saved and created columns (tag)

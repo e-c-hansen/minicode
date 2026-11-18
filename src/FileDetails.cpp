@@ -540,3 +540,116 @@ const char *kindName(Kind k) {
 }
 
 }  // namespace FileIcon
+
+namespace TreeFocus {
+
+namespace {
+
+std::vector<std::string> names(const std::string &rel) {
+    std::vector<std::string> out;
+    size_t at = 0;
+    while (at <= rel.size()) {
+        size_t slash = rel.find('/', at);
+        if (slash == std::string::npos) slash = rel.size();
+        if (slash > at) out.push_back(rel.substr(at, slash - at));
+        at = slash + 1;
+    }
+    return out;
+}
+
+std::string joined(const std::vector<std::string> &parts, size_t count) {
+    std::string out;
+    for (size_t i = 0; i < count && i < parts.size(); i++) {
+        if (i) out += '/';
+        out += parts[i];
+    }
+    return out;
+}
+
+}  // namespace
+
+std::string normalize(const std::string &focus) {
+    std::vector<std::string> kept;
+    for (const std::string &n : names(focus)) {
+        if (n == ".") continue;
+        if (n == "..") return "";
+        kept.push_back(n);
+    }
+    return joined(kept, kept.size());
+}
+
+bool relative(const std::string &root, const std::string &path, std::string *out) {
+    std::string r = root;
+    while (r.size() > 1 && r.back() == '/') r.pop_back();
+    if (r.empty()) return false;
+    if (path == r) {
+        *out = "";
+        return true;
+    }
+    const std::string prefix = r == "/" ? r : r + "/";
+    if (path.size() <= prefix.size() || path.compare(0, prefix.size(), prefix) != 0) return false;
+    *out = normalize(path.substr(prefix.size()));
+    return true;
+}
+
+bool contains(const std::string &focus, const std::string &rel) {
+    if (focus.empty() || rel == focus) return true;
+    return rel.size() > focus.size() && rel.compare(0, focus.size(), focus) == 0 &&
+           rel[focus.size()] == '/';
+}
+
+std::string parent(const std::string &rel) {
+    const size_t slash = rel.rfind('/');
+    return slash == std::string::npos ? "" : rel.substr(0, slash);
+}
+
+std::vector<Part> breadcrumb(const std::string &rootName, const std::string &focus) {
+    std::vector<Part> out{{rootName, ""}};
+    const std::vector<std::string> parts = names(normalize(focus));
+    for (size_t i = 0; i < parts.size(); i++) out.push_back({parts[i], joined(parts, i + 1)});
+    return out;
+}
+
+std::string widened(const std::string &focus, const std::string &rel) {
+    if (rel != focus && contains(focus, rel)) return focus;
+    const std::vector<std::string> a = names(focus), b = names(parent(rel));
+    size_t common = 0;
+    while (common < a.size() && common < b.size() && a[common] == b[common]) common++;
+    return joined(a, common);
+}
+
+std::string restored(const std::string &saved,
+                     const std::function<bool(const std::string &)> &isFolder) {
+    const std::string focus = normalize(saved);
+    if (focus.empty() || !isFolder || !isFolder(focus)) return "";
+    return focus;
+}
+
+std::vector<int> fit(const std::vector<double> &widths, double separator, double ellipsis,
+                     double available) {
+    std::vector<int> out;
+    const int n = (int)widths.size();
+    if (n == 0) return out;
+    double all = separator * (n - 1);
+    for (double w : widths) all += w;
+    if (all <= available) {
+        for (int i = 0; i < n; i++) out.push_back(i);
+        return out;
+    }
+    // The first, an ellipsis, then the most of the last parts that fit.
+    for (int keep = n - 2; keep >= 1; keep--) {
+        double w = widths[0] + separator + ellipsis;
+        for (int i = n - keep; i < n; i++) w += separator + widths[(size_t)i];
+        if (w <= available) {
+            out = {0, -1};
+            for (int i = n - keep; i < n; i++) out.push_back(i);
+            return out;
+        }
+    }
+    out = {0};
+    if (n > 2) out.push_back(-1);
+    if (n > 1) out.push_back(n - 1);
+    return out;
+}
+
+}  // namespace TreeFocus

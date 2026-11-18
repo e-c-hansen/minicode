@@ -64,6 +64,15 @@
           keyEquivalent:@""];
     [m addItemWithTitle:@"Refresh" action:@selector(refreshTree:) keyEquivalent:@""];
     [m addItem:[NSMenuItem separatorItem]];
+    // The tree rooted at a folder, and back (+TreeFocus): the first on a
+    // folder's row, the second while the tree is focused.
+    [m addItemWithTitle:@"Focus on Folder" action:@selector(focusOnFolder:)
+          keyEquivalent:@""].tag = kFocusFolderMenuTag;
+    [m addItemWithTitle:@"Show Whole Folder in Tree" action:@selector(showWholeFolderInTree:)
+          keyEquivalent:@""].tag = kTreeFocusedMenuTag;
+    NSMenuItem *afterFocus = [NSMenuItem separatorItem];
+    afterFocus.tag = kFocusFolderMenuTag;
+    [m addItem:afterFocus];
     // How the tree is ordered (remembered per folder), and the sizes and
     // dates at the right of each row (each its own switch, for every window).
     NSMenu *sort = [EditorController treeSortMenu];
@@ -100,10 +109,10 @@ static NSString *const kShowHiddenFilesKey = @"MCShowHiddenFiles";
 
 // ------------------------------------------------------- NSOutlineView source
 - (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item {
-    return (NSInteger)[self childrenOf:item ?: _root].count;
+    return (NSInteger)[self childrenOf:item ?: [self treeTop]].count;
 }
 - (id)outlineView:(NSOutlineView *)ov child:(NSInteger)i ofItem:(id)item {
-    return [self childrenOf:item ?: _root][(NSUInteger)i];
+    return [self childrenOf:item ?: [self treeTop]][(NSUInteger)i];
 }
 - (BOOL)outlineView:(NSOutlineView *)ov isItemExpandable:(id)item {
     return ((FileItem *)item).isDir;
@@ -167,7 +176,7 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
     FileItem *target = item;
     if (target && !target.isDir) target = [ov parentForItem:target];
     [ov setDropItem:target dropChildIndex:NSOutlineViewDropOnItemIndex];
-    NSString *dir = target ? target.path : _root.path;
+    NSString *dir = target ? target.path : [self treeTop].path;
     if (!dir) return NSDragOperationNone;
     BOOL local = info.draggingSource == ov;
     NSArray<NSString *> *paths = [self droppedPaths:info local:local];
@@ -180,7 +189,7 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
 - (BOOL)outlineView:(NSOutlineView *)ov acceptDrop:(id<NSDraggingInfo>)info
                item:(id)item childIndex:(NSInteger)index {
     FileItem *target = item;   // a folder or nil, as validateDrop set it
-    NSString *dir = target ? target.path : _root.path;
+    NSString *dir = target ? target.path : [self treeTop].path;
     BOOL local = info.draggingSource == ov;
     NSFileManager *fm = [NSFileManager defaultManager];
     NSMutableArray<NSString *> *problems = [NSMutableArray array];
@@ -481,15 +490,23 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     }
     if (reshowRoot) touch(_root);
 
+    // The focused folder gone (deleted, renamed): the whole folder again.
+    if (NSSet<NSString *> *open = [self dropLostTreeFocus]) {
+        [self reloadTreeKeepingState:NO alsoExpanding:open];
+        [self refreshTreeCells];
+        return;
+    }
     // A folder its parent's new listing dropped is not in the tree any more.
+    // One above the focused folder, or beside it, has no rows on show.
     NSDictionary<NSString *, FileItem *> *still = [self loadedTreeFolders];
     NSMutableArray<FileItem *> *reload = [NSMutableArray array];
+    FileItem *top = [self treeTop];
     for (FileItem *f in touched) {
         if (still[f.path] != f) continue;
         NSArray<FileItem *> *was = [before objectForKey:f];
         f.shown = nil;   // its order on show, worked out again
         NSArray<FileItem *> *now = [self childrenOf:f];
-        if (![was isEqualToArray:now]) [reload addObject:f];
+        if (![was isEqualToArray:now] && [self treeShowsFolder:f]) [reload addObject:f];
     }
     if (reload.count) {
         FileItem *selected = self.outline.selectedRow >= 0
@@ -502,9 +519,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
             return [a.path compare:b.path];   // a folder before those inside it
         }];
         for (FileItem *f in reload) {
-            [self.outline reloadItem:f == _root ? nil : f reloadChildren:YES];
+            [self.outline reloadItem:f == top ? nil : f reloadChildren:YES];
             [self reExpand:f usingSet:expanded];
-            if (f == _root && _worktreesItem && [expanded containsObject:_worktreesItem.path]) {
+            if (f == _root && top == _root && _worktreesItem &&
+                [expanded containsObject:_worktreesItem.path]) {
                 [self.outline expandItem:_worktreesItem];
                 [self reExpand:_worktreesItem usingSet:expanded];
             }
@@ -526,8 +544,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 // The paths of the expanded folders at or below `node` (the Worktrees node
 // too, below the root).
 - (void)collectExpanded:(FileItem *)node into:(NSMutableSet<NSString *> *)expanded {
-    if (node != _root && [self.outline isItemExpanded:node]) [expanded addObject:node.path];
-    if (node == _root && _worktreesItem) [self collectExpanded:_worktreesItem into:expanded];
+    FileItem *top = [self treeTop];
+    if (node != top && [self.outline isItemExpanded:node]) [expanded addObject:node.path];
+    if (node == _root && top == _root && _worktreesItem)
+        [self collectExpanded:_worktreesItem into:expanded];
     for (FileItem *c in node.children)
         if (c.isDir && c.loaded) [self collectExpanded:c into:expanded];
 }
@@ -554,6 +574,12 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 // Rebuild the rows, from the disk when `rescan`, else only in a new order,
 // keeping the expanded folders, the selected row and the scroll position.
 - (void)reloadTreeKeepingState:(BOOL)rescan {
+    [self reloadTreeKeepingState:rescan alsoExpanding:nil];
+}
+
+// The same, opening the folders in `more` too (those open outside a
+// focused folder that has just gone).
+- (void)reloadTreeKeepingState:(BOOL)rescan alsoExpanding:(NSSet<NSString *> *)more {
     NSString *selPath = nil;
     if (self.outline.selectedRow >= 0)
         selPath = [(FileItem *)[self.outline itemAtRow:self.outline.selectedRow] path];
@@ -570,10 +596,15 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         _treeGeneration++;   // listings under way are older than this
         [_root refresh];
         [_worktreesItem refresh];
+        // The focused folder gone from the disk (or hidden now): the whole
+        // folder again.
+        if (NSSet<NSString *> *open = [self dropLostTreeFocus]) [expanded unionSet:open];
     }
+    if (more) [expanded unionSet:more];
     [self.outline reloadData];
-    [self reExpand:_root usingSet:expanded];
-    if (_worktreesItem && [expanded containsObject:_worktreesItem.path]) {
+    FileItem *top = [self treeTop];
+    [self reExpand:top usingSet:expanded];
+    if (top == _root && _worktreesItem && [expanded containsObject:_worktreesItem.path]) {
         [self.outline expandItem:_worktreesItem];
         [self reExpand:_worktreesItem usingSet:expanded];
     }
@@ -730,12 +761,20 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     if (menu != self.outline.menu) return;
     const BOOL wt = [self worktreeMenuItem] != nil;
-    const BOOL keep = [self isWorktreeRowOrNode:[self clickedOrSelectedItem]];
+    FileItem *clicked = [self clickedOrSelectedItem];
+    const BOOL keep = [self isWorktreeRowOrNode:clicked];
+    const BOOL folderRow = clicked.isDir && !keep;   // Focus on Folder's
+    const BOOL focused = self.treeFocus.length > 0;  // Show Whole Folder in Tree's
     for (NSMenuItem *item in menu.itemArray) {
         if (item.tag == kWorktreeMenuTag) item.hidden = !wt;
         if (item.tag == kNotOnWorktreeMenuTag) item.hidden = keep;
         if (item.tag == kBookmarkFolderMenuTag) item.hidden = !self.canOpenBookmarksInTabs;
         if (item.tag == kBookmarkFileMenuTag) item.hidden = !self.canOpenBookmarkAsText;
+        // Focus on Folder, and the line after it, which stays for Show
+        // Whole Folder in Tree.
+        if (item.tag == kFocusFolderMenuTag)
+            item.hidden = item.isSeparatorItem ? !folderRow && !focused : !folderRow;
+        if (item.tag == kTreeFocusedMenuTag) item.hidden = !focused;
     }
 }
 
@@ -749,7 +788,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 - (NSString *)targetDirectory {
     NSInteger row = self.outline.clickedRow >= 0 ? self.outline.clickedRow
                                                  : self.outline.selectedRow;
-    if (row < 0) return _root.path;
+    if (row < 0) return [self treeTop].path;
     FileItem *node = [self.outline itemAtRow:row];
     return node.isDir ? node.path : [node.path stringByDeletingLastPathComponent];
 }
@@ -862,7 +901,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 - (void)revealInFinder:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
-    [self revealPathInFinder:node ? node.path : _root.path];
+    [self revealPathInFinder:node ? node.path : [self treeTop].path];
 }
 
 - (void)revealPathInFinder:(NSString *)path {
@@ -874,13 +913,13 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 // else the selected one's, else the open folder's (as Reveal in Finder picks).
 - (void)copyPath:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
-    [self copyText:node ? node.path : _root.path];
+    [self copyText:node ? node.path : [self treeTop].path];
 }
 
 // The same path from the open folder ("mac/src/main.mm"); "." for the folder.
 - (void)copyRelativePath:(id)sender {
     FileItem *node = [self clickedOrSelectedItem];
-    NSString *p = node ? node.path : _root.path;
+    NSString *p = node ? node.path : [self treeTop].path;
     [self copyText:[self pathFromRoot:p] ?: p];
 }
 
@@ -904,18 +943,33 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 // Expand ancestor folders down to path, select it, and optionally open it.
 - (void)revealPath:(NSString *)path andOpen:(BOOL)open {
-    [self revealPath:path open:open from:EditorTabs::OpenFrom::Other];
+    [self revealPath:path open:open from:EditorTabs::OpenFrom::Other widen:!open];
+}
+
+- (void)revealPath:(NSString *)path open:(BOOL)open from:(EditorTabs::OpenFrom)from {
+    [self revealPath:path open:open from:from widen:!open];
 }
 
 // Selects `path` in the tree, and opens it when `open` is set, in the
-// preview tab or a kept one as an open from `from` goes.
-- (void)revealPath:(NSString *)path open:(BOOL)open from:(EditorTabs::OpenFrom)from {
-    NSArray<NSString *> *rootParts = _root.path.pathComponents;
+// preview tab or a kept one as an open from `from` goes. Outside a focused
+// folder, the focus widens first when `widen` is set; otherwise the tree
+// is left as it is and the file only opened.
+- (void)revealPath:(NSString *)path open:(BOOL)open from:(EditorTabs::OpenFrom)from
+             widen:(BOOL)widen {
+    if (![self treeFocusShowsPath:path widen:widen]) {
+        BOOL isDir = NO;
+        if (open && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
+            [self openFileAtPath:path from:from];
+        return;
+    }
+    FileItem *top = [self treeTop];
+    NSArray<NSString *> *rootParts = top.path.pathComponents;
     NSArray<NSString *> *parts = path.pathComponents;
-    FileItem *node = _root;
-    NSString *acc = _root.path;
+    FileItem *node = top;
+    NSString *acc = top.path;
     // A worktree's files are reached through the Worktrees node.
-    if (_worktreesItem && [path hasPrefix:[_worktreesItem.path stringByAppendingString:@"/"]]) {
+    if (top == _root && _worktreesItem &&
+        [path hasPrefix:[_worktreesItem.path stringByAppendingString:@"/"]]) {
         node = _worktreesItem;
         acc = _worktreesItem.path;
         rootParts = acc.pathComponents;
@@ -933,7 +987,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         // the tree refreshed.
         if (!next && node.loaded && [[NSFileManager defaultManager] fileExistsAtPath:acc]) {
             [node refresh];
-            [self.outline reloadItem:node == _root ? nil : node reloadChildren:YES];
+            [self.outline reloadItem:node == top ? nil : node reloadChildren:YES];
             for (FileItem *c in node.children)
                 if ([c.path isEqual:acc]) { next = c; break; }
         }
@@ -961,7 +1015,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 // out unless asked, so a file from Finder is opened directly: selected in the
 // tree when the tree has it, and shown either way.
 - (BOOL)showFile:(NSString *)path {
-    [self revealPath:path andOpen:NO];
+    [self revealPath:path open:NO from:EditorTabs::OpenFrom::Other widen:NO];
     [self openFileAtPath:path];
     return [self.currentPath isEqualToString:path];
 }
@@ -1017,6 +1071,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     [self.navigator clear];   // places in the old folder
     _root = [FileItem new];
     _root.path = dir; _root.isDir = YES;
+    [self forgetTreeFocus];   // a focus belongs to its folder
     [self rootChanged];
     [_root loadChildren];
     [self.lsp setRoot:dir];   // servers belong to the old folder
