@@ -19,7 +19,7 @@ found through that list.
   old `~/.config/minicode/ppa-key-id` is read while that is missing), and
   uploads it to `ppa:echansen/minicode` (`--dry-run` and `--simulate` send
   nothing). From 1.6.0 the source package is `mutible`, building `mutible`
-  and `minicode`, a transitional package that moves PPA users over (the PPA
+  and `minicode`, a transitional package that moves PPA users over (the PPA <!-- rename-mutible: keep -->
   keeps its name; `packaging/PPA.md`, "What the packages hold"). Setup is in `packaging/PPA.md`. Account `echansen`, key
   340F7652...1F40 in the Mac's gpg with its passphrase in the Keychain;
   Launchpad builds amd64 about 35 minutes after an upload, and ppa.sh (so
