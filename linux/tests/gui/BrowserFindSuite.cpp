@@ -43,6 +43,8 @@ MC_GUI_SUITE(browser_find) {
         MCGuiWriteFile(MCGuiProjectFile("zoom2.html"), "<title>Zoom2</title><p>second</p>");
         MCGuiWriteFile(MCGuiProjectFile("note.txt"), "alpha\nbeta\n");
         MCGuiApp().layout->showBrowser();
+        // Tabs earlier suites left would come before the one it loads.
+        while (browser()->tabCount() > 1) browser()->closeTab(browser()->tabCount() - 1);
     });
     MCGuiWait("the first page is made", 60, [] { return browser()->userProbe() != nullptr; });
     MCGuiStep("a page with three needles", [] { browser()->load(page("find")); });
