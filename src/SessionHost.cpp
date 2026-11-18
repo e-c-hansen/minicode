@@ -1,6 +1,8 @@
 // SessionHost.cpp — see SessionHost.h.
 #include "SessionHost.h"
 
+#include "SessionFiles.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -57,6 +59,7 @@ bool Host::refusedFromViewer(ClientId c, const Message& m) const {
     case Kind::Ping:
     case Kind::TermAttach:
     case Kind::TermAck:
+    case Kind::FsRead:       // reads the folder, changes nothing
         return false;
     case Kind::DocEdit:
         // A guest's edits, in the undo history; from a reader, only the
@@ -131,8 +134,33 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::TermClose:
         if (terms_.count(m.term)) endTerminal(m.term, false, from);
         break;
+    case Kind::FsRead: onRead(from, m); break;
     default: error(from, m.doc, std::string("the host takes no ") + kindName(m.kind)); break;
     }
+}
+
+std::string Host::readRoot(std::uint64_t window) const {
+    if (!folder_.empty()) return folder_;
+    auto w = windows_.find(window);
+    return w == windows_.end() ? std::string() : w->second.second["root"].asString();
+}
+
+void Host::onRead(ClientId c, Message& m) {
+    Message r;
+    r.kind = Kind::FsData;
+    r.req = m.req;
+    r.window = m.window;
+    const std::string root = readRoot(m.window);
+    if (root.empty()) {
+        Json e = Json::object();
+        e.set("op", m.json["op"]);
+        e.set("path", m.json["path"]);
+        e.set("error", Json(std::string("no folder to read in")));
+        r.json = std::move(e);
+    } else {
+        r.json = readWorkspace(root, m.json);
+    }
+    send(c, std::move(r));
 }
 
 void Host::onHello(ClientId c, Message& m) {

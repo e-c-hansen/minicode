@@ -85,7 +85,10 @@ goes here first, with tests; the GUI only displays it.
   socket, `HostServer`, one per folder by a lock file, ending after its
   idle time with no renderer and nothing unsaved or running; `HostLink`, a
   renderer's connection; `dumpSession`, `minicode attach --dump`'s text;
-  `hostserver:*`; docs/notes/session-host.md). The wire
+  `hostserver:*`; docs/notes/session-host.md), and `SessionFiles` (stage
+  7's first read: `FsRead` lists one folder of the session's, confined to
+  it by `confinedPath`, with the apps' trees' dotfile, order and ignore
+  rules, for the browser's tree; `host:fs-list`). The wire
   unit is the renderer's (Hello says which); the host converts at the
   edge. A UTF-16 renderer must never split a surrogate pair (a renderer
   counting code points could not follow). `host:*`: the edit loop, undo

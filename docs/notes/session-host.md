@@ -170,6 +170,13 @@ top of a turn, never inside a text system callback.
 
 ## Traps
 
+- **A tree listing runs on the host's thread**, between typing messages;
+  hence `kMaxListed`. Stage 7's bigger reads belong on a worker.
+- **Confine with `confinedPath`, never by spelling.** A path from a page
+  is held inside the folder by its `realpath` (symlinks followed) and
+  must not hold "..", ".", empty names or a leading '/'; the Mac's `open`
+  trusts that check.
+
 - **Never edit the storage from the hook.** `willReplaceCharacters` runs
   inside the storage's edit: it records and sends a message, nothing else
   (no layout, no other edit, no wait).
@@ -635,6 +642,81 @@ text. The page's line splitting and transform were also fuzzed under node
 by hand against plain string edits and TP1 (not committed: CI has no
 JavaScript runner).
 
+### The tree in the browser (stage 7's first read)
+
+The page has a file tree in a left sidebar (the owner's ask, 2026-11-18,
+R6): `src/SessionFiles.{h,cpp}` reads the folder for the host, and the
+protocol gained two kinds, `FsRead {req, window, json}` and `FsData {req,
+json}` ("fs.read", "fs.data"), shaped as stage 7's general read: the
+request's `op` names the read, so stage 7 adds reads (a file's bytes for
+viewers, Quick Open's list) as new ops, not new messages.
+
+- **Where a read is confined.** `Host::readRoot`: a headless host's own
+  folder (`setFolder`), else the `root` of the window the request names,
+  as that window's renderer reported it (`WindowTabs`; the Mac's
+  `MCSessionBrowser reportTabs` sends the window's folder). With neither,
+  the answer is `{"error": "no folder to read in"}`. `confinedPath`
+  refuses an absolute path, an empty, "." or ".." name, a NUL, and a path
+  whose `realpath` is outside the folder's `realpath`; what it gives back
+  is spelled under the root (as the tabs spell paths), not the real path.
+- **The listing** is the apps' trees' rule, not a new one: dotfiles only
+  with `hidden` (the Mac passes `gShowHidden` at the server's start, as
+  `Options::showHidden`), folders first in `TreeSort::order`, and what
+  `FolderSearch::Ignore::Rules` (atTop, then `enter` down the path, a
+  folder they ignore making all below it ignored) ignores is marked
+  `ignored` and drawn in `tree.git-ignored`'s color (`paletteJson`'s
+  `treeIgnored`), as the apps color it rather than leave it out. A symlink
+  is marked `link`; one whose target is outside is `outside`, listed
+  dimmed, never listed into or opened. Files carry `FileIcon::kindOf`'s
+  name. At most `kMaxListed` (10,000) entries, the rest counted as `more`.
+- **Viewers may read.** `refusedFromViewer` lets `FsRead` through (it
+  changes nothing). `Client::requestRead` sends at once (never behind an
+  edit in flight); the answer is `readAnswer(req)` after a dispatch, or
+  `read()` waits.
+- **The web server**: the page's `list {path}` becomes an `FsRead` for
+  `Options::window`, answered to that page as `tree {path, root, entries,
+  more | error}` (`takeReads`, beside `takeOutcomes`, after each
+  dispatch; at most 256 reads outstanding). `open {path, keep}` is held
+  inside `Options::folder` by `confinedPath` and must name a regular file;
+  then `Options::open(abs, keep)` (the Mac: `openSessionPath:keep:` on the
+  main queue, `revealPath:open:YES from:TreeClick|TreeCommandClick
+  widen:NO`, so the window gets the tab its own tree's click would give,
+  the row selected in its tree), answered `opening {path, abs, ok, why}`.
+  A headless host has no `open`: the answer says it cannot open files yet.
+  **Read-only pages may list and open** (the decision for R6): a tab opened
+  or switched changes no text, so both come before the editable gate in
+  `handleMessage`.
+- **The page** keeps the open folders (`T.open`), each folder's last
+  listing and errors, lists a folder each time it is opened (so it is
+  current when opened), lists every open folder again on ↻, on `hello`
+  (every reconnect) and when the page becomes visible again. There is no
+  watching: the host watches nothing yet (stage 7). A click on a file
+  sends `open` (the second click of a double-click, or Command/Control,
+  keeps the tab) and, once `opening` says ok, waits for a document with
+  that `abs` in the state, then shows it (`takePending`); a viewer kind
+  (image, video, audio, pdf, database, archive, bookmark) says "NAME opens
+  in the minicode window." in `#treenote` instead, and a text file with no
+  document after 4 s says it opened in the window. The document on show's
+  row is marked `current`. At 700 px and under the sidebar is hidden and
+  the header's ☰ shows it over the page (a tap beside it closes it);
+  wider, ☰ hides and shows it.
+
+#### Checks
+
+`host:fs-list` (the listing's order, dotfiles, ignore marks, links in and
+out, kinds, one level at a time, an ignored folder's contents, twelve
+refused paths, `confinedPath` directly, an unknown op, a window's folder
+in an app's own host and none without one, a read-only renderer reading,
+the messages through encode and decode, the cap); `sessionweb:tree` (over
+the wire: no listing over plain HTTP, no socket without the token or from
+another origin, the folder listed with marks, a subfolder, four escapes
+refused, a read-only page's opens reaching `Options::open` with `keep`,
+a folder and two escapes not opened, a headless server saying it cannot
+open). GUI: `session_browser` reads the page's tree in WKWebView, clicks
+a folder open and a file in it, sees the window open that file in its tab
+and the page show it, and a picture's line. Checked by hand in headless
+Chromium over CDP at 1100 and 390 px wide (not committed).
+
 ### Still to do
 
 - Lines are re-sent whole per edit; a long line typed into from a browser
@@ -648,3 +730,7 @@ JavaScript runner).
   app's own until they move into the host.
 - Typing the session had not confirmed when the connection drops is lost
   (the page says so); it is not resent on reconnecting.
+- The tree does not follow the disk by itself: the host watches nothing
+  yet. Stage 7's watching should send the page a folder's listing when it
+  changes. A headless host's page cannot open files (no window decides
+  tabs); viewers in the page are R3.
