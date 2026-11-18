@@ -88,12 +88,16 @@ static NSString *MCGroupedCount(long long n) {
 - (void)configureTreeCell:(MCTreeCell *)cell item:(FileItem *)node {
     AppSettings *cfg = [AppSettings shared];
     NSColor *text = [cfg text:Surface::Sidebar];
-    cell.textField.stringValue = node.name ?: @"";
+    // A root row of several focused folders says its path from the
+    // window's folder ("mac/src"), a little heavier (+TreeFocus).
+    NSString *rootLabel = [self treeRootLabelFor:node];
+    cell.textField.stringValue = rootLabel ?: node.name ?: @"";
     // In a git folder the name takes its status's color (tree.git-*).
     NSString *gitTip = nil;
     NSColor *gitColor = [self gitColorOf:node tip:&gitTip];
     cell.textField.textColor = gitColor ?: text;
-    cell.textField.font = [NSFont systemFontOfSize:12.5];
+    cell.textField.font = rootLabel ? [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium]
+                                    : [NSFont systemFontOfSize:12.5];
     // A file's icon says what a click opens: a picture, a film, a table...
     NSString *sym = node.isDir ? @"folder.fill" : MCTreeIconSymbol(node.path);
     NSColor *tint = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);

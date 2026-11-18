@@ -1567,6 +1567,14 @@ These may run in parallel.
   folder's session, a focused folder gone falling back to the whole one.
   No keys on either system. *Done* (`HANDOFF.md` item 94), checked by the
   `tree_focus` suite.
+- [ ] **4.10 Add to Focus, several folders.** Added to the Mac on
+  2026-11-18: "Add to Focus, several folders" in `../docs/notes/tree.md`.
+  The core's set rules (`TreeFocus::added`, `removed`, `merged`, `rootOf`,
+  `revealed`, `restoredSet`, `shortLabels`, `shared`; `tree:focus-set`)
+  and the list form of `TabSessions::Session.treeFocus` are in; the port
+  keeps one folder (`Persistence.cpp` writes a list of one and restores
+  the first) until it shows each focused folder as a root row with the
+  label row above.
 
 ## Reported by the owner
 

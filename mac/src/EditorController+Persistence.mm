@@ -35,6 +35,13 @@ static BOOL MCSessionsEnabled(void) {
 static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g);
 static EditorTabs::GroupsSession MCGroupsSession(NSDictionary *state);
 
+// The tree's focused folders as a session keeps them.
+static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
+    std::vector<std::string> out;
+    for (NSString *f in folders) out.push_back(Utf8String(f));
+    return out;
+}
+
 // The same in the shape the user defaults held it (files, active, preview,
 // sidePreview, groups, browser), for the checks.
 - (NSDictionary *)storedSession {
@@ -126,7 +133,7 @@ static EditorTabs::GroupsSession MCGroupsSession(NSDictionary *state);
         session.split = true;
         session.groups = MCGroupsSession(groups);
     }
-    session.treeFocus = Utf8String(self.treeFocus);   // Focus on Folder's folder, "" for none
+    session.treeFocus = MCTreeFocusList(self.treeFocusFolders);   // the focused folders, none for the whole
     MCSessionsPutFolder(Utf8String(key), session);   // none: the folder goes
     // And every window, a moment later (one write for a burst of switches),
     // so a crash or a force quit loses little of them.
@@ -185,7 +192,9 @@ static EditorTabs::GroupsSession MCGroupsSession(NSDictionary *state);
         // windows on one folder each get theirs.
         const TabSessions::Session &ws = restoring ? record.tabs : folder;
         // The tree's focused folder first, while it still is one.
-        [self restoreTreeFocus:@(ws.treeFocus.c_str())];
+        NSMutableArray<NSString *> *focus = [NSMutableArray array];
+        for (const std::string &f : ws.treeFocus) [focus addObject:@(f.c_str()) ?: @""];
+        [self restoreTreeFocus:focus];
         saved = TabSessions::files(ws);
         NSMutableSet *side = [NSMutableSet set];
         for (const TabSessions::Tab &t : ws.tabs) {
@@ -452,7 +461,7 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
         s.groups.fraction = [groups[@"fraction"] doubleValue];
         s.split = !s.groups.groups[0].empty() && !s.groups.groups[1].empty();
     }
-    s.treeFocus = Utf8String(self.treeFocus);
+    s.treeFocus = MCTreeFocusList(self.treeFocusFolders);
     // The sidebar, the editor, Problems and the terminal dock.
     w.sidebar = self.processesVisible ? "processes" : self.agentsVisible ? "agents"
               : self.gitPanelVisible ? "git" : "tree";
@@ -532,15 +541,10 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
     // file on show, and its scroll.
     NSMutableSet<NSString *> *expanded = [NSMutableSet set];
     for (const std::string &e : w.expanded) [expanded addObject:@(e.c_str())];
-    // Focused on a folder (restoreSession set it): its rows, and the
-    // folders open outside it kept for when it widens.
-    FileItem *top = [self treeTop];
-    [self reExpand:top usingSet:expanded];
+    // Focused (restoreSession set it): its rows, each root of several open
+    // as it was, and the folders open outside them kept for when it widens.
+    [self reExpandTreeTop:expanded];
     [self rememberTreeExpanded:expanded];
-    if (top == _root && _worktreesItem && [expanded containsObject:_worktreesItem.path]) {
-        [self.outline expandItem:_worktreesItem];
-        [self reExpand:_worktreesItem usingSet:expanded];
-    }
     NSString *selected = @(w.selected.c_str());
     for (NSInteger r = 0; selected.length && r < self.outline.numberOfRows; r++) {
         if (![[(FileItem *)[self.outline itemAtRow:r] path] isEqualToString:selected]) continue;

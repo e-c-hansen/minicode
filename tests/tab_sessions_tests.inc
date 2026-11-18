@@ -116,13 +116,41 @@ static void testTabSessions() {
         CHECK(!all.count("/new"));
         // ...unless the tree was focused on a folder there (Focus on
         // Folder), which comes back with the folder; it reads back too.
+        // Several folders (Add to Focus) are a list, kept in their order.
         Session focused;
-        focused.treeFocus = "mac/src";
+        focused.treeFocus = {"mac/src"};
         put(all, "/new", focused, 3001);
-        CHECK(all.count("/new") && all.at("/new").treeFocus == "mac/src");
+        CHECK(all.count("/new") && all.at("/new").treeFocus == std::vector<std::string>{"mac/src"});
         Sessions back = decode(encode(all));
-        CHECK(back.count("/new") && back.at("/new").treeFocus == "mac/src");
+        CHECK(back.count("/new") && back.at("/new").treeFocus == std::vector<std::string>{"mac/src"});
         CHECK(back.at("/f5").treeFocus.empty());
+        Session several;
+        several.treeFocus = {"mac/src", "linux/src", "docs"};
+        Sessions two{{"/two", several}};
+        const std::string twoText = encode(two);
+        CHECK(twoText.find("\"treeFocus\":[") != std::string::npos);
+        back = decode(twoText);
+        CHECK(back.count("/two") &&
+              back.at("/two").treeFocus == (std::vector<std::string>{"mac/src", "linux/src", "docs"}));
+        // The form written before 2026-11-18, one path as a string, reads as
+        // a list of one; an empty one as none (and keeps no session alone).
+        std::string old = encode(Sessions{{"/old", focused}});
+        const size_t at = old.find("[\"mac/src\"]");
+        CHECK(at != std::string::npos);
+        if (at != std::string::npos) {
+            old.replace(at, std::string("[\"mac/src\"]").size(), "\"mac/src\"");
+            back = decode(old);
+            CHECK(back.count("/old") && back.at("/old").treeFocus == std::vector<std::string>{"mac/src"});
+            std::string none = old;
+            none.replace(none.find("\"mac/src\""), std::string("\"mac/src\"").size(), "\"\"");
+            CHECK(decode(none).count("/old") == 0);
+        }
+        // Not strings in the list are skipped.
+        std::string mixed = twoText;
+        mixed.replace(mixed.find("\"docs\""), 6, "7");
+        back = decode(mixed);
+        CHECK(back.count("/two") &&
+              back.at("/two").treeFocus == (std::vector<std::string>{"mac/src", "linux/src"}));
         CHECK(encode(Sessions{{"/f", one}}).find("treeFocus") == std::string::npos);
         put(all, "/new", Session(), 3002);
         CHECK(!all.count("/new"));

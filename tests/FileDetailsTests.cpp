@@ -421,4 +421,75 @@ static void testFileDetails() {
         CHECK((fit({50, 50}, 10, 12, 60) == std::vector<int>{0, 1}));
         CHECK(fit({}, 10, 12, 60).empty());
     }
+
+    GROUP("tree:focus-set");
+    {
+        using namespace TreeFocus;
+        using S = Set;
+        // Added in order; a folder already there, or inside one, changes nothing.
+        CHECK((added({}, "mac/src") == S{"mac/src"}));
+        CHECK((added({"mac/src"}, "linux/src") == S{"mac/src", "linux/src"}));
+        CHECK((added({"mac/src", "linux/src"}, "/linux/src/") == S{"mac/src", "linux/src"}));
+        CHECK((added({"mac/src", "linux/src"}, "mac/src/deep") == S{"mac/src", "linux/src"}));
+        // One that holds some takes the first one's place; the others go.
+        CHECK((added({"mac/src", "linux/src", "mac/tests"}, "mac") == S{"mac", "linux/src"}));
+        CHECK((added({"docs", "mac/src"}, "mac") == S{"docs", "mac"}));
+        // A name, not a prefix.
+        CHECK((added({"mac/src"}, "mac/srcx") == S{"mac/src", "mac/srcx"}));
+        CHECK((added({"mac"}, "macos") == S{"mac", "macos"}));
+        // The whole folder, or one leaving it, is no folder: the empty set.
+        CHECK(added({"mac/src", "linux/src"}, "").empty());
+        CHECK(added({"mac/src"}, ".").empty() && added({"mac/src"}, "../x").empty());
+
+        CHECK((removed({"mac/src", "linux/src"}, "mac/src") == S{"linux/src"}));
+        CHECK((removed({"mac/src", "linux/src"}, "/linux/src") == S{"mac/src"}));
+        CHECK((removed({"mac/src"}, "docs") == S{"mac/src"}));
+        CHECK(removed({"mac/src"}, "mac/src").empty());
+
+        CHECK((merged({"mac/src", "", "mac", "linux/src", "../up", "linux/src/x", "/docs/"}) ==
+               S{"mac", "linux/src", "docs"}));
+        CHECK(merged({}).empty() && merged({"", "."}).empty());
+
+        CHECK(rootOf({"mac/src", "linux/src"}, "linux/src/a.c") == 1);
+        CHECK(rootOf({"mac/src", "linux/src"}, "linux/src") == 1);   // a root is a row
+        CHECK(rootOf({"mac/src", "linux/src"}, "mac") == -1);
+        CHECK(rootOf({"mac/src", "linux/src"}, "mac/srcx/a") == -1);
+        CHECK(rootOf({}, "a") == -1);
+
+        // Reveals: none, nothing; one, #144's widening; several, the
+        // file's folder added.
+        CHECK(revealed({}, "src/a.cpp").empty());
+        CHECK((revealed({"mac/src"}, "mac/src/a.mm") == S{"mac/src"}));
+        CHECK((revealed({"mac/src"}, "mac/tests/t.mm") == S{"mac"}));
+        CHECK(revealed({"mac/src"}, "src/core.cpp").empty());
+        CHECK((revealed({"mac/src", "linux/src"}, "linux/src/deep/a.c") == S{"mac/src", "linux/src"}));
+        CHECK((revealed({"mac/src", "linux/src"}, "linux/src") == S{"mac/src", "linux/src"}));
+        CHECK((revealed({"mac/src", "linux/src"}, "src/core.cpp") == S{"mac/src", "linux/src", "src"}));
+        CHECK((revealed({"mac/src", "linux/src"}, "mac/tests/t.mm") ==
+               S{"mac/src", "linux/src", "mac/tests"}));
+        CHECK((revealed({"mac/src/deep", "linux/src"}, "mac/src/a.mm") == S{"mac/src", "linux/src"}));
+        CHECK(revealed({"mac/src", "linux/src"}, "README.md").empty());   // the top: the whole folder
+
+        auto folders = [](const std::string &f) {
+            return f == "mac" || f == "mac/src" || f == "linux/src" || f == "docs";
+        };
+        CHECK((restoredSet({"mac/src", "gone", "linux/src"}, folders) == S{"mac/src", "linux/src"}));
+        CHECK((restoredSet({"/mac/src/", "mac"}, folders) == S{"mac"}));
+        CHECK(restoredSet({"gone", "../mac"}, folders).empty());
+        CHECK(restoredSet({"mac"}, nullptr).empty());
+
+        CHECK((shortLabels({"mac/src", "linux/src"}) == std::vector<std::string>{"mac/src", "linux/src"}));
+        CHECK((shortLabels({"mac/src/deep", "linux/tests"}) == std::vector<std::string>{"deep", "tests"}));
+        CHECK((shortLabels({"src", "mac/src"}) == std::vector<std::string>{"src", "mac/src"}));
+        CHECK((shortLabels({"a/x/src", "b/x/src", "docs"}) ==
+               std::vector<std::string>{"a/x/src", "b/x/src", "docs"}));
+        CHECK(shortLabels({}).empty());
+
+        CHECK((shared({40, 50}, 100) == std::vector<double>{40, 50}));
+        CHECK((shared({20, 100, 100}, 120) == std::vector<double>{20, 50, 50}));
+        CHECK((shared({60, 60}, 100) == std::vector<double>{50, 50}));
+        CHECK((shared({10, 30, 90}, 70) == std::vector<double>{10, 30, 30}));
+        CHECK((shared({10, 10}, 0) == std::vector<double>{0, 0}));
+        CHECK(shared({}, 10).empty());
+    }
 }

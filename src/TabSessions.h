@@ -86,10 +86,13 @@ struct Session {
     // comes back as one group.
     bool split = false;
     EditorTabs::GroupsSession groups;
-    // The tree's focused folder (Focus on Folder, FileDetails.h's
-    // TreeFocus), as a path from the folder, "" for the whole folder. The
-    // port checks it still names a folder before it uses it.
-    std::string treeFocus;
+    // The tree's focused folders (Focus on Folder and Add to Focus,
+    // FileDetails.h's TreeFocus), each a path from the folder, in the order
+    // they were added; none for the whole folder. Kept as a list; the
+    // single path written before 2026-11-18 reads as a list of one. The
+    // port checks each still names a folder (TreeFocus::restoredSet)
+    // before it uses them.
+    std::vector<std::string> treeFocus;
 };
 
 // Every folder's, by its resolved path.

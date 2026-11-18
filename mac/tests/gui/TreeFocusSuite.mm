@@ -10,6 +10,18 @@
 // focus comes back with its window and with its folder's session, a saved
 // focus on a folder gone since comes back as the whole folder, and the
 // focused folder deleted on disk gives the whole folder back.
+//
+// Add to Focus (2026-11-18): several folders, each a root row labelled with
+// its path, under a row of their labels. From the whole folder it is Focus
+// on Folder; a second folder (the open file's, from the palette) gives two
+// roots, open, and the label row; a file made in a root shows; a folder
+// inside a root changes nothing, one holding a root takes its place; a
+// reveal outside them adds its folder; a label's × and Remove from Focus
+// take one out, down to one giving the breadcrumb back; Focus on Folder
+// replaces the set; the last × clears it. The set comes back with its
+// window (each root open or closed as it was) and its folder's session,
+// folders gone since dropped; a record in the old single-path form still
+// restores; a root deleted on disk leaves the others.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -93,11 +105,40 @@ NSMenuItem *TreeMenuItem(EditorController *c, SEL action) {
     return nil;
 }
 
-// The focus the folder's own session keeps.
+// The focus the folder's own session keeps, several joined by ", ".
 NSString *StoredFocus(NSString *folder) {
     const TabSessions::Store store = MCSessionsRead();
     auto found = store.folders.find(folder.stringByResolvingSymlinksInPath.UTF8String);
-    return found == store.folders.end() ? @"(no session)" : @(found->second.treeFocus.c_str());
+    if (found == store.folders.end()) return @"(no session)";
+    NSMutableArray<NSString *> *list = [NSMutableArray array];
+    for (const std::string &f : found->second.treeFocus) [list addObject:@(f.c_str())];
+    return [list componentsJoinedByString:@", "];
+}
+
+// The top rows as the tree labels them (a root of several by its path).
+NSString *TopLabels(EditorController *c) {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    const NSInteger n = [c.outline.dataSource outlineView:c.outline numberOfChildrenOfItem:nil];
+    for (NSInteger i = 0; i < n; i++) {
+        FileItem *it = [c.outline.dataSource outlineView:c.outline child:i ofItem:nil];
+        [names addObject:[c treeRootLabelFor:it] ?: it.name];
+    }
+    return [names componentsJoinedByString:@" "];
+}
+
+// What a row's cell says on screen.
+NSString *CellText(EditorController *c, NSString *path) {
+    const NSInteger row = RowOf(c, path);
+    if (row < 0) return @"(no row)";
+    NSTableCellView *cell = [c.outline viewAtColumn:0 row:row makeIfNecessary:YES];
+    return cell.textField.stringValue ?: @"(no text)";
+}
+
+NSInteger RowsOf(EditorController *c, NSString *path) {
+    NSInteger n = 0;
+    for (NSInteger r = 0; r < c.outline.numberOfRows; r++)
+        if ([[(FileItem *)[c.outline itemAtRow:r] path] isEqualToString:path]) n++;
+    return n;
 }
 
 }  // namespace
@@ -229,7 +270,7 @@ MC_GUI_SUITE(tree_focus) {
     MCGuiStep(@"brought back with its window", ^{
         GCHECK([c focusTreeOn:@"mac/src"]);
         const TabSessions::Window w = [c windowRecordNow];
-        GCHECK(w.tabs.treeFocus == "mac/src");
+        GCHECK(w.tabs.treeFocus == std::vector<std::string>{"mac/src"});
         record = @(TabSessions::encodeWindows({w}).c_str());
         EditorController *back = [(NSObject *)NSApp.delegate openWindowAtPath:repo restoring:record];
         GCHECK_EQ_STR(back.treeFocus, @"mac/src");
@@ -242,7 +283,7 @@ MC_GUI_SUITE(tree_focus) {
     });
     MCGuiStep(@"a window brought back focused on a folder gone since shows the whole folder", ^{
         TabSessions::Window w = TabSessions::decodeWindows(record.UTF8String).at(0);
-        w.tabs.treeFocus = "mac/gone";
+        w.tabs.treeFocus = {"mac/gone"};
         EditorController *back = [(NSObject *)NSApp.delegate
             openWindowAtPath:repo restoring:@(TabSessions::encodeWindows({w}).c_str())];
         GCHECK_EQ_STR(back.treeFocus, @"");
@@ -290,6 +331,211 @@ MC_GUI_SUITE(tree_focus) {
         GCHECK_EQ_STR(c.treeFocus, @"");
         GCHECK_EQ_STR(TopRows(c), @"mac src README.md");
     });
+
+    // ---- several folders (Add to Focus)
+    MCGuiStep(@"more folders: linux/src (l.c, sub/s.c), docs/d.md; mac open", ^{
+        MCGuiWriteFile(file(@"linux/src/l.c"), @"// l\n");
+        MCGuiWriteFile(file(@"linux/src/sub/s.c"), @"// s\n");
+        MCGuiWriteFile(file(@"docs/d.md"), @"# d\n");
+        [c refreshTree:nil];
+        [c.outline expandItem:ItemAt(c, file(@"mac"))];
+        GCHECK_EQ_STR(c.treeFocus, @"");
+        GCHECK(RowOf(c, file(@"mac/src")) >= 0);
+    });
+    MCGuiStep(@"from the whole folder, Add to Focus is Focus on Folder: the breadcrumb", ^{
+        Select(c, file(@"mac/src"));
+        NSMenuItem *add = TreeMenuItem(c, @selector(addFolderToFocus:));
+        GCHECK(add && !add.hidden);
+        GCHECK(TreeMenuItem(c, @selector(removeFolderFromFocus:)).hidden);
+        [c addFolderToFocus:nil];
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src");
+        GCHECK_EQ_STR(TopRows(c), @"a.mm new.txt");
+        GCHECK(![c treeFocusBar].showsFolders);
+        GCHECK_EQ_STR(Labels(c), @"focusrepo › mac › src");
+        // A folder inside the focus adds nothing: its right click has no Add to Focus.
+        MCGuiWriteFile(file(@"mac/src/inner/i.txt"), @"i\n");
+        [c refreshTree:nil];
+        Select(c, file(@"mac/src/inner"));
+        GCHECK(TreeMenuItem(c, @selector(addFolderToFocus:)).hidden);
+        GCHECK(!TreeMenuItem(c, @selector(focusOnFolder:)).hidden);
+    });
+    MCGuiStep(@"the palette's Add to Focus takes the open file's folder: two roots", ^{
+        [c revealPath:file(@"linux/src/l.c") open:YES from:EditorTabs::OpenFrom::QuickOpen];
+        GCHECK_EQ_STR(c.currentPath, file(@"linux/src/l.c"));
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src");   // an open leaves the focus
+        Select(c, file(@"mac/src/a.mm"));         // a row the tree shows already
+        GCHECK_EQ_STR([c folderToAddToFocus], @"linux/src");
+        [c addFolderToFocus:nil];
+        GCHECK((c.treeFocusFolders.count == 2));
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src, linux/src");
+        GCHECK_EQ_STR(TopLabels(c), @"mac/src linux/src");
+        GCHECK_EQ_STR(CellText(c, file(@"linux/src")), @"linux/src");
+        GCHECK_EQ_STR(CellText(c, file(@"linux/src/l.c")), @"l.c");
+        // Both open, their rows under them; the window's folder unchanged.
+        GCHECK(Expanded(c, file(@"mac/src")) && Expanded(c, file(@"linux/src")));
+        GCHECK(RowOf(c, file(@"mac/src/a.mm")) >= 0 && RowOf(c, file(@"linux/src/l.c")) >= 0);
+        GCHECK(RowOf(c, file(@"src/core.cpp")) < 0 && RowOf(c, file(@"README.md")) < 0);
+        GCHECK_EQ_STR(c.rootPath, repo);
+        // The label row: one label per folder, each with its ×.
+        MCTreeFocusBar *bar = [c treeFocusBar];
+        GCHECK(bar && !bar.hidden && bar.showsFolders);
+        GCHECK_EQ_STR(Labels(c), @"mac/src › linux/src");
+        GCHECK(!NSIsEmptyRect([bar rectOfPart:1]) && !NSIsEmptyRect([bar removeRectOfPart:1]));
+        GCHECK(NSMaxX([bar removeRectOfPart:1]) <= NSMinX([bar closeRect]));
+        GCHECK_EQ_STR(StoredFocus(repo), @"mac/src, linux/src");
+        MCGuiSnapshot(c.sidebarScroll, @"tree_focus-roots");
+        // A root's right click: Remove from Focus, no Add to Focus.
+        Select(c, file(@"linux/src"));
+        GCHECK(!TreeMenuItem(c, @selector(removeFolderFromFocus:)).hidden);
+        GCHECK(TreeMenuItem(c, @selector(addFolderToFocus:)).hidden);
+        Select(c, file(@"linux/src/sub"));
+        GCHECK(TreeMenuItem(c, @selector(removeFolderFromFocus:)).hidden);
+        MCGuiWriteFile(file(@"linux/src/new.c"), @"// n\n");
+    });
+    MCGuiWait(@"a file made in a root shows", 10, ^BOOL {
+        return RowOf(c, file(@"linux/src/new.c")) >= 0;
+    });
+    MCGuiStep(@"New File's folder and Copy Path go by the row, else the first root", ^{
+        [c.outline deselectAll:nil];
+        GCHECK_EQ_STR([c targetDirectory], file(@"mac/src"));
+        Select(c, file(@"linux/src/sub/s.c"));
+        GCHECK_EQ_STR([c targetDirectory], file(@"linux/src/sub"));
+    });
+    MCGuiStep(@"a folder inside a root changes nothing; one holding a root takes its place", ^{
+        GCHECK([c addTreeFocus:@"linux/src/sub"]);
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src, linux/src");
+        GCHECK([c addTreeFocus:@"mac"]);
+        GCHECK_EQ_STR(c.treeFocus, @"mac, linux/src");
+        GCHECK_EQ_STR(TopLabels(c), @"mac linux/src");
+        // mac/src shows inside mac, open, and no file shows twice.
+        GCHECK(Expanded(c, file(@"mac")) && Expanded(c, file(@"mac/src")));
+        GCHECK(RowsOf(c, file(@"mac/src/a.mm")) == 1);
+        GCHECK([c addTreeFocus:@"mac/checks"]);
+        GCHECK_EQ_STR(c.treeFocus, @"mac, linux/src");
+    });
+    MCGuiStep(@"a reveal outside every root adds its folder; an open does not", ^{
+        [c revealPath:file(@"src/core.cpp") andOpen:NO];
+        GCHECK_EQ_STR(c.treeFocus, @"mac, linux/src, src");
+        GCHECK_EQ_STR(Selected(c), file(@"src/core.cpp"));
+        [c revealPath:file(@"docs/d.md") open:YES from:EditorTabs::OpenFrom::QuickOpen];
+        GCHECK_EQ_STR(c.currentPath, file(@"docs/d.md"));
+        GCHECK_EQ_STR(c.treeFocus, @"mac, linux/src, src");
+        // Inside a root: selected, nothing added.
+        [c revealPath:file(@"linux/src/sub/s.c") andOpen:NO];
+        GCHECK_EQ_STR(c.treeFocus, @"mac, linux/src, src");
+        GCHECK_EQ_STR(Selected(c), file(@"linux/src/sub/s.c"));
+    });
+    MCGuiStep(@"a label's × takes its folder out; a click on a label selects its root", ^{
+        GCHECK_EQ_STR(Labels(c), @"mac › linux/src › src");
+        ClickBar(c, [[c treeFocusBar] removeRectOfPart:2]);
+        GCHECK_EQ_STR(c.treeFocus, @"mac, linux/src");
+        GCHECK_EQ_STR(TopLabels(c), @"mac linux/src");
+        ClickBar(c, [[c treeFocusBar] rectOfPart:1]);
+        GCHECK_EQ_STR(Selected(c), file(@"linux/src"));
+        GCHECK_EQ_STR(c.treeFocus, @"mac, linux/src");
+    });
+    MCGuiStep(@"Remove from Focus on a root: down to one, the breadcrumb is back", ^{
+        Select(c, file(@"linux/src"));
+        [c removeFolderFromFocus:nil];
+        GCHECK_EQ_STR(c.treeFocus, @"mac");
+        GCHECK(![c treeFocusBar].showsFolders && ![c treeFocusBar].hidden);
+        GCHECK_EQ_STR(Labels(c), @"focusrepo › mac");
+        GCHECK_EQ_STR(TopRows(c), @"checks src");
+        GCHECK(Expanded(c, file(@"mac/src")));
+    });
+    MCGuiStep(@"Focus on Folder on a root replaces the set", ^{
+        GCHECK([c addTreeFocus:@"linux/src"]);
+        GCHECK_EQ_STR(c.treeFocus, @"mac, linux/src");
+        Select(c, file(@"linux/src"));
+        [c focusOnFolder:nil];
+        GCHECK_EQ_STR(c.treeFocus, @"linux/src");
+        GCHECK_EQ_STR(TopRows(c), @"sub l.c new.c");
+    });
+    MCGuiStep(@"the last × shows the whole folder; so does Show Whole Folder in Tree", ^{
+        GCHECK(([c setTreeFocusFolders:@[@"mac/src", @"linux/src"]]));
+        ClickBar(c, [[c treeFocusBar] closeRect]);
+        GCHECK_EQ_STR(c.treeFocus, @"");
+        GCHECK([c treeFocusBar].hidden);
+        GCHECK_EQ_STR(TopRows(c), @"docs linux mac src README.md");
+        // The roots show open where they are.
+        GCHECK(Expanded(c, file(@"mac/src")) && Expanded(c, file(@"linux/src")));
+        GCHECK(([c setTreeFocusFolders:@[@"mac/src", @"linux/src"]]));
+        [c showWholeFolderInTree:nil];
+        GCHECK_EQ_STR(c.treeFocus, @"");
+        GCHECK((![c setTreeFocusFolders:@[@"mac/src", @"nope"]]));   // refused, as it was
+        GCHECK_EQ_STR(c.treeFocus, @"");
+    });
+    __block NSString *rootsRecord = nil;
+    MCGuiStep(@"brought back with its window: the set, each root open or closed as it was", ^{
+        GCHECK(([c setTreeFocusFolders:@[@"mac/src", @"linux/src"]]));
+        [c.outline collapseItem:ItemAt(c, file(@"linux/src"))];
+        const TabSessions::Window w = [c windowRecordNow];
+        GCHECK((w.tabs.treeFocus == std::vector<std::string>{"mac/src", "linux/src"}));
+        rootsRecord = @(TabSessions::encodeWindows({w}).c_str());
+        EditorController *back = [(NSObject *)NSApp.delegate openWindowAtPath:repo restoring:rootsRecord];
+        GCHECK_EQ_STR(back.treeFocus, @"mac/src, linux/src");
+        GCHECK_EQ_STR(TopLabels(back), @"mac/src linux/src");
+        GCHECK(Expanded(back, file(@"mac/src")) && !Expanded(back, file(@"linux/src")));
+        GCHECK([back treeFocusBar].showsFolders);
+        [back.window performClose:nil];
+        MCGuiSetKeyWindow(c.window);
+    });
+    MCGuiStep(@"a record with folders gone since keeps the others", ^{
+        TabSessions::Window w = TabSessions::decodeWindows(rootsRecord.UTF8String).at(0);
+        w.tabs.treeFocus = {"mac/src", "gone", "linux/src"};
+        EditorController *back = [(NSObject *)NSApp.delegate
+            openWindowAtPath:repo restoring:@(TabSessions::encodeWindows({w}).c_str())];
+        GCHECK_EQ_STR(back.treeFocus, @"mac/src, linux/src");
+        [back.window performClose:nil];
+        w.tabs.treeFocus = {"gone", "linux/src"};
+        back = [(NSObject *)NSApp.delegate
+            openWindowAtPath:repo restoring:@(TabSessions::encodeWindows({w}).c_str())];
+        GCHECK_EQ_STR(back.treeFocus, @"linux/src");
+        GCHECK(![back treeFocusBar].showsFolders);
+        GCHECK_EQ_STR(Labels(back), @"focusrepo › linux › src");
+        [back.window performClose:nil];
+        MCGuiSetKeyWindow(c.window);
+    });
+    MCGuiStep(@"a record in the old single-path form still restores", ^{
+        TabSessions::Window w = TabSessions::decodeWindows(rootsRecord.UTF8String).at(0);
+        w.tabs.treeFocus = {"mac/src"};
+        std::string text = TabSessions::encodeWindows({w});
+        const size_t at = text.find("[\"mac/src\"]");
+        GCHECK(at != std::string::npos);
+        if (at == std::string::npos) return;
+        text.replace(at, std::string("[\"mac/src\"]").size(), "\"mac/src\"");
+        EditorController *back = [(NSObject *)NSApp.delegate openWindowAtPath:repo restoring:@(text.c_str())];
+        GCHECK_EQ_STR(back.treeFocus, @"mac/src");
+        GCHECK_EQ_STR(Labels(back), @"focusrepo › mac › src");
+        [back.window performClose:nil];
+        MCGuiSetKeyWindow(c.window);
+    });
+    MCGuiStep(@"the folder's own session brings the set back", ^{
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src, linux/src");
+        [c.window performClose:nil];
+        MCGuiSetKeyWindow(nil);
+        GCHECK_EQ_STR(StoredFocus(repo), @"mac/src, linux/src");
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:repo]]];
+        c = MCGuiController();
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src, linux/src");
+        GCHECK_EQ_STR(TopLabels(c), @"mac/src linux/src");
+        GCHECK(Expanded(c, file(@"mac/src")));
+    });
+    MCGuiStep(@"three roots; docs deleted on disk", ^{
+        GCHECK([c addTreeFocus:@"docs"]);
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src, linux/src, docs");
+        [[NSFileManager defaultManager] removeItemAtPath:file(@"docs") error:nil];
+    });
+    MCGuiWait(@"the other two stay", 10, ^BOOL {
+        return [c.treeFocus isEqualToString:@"mac/src, linux/src"];
+    });
+    MCGuiStep(@"their rows and label row; the session keeps the two", ^{
+        GCHECK_EQ_STR(TopLabels(c), @"mac/src linux/src");
+        GCHECK_EQ_STR(Labels(c), @"mac/src › linux/src");
+        GCHECK_EQ_STR(StoredFocus(repo), @"mac/src, linux/src");
+    });
+
     MCGuiStep(@"close the window", ^{
         [c.window performClose:nil];
         MCGuiSetKeyWindow(nil);

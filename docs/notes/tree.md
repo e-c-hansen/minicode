@@ -127,8 +127,7 @@ found through that list.
   `TreeFocus::restored`, so a gone folder comes back whole, and
   `finishRestoringWindow` re-expands from the top and remembers the
   record's folders outside it (`windowRecordNow` lists those too). Not on
-  the Worktrees node or a worktree row. Pinning several folders is a
-  possible follow-up. The GTK port has it too (2026-11-17,
+  the Worktrees node or a worktree row. The GTK port has it too (2026-11-17,
   `linux/src/FileTree.cpp`'s "Focus on Folder" section, `linux/HANDOFF.md`
   item 94, `./build/minicode-guitest tree_focus`): its tree makes its model
   again from the focused folder (`makeTreeModel`, `replaceModel` on the
@@ -140,6 +139,51 @@ found through that list.
   through its `treeFocus` and `restoreTreeFocus` hooks. The breadcrumb is
   labels laid out by `TreeFocus::fit` in a `GtkCustomLayout`. It keeps no
   open folders in a window's record, so a window brought back opens none.
+- **Add to Focus, several folders** (2026-11-18, the owner: "what if I'm
+  jumping between two different subdirectories"; the same files, core
+  `tree:focus-set`, `tab-sessions:put`, the `tree_focus` suite's second
+  half): the focus is a list, `_treeFocusItems` and `_treeFocusPaths` in
+  the order added, kept merged by the core's `TreeFocus::added` (a folder
+  inside a focused one changes nothing; one holding focused folders takes
+  the first one's place and the rest go: the outer wins, so no file shows
+  twice). None is the whole folder and one is exactly the single focus
+  above, breadcrumb and widening included. With several, `treeTop` is nil
+  and `treeTopRows` (the data source's top) is the focused items
+  themselves: each a root row, labelled with its path (`treeRootLabelFor:`,
+  in `configureTreeCell:`, medium weight), opened and closed as any row,
+  so listings reload it as an item (`reloadItem:f == top ? nil : f` gives
+  `f` with top nil) and `treeShowsFolder:` asks whether a folder is a root
+  or under one. `reExpandTreeTop:` opens each root exactly when the set
+  holds it (a root new to the set, or the folder that was the single
+  focus, starts open). Commands with no row to go by (New File, Copy
+  Path, Reveal in Finder) take `treeDefaultFolder`, the first root; a drop
+  on the empty space below the roots is refused (it is in none of them).
+  `revealPath:` walks from the root holding the path (`treeRootFor:`).
+  **A reveal outside every root adds the path's folder**
+  (`TreeFocus::revealed`; with one folder it is still `widened`), so the
+  set only grows; a file at the top of the window's folder adds "" and so
+  shows the whole folder. Add to Focus (`addFolderToFocus:`,
+  `minicode.tree.addToFocus`, the File menu, a folder row's right click)
+  takes the clicked row's folder on a right click, else the selected
+  row's, else the open file's, the first not shown yet
+  (`folderToAddToFocus`): with the tree focused every row is inside a
+  focused folder, so the palette's way to add one is to open a file there
+  first. Remove from Focus on a root row of several, a label's × in the
+  label row, and `dropLostTreeFocus` (each root checked as the one focus
+  was; those gone dropped, the whole folder when none is left) take
+  folders out; one left gives the breadcrumb back. The label row is the
+  same `MCTreeFocusBar` (`setFolders:`, `showsFolders`): one label per
+  folder on a faint ground of the sidebar's text color with its ×, then
+  the trailing × (Show Whole Folder); the full paths when they fit, else
+  `TreeFocus::shortLabels` (the fewest last names that tell them apart),
+  cut to share the room by `TreeFocus::shared`. `TabSessions::Session.
+  treeFocus` is a list (written as a JSON array; the single string written
+  before reads as a list of one), restored through `TreeFocus::
+  restoredSet`. `treeFocusRememberedExpanded` lists only folders outside
+  the roots, so a root closed since it was added comes back closed. **The
+  GTK port follows**: it keeps one folder, the list's first
+  (`linux/src/Persistence.cpp` writes a list of one and restores the
+  first), until the Linux session ports several.
 
 ## Traps
 

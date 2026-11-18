@@ -190,16 +190,27 @@
 
 // EditorController+TreeFocus.mm: Focus on Folder, the tree rooted at one
 // folder inside the window's (the selected folder, or the selected file's
-// or the active file's folder), with a breadcrumb back up; and back to the
-// whole folder. Only the tree narrows: the window's folder is unchanged.
+// or the active file's folder), with a breadcrumb back up; Add to Focus,
+// several folders each a root row of the tree under a row of their labels;
+// and back to the whole folder. Only the tree narrows: the window's folder
+// is unchanged.
 @interface EditorController (TreeFocus)
 - (void)focusOnFolder:(id)sender;
+- (void)addFolderToFocus:(id)sender;
+- (void)removeFolderFromFocus:(id)sender;
 - (void)showWholeFolderInTree:(id)sender;
-// The focus as a path from the window's folder ("mac/src"), "" for none;
-// and setting one (NO when that folder is not in the tree: gone, or hidden
+// The focus as a path from the window's folder ("mac/src"), several joined
+// by ", ", "" for none; the folders themselves, in the order added; and
+// setting one (NO when that folder is not in the tree: gone, or hidden
 // with hidden files off).
 @property(nonatomic, readonly) NSString *treeFocus;
+@property(nonatomic, readonly) NSArray<NSString *> *treeFocusFolders;
 - (BOOL)focusTreeOn:(NSString *)focus;
+// The set's rules (TreeFocus::added, removed): NO when a folder named is
+// not in the tree.
+- (BOOL)addTreeFocus:(NSString *)folder;
+- (BOOL)removeTreeFocus:(NSString *)folder;
+- (BOOL)setTreeFocusFolders:(NSArray<NSString *> *)folders;
 @end
 
 // EditorController+TreeDetails.mm

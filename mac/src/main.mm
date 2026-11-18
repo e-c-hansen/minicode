@@ -590,7 +590,7 @@ static BOOL MCWindowTabAction(SEL a) {
            a == @selector(sortTreeBy:) || a == @selector(setTreeSortDirection:) ||
            a == @selector(saveFileAs:) || a == @selector(saveAllFiles:) ||
            a == @selector(toggleFoldersFirst:) || a == @selector(focusOnFolder:) ||
-           a == @selector(showWholeFolderInTree:);
+           a == @selector(addFolderToFocus:) || a == @selector(showWholeFolderInTree:);
 }
 - (BOOL)keyWindowIsEditor {
     NSWindow *key = NSApp.keyWindow;
@@ -922,6 +922,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)deleteSelected:(id)sender  { [[self current] deleteSelected:sender]; }
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
 - (void)focusOnFolder:(id)sender   { [[self current] focusOnFolder:sender]; }
+- (void)addFolderToFocus:(id)sender { [[self current] addFolderToFocus:sender]; }
 - (void)showWholeFolderInTree:(id)sender { [[self current] showWholeFolderInTree:sender]; }
 - (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
 - (void)openKeyboardShortcuts:(id)sender { [[self current] openKeyboardShortcuts:sender]; }
@@ -1125,9 +1126,12 @@ static void BuildMenu(void) {
                         action:@selector(copyRelativePath:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Refresh File Tree"
                         action:@selector(refreshTree:) keyEquivalent:@"r"];
-    // The tree rooted at one folder, and back (EditorController+TreeFocus.mm).
+    // The tree rooted at one folder or several, and back
+    // (EditorController+TreeFocus.mm).
     [fileMenu addItemWithTitle:@"Focus on Folder"
                         action:@selector(focusOnFolder:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Add to Focus"
+                        action:@selector(addFolderToFocus:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Show Whole Folder in Tree"
                         action:@selector(showWholeFolderInTree:) keyEquivalent:@""];
     [fileMenu addItem:[NSMenuItem separatorItem]];

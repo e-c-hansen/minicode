@@ -30,7 +30,7 @@ goes here first, with tests; the GUI only displays it.
   window keep between runs: sessions.json's `Store`, the window record),
   `SavePlan` (when backups, auto-saves and GTK's session are written,
   from a clock the port ticks), `FileDetails` (tree sorts, ages, folder
-  totals, the tree's focus: Focus on Folder's breadcrumb and widening), `RunFile` (Run File's quoting), `Runnables` (the tests in a
+  totals, the tree's focus: Focus on Folder's breadcrumb and widening, and Add to Focus's set of folders), `RunFile` (Run File's quoting), `Runnables` (the tests in a
   file, found through the highlighter's tokens, and the command for one
   test or the file), `RightAreaLayout` (the right
   side's panes and bars by the Mac's rules, which the GTK port lays out from).
@@ -190,7 +190,7 @@ goes here first, with tests; the GUI only displays it.
   TODOs window), `GitPanel`, `ChangeReviewPage` (every uncommitted change in
   one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
   in the editor), `TreeDetails`, `TreeFocusBar` (the focused tree's
-  breadcrumb row),
+  breadcrumb row, or its label row for several folders),
   `FormatRunner`, `BackupStore`, `SessionStore` (sessions.json),
   `SessionLink` (the session's host and each tab's document on it,
   editor.session-host; `docs/notes/session-host.md`),
@@ -216,7 +216,7 @@ goes here first, with tests; the GUI only displays it.
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
 Tabs (tabs, closed tabs, saving), Session (the session host's hooks), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
-files changed outside), TreeFocus (Focus on Folder), Rendering (what the editor's slot shows), Highlighting,
+files changed outside), TreeFocus (Focus on Folder and Add to Focus), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
 LanguageServers, Agents (inline agent, Request a
