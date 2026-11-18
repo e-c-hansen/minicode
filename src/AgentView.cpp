@@ -47,7 +47,7 @@ std::string folderText(const std::string &path, AgentIndex::Place place,
     if (place == AgentIndex::Place::Worktree) {
         if (below(dir, AgentIndex::normalizePath(worktree), &rel)) return rel;
         const std::string mark = "/.claude/worktrees/";
-        size_t at = dir.find(mark);
+        size_t at = dir.rfind(mark);   // the innermost, as AgentIndex's worktreeOf
         if (at != std::string::npos) {
             size_t start = at + mark.size();
             size_t end = dir.find('/', start);

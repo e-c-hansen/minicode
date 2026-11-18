@@ -320,6 +320,11 @@ static void testAgentIndex() {
     CHECK(classify("/w/p/.claude/worktrees/agent-x/a.cpp", "/w/p", "/w/p/.claude/worktrees/agent-x") ==
           Place::Worktree);
     CHECK(classify("/w/p/.claude/worktrees/agent-y/a.cpp", "/w/p", "") == Place::Worktree);
+    // A project inside an agent's worktree: the innermost worktree counts.
+    CHECK(classify("/w/.claude/worktrees/outer/p/.claude/worktrees/agent-y/a.cpp",
+                   "/w/.claude/worktrees/outer/p", "") == Place::Worktree);
+    CHECK(classify("/w/.claude/worktrees/outer/p/src/a.cpp", "/w/.claude/worktrees/outer/p", "") ==
+          Place::Main);
     CHECK(classify("/private/tmp/claude-1/x/scratchpad/r.md", "/w/p", "") == Place::Outside);
     CHECK(std::string(placeName(Place::Outside)) == "Outside the folder");
 
