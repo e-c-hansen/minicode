@@ -6266,3 +6266,33 @@ client, instead of one process-wide client and in-process host.
   takes the CLI subcommands in its own `main`, since the host a window
   starts is `mutible-guitest host`. `host_link` (the notes say what it
   checks); `hostserver:host-gone` and the settings checks in `make test`.
+
+### 100. Closing a window detaches, and the next window reattaches (stage 6, step 2; November 2026)
+
+The second step of stage 6's GTK half; `../docs/notes/session-host.md`,
+"GTK reattaches (stage 6, step 2)", has the details and what is left.
+
+- **What a user meets.** With `editor.session-host = headless`, closing a
+  window (or quitting) leaves its terminals running on the folder's host,
+  and the close question has a fourth answer, Keep Unsaved, which leaves
+  unsaved files there; the folder's next window, in this app or after a
+  relaunch, gets its tabs back (the unsaved text, unsaved; the host's undo
+  history) and its terminals attached (the same shell, what it printed,
+  live output). In process (the default) the same happens for saved files
+  and terminals while the app runs. When the host goes, Reconnect in the
+  status bar (or the next window on the folder) finds or starts it again
+  and reopens every window's files on it from their buffers.
+- **Code.** Core: `DocPath`, `DocDetach`, `TermDetach` (SessionProtocol.h,
+  additive), the state's `connected` and `seen` for windows,
+  `Client::setPath`, `detach`, `detachTerminal`, `clientId`,
+  `showsTerminal`, `Shared::termLooksLikeAnswer`. GTK: `SessionLink`
+  (`takeForWindow`, `windowDetached`, `windowTerminals`,
+  `keepWhileHolding`, `endDetached`, `folderLost`), `Document`
+  (`attachHeld`, `detachFromHost`, `rehost`, the path), `Editor`
+  (`attachTab`, `detachFromHost`, `rehost`), `Terminal` (`attachHeld`,
+  `detachFromHost`, `rehost`, answers, `followPtySize`), `Persistence`
+  (a held path's backup removed), main.cpp (`detachWindow`, the question,
+  Reconnect, `rehostWindows`).
+- **Checks**: `host_reattach` (and `_host_reattach_child`), `host:detach`,
+  `host:window-records`, `host:term-answers`. The harness ends what closed
+  windows left on their hosts between suites (`SessionLink::endDetached`).

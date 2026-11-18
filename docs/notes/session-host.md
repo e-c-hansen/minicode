@@ -463,10 +463,9 @@ document, terminal (dying ones included) or window is held
   `Model::Window`'s callbacks are data.
 - Size: done in the host (stage 6's **Size**), and followed by the Mac's
   grid ("Terminals on the host", **Size**) and the page (`tsize`, and the
-  view following `TermShell`; 2026-11-18). GTK's VTE still sizes itself
-  from its widget and commits its answers with the user's keys
-  (`onCommit`); it needs both before a second renderer shares its
-  terminals.
+  view following `TermShell`; 2026-11-18). GTK's VTE sends its answers
+  as answers and follows the pty's size since step 2 ("GTK reattaches",
+  below), minimally: clipped when larger, no panning yet.
 - Saving, dirty, backups and the disk are still the app's (stage 7): a
   headless host's unsaved document is only as safe as the host process.
 
@@ -528,11 +527,10 @@ client's base, so ids of two hosts never meet in one client).
   (`flashStatus`) and each terminal on it, which writes a line, drops its
   shell (it ended with the host's pty) and starts none again. Documents
   stay open and editable and save as before (saving is the app's); undo
-  and redo do nothing in them. Nothing reconnects.
+  and redo do nothing in them. Step 2 reconnects (below).
 - **Quitting** calls `SessionLink::detachAll` (the shutdown handler):
   every headless host is detached from and runs on until its lifetime
-  ends. Closing a window behaves as today: its documents close on the host
-  and its terminals ask, then end; then the window's link goes (detached).
+  ends. Closing a window detaches since step 2 (below).
 - **Checks.** The harness sets `MUTIBLE_HOST=inprocess` for every suite
   (Wrapper.cpp, kept when a run asks for loopback), and its socket folder
   is the scratch world's (`XDG_RUNTIME_DIR` under `/tmp/mcgui-*`). The
@@ -548,18 +546,118 @@ client's base, so ids of two hosts never meet in one client).
   host it starts it ends by its pid (SIGKILL, or SIGTERM to see it stop);
   the wrapper's subreaper reaps them and would end any left.
 
-**Step 2 (TODO).** Closing a window detaches instead of closing its
-documents and terminals; a window opened on the folder (or the app
-started again) reattaches to what the host holds: the documents by path
-(the GTK document opens on the host with an empty path today, so the host
-has to be told each document's path first) and the terminals by id (a VTE
-fed the host's `replay()`, `TermAttach` instead of `TermOpen`), with the
-window's tabs rebuilt from `StateQuery`'s `windows`. A host that goes
-should be found or started again and reattached to, the documents
-reopened with their buffers' text (`Client::open` anew under new ids, or
-reset), rather than left without undo. The terminals' size and answers
-need the "For the GTK and Mac attach steps" work above before a second
-renderer shares them. Then the default can flip, on both apps together.
+### GTK reattaches (stage 6, step 2)
+
+Closing a window detaches from its folder's host instead of ending what
+it shows, and a window opening on the folder takes what a closed one
+left (linux/HANDOFF.md item 100). Both host modes: a headless host keeps
+it after the app quits; an in-process one while the app runs.
+
+- **The protocol, additive.** Three renderer-to-host kinds, new rather
+  than flags on DocClose and TermClose, so a host from before them answers
+  "the host takes no ..." instead of closing what the renderer meant to
+  keep: `DocPath` (doc, name: the file's path now; `Client::setPath`),
+  `DocDetach` (doc: the renderer's seat goes, the document stays with its
+  text and history even with no seat left, as when a connection goes;
+  `Client::detach` sends the document's queued edits first and forgets the
+  entry once the DocDetach is out) and `TermDetach` (term: the renderer
+  stops being a viewer, so its credit holds nothing back; the shell runs
+  on; `Client::detachTerminal`). The state's windows gain `connected`
+  (whether the renderer that reported the record is still connected) and
+  `seen` (the host's order of its last WindowTabs). `Client::clientId()`
+  and `showsTerminal()` are new accessors, and
+  `Shared::termLooksLikeAnswer` says whether bytes read as an emulator's
+  answers (below). Checks: `host:detach`, `host:window-records`,
+  `host:term-answers`.
+- **Paths.** A GTK document tells the host its path when its text is set
+  from a file (`resetHistory`) and on Save As or a rename (`setPath`);
+  `tellHostPath` sends only a change.
+- **Closing** (main.cpp `detachWindow`, from `onWindowRemoved`): the
+  window's terminals are reported in its record (`"terms"`, as the Mac's
+  window has them; `Link::windowTerminals`) and detached
+  (`Terminal::detachFromHost`); the editor sends its record once more
+  (`Link::windowDetached`, so its `seen` is the latest; a window with no
+  tabs and no terminals sends WindowClose instead) and detaches every
+  document (`Editor::detachFromHost`) but those the close question's
+  Don't Save named, which close on the host with their tabs; then each
+  link settles (what was typed goes before a headless link can be let
+  go of). An explicit close of a tab or terminal still closes it on the
+  host.
+- **The question.** Kept, since saving stays the app's until stage 7. On
+  a headless host it has a fourth answer, Keep Unsaved: the unsaved files
+  stay unsaved on the host for the folder's next window (and keep the
+  host alive by its lifetime rule). In process the answers stay Save,
+  Don't Save and Cancel, since the host ends with the app; unsaved files
+  are never kept there, only saved or clean ones and terminals. Don't Save
+  closes the files on the host; Cancel keeps the window.
+- **Busy terminals.** No question at a window's close: the window close
+  never asked on GTK, and closing now detaches, so a running command goes
+  on (the core's lifetime rule keeps a headless host alive while one
+  runs). Quitting with an in-process host ends the shells as before; the
+  Mac's own close question is unchanged.
+- **Opening** (`Link::takeForWindow`, from `newWindow` as the editor is
+  made, and from Open Folder): a record is free when no window of this
+  app has it and its renderer is gone or is this app's. The window takes
+  the free record with the highest `seen` (the latest a closed window
+  left) and reports its tabs under that record's id from then on; it gets
+  the documents and terminals that record names and the host holds, then
+  every held document (with a path) and terminal that no record names.
+  What a record of an open window (here or another renderer's) names is
+  that window's and left alone. **Two windows on one folder** each leave
+  a record; the next window takes the latest, the one after it the other.
+- **Documents** come back before the session restores the rest
+  (`attachHeldDocuments`, then `Persistence::restoreSession`, which passes
+  over a path open already and removes a backup of it a process that went
+  left: the host's live text wins). `Editor::attachTab` makes the
+  `Document` under the held id (`DocOpen` with an empty text: the host's
+  text comes back as one insertion, which records nothing), and
+  `Document::attachHeld` reads the file, whose text counts as saved, so
+  the tab is unsaved when the two differ. The undo history is the host's.
+  After the session, the record's tab on show is put on show.
+- **Terminals** go to the dock in order, one tab each (splits are not
+  kept): `makeTerminal` gives each its held id (`Terminal::attachHeld`,
+  the pid and the host's TermShell at once, so busy() and the title work
+  before it is shown), and when VTE is made it attaches (`attachShell`:
+  TermAttach, the replay fed to VTE, then live output; the shell is zsh
+  or bash by `/proc/<pid>/comm`, and the integration's word is the host's,
+  since its nonce never reaches this renderer).
+- **In process**, a link holding anything a closed window left is kept
+  while the app runs (`SessionLink::keepWhileHolding`; `detachAll` lets
+  them go at quit). The GUI harness ends what no open window shows
+  between suites (`SessionLink::endDetached`, in `checkWhatSuiteLeft`),
+  as it puts the two files back, so one suite's detached terminals never
+  come back in the next suite's window.
+- **The host gone, then back.** `forFolder` passes a lost link over, so
+  the next window on the folder, or the status bar's Reconnect (shown
+  while the host is gone), finds or starts the host again; every window on
+  the old link moves to the new one (`rehostWindows`): each document opens
+  on it anew under a new id with its buffer's text (`Document::rehost`:
+  nothing typed is lost; its undo went with the old host), and each
+  terminal there starts a new shell (`Terminal::rehost`).
+- **VTE as a renderer among several.** What VTE commits with no key
+  pressed (`userInput_`) and that reads as answers
+  (`termLooksLikeAnswer`: CSI ending in c, n, R, t, x or y, an OSC, a
+  DCS, each whole) goes as an answer (`terminalInput(..., true)`), so it
+  never takes the pty's size. TermShell's cols and rows are followed
+  (`followPtySize`): a pty larger than the view gets VTE at its size,
+  clipped by the scroller (its horizontal policy is EXTERNAL), with the
+  view's own size, from the scroller, still sent as this renderer's
+  (`viewCells`); a smaller one is drawn at the top left of VTE's own
+  grid. No panning to the cursor yet, and plain lines wrap at VTE's width
+  rather than the pty's.
+- **Checks**: `make guitest`'s `host_reattach` (linux/tests/gui/
+  HostReattachSuite.cpp; its header says what it checks), with
+  `_host_reattach_child`, a second app process, for quit and relaunch.
+
+**Left before the default flips:** the Mac's half (closing detaching,
+reattaching); the browser's view lists a closed window's record among the
+windows; panning a larger pty to the cursor in VTE, and VTE's own wrap of
+plain output at a smaller pty's width; a held document with no path (none
+GTK makes) is left on the host; two held documents of one path (two
+windows on one file) come back as one tab, the other left on the host;
+terminal splits come back as tabs; a headless host's unsaved file is only
+as safe as the host process (no backup is kept for it once its window
+closes).
 
 ## The browser's view (stage 6b)
 
