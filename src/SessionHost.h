@@ -275,8 +275,11 @@ public:
     // The folder a headless host serves (Host::setFolder), on its thread.
     void setFolder(std::string folder);
     // Runs `f` on the host's thread with the Host, after everything posted
-    // before it, and waits for it (checks only).
-    void inspect(const std::function<void(const Host&)>& f);
+    // before it, and waits for it, at most `timeoutMs`: false, and `f` never
+    // run, when the thread did not come to it in time (a hang there fails
+    // the caller instead of hanging it too). Once `f` has started it is
+    // waited for.
+    bool inspect(const std::function<void(const Host&)>& f, int timeoutMs = 10000);
 
 private:
     Host host_;

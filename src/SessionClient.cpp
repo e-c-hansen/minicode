@@ -275,8 +275,21 @@ bool Client::take(Message* out) {
 }
 
 void Client::dispatch() {
+    std::size_t queued;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        queued = inbox_.size();
+    }
     Message m;
-    while (take(&m)) process(std::move(m));
+    while (queued-- && take(&m)) process(std::move(m));
+    // Messages that came while those were taken found the queue not empty and
+    // called no wake: call it now, so they are not left until the next.
+    std::function<void()> wake;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!inbox_.empty()) wake = wake_;
+    }
+    if (wake) wake();
 }
 
 void Client::process(Message&& m) {
@@ -492,6 +505,7 @@ bool Client::waitFor(const std::function<bool()>& done, int timeoutMs) {
         while (take(&m)) {
             process(std::move(m));
             if (done()) return true;
+            if (std::chrono::steady_clock::now() >= deadline) return false;
         }
         if (done()) return true;
         std::unique_lock<std::mutex> lk(mu_);

@@ -263,10 +263,11 @@ struct TermRig : Shared::Client::TermListener {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     }
-    // The host's counts of terminals and shells waiting to be reaped.
+    // The host's counts of terminals and shells waiting to be reaped
+    // (SIZE_MAX when its thread does not answer).
     std::pair<size_t, size_t> counts() {
-        std::pair<size_t, size_t> c;
-        host->inspect([&](const Shared::Host& h) { c = {h.terminalCount(), h.dyingCount()}; });
+        std::pair<size_t, size_t> c{SIZE_MAX, SIZE_MAX};
+        host->inspect([&](const Shared::Host& h) { c = {h.terminalCount(), h.dyingCount()}; }, 2000);
         return c;
     }
     bool settled(int ms = 8000) {
@@ -278,6 +279,21 @@ struct TermRig : Shared::Client::TermListener {
         return f;
     }
     bool has(const std::string& s) const { return out.find(s) != std::string::npos; }
+};
+
+// A listener that, as each output is taken, has one more delivered: the
+// host reading on as fast as a renderer acknowledges (term:dispatch).
+struct Refill : Shared::Client::TermListener {
+    Shared::Client* client = nullptr;
+    long long taken = 0, cap = 0;
+    void termOutput(Shared::TermId t, const std::string&, long long, bool, bool) override {
+        if (++taken >= cap) return;
+        Message m;
+        m.kind = Shared::Kind::TermOutput;
+        m.term = t;
+        m.bytes = "y\r\n";
+        client->deliver(std::move(m));
+    }
 };
 
 }  // namespace
@@ -558,22 +574,66 @@ static void testSessionTerminals() {
     {
         // Output nobody takes stops the host reading the pty (the program
         // blocks) at kTermCredit; taking it lets it go on.
+        // A megabyte through TSan's host and mirror took 2 s on an M3 and
+        // 9 s under `taskpolicy -b`: the wait polls, so its room only
+        // delays a failure. Each look is after a round trip (settle()):
+        // dispatch() takes only what was queued when it was called, and a
+        // message the host sent during it is not output read after.
         TermRig r;
         r.ack = false;
         r.open(8, r.spec("yes", {"yes", "credit"}));
-        CHECK(r.wait([&] { return r.received >= Shared::kTermCredit; }));
+        CHECK(r.wait([&] { return r.received >= Shared::kTermCredit; }, 30000));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        r.client->dispatch();
+        CHECK(r.client->settle(5000));
         const long long held = r.received;
         CHECK(held <= Shared::kTermCredit + 65536);
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        r.client->dispatch();
+        CHECK(r.client->settle(5000));
+        if (r.received != held) std::printf("  credit: %lld bytes held, then %lld\n", held, r.received);
         CHECK(r.received == held);
         r.ack = true;
         r.client->ackTerminal(8, (size_t)held);
         CHECK(r.wait([&] { return r.received > held + 100000; }));
         r.client->closeTerminal(8);
         CHECK(r.settled(5000));
+    }
+
+    GROUP("term:dispatch");
+    {
+        // dispatch() takes what was queued when it was called and no more:
+        // one that ran until the queue was empty never returned while the
+        // host refilled it as fast as it was taken (`yes` with every output
+        // acknowledged at once hung term:credit in CI under TSan). What
+        // came meanwhile gets its wake. And settle() gives up at its time
+        // even while messages keep coming.
+        Shared::Client c(Model::Unit::CodePoint, "test");
+        c.connect([](Message&&) {});   // a host that never answers
+        int wakes = 0;
+        c.setWake([&] { wakes++; });
+        Refill l;
+        l.client = &c;
+        l.cap = 300000;
+        c.openTerminal(9, Shared::TermSpec(), &l);
+        auto output = [&] {
+            Message m;
+            m.kind = Shared::Kind::TermOutput;
+            m.term = 9;
+            m.bytes = "y\r\n";
+            c.deliver(std::move(m));
+        };
+        output();
+        output();
+        CHECK(wakes == 1);   // the first found the queue empty
+        c.dispatch();
+        if (l.taken != 2) std::printf("  one dispatch() took %lld outputs\n", l.taken);
+        CHECK(l.taken == 2);
+        CHECK(wakes == 2);   // the two delivered meanwhile are waiting
+        c.dispatch();
+        CHECK(l.taken == 4);
+        const bool settled = c.settle(100);
+        CHECK(!settled);
+        if (l.taken >= l.cap) std::printf("  settle() ran past its time: %lld outputs\n", l.taken);
+        CHECK(l.taken < l.cap);
     }
 
     GROUP("term:protocol");

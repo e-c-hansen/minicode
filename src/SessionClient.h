@@ -91,10 +91,16 @@ public:
     // Any thread: queued, and `wake` called when the queue was empty.
     void deliver(Message&& m);
     void setWake(std::function<void()> wake);
-    // Everything queued, in order.
+    // What was queued when it was called, in order, and no more: a listener
+    // that acknowledges terminal output as it takes it lets the host send
+    // more at once, and a dispatch() that ran until the queue was empty
+    // never returned while a program printed as fast as it was taken
+    // (term:credit hung CI under TSan, 2026-11-18). What came meanwhile
+    // waits for the next call, and `wake` is called for it.
     void dispatch();
     // Everything sent before now done by the host and its answers taken
-    // (dispatch()ed). False when the host did not answer in time.
+    // (dispatch()ed). False when the host did not answer in time, even
+    // while other messages keep coming.
     bool settle(int timeoutMs = 10000);
 
     // ---- documents

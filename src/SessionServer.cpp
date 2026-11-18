@@ -341,7 +341,8 @@ bool HostServer::run() {
         const long long quiet =
             std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - lastLeft).count();
         if (quiet < opt_.idleMs) continue;
-        std::string why;
+        // Busy, too, when the host's thread does not answer.
+        std::string why = "the host's thread did not answer";
         host_->inspect([&why](const Host& h) { why = h.busyReason(); });
         if (why.empty()) return true;
     }
