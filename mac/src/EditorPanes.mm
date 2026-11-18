@@ -63,7 +63,9 @@
     if (self.onDrag) self.onDrag([self along:p] - _grabOffset);
 }
 - (void)mouseUp:(NSEvent *)event {
+    const BOOL wasDragging = _dragging;
     _dragging = NO;
+    if (wasDragging && self.onDragEnd) self.onDragEnd();
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     [self setHot:NSPointInRect(p, self.bounds)];
 }

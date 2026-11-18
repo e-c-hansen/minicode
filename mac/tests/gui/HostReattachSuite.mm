@@ -32,6 +32,19 @@
 //     untitled buffer as the unsaved tab of Untitled-1, a file not on disk;
 //     its own backups are written as it opens and the host's go. Cmd+S
 //     writes Untitled-1, and only then does the host have its path.
+//   - Terminal splits in the record (the record's "termLayout",
+//     TermDockRecord.h), with the process's host: two dock tabs, the first
+//     split right and then down in the new column, both bars dragged (the
+//     host's record keeps the shares from before a drag until the button
+//     is let go, then takes the new ones at once), its top right pane
+//     active and the second tab on show. The window closes and the
+//     folder's next window has the same tabs: the same terminals in the
+//     same columns and rows, the shares within 0.01 and laid out so, the
+//     same active pane and tab. Closed again and the record rewritten as
+//     GTK writes it (built here from JSON text): another arrangement, with
+//     a pane naming a terminal that is not there; the next window has that
+//     arrangement, the missing pane gone and its share given to its
+//     neighbour, the active pane moved off it to the one below.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -40,17 +53,22 @@
 #import "SessionLink.h"
 #import "SessionWindow.h"
 #import "Terminal.h"
+#import "TerminalPanel.h"
+#import "EditorPanes.h"
 
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include <climits>
+#include <cmath>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "Backups.h"
 #include "SessionServer.h"
+#include "TermDockRecord.h"
 
 namespace {
 
@@ -177,6 +195,94 @@ uint64_t LeaveOnHost(const std::string &socket, const std::string &path, const s
     return id;
 }
 
+// ---- terminal splits
+
+NSString *gDirS;
+TerminalView *gA, *gB, *gC2, *gD;   // the panes: tab 0 [[A], [B, C]], tab 1 [[D]]
+uint64_t gIdA, gIdB, gIdC, gIdD;
+pid_t gShellA;
+Shared::TermDock gDockBefore;       // as the first window left it
+
+MCTerminalPanel *PanelOf(EditorController *c) { return [c valueForKey:@"terminalPanel"]; }
+
+BOOL Idle(TerminalView *t) { return t.atPrompt && !t.busy; }
+
+NSEvent *Mouse(NSWindow *w, NSEventType type, NSPoint p) {
+    return [NSEvent mouseEventWithType:type location:p modifierFlags:0 timestamp:0
+                          windowNumber:w.windowNumber context:nil eventNumber:0
+                            clickCount:1 pressure:1];
+}
+
+// The window's record on the process's host now, null for none.
+Json HostRecord(uint64_t window) {
+    const Json st = MCSessionClient().sessionState();
+    for (const Json &w : st["windows"].elements())
+        if ((uint64_t)w["window"].asInt() == window) return w["tabs"];
+    return Json();
+}
+
+BOOL Near(double a, double b) { return std::fabs(a - b) <= 0.01; }
+
+BOOL SharesNear(const TerminalLayout::Fractions &a, const TerminalLayout::Fractions &b) {
+    if (a.size() != b.size()) return NO;
+    for (size_t i = 0; i < a.size(); i++)
+        if (!Near(a[i], b[i])) return NO;
+    return YES;
+}
+
+BOOL JsonSharesNear(const Json &j, const TerminalLayout::Fractions &b) {
+    if (!j.isArray() || j.size() != b.size()) return NO;
+    for (size_t i = 0; i < b.size(); i++)
+        if (!Near(j[i].asNumber(-1), b[i])) return NO;
+    return YES;
+}
+
+typedef std::vector<std::vector<uint64_t>> Columns;
+
+Columns IdsIn(MCTerminalPanel *panel, NSUInteger tab) {
+    Columns out;
+    for (NSArray<TerminalView *> *column in [panel columnsInTab:tab]) {
+        std::vector<uint64_t> ids;
+        for (TerminalView *t in column) ids.push_back(t.sessionTerminal);
+        out.push_back(ids);
+    }
+    return out;
+}
+
+NSString *ColumnsText(const Columns &cols) {
+    NSMutableArray *parts = [NSMutableArray array];
+    for (const auto &c : cols) {
+        NSMutableArray *ids = [NSMutableArray array];
+        for (uint64_t id : c) [ids addObject:@(id)];
+        [parts addObject:[NSString stringWithFormat:@"[%@]", [ids componentsJoinedByString:@","]]];
+    }
+    return [NSString stringWithFormat:@"[%@]", [parts componentsJoinedByString:@","]];
+}
+
+// The panes of a shown tab laid out at its shares: each column's width, and
+// each pane's height in its column, as a share of the whole.
+void CheckLaidOut(MCTerminalPanel *panel, NSUInteger tab, const TerminalLayout::Layout &l) {
+    NSArray<NSArray<TerminalView *> *> *cols = [panel columnsInTab:tab];
+    GCHECK(cols.count == l.columns.size());
+    if (cols.count != l.columns.size()) return;
+    const CGFloat W = panel.bounds.size.width;
+    CGFloat H = 0;
+    for (TerminalView *t in cols[0]) H += t.frame.size.height + 1;
+    H -= 1;
+    for (NSUInteger c = 0; c < cols.count; c++) {
+        const CGFloat w = cols[c].firstObject.frame.size.width;
+        // The layout gives each pane its share of what the 1pt gaps leave.
+        const double share = w / (W - (cols.count - 1));
+        if (std::fabs(share - l.columns[c]) > 0.02) MCGuiNote(@"column %lu: %.3f, %.3f wanted", (unsigned long)c, share, l.columns[c]);
+        GCHECK(std::fabs(share - l.columns[c]) <= 0.02);
+        for (NSUInteger r = 0; r < cols[c].count && r < l.rows[c].size(); r++) {
+            const double h = cols[c][r].frame.size.height / (H - (cols[c].count - 1));
+            if (std::fabs(h - l.rows[c][r]) > 0.02) MCGuiNote(@"pane %lu,%lu: %.3f, %.3f wanted", (unsigned long)c, (unsigned long)r, h, l.rows[c][r]);
+            GCHECK(std::fabs(h - l.rows[c][r]) <= 0.02);
+        }
+    }
+}
+
 }  // namespace
 
 MC_GUI_SUITE(host_reattach) {
@@ -249,6 +355,203 @@ MC_GUI_SUITE(host_reattach) {
         [gC.window performClose:nil];
     });
     MCGuiWait(@"gone", 10, ^BOOL { return WindowOn(gDirA) == nil; });
+
+    // ---------------------------------------------------- terminal splits in the record
+    MCGuiStep(@"splits: a window with a terminal split right, then down in the new column", ^{
+        gC = nil;
+        gDirS = [MCGuiScratch() stringByAppendingPathComponent:@"reattach-splits"];
+        [NSFileManager.defaultManager createDirectoryAtPath:gDirS withIntermediateDirectories:YES attributes:nil error:nil];
+        gC = OpenWindowOn(gDirS);
+        GCHECK(gC != nil);
+        [gC newTerminal:nil];
+        MCTerminalPanel *panel = PanelOf(gC);
+        GCHECK(panel != nil);
+        // A dock tall enough for a stack of two with room to move its bar.
+        [gC setValue:@(3 * [MCTerminalPanel minPaneHeight] + MCTabStripHeight() + 60) forKey:@"terminalHeight"];
+        [gC relayoutRightArea];
+        MCGuiNote(@"window %@, dock %@", NSStringFromSize(gC.window.frame.size), NSStringFromSize(panel.frame.size));
+        gA = panel.activeTerminal;
+        gB = [panel splitActive];
+        gC2 = [panel splitActiveDown];
+        GCHECK(gA && gB && gC2);
+        NSArray *cols = [panel columnsInTab:0];
+        GCHECK(cols.count == 2 && [cols[0] isEqual:@[ gA ]] && [cols[1] isEqual:(@[ gB, gC2 ])]);
+        GCHECK(gA.onSessionHost && gA.sessionTerminal && gB.sessionTerminal && gC2.sessionTerminal);
+    });
+    MCGuiWait(@"three prompts", 20, ^BOOL { return Idle(gA) && Idle(gB) && Idle(gC2); });
+    MCGuiStep(@"the bar between the columns dragged: the host's record keeps the old shares till it is let go", ^{
+        MCSessionWindow *w = [gC sessionWindow];
+        [w report];
+        MCTerminalPanel *panel = PanelOf(gC);
+        DragBar *bar = nil;
+        for (DragBar *b in [panel splitBars])
+            if (b.vertical) bar = b;
+        GCHECK(bar != nil);
+        if (!bar) return;
+        GCHECK(JsonSharesNear(HostRecord(w.windowId)["termLayout"]["tabs"][0]["columnShares"], {0.5, 0.5}));
+        NSPoint a = [bar convertPoint:NSMakePoint(NSMidX(bar.bounds), NSMidY(bar.bounds)) toView:nil];
+        const CGFloat by = 0.1 * panel.bounds.size.width;   // to about 60:40
+        NSPoint b = NSMakePoint(a.x + by, a.y);
+        [bar mouseDown:Mouse(gC.window, NSEventTypeLeftMouseDown, a)];
+        [bar mouseDragged:Mouse(gC.window, NSEventTypeLeftMouseDragged, NSMakePoint(a.x + by / 2, a.y))];
+        [bar mouseDragged:Mouse(gC.window, NSEventTypeLeftMouseDragged, b)];
+        GCHECK(gA.frame.size.width > gB.frame.size.width + 0.1 * by);   // the panes moved
+        [w report];   // what the half second's timer sends, mid-drag
+        const Json mid = HostRecord(w.windowId)["termLayout"]["tabs"][0]["columnShares"];
+        MCGuiNote(@"mid-drag, the host's record: %s", mid.dump().c_str());
+        GCHECK(JsonSharesNear(mid, {0.5, 0.5}));
+        [bar mouseUp:Mouse(gC.window, NSEventTypeLeftMouseUp, b)];
+    });
+    MCGuiWait(@"let go: the host's record has the new shares, without waiting for the timer", 2, ^BOOL {
+        const Json shares = HostRecord([gC sessionWindow].windowId)["termLayout"]["tabs"][0]["columnShares"];
+        return shares.isArray() && shares.size() == 2 && shares[0].asNumber(0) > 0.55;
+    });
+    MCGuiStep(@"the bar in the right column dragged down; its top pane active; a second tab on show", ^{
+        MCTerminalPanel *panel = PanelOf(gC);
+        DragBar *bar = nil;
+        for (DragBar *b in [panel splitBars])
+            if (!b.vertical) bar = b;
+        GCHECK(bar != nil);
+        if (bar) {
+            NSPoint a = [bar convertPoint:NSMakePoint(NSMidX(bar.bounds), NSMidY(bar.bounds)) toView:nil];
+            NSPoint b = NSMakePoint(a.x, a.y - 0.15 * (panel.bounds.size.height - MCTabStripHeight()));
+            [bar mouseDown:Mouse(gC.window, NSEventTypeLeftMouseDown, a)];
+            [bar mouseDragged:Mouse(gC.window, NSEventTypeLeftMouseDragged, b)];
+            [bar mouseUp:Mouse(gC.window, NSEventTypeLeftMouseUp, b)];
+        }
+        GCHECK(gB.frame.size.height > gC2.frame.size.height + 10);
+        [panel selectTerminal:gB];
+        [gC newTerminal:nil];
+        gD = panel.activeTerminal;
+        GCHECK(gD && gD != gC2 && panel.tabCount == 2 && panel.selectedTab == 1);
+        gIdA = gA.sessionTerminal;
+        gIdB = gB.sessionTerminal;
+        gIdC = gC2.sessionTerminal;
+        gIdD = gD.sessionTerminal;
+        gShellA = gA.shellPid;
+        [panel sessionDock:&gDockBefore];
+        GCHECK(gDockBefore.tabs.size() == 2);
+        if (gDockBefore.tabs.size() != 2) return;
+        const Shared::TermDock::Tab &t = gDockBefore.tabs[0];
+        GCHECK((t.columns == Columns{{gIdA}, {gIdB, gIdC}}));
+        GCHECK(t.activeColumn == 1 && t.activeRow == 0);
+        GCHECK(t.layout.columns[0] > 0.55 && t.layout.rows[1][0] > 0.55);
+        GCHECK(gDockBefore.activeTab == 1);
+        MCGuiNote(@"shares: columns %.4f %.4f, right column %.4f %.4f", t.layout.columns[0], t.layout.columns[1],
+                  t.layout.rows[1][0], t.layout.rows[1][1]);
+    });
+    MCGuiWait(@"the new tab's prompt", 20, ^BOOL { return Idle(gD); });
+    MCGuiStep(@"the window's record has the layout beside its terminals", ^{
+        const Json r = [[gC sessionWindow] recordLeavingOut:nil];
+        MCGuiNote(@"record: %s", r.dump().c_str());
+        GCHECK(r["terms"].size() == 4);
+        const Json &l = r["termLayout"];
+        GCHECK(l["tabs"].size() == 2 && l["activeTab"].asInt() == 1);
+        Json left = Json::array(), right = Json::array(), cols = Json::array();
+        left.push(Json((int64_t)gIdA));
+        right.push(Json((int64_t)gIdB));
+        right.push(Json((int64_t)gIdC));
+        cols.push(left);
+        cols.push(right);
+        GCHECK(l["tabs"][0]["columns"].dump() == cols.dump());
+        if (gDockBefore.tabs.size() != 2) return;
+        GCHECK(l["tabs"][0]["activeColumn"].asInt() == 1 && l["tabs"][0]["activeRow"].asInt() == 0);
+        GCHECK(JsonSharesNear(l["tabs"][0]["columnShares"], gDockBefore.tabs[0].layout.columns));
+        GCHECK(JsonSharesNear(l["tabs"][0]["rowShares"][1], gDockBefore.tabs[0].layout.rows[1]));
+        GCHECK(l["tabs"][1]["columns"][0][0].asInt() == (int64_t)gIdD);
+    });
+    MCGuiStep(@"the window closes", ^{
+        gA = gB = gC2 = gD = nil;
+        [gC.window performClose:nil];
+    });
+    MCGuiWait(@"gone", 10, ^BOOL { return WindowOn(gDirS) == nil; });
+    MCGuiStep(@"the folder's next window: the same tabs, panes, shares, active pane and tab", ^{
+        gC = OpenWindowOn(gDirS);
+        GCHECK(gC != nil);
+        MCTerminalPanel *panel = PanelOf(gC);
+        GCHECK(panel != nil && panel.tabCount == 2);
+        if (!panel || panel.tabCount != 2) return;
+        MCGuiNote(@"tabs %@ %@", ColumnsText(IdsIn(panel, 0)), ColumnsText(IdsIn(panel, 1)));
+        GCHECK((IdsIn(panel, 0) == Columns{{gIdA}, {gIdB, gIdC}}));
+        GCHECK((IdsIn(panel, 1) == Columns{{gIdD}}));
+        GCHECK(panel.selectedTab == 1);
+        if (gDockBefore.tabs.size() != 2) return;
+        Shared::TermDock now;
+        [panel sessionDock:&now];
+        const Shared::TermDock::Tab &t = now.tabs[0], &was = gDockBefore.tabs[0];
+        GCHECK(SharesNear(t.layout.columns, was.layout.columns));
+        GCHECK(t.layout.rows.size() == 2 && SharesNear(t.layout.rows[1], was.layout.rows[1]));
+        GCHECK(t.activeColumn == 1 && t.activeRow == 0);
+        GCHECK(now.activeTab == 1);
+        NSArray<NSArray<TerminalView *> *> *cols = [panel columnsInTab:0];
+        gA = cols[0][0];
+        GCHECK(gA.shellPid == gShellA);
+        // Laid out at those shares when its tab is shown.
+        [gC setValue:@(3 * [MCTerminalPanel minPaneHeight] + MCTabStripHeight() + 60) forKey:@"terminalHeight"];
+        [gC relayoutRightArea];
+        [panel selectTab:0];
+        GCHECK(panel.activeTerminal == cols[1][0]);
+        CheckLaidOut(panel, 0, was.layout);
+        [panel selectTab:1];
+    });
+    MCGuiWait(@"the top left pane's replay", 20, ^BOOL { return [gA recentText:200].length > 0 && gA.atPrompt; });
+
+    // A record as GTK writes it: another arrangement of the same terminals,
+    // a pane naming one that is not there (it drops out, its share to its
+    // neighbour), and the active pane on it (the keyboard's next: below).
+    __block uint64_t splitsRecord = 0;
+    MCGuiStep(@"closed again", ^{
+        gA = nil;
+        splitsRecord = [gC sessionWindow].windowId;
+        [gC.window performClose:nil];
+    });
+    MCGuiWait(@"gone", 10, ^BOOL { return WindowOn(gDirS) == nil; });
+    MCGuiStep(@"the record rewritten as GTK writes it", ^{
+        gC = nil;
+        const uint64_t window = splitsRecord;
+        Json tabs = HostRecord(window);
+        GCHECK(tabs.isObject() && tabs["detached"].asBool() && tabs.has("termLayout"));
+        if (!tabs.isObject()) return;
+        NSString *text = [NSString stringWithFormat:
+            @"{\"tabs\":[{\"columns\":[[%llu,%llu],[999999,%llu]],\"columnShares\":[0.3,0.7],"
+            @"\"rowShares\":[[0.6,0.4],[0.5,0.5]],\"activeColumn\":1,\"activeRow\":0},"
+            @"{\"columns\":[[%llu]],\"columnShares\":[1],\"rowShares\":[[1]],\"activeColumn\":0,\"activeRow\":0}],"
+            @"\"activeTab\":0}",
+            (unsigned long long)gIdC, (unsigned long long)gIdA, (unsigned long long)gIdD, (unsigned long long)gIdB];
+        Json layout;
+        std::string error;
+        GCHECK(Json::parse(text.UTF8String, layout, &error));
+        Json rewritten = Json::object();
+        for (const auto &[key, value] : tabs.items())
+            if (key != "termLayout") rewritten.set(key, value);
+        rewritten.set("termLayout", layout);
+        MCSessionClient().windowTabs(window, rewritten);
+        GCHECK(MCSessionClient().settle());
+        GCHECK(HostRecord(window)["termLayout"]["tabs"][0]["columns"][1][0].asInt() == 999999);
+    });
+    MCGuiStep(@"the next window has GTK's arrangement, the missing pane gone", ^{
+        gC = OpenWindowOn(gDirS);
+        GCHECK(gC != nil);
+        MCTerminalPanel *panel = PanelOf(gC);
+        GCHECK(panel != nil && panel.tabCount == 2);
+        if (!panel || panel.tabCount != 2) return;
+        MCGuiNote(@"tabs %@ %@", ColumnsText(IdsIn(panel, 0)), ColumnsText(IdsIn(panel, 1)));
+        GCHECK((IdsIn(panel, 0) == Columns{{gIdC, gIdA}, {gIdD}}));
+        GCHECK((IdsIn(panel, 1) == Columns{{gIdB}}));
+        GCHECK(panel.selectedTab == 0);
+        Shared::TermDock now;
+        [panel sessionDock:&now];
+        const Shared::TermDock::Tab &t = now.tabs[0];
+        GCHECK(SharesNear(t.layout.columns, {0.3, 0.7}));
+        GCHECK(t.layout.rows.size() == 2 && SharesNear(t.layout.rows[0], {0.6, 0.4}) && SharesNear(t.layout.rows[1], {1}));
+        GCHECK(t.activeColumn == 1 && t.activeRow == 0);
+        GCHECK(panel.activeTerminal.sessionTerminal == gIdD);
+        [gC setValue:@(3 * [MCTerminalPanel minPaneHeight] + MCTabStripHeight() + 60) forKey:@"terminalHeight"];
+        [gC relayoutRightArea];
+        CheckLaidOut(panel, 0, t.layout);
+    });
+    MCGuiStep(@"the window closes", ^{ [gC.window performClose:nil]; });
+    MCGuiWait(@"gone", 10, ^BOOL { return WindowOn(gDirS) == nil; });
 
     // ---------------------------------------------------- a headless host
     MCGuiStep(@"editor.session-host = headless: the window starts the folder's host", ^{

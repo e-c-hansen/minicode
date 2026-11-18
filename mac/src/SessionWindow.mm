@@ -15,6 +15,8 @@
     int _lostToken;
     NSTimer *_timer;
     BOOL _detached;
+    BOOL _reportQueued;
+    Shared::TermDock _heldDock;
 }
 
 - (instancetype)initWithFolder:(NSString *)folder {
@@ -49,6 +51,7 @@
 
 - (void)moveTo:(MCSessionLinkRef *)link folder:(NSString *)folder {
     _heldTerms.clear();
+    _heldDock = Shared::TermDock();
     if (link.link == _l && !_l->lost()) {   // the same host (the process's): the same window
         _folder = [folder copy] ?: @"";
         _detached = NO;
@@ -94,6 +97,13 @@
     for (NSNumber *t in _terminals ? _terminals() : @[])
         if (t.unsignedLongLongValue) terms.push(Json((int64_t)t.unsignedLongLongValue));
     w.set("terms", std::move(terms));
+    // How the dock holds them: its tabs, splits, shares and active panes.
+    if (_termDock) {
+        Shared::TermDock dock;
+        _termDock(&dock);
+        Json layout = Shared::termLayoutJson(dock);
+        if (!layout.isNull()) w.set("termLayout", std::move(layout));
+    }
     // The browser pane's tabs, when the window has the pane.
     if (NSDictionary *pane = _browserTabs ? _browserTabs() : nil) {
         std::vector<Shared::Web::BrowserTab> tabs;
@@ -118,6 +128,18 @@
     if (_onReported) _onReported();
 }
 
+- (void)reportSoon {
+    if (_reportQueued) return;
+    _reportQueued = YES;
+    __weak MCSessionWindow *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        MCSessionWindow *w = weakSelf;
+        if (!w) return;
+        w->_reportQueued = NO;
+        [w report];
+    });
+}
+
 - (void)start {
     if (_timer) return;
     __weak MCSessionWindow *weakSelf = self;
@@ -135,6 +157,7 @@
     [self stop];
     _detached = YES;
     _heldTerms.clear();
+    _heldDock = Shared::TermDock();
     _l->windowDetached(_windowId, [self recordLeavingOut:leaveOut], keep);
 }
 
@@ -144,7 +167,18 @@
     uint64_t window = _windowId;
     MCSession::Held h = _l->takeForWindow(&window, _folder.fileSystemRepresentation ?: "");
     _windowId = window;
-    _heldTerms.assign(h.terms.begin(), h.terms.end());
+    // The dock the record names, and the held terminals in the order the
+    // panel will make its panes (each pane takes the next).
+    std::vector<std::uint64_t> taken;
+    for (const MCSession::HeldTerm &t : h.terms) taken.push_back(t.id);
+    _heldDock = Shared::termDockFrom(h.tabs, taken);
+    _heldTerms.clear();
+    for (std::uint64_t id : _heldDock.order())
+        for (const MCSession::HeldTerm &t : h.terms)
+            if (t.id == id) {
+                _heldTerms.push_back(t);
+                break;
+            }
     _heldActiveDoc = 0;
     _heldDocsAttached = 0;
     if (h.tabs.isObject()) {
@@ -157,6 +191,8 @@
 }
 
 - (NSUInteger)heldTermsLeft { return _heldTerms.size(); }
+
+- (const Shared::TermDock &)heldDock { return _heldDock; }
 
 - (MCSessionTermPlace *)nextTermPlace {
     MCSessionTermPlace *p = [MCSessionTermPlace new];

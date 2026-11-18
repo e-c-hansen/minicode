@@ -134,6 +134,11 @@ static char kSessionWindowKey;
             if (t.sessionTerminal) [ids addObject:@(t.sessionTerminal)];
         return ids;
     };
+    // How the dock holds them (the record's "termLayout").
+    w.termDock = ^(Shared::TermDock *out) {
+        EditorController *s = weakSelf;
+        [s.terminalPanel sessionDock:out];
+    };
     w.panes = ^NSDictionary * { return [weakSelf sessionBrowserPanes]; };
     w.browserTabs = ^NSDictionary * { return [weakSelf sessionBrowserTabs]; };
     w.onLost = ^{ [weakSelf sessionHostWentAway]; };
@@ -143,6 +148,18 @@ static char kSessionWindowKey;
 // sessionPlace): this window's link, with a held terminal while any is left.
 - (MCSessionTermPlace *)sessionTerminalPlace {
     return [[self sessionWindow] nextTermPlace];
+}
+
+// The dock changed (MCTerminalPanel onChanged): the record goes on the next
+// turn, not at the next half second's report.
+- (void)sessionDockChanged {
+    [[self existingSessionWindow] reportSoon];
+}
+
+// The window took terminals from its host: its dock is the record's
+// (finishSessionAttach), not the window list's.
+- (BOOL)sessionHoldsTerminals {
+    return [self existingSessionWindow].heldTermsLeft > 0;
 }
 
 // ---------------------------------------------------- a window opening
@@ -212,8 +229,9 @@ static char kSessionWindowKey;
 }
 
 // After the session restored the rest: the record's tab on show, and the
-// held terminals, a tab each in the dock (the dock's own restored tabs took
-// theirs as they were made).
+// held terminals in the dock as the record's "termLayout" had them (its
+// tabs, splits, shares, active panes and tab on show; a tab each without
+// one), after any tabs the dock has of its own (Open Folder).
 - (void)finishSessionAttach {
     MCSessionWindow *w = [self existingSessionWindow];
     if (!w) return;
@@ -231,9 +249,9 @@ static char kSessionWindowKey;
     w.heldDocsAttached = 0;
     if (w.heldTermsLeft) {
         const BOOL fresh = self.terminalPanel == nil;
-        [self showTerminalPanel];   // its first terminal takes one
-        if (!fresh && w.heldTermsLeft) [self.terminalPanel addTab];
-        while (w.heldTermsLeft) [self.terminalPanel addTab];
+        [self showTerminalPanel];   // its first terminal takes the first held one
+        [self.terminalPanel restoreHostDock:w.heldDock fresh:fresh];
+        while (w.heldTermsLeft) [self.terminalPanel addTab];   // none: the dock placed each
     }
     [w report];
 }

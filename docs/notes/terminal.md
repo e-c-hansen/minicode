@@ -384,7 +384,17 @@ for full-screen programs. Both can be open at once.
   actions, so with the keyboard in a terminal the panel received Ctrl+Shift+W
   as `closeTerminal:(NSMenuItem *)` and closed nothing (until 2026-11-08);
   both take a non-terminal argument as "the active one". `make guitest
-  SUITES=terminal_splits`.
+  SUITES=terminal_splits`. **The host's record** (2026-11-18, with
+  `editor.session-host` on or headless; docs/notes/session-host.md,
+  "Terminal splits in the record"): the panel's `onChanged` says when
+  something the record keeps changed (a tab added, closed, moved or shown,
+  a split, a pane closed or given the keyboard, a keyboard resize, a bar's
+  drag ended: `DragBar onDragEnd`, on mouse up), and `sessionDock:` gives
+  the tabs as host ids with their `TerminalLayout::Layout` and active pane;
+  while a bar is dragged its tab's shares are the ones from before the drag
+  (`_dragTab`, `_dragLayout`), so the record moves once per drag.
+  `restoreHostDock:fresh:` builds a window's held terminals as the record
+  had them (`Shared::termDockFrom`), each pane made in `TermDock::order()`.
 - **Closing** (`TerminalView close`, `stopShell`, `_closed`): a terminal with
   `runningCommands` asks (since 2026-11-15, as the user closes it, the
   tab's ×, its menu, Cmd+W, Ctrl+Shift+W: `closeTerminalAsking:` and

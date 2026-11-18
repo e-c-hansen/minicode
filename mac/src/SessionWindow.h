@@ -19,6 +19,7 @@
 
 #include "Json.h"
 #include "SessionLink.h"
+#include "TermDockRecord.h"
 
 @class MCTab;
 
@@ -38,6 +39,10 @@
 @property(nonatomic, copy) NSArray<NSArray<MCTab *> *> * (^tabs)(void);
 @property(nonatomic, copy) NSArray *(^active)(void);
 @property(nonatomic, copy) NSArray<NSNumber *> * (^terminals)(void);
+// How the terminal dock holds them (MCTerminalPanel sessionDock), filled
+// into `out`: the record's "termLayout" (Shared::termLayoutJson), written
+// beside "terms". nil, or nothing filled: no layout.
+@property(nonatomic, copy) void (^termDock)(Shared::TermDock *out);
 @property(nonatomic, copy) NSDictionary * (^browserTabs)(void);
 @property(nonatomic, copy) NSDictionary * (^panes)(void);
 // After a record was sent (the browser's view looks at once).
@@ -48,12 +53,20 @@
 // Sent when it differs from what was sent last. Every half second from
 // start until stop.
 - (void)report;
+// The same on the main queue's next turn, once however often it is asked
+// (the dock's changes, MCTerminalPanel onChanged).
+- (void)reportSoon;
 - (void)start;
 - (void)stop;
 
 // What the host holds for this window, taken now: the record's id becomes
-// the window's, and its terminals wait for the panel (nextTermPlace).
+// the window's, and its terminals wait for the panel (nextTermPlace) in the
+// order its dock is built (heldDock).
 - (MCSession::Held)takeHeld;
+// The dock the record's "termLayout" and the terminals taken make
+// (Shared::termDockFrom): every held terminal once, in nextTermPlace's
+// order (TermDock::order()); a tab each when the record has no layout.
+- (const Shared::TermDock &)heldDock;
 // Where the next terminal the panel makes goes: the window's link, with the
 // next held terminal while any is left.
 - (MCSessionTermPlace *)nextTermPlace;
