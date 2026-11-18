@@ -279,9 +279,10 @@ Either kind of release refuses a version whose tag already exists.
 5. Uploads with `dput ppa:echansen/minicode` from where it built.
 
 The committed `debian/changelog` numbers builds from a checkout: its
-newest entry is `mutible (1.6.0-0)`, below every upload of 1.6.0 (so apt
-replaces a build from it) and at 1.6.0, so its `minicode` transitional
-package is not one that `mutible`'s `Breaks: minicode (<< 1.6.0~)` refuses.
+newest entry is `mutible (1.6.0-1~local0)`, below every upload of 1.6.0
+(`1.6.0-1~ppa1~resolute1` and later, so apt replaces a build from it) and
+at 1.6.0, so its `minicode` transitional package is not one that
+`mutible`'s `Breaks: minicode (<< 1.6.0~)` refuses.
 Each upload's changelog is the single entry ppa.sh writes; when the
 committed newest entry is for the release being uploaded (1.6.0's says
 that minicode is now mutible), its lines are added to that entry. The

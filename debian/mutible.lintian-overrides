@@ -1,0 +1,4 @@
+# mutible-browser.js is sh and JavaScript at once (the terminal's BROWSER):
+# its first line ends in exec, so sh never reaches the JavaScript after it,
+# which is what `sh -n` fails on.
+mutible: shell-script-fails-syntax-check [usr/share/mutible/mutible-browser.js]

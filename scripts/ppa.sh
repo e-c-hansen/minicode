@@ -26,10 +26,10 @@
 #
 # The version given here is the one source of truth, as in release.sh: the
 # changelog entry is written from it by dch, never by hand. When the
-# committed changelog's newest entry is this release's (1.6.0-0 for 1.6.0,
-# numbered below every upload of it so that apt replaces a build from a
-# checkout), its lines are added to the upload's entry. Launchpad builds the
-# binaries from the source package, so only that is made here.
+# committed changelog's newest entry is this release's (1.6.0-1~local0 for
+# 1.6.0, numbered below every upload of it so that apt replaces a build from
+# a checkout), its lines are added to the upload's entry. Launchpad builds
+# the binaries from the source package, so only that is made here.
 #
 # What goes in:
 #   - the upstream tarball, mutible_VERSION.orig.tar.gz, is `git archive` of

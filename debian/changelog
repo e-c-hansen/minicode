@@ -1,4 +1,4 @@
-mutible (1.6.0-0) UNRELEASED; urgency=medium
+mutible (1.6.0-1~local0) UNRELEASED; urgency=medium
 
   * minicode is now mutible (https://mut.ible.ai). The source package and the
     app's package are named mutible; minicode is a transitional package that

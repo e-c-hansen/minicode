@@ -41,3 +41,9 @@ endif
 
 override_dh_missing:
 	dh_missing --fail-missing
+
+# The terminal's BROWSER is /usr/share/mutible/mutible-browser.js, run as a
+# program (sh and JavaScript at once), so it keeps the 0755 the Meson build
+# gives it: dh_fixperms makes every .js file 0644.
+override_dh_fixperms:
+	dh_fixperms -Xmutible-browser.js
