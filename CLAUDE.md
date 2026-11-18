@@ -86,7 +86,10 @@ a trap.
 - `make test-asan` (ASan and UBSan, the `fuzz:*` groups, `MC_FUZZ_SCALE`) and
   `make test-tsan` (ThreadSanitizer, `tests/tsan.supp`): `docs/notes/build.md`.
 - CI (`.github/workflows/ci.yml`, six jobs: macOS, GTK4, sanitizers, tsan,
-  Android debug plus Kotlin checks, Android release) is the gate: no merge
+  Android debug plus Kotlin checks, Android release; **Android is frozen**
+  since 2026-11-17: its jobs run only when CI is started by hand, CI passed
+  does not wait for them, and release.sh skips the APK;
+  `docs/ci.md`) is the gate: no merge
   to main while a job on main is red, except the fix for that red. The
   macOS job also builds `make dist-zip RELEASE=1` and checks it as
   release.sh does (`nm`, the zip's contents, check-minos); the Android
