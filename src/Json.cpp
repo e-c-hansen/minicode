@@ -315,7 +315,10 @@ void Json::dumpTo(std::string& out) const {
         char buf[32];
         if (!std::isfinite(num_)) {
             out += "null";   // JSON has no NaN or infinity
-        } else if (num_ == std::floor(num_) && std::fabs(num_) < 1e15) {
+        } else if (num_ == std::floor(num_) && std::fabs(num_) < 9007199254740992.0) {
+            // Every integer a double holds exactly (below 2^53) as its
+            // digits: a session's ids reach 2^53 - 1 (SessionProtocol.h),
+            // and %.15g wrote 2000000000000000 as 2e+15.
             std::snprintf(buf, sizeof buf, "%lld", (long long)num_);
             out += buf;
         } else {

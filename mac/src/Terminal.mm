@@ -2360,8 +2360,7 @@ static NSString *MCBrowserHelperPath(void) {
         spec.rows = ws.ws_row;
         spec.scrollback = [AppSettings shared].settings.terminalScrollback();
         spec.nonce = nonce;
-        static Shared::TermId lastTerm;   // ids on the host: the main thread's only
-        _hostTerm = ++lastTerm;
+        _hostTerm = MCSessionClient().newId();   // from the client's range on the host
         _hostShell = Shared::TermShell();
         _hostInput.clear();
         _shellStarted = [NSDate date];
