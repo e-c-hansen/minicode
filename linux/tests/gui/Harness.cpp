@@ -31,6 +31,7 @@
 #include <ctime>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <thread>
@@ -188,6 +189,52 @@ void MCGuiNote(const char* format, ...) {
     printf("    %s\n", text);
     fflush(stdout);
     g_free(text);
+}
+
+// GLib's log, watched (Harness.h). A writer may run on any thread.
+namespace {
+std::mutex gLogMutex;
+bool gLogWatching = false;
+std::vector<std::string> gLogKept;
+
+std::string logField(const GLogField& f) {
+    if (!f.value) return "";
+    return f.length < 0 ? std::string((const char*)f.value) : std::string((const char*)f.value, (size_t)f.length);
+}
+
+GLogWriterOutput logWriter(GLogLevelFlags level, const GLogField* fields, gsize n, gpointer data) {
+    if (level & (G_LOG_LEVEL_WARNING | G_LOG_LEVEL_CRITICAL)) {
+        std::lock_guard<std::mutex> lock(gLogMutex);
+        if (gLogWatching) {
+            std::string domain = "(no domain)", message;
+            for (gsize i = 0; i < n; i++) {
+                if (!strcmp(fields[i].key, "GLIB_DOMAIN")) domain = logField(fields[i]);
+                else if (!strcmp(fields[i].key, "MESSAGE")) message = logField(fields[i]);
+            }
+            gLogKept.push_back(domain + ((level & G_LOG_LEVEL_CRITICAL) ? "-CRITICAL: " : "-WARNING: ") + message);
+        }
+    }
+    return g_log_writer_default(level, fields, n, data);
+}
+}  // namespace
+
+void MCGuiLogWatchStart() {
+    static bool installed = false;
+    if (!installed) {
+        installed = true;
+        g_log_set_writer_func(logWriter, nullptr, nullptr);
+    }
+    std::lock_guard<std::mutex> lock(gLogMutex);
+    gLogKept.clear();
+    gLogWatching = true;
+}
+
+std::vector<std::string> MCGuiLogWatchStop() {
+    std::lock_guard<std::mutex> lock(gLogMutex);
+    gLogWatching = false;
+    std::vector<std::string> kept;
+    kept.swap(gLogKept);
+    return kept;
 }
 
 double MCGuiThreadCpuMs() {
