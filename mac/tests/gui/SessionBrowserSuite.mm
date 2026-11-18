@@ -19,13 +19,20 @@
 // the window's tab, which the page then shows, and a picture says it opens
 // in the window. The page's address field asks the window's browser pane
 // to open an address: javascript: is refused, an http address on this Mac
-// opens in the pane, and the page lists the window's browser tab under
-// "Browser" and frames it, with its new-tab link and the line that a
-// loopback address is this machine's. Two windows, each with a terminal on
-// the host and each with its page: each page lists only its own window's
-// terminal, a crafted show or keys for the other window's terminal id
-// reach nothing, keys for its own run there, and a terminal the window
-// closes leaves its page. Closing the window stops the server. No browser
+// opens in the pane, and the page shows the window's browser tab in a pane
+// of its own beside the editor and frames it, with its new-tab link and
+// the line that a loopback address is this machine's. The page's close
+// button hides that pane on the page alone; the window hiding its pane
+// hides it there too, and showing it shows it again. A tab's close button
+// on the editable page closes the window's tab. Two windows, each with a
+// terminal on the host and each with its page: each page lists only its
+// own window's terminal, a crafted show or keys for the other window's
+// terminal id reach nothing, keys for its own run there, the window hiding
+// its terminal panel hides the page's terminal pane, and a terminal the
+// window closes leaves its page. Then the page again, read-only: a file
+// clicked in its tree opens in a tab of the page's own and not in the
+// window, the window's tabs have no close button, and the page's tab
+// closes on the page. Closing the window stops the server. No browser
 // window opens.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
@@ -248,7 +255,35 @@ NSString *const kRead =
     @" browseField: !document.getElementById('browse').classList.contains('hidden'),"
     @" toast: document.getElementById('toast').textContent,"
     @" browser: window.mcSessionView ? window.mcSessionView.browser().join('|') : '',"
+    @" panes: window.mcSessionView ? window.mcSessionView.panes() : null,"
+    @" winPanes: window.mcSessionView ? window.mcSessionView.windowPanes() : null,"
+    @" tabs: window.mcSessionView ? window.mcSessionView.tabs().join('|') : '',"
+    @" local: window.mcSessionView ? window.mcSessionView.local() : '',"
+    @" closers: document.querySelectorAll('#tabs button:not(.local) .x').length,"
     @" web: window.mcSessionView ? window.mcSessionView.web() : null})";
+
+// Script run in the page (a click on its controls), its failure noted.
+void Eval(NSString *js) {
+    [gPage evaluateJavaScript:js inFrame:nil inContentWorld:WKContentWorld.pageWorld
+            completionHandler:^(id value, NSError *error) {
+                if (error || ([value isKindOfClass:NSNumber.class] && ![value boolValue]))
+                    MCGuiNote(@"in the page: %@ %@", js, error.localizedDescription ?: @"found nothing");
+            }];
+}
+
+// The close button of the page's tab named `name`.
+void CloseTab(NSString *name) {
+    NSData *quoted = [NSJSONSerialization dataWithJSONObject:@[ name ] options:0 error:nil];
+    Eval([NSString stringWithFormat:
+        @"(() => { const want = %@[0];"
+        @" const b = [...document.querySelectorAll('#tabs button')].find(x => x.firstChild.textContent === want);"
+        @" const x = b && b.querySelector('.x'); if (x) x.click(); return !!x; })()",
+        [[NSString alloc] initWithData:quoted encoding:NSUTF8StringEncoding]]);
+}
+
+NSDictionary *SeenPanes(void) {
+    return [gSeen[@"panes"] isKindOfClass:NSDictionary.class] ? gSeen[@"panes"] : nil;
+}
 
 // An address typed into the page's address field, then Return.
 void Browse(NSString *url) {
@@ -315,6 +350,12 @@ NSString *Typed(NSString *s) {
 
 NSTextView *TV(EditorController *c) { return [c valueForKey:@"textView"]; }
 MCTab *Active(EditorController *c) { return [c valueForKey:@"activeTab"]; }
+// The window's tab for a file named `name`, nil when it has none.
+MCTab *MCTabNamed(EditorController *c, NSString *name) {
+    for (MCTab *t in [c tabs])
+        if ([t.currentPath.lastPathComponent isEqualToString:name]) return t;
+    return nil;
+}
 std::string Text(EditorController *c) { return std::string(TV(c).string.UTF8String ?: ""); }
 
 }  // namespace
@@ -578,12 +619,63 @@ MC_GUI_SUITE(session_browser) {
         return [[gSeen[@"browser"] componentsSeparatedByString:@"|"] containsObject:address] &&
                [web[@"src"] isEqualToString:address];
     });
-    MCGuiStep(@"with its link to a new tab and the loopback line", ^{
-        MCGuiNote(@"browser tabs: %@", gSeen[@"browser"]);
+    MCGuiStep(@"with its link to a new tab and the loopback line, in a pane beside the editor", ^{
+        MCGuiNote(@"browser tabs: %@, panes: %@", gSeen[@"browser"], gSeen[@"panes"]);
         NSDictionary *web = gSeen[@"web"];
         GCHECK_EQ_STR(web[@"open"], address);
         GCHECK([web[@"loopback"] boolValue]);
+        GCHECK([SeenPanes()[@"browser"] boolValue] && [SeenPanes()[@"beside"] boolValue]);
+        // The editor's strip holds the files, the browser's pane its tabs.
+        GCHECK(![gSeen[@"tabs"] containsString:@"127.0.0.1"]);
+        GCHECK([gC browserVisible]);
+        Eval(@"(() => { document.getElementById('webclose').click(); return 1; })()");
     });
+    MCGuiWait(@"the page's close button hides the browser pane on the page", 20, ^BOOL {
+        Read();
+        return SeenPanes() && ![SeenPanes()[@"browser"] boolValue] && gSeen[@"web"] == NSNull.null;
+    });
+    MCGuiStep(@"and only there; then the window hides its own pane", ^{
+        GCHECK([gC browserVisible]);
+        GCHECK([[gC browserPane].tabAddresses containsObject:address]);
+        [gC toggleBrowser:nil];
+        GCHECK(![gC browserVisible]);
+        MCGuiSetKeyWindow(gC.window);
+    });
+    MCGuiWait(@"which the page hears", 20, ^BOOL {
+        Read();
+        NSDictionary *w = [gSeen[@"winPanes"] isKindOfClass:NSDictionary.class] ? gSeen[@"winPanes"] : nil;
+        return w && ![w[@"browser"] boolValue];
+    });
+    MCGuiStep(@"and shows it again", ^{
+        GCHECK(![SeenPanes()[@"browser"] boolValue]);
+        [gC toggleBrowser:nil];
+        GCHECK([gC browserVisible]);
+        MCGuiSetKeyWindow(gC.window);
+    });
+    MCGuiWait(@"which the page follows: its pane shows again", 20, ^BOOL {
+        Read();
+        return [SeenPanes()[@"browser"] boolValue];
+    });
+    MCGuiStep(@"a file opened in the window, kept", ^{
+        [gC openFileAtPath:[dir stringByAppendingPathComponent:@"pkg/util.py"]];
+        GCHECK(MCTabNamed(gC, @"util.py") != nil && MCTabNamed(gC, @"util.py").session != nil);
+    });
+    MCGuiWait(@"is a tab on the page, with a close button", 20, ^BOOL {
+        Read();
+        return [[gSeen[@"tabs"] componentsSeparatedByString:@"|"] containsObject:@"util.py"] &&
+               [gSeen[@"closers"] intValue] > 0;
+    });
+    MCGuiStep(@"the editable page's close button on it", ^{
+        MCGuiNote(@"tabs: %@", gSeen[@"tabs"]);
+        GCHECK(!MCTabNamed(gC, @"util.py").dirty);
+        CloseTab(@"util.py");
+    });
+    MCGuiWait(@"closes it in the window", 20, ^BOOL { return MCTabNamed(gC, @"util.py") == nil; });
+    MCGuiWait(@"and the page's strip lets it go", 20, ^BOOL {
+        Read();
+        return gSeen[@"tabs"] && ![gSeen[@"tabs"] containsString:@"util.py"];
+    });
+    MCGuiStep(@"the window's file on show again", ^{ [gC openFileAtPath:gFile]; });
     MCGuiStep(@"a terminal in this window, and a second window with a terminal of its own", ^{
         GCHECK(MCSessionHostEnabled());
         [gC newTerminal:nil];
@@ -610,6 +702,30 @@ MC_GUI_SUITE(session_browser) {
     });
     MCGuiWait(@"both shells at their prompts", 20, ^BOOL {
         return gTermA.atPrompt && !gTermA.busy && gTermB.atPrompt && !gTermB.busy;
+    });
+    MCGuiWait(@"the page shows this window's terminal below the editor", 20, ^BOOL {
+        Read();
+        return [SeenPanes()[@"terminal"] boolValue];
+    });
+    MCGuiStep(@"the window hides its terminal panel (Toggle Terminal)", ^{
+        GCHECK([gC terminalVisible]);
+        [gC toggleTerminal:nil];
+        GCHECK(![gC terminalVisible]);
+        MCGuiSetKeyWindow(gC.window);
+    });
+    MCGuiWait(@"and the page hides its terminal pane, the shell still running", 20, ^BOOL {
+        Read();
+        return SeenPanes() && ![SeenPanes()[@"terminal"] boolValue];
+    });
+    MCGuiStep(@"the window shows it again", ^{
+        GCHECK(gTermA.sessionTerminal != 0 && [[gC controlTerminals] containsObject:gTermA]);
+        [gC toggleTerminal:nil];
+        GCHECK([gC terminalVisible]);
+        MCGuiSetKeyWindow(gC.window);
+    });
+    MCGuiWait(@"and so does the page", 20, ^BOOL {
+        Read();
+        return [SeenPanes()[@"terminal"] boolValue];
     });
     MCGuiStep(@"a scripted browser on each window's page", ^{
         gBrowser = new Browser();
@@ -661,6 +777,10 @@ MC_GUI_SUITE(session_browser) {
     MCGuiWait(@"the terminal this window closed leaves its page", 20, ^BOOL {
         return gBrowser->terms().empty();
     });
+    MCGuiWait(@"and the page in WebKit drops its terminal pane", 20, ^BOOL {
+        Read();
+        return SeenPanes() && ![SeenPanes()[@"terminal"] boolValue];
+    });
     MCGuiStep(@"the second window closes its terminal and itself", ^{
         GCHECK(gBrowser2->terms() == std::to_string(gTermB.sessionTerminal) + " ");
         gBrowser->finish();
@@ -674,7 +794,56 @@ MC_GUI_SUITE(session_browser) {
         [gC2.window performClose:nil];
     });
     MCGuiWait(@"the second window is gone", 10, ^BOOL { return ![MCGuiControllers() containsObject:gC2]; });
+    __block NSString *readUrl = nil;
+    MCGuiStep(@"the page again, read-only (the remembered choice)", ^{
+        [gPage stopLoading];
+        gSeen = nil;
+        [MCAppDefaults() setBool:NO forKey:@"MCSessionBrowserEditable"];
+        [gC copySessionBrowserLink:nil];
+        GCHECK(gC.sessionBrowser != nil && !gC.sessionBrowser.editable);
+        readUrl = gC.sessionBrowser.url;
+        GCHECK(readUrl != nil && ![readUrl isEqualToString:gUrl]);   // a server anew
+        GCHECK(MCTabNamed(gC, @"util.py") == nil);
+        [gPage loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:readUrl]]];
+    });
+    MCGuiWait(@"the read-only page shows the window's tab, with no close buttons on the window's tabs", 30, ^BOOL {
+        Read();
+        return [gSeen[@"status"] isEqualToString:@"live, read-only"] &&
+               [gSeen[@"text"] isEqualToString:TV(gC).string] &&
+               [gSeen[@"tree"] isEqualToString:@"pkg|calc.py|logo.png"];
+    });
+    __block NSUInteger tabsBefore = 0;
+    MCGuiStep(@"a folder and a file clicked in its tree", ^{
+        GCHECK([gSeen[@"closers"] intValue] == 0);
+        GCHECK([SeenPanes()[@"browser"] boolValue]);   // the layout is the window's for a reader too
+        tabsBefore = [gC tabs].count;
+        ClickRow(@"pkg");
+    });
+    MCGuiWait(@"the folder opens", 20, ^BOOL {
+        Read();
+        return [gSeen[@"tree"] containsString:@"pkg/util.py"];
+    });
+    MCGuiStep(@"and the file in it", ^{ ClickRow(@"pkg/util.py"); });
+    MCGuiWait(@"shows in a tab of the page's own", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@"pkg/util.py"] && [gSeen[@"text"] hasPrefix:@"def helper"];
+    });
+    MCGuiStep(@"and not in the window, which opened nothing", ^{
+        MCGuiNote(@"page tabs: %@", gSeen[@"tabs"]);
+        GCHECK(MCTabNamed(gC, @"util.py") == nil);
+        GCHECK([gC tabs].count == tabsBefore);
+        GCHECK([[gSeen[@"tabs"] componentsSeparatedByString:@"|"] containsObject:@"+util.py"]);
+        CloseTab(@"util.py");
+    });
+    MCGuiWait(@"its close button closes it on the page, back to the window's tab", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:@"util.py"] &&
+               [gSeen[@"text"] isEqualToString:TV(gC).string];
+    });
     MCGuiStep(@"the window closes, and the server with it", ^{
+        GCHECK([gC tabs].count == tabsBefore);
+        [MCAppDefaults() removeObjectForKey:@"MCSessionBrowserEditable"];
+        gPort = gC.sessionBrowser.port;   // the read-only server's
         [gPage stopLoading];
         gPage = nil;
         gSeen = nil;

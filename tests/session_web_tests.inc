@@ -1694,8 +1694,10 @@ static void testSessionWeb() {
 
     // The page's tree (stage 7's first read): the host lists one folder a
     // time over the socket, confined to its folder; a click on a file asks
-    // the app to open it (Options::open), read-only pages included; nothing
-    // of it is reachable without the token or outside the socket.
+    // the app to open it (Options::open) from an editable page, and a page
+    // that only reads is refused and reads the file for a tab of its own
+    // (readfile, R7) instead; nothing of it is reachable without the token
+    // or outside the socket.
     GROUP("sessionweb:tree");
     {
         ServerRig rig;
@@ -1708,6 +1710,9 @@ static void testSessionWeb() {
         writeText(root + "/src/util.c", "int u;\n");
         writeText(elsewhere + "/secret.txt", "not yours\n");
         CHECK(::symlink(elsewhere.c_str(), (root + "/away").c_str()) == 0);
+        writeText(root + "/.env", "TOKEN=1\n");
+        writeText(root + "/blob.bin", std::string("\x7f" "ELF\0\0\x01", 7));
+        writeText(root + "/notes.md", "# Notes\n\nSome *text*.\n");
         std::mutex openedMu;
         std::vector<std::pair<std::string, bool>> opened;
         Web::Server web;   // read-only, as the command line's default
@@ -1723,10 +1728,15 @@ static void testSessionWeb() {
         std::string error;
         CHECK(web.start(o, &error));
         std::thread webThread([&] { web.run(); });
+        Web::Server editing;   // the same, editable
+        Web::Options e = o;
+        e.editable = true;
+        e.port = 0;
+        CHECK(editing.start(e, &error));
+        std::thread editingThread([&] { editing.run(); });
         Web::Server headless;   // no window to open files in
-        Web::Options h = o;
+        Web::Options h = e;
         h.open = nullptr;
-        h.port = 0;
         CHECK(headless.start(h, &error));
         std::thread headlessThread([&] { headless.run(); });
         const int port = web.port();
@@ -1746,16 +1756,19 @@ static void testSessionWeb() {
             p.close();
 
             CHECK(p.upgrade(port, "/ws?t=" + web.token()));
-            Json state;
-            std::map<std::string, Json> trees;
+            Json state, hello;
+            std::map<std::string, Json> trees, files;
             std::vector<Json> opens;
             auto take = [&](const Json& m) {
                 const std::string t = m["t"].asString();
                 if (t == "state") state = m;
+                else if (t == "hello") hello = m;
                 else if (t == "tree") trees[m["path"].asString()] = m;
                 else if (t == "opening") opens.push_back(m);
+                else if (t == "filetext") files[m["path"].asString()] = m;
             };
             CHECK(p.pump(take, [&] { return state.isObject(); }));
+            CHECK(!hello["editable"].asBool() && !hello["canOpen"].asBool() && !hello["canClose"].asBool());
             // The folder, as the apps' trees list it.
             p.sendText("{\"t\":\"list\",\"path\":\"\"}");
             CHECK(p.pump(take, [&] { return trees.count(""); }));
@@ -1766,8 +1779,9 @@ static void testSessionWeb() {
                 names += e["name"].asString() + (e["dir"].asBool() ? "/" : "") +
                          (e["ignored"].asBool() ? "(ignored)" : "") +
                          (e["outside"].asBool() ? "(outside)" : "") + " ";
-            CHECK(names == "away/(outside) src/ main.py run.log(ignored) ");
-            if (names != "away/(outside) src/ main.py run.log(ignored) ") std::printf("  sessionweb:tree: %s\n", names.c_str());
+            const std::string topNames = "away/(outside) src/ blob.bin main.py notes.md run.log(ignored) ";
+            CHECK(names == topNames);
+            if (names != topNames) std::printf("  sessionweb:tree: %s\n", names.c_str());
             p.sendText("{\"t\":\"list\",\"path\":\"src\"}");
             CHECK(p.pump(take, [&] { return trees.count("src"); }));
             CHECK(trees["src"]["entries"].size() == 1 && trees["src"]["entries"][0]["name"].asString() == "util.c");
@@ -1777,14 +1791,77 @@ static void testSessionWeb() {
                 CHECK(p.pump(take, [&] { return trees.count(bad); }));
                 CHECK(trees[bad].has("error") && !trees[bad].has("entries"));
             }
-            // A click on a file: the app opens it, even from a page that
-            // only reads; a folder, or a path out of the folder, is not.
+            // A click on a file in a page that only reads: the window opens
+            // nothing (a tab opened changes the window), and the page reads
+            // the file for a tab of its own instead.
             p.sendText("{\"t\":\"open\",\"path\":\"src/util.c\"}");
             p.sendText("{\"t\":\"open\",\"path\":\"main.py\",\"keep\":true}");
-            p.sendText("{\"t\":\"open\",\"path\":\"src\"}");
-            p.sendText("{\"t\":\"open\",\"path\":\"../" + elsewhere.substr(5) + "/secret.txt\"}");
-            p.sendText("{\"t\":\"open\",\"path\":\"away/secret.txt\"}");
-            CHECK(p.pump(take, [&] { return opens.size() == 5; }));
+            CHECK(p.pump(take, [&] { return opens.size() == 2; }));
+            for (const Json& m : opens)
+                CHECK(!m["ok"].asBool() && m["why"].asString().find("only reads") != std::string::npos);
+            p.sendText("{\"t\":\"readfile\",\"path\":\"src/util.c\"}");
+            p.sendText("{\"t\":\"readfile\",\"path\":\"notes.md\"}");
+            CHECK(p.pump(take, [&] { return files.count("src/util.c") && files.count("notes.md"); }));
+            {
+                const Json& f = files["src/util.c"];
+                CHECK(!f.has("error") && f["abs"].asString() == root + "/src/util.c" && f["kind"].asString() == "code");
+                PageDoc local;
+                Json asDoc = f;
+                asDoc.set("t", Json("doc"));
+                local.take(asDoc);
+                CHECK(local.text() == "int u;\n");
+                CHECK(f["lines"].size() == 2 && f["lines"][0][1].size() > 0);   // highlighted: int is a keyword
+                CHECK(files["notes.md"]["kind"].asString() == "markdown" &&
+                      files["notes.md"]["html"].asString().find("<em>text</em>") != std::string::npos);
+            }
+            // A folder, a path out of the folder, a link out, a dotfile the
+            // tree hides, a binary file and a missing one: refused.
+            const std::vector<std::string> badReads = {"src", "../" + elsewhere.substr(5) + "/secret.txt",
+                                                       "away/secret.txt", ".env", "src/../.env", "blob.bin",
+                                                       "missing.txt", "/etc/hosts"};
+            for (const std::string& bad : badReads) {
+                Json q = Json::object();
+                q.set("t", Json("readfile"));
+                q.set("path", Json(bad));
+                p.sendText(q.dump());
+            }
+            CHECK(p.pump(take, [&] {
+                for (const std::string& bad : badReads)
+                    if (!files.count(bad)) return false;
+                return true;
+            }));
+            for (const std::string& bad : badReads) {
+                const Json& f = files[bad];
+                if (!f.has("error") || f.has("lines")) std::printf("  sessionweb:tree: read %s: %s\n", bad.c_str(), f.dump().c_str());
+                CHECK(f.has("error") && !f.has("lines") && f.dump().find("not yours") == std::string::npos &&
+                      f.dump().find("TOKEN") == std::string::npos);
+            }
+            CHECK(files["blob.bin"]["error"].asString().find("not text") != std::string::npos);
+            // The same, called directly: a dotfile where the tree shows them.
+            CHECK(!Web::localFileJson(root, ".env", true).has("error"));
+            CHECK(Web::localFileJson(root, ".env", false).has("error"));
+            CHECK(Web::localFileJson("", "main.py", false).has("error"));
+            {
+                std::lock_guard<std::mutex> lk(openedMu);
+                CHECK(opened.empty());
+            }
+            p.close();
+
+            // An editable page: a click opens the file in the window; a
+            // folder, or a path out of the folder, is not opened.
+            PageClient ep;
+            CHECK(ep.upgrade(editing.port(), "/ws?t=" + editing.token()));
+            hello = Json();
+            state = Json();
+            opens.clear();
+            CHECK(ep.pump(take, [&] { return state.isObject(); }));
+            CHECK(hello["canOpen"].asBool() && !hello["canClose"].asBool());
+            ep.sendText("{\"t\":\"open\",\"path\":\"src/util.c\"}");
+            ep.sendText("{\"t\":\"open\",\"path\":\"main.py\",\"keep\":true}");
+            ep.sendText("{\"t\":\"open\",\"path\":\"src\"}");
+            ep.sendText("{\"t\":\"open\",\"path\":\"../" + elsewhere.substr(5) + "/secret.txt\"}");
+            ep.sendText("{\"t\":\"open\",\"path\":\"away/secret.txt\"}");
+            CHECK(ep.pump(take, [&] { return opens.size() == 5; }));
             if (opens.size() == 5) {
                 CHECK(opens[0]["ok"].asBool() && opens[0]["abs"].asString() == root + "/src/util.c");
                 CHECK(opens[1]["ok"].asBool() && opens[1]["abs"].asString() == root + "/main.py");
@@ -1798,31 +1875,38 @@ static void testSessionWeb() {
                     CHECK(opened[1].first == root + "/main.py" && opened[1].second);
                 }
             }
-            p.close();
+            ep.close();
 
             // A host with no window to open files in says so.
             PageClient q;
             CHECK(q.upgrade(headless.port(), "/ws?t=" + headless.token()));
-            Json hstate;
+            Json hstate, hhello, hfile;
             std::vector<Json> hopens;
             bool listed = false;
             auto htake = [&](const Json& m) {
                 const std::string t = m["t"].asString();
                 if (t == "state") hstate = m;
-                else if (t == "tree") listed = m["entries"].size() == 4;
+                else if (t == "hello") hhello = m;
+                else if (t == "tree") listed = m["entries"].size() == 6;
                 else if (t == "opening") hopens.push_back(m);
+                else if (t == "filetext") hfile = m;
             };
             CHECK(q.pump(htake, [&] { return hstate.isObject(); }));
+            CHECK(!hhello["canOpen"].asBool());   // the page reads files for itself
             q.sendText("{\"t\":\"list\",\"path\":\"\"}");
             q.sendText("{\"t\":\"open\",\"path\":\"main.py\"}");
-            CHECK(q.pump(htake, [&] { return listed && hopens.size() == 1; }));
+            q.sendText("{\"t\":\"readfile\",\"path\":\"main.py\"}");
+            CHECK(q.pump(htake, [&] { return listed && hopens.size() == 1 && hfile.isObject(); }));
             CHECK(hopens.size() == 1 && !hopens[0]["ok"].asBool() &&
                   hopens[0]["why"].asString().find("headless") != std::string::npos);
+            CHECK(hfile["lines"].size() == 2 && hfile["lines"][0][0].asString() == "print(1)");
             q.close();
-            CHECK(waitUntil([&] { return web.browsers() == 0 && headless.browsers() == 0; }));
+            CHECK(waitUntil([&] { return web.browsers() == 0 && headless.browsers() == 0 && editing.browsers() == 0; }));
         }
         web.stop();
         webThread.join();
+        editing.stop();
+        editingThread.join();
         headless.stop();
         headlessThread.join();
         // The page carries the tree and its sidebar.
@@ -2068,5 +2152,276 @@ static void testSessionWeb() {
         CHECK(a.response.find("default-src 'none'") != std::string::npos);
         CHECK(Web::pageHtml().find("id=\"web\"") != std::string::npos &&
               Web::pageHtml().find("Open in a new tab") != std::string::npos);
+    }
+
+    // R7, the owner's four: the window says which panes it shows, so the
+    // page lays out its browser pane beside the editor and its terminal
+    // below as the window does; an editable page closes the window's tabs
+    // as the window does (never one with unsaved changes, never another
+    // window's), and a page that only reads closes none; a terminal the
+    // host closes leaves every page at once, not at the next look.
+    GROUP("sessionweb:close-and-panes");
+    {
+        // The report, and the page's copy checked again.
+        Json panes = Web::panesReportJson(true, false, 0.35);
+        CHECK(panes["browser"].asBool() && !panes["terminal"].asBool() && panes["browserShare"].asNumber() == 0.35);
+        Json view = Web::panesViewJson(panes);
+        CHECK(view == panes);
+        Json odd;
+        CHECK(Json::parse("{\"browser\":\"yes\",\"terminal\":1,\"browserShare\":7,\"x\":\"<script>\"}", odd));
+        view = Web::panesViewJson(odd);
+        CHECK(!view["browser"].asBool() && !view["terminal"].asBool() && view["browserShare"].asNumber() == 0.9);
+        CHECK(!view.has("x"));
+        CHECK(Web::panesViewJson(Web::panesReportJson(false, true, -3))["browserShare"].asNumber() == 0.1);
+        CHECK(Web::panesViewJson(Json::object())["browserShare"].asNumber() == 0.5);
+        CHECK(Web::panesViewJson(Json()).isNull() && Web::panesViewJson(Json(2.0)).isNull());
+        Message wt;
+        wt.kind = Shared::Kind::WindowTabs;
+        wt.window = 9;
+        wt.json = Json::object();
+        wt.json.set("panes", panes);
+        CHECK(Shared::roundTrip(wt).json["panes"] == panes);
+
+        // An in-process host: window 5 holds a clean tab and a dirty one,
+        // window 6 one of its own.
+        std::mutex routesMu;
+        std::map<Shared::ClientId, Shared::Client*> routes;
+        Shared::SessionHost host([&](Shared::ClientId to, Message&& m) {
+            std::lock_guard<std::mutex> lk(routesMu);
+            auto it = routes.find(to);
+            if (it != routes.end()) it->second->deliver(std::move(m));
+        });
+        Shared::Client editor(Model::Unit::Utf16, "editor");
+        const Shared::ClientId editorId = host.connect();
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes[editorId] = &editor;
+        }
+        editor.connect([&](Message&& m) { host.post(editorId, std::move(m)); });
+        TestMirror dirty;
+        dirty.client = &editor;
+        dirty.doc = 2;
+        dirty.text = u"x = 1\n";
+        editor.open(1, "/w/clean.py", "y = 2\n", nullptr);
+        editor.open(2, "/w/dirty.py", Model::utf8FromUtf16(dirty.text), &dirty);
+        editor.open(3, "/other/theirs.py", "z = 3\n", nullptr);
+        dirty.caret = dirty.text.size();
+        dirty.type(u"# unsaved\n");
+        auto windowOf = [](std::vector<std::pair<Shared::DocId, std::string>> docs, Json panes) {
+            Json tabs = Json::array();
+            for (const auto& [d, path] : docs) {
+                Json t = Json::object();
+                t.set("doc", Json((int64_t)d));
+                t.set("path", Json(path));
+                tabs.push(std::move(t));
+            }
+            Json g = Json::object();
+            g.set("tabs", std::move(tabs));
+            g.set("active", Json((int64_t)(docs.empty() ? 0 : docs[0].first)));
+            Json groups = Json::array();
+            groups.push(std::move(g));
+            Json w = Json::object();
+            w.set("root", Json("/w"));
+            w.set("focused", Json(0));
+            w.set("groups", std::move(groups));
+            if (!panes.isNull()) w.set("panes", std::move(panes));
+            return w;
+        };
+        editor.windowTabs(5, windowOf({{1, "/w/clean.py"}, {2, "/w/dirty.py"}},
+                                      Web::panesReportJson(true, true, 0.4)));
+        editor.windowTabs(6, windowOf({{3, "/other/theirs.py"}}, Json()));
+        CHECK(editor.settle());
+        auto connectTo = [&](Shared::Client& c) -> std::function<void()> {
+            const Shared::ClientId id = host.connect();
+            {
+                std::lock_guard<std::mutex> lk(routesMu);
+                routes[id] = &c;
+            }
+            c.connect([&host, id](Message&& m) { host.post(id, std::move(m)); });
+            return [&, id] {
+                {
+                    std::lock_guard<std::mutex> lk(routesMu);
+                    routes.erase(id);
+                }
+                host.disconnect(id);
+            };
+        };
+        std::mutex closedMu;
+        std::vector<Shared::DocId> closed;
+        auto serve = [&](Web::Server& web, bool editable) {
+            Web::Options o;
+            o.folder = "/w";
+            o.window = 5;
+            o.pollMs = 100;
+            o.editable = editable;
+            o.connect = connectTo;
+            o.close = [&](Shared::DocId d) {
+                std::lock_guard<std::mutex> lk(closedMu);
+                closed.push_back(d);
+                return true;
+            };
+            std::string error;
+            CHECK(web.start(o, &error));
+        };
+        Web::Server editing, reading;
+        serve(editing, true);
+        serve(reading, false);
+        std::thread t1([&] { editing.run(); }), t2([&] { reading.run(); });
+        {
+            PageClient p;
+            CHECK(p.upgrade(editing.port(), "/ws?t=" + editing.token()));
+            Json hello, state;
+            std::vector<Json> answers, notes;
+            auto take = [&](const Json& m) {
+                const std::string t = m["t"].asString();
+                if (t == "hello") hello = m;
+                else if (t == "state") state = m;
+                else if (t == "closing") answers.push_back(m);
+                else if (t == "note") notes.push_back(m);
+            };
+            auto dirtyOf = [&](Shared::DocId d) {
+                for (const Json& x : state["docs"].elements())
+                    if ((Shared::DocId)x["id"].asInt() == d) return x["dirty"].asBool();
+                return false;
+            };
+            CHECK(p.pump(take, [&] { return state.isObject() && dirtyOf(2); }));
+            CHECK(hello["canClose"].asBool());
+            // The window's panes, for the page's layout.
+            CHECK(state["windows"].size() == 1);
+            CHECK(state["windows"][0]["panes"] == Web::panesReportJson(true, true, 0.4));
+            // The window hides its terminal panel: the page hears it.
+            editor.windowTabs(5, windowOf({{1, "/w/clean.py"}, {2, "/w/dirty.py"}},
+                                          Web::panesReportJson(true, false, 0.4)));
+            CHECK(editor.settle());
+            CHECK(p.pump(take, [&] { return !state["windows"][0]["panes"]["terminal"].asBool(); }));
+            // Closing: the clean tab goes to the window; the dirty one, another
+            // window's and one that is no document are refused before it.
+            p.sendText("{\"t\":\"close\",\"doc\":2}");
+            p.sendText("{\"t\":\"close\",\"doc\":3}");
+            p.sendText("{\"t\":\"close\",\"doc\":99}");
+            p.sendText("{\"t\":\"close\",\"doc\":\"1\"}");
+            p.sendText("{\"t\":\"close\",\"doc\":1}");
+            CHECK(p.pump(take, [&] { return answers.size() == 5; }));
+            if (answers.size() == 5) {
+                CHECK(!answers[0]["ok"].asBool() && answers[0]["why"].asString().find("unsaved") != std::string::npos);
+                CHECK(answers[0]["why"].asString().find("dirty.py") != std::string::npos);
+                for (int i = 1; i < 4; i++)
+                    CHECK(!answers[i]["ok"].asBool() && answers[i]["why"].asString().find("not one of this window") !=
+                                                            std::string::npos);
+                CHECK(answers[4]["ok"].asBool() && answers[4]["doc"].asInt() == 1);
+            }
+            {
+                std::lock_guard<std::mutex> lk(closedMu);
+                CHECK(closed.size() == 1 && closed[0] == 1);
+            }
+            // The window closes it, and reports its tabs without it.
+            editor.windowTabs(5, windowOf({{2, "/w/dirty.py"}}, Web::panesReportJson(true, false, 0.4)));
+            CHECK(editor.settle());
+            CHECK(p.pump(take, [&] { return state["docs"].size() == 1 && state["docs"][0]["id"].asInt() == 2; }));
+            p.close();
+
+            // A page that only reads closes nothing of the window's.
+            PageClient r;
+            CHECK(r.upgrade(reading.port(), "/ws?t=" + reading.token()));
+            hello = Json();
+            state = Json();
+            answers.clear();
+            CHECK(r.pump(take, [&] { return state.isObject(); }));
+            CHECK(!hello["canClose"].asBool() && !hello["canOpen"].asBool());
+            CHECK(!state["windows"][0]["panes"]["terminal"].asBool());   // the layout is a reader's too
+            r.sendText("{\"t\":\"close\",\"doc\":2}");
+            CHECK(r.pump(take, [&] { return answers.size() == 1; }));
+            CHECK(answers.size() == 1 && !answers[0]["ok"].asBool() &&
+                  answers[0]["why"].asString().find("only reads") != std::string::npos);
+            r.close();
+            {
+                std::lock_guard<std::mutex> lk(closedMu);
+                CHECK(closed.size() == 1);
+            }
+            CHECK(waitUntil([&] { return editing.browsers() == 0 && reading.browsers() == 0; }));
+        }
+        editing.stop();
+        reading.stop();
+        t1.join();
+        t2.join();
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes.clear();
+        }
+        // The page: a browser pane of its own with its close button, a
+        // terminal pane with its own, and buttons that show them again.
+        const std::string& page = Web::pageHtml();
+        for (const char* id : {"id=\"top\"", "id=\"webtabs\"", "id=\"webclose\"", "id=\"termclose\"",
+                               "id=\"webbtn\"", "id=\"termbtn\""})
+            CHECK(page.find(id) != std::string::npos);
+        CHECK(page.find("\"readfile\"") != std::string::npos && page.find("\"close\"") != std::string::npos);
+    }
+
+    // A terminal the host closes (its window closed it, or its shell
+    // ended) leaves the pages at once: the view hears it end and looks at
+    // the state then, not at its next look (here a minute away). For a
+    // headless host's view, which has no window to stop reporting it.
+    GROUP("sessionweb:terminal-ends");
+    {
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        SocketRenderer a;
+        CHECK(a.attach(rig.path(), "editor"));
+        const std::string home = scratchFolder();
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = rig.path();
+        o.folder = rig.proj;
+        o.pollMs = 60000;
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        auto idsOf = [](const Json& state) {
+            std::string s;
+            for (const Json& t : state["terms"].elements()) s += std::to_string(t["id"].asInt()) + " ";
+            return s;
+        };
+        if (a.client && web.port() > 0) {
+            a.client->openTerminal(21, shellSpec(home, {"sh"}), &a);
+            a.client->openTerminal(22, shellSpec(home, {"sh"}), &a);
+            auto prompt = [&](Shared::TermId t) {
+                for (const std::string& r : hostRows(rig, t))
+                    if (r.find("$") != std::string::npos) return true;
+                return false;
+            };
+            CHECK(a.wait([&] { return prompt(21) && prompt(22); }));
+            PageClient p;
+            CHECK(p.upgrade(web.port(), "/ws?t=" + web.token()));
+            Json state;
+            PageTerm term;
+            auto take = [&](const Json& m) {
+                if (m["t"].asString() == "state") state = m;
+                term.take(m);
+            };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            CHECK(idsOf(state) == "21 22 ");
+            p.sendText("{\"t\":\"show\",\"doc\":0,\"term\":21}");
+            CHECK(p.pump(take, [&] { return term.snapshots == 1 && term.id == 21; }));
+            // Its window closes it.
+            const double t0 = nowMs();
+            a.client->closeTerminal(21);
+            CHECK(p.pump(take, [&] { return idsOf(state) == "22 "; }, 5000));
+            if (idsOf(state) != "22 ") std::printf("  terminal-ends: %s\n", idsOf(state).c_str());
+            CHECK(nowMs() - t0 < 5000);
+            // Asked for again by id: nothing of it is left to show.
+            const int before = term.snapshots;
+            p.sendText("{\"t\":\"show\",\"doc\":0,\"term\":21}");
+            p.pump(take, [] { return false; }, 300);
+            CHECK(term.snapshots == before);
+            // The other ends by itself (its shell exits).
+            p.sendText("{\"t\":\"show\",\"doc\":0,\"term\":22}");
+            CHECK(p.pump(take, [&] { return term.id == 22; }));
+            a.client->terminalInput(22, "exit\n");
+            CHECK(p.pump(take, [&] { return state["terms"].size() == 0; }, 5000));
+            p.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0; }));
+        }
+        web.stop();
+        webThread.join();
     }
 }

@@ -96,12 +96,19 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
             return true;
         };
     }
-    if (_open) {
+    if (_editable && _open) {   // a read-only page changes nothing in the window
         void (^open)(NSString *, BOOL) = _open;
         o.open = [open](const std::string &path, bool keep) {
             NSString *p = [NSString stringWithUTF8String:path.c_str()];
             if (!p) return false;
             dispatch_async(dispatch_get_main_queue(), ^{ open(p, keep); });
+            return true;
+        };
+    }
+    if (_editable && _close) {
+        void (^close)(uint64_t) = _close;
+        o.close = [close](Shared::DocId d) {
+            dispatch_async(dispatch_get_main_queue(), ^{ close(d); });
             return true;
         };
     }
@@ -180,6 +187,11 @@ void (^MCSessionBrowserOpener)(NSURL *url) = nil;
         }
         w.set("browser", Shared::Web::browserReportJson(tabs, [pane[@"active"] intValue]));
     }
+    // Which panes it shows, so the page lays itself out alike.
+    if (NSDictionary *panes = _panes ? _panes() : nil)
+        w.set("panes", Shared::Web::panesReportJson([panes[@"browser"] boolValue],
+                                                    [panes[@"terminal"] boolValue],
+                                                    [panes[@"browserShare"] doubleValue]));
     std::string dump = w.dump();
     if (dump == _sentTabs) return;
     _sentTabs = std::move(dump);

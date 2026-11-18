@@ -906,14 +906,17 @@ viewers, Quick Open's list) as new ops, not new messages.
   widen:NO`, so the window gets the tab its own tree's click would give,
   the row selected in its tree), answered `opening {path, abs, ok, why}`.
   A headless host has no `open`: the answer says it cannot open files yet.
-  **Read-only pages may list and open** (the decision for R6): a tab opened
-  or switched changes no text, so both come before the editable gate in
-  `handleMessage`.
+  **Read-only pages list but do not open** (R7, reversing R6's decision):
+  opening a tab changes the Mac's window, which a reader must leave as it
+  is, so `open` is after the editable gate in `handleMessage` and a reader
+  reads the file for a tab of its own instead (`readfile`, below, "The
+  page's own tabs").
 - **The page** keeps the open folders (`T.open`), each folder's last
   listing and errors, lists a folder each time it is opened (so it is
   current when opened), lists every open folder again on ↻, on `hello`
   (every reconnect) and when the page becomes visible again. There is no
-  watching: the host watches nothing yet (stage 7). A click on a file
+  watching: the host watches nothing yet (stage 7). On a page with
+  `canOpen` (editable, with `Options::open`) a click on a file
   sends `open` (the second click of a double-click, or Command/Control,
   keeps the tab) and, once `opening` says ok, waits for a document with
   that `abs` in the state, then shows it (`takePending`); a viewer kind
@@ -971,13 +974,15 @@ frames the one picked.
   `openSessionAddress:` on the main queue: `agentBrowserPane` (made and
   shown, no home page), then `openAddresses:` (a tab at the address shown
   again, else a new tab), the keyboard kept where it was.
-- **The page.** A browser tab's button hides `#docsec` and shows
-  `#websec`: the title and address, an "Open in a new tab" link
+- **The page.** The pane is `#websec`, beside `#docsec` (R7: it was a
+  "Browser" group in the editor's strip, shown in the editor's place, the
+  owner's bug a), with its tabs in `#webtabs`: the title and address, an
+  "Open in a new tab" link
   (`rel="noopener noreferrer"`), always shown with the frame because a page
   cannot tell a site that refused framing (X-Frame-Options, CSP
   frame-ancestors) from a blank one, a muted line for a loopback address,
-  and the frame. A doc tab, or a file opened from the tree, goes back
-  (`showDoc` calls `hideWeb`), and the frame is set to about:blank so the
+  and the frame. The pane follows the window's tab on show until one is
+  picked (`W.follow`); hidden, its frame is set to about:blank so the
   framed page stops. An address the page asked for is shown once the
   window's state lists it (`takeWebPending`, trailing slashes ignored, 15 s).
   Typed addresses with no scheme get http:// for localhost, 127.x and [::1],
@@ -1007,6 +1012,85 @@ in the window's browser pane, and the page lists it under Browser and
 frames it with its link and loopback line. The look (the strip's group,
 the frame, the narrow layout) needs the owner's eyes.
 
+### The page's panes, its own tabs, closing, and terminals that end (R7)
+
+The owner's four bugs on 1.6.1's read-only page (2026-11-18): the browser
+pane drawn in the editor's place rather than as a panel, no way to close
+a tab opened from the tree, no way to close the browser, and a terminal
+closed on the Mac staying on the page.
+
+- **Panes as the window has them.** The window's `WindowTabs` json gains
+  `panes` {browser, terminal, browserShare} (`Web::panesReportJson`;
+  `MCSessionBrowser panes`, from `sessionBrowserPanes`: `browserVisible`
+  with a pane, `terminalVisible` with a panel, `browserFraction`;
+  Maximize Pane is not followed). `lookAtState` passes it on checked again
+  (`panesViewJson`: booleans, the share held to 0.1..0.9). The page lays
+  out `#top` (`#docsec`, then `#websec` at `--webshare` of the width; a
+  column at 700 px and under) above `#termsec`. Each pane shows while the
+  window shows it and has something in it (a host that sends no `panes`,
+  a headless one: shown); the page's own choice (`P[name].mine`, the ×
+  in the pane's row and the Browser and Terminal buttons in the header)
+  wins until the window shows or hides that pane again. **Hiding is the
+  page's own, read-only and editable alike** (the owner left the editable
+  case to us): a page is another screen with its own room, a phone's
+  especially, and hiding the Mac's pane from it would change the window
+  under the person at the Mac; the page asks nothing of the window for
+  it. An address an editable page opens shows the pane on the page.
+- **Terminals that end leave at once** (bug d). The bug the owner met was
+  Toggle Terminal: the panel hid but its shells ran, the window kept
+  reporting them, and the page kept its pane; now `panes.terminal` hides
+  it. Terminals that really go were already dropped through the window's
+  `terms`; besides that, the view's `Session` now overrides `termExited`
+  (the host tells every attached renderer when a shell is reaped) and
+  looks at the state at once, and `lookAtState` lets go of every
+  `TermView` and page `term` not in the state it sends, for a headless
+  view (`window` 0) too, which kept dead views before.
+- **The page's own tabs** (bug b). `readfile {path}` (any page) is
+  answered `filetext` by `Web::localFileJson(folder, rel, showHidden)`:
+  `confinedPath`, no dotfile name unless the tree shows them, opened
+  `O_NONBLOCK` and `fstat`ed as a regular file of at most 8 MB, refused
+  with a NUL in its first 8 KB, then made into a `DocView`'s snapshot (the
+  same lines, spans, Markdown page and indent a `doc` has). It is read
+  from the disk by the server, not through the host: the file need not be
+  open anywhere, and the server runs where the folder is (in the app, or
+  `host`/`attach --web` on that machine). The page keeps them in `L.tabs`,
+  drawn after the window's tabs in italics with a ×; showing one sends
+  `show {doc: 0}` and fills `D` with id -1 (not editable), and closing it
+  goes back to the window's tab on show. A file the window has open is
+  shown from its tab instead (live). Readers and pages with no `canOpen`
+  (a headless host's) use this; viewer kinds get a note.
+- **Closing the window's tabs** (editable pages). `close {doc}` is answered
+  `closing {doc, ok, why}`; refused for a reader, a document not this
+  window's, and a dirty one (the host's flag in the state: the Mac would
+  ask on its own screen, so the page says to save or close it there);
+  else `Options::close` (the Mac's `closeSessionDocument:`: the tab's
+  `dirty` checked again, then `closeTabEverywhere:prompt:YES`, both
+  groups, so the page's tab, which stands for the document, goes). The
+  hello's `canOpen` and `canClose` say which a page has; a reader's
+  `Options::open` is no longer set on the Mac.
+
+#### Checks
+
+`sessionweb:tree` (a reader's `open` refused and nothing opened, its
+`readfile` of a C file and a Markdown file as lines with spans and the
+page, eight refused reads: a folder, two ways out, a dotfile, a binary
+file, a missing one, an absolute path; an editable page's opens reaching
+`Options::open`; a headless page reading); `sessionweb:close-and-panes`
+(the panes report and its check, through the protocol; an in-process
+host: window 5's panes in the state, a hidden terminal panel reaching the
+page, closing a clean tab, refusing a dirty one, another window's, an
+unknown and a malformed id, a reader refused, `canClose`);
+`sessionweb:terminal-ends` (a headless view with a minute's poll: a
+terminal its renderer closes and one whose shell exits leave the page
+within seconds, and the closed one shows nothing when asked for by id).
+GUI: `session_browser` sees the browser pane beside the editor, the
+page's × hide it there only, the window hiding and showing its pane
+followed, an editable page's × close a window tab, Toggle Terminal hide
+and show the page's terminal pane, and the closed terminal's pane go;
+then a read-only page whose tree click opens a tab of its own (the
+window's tabs unchanged, no × on them) that its × closes. The look of the
+panes and the ×s needs the owner's eyes.
+
 ### Still to do
 
 - Lines are re-sent whole per edit; a long line typed into from a browser
@@ -1015,8 +1099,9 @@ the frame, the narrow layout) needs the owner's eyes.
   every half second for tabs and documents (terminal sizes come with
   `TermShell`).
 - Several carets, folding, find, completion and the rest of the editor
-  are the Mac's and GTK's, not the page's; so are closing and reordering
-  tabs, which wait for the host to decide tabs (stage 6's note).
+  are the Mac's and GTK's, not the page's; so is reordering tabs, which
+  waits for the host to decide tabs (stage 6's note). Closing goes to the
+  window (R7), not the host.
 - Saving from a headless host waits for stage 7; Mac terminals are the
   app's own until they move into the host.
 - Typing the session had not confirmed when the connection drops is lost
