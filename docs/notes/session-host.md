@@ -272,7 +272,9 @@ release. With the setting off nothing changes, MCPty included.
   window (`SessionBrowser`) shows all of the app's host terminals, since
   the Mac does not report which window holds one. Notes the panel writes
   on the screen itself ("[shell exited — restarting]") are only on the
-  Mac's screen. Terminal size follows the Mac (any `TermResize` wins).
+  Mac's screen. Terminal size follows the renderer that last typed
+  (stage 6's **Size**); the browser's view sends no size, so the Mac's
+  holds.
 
 Checks: `make guitest SUITES=terminal_host` (the setting turned on by the
 suite: the shell is the host's; a command typed on the Mac is on the
@@ -336,6 +338,24 @@ yet; GTK is next, after the Linux session's GTK terminals (#128).
   terminal nobody shows keeps running, its output going only into the
   host's screen. Detaching (the connection closing) is `Host::disconnect`:
   documents, windows and terminals stay.
+- **Size** (tmux's `window-size latest`, 2026-11-18). A renderer's
+  `TermResize` is its view's size, kept as that renderer's
+  (`Term::Viewer`). The pty and the host's screen take the size of the
+  renderer showing the terminal that typed into it last and has said a
+  size; before that, the opener's (its `TermSpec`) while it shows it;
+  else the first renderer that attached with a size; with none, the pty
+  keeps its own. The size moves before the typed bytes are written, and a
+  renderer going hands it on by the same rule. Typing is `TermInput`
+  without flag 1: flag 1 (`terminalInput(t, bytes, true)`) marks an
+  emulator's answer to a program's query (DA, DSR, OSC colors), which
+  every renderer's emulator sends and which would otherwise hand the size
+  to whichever answered last. `TermShell` carries the pty's `cols` and
+  `rows`, so every renderer hears a change where the host's screen
+  reflowed in the stream. A renderer draws its emulator at that size,
+  never reflowing a program's screen to its view: a larger pty clipped
+  around the cursor (tmux pans), a smaller one at the top left with the
+  rest empty. It keeps sending its view's size, so its next key gives the
+  pty that size with no other message. With one renderer nothing changed.
 - **Lifetime** (the owner's answer): `run()` returns once there has been no
   connection for `idleMs` (10 minutes; `--idle-minutes`, fractions allowed,
   for checks) and `Host::busyReason()` is empty: no document dirty, no
@@ -371,6 +391,11 @@ replay, two renderers hear the same output, and closing it ends the shell;
 the lifetime with a 150 ms timer (no renderer, an unsaved document kept and
 then saved, a running command by the marks, a foreground `sleep` in `sh -i`);
 the command line's parsing. Real sockets and shells, under TSan in CI.
+`term:size` (`tests/session_terminal_tests.inc`) holds the size rule to the
+pty's own winsize and `stty size`: up to four renderers on one terminal,
+the opener's size until another types, a resize from one that is not the
+typist kept but not taken, an answer that is not typing, the typist going
+(to the latest typist left, then the first attached), and one alone.
 
 ### Ids (done, 2026-11-18)
 
@@ -409,8 +434,17 @@ document, terminal (dying ones included) or window is held
 - Tabs are still reported, not decided (4a's note): a second renderer reads
   `windows` from the state but cannot change them through the host until
   `Model::Window`'s callbacks are data.
-- The renderer that last typed into a terminal should set its size (the
-  design's tmux `window-size latest`); today any `TermResize` wins.
+- Size: done in the host (stage 6's **Size**). Each renderer still has
+  to follow it. The Mac's grid on the host should resize its screen only
+  to `TermShell`'s size (today it resizes on layout, which is right only
+  while it is the one sizing), send its screen's replies (`takeReplies`)
+  with `answer`, apart from the keys, and draw at the pty's size. GTK's
+  VTE sizes itself from its widget and commits its answers with the
+  user's keys (`onCommit`); it needs both before a second renderer shares
+  its terminals. The page sends no size, and the host refuses a guest's
+  `TermResize`: so its typing moves nothing today; to send one, let a
+  guest's `TermResize` through `refusedFromViewer`, and follow
+  `TermShell`'s size rather than polling the state.
 - Saving, dirty, backups and the disk are still the app's (stage 7): a
   headless host's unsaved document is only as safe as the host process.
 

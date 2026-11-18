@@ -32,7 +32,10 @@
 // since), whose own emulator (VTE on GTK) draws them; input comes back as
 // bytes. The host's screen answers no queries (DA, DSR): the renderer's
 // emulator does, through its input. A renderer that attaches gets the
-// screen as replay() bytes, then the live output.
+// screen as replay() bytes, then the live output. The pty's size is one
+// renderer's (tmux's window-size latest): that of the one that last typed
+// into it and has said its size, else the opener's, else the first
+// attached one's; TermShell tells every renderer the size (see Term).
 //
 // Stage 6: renderers come and go (a headless host, SessionServer.h).
 // Detaching leaves documents, windows and terminals as they are; a
@@ -186,9 +189,16 @@ private:
     };
 
     struct Term {
-        // Renderers showing it, each with its output not yet acknowledged:
-        // the pty is read while every one of them has credit left.
-        std::map<ClientId, long long> viewers;
+        // Renderers showing it: the pty is read while every one of them has
+        // credit left (output not yet acknowledged under kTermCredit).
+        struct Viewer {
+            long long unacked = 0;
+            int cols = 0, rows = 0;      // its view's size (TermSpec, TermResize), 0 unsaid
+            std::uint64_t typed = 0;     // when it last typed (order_), 0 never
+            std::uint64_t joined = 0;    // when it opened or first attached (order_)
+        };
+        std::map<ClientId, Viewer> viewers;
+        ClientId opener = 0;
         std::unique_ptr<Pty> pty;
         TerminalScreen screen;
         TerminalStream stream;
@@ -210,6 +220,13 @@ private:
     void onTermOpen(ClientId c, Message& m);
     void onTermAttach(ClientId c, Message& m);
     void sendShell(TermId id, Term& t, bool always = false);
+    // Whose size the pty takes: the renderer showing it that typed last and
+    // has a size, else the opener while it shows it, else the first that
+    // joined with a size; nullptr when none has one (the pty keeps its own).
+    const Term::Viewer* sizer(const Term& t) const;
+    // The pty and the host's screen take the sizer's size, and every
+    // renderer is told (TermShell's cols and rows), when it changed.
+    void fit(TermId id, Term& t);
     void sendMarks(TermId id, Term& t);
     void look(Term& t);   // foreground group and modes
     // The terminal's shell is gone or going: what is left is read (when
@@ -234,6 +251,7 @@ private:
     bool slotFree(std::uint64_t slot) const;
     std::map<DocId, Doc> docs_;
     std::map<std::uint64_t, std::pair<ClientId, Json>> windows_;
+    std::uint64_t order_ = 0;   // counts terminals' typing and joining (Term::Viewer)
 
     void send(ClientId to, Message&& m);
     void error(ClientId to, DocId d, const std::string& what);
