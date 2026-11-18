@@ -5873,3 +5873,87 @@ same `chooseTheme` (unsaved-settings refusal, the question about colors the
 file sets, `Settings::withTheme`, the config writer). Checked by the palette
 suite's last block. The rows do not mark the current theme (the palette has
 no checked rows on either port).
+
+### 94. Focus on Folder (done, November 2026)
+
+The Mac's feature of 2026-11-17 (`../docs/notes/tree.md`, "Focus on
+Folder"; `mac/src/EditorController+TreeFocus.mm`), over the same core:
+`FileDetails.h`'s `TreeFocus` (normalize, relative, contains, parent,
+breadcrumb, widened, restored, fit) and `TabSessions::Session.treeFocus`.
+A folder's right click, File > Focus on Folder and the palette
+(`minicode.tree.focusFolder`, `win.focusfolder`: the selected folder, a
+selected file's folder, else the open file's) root the tree at that
+folder; Show Whole Folder in Tree (`minicode.tree.showWholeFolder`,
+`win.showwholefolder`) and the breadcrumb row's first part or × give the
+whole folder back. No keys, as on the Mac (`CommandsLinux.cpp` has both
+rows without one).
+
+- **The model starts lower.** `FileTree::focus_` is a path from `root_`,
+  which never changes; `top()` is the folder the rows start at.
+  `applyFocus` reads the folders open now, keeps those outside the new top
+  in `focusExpanded_` (the Mac's `_treeFocusExpanded`), replaces the model
+  (`replaceModel`: a fresh `makeTreeModel()` from `top()` put on the same
+  `GtkSingleSelection`, which owns the tree model, so the old one goes
+  with its folders' watches and the list view and its handlers stay), and
+  opens the folders again through `pendingExpand_` as the listings come.
+  Widening opens the old root and the folders down to it and selects its
+  row; the selected row stays selected where it still shows. The
+  Worktrees node is listed only from the window's folder (`makeDirModel`'s
+  `root`), and neither it nor a folder inside a worktree can be focused
+  (`inTree`: .claude lists no "worktrees"; a dotfolder only with hidden
+  files on). New File, Open Containing Folder and Copy Path with nothing
+  selected, and a drop on the empty space, start at `top()`.
+- **The breadcrumb** is a box over the scroller in `container()`, which
+  the sidebar's stack now holds (`widget()` stays the scrolled window,
+  which several suites read): one label per part, a "›" each, an ellipsis
+  and a flat × button, laid out by a `GtkCustomLayout` whose allocate
+  function measures the labels and shows what `TreeFocus::fit` chooses
+  (the rest `gtk_widget_set_child_visible(FALSE)`, the last part cut
+  short with its ellipsized label). A press picks the part's label with
+  `gtk_widget_pick`; the last part, the root already, does nothing. Its
+  right click has Show Whole Folder in Tree. Colors in `ThemeCss.cpp`
+  (`.minicode-tree-focus-*`): the sidebar's background, the parts at 60%
+  of its text color and the root in full and bold, as the Mac draws them.
+- **Gone from the disk.** The tree's own watches start at the focused
+  folder, so `watchFocusPath` adds a `GFileMonitor` on each folder from
+  the window's folder down to the focused folder's parent; a delete or
+  rename there checks `inTree(focus_)` 100 ms later and falls back to the
+  whole folder with the Mac's status note (`dropLostFocus`). Turning hidden
+  files off with a dotfolder focused does the same. Those monitors also
+  pass their events to the activity callback, as the root's watch would.
+- **Reveals widen, opens do not.** `revealPath(path, widen)` asks
+  `showsPath` first: outside the focus with `widen` it widens to
+  `TreeFocus::widened`, without it leaves the tree alone. `widen` is set
+  by `revealInTree` (Reveal Active File in File Tree, the tab's Reveal in
+  File Tree, source control's), a folder link, New File, New Folder,
+  Rename and drops; the tree following the tab on show
+  (`revealActiveInTree`), a file link and the opens behind it never widen.
+- **Sessions.** `Persistence::Host` has `treeFocus` (asked by `session()`,
+  also as the window closes, so it is not behind `app->dead`) and
+  `restoreTreeFocus`, which `restoreSession` calls first with the saved
+  focus (the window's record or the folder's session), before any tab, so
+  a focus alone comes back; `FileTree::restoreFocus` takes it through
+  `TreeFocus::restored`, so a folder gone since gives the whole folder. A
+  change of focus saves the session at once. The port keeps no open
+  folders in a window's record (the Mac does), so a window brought back
+  focused opens none.
+- **Menus.** The tree's right click has a section of its own with
+  `win.focusfolderrow` and `win.showwholefolder`, both
+  `hidden-when="action-disabled"`; `updateTreeFocusActions` enables the
+  first for a folder row the tree can focus and the second while focused
+  (on every right click, change of focus and restore), so the File menu's
+  Show Whole Folder in Tree is greyed while the whole folder shows.
+
+Checked by the new `tree_focus` suite (63 checks; real right clicks on a
+folder's and a file's row, the menus read; the action; the root and the
+breadcrumb, the bar above the rows; a file made inside; real clicks on
+the breadcrumb's parts and the × widening with the folders kept open;
+Show Whole Folder; a focus too long for the bar, its first part, ellipsis
+and last part; an open outside the focus leaving it, reveals widening,
+Reveal Active File in File Tree; a window brought back from its record,
+also focused on a folder gone since; the folder's session after closing
+and opening again, also with the folder renamed meanwhile; the focused
+folder deleted on disk, with the status note). The bar's pictures were
+looked at (`MC_GUI_SNAPSHOTS`). Needs a person at the ThinkPad: the bar's
+look under GNOME, hover and the pointer (`BUILD-LINUX.md`, "How it
+looks").
