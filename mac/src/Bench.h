@@ -1,12 +1,12 @@
-// Bench.h — the MiniCode side of scripts/membench-mac.sh.
+// Bench.h — the Mutible side of scripts/membench-mac.sh.
 //
 // Compiled into development builds but inert: nothing runs unless
-// MINICODE_BENCH is set. A release build (`make RELEASE=1`) leaves Bench.mm
+// MUTIBLE_BENCH is set. A release build (`make RELEASE=1`) leaves Bench.mm
 // out and main.mm gets the stubs below. It puts the window into the
 // benchmark's workload the way a person
 // would leave it: a C++ file open (so its language server starts), a LaTeX
 // file typeset in the preview, the terminal open, and a page in the browser.
-// Then it prints "minicode bench: ready" to stderr and leaves the app running
+// Then it prints "mutible bench: ready" to stderr and leaves the app running
 // for the script to measure and stop.
 #import <Cocoa/Cocoa.h>
 
@@ -16,8 +16,8 @@
 static inline void MCBenchStart(EditorController *controller) { (void)controller; }
 static inline BOOL MCBenchActive(void) { return NO; }
 #else
-// MINICODE_BENCH_CPP, MINICODE_BENCH_TEX: files to open (absolute paths).
-// MINICODE_BENCH_URL: the page for the browser panel.
+// MUTIBLE_BENCH_CPP, MUTIBLE_BENCH_TEX: files to open (absolute paths).
+// MUTIBLE_BENCH_URL: the page for the browser panel.
 void MCBenchStart(EditorController *controller);
 BOOL MCBenchActive(void);
 #endif

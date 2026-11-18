@@ -145,7 +145,7 @@ static void testCommandTable() {
     CHECK(HasKey(d, "workbench.action.showCommands", "shift+cmd+p"));
     CHECK(d.keysOf("workbench.action.terminal.toggleTerminal").size() == 3);
     CHECK(d.keysOf("workbench.action.terminal.toggleTerminal")[0] == K("shift+cmd+t"));
-    CHECK(d.keysOf("minicode.about").empty());
+    CHECK(d.keysOf("mutible.about").empty());
     CHECK(d.keysOf("no.such").empty());
     // Cmd+Home is the editor's in the editor and the terminal's there.
     CHECK(d.commandsFor(K("cmd+home")).size() == 2);
@@ -191,8 +191,8 @@ static void testCommandTable() {
     CHECK(d.commandFor(K("cmd+k"), When::Terminal) == find("workbench.action.terminal.clear"));
     CHECK(d.commandFor(K("cmd+k"), When::Editor) == nullptr);
     CHECK(d.commandFor(K("shift+cmd+p"), When::Terminal) == find("workbench.action.showCommands"));
-    // minicode's Shift+Cmd keys and VS Code's where it has the feature.
-    CHECK(HasKey(d, "minicode.requestChange", "shift+cmd+k"));
+    // mutible's Shift+Cmd keys and VS Code's where it has the feature.
+    CHECK(HasKey(d, "mutible.requestChange", "shift+cmd+k"));
     CHECK(HasKey(d, "editor.action.deleteLines", "ctrl+shift+k"));
     CHECK(HasKey(d, "editor.action.formatDocument", "alt+shift+f"));
     CHECK(HasKey(d, "editor.action.rename", "f2"));
@@ -203,27 +203,27 @@ static void testCommandTable() {
     CHECK(d.commandFor(K("cmd+backspace"), When::Tree) == find("moveFileToTrash"));
     CHECK(d.commandFor(K("cmd+backspace"), When::Editor) == find("deleteAllLeft"));
     CHECK(d.commandFor(K("cmd+backspace"), When::Terminal) ==
-          find("minicode.terminal.deleteToLineStart"));
-    CHECK(d.commandFor(K("alt+left"), When::Terminal) == find("minicode.terminal.wordLeft"));
-    CHECK(d.commandFor(K("space"), When::Tree) == find("minicode.tree.quickLook"));
+          find("mutible.terminal.deleteToLineStart"));
+    CHECK(d.commandFor(K("alt+left"), When::Terminal) == find("mutible.terminal.wordLeft"));
+    CHECK(d.commandFor(K("space"), When::Tree) == find("mutible.tree.quickLook"));
     // Shift+Cmd+N is New Folder in the tree, as in Finder, and VS Code's New
     // Window everywhere else; Option+Cmd+N stays New Window's too.
-    CHECK(d.commandFor(K("shift+cmd+n"), When::Tree) == find("minicode.tree.newFolder"));
+    CHECK(d.commandFor(K("shift+cmd+n"), When::Tree) == find("mutible.tree.newFolder"));
     for (When w : {When::Editor, When::Terminal, When::Page, When::Any})
         CHECK(d.commandFor(K("shift+cmd+n"), w) == find("workbench.action.newWindow"));
     CHECK(d.keysOf("workbench.action.newWindow").size() == 2 &&
           format(d.keysOf("workbench.action.newWindow")[0]) == "shift+cmd+n" &&
           HasKey(d, "workbench.action.newWindow", "alt+cmd+n"));
     CHECK(d.keysOf("explorer.newFolder").empty() && find("explorer.newFolder")->when == When::Any);
-    CHECK(find("minicode.tree.newFolder")->when == When::Tree &&
-          std::string(find("minicode.tree.newFolder")->selector) == "newFolder:");
+    CHECK(find("mutible.tree.newFolder")->when == When::Tree &&
+          std::string(find("mutible.tree.newFolder")->selector) == "newFolder:");
     // Cmd+=, Cmd+- and Cmd+0 zoom a web page or a PDF in one, as in Safari;
     // the zoom keys are the terminals' zoom in a terminal and the editor's
     // everywhere else, and Cmd+0 is Focus File Tree outside a page.
-    CHECK(d.commandFor(K("cmd+="), When::Page) == find("minicode.page.zoomIn"));
-    CHECK(d.commandFor(K("shift+cmd+="), When::Page) == find("minicode.page.zoomIn"));
-    CHECK(d.commandFor(K("cmd+-"), When::Page) == find("minicode.page.zoomOut"));
-    CHECK(d.commandFor(K("cmd+0"), When::Page) == find("minicode.page.actualSize"));
+    CHECK(d.commandFor(K("cmd+="), When::Page) == find("mutible.page.zoomIn"));
+    CHECK(d.commandFor(K("shift+cmd+="), When::Page) == find("mutible.page.zoomIn"));
+    CHECK(d.commandFor(K("cmd+-"), When::Page) == find("mutible.page.zoomOut"));
+    CHECK(d.commandFor(K("cmd+0"), When::Page) == find("mutible.page.actualSize"));
     for (When w : {When::Editor, When::Tree, When::Any}) {
         CHECK(d.commandFor(K("cmd+="), w) == find("editor.action.fontZoomIn"));
         CHECK(d.commandFor(K("shift+cmd+="), w) == find("editor.action.fontZoomIn"));
@@ -249,7 +249,7 @@ static void testCommandTable() {
     CHECK(d.commandFor(K("alt+cmd+0"), When::Page) == nullptr);
     CHECK(d.commandFor(K("alt+z"), When::Editor) == find("editor.action.toggleWordWrap"));
     CHECK(d.commandFor(K("alt+z"), When::Terminal) == nullptr);
-    CHECK(d.commandFor(K("ctrl+cmd+m"), When::Page) == find("minicode.toggleMaximizedPane"));
+    CHECK(d.commandFor(K("ctrl+cmd+m"), When::Page) == find("mutible.toggleMaximizedPane"));
     {
         // A key for anywhere takes it from both sides; one for the editor
         // only from the editor's zoom, so a page still zooms on Cmd+=.
@@ -259,11 +259,11 @@ static void testCommandTable() {
         m = resolve("cmd+0 = editor.action.toggleWordWrap\n", &errs);
         CHECK(errs.empty());
         CHECK(m.commandFor(K("cmd+0"), When::Editor) == find("editor.action.toggleWordWrap"));
-        CHECK(m.commandFor(K("cmd+0"), When::Page) == find("minicode.page.actualSize"));
+        CHECK(m.commandFor(K("cmd+0"), When::Page) == find("mutible.page.actualSize"));
         CHECK(m.commandFor(K("cmd+0"), When::Tree) == nullptr);
         // Two lines giving one key to a page's command and the editor's
         // zoom are no conflict; to the editor's zoom and a tree command are.
-        m = resolve("ctrl+alt+cmd+z = minicode.page.zoomIn\n"
+        m = resolve("ctrl+alt+cmd+z = mutible.page.zoomIn\n"
                     "ctrl+alt+cmd+z = editor.action.fontZoomIn\n", &errs);
         CHECK(errs.empty());
         m = resolve("ctrl+alt+cmd+z = renameFile\nctrl+alt+cmd+z = editor.action.fontZoomIn\n",
@@ -289,7 +289,7 @@ static void testCommandTable() {
         CHECK(errs.empty() && m.commandFor(K("cmd+k"), When::Terminal) ==
                                   find("workbench.action.terminal.clear"));
         m = resolve("ctrl+alt+cmd+z = editor.action.fontZoomIn\n"
-                    "ctrl+alt+cmd+z = minicode.toggleBrowser\n", &errs);
+                    "ctrl+alt+cmd+z = mutible.toggleBrowser\n", &errs);
         CHECK(errs.size() == 1 && errs[0].line == 2);
         CHECK(defaultFileText().find("but not in a web page, a PDF, or the terminal") !=
               std::string::npos);
@@ -323,7 +323,7 @@ static void testCommandLanguages() {
     CHECK(placeName(*find("workbench.action.terminal.clear")) == "the terminal");
 
     Keymap d = defaults();
-    const Command *task = find("minicode.markdown.toggleTask");
+    const Command *task = find("mutible.markdown.toggleTask");
     CHECK(d.commandFor(K("alt+c"), When::Editor, "markdown") == task);
     CHECK(d.commandFor(K("alt+c"), When::Editor) == nullptr);   // types its character
     CHECK(d.commandFor(K("alt+c"), When::Editor, "python") == nullptr);
@@ -379,7 +379,7 @@ static void testCommandLanguages() {
     resolve("shift+enter = editor.action.formatDocument\n", &errs);
     CHECK(errs.size() == 1);
     errs.clear();
-    m = resolve("alt+c = -minicode.markdown.toggleTask\n", &errs);
+    m = resolve("alt+c = -mutible.markdown.toggleTask\n", &errs);
     CHECK(errs.empty() && m.commandFor(K("alt+c"), When::Editor, "markdown") == nullptr);
     CHECK(defaultFileText().find("in the editor, in Python files") != std::string::npos);
 }
@@ -404,7 +404,7 @@ static void testKeymapFile() {
     CHECK(errs.empty());
     CHECK(m.keysOf("editor.action.deleteLines").size() == 1);
     CHECK(m.keysOf("editor.action.deleteLines")[0] == K("shift+cmd+k"));
-    CHECK(m.keysOf("minicode.requestChange").empty());
+    CHECK(m.keysOf("mutible.requestChange").empty());
     CHECK(m.commandsFor(K("ctrl+shift+k")).empty());
     CHECK(m.conflicts().empty());
 
@@ -428,53 +428,53 @@ static void testKeymapFile() {
     CHECK(m.commandFor(K("cmd+k"), When::Terminal) == find("workbench.action.terminal.clear"));
     CHECK(m.conflicts().empty());
     // ... but one that applies anywhere takes it.
-    m = resolve("cmd+k = minicode.toggleBrowser\n", &errs);
+    m = resolve("cmd+k = mutible.toggleBrowser\n", &errs);
     CHECK(m.keysOf("workbench.action.terminal.clear").empty());
-    CHECK(m.commandFor(K("cmd+k"), When::Terminal) == find("minicode.toggleBrowser"));
+    CHECK(m.commandFor(K("cmd+k"), When::Terminal) == find("mutible.toggleBrowser"));
 
     // Two lines, one key, two commands in one place: the later is refused.
     errs.clear();
-    m = resolve("ctrl+alt+cmd+j = minicode.toggleBrowser\n"
+    m = resolve("ctrl+alt+cmd+j = mutible.toggleBrowser\n"
                 "\n"
-                "ctrl+alt+cmd+j = minicode.toggleAgents\n",
+                "ctrl+alt+cmd+j = mutible.toggleAgents\n",
                 &errs);
     CHECK(errs.size() == 1 && errs[0].line == 3);
     CHECK(!errs.empty() && errs[0].message.find("from line 1") != std::string::npos);
-    CHECK(HasKey(m, "minicode.toggleBrowser", "ctrl+alt+cmd+j"));
-    CHECK(!HasKey(m, "minicode.toggleAgents", "ctrl+alt+cmd+j"));
+    CHECK(HasKey(m, "mutible.toggleBrowser", "ctrl+alt+cmd+j"));
+    CHECK(!HasKey(m, "mutible.toggleAgents", "ctrl+alt+cmd+j"));
     // ... the same line twice is no conflict, and neither is a terminal one.
     errs.clear();
-    m = resolve("ctrl+alt+cmd+j = minicode.toggleBrowser\n"
-                "ctrl+alt+cmd+j = minicode.toggleBrowser\n"
+    m = resolve("ctrl+alt+cmd+j = mutible.toggleBrowser\n"
+                "ctrl+alt+cmd+j = mutible.toggleBrowser\n"
                 "ctrl+alt+cmd+u = editor.action.commentLine\n"
                 "ctrl+alt+cmd+u = workbench.action.terminal.clear\n",
                 &errs);
     CHECK(errs.empty());
-    CHECK(m.keysOf("minicode.toggleBrowser")[0] == K("ctrl+alt+cmd+j"));
-    CHECK(m.keysOf("minicode.toggleBrowser").size() == 2);
+    CHECK(m.keysOf("mutible.toggleBrowser")[0] == K("ctrl+alt+cmd+j"));
+    CHECK(m.keysOf("mutible.toggleBrowser").size() == 2);
 
     // Mistakes, each on its own line.
     errs.clear();
     m = resolve("cmd+k\n"                                     // 1: no "="
                 "cmd+k =\n"                                   // 2: no command
-                "cmd+banana = minicode.toggleBrowser\n"       // 3: no such key
-                "cmd+k = minicode.nothing\n"                  // 4: no such command
-                "k = minicode.toggleBrowser\n"                // 5: types a letter
-                "shift+up = minicode.toggleBrowser\n"         // 6: moves the caret
-                "alt+down = minicode.toggleBrowser\n"         // 7: the editor's own
+                "cmd+banana = mutible.toggleBrowser\n"       // 3: no such key
+                "cmd+k = mutible.nothing\n"                  // 4: no such command
+                "k = mutible.toggleBrowser\n"                // 5: types a letter
+                "shift+up = mutible.toggleBrowser\n"         // 6: moves the caret
+                "alt+down = mutible.toggleBrowser\n"         // 7: the editor's own
                 "cmd+up = -\n"                                // 8: likewise, twice
                                                               // (the terminal's too)
                 "f5 = editor.action.moveLinesDownAction\n"    // 9: cannot be remapped
-                "f5 = minicode.toggleBrowser\n",              // fine
+                "f5 = mutible.toggleBrowser\n",              // fine
                 &errs);
     std::vector<int> lines;
     for (const Error &e : errs) lines.push_back(e.line);
     CHECK((lines == std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 8, 9}));
-    CHECK(errs.size() == 10 && errs[3].message.find("minicode.nothing") != std::string::npos);
+    CHECK(errs.size() == 10 && errs[3].message.find("mutible.nothing") != std::string::npos);
     CHECK(errs.size() == 10 && errs[6].message.find("Move Line Down") != std::string::npos);
     CHECK(errs.size() == 10 && errs[8].message.find("Previous Command") != std::string::npos);
-    CHECK(HasKey(m, "minicode.toggleBrowser", "f5"));
-    CHECK(!HasKey(m, "minicode.toggleBrowser", "alt+down"));
+    CHECK(HasKey(m, "mutible.toggleBrowser", "f5"));
+    CHECK(!HasKey(m, "mutible.toggleBrowser", "alt+down"));
     CHECK(HasKey(m, "cursorTop", "cmd+up"));
     CHECK(HasKey(m, "editor.action.moveLinesDownAction", "alt+down"));
     // A key the editor keeps for itself can still go to a terminal command.
@@ -499,7 +499,7 @@ static void testKeymapFile() {
     errs.clear();
     m = resolve("f9 = -\nf9 = editor.action.commentLine\n", &errs);
     CHECK(errs.empty());
-    CHECK(m.keysOf("minicode.sortLines").empty());
+    CHECK(m.keysOf("mutible.sortLines").empty());
     CHECK(m.commandFor(K("f9"), When::Editor) == find("editor.action.commentLine"));
 
     GROUP("commands:file-text");
@@ -538,7 +538,7 @@ static void testKeymapFile() {
     }
     CHECK(same2);
     CHECK(text.find("workbench.action.showCommands") != std::string::npos);
-    CHECK(text.find("# (no key) = minicode.about") != std::string::npos);
+    CHECK(text.find("# (no key) = mutible.about") != std::string::npos);
     CHECK(text.find("Move Line Down") != std::string::npos);
     for (const Command &c : all()) CHECK(text.find(c.id) != std::string::npos || (c.flags & Fixed));
 }

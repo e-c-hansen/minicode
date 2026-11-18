@@ -355,7 +355,7 @@ struct Part {
     std::string focus;
 };
 // The window's folder (named `rootName`), then every folder down to the
-// focus, the focus last: "minicode › mac › src" for "mac/src". The whole
+// focus, the focus last: "mutible › mac › src" for "mac/src". The whole
 // folder gives the one part.
 std::vector<Part> breadcrumb(const std::string &rootName, const std::string &focus);
 

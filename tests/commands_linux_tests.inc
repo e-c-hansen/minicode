@@ -87,7 +87,7 @@ static void testLinuxCommandTable() {
     CHECK(std::string(titleOf(*find("revealFileInOS"), Platform::Linux)) == "Open Containing Folder");
     CHECK(std::string(titleOf(*find("revealFileInOS"), Platform::Mac)) == "Reveal in Finder");
     CHECK(std::string(menuOf(*find("workbench.action.quit"), Platform::Linux)) == "File");
-    CHECK(std::string(menuOf(*find("workbench.action.quit"), Platform::Mac)) == "minicode");
+    CHECK(std::string(menuOf(*find("workbench.action.quit"), Platform::Mac)) == "mutible");
     CHECK(std::string(titleOf(*find("actions.find"), Platform::Linux)) == "Find…");
     // Global: the Mac's, and Linux's keys out of the terminal.
     const Command &toggle = *find("workbench.action.terminal.toggleTerminal");
@@ -110,11 +110,11 @@ static void testLinuxCommandDefaults() {
     // The keys D1 moves.
     CHECK(d.keysOf("markdown.showPreview").size() == 1 &&
           HasKey(d, "markdown.showPreview", "ctrl+shift+v"));
-    CHECK(d.keysOf("minicode.markdown.toggleTask").size() == 2 &&
-          d.keysOf("minicode.markdown.toggleTask")[0] == K("ctrl+alt+l") &&
-          HasKey(d, "minicode.markdown.toggleTask", "alt+c"));
-    CHECK(d.keysOf("minicode.showTodos").size() == 1 &&
-          HasKey(d, "minicode.showTodos", "ctrl+shift+d"));
+    CHECK(d.keysOf("mutible.markdown.toggleTask").size() == 2 &&
+          d.keysOf("mutible.markdown.toggleTask")[0] == K("ctrl+alt+l") &&
+          HasKey(d, "mutible.markdown.toggleTask", "alt+c"));
+    CHECK(d.keysOf("mutible.showTodos").size() == 1 &&
+          HasKey(d, "mutible.showTodos", "ctrl+shift+d"));
     CHECK(d.keysOf("explorer.newFile").size() == 1 && HasKey(d, "explorer.newFile", "ctrl+n"));
     CHECK(d.keysOf("workbench.action.newWindow").size() == 1 &&
           HasKey(d, "workbench.action.newWindow", "ctrl+shift+n"));
@@ -125,8 +125,8 @@ static void testLinuxCommandDefaults() {
           HasKey(d, "editor.action.showHover", "ctrl+alt+i"));
     CHECK(d.keysOf("editor.action.nextMatchFindAction").size() == 1 &&
           HasKey(d, "editor.action.nextMatchFindAction", "f3"));
-    CHECK(d.keysOf("minicode.toggleHiddenFiles").size() == 1 &&
-          HasKey(d, "minicode.toggleHiddenFiles", "ctrl+shift+."));
+    CHECK(d.keysOf("mutible.toggleHiddenFiles").size() == 1 &&
+          HasKey(d, "mutible.toggleHiddenFiles", "ctrl+shift+."));
     // Go to Symbol in Workspace is VS Code's Ctrl+T (PARITY.md 2.12).
     CHECK(d.keysOf("workbench.action.showAllSymbols").size() == 1 &&
           HasKey(d, "workbench.action.showAllSymbols", "ctrl+t"));
@@ -175,7 +175,7 @@ static void testLinuxCommandDefaults() {
     CHECK(d.commandFor(K("ctrl+g"), When::Tree) == find("workbench.action.gotoLine"));
     // The find bar and Replace in Folder (PARITY.md 1.6): VS Code's Linux
     // keys, but Replace in Folder's Ctrl+Shift+H, which is the shortcut
-    // hints' (minicode's own Shift key).
+    // hints' (mutible's own Shift key).
     CHECK(d.keysOf("editor.action.startFindReplaceAction").size() == 1 &&
           HasKey(d, "editor.action.startFindReplaceAction", "ctrl+h"));
     CHECK(d.keysOf("editor.action.replaceOne").size() == 1 &&
@@ -187,12 +187,12 @@ static void testLinuxCommandDefaults() {
           HasKey(d, "toggleFindInSelection", "alt+l"));
     CHECK(d.keysOf("workbench.action.replaceInFiles").size() == 1 &&
           HasKey(d, "workbench.action.replaceInFiles", "ctrl+alt+shift+f"));
-    CHECK(d.commandFor(K("ctrl+shift+h"), When::Editor) == find("minicode.toggleShortcutHints"));
+    CHECK(d.commandFor(K("ctrl+shift+h"), When::Editor) == find("mutible.toggleShortcutHints"));
     // Alt+C is Match Case's, but the task's in a Markdown file's editor.
     CHECK(d.commandFor(K("alt+c"), When::Editor) == find("toggleFindCaseSensitive"));
     CHECK(d.commandFor(K("alt+c"), When::Any) == find("toggleFindCaseSensitive"));
     // The tabs (PARITY.md 1.1): VS Code's Linux keys, but Reopen Closed Tab,
-    // whose Ctrl+Shift+T stays Toggle Terminal's (minicode's own Shift key),
+    // whose Ctrl+Shift+T stays Toggle Terminal's (mutible's own Shift key),
     // and Save All, whose VS Code key is a chord.
     CHECK(d.keysOf("workbench.action.closeActiveEditor").size() == 2 &&
           d.keysOf("workbench.action.closeActiveEditor")[0] == K("ctrl+w") &&
@@ -226,10 +226,10 @@ static void testLinuxCommandDefaults() {
     CHECK(d.commandFor(K("f2"), When::Tree) == find("renameFile"));
     CHECK(d.commandFor(K("delete"), When::Tree) == find("moveFileToTrash"));
     CHECK(d.commandFor(K("delete"), When::Editor) == nullptr);
-    CHECK(d.commandFor(K("alt+c"), When::Editor, "markdown") == find("minicode.markdown.toggleTask"));
+    CHECK(d.commandFor(K("alt+c"), When::Editor, "markdown") == find("mutible.markdown.toggleTask"));
     CHECK(d.commandFor(K("alt+c"), When::Editor, "python") == find("toggleFindCaseSensitive"));
     CHECK(d.commandFor(K("ctrl+alt+l"), When::Editor, "markdown") ==
-          find("minicode.markdown.toggleTask"));
+          find("mutible.markdown.toggleTask"));
     // The keymap gives Ctrl+Shift+V to the preview in the terminal too; the
     // port leaves it to VTE's paste there (linuxTerminalTakes, below).
     CHECK(d.commandFor(K("ctrl+shift+v"), When::Terminal) == find("markdown.showPreview"));
@@ -247,7 +247,7 @@ static void testLinuxTerminalKeys() {
     CHECK(takes("workbench.action.toggleSidebarVisibility", "ctrl+b"));
     CHECK(takes("workbench.action.quit", "ctrl+q"));
     CHECK(takes("editor.action.revealDefinition", "f12"));
-    CHECK(takes("minicode.sortLines", "f9"));
+    CHECK(takes("mutible.sortLines", "f9"));
     CHECK(takes("editor.action.nextMatchFindAction", "f3"));
     // The palette's plain keys too (readline's Ctrl+P, Emacs's Ctrl+G); its
     // Shift keys open it from the terminal.
@@ -264,16 +264,16 @@ static void testLinuxTerminalKeys() {
     CHECK(!takes("workbench.action.nextEditor", "ctrl+tab"));
     // Shift and Alt stay the app's...
     CHECK(!takes("workbench.action.terminal.toggleTerminal", "ctrl+shift+t"));
-    CHECK(!takes("minicode.showTodos", "ctrl+shift+d"));
+    CHECK(!takes("mutible.showTodos", "ctrl+shift+d"));
     CHECK(!takes("workbench.action.newWindow", "ctrl+shift+n"));
     CHECK(!takes("explorer.newFolder", "ctrl+alt+n"));
     CHECK(!takes("editor.action.previousMatchFindAction", "shift+f3"));
-    CHECK(!takes("minicode.toggleHiddenFiles", "ctrl+shift+."));
+    CHECK(!takes("mutible.toggleHiddenFiles", "ctrl+shift+."));
     // ... but for the terminal's copy and paste, and the two a shell reads
     // as Ctrl+G and Ctrl+Space.
     CHECK(takes("markdown.showPreview", "ctrl+shift+v"));
     CHECK(takes("workbench.view.scm", "ctrl+shift+g"));
-    CHECK(takes("minicode.togglePlayback", "ctrl+shift+space"));
+    CHECK(takes("mutible.togglePlayback", "ctrl+shift+space"));
     CHECK(linuxTerminalOwnKey(K("ctrl+shift+c")) && linuxTerminalOwnKey(K("ctrl+shift+v")));
     CHECK(!linuxTerminalOwnKey(K("ctrl+c")) && !linuxTerminalOwnKey(K("ctrl+shift+p")));
     // Even a Global command leaves the terminal its own keys.
@@ -374,22 +374,22 @@ static void testLinuxKeymapFile() {
     GROUP("commands:linux-keymap");
     std::vector<Error> errs;
     // A key added goes first; the default stays.
-    Keymap m = resolve("ctrl+alt+j = minicode.toggleShortcutHints\n", &errs, Platform::Linux);
+    Keymap m = resolve("ctrl+alt+j = mutible.toggleShortcutHints\n", &errs, Platform::Linux);
     CHECK(errs.empty());
-    CHECK(m.keysOf("minicode.toggleShortcutHints").size() == 2 &&
-          m.keysOf("minicode.toggleShortcutHints")[0] == K("ctrl+alt+j"));
+    CHECK(m.keysOf("mutible.toggleShortcutHints").size() == 2 &&
+          m.keysOf("mutible.toggleShortcutHints")[0] == K("ctrl+alt+j"));
     // Taken away, from every command or one.
     m = resolve("ctrl+shift+h = -\nctrl+b = -workbench.action.toggleSidebarVisibility\n", &errs,
                 Platform::Linux);
     CHECK(errs.empty());
-    CHECK(m.keysOf("minicode.toggleShortcutHints").empty());
+    CHECK(m.keysOf("mutible.toggleShortcutHints").empty());
     CHECK(m.keysOf("workbench.action.toggleSidebarVisibility").empty());
     // A key given to a command that applies everywhere leaves the other.
-    m = resolve("ctrl+shift+v = minicode.toggleBrowser\n", &errs, Platform::Linux);
+    m = resolve("ctrl+shift+v = mutible.toggleBrowser\n", &errs, Platform::Linux);
     CHECK(errs.empty() && m.keysOf("markdown.showPreview").empty());
-    CHECK(m.commandFor(K("ctrl+shift+v"), When::Editor) == find("minicode.toggleBrowser"));
+    CHECK(m.commandFor(K("ctrl+shift+v"), When::Editor) == find("mutible.toggleBrowser"));
     // A Mac's line: no Command key here.
-    m = resolve("cmd+k = minicode.toggleBrowser\n", &errs, Platform::Linux);
+    m = resolve("cmd+k = mutible.toggleBrowser\n", &errs, Platform::Linux);
     CHECK(errs.size() == 1 && errs[0].line == 1 &&
           errs[0].message.find("no Command key") != std::string::npos);
     CHECK(m.keys == defaults(Platform::Linux).keys);
@@ -398,13 +398,13 @@ static void testLinuxKeymapFile() {
     CHECK(errs.size() == 1);
     // A command Linux does not have yet (the registry's Mac-only rows).
     errs.clear();
-    m = resolve("ctrl+alt+p = minicode.requestChange\n", &errs, Platform::Linux);
-    CHECK(errs.size() == 1 && errs[0].message.find("not in minicode for Linux yet") != std::string::npos);
+    m = resolve("ctrl+alt+p = mutible.requestChange\n", &errs, Platform::Linux);
+    CHECK(errs.size() == 1 && errs[0].message.find("not in mutible for Linux yet") != std::string::npos);
     CHECK(m.commandsFor(K("ctrl+alt+p")).empty());
     // The same line on the Mac is fine, and its keys are the Mac's.
     errs.clear();
-    m = resolve("ctrl+alt+p = minicode.requestChange\n", &errs);
-    CHECK(errs.empty() && HasKey(m, "minicode.requestChange", "shift+cmd+k"));
+    m = resolve("ctrl+alt+p = mutible.requestChange\n", &errs);
+    CHECK(errs.empty() && HasKey(m, "mutible.requestChange", "shift+cmd+k"));
     // The palette's own keys move like any other.
     errs.clear();
     m = resolve("ctrl+alt+p = workbench.action.showCommands\n", &errs, Platform::Linux);
@@ -420,7 +420,7 @@ static void testLinuxKeymapFile() {
     CHECK(errs.size() == 1);
     // Two lines, one key, two commands in one place.
     errs.clear();
-    m = resolve("ctrl+alt+j = minicode.toggleBrowser\nctrl+alt+j = minicode.toggleEditor\n", &errs,
+    m = resolve("ctrl+alt+j = mutible.toggleBrowser\nctrl+alt+j = mutible.toggleEditor\n", &errs,
                 Platform::Linux);
     CHECK(errs.size() == 1 && errs[0].line == 2);
     // An editor command and a tree command may share one.
@@ -473,12 +473,12 @@ static void testLinuxKeymapFile() {
         CHECK(text.find(std::string(" = ") + r.id) != std::string::npos);
     }
     // Only Linux's commands, in Linux's words, with no Mac key.
-    CHECK(text.find("minicode.requestChange") == std::string::npos);
+    CHECK(text.find("mutible.requestChange") == std::string::npos);
     CHECK(text.find("# ctrl+shift+p = workbench.action.showCommands") != std::string::npos);
     CHECK(text.find("cmd+") == std::string::npos);
     CHECK(text.find("File > Open Containing Folder") != std::string::npos);
     CHECK(text.find("Finder") == std::string::npos);
-    CHECK(text.find("# ---- File") != std::string::npos && text.find("# ---- minicode") == std::string::npos);
+    CHECK(text.find("# ---- File") != std::string::npos && text.find("# ---- mutible") == std::string::npos);
 }
 
 // docs/REFERENCE.md's Linux column against the table: every key in the table is in it,

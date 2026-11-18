@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>MiniCode</string>
+	<string>Mutible</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -223,13 +223,13 @@
 		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
-	<string>MiniCode</string>
+	<string>Mutible</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>ai.ible.mutible</string>
 	<key>CFBundleName</key>
-	<string>MiniCode</string>
+	<string>Mutible</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -239,25 +239,25 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>11.0</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Scripts you run in minicode's terminal can control other apps through minicode.</string>
+	<string>Scripts you run in mutible's terminal can control other apps through mutible.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Programs you run in minicode's terminal use the camera through minicode.</string>
+	<string>Programs you run in mutible's terminal use the camera through mutible.</string>
 	<key>NSDesktopFolderUsageDescription</key>
-	<string>minicode shows and edits the files in the folders you open, and programs in its terminal work there.</string>
+	<string>mutible shows and edits the files in the folders you open, and programs in its terminal work there.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>minicode shows and edits the files in the folders you open, and programs in its terminal work there.</string>
+	<string>mutible shows and edits the files in the folders you open, and programs in its terminal work there.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
-	<string>minicode shows and edits the files in the folders you open, and programs in its terminal work there.</string>
+	<string>mutible shows and edits the files in the folders you open, and programs in its terminal work there.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Programs you run in minicode's terminal, such as Claude Code's voice input, use the microphone through minicode.</string>
+	<string>Programs you run in mutible's terminal, such as Claude Code's voice input, use the microphone through mutible.</string>
 	<key>NSNetworkVolumesUsageDescription</key>
-	<string>minicode shows and edits the files in the folders you open, and programs in its terminal work there.</string>
+	<string>mutible shows and edits the files in the folders you open, and programs in its terminal work there.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSRemovableVolumesUsageDescription</key>
-	<string>minicode shows and edits the files in the folders you open, and programs in its terminal work there.</string>
+	<string>mutible shows and edits the files in the folders you open, and programs in its terminal work there.</string>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>

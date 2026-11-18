@@ -433,17 +433,17 @@ static void testGettingAround() {
         // terminals' in the terminal, no clash between them.
         CHECK(is(d.commandFor(K("ctrl+="), When::Editor), "editor.action.fontZoomIn"));
         CHECK(is(d.commandFor(K("ctrl+="), When::Tree), "editor.action.fontZoomIn"));
-        CHECK(is(d.commandFor(K("ctrl+="), When::Page), "minicode.page.zoomIn"));
+        CHECK(is(d.commandFor(K("ctrl+="), When::Page), "mutible.page.zoomIn"));
         CHECK(is(d.commandFor(K("ctrl+="), When::Terminal), "workbench.action.terminal.fontZoomIn"));
         CHECK(is(d.commandFor(K("ctrl+shift+="), When::Editor), "editor.action.fontZoomIn"));
         CHECK(is(d.commandFor(K("ctrl+-"), When::Editor), "editor.action.fontZoomOut"));
         CHECK(is(d.commandFor(K("ctrl+-"), When::Terminal), "workbench.action.terminal.fontZoomOut"));
-        CHECK(is(d.commandFor(K("ctrl+-"), When::Page), "minicode.page.zoomOut"));
+        CHECK(is(d.commandFor(K("ctrl+-"), When::Page), "mutible.page.zoomOut"));
         // Ctrl+Alt+0: fit width in a page, the terminals' reset in the
         // terminal, and Fold All in the editor (PARITY.md D1: the family of
         // VS Code's Ctrl+K chords), so the editor's reset is VS Code's own
         // Ctrl+keypad 0 alone. Ctrl+0 stays Focus File Tree.
-        CHECK(is(d.commandFor(K("ctrl+alt+0"), When::Page), "minicode.page.fitWidth"));
+        CHECK(is(d.commandFor(K("ctrl+alt+0"), When::Page), "mutible.page.fitWidth"));
         CHECK(is(d.commandFor(K("ctrl+alt+0"), When::Editor), "editor.foldAll"));
         CHECK(is(d.commandFor(K("ctrl+alt+0"), When::Terminal),
                  "workbench.action.terminal.fontZoomReset"));
@@ -467,8 +467,8 @@ static void testGettingAround() {
               is(d.commandFor(K("alt+z"), When::Editor), "editor.action.toggleWordWrap"));
         CHECK(linuxTerminalTakes(*find("editor.action.toggleWordWrap"), K("alt+z")));
         // Maximize Pane: Ctrl+Alt+M anywhere, the terminal included.
-        CHECK(is(d.commandFor(K("ctrl+alt+m"), When::Terminal), "minicode.toggleMaximizedPane"));
-        CHECK(!linuxTerminalTakes(*find("minicode.toggleMaximizedPane"), K("ctrl+alt+m")));
+        CHECK(is(d.commandFor(K("ctrl+alt+m"), When::Terminal), "mutible.toggleMaximizedPane"));
+        CHECK(!linuxTerminalTakes(*find("mutible.toggleMaximizedPane"), K("ctrl+alt+m")));
         // Go Back and Forward: VS Code's Linux keys; in the terminal
         // Ctrl+Shift+- is readline's undo (Ctrl+_), Ctrl+Alt+- still goes back.
         CHECK(d.keysOf("workbench.action.navigateBack").size() == 1 &&

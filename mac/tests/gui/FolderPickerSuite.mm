@@ -1,4 +1,4 @@
-// FolderPickerSuite.mm — `make guitest SUITES=folder_picker`: minicode's own
+// FolderPickerSuite.mm — `make guitest SUITES=folder_picker`: mutible's own
 // folder picker (PalettePanel.h, MCFolderPick; the core's FolderPicker.h),
 // which Open Folder… and the Dock's Open Folder… show in place of the
 // system's open panel. In a scratch tree: the window's subfolders listed

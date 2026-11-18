@@ -2,7 +2,7 @@
 // Copy Session Browser Link): the browser's view of a session (SessionWeb.h,
 // stages 6b and 8b) served for one window's tabs from the app's own host
 // (SessionLink.h, editor.session-host), so the page works on this Mac
-// without `minicode host`. Editable (the choice Show asks for), the page
+// without `mutible host`. Editable (the choice Show asks for), the page
 // types into the window's documents through the host, undoes through its
 // history, and saves through the window's own Cmd+S; read-only, it only
 // looks.

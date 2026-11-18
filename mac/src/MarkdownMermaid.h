@@ -1,7 +1,7 @@
 // MarkdownMermaid.h — Mermaid diagrams in the Markdown preview (macOS).
 //
 // A ```mermaid block is drawn by mermaid-cli's `mmdc` when it is installed
-// (npm install -g @mermaid-js/mermaid-cli), as math is by tectonic: minicode
+// (npm install -g @mermaid-js/mermaid-cli), as math is by tectonic: mutible
 // bundles no Mermaid code (it has no third-party code at all) and draws no
 // diagram itself. Without mmdc, a line above the first diagram offers to
 // download one pinned mermaid.js (5.5 MB, kept in Application Support,
@@ -10,7 +10,7 @@
 // window, has a non-persistent data store and a content rule list blocking
 // every load, and loads nothing but an empty page. Each diagram is drawn in the background, one mmdc run at a
 // time, as a transparent PNG at twice its size in the preview's theme, and
-// kept in memory and under ~/Library/Caches/MiniCode/mermaid (by a key of
+// kept in memory and under ~/Library/Caches/Mutible/mermaid (by a key of
 // its source and theme, MermaidDiagram.h), so a page opened again shows its
 // diagrams at once. Until a diagram arrives, and for good when mmdc is not
 // there, markdown.mermaid is off or the diagram does not parse, the block
@@ -20,15 +20,15 @@
 #include "MarkdownParser.h"
 #include <vector>
 
-// mmdc: $MINICODE_MMDC, else found on PATH and the usual folders
+// mmdc: $MUTIBLE_MMDC, else found on PATH and the usual folders
 // (MCFindProgram); nil when there is none.
 NSString *MCMermaidPath(void);
-// The pinned mermaid.js: $MINICODE_MERMAID_JS (a file used as it is, for
+// The pinned mermaid.js: $MUTIBLE_MERMAID_JS (a file used as it is, for
 // checks), else the downloaded copy when it is there and still matches its
 // checksum; nil otherwise.
 NSString *MCMermaidJsPath(void);
-// Downloads the pinned mermaid.js (from $MINICODE_MERMAID_DOWNLOAD instead,
-// for checks, held to $MINICODE_MERMAID_SHA256 when that is set too, else
+// Downloads the pinned mermaid.js (from $MUTIBLE_MERMAID_DOWNLOAD instead,
+// for checks, held to $MUTIBLE_MERMAID_SHA256 when that is set too, else
 // to the pinned checksum) into Application Support; `done` gets nil or
 // why it failed, on the main thread. One download at a time.
 void MCDownloadMermaid(void (^done)(NSString *problem));
@@ -45,8 +45,8 @@ int MCMermaidDrawerState(void);
 // but its empty page (for checks).
 NSUInteger MCMermaidWebLoadsRefused(void);
 
-// Where drawn diagrams are kept: $MINICODE_MERMAID_CACHE, else
-// ~/Library/Caches/MiniCode/mermaid (at most 50 MB, oldest first out).
+// Where drawn diagrams are kept: $MUTIBLE_MERMAID_CACHE, else
+// ~/Library/Caches/Mutible/mermaid (at most 50 MB, oldest first out).
 NSString *MCMermaidCacheDirectory(void);
 
 // Marks the code a diagram stands in for while it is drawn (its value the

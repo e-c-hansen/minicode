@@ -327,15 +327,15 @@ static void testPageCheck() {
     GROUP("page:skill");
     {
         // R1.11 and R6.6: the skill stays short and says how to check pages.
-        std::ifstream f("skills/minicode/SKILL.md");
+        std::ifstream f("skills/mutible/SKILL.md");
         if (!f) {
-            std::printf("  (skills/minicode/SKILL.md not found here; skill checks skipped)\n");
+            std::printf("  (skills/mutible/SKILL.md not found here; skill checks skipped)\n");
         } else {
             std::stringstream ss;
             ss << f.rdbuf();
             const std::string skill = ss.str();
             CHECK(std::count(skill.begin(), skill.end(), '\n') < 150);
-            for (const char *w : {"minicode browse", "--wait", "minicode page --text", "--console",
+            for (const char *w : {"mutible browse", "--wait", "mutible page --text", "--console",
                                   "--screenshot", "--yours", "Playwright", "scratchpad",
                                   "control.page-any-origin"})
                 CHECK(skill.find(w) != std::string::npos);
@@ -346,9 +346,9 @@ static void testPageCheck() {
     {
         // The bash launcher hands only the subcommands it lists to the
         // client; one missing there is taken for a file to open.
-        std::ifstream f("scripts/minicode-launcher");
+        std::ifstream f("scripts/mutible-launcher");
         if (!f) {
-            std::printf("  (scripts/minicode-launcher not found here; launcher check skipped)\n");
+            std::printf("  (scripts/mutible-launcher not found here; launcher check skipped)\n");
         } else {
             std::string line, cases;
             while (std::getline(f, line))

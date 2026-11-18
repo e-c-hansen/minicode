@@ -4,7 +4,7 @@
 //
 // - MCFindStyle: the theme's colors for them, VS Code's editorWidget.*,
 //   input.*, inputOption.*, badge.* and diff colors, read off the theme
-//   files for the themes minicode has (Settings::themes), the light or
+//   files for the themes mutible has (Settings::themes), the light or
 //   dark defaults otherwise.
 // - MCFindButton: VS Code's 22-point icon button (16-point codicon, 3 of
 //   padding, a hover square) or, as a toggle, its 20-point option toggle

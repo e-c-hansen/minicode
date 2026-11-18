@@ -1,7 +1,7 @@
 #!/bin/sh
 # make-signing-identity.sh: creates "MiniCode Local Signing", a self-signed
 # code signing certificate, in the login keychain, once. `make` signs
-# MiniCode.app with it when it is there, and with an ad-hoc signature
+# Mutible.app with it when it is there, and with an ad-hoc signature
 # otherwise.
 #
 # Why: macOS remembers what an app may do (a folder in Documents, the
@@ -26,7 +26,7 @@ if security find-certificate -c "$NAME" "$KEYCHAIN" >/dev/null 2>&1; then
     exit 0
 fi
 
-DIR=$(mktemp -d "${TMPDIR:-/tmp}/minicode-sign.XXXXXX")
+DIR=$(mktemp -d "${TMPDIR:-/tmp}/mutible-sign.XXXXXX")
 trap 'rm -rf "$DIR"' EXIT
 umask 077
 cat > "$DIR/cert.cnf" <<CNF

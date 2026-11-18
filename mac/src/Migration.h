@@ -1,4 +1,4 @@
-// Migration.h — the first launch after minicode became mutible (1.6.0).
+// Migration.h — the first launch after mutible became mutible (1.6.0).
 // Copies what the old name kept (Application Support, ~/.config, the
 // browser's site data and cookies, the defaults domain of the old bundle
 // id) to the new places, leaves the old copies, and writes a marker so it

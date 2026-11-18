@@ -86,7 +86,7 @@ static dispatch_queue_t MCSidePageQueue(void) {
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        queue = dispatch_queue_create("MiniCode side preview", DISPATCH_QUEUE_SERIAL);
+        queue = dispatch_queue_create("Mutible side preview", DISPATCH_QUEUE_SERIAL);
     });
     return queue;
 }
@@ -934,7 +934,7 @@ static NSUInteger MCMathNoteLength(NSTextStorage *st);
                                           @"shows as TeX. ", _tectonicProblem];
         link = @"Try again";
     } else {
-        text = @"The math on this page shows as TeX: MiniCode typesets it with tectonic, "
+        text = @"The math on this page shows as TeX: Mutible typesets it with tectonic, "
                @"which is not installed. ";
         link = @"Download tectonic";
     }
@@ -1147,7 +1147,7 @@ static void MCRedrawWholePane(NSTextView *tv) {
 }
 
 // ------------------------------------------------ the preview to the side
-// Control+Command+V (VS Code's Cmd+K V; minicode has no chords and gives
+// Control+Command+V (VS Code's Cmd+K V; mutible has no chords and gives
 // Cmd+K chords Control+Command and the chord's second key, as the folding
 // keys have): the tab's page beside its source, which stays on show and
 // keeps the keyboard. The pane is the window's (MarkdownSidePreview.h); a

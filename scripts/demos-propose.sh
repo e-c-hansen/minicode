@@ -33,7 +33,7 @@ if git diff --cached --quiet; then
 fi
 git diff --cached --stat
 
-run="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-e-c-hansen/minicode}/actions/runs/${GITHUB_RUN_ID:-0}"
+run="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-ible-ai/mutible}/actions/runs/${GITHUB_RUN_ID:-0}"
 git -c user.name="github-actions[bot]" \
     -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
     commit -q -m "Demos: record the GIFs again for $what" -m "Made by the Demos workflow, $run."
@@ -58,5 +58,5 @@ Look at each before merging. A scene that failed kept its old GIF, and the run's
 if ! gh pr create --base main --head "$branch" \
         --title "Demos: record the GIFs again for $what" --body "$body"; then
     echo "Actions may not open pull requests in this repository. Open one from"
-    echo "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-e-c-hansen/minicode}/compare/main...$branch"
+    echo "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-ible-ai/mutible}/compare/main...$branch"
 fi

@@ -1,7 +1,7 @@
 # Build output
 build/
 build-make/
-MiniCode.app/
+Mutible.app/
 
 # macOS
 .DS_Store

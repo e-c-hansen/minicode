@@ -1834,7 +1834,7 @@ void TerminalScreen::csi(const std::string& csi, unsigned char f) {
             while (parts++ < 3) number *= 100;
             replies_ += "\x1b[>1;" + std::to_string(number) + ";0c";
         } else {                             // XTVERSION
-            replies_ += "\x1bP>|minicode" + (version_.empty() ? "" : " " + version_) + "\x1b\\";
+            replies_ += "\x1bP>|mutible" + (version_.empty() ? "" : " " + version_) + "\x1b\\";
         }
         return;
     }

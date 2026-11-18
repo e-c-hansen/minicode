@@ -1,6 +1,6 @@
 // TreeFocusBar.h — the slim row across the top of the file tree while it
 // is focused (EditorController+TreeFocus.mm). On one folder (Focus on
-// Folder) it is a breadcrumb, "minicode › mac › src", then a ×: a click on
+// Folder) it is a breadcrumb, "mutible › mac › src", then a ×: a click on
 // a part roots the tree there, the first part or the × shows the whole
 // folder again. On several (Add to Focus) it is one small label per folder
 // ("mac/src ×  linux/src ×"), then a ×: a click on a label shows that

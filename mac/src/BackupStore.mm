@@ -32,7 +32,7 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         NSDictionary *env = MCEnvironment();
-        if (env[@"MINICODE_DEMO"] || env[@"MINICODE_BENCH"]) return;
+        if (env[@"MUTIBLE_DEMO"] || env[@"MUTIBLE_BENCH"]) return;
         store = [MCBackupStore new];
     });
     return store;
@@ -40,14 +40,14 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 
 - (instancetype)init {
     if ((self = [super init])) {
-        NSString *dir = MCEnvironment()[@"MINICODE_BACKUP_DIR"];
+        NSString *dir = MCEnvironment()[@"MUTIBLE_BACKUP_DIR"];
         if (!dir.length)
             dir = [NSHomeDirectory() stringByAppendingPathComponent:
-                   @"Library/Application Support/MiniCode/Backups"];
+                   @"Library/Application Support/Mutible/Backups"];
         _directory = dir.stringByStandardizingPath;
         _store.dir = U8(_directory);
         _store.fs = Backups::posixFs();
-        _queue = dispatch_queue_create("minicode.backups", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.backups", DISPATCH_QUEUE_SERIAL);
         _latest = [NSMutableDictionary dictionary];
         _myStart = MCProcessStart(getpid());
         _claimed = [NSMutableSet set];
@@ -120,7 +120,7 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
         if (!bytes) return;
         std::string t((const char *)bytes.bytes, bytes.length);
         if (!self->_store.save(e, t))
-            NSLog(@"minicode: could not write the backup of %@ in %@", path, self.directory);
+            NSLog(@"mutible: could not write the backup of %@ in %@", path, self.directory);
     });
 }
 

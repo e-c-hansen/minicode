@@ -295,7 +295,7 @@ private:
 
 // A Host on a thread of its own. Messages from renderers go in with post()
 // from any thread, in order per renderer; the host's go out through the
-// Sink on the host's thread. MINICODE_HOST_DELAY_US-style delays are the
+// Sink on the host's thread. MUTIBLE_HOST_DELAY_US-style delays are the
 // caller's: `delayUs` makes the thread wait that long before each message,
 // as a slow link would. The thread waits in poll(2) on the terminals' ptys
 // and a pipe post() writes to, so a terminal's output and a message are

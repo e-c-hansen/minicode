@@ -165,7 +165,7 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
 // A page of its own in the editor's slot (isDiff too): the Evidence view, a
 // worktree's changes (EditorPage.h).
 @property(nonatomic, strong) id<MCEditorPage> page;
-// One of the window's two agent preview tabs: what `minicode open --note`
+// One of the window's two agent preview tabs: what `mutible open --note`
 // shows (Model::Preview::Agent), or a diff (Model::Preview::AgentDiff),
 // replaced by the next such open of its kind; an edit or a double-click on
 // its title keeps it as an ordinary tab. Its window's; NO for a tab in no

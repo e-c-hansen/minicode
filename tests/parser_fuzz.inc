@@ -656,7 +656,7 @@ void testFuzzIdeLink() {
 
     // MCP requests, whole and damaged: every answer is a JSON-RPC 2.0 object.
     {
-        McpServer server("minicode", "0");
+        McpServer server("mutible", "0");
         Tool echo;
         echo.name = "echo";
         echo.inputSchema = objectSchema({{"text", schemaProperty("string", "what to echo")}});

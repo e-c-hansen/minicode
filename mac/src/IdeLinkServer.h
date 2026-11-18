@@ -5,13 +5,13 @@
 // While the setting is on, every window listens on 127.0.0.1 (a port the
 // system picks) and writes ~/.claude/ide/<port>.lock ($CLAUDE_CONFIG_DIR/ide
 // when that is set; mode 0600, written whole and renamed into place) naming
-// its folder, minicode's pid and a fresh secret. Claude Code started in that
+// its folder, mutible's pid and a fresh secret. Claude Code started in that
 // folder offers the window under /ide; started in one of the window's
 // terminals (which get CLAUDE_CODE_SSE_PORT), it joins by itself. A peer
 // without the secret is turned away before anything is said. The lock file
-// goes when the window closes, the setting goes off or minicode quits
-// (atexit too); lock files minicode left behind when it died are removed at
-// the next start, and every other one (VS Code's, a running minicode's) is
+// goes when the window closes, the setting goes off or mutible quits
+// (atexit too); lock files mutible left behind when it died are removed at
+// the next start, and every other one (VS Code's, a running mutible's) is
 // left alone. Nothing else is written under ~/.claude.
 //
 // What Claude Code gets (each tool keeps to the control channel's rules:
@@ -43,7 +43,7 @@
 
 // The folder lock files go in: $CLAUDE_CONFIG_DIR/ide, else ~/.claude/ide.
 NSString *MCIdeLinkFolder(void);
-// Removes lock files in `folder` that minicode left behind (its ideName, a
+// Removes lock files in `folder` that mutible left behind (its ideName, a
 // pid that is not this process and no longer runs, owned by this user);
 // returns how many.
 NSUInteger MCIdeLinkRemoveStaleLocks(NSString *folder);

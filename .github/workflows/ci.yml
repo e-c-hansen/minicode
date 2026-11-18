@@ -165,9 +165,9 @@ jobs:
         id: session
         timeout-minutes: 16
         env:
-          MINICODE_SESSION_HOST: 'on'
-          MINICODE_HOST: loopback
-          MINICODE_HOST_DELAY_US: '200'
+          MUTIBLE_SESSION_HOST: 'on'
+          MUTIBLE_HOST: loopback
+          MUTIBLE_HOST_DELAY_US: '200'
           MC_GUI_WAIT_SCALE: '1.5'
           MC_TIMING_SCALE: '1.5'
           PICTURES: ${{ runner.temp }}/gui-pictures
@@ -202,13 +202,13 @@ jobs:
 
       - name: Check the release build
         run: |
-          if nm MiniCode.app/Contents/MacOS/MiniCode | grep -q 'MCDemoStart\|MCBenchStart'; then
+          if nm Mutible.app/Contents/MacOS/Mutible | grep -q 'MCDemoStart\|MCBenchStart'; then
             echo "error: the release build still has the demo scenes or the benchmark in it" >&2
             exit 1
           fi
-          unzip -l MiniCode.zip | grep -q ' MiniCode.app/Contents/MacOS/MiniCode$'
-          unzip -l MiniCode.zip | grep -q ' MiniCode.app/Contents/MacOS/minicode-cli$'
-          scripts/check-minos.sh MiniCode.app
+          unzip -l Mutible.zip | grep -q ' Mutible.app/Contents/MacOS/Mutible$'
+          unzip -l Mutible.zip | grep -q ' Mutible.app/Contents/MacOS/mutible-cli$'
+          scripts/check-minos.sh Mutible.app
 
       # The cache saved even when a check failed (what it holds is right
       # either way), trimmed to what this run used when the job passed.

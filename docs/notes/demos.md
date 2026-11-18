@@ -23,14 +23,14 @@ unasked: it puts windows on the screen. The GTK scenes are underscore suites
 in `linux/tests/gui/DemoSuite.cpp`, recorded with ffmpeg's x11grab on the
 harness's Xvfb and written to `docs/demos/linux/` (one palette a GIF).
 
-`scripts/demos.sh` builds `/private/tmp/minicode-demo` (a 7-commit copy of
+`scripts/demos.sh` builds `/private/tmp/mutible-demo` (a 7-commit copy of
 `demo/` with fixed dates and a local git identity, a fresh HOME, ZDOTDIR and
 CFFIXED_USER_HOME per scene with a short zsh prompt and a `.vimrc`,
 `tools/demo-settings.conf` (the grid terminal), two made-up Claude Code
 sessions from `tools/demo-agents/make-transcripts.py`, a copy of the tectonic
-cache), runs the raw binary with `MINICODE_DEMO=<scene>` under `env -i`,
+cache), runs the raw binary with `MUTIBLE_DEMO=<scene>` under `env -i`,
 kills only its own pid after 2 min, and runs `build/makegif`.
-`MINICODE_DEMO=list` lists scenes; `DEMO_KEEP_FRAMES=<dir>` keeps frames and
+`MUTIBLE_DEMO=list` lists scenes; `DEMO_KEEP_FRAMES=<dir>` keeps frames and
 the log. A scene ends with `exit(0)` once its frames are written, so a file
 it left unsaved never holds it on the quit question.
 
@@ -66,18 +66,18 @@ it left unsaved never holds it on the quit question.
 
 Two scripts run one workload (a copy of the repo as the project,
 tests/run_tests.cpp open with clangd, a shell, demo/paper/notes.tex typeset
-by tectonic with the PDF on screen, one web page) on minicode and on the
+by tectonic with the PDF on screen, one web page) on mutible and on the
 usual alternative, and sum each side's memory; each system's files are
 named for it (`-mac`, `-linux`).
 
 - **Mac**: `scripts/membench-mac.sh` and `tools/procmem-mac.c` (built as
-  `build/procmem-mac`): VS Code + Chrome + Preview against minicode, summing
+  `build/procmem-mac`): VS Code + Chrome + Preview against mutible, summing
   the physical footprint (`proc_pid_rusage`; 320 MB against 1,283 MB on
   2026-09-21, in the README). A process belongs to a side by parent or
   responsible pid (WebKit's helpers are launchd's children); a shell-launched
-  app makes the terminal responsible, so minicode starts with `open -n -g
+  app makes the terminal responsible, so mutible starts with `open -n -g
   --env`. `mac/src/Bench.mm` resolves paths like the tree; a tiny VS Code
-  extension types the command; `MINICODE_BENCH` skips activation. Report:
+  extension types the command; `MUTIBLE_BENCH` skips activation. Report:
   `build/membench-mac.txt`.
 - **Linux**: `scripts/membench-linux.sh` and `tools/procmem-linux.c`
   (`build/procmem-linux`): the VS Code snap, Chrome and GNOME's Papers
@@ -96,10 +96,10 @@ named for it (`-mac`, `-linux`).
   `MEMBENCH_DISPLAY=desktop` uses the session's display, run by the owner
   only. A virtual display has no GPU, so Chrome, Electron and WebKit draw in
   software and their numbers shift somewhat. `linux/src/Bench.cpp`
-  (`MINICODE_BENCH`, inert otherwise) opens the C++ file, shows the terminal
+  (`MUTIBLE_BENCH`, inert otherwise) opens the C++ file, shows the terminal
   and the page, opens the LaTeX preview in a second window as the Mac's
-  does, and prints `minicode bench: ready`. Language servers are turned on
-  by the scratch `settings.conf` in `MINICODE_SETTINGS`. Report:
+  does, and prints `mutible bench: ready`. Language servers are turned on
+  by the scratch `settings.conf` in `MUTIBLE_SETTINGS`. Report:
   `build/membench-linux.txt`, with each side's process list in
   `build/membench-linux-*.procs`. Scratch data is under
   `/tmp/membench-linux`; processes are stopped by recorded pid, never

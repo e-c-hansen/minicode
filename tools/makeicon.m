@@ -1,4 +1,4 @@
-// Generates resources/AppIcon.icns for MiniCode. Build via `make icon`.
+// Generates resources/AppIcon.icns for Mutible. Build via `make icon`.
 // Motif: syntax-highlighted lines of code in the app's own Dark+ palette,
 // on a dark rounded square.
 #import <Cocoa/Cocoa.h>

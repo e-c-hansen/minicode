@@ -11,7 +11,7 @@ namespace IdeLink {
 const char *const kAuthHeader = "X-Claude-Code-Ide-Authorization";
 const char *const kSubprotocol = "mcp";
 const char *const kProtocolVersion = "2025-06-18";
-const char *const kIdeName = "minicode";
+const char *const kIdeName = "mutible";
 
 // ------------------------------------------------------------------ SHA-1
 // FIPS 180-4. Only the handshake uses it, as RFC 6455 says to; nothing here

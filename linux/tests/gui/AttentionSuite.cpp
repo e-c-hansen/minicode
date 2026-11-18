@@ -2,7 +2,7 @@
 // attention`, PARITY.md item 3.6; the Mac's AttentionSuite in tests/gui):
 //   - the shell in the app's terminal has MINICODE_TERMINAL_ID (the window's
 //     control id) and MINICODE_PID (the app's), and no stale copies;
-//   - `minicode notify --from-hook` with canned hook JSON on stdin marks that
+//   - `mutible notify --from-hook` with canned hook JSON on stdin marks that
 //     terminal (waiting, then done), prints nothing and exits 0, and does the
 //     same with no app to talk to;
 //   - the dot shows over the terminal, the window title counts the waiting
@@ -133,7 +133,7 @@ std::string stateAttention() {
 bool hasAll(const std::string& text) {
     for (const char* e : {"Notification", "Stop", "UserPromptSubmit", "PostToolUse"})
         if (text.find(e) == std::string::npos) return false;
-    return text.find("minicode notify --from-hook") != std::string::npos;
+    return text.find("mutible notify --from-hook") != std::string::npos;
 }
 
 }  // namespace

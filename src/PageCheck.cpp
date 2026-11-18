@@ -156,7 +156,7 @@ const char* focusName(Focus f) {
 
 std::string inputOffError() {
     return std::string("typing into pages is off: set ") + kInputSetting +
-           " = true in the settings file to let minicode page --paste do it";
+           " = true in the settings file to let mutible page --paste do it";
 }
 
 std::string noFieldError(const std::string& url) {

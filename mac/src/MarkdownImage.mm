@@ -265,7 +265,7 @@ BOOL MCMarkdownIsWebImage(NSString *src) {
 - (instancetype)init {
     if ((self = [super init])) {
         _cache = [NSCache new];
-        _cache.name = @"MiniCode web images";
+        _cache.name = @"Mutible web images";
         _cache.totalCostLimit = 64 * 1024 * 1024;
         _inFlight = [NSMutableSet set];
         _failed = [NSMutableDictionary dictionary];
@@ -290,13 +290,13 @@ BOOL MCMarkdownIsWebImage(NSString *src) {
     c.timeoutIntervalForResource = 30;   // and so does this long in all
     NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"];
     c.HTTPAdditionalHeaders = @{
-        @"User-Agent": version.length ? [@"MiniCode/" stringByAppendingString:version]
-                                      : @"MiniCode",
+        @"User-Agent": version.length ? [@"Mutible/" stringByAppendingString:version]
+                                      : @"Mutible",
         @"Accept": @"image/*,*/*;q=0.8",
     };
     NSOperationQueue *queue = [NSOperationQueue new];
     queue.maxConcurrentOperationCount = 1;
-    queue.name = @"MiniCode web images";
+    queue.name = @"Mutible web images";
     _session = [NSURLSession sessionWithConfiguration:c delegate:self delegateQueue:queue];
     return _session;
 }

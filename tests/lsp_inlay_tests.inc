@@ -283,7 +283,7 @@ static void testLspInlayHints() {
         CHECK(e.empty() && !off.inlayHints() && off.inlayHintColor() == Rgba::hex(0xFF0000));
         parseSettings("editor.inlay-hints = sometimes\n", &e);
         CHECK(e.size() == 1);
-        // VS Code's four values, in minicode's spelling and VS Code's.
+        // VS Code's four values, in mutible's spelling and VS Code's.
         using M = Settings::InlayHints;
         CHECK(d.inlayHintsMode() == M::On);
         CHECK(parseSettings("editor.inlay-hints = off\n").inlayHintsMode() == M::Off);

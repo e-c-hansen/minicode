@@ -1,6 +1,6 @@
 #!/bin/bash
-# Check that a built MiniCode.app runs on the macOS it says it does.
-#   scripts/check-minos.sh [path/to/MiniCode.app]
+# Check that a built Mutible.app runs on the macOS it says it does.
+#   scripts/check-minos.sh [path/to/Mutible.app]
 #
 # Info.plist's LSMinimumSystemVersion is the one place the minimum is written:
 # the Makefile builds with -mmacosx-version-min from it. This checks the
@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="${1:-MiniCode.app}"
+APP="${1:-Mutible.app}"
 BUDDY=/usr/libexec/PlistBuddy
 CASK=packaging/mutible.rb
 
@@ -28,7 +28,7 @@ if [ "$(norm "$BUNDLED")" != "$(norm "$WANT")" ]; then
     fail=1
 fi
 
-for bin in "$APP/Contents/MacOS/MiniCode" "$APP/Contents/MacOS/minicode-cli"; do
+for bin in "$APP/Contents/MacOS/Mutible" "$APP/Contents/MacOS/mutible-cli"; do
     if [ ! -f "$bin" ]; then
         echo "error: $bin is missing" >&2; fail=1; continue
     fi

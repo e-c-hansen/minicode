@@ -1,6 +1,6 @@
 // Demo.mm — scripted demo scenes and the window recorder behind `make demos`.
 //
-// Inert unless MINICODE_DEMO is set. A scene is a list of steps (click a file,
+// Inert unless MUTIBLE_DEMO is set. A scene is a list of steps (click a file,
 // type, press a shortcut, wait) played in the live app. Clicks and keys are
 // posted as real NSEvents, so they travel the same path a person's do: the
 // tree's mouseDown, the text input system, the local key monitor for Ctrl+`,
@@ -311,7 +311,7 @@ static int WaitFor(pid_t pid) {
                 [_manifest writeData:[lines dataUsingEncoding:NSUTF8StringEncoding]];
             }
         } else if (++_failures >= 5) {
-            fprintf(stderr, "minicode demo: screencapture keeps failing (does the "
+            fprintf(stderr, "mutible demo: screencapture keeps failing (does the "
                             "terminal have Screen Recording permission?)\n");
             exit(4);
         }
@@ -425,7 +425,7 @@ static void After(double seconds, dispatch_block_t block) {
 }
 
 - (void)fail:(NSString *)why {
-    fprintf(stderr, "minicode demo: %s\n", why.UTF8String);
+    fprintf(stderr, "mutible demo: %s\n", why.UTF8String);
     exit(2);
 }
 
@@ -849,7 +849,7 @@ static BOOL KeyFor(unichar c, unsigned short *code, BOOL *shift) {
 - (void)setUpWindow {
     NSWindow *w = self.window;
     NSSize size = NSMakeSize(960, 600);
-    NSString *env = MCEnvironment()[@"MINICODE_DEMO_SIZE"];
+    NSString *env = MCEnvironment()[@"MUTIBLE_DEMO_SIZE"];
     NSArray *wh = [env componentsSeparatedByString:@"x"];
     if (wh.count == 2 && [wh[0] doubleValue] > 0 && [wh[1] doubleValue] > 0)
         size = NSMakeSize([wh[0] doubleValue], [wh[1] doubleValue]);
@@ -1527,38 +1527,38 @@ static const struct { const char *name; MCSceneBuilder build; } kScenes[] = {
 // ------------------------------------------------------------ entry points
 
 BOOL MCDemoListScenes(void) {
-    const char *scene = getenv("MINICODE_DEMO");
+    const char *scene = getenv("MUTIBLE_DEMO");
     if (!scene || strcmp(scene, "list") != 0) return NO;
     for (const auto &s : kScenes) printf("%s\n", s.name);
     return YES;
 }
 
 void MCDemoStart(EditorController *controller) {
-    const char *name = getenv("MINICODE_DEMO");
+    const char *name = getenv("MUTIBLE_DEMO");
     if (!name || !*name) return;
     MCSceneBuilder build = nullptr;
     for (const auto &s : kScenes)
         if (strcmp(s.name, name) == 0) build = s.build;
     if (!build) {
-        fprintf(stderr, "minicode demo: no scene called %s\n", name);
+        fprintf(stderr, "mutible demo: no scene called %s\n", name);
         exit(2);
     }
-    const char *frames = getenv("MINICODE_DEMO_FRAMES");
+    const char *frames = getenv("MUTIBLE_DEMO_FRAMES");
     if (!frames || !*frames) {
-        fprintf(stderr, "minicode demo: set MINICODE_DEMO_FRAMES to a folder\n");
+        fprintf(stderr, "mutible demo: set MUTIBLE_DEMO_FRAMES to a folder\n");
         exit(2);
     }
     static MCDemo *demo;   // lives until the app quits
     demo = [[MCDemo alloc] initWithController:controller];
     build(demo);
     if (demo.skipReason) {
-        fprintf(stderr, "minicode demo: skipping %s: %s\n", name,
+        fprintf(stderr, "mutible demo: skipping %s: %s\n", name,
                 demo.skipReason.UTF8String);
         exit(3);
     }
     // Nothing should take this long; if it does, don't leave a window behind.
     After(180, ^{
-        fprintf(stderr, "minicode demo: %s did not finish in time\n", name);
+        fprintf(stderr, "mutible demo: %s did not finish in time\n", name);
         exit(2);
     });
     [demo setUpWindow];

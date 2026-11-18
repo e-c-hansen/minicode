@@ -1,8 +1,8 @@
 // InstallHints.h — pure C++. How to install the language servers and
-// formatters MiniCode talks to but never ships: one table, so the app's
+// formatters Mutible talks to but never ships: one table, so the app's
 // notes (the bar shown when a file's server is missing, the Language Servers
 // popover, Format Document's note) and docs/REFERENCE.md say the same thing.
-// MiniCode never runs these itself; it shows them, copies them, or types
+// Mutible never runs these itself; it shows them, copies them, or types
 // them into a terminal for the user to run.
 //
 // Each tool lists its install commands best first. A command that needs a
@@ -45,12 +45,12 @@ struct Tool {
     std::vector<Way> ways;  // best first
 };
 
-// The server MiniCode recommends for a language server key ("python",
+// The server Mutible recommends for a language server key ("python",
 // "cpp", "go", "rust", "typescript"), or for a second server's key
 // ("python.also": Ruff's), or nullptr.
 const Tool* server(const std::string& key);
 // A formatter by program name or path ("pyink", "/x/bin/clang-format"),
-// or nullptr for one MiniCode does not know.
+// or nullptr for one Mutible does not know.
 const Tool* formatter(const std::string& program);
 // Every tool, the servers first, then the formatters.
 std::vector<const Tool*> all();

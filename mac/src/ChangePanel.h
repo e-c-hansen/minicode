@@ -1,9 +1,9 @@
-// ChangePanel.h — Objective-C++. Request a Change to minicode (Shift+Cmd+K),
+// ChangePanel.h — Objective-C++. Request a Change to mutible (Shift+Cmd+K),
 // inside the window: a bar across the top of the right pane takes a request,
-// a terminal tab opens in minicode's own source folder running Claude Code
+// a terminal tab opens in mutible's own source folder running Claude Code
 // with it (so the user watches, answers its questions, and approves its
 // edits right there; a copy installed without its source clones the running
-// release first, in the same terminal), and once Claude has rebuilt MiniCode.app with `make`
+// release first, in the same terminal), and once Claude has rebuilt Mutible.app with `make`
 // the bar offers to restart into the new build. The restart reopens every
 // window's folder (their tabs come back with the folder's session) and the
 // conversation, with `claude --continue`, in a terminal of the window it
@@ -87,15 +87,15 @@ typedef NS_ENUM(NSInteger, MCChangeBarMode) {
 - (void)stop;      // the window is closing
 @end
 
-// minicode's source folder: develop.source when set (nil and *problem when
+// mutible's source folder: develop.source when set (nil and *problem when
 // it is not one), else the checkout this app was built in, else the clone
 // made by an earlier request; nil when there is none yet, and the request
 // clones the running release into MCChangeCloneFolder() first.
 NSString *MCChangeSourceFolder(NSString **problem);
-// ~/Library/Application Support/MiniCode/source
+// ~/Library/Application Support/Mutible/source
 NSString *MCChangeCloneFolder(void);
 
-// Removes the prompt files in `dir` (MiniCode-change, MiniCode-agent in the
+// Removes the prompt files in `dir` (Mutible-change, Mutible-agent in the
 // temporary folder) that no one will read again: their writer has quit, or
 // they are a day old (ChangeRequest::promptFileIsStale).
 void MCRemoveStalePromptFiles(NSString *dir);

@@ -1,24 +1,24 @@
-// minicode-cli.cpp — the client half of the control channel. The `minicode`
-// launcher (scripts/minicode-launcher) hands it every subcommand (`minicode
+// mutible-cli.cpp — the client half of the control channel. The `mutible`
+// launcher (scripts/mutible-launcher) hands it every subcommand (`mutible
 // open`, `state`, `term`, ...); it turns the command line into one request
-// (ControlProtocol.h), sends it over the newest running minicode's Unix
-// socket ($TMPDIR/MiniCode/<pid>.sock, or the same in the user's own
+// (ControlProtocol.h), sends it over the newest running mutible's Unix
+// socket ($TMPDIR/Mutible/<pid>.sock, or the same in the user's own
 // temporary folder), prints the answer, and exits 0 (done), 1 (the command
-// failed), 2 (a usage error) or 3 (no minicode to talk to). With no minicode
+// failed), 2 (a usage error) or 3 (no mutible to talk to). With no mutible
 // running it starts one the way the launcher does, then waits up to 10
 // seconds for its socket; reads (state, selection, term-output, procs) exit 3 at
 // once instead.
 //
 // On Linux (PARITY.md 3.1) the same file is the client half of the app's
-// own binary: `minicode open|window|state|selection ...` runs minicodeCliMain
+// own binary: `mutible open|window|state|selection ...` runs mutibleCliMain
 // (linux/src/main.cpp calls it before anything of GTK starts) over the socket
 // folder of ControlPaths.h; the commands of later items (terminals, diffs,
 // notifications, processes) answer "not on Linux yet" from the app, and the
 // ones that need the Mac's frameworks are left out of this build.
 //
-// For tests: MINICODE_LAUNCHER_DRYRUN prints the launch command instead of
-// running it, MINICODE_CLI_WAIT sets the wait in seconds, and
-// MINICODE_CONTROL_DIR names the one folder to look for sockets in.
+// For tests: MUTIBLE_LAUNCHER_DRYRUN prints the launch command instead of
+// running it, MUTIBLE_CLI_WAIT sets the wait in seconds, and
+// MUTIBLE_CONTROL_DIR names the one folder to look for sockets in.
 #include "ControlPaths.h"
 #include "Rename.h"
 #include "ControlProtocol.h"
@@ -62,12 +62,12 @@ namespace {
 
 const int kExitOK = 0, kExitFailed = 1, kExitUsage = 2, kExitNoApp = 3;
 
-// The folders a minicode's socket may be in (ControlPaths.h).
+// The folders a mutible's socket may be in (ControlPaths.h).
 std::vector<std::string> socketDirs() { return socketFolders(); }
 
 // A folder the app made: a real folder (not a link) of this user's that
 // nobody else can enter. Another user's socket in a shared folder could
-// otherwise stand in for minicode.
+// otherwise stand in for mutible.
 bool trustedFolder(const std::string &dir) {
     struct stat st;
     return lstat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == getuid() &&
@@ -84,7 +84,7 @@ struct Candidate {
     std::string path;
 };
 
-// Every live minicode's socket, best first: `wantPid` alone when given.
+// Every live mutible's socket, best first: `wantPid` alone when given.
 std::vector<Candidate> findSockets(int wantPid) {
     std::vector<SocketEntry> found;
     std::vector<std::string> paths;
@@ -116,10 +116,10 @@ std::vector<Candidate> findSockets(int wantPid) {
     return out;
 }
 
-// A minicode process of this user's that has no socket: one from before the
+// A mutible process of this user's that has no socket: one from before the
 // control channel, which a launch would only bring forward.
 #ifndef __APPLE__
-bool appRunningWithoutSocket() { return false; }   // every Linux minicode has the channel
+bool appRunningWithoutSocket() { return false; }   // every Linux mutible has the channel
 #else
 bool appRunningWithoutSocket() {
     std::vector<pid_t> pids(4096);
@@ -129,7 +129,7 @@ bool appRunningWithoutSocket() {
     for (pid_t pid : pids) {
         char name[2 * MAXCOMLEN + 1] = {};
         if (pid <= 0 || proc_name(pid, name, sizeof name) <= 0) continue;
-        if (std::strcmp(name, "MiniCode") != 0) continue;
+        if (std::strcmp(name, "Mutible") != 0) continue;
         struct proc_bsdshortinfo info;
         if (proc_pidinfo(pid, PROC_PIDT_SHORTBSDINFO, 0, &info, sizeof info) == sizeof info &&
             info.pbsi_uid == getuid())
@@ -138,7 +138,7 @@ bool appRunningWithoutSocket() {
     return false;
 }
 
-// The app bundle this client was installed in (Contents/MacOS/minicode-cli),
+// The app bundle this client was installed in (Contents/MacOS/mutible-cli),
 // or "" when it runs from elsewhere (the build folder).
 #ifdef __APPLE__
 std::string bundlePath() {
@@ -166,7 +166,7 @@ std::string shellQuote(const std::string &s) {
 }
 
 #ifndef __APPLE__
-// Starts minicode on `folder` as `minicode <folder>` does: the app detaches
+// Starts mutible on `folder` as `mutible <folder>` does: the app detaches
 // from the terminal and returns at once (Detach.h), so this waits for that,
 // and the caller waits for the socket. False when it could not be started.
 bool launchApp(const std::string &folder) {
@@ -174,7 +174,7 @@ bool launchApp(const std::string &folder) {
     ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
     if (n <= 0) return false;
     exe[n] = 0;
-    const char *dry = getenv("MINICODE_LAUNCHER_DRYRUN");
+    const char *dry = getenv("MUTIBLE_LAUNCHER_DRYRUN");
     if (dry && *dry) {
         std::printf("%s %s\n", shellQuote(exe).c_str(), shellQuote(folder).c_str());
         std::fflush(stdout);
@@ -191,14 +191,14 @@ bool launchApp(const std::string &folder) {
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 #else
-// Starts minicode the way the launcher does with a folder: Launch Services
+// Starts mutible the way the launcher does with a folder: Launch Services
 // opens the bundle, which opens a window on the folder. False when it could
 // not be started.
 bool launchApp(const std::string &folder) {
     std::string bundle = bundlePath();
-    const char *dry = getenv("MINICODE_LAUNCHER_DRYRUN");
+    const char *dry = getenv("MUTIBLE_LAUNCHER_DRYRUN");
     if (dry && *dry) {
-        std::printf("open -a %s %s\n", shellQuote(bundle.empty() ? "MiniCode.app" : bundle).c_str(),
+        std::printf("open -a %s %s\n", shellQuote(bundle.empty() ? "Mutible.app" : bundle).c_str(),
                     shellQuote(folder).c_str());
         std::fflush(stdout);
         return true;
@@ -215,7 +215,7 @@ bool launchApp(const std::string &folder) {
 #endif
 
 double waitSeconds() {
-    const char *w = getenv("MINICODE_CLI_WAIT");
+    const char *w = getenv("MUTIBLE_CLI_WAIT");
     if (w && *w) {
         double d = std::atof(w);
         if (d >= 0) return d;
@@ -231,7 +231,7 @@ double now() {
 
 // Sends one request and reads the one answer line. False with `error` set
 // when the socket could not be used; *refused when nothing listens on it (a
-// socket left by a minicode that died, its pid since reused).
+// socket left by a mutible that died, its pid since reused).
 bool exchange(const Candidate &to, const std::string &request, std::string &answer,
               std::string &error, bool *refused, int timeoutSeconds) {
     const int pid = to.pid;
@@ -254,7 +254,7 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
     int on = 1;
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
 #else
-    signal(SIGPIPE, SIG_IGN);   // a minicode that went away is an error, not a signal
+    signal(SIGPIPE, SIG_IGN);   // a mutible that went away is an error, not a signal
 #endif
     // A diff waits for git and browse --wait for a page (15 s at most);
     // nothing else takes more than a moment.
@@ -263,7 +263,7 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
     if (connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
         *refused = errno == ECONNREFUSED || errno == ENOENT;
-        error = "could not connect to minicode (process " + std::to_string(pid) + "): " +
+        error = "could not connect to mutible (process " + std::to_string(pid) + "): " +
                 std::strerror(errno);
         close(fd);
         return false;
@@ -273,13 +273,13 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
         ssize_t n = write(fd, request.data() + off, request.size() - off);
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EPIPE || errno == ECONNRESET)) {
-            // minicode took the connection and closed it before the request
+            // mutible took the connection and closed it before the request
             // was written: what it does to another user's process, which
             // gets no answer at all. Which of the write and the close comes
             // first is timing, so this says the same as a close seen while
             // reading (the control suite's "state as another user" once
             // failed on it).
-            error = "minicode closed the connection without answering";
+            error = "mutible closed the connection without answering";
             close(fd);
             return false;
         }
@@ -302,7 +302,7 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
     close(fd);
     size_t nl = answer.find('\n');
     if (nl == std::string::npos) {
-        error = "minicode closed the connection without answering";
+        error = "mutible closed the connection without answering";
         return false;
     }
     answer.resize(nl);
@@ -324,7 +324,7 @@ std::string readStdin(size_t limit) {
     return out;
 }
 
-// `minicode hooks --print` and `--install` (R7.5). The settings file is
+// `mutible hooks --print` and `--install` (R7.5). The settings file is
 // ClaudeHooks::settingsPath's: $CLAUDE_CONFIG_DIR/settings.json when that is
 // set (Claude Code reads its settings from there then), else
 // ~/.claude/settings.json. The app's Install Claude Code Hooks… does the
@@ -338,7 +338,7 @@ int runHooks(const std::string &action) {
     ClaudeHooks::InstallResult r =
         ClaudeHooks::install(path, ClaudeHooks::kCommand, (long)time(nullptr));
     if (!r.ok) {
-        std::fprintf(stderr, "minicode: %s\n", r.error.c_str());
+        std::fprintf(stderr, "mutible: %s\n", r.error.c_str());
         return kExitFailed;
     }
     if (!r.changed) {
@@ -347,21 +347,21 @@ int runHooks(const std::string &action) {
     }
     if (!r.backup.empty()) std::printf("Backed up %s to %s\n", path.c_str(), r.backup.c_str());
     std::printf("Added `%s` to the %s hooks in %s.\n"
-                "Claude Code sessions started from now on in minicode's terminals mark "
+                "Claude Code sessions started from now on in mutible's terminals mark "
                 "their tabs.\n",
                 ClaudeHooks::kCommand, ClaudeHooks::eventList(r.added).c_str(), path.c_str());
     return kExitOK;
 }
 
 // open-url's way out: the address goes to the default browser through
-// /usr/bin/open, or xdg-open on Linux ($MINICODE_OPEN_FALLBACK in the GUI
+// /usr/bin/open, or xdg-open on Linux ($MUTIBLE_OPEN_FALLBACK in the GUI
 // checks, which record instead of opening anything).
 int openInDefaultBrowser(const std::string &url) {
     if (url.empty() || url[0] == '-') {
-        std::fprintf(stderr, "minicode: not an address: %s\n", url.c_str());
+        std::fprintf(stderr, "mutible: not an address: %s\n", url.c_str());
         return kExitUsage;
     }
-    const char *fallback = getenv("MINICODE_OPEN_FALLBACK");
+    const char *fallback = getenv("MUTIBLE_OPEN_FALLBACK");
 #ifdef __APPLE__
     const std::string program = fallback && *fallback ? fallback : "/usr/bin/open";
 #else
@@ -370,7 +370,7 @@ int openInDefaultBrowser(const std::string &url) {
     std::vector<char *> argv = {const_cast<char *>(program.c_str()), const_cast<char *>(url.c_str()),
                                 nullptr};
     execvp(program.c_str(), argv.data());
-    std::fprintf(stderr, "minicode: could not run %s: %s\n", program.c_str(), std::strerror(errno));
+    std::fprintf(stderr, "mutible: could not run %s: %s\n", program.c_str(), std::strerror(errno));
     return kExitFailed;
 }
 
@@ -410,17 +410,17 @@ bool startWeb(Shared::Web::Server &web, const std::string &socket, const std::st
     w.editable = edit;
     std::string error;
     if (!web.start(w, &error)) {
-        std::fprintf(stderr, "minicode: the browser's view could not listen: %s\n", error.c_str());
+        std::fprintf(stderr, "mutible: the browser's view could not listen: %s\n", error.c_str());
         return false;
     }
-    std::fprintf(stderr, "minicode: %s of %s for a browser on this machine:\n",
+    std::fprintf(stderr, "mutible: %s of %s for a browser on this machine:\n",
                  edit ? "a view that can edit" : "a read-only view", folder.c_str());
     std::printf("%s\n", web.url().c_str());
     std::fflush(stdout);
     return true;
 }
 
-// `minicode host --folder DIR [--web PORT]`: the session's host for one
+// `mutible host --folder DIR [--web PORT]`: the session's host for one
 // folder, with no window (SessionServer.h), in the foreground until its
 // lifetime ends or a signal stops it; with --web, also its view for a
 // browser, a renderer of it attached while a browser looks.
@@ -428,7 +428,7 @@ int runHost(const Json &args) {
     const std::string asked = args["folder"].asString();
     const std::string folder = Shared::resolveFolder(asked);
     if (folder.empty()) {
-        std::fprintf(stderr, "minicode: %s is not a folder\n", asked.c_str());
+        std::fprintf(stderr, "mutible: %s is not a folder\n", asked.c_str());
         return kExitFailed;
     }
     Shared::HostOptions o;
@@ -440,19 +440,19 @@ int runHost(const Json &args) {
     std::string error;
     switch (server.start(o, &error)) {
     case Shared::HostServer::Start::Running:
-        std::fprintf(stderr, "minicode: a host for %s is running already (%s)\n", folder.c_str(),
+        std::fprintf(stderr, "mutible: a host for %s is running already (%s)\n", folder.c_str(),
                      error.c_str());
         if (args.has("web"))
-            std::fprintf(stderr, "minicode: for a browser's view of it, run `minicode attach "
+            std::fprintf(stderr, "mutible: for a browser's view of it, run `mutible attach "
                                  "--folder %s --web %d`\n",
                          shellQuote(folder).c_str(), (int)args["web"].asInt());
         return kExitOK;
     case Shared::HostServer::Start::Failed:
-        std::fprintf(stderr, "minicode: %s\n", error.c_str());
+        std::fprintf(stderr, "mutible: %s\n", error.c_str());
         return kExitFailed;
     case Shared::HostServer::Start::Ok: break;
     }
-    std::fprintf(stderr, "minicode: hosting %s at %s\n", folder.c_str(), server.socketPath().c_str());
+    std::fprintf(stderr, "mutible: hosting %s at %s\n", folder.c_str(), server.socketPath().c_str());
     Shared::Web::Server web;
     std::thread webThread;
     if (args.has("web")) {
@@ -466,7 +466,7 @@ int runHost(const Json &args) {
         gHost = &server;
     }
     if (server.run())
-        std::fprintf(stderr, "minicode: the host for %s had no renderer and nothing unsaved or "
+        std::fprintf(stderr, "mutible: the host for %s had no renderer and nothing unsaved or "
                              "running, so it stopped\n", folder.c_str());
     {
         std::lock_guard<std::mutex> lk(gStopMu);
@@ -479,14 +479,14 @@ int runHost(const Json &args) {
     return kExitOK;
 }
 
-// `minicode attach --folder DIR --dump`: the folder's session as text, then
+// `mutible attach --folder DIR --dump`: the folder's session as text, then
 // detach (SessionServer.h's dumpSession). `--web PORT`: a browser's view of
 // it until the host ends.
 int runAttach(const Json &args) {
     const std::string asked = args["folder"].asString();
     const std::string folder = Shared::resolveFolder(asked);
     if (folder.empty()) {
-        std::fprintf(stderr, "minicode: %s is not a folder\n", asked.c_str());
+        std::fprintf(stderr, "mutible: %s is not a folder\n", asked.c_str());
         return kExitFailed;
     }
     signal(SIGPIPE, SIG_IGN);
@@ -497,10 +497,10 @@ int runAttach(const Json &args) {
     if (!path.empty()) link = Shared::HostLink::open(path, &error, &refused);
     if (!link) {
         if (path.empty() || refused)
-            std::fprintf(stderr, "minicode: no host serves %s (start one with `minicode host "
+            std::fprintf(stderr, "mutible: no host serves %s (start one with `mutible host "
                                  "--folder %s`)\n", folder.c_str(), shellQuote(folder).c_str());
         else
-            std::fprintf(stderr, "minicode: %s\n", error.c_str());
+            std::fprintf(stderr, "mutible: %s\n", error.c_str());
         return kExitNoApp;
     }
     if (args.has("web")) {
@@ -516,21 +516,21 @@ int runAttach(const Json &args) {
             std::lock_guard<std::mutex> lk(gStopMu);
             gWeb = &web;
         }
-        if (web.run()) std::fprintf(stderr, "minicode: the host for %s stopped\n", folder.c_str());
+        if (web.run()) std::fprintf(stderr, "mutible: the host for %s stopped\n", folder.c_str());
         std::lock_guard<std::mutex> lk(gStopMu);
         gWeb = nullptr;
         return kExitOK;
     }
-    Shared::Client client(Model::Unit::Utf16, "minicode attach");
+    Shared::Client client(Model::Unit::Utf16, "mutible attach");
     link->connect(client);
     const std::string text = Shared::dumpSession(client);
     link->close();
     if (text.empty()) {
-        std::fprintf(stderr, "minicode: the host at %s did not answer\n", path.c_str());
+        std::fprintf(stderr, "mutible: the host at %s did not answer\n", path.c_str());
         return kExitFailed;
     }
     if (text.compare(0, 8 + folder.size() + 1, "== host " + folder + "\n") != 0) {
-        std::fprintf(stderr, "minicode: the host at %s serves another folder\n", path.c_str());
+        std::fprintf(stderr, "mutible: the host at %s serves another folder\n", path.c_str());
         return kExitFailed;
     }
     std::fwrite(text.data(), 1, text.size(), stdout);
@@ -538,17 +538,17 @@ int runAttach(const Json &args) {
 }
 
 int usageError(const std::string &message) {
-    std::fprintf(stderr, "minicode: %s\nTry 'minicode help'.\n", message.c_str());
+    std::fprintf(stderr, "mutible: %s\nTry 'mutible help'.\n", message.c_str());
     return kExitUsage;
 }
 
 }  // namespace
 
 #ifndef __APPLE__
-// `minicode install-skill [--dir DIR]` on Linux, what scripts/minicode-launcher
+// `mutible install-skill [--dir DIR]` on Linux, what scripts/mutible-launcher
 // does on the Mac (PARITY.md 3.1): the skill that ships with the package, or
-// the build tree's copy, goes to $CLAUDE_CONFIG_DIR/skills/minicode (else
-// ~/.claude/skills/minicode). $MINICODE_SKILL_FILE names the source in checks.
+// the build tree's copy, goes to $CLAUDE_CONFIG_DIR/skills/mutible (else
+// ~/.claude/skills/mutible). $MUTIBLE_SKILL_FILE names the source in checks.
 static bool readWholeFile(const std::string &path, std::string &out) {
     FILE *f = std::fopen(path.c_str(), "rb");
     if (!f) return false;
@@ -570,14 +570,14 @@ static bool makeFolders(const std::string &dir) {
     return true;
 }
 
-int minicodeInstallSkill(int argc, char **argv) {
+int mutibleInstallSkill(int argc, char **argv) {
     std::string to;
     const char *config = getenv("CLAUDE_CONFIG_DIR");
     const char *home = getenv("HOME");
     const std::string skills = config && *config
                                    ? std::string(config) + "/skills"
                                    : std::string(home && *home ? home : "/") + "/.claude/skills";
-    to = skills + "/minicode";
+    to = skills + "/mutible";
     bool givenDir = false;
     for (int i = 2; i < argc; i++) {
         const std::string a = argv[i];
@@ -586,22 +586,22 @@ int minicodeInstallSkill(int argc, char **argv) {
             to = argv[++i];
             givenDir = true;
         } else if (a == "-h" || a == "--help") {
-            std::printf("Usage: minicode install-skill [--dir DIR]\n");
+            std::printf("Usage: mutible install-skill [--dir DIR]\n");
             return kExitOK;
         } else {
             return usageError("install-skill: unexpected " + a);
         }
     }
     std::vector<std::string> candidates;
-    if (const char *own = getenv("MINICODE_SKILL_FILE")) candidates.push_back(own);
+    if (const char *own = getenv("MUTIBLE_SKILL_FILE")) candidates.push_back(own);
     char exe[PATH_MAX];
     const ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
     if (n > 0) {
         std::string dir(exe, (size_t)n);
         dir.erase(dir.rfind('/'));
         candidates.push_back(dir + "/SKILL.md");                                  // build tree
-        candidates.push_back(dir + "/../share/minicode/skills/minicode/SKILL.md");  // installed
-        candidates.push_back(dir + "/../../../skills/minicode/SKILL.md");       // linux/build in a checkout
+        candidates.push_back(dir + "/../share/mutible/skills/mutible/SKILL.md");  // installed
+        candidates.push_back(dir + "/../../../skills/mutible/SKILL.md");       // linux/build in a checkout
     }
     std::string skill;
     bool found = false;
@@ -611,23 +611,23 @@ int minicodeInstallSkill(int argc, char **argv) {
             break;
         }
     if (!found) {
-        std::fprintf(stderr, "minicode: this copy has no skill to install\n");
+        std::fprintf(stderr, "mutible: this copy has no skill to install\n");
         return 3;
     }
     std::string have;
     if (readWholeFile(to + "/SKILL.md", have) && have == skill) {
-        std::printf("The minicode skill in %s is up to date\n", to.c_str());
+        std::printf("The mutible skill in %s is up to date\n", to.c_str());
         return kExitOK;
     }
     FILE *out = makeFolders(to) ? std::fopen((to + "/SKILL.md").c_str(), "wb") : nullptr;
     if (!out || std::fwrite(skill.data(), 1, skill.size(), out) != skill.size()) {
-        std::fprintf(stderr, "minicode: could not write %s/SKILL.md: %s\n", to.c_str(),
+        std::fprintf(stderr, "mutible: could not write %s/SKILL.md: %s\n", to.c_str(),
                      std::strerror(errno));
         if (out) std::fclose(out);
         return kExitFailed;
     }
     std::fclose(out);
-    std::printf("Installed the minicode skill in %s\n", to.c_str());
+    std::printf("Installed the mutible skill in %s\n", to.c_str());
     // The skill as it was installed before the rename is left alone; say
     // where it is, so Claude Code does not load both (src/Rename.h).
     const std::string oldSkill = skills + "/" + Rename::kOldName;
@@ -642,9 +642,9 @@ int minicodeInstallSkill(int argc, char **argv) {
 #ifdef __APPLE__
 int main(int argc, char **argv) {
 #else
-int minicodeCliMain(int argc, char **argv) {
+int mutibleCliMain(int argc, char **argv) {
 #endif
-    Rename::adoptOldEnvironment();   // MINICODE_* still read (src/Rename.h)
+    Rename::adoptOldEnvironment();   // MUTIBLE_* still read (src/Rename.h)
     std::vector<std::string> args(argv + 1, argv + argc);
     char cwdBuf[PATH_MAX];
     std::string cwd = getcwd(cwdBuf, sizeof cwdBuf) ? cwdBuf : "/";
@@ -681,44 +681,44 @@ int minicodeCliMain(int argc, char **argv) {
         c.cmd != "open-url" && c.cmd != "term" && c.cmd != "term-output") {
         // A hook never fails noisily.
         if (c.fromHook) return kExitOK;
-        std::fprintf(stderr, "minicode: %s is not on Linux yet\n", c.cmd.c_str());
+        std::fprintf(stderr, "mutible: %s is not on Linux yet\n", c.cmd.c_str());
         return kExitFailed;
     }
 #endif
 
-    // notify: never launches minicode and never complains that there is
+    // notify: never launches mutible and never complains that there is
     // none; with --from-hook nothing at all is ever reported (R7.2).
     const bool notify = c.cmd == "notify";
     const bool quiet = c.fromHook;
     if (notify && c.fromHook) {
         int pid = 0;
         Json hookArgs;
-        if (!ClaudeHooks::notifyArgsFromHook(readStdin(1 << 20), getenv("MINICODE_TERMINAL_ID"),
-                                             getenv("MINICODE_PID"), hookArgs, pid))
+        if (!ClaudeHooks::notifyArgsFromHook(readStdin(1 << 20), getenv("MUTIBLE_TERMINAL_ID"),
+                                             getenv("MUTIBLE_PID"), hookArgs, pid))
             return kExitOK;
         c.args = hookArgs;
         if (!c.pid) c.pid = pid;
     } else if (notify && !c.pid) {
-        c.pid = ClaudeHooks::parsePositive(getenv("MINICODE_PID"));
+        c.pid = ClaudeHooks::parsePositive(getenv("MUTIBLE_PID"));
     }
 
-    // open-url, which BROWSER runs in minicode's terminals: a page that is
+    // open-url, which BROWSER runs in mutible's terminals: a page that is
     // not local goes to the default browser, and so does any page when the
-    // minicode the terminal belongs to does not take it. It never starts
-    // minicode, and prints nothing when the page opened.
+    // mutible the terminal belongs to does not take it. It never starts
+    // mutible, and prints nothing when the page opened.
     const bool openUrl = c.cmd == "open-url";
     const std::string url = openUrl ? c.args["url"].asString() : "";
     if (openUrl) {
         if (!opensInPane(url)) return openInDefaultBrowser(url);
-        if (!c.pid) c.pid = ClaudeHooks::parsePositive(getenv("MINICODE_PID"));
-        const int terminal = ClaudeHooks::parsePositive(getenv("MINICODE_TERMINAL_ID"));
+        if (!c.pid) c.pid = ClaudeHooks::parsePositive(getenv("MUTIBLE_PID"));
+        const int terminal = ClaudeHooks::parsePositive(getenv("MUTIBLE_TERMINAL_ID"));
         if (!c.args.has("terminal") && terminal > 0) c.args.set("terminal", terminal);
     }
 
     if (!c.tourFile.empty()) {
         std::ifstream in(c.tourFile);
         if (!in) {
-            std::fprintf(stderr, "minicode: %s: %s\n", c.tourFile.c_str(), std::strerror(errno));
+            std::fprintf(stderr, "mutible: %s: %s\n", c.tourFile.c_str(), std::strerror(errno));
             return kExitFailed;
         }
         std::stringstream ss;
@@ -726,7 +726,7 @@ int minicodeCliMain(int argc, char **argv) {
         Json stops;
         std::string error;
         if (!tourStops(ss.str(), cwd, home ? home : "/", stops, error)) {
-            std::fprintf(stderr, "minicode: %s\n", error.c_str());
+            std::fprintf(stderr, "mutible: %s\n", error.c_str());
             return kExitFailed;
         }
         c.args.set("stops", stops);
@@ -741,27 +741,27 @@ int minicodeCliMain(int argc, char **argv) {
     if (sockets.empty() && openUrl) return openInDefaultBrowser(url);
     if (sockets.empty()) {
         if (c.pid) {
-            std::fprintf(stderr, "minicode: no minicode is running as process %d\n", c.pid);
+            std::fprintf(stderr, "mutible: no mutible is running as process %d\n", c.pid);
             return kExitNoApp;
         }
         if (appRunningWithoutSocket()) {
-            std::fprintf(stderr, "minicode: the minicode that is running does not answer (a version "
+            std::fprintf(stderr, "mutible: the mutible that is running does not answer (a version "
                                  "from before the command channel?); quit and open it again\n");
             return kExitNoApp;
         }
         if (!launchesApp(c.cmd)) {
-            // Nothing to read from a minicode that is not there.
-            std::fprintf(stderr, "minicode: minicode is not running\n");
+            // Nothing to read from a mutible that is not there.
+            std::fprintf(stderr, "mutible: mutible is not running\n");
             return kExitNoApp;
         }
         if (!launchApp(c.launchFolder)) {
-            std::fprintf(stderr, "minicode: minicode is not running and could not be started\n");
+            std::fprintf(stderr, "mutible: mutible is not running and could not be started\n");
             return kExitNoApp;
         }
         const double until = now() + waitSeconds();
         while ((sockets = findSockets(0)).empty() && now() < until) usleep(100000);
         if (sockets.empty()) {
-            std::fprintf(stderr, "minicode: minicode did not start within %g seconds\n",
+            std::fprintf(stderr, "mutible: mutible did not start within %g seconds\n",
                          waitSeconds());
             return kExitNoApp;
         }
@@ -783,31 +783,31 @@ int minicodeCliMain(int argc, char **argv) {
     if (!sent) {
         if (notify) return kExitOK;
         if (openUrl) return openInDefaultBrowser(url);
-        std::fprintf(stderr, "minicode: %s\n", error.c_str());
+        std::fprintf(stderr, "mutible: %s\n", error.c_str());
         return kExitNoApp;
     }
     Json reply;
     if (quiet) return kExitOK;
     if (!Json::parse(answer, reply, &error) || !reply.isObject()) {
-        std::fprintf(stderr, "minicode: an answer that is not JSON: %s\n", answer.c_str());
+        std::fprintf(stderr, "mutible: an answer that is not JSON: %s\n", answer.c_str());
         return kExitFailed;
     }
     if (!reply["ok"].asBool()) {
-        std::fprintf(stderr, "minicode: %s\n", reply["error"].asString("failed").c_str());
+        std::fprintf(stderr, "mutible: %s\n", reply["error"].asString("failed").c_str());
         if (openUrl) return openInDefaultBrowser(url);
         return kExitFailed;
     }
     const Json &result = reply["result"];
     if (result["background"].asBool())
-        std::fprintf(stderr, "minicode: the user is typing in the editor, so this opened in a tab "
+        std::fprintf(stderr, "mutible: the user is typing in the editor, so this opened in a tab "
                              "beside theirs; it shows when they switch to it\n");
     if (result["pane_busy"].asBool())
-        std::fprintf(stderr, "minicode: the user is using the browser pane, so the agent page "
+        std::fprintf(stderr, "mutible: the user is using the browser pane, so the agent page "
                              "loaded without being shown; it shows when they pick Agent there\n");
     if (result["timed_out"].asBool())
-        std::fprintf(stderr, "minicode: the page was still loading after 15 seconds\n");
+        std::fprintf(stderr, "mutible: the page was still loading after 15 seconds\n");
     if (result["dropped"].asInt() > 0)
-        std::fprintf(stderr, "minicode: %lld earlier messages of this page were dropped (the "
+        std::fprintf(stderr, "mutible: %lld earlier messages of this page were dropped (the "
                              "last 500 are kept)\n", (long long)result["dropped"].asInt());
     switch (c.output) {
     case Output::None: break;

@@ -49,10 +49,10 @@ BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString 
 
 - (instancetype)init {
     if ((self = [super init])) {
-        NSString *env = MCEnvironment()[@"MINICODE_SETTINGS"];
+        NSString *env = MCEnvironment()[@"MUTIBLE_SETTINGS"];
         _path = env.length ? env.stringByExpandingTildeInPath
                            : [NSHomeDirectory() stringByAppendingPathComponent:
-                                 @".config/minicode/settings.conf"];
+                                 @".config/mutible/settings.conf"];
         _errors = @[];
         [self load];
         [self watch];
@@ -83,7 +83,7 @@ BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString 
         [list addObject:[NSString stringWithFormat:@"line %d: %s", e.line,
                          e.message.c_str()]];
     _errors = list;
-    for (NSString *e in list) NSLog(@"MiniCode settings %@", e);
+    for (NSString *e in list) NSLog(@"Mutible settings %@", e);
     return YES;
 }
 
@@ -93,10 +93,10 @@ BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString 
             postNotificationName:MCSettingsDidChangeNotification object:self];
 }
 
-// Watch the file itself. Editors, MiniCode included, save by writing a new
+// Watch the file itself. Editors, Mutible included, save by writing a new
 // file and renaming it over the old one, so on delete/rename the watch is
 // re-armed on whatever is at the path now. With no file yet, check back
-// every couple of seconds so creating one outside MiniCode is noticed too.
+// every couple of seconds so creating one outside Mutible is noticed too.
 - (void)watch {
     if (_watch) { dispatch_source_cancel(_watch); _watch = nil; }
     int fd = open(_path.fileSystemRepresentation, O_EVTONLY);
@@ -145,18 +145,18 @@ BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString 
     NSString *why = nil;
     BOOL ok = MCWriteConfigFile(_path, body, NO, &why);
     if (ok) { [self reload]; [self watch]; }
-    else NSLog(@"minicode: %@", why);
+    else NSLog(@"mutible: %@", why);
     return ok;
 }
 
-// The file rewritten by minicode itself (a theme, the IDE link), refused
+// The file rewritten by mutible itself (a theme, the IDE link), refused
 // while a tab holds it with unsaved changes. Applied at once, rather than
 // when the watch notices the rename.
 - (BOOL)rewriteFileWith:(NSString *)body {
     NSString *why = nil;
     if (!body) why = [NSString stringWithFormat:@"Could not write %@.", _path.lastPathComponent];
     if (why || !MCWriteConfigFile(_path, body, YES, &why)) {
-        NSLog(@"minicode: %@", why);
+        NSLog(@"mutible: %@", why);
         if (gWriteProblemHandler) gWriteProblemHandler(why);
         return NO;
     }

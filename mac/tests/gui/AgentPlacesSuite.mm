@@ -1,6 +1,6 @@
 // AgentPlacesSuite.mm — `make guitest SUITES=agent_places`: where an agent's
 // pointers land, in the files where they went wrong.
-//   - A note, and a line revealed (`minicode open big.log:250000 --note`),
+//   - A note, and a line revealed (`mutible open big.log:250000 --note`),
 //     in a large-file tab, whose layout is non-contiguous and whose rects
 //     far down are estimates: the line ends up on screen a third of the
 //     way down and the note box over it (agents 1, round 6).

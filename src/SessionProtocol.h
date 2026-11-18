@@ -1,6 +1,6 @@
 // SessionProtocol.h — the messages between a session's host and its
 // renderers (SESSION-DESIGN.md, sections 2 and 3, stage 4). In one process
-// they pass as these structs, never encoded; MINICODE_HOST=loopback (the
+// they pass as these structs, never encoded; MUTIBLE_HOST=loopback (the
 // GTK port's) and the protocol tests put every one through encode() and
 // decode(), one JSON line each, so the wire format is exercised before any
 // network carries it.

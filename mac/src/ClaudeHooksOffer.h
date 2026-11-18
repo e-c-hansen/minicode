@@ -1,18 +1,18 @@
 // ClaudeHooksOffer.h — Objective-C++. The waiting dots (TerminalAttention.h)
-// need Claude Code's hooks to run `minicode notify --from-hook`; this is
-// where the app offers them, so nobody has to know `minicode hooks
+// need Claude Code's hooks to run `mutible notify --from-hook`; this is
+// where the app offers them, so nobody has to know `mutible hooks
 // --install`:
 //   - a bar over the terminals the first time Claude Code starts in one
 //     (MCTerminalClaudeDidStartNotification), once per launch, unless the
 //     hooks are in already or Not Now was pressed once (kept in the app's
 //     defaults, as the install bar's Don't Show Again);
-//   - minicode > Install Claude Code Hooks… (minicode.installClaudeHooks),
+//   - mutible > Install Claude Code Hooks… (mutible.installClaudeHooks),
 //     and a line in the Agents panel's header while they are missing.
 // Each shows exactly what goes into Claude Code's settings file and writes
 // only on a second yes, through the core's ClaudeHooks::install (a backup
 // of the file first, every key and hook of the user's kept), then says
 // where it wrote. A press when they are in says so and writes nothing.
-// This is the one place minicode writes under ~/.claude, and only after
+// This is the one place mutible writes under ~/.claude, and only after
 // those two presses (the owner's decision, 2026-11-15).
 #import <Cocoa/Cocoa.h>
 
@@ -21,7 +21,7 @@
 // Claude Code's settings file: $CLAUDE_CONFIG_DIR/settings.json, else
 // ~/.claude/settings.json (HOME's, as Claude Code reads it).
 NSString *MCClaudeSettingsPath(void);
-// The command the hooks run: `minicode notify --from-hook` when `minicode`
+// The command the hooks run: `mutible notify --from-hook` when `mutible`
 // is found (MCFindProgram), else the bundle's launcher by its full path.
 NSString *MCClaudeHooksCommand(void);
 // Every event's hook is in the settings file already.

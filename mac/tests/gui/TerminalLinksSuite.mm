@@ -1,5 +1,5 @@
 // TerminalLinksSuite.mm — `make guitest SUITES=terminal_links`: web pages
-// opened from a terminal land in minicode's browser pane, the user's page.
+// opened from a terminal land in mutible's browser pane, the user's page.
 // A local server (mac/tests/gui/serve.py: http.server on 127.0.0.1) prints its address,
 // and a Cmd+click on it loads it there, the keyboard staying in the
 // terminal; 0.0.0.0 is read as localhost; an OSC 8 hyperlink printed by
@@ -7,9 +7,9 @@
 // shows it as the tooltip, and a javascript: one is no link at all; and a
 // program with mouse reporting on, which takes the plain click itself and
 // opens the page with Python's webbrowser, goes through BROWSER (the
-// helper, then `minicode open-url`) into the pane too, while Cmd still
-// reaches minicode's own link. Pages that are not local, and any page when
-// minicode does not answer, go to MINICODE_OPEN_FALLBACK (a recorder here,
+// helper, then `mutible open-url`) into the pane too, while Cmd still
+// reaches mutible's own link. Pages that are not local, and any page when
+// mutible does not answer, go to MUTIBLE_OPEN_FALLBACK (a recorder here,
 // /usr/bin/open for real), and node runs the helper as Vite does. Nothing
 // off the Mac is ever loaded. Real zsh and python3 (node when there is one).
 #import "Harness.h"
@@ -164,7 +164,7 @@ MC_GUI_SUITE(terminal_links) {
     gDir = [MCGuiScratch() stringByAppendingPathComponent:@"links"];
     gPort = FreePort();
     NSString *recorder = [gDir stringByAppendingPathComponent:@"record.sh"];
-    NSString *helper = [MCGuiBuildDir() stringByAppendingPathComponent:@"minicode-browser.js"];
+    NSString *helper = [MCGuiBuildDir() stringByAppendingPathComponent:@"mutible-browser.js"];
     if (!python) {
         MCGuiStep(@"python3 is needed for the local server", ^{ MCGuiNote(@"no python3: skipped"); });
         return;
@@ -184,7 +184,7 @@ MC_GUI_SUITE(terminal_links) {
         MCGuiWriteFile(recorder, [NSString stringWithFormat:
             @"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> '%@/opened.txt'\n", gDir]);
         chmod(recorder.fileSystemRepresentation, 0755);
-        MCSetEnv("MINICODE_OPEN_FALLBACK", recorder.fileSystemRepresentation);
+        MCSetEnv("MUTIBLE_OPEN_FALLBACK", recorder.fileSystemRepresentation);
         // A program that turns on mouse reporting, prints one address, and
         // on a plain click opens another with Python's webbrowser.
         MCGuiWriteFile([gDir stringByAppendingPathComponent:@"mouse_open.py"],
@@ -335,7 +335,7 @@ MC_GUI_SUITE(terminal_links) {
     MCGuiWait(@"it waits for a click", 15, ^BOOL {
         return Screen(term)->mouseTracking() == 1000 && RowStarting(Screen(term), @"click the link") >= 0;
     });
-    MCGuiStep(@"Cmd still finds the address, and a Cmd+click is minicode's", ^{
+    MCGuiStep(@"Cmd still finds the address, and a Cmd+click is mutible's", ^{
         TerminalScreen *s = Screen(term);
         int row = RowStarting(s, @"click the link");
         int col = ColumnOf(s, row, @"http://");
@@ -380,8 +380,8 @@ MC_GUI_SUITE(terminal_links) {
         GCHECK(PaneShows(c, @"Mouse"));
         GCHECK([[term recentText:5] containsString:@"gave True"]);
     });
-    MCGuiStep(@"a minicode that does not answer", ^{
-        [term runCommand:[NSString stringWithFormat:@"MINICODE_PID=999999 \"$BROWSER\" %@; echo exit=$?",
+    MCGuiStep(@"a mutible that does not answer", ^{
+        [term runCommand:[NSString stringWithFormat:@"MUTIBLE_PID=999999 \"$BROWSER\" %@; echo exit=$?",
                                                     Local(@"/dead.html")]];
     });
     MCGuiWait(@"the default browser has it", 15, ^BOOL {
@@ -402,7 +402,7 @@ MC_GUI_SUITE(terminal_links) {
     }
 
     MCGuiStep(@"the server stops and the suite's window closes", ^{
-        MCSetEnv("MINICODE_OPEN_FALLBACK", nullptr);
+        MCSetEnv("MUTIBLE_OPEN_FALLBACK", nullptr);
         [term runCommand:@"kill %1"];
     });
     MCGuiWait(@"the server is gone", 10, ^BOOL { return term.atPrompt && !term.busy; });

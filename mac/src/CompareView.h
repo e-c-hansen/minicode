@@ -8,7 +8,7 @@
 // F7 and Shift+F7 (VS Code's Go to Next and Previous Difference) step
 // through the runs of changes, wrapping around.
 //
-// `minicode diff` shows one in the window's agent preview tab
+// `mutible diff` shows one in the window's agent preview tab
 // (ControlCommands.mm); anything else that compares two texts (a worktree
 // against its main branch) can make an MCComparison and hand it to
 // EditorController's showComparison:preview:.
@@ -21,7 +21,7 @@
 @property(nonatomic, copy) NSString *rightLabel;   // "src/a.py"
 @property(nonatomic, copy) NSString *leftText;
 @property(nonatomic, copy) NSString *rightText;
-// The file on the right, when it is one (for `minicode state`); else nil.
+// The file on the right, when it is one (for `mutible state`); else nil.
 @property(nonatomic, copy) NSString *path;
 // The name whose extension picks the syntax colors; path's when not set.
 @property(nonatomic, copy) NSString *fileName;

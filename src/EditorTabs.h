@@ -112,7 +112,7 @@ private:
 // title or on the file in the tree, or Keep Open makes it an ordinary
 // ("kept") tab. Each editor group has its own preview tab, as in VS Code.
 // The agents' preview tabs follow the same rules but are their own, one for
-// files (`minicode open --note`) and one for comparisons (`minicode diff`):
+// files (`mutible open --note`) and one for comparisons (`mutible diff`):
 // an agent's open never replaces the user's preview tab, nor a click in the
 // tree the agent's, nor a note the agents' diff.
 
@@ -210,8 +210,8 @@ using DocId = std::uint64_t;
 enum class Preview : std::uint8_t {
     None,        // an ordinary ("kept") tab
     User,        // a group's preview tab: a tree click, a search result
-    Agent,       // the agents' preview tab for files: `minicode open --note`
-    AgentDiff,   // the agents' preview tab for comparisons: `minicode diff`
+    Agent,       // the agents' preview tab for files: `mutible open --note`
+    AgentDiff,   // the agents' preview tab for comparisons: `mutible diff`
 };
 inline bool isAgentPreview(Preview p) { return p == Preview::Agent || p == Preview::AgentDiff; }
 

@@ -10,7 +10,7 @@
 #
 # Run through `make demos`, which builds the app and tools/makegif first.
 #
-# Each scene plays in a real MiniCode window (it appears on screen for about
+# Each scene plays in a real Mutible window (it appears on screen for about
 # twenty seconds; leave the mouse and keyboard alone meanwhile). The app runs
 # against scratch copies of everything it would read from your account: HOME,
 # ZDOTDIR, the settings file (from tools/demo-settings.conf), and the tectonic
@@ -20,7 +20,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$REPO/MiniCode.app/Contents/MacOS/MiniCode"
+APP="$REPO/Mutible.app/Contents/MacOS/Mutible"
 MAKEGIF="$REPO/build/makegif"
 OUT="$REPO/docs/demos"
 WIDTH="${DEMO_WIDTH:-960}"
@@ -28,20 +28,20 @@ WIDTH="${DEMO_WIDTH:-960}"
 [ -x "$APP" ] || { echo "demos: build the app first (make)" >&2; exit 1; }
 [ -x "$MAKEGIF" ] || { echo "demos: build tools/makegif first (make demos)" >&2; exit 1; }
 # Short and outside $HOME: this path shows in the terminal scene's prompt.
-WORK=/private/tmp/minicode-demo
+WORK=/private/tmp/mutible-demo
 rm -rf "$WORK"
 mkdir -p "$WORK/home" "$OUT"
 pid=
 cleanup() {
-    # Only ever the scene's own process: a MiniCode you have open is left alone.
+    # Only ever the scene's own process: a Mutible you have open is left alone.
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
     rm -rf "$WORK"
 }
 trap cleanup EXIT
 
-# The tectonic minicode downloads, else one on PATH (CI installs it with
+# The tectonic mutible downloads, else one on PATH (CI installs it with
 # Homebrew); DEMO_TECTONIC and DEMO_TECTONIC_CACHE name others.
-TECTONIC="${DEMO_TECTONIC:-$HOME/Library/Application Support/MiniCode/bin/tectonic}"
+TECTONIC="${DEMO_TECTONIC:-$HOME/Library/Application Support/Mutible/bin/tectonic}"
 [ -x "$TECTONIC" ] || TECTONIC="$(command -v tectonic || true)"
 TECTONIC_CACHE="${DEMO_TECTONIC_CACHE:-$HOME/Library/Caches/TectonicProject.Tectonic}"
 
@@ -51,8 +51,8 @@ prepare_project() {
     cp -R "$REPO/demo" "$WORK/demo"
     (
         cd "$WORK/demo"
-        export GIT_AUTHOR_NAME="MiniCode" GIT_AUTHOR_EMAIL="demo@example.com"
-        export GIT_COMMITTER_NAME="MiniCode" GIT_COMMITTER_EMAIL="demo@example.com"
+        export GIT_AUTHOR_NAME="Mutible" GIT_AUTHOR_EMAIL="demo@example.com"
+        export GIT_COMMITTER_NAME="Mutible" GIT_COMMITTER_EMAIL="demo@example.com"
         export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
         n=0
         commit() {   # fixed dates, so the log reads the same every run
@@ -69,7 +69,7 @@ prepare_project() {
         commit "Add the app icon" images
         commit "Add a table of cities" data
         # The git scene commits from the app, whose git has no global config.
-        git config user.name "MiniCode"
+        git config user.name "Mutible"
         git config user.email "demo@example.com"
     )
     cp "$REPO/tools/demo-settings.conf" "$WORK/settings.conf"
@@ -129,7 +129,7 @@ if [ $# -gt 0 ]; then
     SCENES=("$@")
 else
     SCENES=()
-    while IFS= read -r s; do SCENES+=("$s"); done < <(MINICODE_DEMO=list "$APP")
+    while IFS= read -r s; do SCENES+=("$s"); done < <(MUTIBLE_DEMO=list "$APP")
 fi
 
 status=0
@@ -142,13 +142,13 @@ for scene in "${SCENES[@]}"; do
 
     extra=()
     if [ -x "$TECTONIC" ]; then
-        extra+=("MINICODE_TECTONIC=$TECTONIC")
+        extra+=("MUTIBLE_TECTONIC=$TECTONIC")
         if [ -d "$TECTONIC_CACHE" ] && [ ! -d "$WORK/tectonic-cache" ]; then
             cp -R "$TECTONIC_CACHE" "$WORK/tectonic-cache"
         fi
         extra+=("TECTONIC_CACHE_DIR=$WORK/tectonic-cache")
     else
-        extra+=("MINICODE_TECTONIC=/nonexistent")
+        extra+=("MUTIBLE_TECTONIC=/nonexistent")
     fi
 
     env -i \
@@ -157,9 +157,9 @@ for scene in "${SCENES[@]}"; do
         USER="${USER:-demo}" LOGNAME="${LOGNAME:-demo}" SHELL=/bin/zsh \
         LANG="en_US.UTF-8" TMPDIR="${TMPDIR:-/tmp}" \
         GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-        MINICODE_SETTINGS="$WORK/settings.conf" \
-        MINICODE_CLAUDE_PROJECTS="$WORK/claude/projects" MINICODE_CLAUDE_TMP="$WORK/claude/tmp" \
-        MINICODE_DEMO="$scene" MINICODE_DEMO_FRAMES="$frames" \
+        MUTIBLE_SETTINGS="$WORK/settings.conf" \
+        MUTIBLE_CLAUDE_PROJECTS="$WORK/claude/projects" MUTIBLE_CLAUDE_TMP="$WORK/claude/tmp" \
+        MUTIBLE_DEMO="$scene" MUTIBLE_DEMO_FRAMES="$frames" \
         "${extra[@]}" \
         "$APP" "$WORK/demo" >"$WORK/$scene.log" 2>&1 &
     pid=$!
@@ -185,7 +185,7 @@ for scene in "${SCENES[@]}"; do
     fi
     if [ "$rc" -ne 0 ] || ! grep -q "^end " "$frames/manifest.txt" 2>/dev/null; then
         echo "demos: $scene failed (exit $rc)" >&2
-        grep -i "minicode demo" "$WORK/$scene.log" >&2 || tail -5 "$WORK/$scene.log" >&2
+        grep -i "mutible demo" "$WORK/$scene.log" >&2 || tail -5 "$WORK/$scene.log" >&2
         # A failed run's frames and log are what show where it stopped.
         if [ -n "${DEMO_KEEP_FRAMES:-}" ]; then
             cp -R "$frames" "$DEMO_KEEP_FRAMES/" 2>/dev/null || true

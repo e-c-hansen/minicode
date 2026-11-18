@@ -11,7 +11,7 @@ found through that list.
   listening TCP ports) and keys processes by (pid, start time). Tracked:
   descendants of terminal shells (the shells themselves not), kept with
   their origin after re-parenting to launchd, and their children; the
-  user's processes outside minicode's own tree (language servers, git and
+  user's processes outside mutible's own tree (language servers, git and
   shells are in it) whose cwd is in an open window's folder ("not started
   here", dropped when the cwd leaves). The command line is read again when
   the short name changes (a fork seen before its exec). Exited ones stay a
@@ -20,7 +20,7 @@ found through that list.
   rows that are running, or have a running process under them, come
   first, then the exited ones, each in start order (2026-11-18, A4: a
   stopped server and two exited `sleep` helpers sat above the server
-  still running). `foldExited` (the Mac panel only; `minicode procs` and
+  still running). `foldExited` (the Mac panel only; `mutible procs` and
   Linux list everything, in that order) moves exited processes that
   never listened on a port (`Proc::listened`, kept after the ports are
   cleared at exit) and have nothing left under them into the level's
@@ -29,9 +29,9 @@ found through that list.
   opens to list them; a stopped server keeps its own row, below the
   running ones, until it is forgotten a minute later. `planStop` signals the
   process group only when every member is the process or below it, so a
-  server Claude started never takes Claude's group down; never minicode, its
+  server Claude started never takes Claude's group down; never mutible, its
   group, a shell, pid 1.
-- **The panel** (Shift+Cmd+J, minicode's own key since 2026-11-15): a
+- **The panel** (Shift+Cmd+J, mutible's own key since 2026-11-15): a
   process row shows a Stop button at its right while hovered (a tracking
   area) or selected (`outlineViewSelectionDidChange:` sets each row view's
   `selected`), which runs `stopRow:` with its questions; the memory figure
@@ -44,9 +44,9 @@ found through that list.
   terminals (`MCControlTerminalID`, `TerminalView shellPid`). CPU times from
   `proc_pid_rusage` are Mach ticks: convert with the timebase. Stop checks
   each pid's start time before SIGTERM and again before the SIGKILL 3 s
-  later. `minicode procs` samples once more before answering, and never
+  later. `mutible procs` samples once more before answering, and never
   opens a window for `--folder`. Session (R7.4): each terminal's session is
-  the attention board's (the last `minicode notify`, with its time); the
+  the attention board's (the last `mutible notify`, with its time); the
   Tracker takes the newest child of the shell started before that notify
   (Claude Code holds the foreground while its hooks run) as the session's
   process, or the shell itself after `exec claude`, and a process under it

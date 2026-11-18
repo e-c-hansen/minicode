@@ -125,7 +125,7 @@ std::string RealPath(NSString *p) {
 - (instancetype)initWithHost:(id<MCGitGutterHost>)host {
     if ((self = [super init])) {
         _host = host;
-        _queue = dispatch_queue_create("minicode.git-gutter", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.git-gutter", DISPATCH_QUEUE_SERIAL);
         _popoverBar = -1;
         CodeTextView *tv = host.gitGutterTextView;
         NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];

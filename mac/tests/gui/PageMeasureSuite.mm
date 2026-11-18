@@ -552,7 +552,7 @@ MC_GUI_SUITE(markdown_width) {
 // ---------------------------------------------------------- swatch_escape
 MC_GUI_SUITE(swatch_escape) {
     __block EditorController *c = nil;
-    NSString *settingsPath = NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"];
+    NSString *settingsPath = NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"];
     NSString *withColor = [kHarnessSettings stringByAppendingString:@"editor.ruler-color = #5A5A5A\n"];
     void (^openSwatch)(void) = ^{
         NSTextView *tv = [c valueForKey:@"textView"];

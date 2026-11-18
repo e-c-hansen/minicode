@@ -302,7 +302,7 @@ MC_GUI_SUITE(keys) {
     });
     MCGuiWait("the editor shows it", 10, [] {
         return MCGuiApp().editor->currentPath() == Keys::path() &&
-               MCGuiEditorText().rfind("# minicode keyboard shortcuts", 0) == 0;
+               MCGuiEditorText().rfind("# mutible keyboard shortcuts", 0) == 0;
     });
     MCGuiStep("every line is commented out, so the keys are the defaults", [] {
         const std::string text = MCGuiReadFile(Keys::path());

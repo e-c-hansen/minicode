@@ -79,7 +79,7 @@ static const unsigned long long kCacheLimit = 50ull << 20, kCacheTrimTo = 40ull 
 // PDF points per TeX point.
 static const double kBpPerPt = 72.0 / 72.27;
 // The first line of a batch's index.
-static NSString *const kIndexHeader = @"minicode-math-index 1";
+static NSString *const kIndexHeader = @"mutible-math-index 1";
 
 // ------------------------------------------------------------------ formula
 
@@ -190,11 +190,11 @@ NSString *MCMathKey(NSString *tex, BOOL display) {
 }
 
 NSString *MCMathCacheDirectory(void) {
-    NSString *over = MCEnvironment()[@"MINICODE_MATH_CACHE"];
+    NSString *over = MCEnvironment()[@"MUTIBLE_MATH_CACHE"];
     if (over.length) return over;
     NSString *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory,
                                                            NSUserDomainMask, YES).firstObject;
-    return [caches stringByAppendingPathComponent:@"MiniCode/math"];
+    return [caches stringByAppendingPathComponent:@"Mutible/math"];
 }
 
 static NSString *MCMathBatchPath(NSString *batch, NSString *extension) {
@@ -395,7 +395,7 @@ static MCMathRun MCMathRunOnce(NSString *tool, const std::vector<MCMathItem> &it
     for (size_t i : which) formulas.push_back({items[i].tex, items[i].display});
 
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *dir = [[NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-math"]
+    NSString *dir = [[NSTemporaryDirectory() stringByAppendingPathComponent:@"Mutible-math"]
         stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *tex = [dir stringByAppendingPathComponent:@"math.tex"];
@@ -680,7 +680,7 @@ static void MCMathFlush(void) {
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        queue = dispatch_queue_create("MiniCode.math", DISPATCH_QUEUE_SERIAL);
+        queue = dispatch_queue_create("Mutible.math", DISPATCH_QUEUE_SERIAL);
     });
     dispatch_async(queue, ^{
         NSString *wholeError = nil;

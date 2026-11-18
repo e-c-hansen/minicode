@@ -60,7 +60,7 @@ BOOL MCTerminalZoomBy(CGFloat points);
 
 // Word wrap in the editor: editor.word-wrap (on by default), unless View >
 // Word Wrap (Option+Z) turned it over since, for every window, until the
-// setting itself changes or minicode quits, as VS Code's toggle does.
+// setting itself changes or mutible quits, as VS Code's toggle does.
 extern NSNotificationName const MCEditorWrapDidChangeNotification;
 BOOL MCEditorWordWrap(void);
 void MCEditorToggleWordWrap(void);

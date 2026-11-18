@@ -16,7 +16,7 @@
 
 namespace Backups {
 
-static const char *const kMagic = "minicode-backup 1";
+static const char *const kMagic = "mutible-backup 1";
 static const char *const kSuffix = ".mcbackup";
 
 std::string lineEndingsOf(const std::string &text) {
@@ -137,7 +137,7 @@ bool decodeHeader(const std::string &data, Entry *e, size_t *textStart) {
             out.bytes = std::strtoull(v.c_str(), &stop, 10);
             haveBytes = true;
         }
-        // Unknown keys are skipped, so a later minicode can add some.
+        // Unknown keys are skipped, so a later mutible can add some.
     }
     if (!haveId || !haveBytes || !validId(out.id) || out.path.empty()) return false;
     *e = out;

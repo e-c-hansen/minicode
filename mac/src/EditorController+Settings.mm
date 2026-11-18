@@ -4,7 +4,7 @@
 
 @implementation EditorController (Settings)
 
-// minicode's own rewrites of settings.conf (View > Theme, the IDE link)
+// mutible's own rewrites of settings.conf (View > Theme, the IDE link)
 // ask every window first: a tab holding the file with unsaved changes
 // refuses them, as Replace in Folder leaves such files alone, and the
 // reason shows in the front window's status bar.

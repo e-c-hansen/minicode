@@ -9,7 +9,7 @@ namespace {
 const NSTimeInterval kPauseAfterTyping = 0.5;
 
 dispatch_queue_t SpellQueue() {
-    static dispatch_queue_t q = dispatch_queue_create("minicode.spell", DISPATCH_QUEUE_SERIAL);
+    static dispatch_queue_t q = dispatch_queue_create("mutible.spell", DISPATCH_QUEUE_SERIAL);
     return q;
 }
 }  // namespace

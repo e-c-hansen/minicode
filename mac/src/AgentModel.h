@@ -17,8 +17,8 @@
 // scratchpads' folder trigger a refresh (coalesced, about 0.5 s after a
 // write, so the panel follows within the 2 s the spec allows).
 //
-// Where Claude Code's files are: $MINICODE_CLAUDE_PROJECTS, else
-// ~/.claude/projects; $MINICODE_CLAUDE_TMP, else /private/tmp/claude-<uid>
+// Where Claude Code's files are: $MUTIBLE_CLAUDE_PROJECTS, else
+// ~/.claude/projects; $MUTIBLE_CLAUDE_TMP, else /private/tmp/claude-<uid>
 // (the GUI checks point both at scratch copies of tests/fixtures/claude).
 #import <Cocoa/Cocoa.h>
 

@@ -6,7 +6,7 @@
 //
 // One file per tab, `<id>.mcbackup`: a short header, which is that backup's
 // index entry, then the buffer's text exactly as it is. There is no shared
-// index file, so two windows, or two minicode processes (`minicode -n`), never
+// index file, so two windows, or two mutible processes (`mutible -n`), never
 // race over one; a backup is written whole to a temporary file and renamed
 // into place, so a reader sees the old one or the new one, never half.
 #pragma once

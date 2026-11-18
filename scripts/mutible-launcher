@@ -1,21 +1,21 @@
 #!/bin/bash
-# CLI launcher for minicode, installed onto PATH as `minicode`. `minicode -h`
-# says what it does. Paths go to the running minicode, so a file opens as a
+# CLI launcher for mutible, installed onto PATH as `mutible`. `mutible -h`
+# says what it does. Paths go to the running mutible, so a file opens as a
 # tab in an existing window; the terminal is free again at once.
 
 usage() {
   cat <<'EOF'
-Usage: minicode [options] [path ...]
+Usage: mutible [options] [path ...]
 
-Opens folders and files in minicode. With no path, opens the current folder.
+Opens folders and files in mutible. With no path, opens the current folder.
 
-  minicode              open the current folder
-  minicode ~/project    open a folder, or bring forward the window showing it
-  minicode notes.md     open a file as a tab in the window whose folder holds
+  mutible              open the current folder
+  mutible ~/project    open a folder, or bring forward the window showing it
+  mutible notes.md     open a file as a tab in the window whose folder holds
                         it, else in the window in front (so, typed in
-                        minicode's own terminal, in that window)
-  minicode a.py b.py    open several files at once
-  minicode https://example.com
+                        mutible's own terminal, in that window)
+  mutible a.py b.py    open several files at once
+  mutible https://example.com
                         open a web page in a browser tab of the browser
                         window, the window on your bookmark folder
                         (~/Bookmarks, or browser.bookmarks in settings);
@@ -30,7 +30,7 @@ Options:
                      and files open there even when another window's folder
                      holds them
   -n, --new-window   open the path in a new window of its own, a separate
-                     minicode, even when a window already shows it
+                     mutible, even when a window already shows it
   -v, --version      print the version
   -h, --help         print this help
 
@@ -39,15 +39,15 @@ rules as a file named here. A web bookmark (a .url or .webloc file) opens
 its page in the browser window instead; several opened together open as
 tabs of it.
 
-  minicode install-skill [--dir DIR]
+  mutible install-skill [--dir DIR]
                      install the Claude Code skill that teaches Claude to
-                     show its work in minicode, in DIR (by default
-                     ~/.claude/skills/minicode, or under $CLAUDE_CONFIG_DIR);
+                     show its work in mutible, in DIR (by default
+                     ~/.claude/skills/mutible, or under $CLAUDE_CONFIG_DIR);
                      run it again after an upgrade
 
-Subcommands drive the running minicode instead, without bringing it to the
+Subcommands drive the running mutible instead, without bringing it to the
 front (a word below is always a subcommand; write ./open for a file of that
-name). `minicode help <command>` says more about one.
+name). `mutible help <command>` says more about one.
 
 EOF
   if [ -x "$cli" ]; then "$cli" help
@@ -78,37 +78,37 @@ done
 dir="$(cd -P "$(dirname "$src")" && pwd)"
 # The launcher lives in Contents/Resources, the binary in Contents/MacOS.
 bundle="$(cd -P "$dir/../.." && pwd)"
-binary="$bundle/Contents/MacOS/MiniCode"
-# The control channel's client: `minicode open`, `state`, `term` and the
-# other subcommands talk to the running minicode through it.
-cli="$bundle/Contents/MacOS/minicode-cli"
+binary="$bundle/Contents/MacOS/Mutible"
+# The control channel's client: `mutible open`, `state`, `term` and the
+# other subcommands talk to the running mutible through it.
+cli="$bundle/Contents/MacOS/mutible-cli"
 
 # Installs the Claude Code skill shipped in the bundle (or, run from a
 # checkout's scripts/, the checkout's own), as `make install` does.
 install_skill() {
-  local skill="$bundle/Contents/Resources/skills/minicode/SKILL.md"
-  [ -f "$skill" ] || skill="$dir/../skills/minicode/SKILL.md"
+  local skill="$bundle/Contents/Resources/skills/mutible/SKILL.md"
+  [ -f "$skill" ] || skill="$dir/../skills/mutible/SKILL.md"
   if [ ! -f "$skill" ]; then
-    echo "minicode: this copy has no skill to install" >&2
+    echo "mutible: this copy has no skill to install" >&2
     return 3
   fi
-  local to="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/minicode"
+  local to="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/mutible"
   local given=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --dir) [ -n "$2" ] || { echo "minicode: --dir needs a folder" >&2; return 2; }
+      --dir) [ -n "$2" ] || { echo "mutible: --dir needs a folder" >&2; return 2; }
              to="$2"; given=1; shift ;;
-      -h|--help) echo "Usage: minicode install-skill [--dir DIR]"; return 0 ;;
-      *) echo "minicode: install-skill: unexpected $1" >&2; return 2 ;;
+      -h|--help) echo "Usage: mutible install-skill [--dir DIR]"; return 0 ;;
+      *) echo "mutible: install-skill: unexpected $1" >&2; return 2 ;;
     esac
     shift
   done
   if cmp -s "$skill" "$to/SKILL.md"; then
-    echo "The minicode skill in $to is up to date"
+    echo "The mutible skill in $to is up to date"
     return 0
   fi
   mkdir -p "$to" && cp "$skill" "$to/SKILL.md" || return 1
-  echo "Installed the minicode skill in $to"
+  echo "Installed the mutible skill in $to"
   # The skill as installed before the rename is left alone; say where it is,
   # so Claude Code does not load both.
   local old="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/minicode"   # rename-mutible: keep
@@ -124,9 +124,9 @@ case "$1" in
   install-skill) shift; install_skill "$@"; exit $? ;;
   open|window|browse|term|diff|split|state|selection|term-output|tour|procs|notify|hooks|page|open-url|host|attach|help)
     if [ ! -x "$cli" ]; then
-      # A hook runs `minicode notify`; it must never fail because of us.
+      # A hook runs `mutible notify`; it must never fail because of us.
       if [ "$1" = notify ]; then [ -t 0 ] || cat >/dev/null 2>&1; exit 0; fi
-      echo "minicode: this copy has no control channel ($cli is missing)" >&2
+      echo "mutible: this copy has no control channel ($cli is missing)" >&2
       exit 3
     fi
     exec "$cli" "$@" ;;
@@ -141,14 +141,14 @@ while [ $# -gt 0 ]; do
     -v|--version)
       v="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
            "$bundle/Contents/Info.plist" 2>/dev/null)"
-      echo "minicode ${v:-unknown}"
+      echo "mutible ${v:-unknown}"
       exit 0 ;;
     -n|--new-window) new_window=1 ;;
     -r|--reuse-window) reuse=1 ;;
     --) shift; paths+=("$@"); break ;;
     -?*)
-      echo "minicode: unknown option $1" >&2
-      echo "Try 'minicode --help'." >&2
+      echo "mutible: unknown option $1" >&2
+      echo "Try 'mutible --help'." >&2
       exit 2 ;;
     *) paths+=("$1") ;;
   esac
@@ -175,14 +175,14 @@ web=()
 for u in "${urls[@]}"; do
   case "$u" in
     *[[:space:][:cntrl:]]*|[Hh][Tt][Tt][Pp]://|[Hh][Tt][Tt][Pp][Ss]://|*://[/?#]*)
-      echo "minicode: $u: not a web address" >&2
+      echo "mutible: $u: not a web address" >&2
       status=1 ;;
     *) web+=("$u") ;;
   esac
 done
 for p in "${paths[@]}"; do
   if [ ! -e "$p" ]; then
-    echo "minicode: $p: no such file or directory" >&2
+    echo "mutible: $p: no such file or directory" >&2
     status=1
     continue
   fi
@@ -193,32 +193,32 @@ done
 
 # For tests: print what would run instead of running it.
 run() {
-  if [ -n "$MINICODE_LAUNCHER_DRYRUN" ]; then printf '%q ' "$@"; echo
+  if [ -n "$MUTIBLE_LAUNCHER_DRYRUN" ]; then printf '%q ' "$@"; echo
   else "$@"; fi
 }
 
 if [ $new_window = 1 ] && [ $reuse = 1 ]; then
-  echo "minicode: --new-window and --reuse-window do not go together" >&2
+  echo "mutible: --new-window and --reuse-window do not go together" >&2
   exit 2
 fi
 
 # Launch Services passes only paths, so -r goes as a request file the app
-# reads and deletes: "minicode-open-1", "reuse", the paths, each ended by a
-# NUL, in $TMPDIR/MiniCode-open (the app reads that folder only). Web
+# reads and deletes: "mutible-open-1", "reuse", the paths, each ended by a
+# NUL, in $TMPDIR/Mutible-open (the app reads that folder only). Web
 # addresses go the same way, as "web" and the addresses.
 request() {
   local mode="$1"; shift
   req_dir="${TMPDIR:-/tmp}"
-  req_dir="${req_dir%/}/MiniCode-open"
+  req_dir="${req_dir%/}/Mutible-open"
   mkdir -p "$req_dir" || exit 1
   tmp="$(mktemp "$req_dir/request.XXXXXX")" || exit 1
-  { printf 'minicode-open-1\0%s\0' "$mode"; printf '%s\0' "$@"; } >"$tmp"
-  req="$tmp.minicode-open"
+  { printf 'mutible-open-1\0%s\0' "$mode"; printf '%s\0' "$@"; } >"$tmp"
+  req="$tmp.mutible-open"
   mv "$tmp" "$req" || exit 1
 }
 
 if [ $new_window = 1 ] && [ ${#web[@]} -gt 0 ]; then
-  echo "minicode: --new-window opens a path, not a web address" >&2
+  echo "mutible: --new-window opens a path, not a web address" >&2
   exit 2
 fi
 
@@ -235,14 +235,14 @@ if [ $new_window = 1 ]; then
   # A process of its own, as the launcher used to start every time; the
   # binary takes one path.
   if [ ${#found[@]} -gt 1 ]; then
-    echo "minicode: --new-window opens one path; opening ${found[0]}" >&2
+    echo "mutible: --new-window opens one path; opening ${found[0]}" >&2
   fi
-  if [ -n "$MINICODE_LAUNCHER_DRYRUN" ]; then run "$binary" "${found[0]}"
+  if [ -n "$MUTIBLE_LAUNCHER_DRYRUN" ]; then run "$binary" "${found[0]}"
   else "$binary" "${found[0]}" >/dev/null 2>&1 & fi
-elif ps -axo comm= | grep -q "/MiniCode$"; then
-  # A minicode is running, maybe another copy of the app (a build that
+elif ps -axo comm= | grep -q "/Mutible$"; then
+  # A mutible is running, maybe another copy of the app (a build that
   # Request a Change restarted into): hand the paths to it.
-  run open -b com.minicode.editor "${found[@]}"
+  run open -b ai.ible.mutible "${found[@]}"
 else
   run open -a "$bundle" "${found[@]}"
 fi

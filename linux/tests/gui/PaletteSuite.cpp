@@ -263,7 +263,7 @@ MC_GUI_SUITE(palette) {
         GCHECK_EQ_STR(pal()->labels().empty() ? "" : pal()->labels()[0], "View > Show Hidden Files");
         GCHECK_EQ_STR(selectedLabel(), "View > Show Hidden Files");
         const std::vector<std::string> recent = stateList("commands");
-        GCHECK(!recent.empty() && recent[0] == "minicode.toggleHiddenFiles");
+        GCHECK(!recent.empty() && recent[0] == "mutible.toggleHiddenFiles");
         MCGuiKey("down");
     });
     MCGuiWait("Down chooses the next", 10, [] { return pal()->selected() == 1; });

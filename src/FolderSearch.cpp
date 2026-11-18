@@ -2082,7 +2082,7 @@ bool writeFileAtomically(const std::string& path, const std::string& content,
     const std::size_t slash = target.rfind('/');
     const std::string dir = slash == std::string::npos ? "." : target.substr(0, slash + 1);
     const std::string base = slash == std::string::npos ? target : target.substr(slash + 1);
-    std::string tmp = dir + "." + base + ".minicode-XXXXXX";
+    std::string tmp = dir + "." + base + ".mutible-XXXXXX";
     std::vector<char> name(tmp.begin(), tmp.end());
     name.push_back('\0');
     const int fd = ::mkstemp(name.data());

@@ -126,7 +126,7 @@ found through that list.
   undoing a letter typed at 20,000 selections ran for minutes. Its handler
   checks that each range still holds what was inserted (allowing one
   change made outside the undo history to have moved them) and otherwise
-  beeps and logs (`os_log`, subsystem com.minicode.editor), never putting
+  beeps and logs (`os_log`, subsystem ai.ible.mutible), never putting
   old text over something else; it gave up silently on any length change.
   From 64 ranges on, the glyphs from the first range to the last are
   invalidated once before the edits (2026-11-07): each storage edit
@@ -289,8 +289,8 @@ found through that list.
 - Regions recompute off the main thread 0.3 s after typing (generation
   counted); `textDocument/foldingRange` is asked at 0.6 s and wins for its
   text. Chevrons show while the pointer is over the gutter.
-- Keys: VS Code's Option+Cmd+[ ] are minicode's terminal switching and its
-  other fold keys are Cmd+K chords, which minicode has none of, so View >
+- Keys: VS Code's Option+Cmd+[ ] are mutible's terminal switching and its
+  other fold keys are Cmd+K chords, which mutible has none of, so View >
   Folding is Control+Command plus the chord's second key ([ ] L 0 J / and 1 to
   7). Control+[ types ESC: test these as real key codes.
 - Trap: one region at a time was quadratic (6 s and 18 s for Fold All and
@@ -382,7 +382,7 @@ found through that list.
   leaves an empty undo group on top that a real key press never opens.
 - Line commands: Cmd+L (`expandLineSelection`), Ctrl+Shift+K (`deleteLines`),
   Cmd+C and Cmd+X with nothing selected take whole lines (`lineCopy`) and mark
-  the item `org.minicode.editor.line-copy`; pasting such an item with nothing
+  the item `ai.ible.mutible.line-copy`; pasting such an item with nothing
   selected goes above the caret's line (`pasteLinesAbove`). Only while
   editable; `copy:` and `cut:` validate with an empty selection there.
 

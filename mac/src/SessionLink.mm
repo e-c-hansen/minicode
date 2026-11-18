@@ -19,7 +19,7 @@
 #include "SessionProtocol.h"
 
 static os_log_t SessionLog(void) {
-    static os_log_t log = os_log_create("com.minicode.editor", "session");
+    static os_log_t log = os_log_create("ai.ible.mutible", "session");
     return log;
 }
 
@@ -51,9 +51,9 @@ void DispatchOnMain() {
 }
 
 void Start() {
-    const char *mode = std::getenv("MINICODE_HOST");
+    const char *mode = std::getenv("MUTIBLE_HOST");
     gLoopback = mode && std::string(mode) == "loopback";
-    const char *delay = std::getenv("MINICODE_HOST_DELAY_US");
+    const char *delay = std::getenv("MUTIBLE_HOST_DELAY_US");
     const unsigned delayUs = delay ? (unsigned)std::strtoul(delay, nullptr, 10) : 0;
     gClient = new Shared::Client(Model::Unit::Utf16, "mac");
     // The host's messages arrive on its thread; the main queue dispatches
@@ -86,7 +86,7 @@ void Start() {
 
 BOOL MCSessionHostEnabled(void) {
     static const BOOL forced = [] {
-        const char *e = std::getenv("MINICODE_SESSION_HOST");
+        const char *e = std::getenv("MUTIBLE_SESSION_HOST");
         return (BOOL)(e && (std::string(e) == "on" || std::string(e) == "1"));
     }();
     return forced || [AppSettings shared].settings.sessionHost();

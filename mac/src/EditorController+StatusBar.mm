@@ -28,13 +28,13 @@
     self.statusLabel = label;
     [self.statusBar addSubview:label];
 
-    // Far right: restart minicode, keeping its windows, tabs, unsaved
-    // changes, browser pages and a conversation with Claude (restartMinicode:).
+    // Far right: restart mutible, keeping its windows, tabs, unsaved
+    // changes, browser pages and a conversation with Claude (restartMutible:).
     NSButton *restart = [NSButton buttonWithTitle:@"↻" target:nil
-                                           action:NSSelectorFromString(@"restartMinicode:")];
+                                           action:NSSelectorFromString(@"restartMutible:")];
     restart.bordered = NO;
     restart.font = [NSFont systemFontOfSize:13];
-    restart.toolTip = @"Restart minicode, keeping its windows, tabs, unsaved changes "
+    restart.toolTip = @"Restart mutible, keeping its windows, tabs, unsaved changes "
                       @"and browser pages";
     restart.frame = NSMakeRect(container.bounds.size.width - 28, 1, 22, 20);
     restart.autoresizingMask = NSViewMinXMargin;
@@ -548,8 +548,8 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
                     key2:[self hk:@"editor.action.insertCursorAbove"] label2:@"Add cursor above" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.addSelectionToNextFindMatch"] label:@"Add next occurrence"
                     key2:[self hk:@"editor.action.selectHighlights"] label2:@"Select all occurrences" state:nil];
-    [self appendHintsRow:s key:[self hk:@"minicode.markdown.toggleTask"] label:@"Toggle task (Markdown)"
-                    key2:[self hk:@"minicode.showTodos"] label2:@"TODOs in folder" state:nil];
+    [self appendHintsRow:s key:[self hk:@"mutible.markdown.toggleTask"] label:@"Toggle task (Markdown)"
+                    key2:[self hk:@"mutible.showTodos"] label2:@"TODOs in folder" state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.openSettings"] label:@"Settings"
                     key2:[self hk:@"editor.action.triggerSuggest"] label2:@"Complete" state:nil];
     [self appendHintsRow:s key:[self hk:@"inlineChat.start"] label:@"Inline agent"
@@ -566,8 +566,8 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
                     key2:[self hk:@"editor.action.organizeImports"] label2:@"Organize imports" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.formatDocument"] label:@"Format document"
                     key2:@"⇥" label2:@"Take completion" state:nil];
-    [self appendHintsRow:s key:[self hk:@"minicode.sortLines"] label:@"Sort lines"
-                    key2:[self hk:@"minicode.sortKeepSortedBlocks"] label2:@"Sort keep-sorted blocks" state:nil];
+    [self appendHintsRow:s key:[self hk:@"mutible.sortLines"] label:@"Sort lines"
+                    key2:[self hk:@"mutible.sortKeepSortedBlocks"] label2:@"Sort keep-sorted blocks" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.indentLines"] label:@"Indent lines (or ⇥)"
                     key2:[self hk:@"editor.action.outdentLines"] label2:@"Outdent lines (or ⇧⇥)" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.insertLineAfter"] label:@"Insert line below"
@@ -585,15 +585,15 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
 
     [self appendHintsHeading:@"Files" to:s];
     [self appendHintsRow:s key:[self hk:@"workbench.action.newWindow"] label:@"New window"
-                    key2:[self hk:@"minicode.tree.newFolder"] label2:@"New folder (in the tree)" state:nil];
+                    key2:[self hk:@"mutible.tree.newFolder"] label2:@"New folder (in the tree)" state:nil];
     [self appendHintsRow:s key:@"⌘⌫" label:@"Trash (in the tree)"
                     key2:[self hk:@"workbench.files.action.refreshFilesExplorer"] label2:@"Refresh tree" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.rename"] label:@"Rename (in the tree)"
                     key2:@"Space" label2:@"Quick Look (in the tree)" state:nil];
-    [self appendHintsRow:s key:[self hk:@"minicode.toggleHiddenFiles"] label:@"Show hidden files"
-                    key2:[self hk:@"minicode.tree.toggleSizes"] label2:@"Sizes" state:nil];
-    [self appendHintsRow:s key:[self hk:@"minicode.tree.toggleSaved"] label:@"When last saved"
-                    key2:[self hk:@"minicode.tree.toggleCreated"] label2:@"When created" state:nil];
+    [self appendHintsRow:s key:[self hk:@"mutible.toggleHiddenFiles"] label:@"Show hidden files"
+                    key2:[self hk:@"mutible.tree.toggleSizes"] label2:@"Sizes" state:nil];
+    [self appendHintsRow:s key:[self hk:@"mutible.tree.toggleSaved"] label:@"When last saved"
+                    key2:[self hk:@"mutible.tree.toggleCreated"] label2:@"When created" state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.files.saveAll"] label:@"Save all"
                     key2:[self hk:@"workbench.action.openRecent"] label2:@"Open recent folder" state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.closeOtherEditors"] label:@"Close other tabs"
@@ -611,9 +611,9 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
     [self appendHintsRow:s key:[self hk:@"workbench.action.focusSideBar"] label:@"Focus tree"
                     key2:[self hk:@"workbench.action.focusFirstEditorGroup"] label2:@"Focus editor (left group)" state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.focusSecondEditorGroup"] label:@"Focus right group"
-                    key2:[self hk:@"minicode.focusBrowser"] label2:@"Focus browser" state:nil];
-    [self appendHintsRow:s key:[self hk:@"minicode.runFile"] label:@"Run the file in the terminal"
-                    key2:[self hk:@"minicode.requestChange"] label2:@"Request a change to minicode" state:nil];
+                    key2:[self hk:@"mutible.focusBrowser"] label2:@"Focus browser" state:nil];
+    [self appendHintsRow:s key:[self hk:@"mutible.runFile"] label:@"Run the file in the terminal"
+                    key2:[self hk:@"mutible.requestChange"] label2:@"Request a change to mutible" state:nil];
     [self appendHintsRow:s key:@"↑ ↓" label:@"Browse tree"
                     key2:@"⏎" label2:@"Open file" state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.toggleSidebarVisibility"] label:@"Toggle sidebar"
@@ -636,14 +636,14 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
                     key2:[self hk:@"workbench.action.quit"] label2:@"Quit" state:nil];
 
     [self appendHintsHeading:@"Panes" to:s];
-    [self appendHintsRow:s key:[self hk:@"minicode.toggleEditor"] label:@"Editor"
+    [self appendHintsRow:s key:[self hk:@"mutible.toggleEditor"] label:@"Editor"
                     key2:nil label2:nil state:openOr(!self.editorHidden)];
     [self appendHintsRow:s key:@"⇧⌘T" label:[self hkAlso:@"workbench.action.terminal.toggleTerminal" title:@"Terminal"]
                     key2:nil label2:nil state:openOr(self.terminalVisible)];
     if (self.terminalVisible) {
         [self appendHintsRow:s
                          key:[NSString stringWithFormat:@"%@ %@", [self hk:@"workbench.action.terminal.new"],
-                              [self hk:@"minicode.terminal.newTab"]]
+                              [self hk:@"mutible.terminal.newTab"]]
                        label:@"New terminal (⌘T in one)"
                         key2:[self hk:@"workbench.action.terminal.split"] label2:@"Split terminal" state:nil];
         [self appendHintsRow:s key:[self hk:@"workbench.action.terminal.focusNext"] label:@"Next terminal"
@@ -658,7 +658,7 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
                         key2:nil label2:nil state:nil];
         [self appendHintsRow:s key:[self hk:@"actions.find"] label:@"Find in the terminal"
                         key2:[self hk:@"workbench.action.terminal.clear"] label2:@"Clear the terminal" state:nil];
-        [self appendHintsRow:s key:[self hk:@"minicode.terminal.clearToPreviousMark"]
+        [self appendHintsRow:s key:[self hk:@"mutible.terminal.clearToPreviousMark"]
                        label:@"Remove the last command and its output"
                         key2:nil label2:nil state:nil];
         [self appendHintsRow:s
@@ -682,33 +682,33 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
                           label2:@"Select it" state:nil];
         }
     }
-    [self appendHintsRow:s key:[self hk:@"minicode.toggleBrowser"] label:@"Browser"
+    [self appendHintsRow:s key:[self hk:@"mutible.toggleBrowser"] label:@"Browser"
                     key2:nil label2:nil state:openOr(self.browserVisible)];
     if (self.browserVisible) {
         // The browser's tabs, while it has the keyboard: Cmd+T (a page key)
         // and the editor's tab keys, which the pane answers itself.
-        [self appendHintsRow:s key:[self hk:@"minicode.browser.newTab"] label:@"New browser tab"
+        [self appendHintsRow:s key:[self hk:@"mutible.browser.newTab"] label:@"New browser tab"
                         key2:[self hk:@"workbench.action.nextEditor"]
                       label2:@"Next browser tab" state:nil];
         [self appendHintsRow:s key:[self hk:@"actions.find"] label:@"Find in the page"
-                        key2:[self hk:@"minicode.browser.saveBookmark"]
+                        key2:[self hk:@"mutible.browser.saveBookmark"]
                       label2:@"Save as bookmark" state:nil];
         // A page's own keys, kept off the menus (Keymap.mm).
-        [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"minicode.page.zoomIn"],
-                                    [self hk:@"minicode.page.zoomOut"]]
+        [self appendHintsRow:s key:[NSString stringWithFormat:@"%@ %@", [self hk:@"mutible.page.zoomIn"],
+                                    [self hk:@"mutible.page.zoomOut"]]
                        label:@"Zoom the page or a PDF"
-                        key2:[self hk:@"minicode.page.actualSize"] label2:@"Actual size" state:nil];
+                        key2:[self hk:@"mutible.page.actualSize"] label2:@"Actual size" state:nil];
     }
-    [self appendHintsRow:s key:[self hk:@"minicode.toggleMaximizedPane"] label:@"Maximize pane"
+    [self appendHintsRow:s key:[self hk:@"mutible.toggleMaximizedPane"] label:@"Maximize pane"
                     key2:nil label2:nil
                    state:self.maximizedPane != MCPaneNone ? @"maximized" : nil];
     [self appendHintsRow:s key:[self hk:@"workbench.view.scm"] label:@"Source control"
                     key2:nil label2:nil state:openOr(self.gitPanelVisible)];
-    [self appendHintsRow:s key:[self hk:@"minicode.toggleAgents"] label:@"Agents"
+    [self appendHintsRow:s key:[self hk:@"mutible.toggleAgents"] label:@"Agents"
                     key2:nil label2:nil state:openOr(self.agentsVisible)];
-    [self appendHintsRow:s key:[self hk:@"minicode.agent.newTask"] label:@"New agent task"
+    [self appendHintsRow:s key:[self hk:@"mutible.agent.newTask"] label:@"New agent task"
                     key2:nil label2:nil state:nil];
-    [self appendHintsRow:s key:[self hk:@"minicode.toggleProcesses"] label:@"Processes"
+    [self appendHintsRow:s key:[self hk:@"mutible.toggleProcesses"] label:@"Processes"
                     key2:nil label2:nil state:openOr(self.processesVisible)];
     [self appendHintsRow:s key:[self hk:@"workbench.actions.view.problems"] label:@"Problems"
                     key2:nil label2:nil state:openOr(self.problemsVisible)];
@@ -733,18 +733,18 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
         [self appendHintsRow:s key:[self hk:@"markdown.showPreviewToSide"]
                        label:@"Preview to the side" key2:nil label2:nil
                        state:[self sidePreviewShowing] ? @"open" : nil];
-        [self appendHintsRow:s key:[self hk:@"minicode.markdown.exportHtml"]
+        [self appendHintsRow:s key:[self hk:@"mutible.markdown.exportHtml"]
                        label:@"Export as HTML (File menu)" key2:nil label2:nil state:nil];
     } else if (self.isLatex) {
         [self appendHintsRow:s key:[self hk:@"markdown.showPreview"] label:@"LaTeX preview"
                         key2:nil label2:nil
                        state:self.previewMode ? @"typeset" : @"source"];
-        [self appendHintsRow:s key:[self hk:@"minicode.latex.exportPDF"] label:@"Export PDF"
+        [self appendHintsRow:s key:[self hk:@"mutible.latex.exportPDF"] label:@"Export PDF"
                         key2:[self hk:@"latex-workshop.synctex"] label2:@"Cursor's line in PDF"
                        state:nil];
     }
     if (self.isMedia) {
-        [self appendHintsRow:s key:[self hk:@"minicode.togglePlayback"] label:@"Play or pause"
+        [self appendHintsRow:s key:[self hk:@"mutible.togglePlayback"] label:@"Play or pause"
                         key2:[self hk:@"workbench.action.focusFirstEditorGroup"] label2:@"Focus the player" state:nil];
     }
     if (self.isDiff && _activeTab.comparison) {
@@ -752,13 +752,13 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
                         key2:[self hk:@"editor.action.accessibleDiffViewer.prev"] label2:@"Previous difference" state:nil];
     }
     if (_notes.tourActive) {
-        [self appendHintsRow:s key:[self hk:@"minicode.tour.next"] label:@"Next stop of the tour"
-                        key2:[self hk:@"minicode.tour.previous"] label2:@"Previous stop" state:nil];
+        [self appendHintsRow:s key:[self hk:@"mutible.tour.next"] label:@"Next stop of the tour"
+                        key2:[self hk:@"mutible.tour.previous"] label2:@"Previous stop" state:nil];
     }
 
     // A short gap, not a whole empty heading, before the way out.
     [s addObject:@{@"gap": @YES}];
-    [self appendHintsRow:s key:[self hk:@"minicode.toggleShortcutHints"] label:@"Hide these hints"
+    [self appendHintsRow:s key:[self hk:@"mutible.toggleShortcutHints"] label:@"Hide these hints"
                     key2:nil label2:nil state:nil];
     return s;
 }

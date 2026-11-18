@@ -176,13 +176,13 @@ MC_GUI_SUITE(keymap) {
         GCHECK([c showFile:py]);
         WriteKeys(@"# the suite's keys\n"
                   @"ctrl+alt+cmd+k = editor.action.commentLine\n"   // a menu key, added
-                  @"f7 = minicode.sortLines\n"                      // a monitor key, added
+                  @"f7 = mutible.sortLines\n"                      // a monitor key, added
                   @"f9 = -\n"                                       // and one taken away
                   @"ctrl+shift+` = -\n"                             // the monitor's Ctrl+Shift+`
                   @"ctrl+alt+cmd+t = workbench.action.terminal.new\n"
                   @"cmd+k = -\n"                                    // Clear Terminal's
-                  @"ctrl+alt+cmd+j = minicode.toggleBrowser\n"
-                  @"ctrl+alt+cmd+j = minicode.toggleAgents\n");     // a conflict
+                  @"ctrl+alt+cmd+j = mutible.toggleBrowser\n"
+                  @"ctrl+alt+cmd+j = mutible.toggleAgents\n");     // a conflict
         NSArray<NSString *> *errors = [MCKeymap shared].errors;
         GCHECK(errors.count == 1);
         GCHECK([errors.firstObject hasPrefix:@"line 9:"]);

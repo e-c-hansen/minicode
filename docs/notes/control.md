@@ -6,13 +6,13 @@ found through that list.
 
 ## The control channel, notes and tours (Mac)
 
-- Each minicode listens on `$TMPDIR/MiniCode/<pid>.sock` (0600 in a 0700
+- Each mutible listens on `$TMPDIR/Mutible/<pid>.sock` (0600 in a 0700
   folder; another uid refused by `getpeereid`, closed with no answer, which
   the CLI reports as "closed the connection without answering" whether the
   close beats its write (EPIPE) or its read; removed on exit; at startup
   sockets of dead pids, and of live pids where nothing listens, are removed).
   Use `getenv("TMPDIR")`: `NSTemporaryDirectory()` ignores it; without it,
-  `confstr(_CS_DARWIN_USER_TEMP_DIR)`. `MINICODE_CONTROL_DIR` overrides both
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)`. `MUTIBLE_CONTROL_DIR` overrides both
   sides (tests). One JSON object per line, checked against
   `ControlProtocol`'s table of commands and arguments (unknown or wrongly
   typed is an error answer, never a crash), handled on the main thread within
@@ -21,7 +21,7 @@ found through that list.
   answer is out), writes are non-blocking with a write source, and a peer
   that takes nothing for 10 s is dropped, so one client can neither queue
   unbounded main-thread work nor hold up the others.
-- A headless session host (`minicode host --folder DIR`) puts
+- A headless session host (`mutible host --folder DIR`) puts
   `host-<hash>.sock` and its `.lock` in the same folder
   (`ControlChannel::socketFolders()`, shared by the CLI); the sweep of dead
   pids' sockets skips them, and the CLI never picks one (no pid in the
@@ -29,15 +29,15 @@ found through that list.
   "The headless host". `--web PORT` (on `host` or `attach`) also serves a
   read-only view to a browser on 127.0.0.1 (session-host.md, "The browser's
   view").
-- `tools/minicode-cli.cpp` builds `Contents/MacOS/minicode-cli`, which the
+- `tools/mutible-cli.cpp` builds `Contents/MacOS/mutible-cli`, which the
   launcher execs for subcommands: newest live socket (or `--pid`) in the
-  shell's `$TMPDIR/MiniCode` and the user's own temporary folder's (a nix
+  shell's `$TMPDIR/Mutible` and the user's own temporary folder's (a nix
   shell's TMPDIR differs from the app's), only in folders that are the
   user's, real and 0700, moving on to the next when one refuses the
-  connection; starting minicode and waiting 10 s when none runs, except for
+  connection; starting mutible and waiting 10 s when none runs, except for
   reads (`state`, `selection`, `term-output`, `procs`, `page`), which exit 3
   at once, and `notify` and `open-url` (`ControlProtocol::launchesApp`); a
-  running minicode with no socket (older than the channel) gets "quit and
+  running mutible with no socket (older than the channel) gets "quit and
   open it again", nothing launched. Exit codes 0, 1 command error, 2 usage, 3
   no app.
 - Commands: `open path[:line[:col]]` (`--to`, `--note`, `--from`, `--keep`),
@@ -84,7 +84,7 @@ found through that list.
   text before its note is placed (`notesCatchUpWithDisk`), or the reload a
   moment later closed it. Tours step with Option+] and [ (keymap commands
   enabled only during a tour) and show "2 of 3".
-- `skills/minicode/SKILL.md` (under 150 lines; `minicode install-skill` or
+- `skills/mutible/SKILL.md` (under 150 lines; `mutible install-skill` or
   `make install`): show work as
   notes, a diff and tests in a terminal; open code with a note when asked where
   something is; read `state` and `selection` for "this"; never rearrange the
@@ -128,7 +128,7 @@ found through that list.
   empty at didFinish, so `--wait` reads `document.title`; a GUI check's
   command line is built when queued, so start a test server before
   queueing steps. `BrowserPagesSuite` serves pages from a server inside the
-  test process (127.0.0.1 and ::1); 20 checks grow minicode plus the agent
+  test process (127.0.0.1 and ::1); 20 checks grow mutible plus the agent
   page's WebKit process by about 0 MB (the page process itself is 25-35 MB).
 - Ground rules for this and the agent workspace: nothing runs because a folder
   or file was opened; Claude Code's data is read, never written, moved or

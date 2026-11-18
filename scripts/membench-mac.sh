@@ -1,5 +1,5 @@
 #!/bin/bash
-# Measure how much memory MiniCode needs for a day-to-day workload, and how
+# Measure how much memory Mutible needs for a day-to-day workload, and how
 # much the usual alternative needs for the same work: VS Code, plus Chrome for
 # the web page and Preview for the typeset PDF.
 #
@@ -16,7 +16,7 @@
 #   - demo/paper/notes.tex typeset by tectonic, and the PDF on screen
 #   - one web page open
 #
-# MiniCode does all of it in one window: its own terminal, browser panel and
+# Mutible does all of it in one window: its own terminal, browser panel and
 # LaTeX preview. The other side is a separate VS Code instance with a scratch
 # profile and only the clangd extension, a Chrome window with a fresh profile,
 # and Preview showing the PDF, which tectonic typesets from VS Code's terminal.
@@ -35,18 +35,18 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PROCMEM="$REPO/build/procmem-mac"
-MINICODE="$REPO/MiniCode.app/Contents/MacOS/MiniCode"
+MUTIBLE="$REPO/Mutible.app/Contents/MacOS/Mutible"
 VSCODE_APP="/Applications/Visual Studio Code.app"
 CHROME_APP="/Applications/Google Chrome.app"
-TECTONIC="$HOME/Library/Application Support/MiniCode/bin/tectonic"
+TECTONIC="$HOME/Library/Application Support/Mutible/bin/tectonic"
 TECTONIC_CACHE="$HOME/Library/Caches/TectonicProject.Tectonic"
 SETTLE="${SETTLE:-60}"
 SAMPLES="${SAMPLES:-5}"
 URL="${BENCH_URL:-https://en.wikipedia.org/wiki/Source-code_editor}"
-WORK=/private/tmp/minicode-bench
+WORK=/private/tmp/mutible-bench
 P="$WORK/project"
 
-for need in "$PROCMEM" "$MINICODE" "$VSCODE_APP" "$CHROME_APP" "$TECTONIC"; do
+for need in "$PROCMEM" "$MUTIBLE" "$VSCODE_APP" "$CHROME_APP" "$TECTONIC"; do
     [ -e "$need" ] || { echo "membench: missing $need" >&2; exit 1; }
 done
 CLANGD="$(xcrun -f clangd 2>/dev/null || true)"
@@ -92,7 +92,7 @@ own() {
                 if (p ~ /clangd/) c = "clangd"
                 else if (p ~ /\/(zsh|login|bash)$/) c = "shell"
                 else if (p ~ /WebKit/) c = "WebKit (web page, PDF)"
-                else if (p ~ /MiniCode/) c = "MiniCode"
+                else if (p ~ /Mutible/) c = "Mutible"
                 else if (p ~ /Visual Studio Code/) c = "VS Code"
                 else if (p ~ /Google Chrome/) c = "Chrome"
                 else if (p ~ /Preview/) c = "Preview"
@@ -142,31 +142,31 @@ wait_for() {   # wait_for <seconds> <description> <command...>
     exit 1
 }
 
-# ---------------------------------------------------------------- MiniCode
+# ---------------------------------------------------------------- Mutible
 
-echo "== MiniCode: launching (settles for ${SETTLE}s)"
+echo "== Mutible: launching (settles for ${SETTLE}s)"
 # Through LaunchServices, as Finder or the Dock would, and in the background
-# (-g). That makes macOS hold MiniCode, not this shell, responsible for the
+# (-g). That makes macOS hold Mutible, not this shell, responsible for the
 # WebKit helpers its browser starts, so they are counted as its own.
-MCAPP="$REPO/MiniCode.app"
-open -n -g -a "$MCAPP" --stdout "$WORK/minicode.log" --stderr "$WORK/minicode.log" \
+MCAPP="$REPO/Mutible.app"
+open -n -g -a "$MCAPP" --stdout "$WORK/mutible.log" --stderr "$WORK/mutible.log" \
     --env HOME="$WORK/home-mc" --env ZDOTDIR="$WORK/home-mc" \
-    --env MINICODE_SETTINGS="$WORK/home-mc/settings.conf" \
-    --env MINICODE_TECTONIC="$TECTONIC" --env TECTONIC_CACHE_DIR="$WORK/tectonic-cache" \
-    --env MINICODE_BENCH=1 --env MINICODE_BENCH_CPP="$P/tests/run_tests.cpp" \
-    --env MINICODE_BENCH_TEX="$P/demo/paper/notes.tex" --env MINICODE_BENCH_URL="$URL" \
+    --env MUTIBLE_SETTINGS="$WORK/home-mc/settings.conf" \
+    --env MUTIBLE_TECTONIC="$TECTONIC" --env TECTONIC_CACHE_DIR="$WORK/tectonic-cache" \
+    --env MUTIBLE_BENCH=1 --env MUTIBLE_BENCH_CPP="$P/tests/run_tests.cpp" \
+    --env MUTIBLE_BENCH_TEX="$P/demo/paper/notes.tex" --env MUTIBLE_BENCH_URL="$URL" \
     --args "$P"
 sleep 2
-mc="$(pgrep -n -f "$MCAPP/Contents/MacOS/MiniCode")"; started+=("$mc")
-wait_for 60 "MiniCode's workload" grep -q "minicode bench: ready" "$WORK/minicode.log"
+mc="$(pgrep -n -f "$MCAPP/Contents/MacOS/Mutible")"; started+=("$mc")
+wait_for 60 "Mutible's workload" grep -q "mutible bench: ready" "$WORK/mutible.log"
 clangd_under() { SNAP="$WORK/probe"; "$PROCMEM" >"$SNAP"; own "$1" | grep -q '^clangd'; }
-wait_for 90 "clangd under MiniCode" clangd_under "$mc"
+wait_for 90 "clangd under Mutible" clangd_under "$mc"
 sleep "$SETTLE"
-echo "== MiniCode: measuring"
-measure minicode "$mc"
+echo "== Mutible: measuring"
+measure mutible "$mc"
 stop "$mc"
-if [ "${ONLY:-}" = minicode ]; then
-    awk -F'\t' '{printf "  %-26s %6.0f MB\n", $1, $2 / 1048576}' "$WORK/results/minicode"
+if [ "${ONLY:-}" = mutible ]; then
+    awk -F'\t' '{printf "  %-26s %6.0f MB\n", $1, $2 / 1048576}' "$WORK/results/mutible"
     exit 0
 fi
 
@@ -198,7 +198,7 @@ EOF
 BENCHEXT="$WORK/vscode/bench-ext"
 mkdir -p "$BENCHEXT"
 cat >"$BENCHEXT/package.json" <<EOF
-{ "name": "membench", "publisher": "minicode", "version": "0.0.1",
+{ "name": "membench", "publisher": "mutible", "version": "0.0.1",
   "engines": { "vscode": "^1.80.0" }, "main": "extension.js",
   "activationEvents": ["onStartupFinished"] }
 EOF
@@ -245,13 +245,13 @@ mb() { awk '{printf "%.0f", $1 / 1048576}'; }
 total() { awk -F'\t' '{s += $2} END {print s}' "$1" | mb; }
 row() { sort -t$'\t' -k2 -nr "$1" | awk -F'\t' '{printf "  %-26s %6.0f MB\n", $1, $2 / 1048576}'; }
 {
-    echo "MiniCode membench, $(date '+%Y-%m-%d %H:%M')"
+    echo "Mutible membench, $(date '+%Y-%m-%d %H:%M')"
     echo "$(sw_vers -productName) $(sw_vers -productVersion), $(sysctl -n machdep.cpu.brand_string), $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
-    echo "MiniCode $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$REPO/MiniCode.app/Contents/Info.plist"), VS Code $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$VSCODE_APP/Contents/Info.plist"), Chrome $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$CHROME_APP/Contents/Info.plist")"
+    echo "Mutible $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$REPO/Mutible.app/Contents/Info.plist"), VS Code $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$VSCODE_APP/Contents/Info.plist"), Chrome $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$CHROME_APP/Contents/Info.plist")"
     echo "Settled ${SETTLE}s, median of ${SAMPLES} samples, physical footprint"
     echo
-    echo "MiniCode: $(total "$WORK/results/minicode") MB"
-    row "$WORK/results/minicode"
+    echo "Mutible: $(total "$WORK/results/mutible") MB"
+    row "$WORK/results/mutible"
     echo
     echo "VS Code + Chrome + Preview: $(total "$WORK/results/others") MB"
     row "$WORK/results/others"

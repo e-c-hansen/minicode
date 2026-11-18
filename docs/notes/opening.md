@@ -13,7 +13,7 @@ found through that list.
   `public.folder`, Office, iWork, OpenDocument and SQLite, and by extension
   TeX, Go, Rust, TOML, conf, ini, tsx and `.ts` (macOS types it as MPEG-2
   video). No `public.data` (VS Code has none either). Where nothing else claims
-  a type (.conf, .bib) minicode is the double-click app anyway.
+  a type (.conf, .bib) mutible is the double-click app anyway.
 - Open With, double-click and Dock drops arrive as odoc events at
   `application:openURLs:`: folders first (a window on it, else a new one), then
   each file to the window with the innermost root holding it, else the window
@@ -33,22 +33,22 @@ found through that list.
   through the argv code only.
 - **The Dock icon's menu** (2026-11-14, RecentFolders.mm): the recent
   folders go to `NSDocumentController noteNewRecentDocumentURL:` as well as
-  minicode's own list, so the Dock lists them with minicode closed too (a
+  mutible's own list, so the Dock lists them with mutible closed too (a
   folder URL is taken because Info.plist claims public.folder; checked in
   the real bundle). A pick arrives as an odoc at `application:openURLs:`.
   `applicationDockMenu:` adds New Window and Open Folder…
-  (`openFolderInNewWindow:`, minicode's folder picker over the window in
+  (`openFolderInNewWindow:`, mutible's folder picker over the window in
   front, then `openURLs:`; the window in front keeps its folder; see "The
   palette, symbols and Go Back"). The first launch seeds the Dock's list from
   the stored folders when it is empty; Clear Recently Opened clears both.
   How the Dock shows it needs the owner's eyes.
-- The launcher (`scripts/minicode-launcher`, `Contents/Resources/minicode`):
-  paths go to a running app with `open -b com.minicode.editor`, else `open -a`
+- The launcher (`scripts/mutible-launcher`, `Contents/Resources/mutible`):
+  paths go to a running app with `open -b ai.ible.mutible`, else `open -a`
   its own bundle (VS Code's `code` rules); `-r` writes a request file to
-  `$TMPDIR/MiniCode-open/*.minicode-open` (read by `MCTakeOpenRequest` only
+  `$TMPDIR/Mutible-open/*.mutible-open` (read by `MCTakeOpenRequest` only
   from the app's own temporary folder); `-n` runs the binary detached;
-  "running" is `ps -axo comm=` ending in `/MiniCode` (pgrep found nothing from
-  Claude Code's shell); `MINICODE_LAUNCHER_DRYRUN=1` prints the command.
+  "running" is `ps -axo comm=` ending in `/Mutible` (pgrep found nothing from
+  Claude Code's shell); `MUTIBLE_LAUNCHER_DRYRUN=1` prints the command.
 - **Never `lsregister` or `open` a build in the repo or a worktree**: Finder
   then offers that copy too. Check claims with a renamed copy registered
   outside /private/tmp (Launch Services ignores apps there), asked with

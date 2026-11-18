@@ -207,7 +207,7 @@ double ThreadCpuMillis() {
 
 - (instancetype)init {
     if ((self = [super init])) {
-        _queue = dispatch_queue_create("minicode.processes", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.processes", DISPATCH_QUEUE_SERIAL);
         _source = std::make_unique<MacSource>();
         [self reschedule];
         [self tick];
@@ -257,7 +257,7 @@ double ThreadCpuMillis() {
             pt.title = t.title.UTF8String ?: "";
             pt.shellPid = t.shellPid;
             pt.window = window;
-            // R7.4: the session `minicode notify` last named here, and when
+            // R7.4: the session `mutible notify` last named here, and when
             // (as process start times count: microseconds since 1970).
             MCTerminalAttention *attention = [MCTerminalAttention shared];
             if (NSString *session = [attention sessionIdForTerminal:t]) {
@@ -361,7 +361,7 @@ double ThreadCpuMillis() {
 
 @end
 
-// ------------------------------------------------------- minicode procs
+// ------------------------------------------------------- mutible procs
 void MCProcessesRegisterCommand(ControlChannel::Dispatcher &d, id<MCControlAppHost> hostIn) {
     __weak id<MCControlAppHost> weakHost = hostIn;
     d.on("procs", [weakHost](const ControlChannel::Request &req,

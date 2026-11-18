@@ -84,7 +84,7 @@ goes here first, with tests; the GUI only displays it.
   `SessionServer` (stage 6: a headless host for one folder on a Unix
   socket, `HostServer`, one per folder by a lock file, ending after its
   idle time with no renderer and nothing unsaved or running; `HostLink`, a
-  renderer's connection; `dumpSession`, `minicode attach --dump`'s text;
+  renderer's connection; `dumpSession`, `mutible attach --dump`'s text;
   `hostserver:*`; docs/notes/session-host.md), and `SessionFiles` (stage
   7's first read: `FsRead` lists one folder of the session's, confined to
   it by `confinedPath`, with the apps' trees' dotfile, order and ignore
@@ -100,7 +100,7 @@ goes here first, with tests; the GUI only displays it.
   asks the host, the language server sync reads its text, and the GTK
   harness checks every buffer against the host as each suite ends; CI's
   GTK job runs a named set of suites again with every message through
-  the wire format (`MINICODE_HOST=loopback`). The
+  the wire format (`MUTIBLE_HOST=loopback`). The
   Mac (4b) is next, behind a setting for one release.
 - Editing: `LineDiff` (Myers, split at lines unique on both sides past
   1,000 edits, so a large reformat keeps a hunk per changed run; UTF-16,
@@ -202,12 +202,12 @@ goes here first, with tests; the GUI only displays it.
   `AgentNotes`, `AgentModel`, `EditorLineHistory` (Show Line History),
   `AgentsPanel`, `AgentPages`, `AgentWindow`, `AgentTaskBar` (New Agent
   Task), `ProcessMonitor` (libproc,
-  `minicode procs`), `ProcessesPanel`.
-- `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
-  (`MINICODE_BENCH`; the Linux port's is `linux/src/Bench.cpp`).
-- Elsewhere: `tools/minicode-cli.cpp`, `scripts/minicode-launcher`,
+  `mutible procs`), `ProcessesPanel`.
+- `Demo` (`make demos`, inert unless `MUTIBLE_DEMO`), `Bench`
+  (`MUTIBLE_BENCH`; the Linux port's is `linux/src/Bench.cpp`).
+- Elsewhere: `tools/mutible-cli.cpp`, `scripts/mutible-launcher`,
   `tools/makegif.m`, `tools/procmem-mac.c`, `tools/procmem-linux.c`,
-  `scripts/membench-mac.sh`, `scripts/membench-linux.sh`, `skills/minicode/SKILL.md`,
+  `scripts/membench-mac.sh`, `scripts/membench-linux.sh`, `skills/mutible/SKILL.md`,
   `tests/fixtures/claude`, `mac/tests/gui`, `tests/latex`, `tests/markdown`,
   `tests/keepsorted`.
 

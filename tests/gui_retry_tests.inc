@@ -84,7 +84,7 @@ static void testGuiRetry() {
     {
         namespace fs = std::filesystem;
         std::random_device rd;
-        const fs::path root = fs::temp_directory_path() / ("minicode-gui-retry-" + std::to_string(rd()));
+        const fs::path root = fs::temp_directory_path() / ("mutible-gui-retry-" + std::to_string(rd()));
         fs::create_directories(root);
         // A stand-in for the harness's program: "flaky" passes when run as a
         // retry, "broken" never does; each says what it was given.

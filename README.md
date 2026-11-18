@@ -1,13 +1,13 @@
-# minicode
+# mutible
 
-minicode is a file browser that opens everything in place, in one window you drive from the keyboard. Each file opens where you are: code in an editor with language servers behind it, Markdown and LaTeX as pages you can edit, and PDFs, pictures, video, spreadsheets, and databases in viewers of their own. A terminal, a browser, a git panel, and a dashboard of what your Claude Code sessions did are a keystroke away. It runs on macOS and Linux.
+mutible is a file browser that opens everything in place, in one window you drive from the keyboard. Each file opens where you are: code in an editor with language servers behind it, Markdown and LaTeX as pages you can edit, and PDFs, pictures, video, spreadsheets, and databases in viewers of their own. A terminal, a browser, a git panel, and a dashboard of what your Claude Code sessions did are a keystroke away. It runs on macOS and Linux.
 
 Web pages, PDFs, video, and documents such as Word and Keynote files are shown by the operating system's own components: WebKit, PDFKit, AVKit, and Quick Look on the Mac, and WebKitGTK, poppler, and GStreamer on Linux. The rest is written from scratch, with no third-party libraries: the editor, a syntax highlighter for over 200 languages, the language server client, the Markdown renderer, the git panel, and on the Mac the terminal emulator (Linux uses VTE). On the Mac it is a download of under 4 MB, and on the same work it used 320 MB of memory where VS Code, Chrome, and Preview together used 1,283 MB, about a quarter as much. On Linux it used less than half of what VS Code, Chrome, and Papers did.
 
-![Clicking through the demo folder in minicode](docs/demos/tour.gif)
+![Clicking through the demo folder in mutible](docs/demos/tour.gif)
 
 ```
-brew install --cask e-c-hansen/tap/minicode
+brew install --cask ible-ai/tap/mutible
 ```
 
 Ubuntu, Android, and building from source are under [Get started](#get-started). Most of what follows works on both macOS and Linux; the [reference](docs/REFERENCE.md) says where the Mac is ahead.
@@ -22,7 +22,7 @@ The file tree follows the disk and colors each name by its git status. A click o
 
 ![clangd flagging an error, completing a member, showing hover info and jumping to a definition](docs/demos/lsp.gif)
 
-With a language server installed (clangd, basedpyright, gopls, rust-analyzer, typescript-language-server, or any other you name), minicode has completion with snippets, errors as you type, hover, go to definition, rename, references, quick fixes, a problems list, semantic colors, and on the Mac inlay hints. Format Document uses your project's formatter. The editor has several cursors, folding, find and replace across the folder, a split editor, and a large-file mode for logs of tens of megabytes. A missing server or formatter comes with the command that installs it.
+With a language server installed (clangd, basedpyright, gopls, rust-analyzer, typescript-language-server, or any other you name), mutible has completion with snippets, errors as you type, hover, go to definition, rename, references, quick fixes, a problems list, semantic colors, and on the Mac inlay hints. Format Document uses your project's formatter. The editor has several cursors, folding, find and replace across the folder, a split editor, and a large-file mode for logs of tens of megabytes. A missing server or formatter comes with the command that installs it.
 
 ### Git, down to the line
 
@@ -34,13 +34,13 @@ Shift Command G or Control Shift G swaps the tree for a source control panel: ch
 
 ![The terminal panel running ls, git log and a Python script](docs/demos/terminal.gif)
 
-Control backtick opens your own zsh, with your prompt, completion, and plugins. On the Mac the terminal emulator is minicode's own: vim, htop, ssh, and Claude Code draw in it as in Terminal.app, lines rewrap when it resizes, and Command Up and Down jump between the commands you ran. Terminals open in tabs and side by side, and Command clicking src/main.cpp:42:7 opens that line.
+Control backtick opens your own zsh, with your prompt, completion, and plugins. On the Mac the terminal emulator is mutible's own: vim, htop, ssh, and Claude Code draw in it as in Terminal.app, lines rewrap when it resizes, and Command Up and Down jump between the commands you ran. Terminals open in tabs and side by side, and Command clicking src/main.cpp:42:7 opens that line.
 
 ### A browser beside the code
 
 ![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
 
-Shift Command B opens a browser with tabs to the right of the editor, the terminal across the bottom under both. URLs printed in the terminal open there, and so do the local pages that Vite and Claude Code open. Bookmarks are .url files in a folder, and `minicode https://example.com` opens the browser in a window of its own.
+Shift Command B opens a browser with tabs to the right of the editor, the terminal across the bottom under both. URLs printed in the terminal open there, and so do the local pages that Vite and Claude Code open. Bookmarks are .url files in a folder, and `mutible https://example.com` opens the browser in a window of its own.
 
 ### Markdown and LaTeX, edited on the page
 
@@ -60,7 +60,7 @@ Pictures, PDFs, video, and audio open in the editor's pane. CSV files open as a 
 
 ![The Agents panel listing the folder's Claude Code sessions, and one session's final message and test runs](docs/demos/agents.gif)
 
-minicode works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), which you install yourself. Command I asks it for a change at the cursor and shows the diff before applying it. With the `minicode` command an agent opens a file at a line with a note, shows a side-by-side diff, or runs the tests in a terminal you can watch. The Agents panel lists the sessions that worked in the folder, with the files each changed and the commands it ran, and the Processes panel shows what they left running. Claude Code's /ide can link to minicode too.
+mutible works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), which you install yourself. Command I asks it for a change at the cursor and shows the diff before applying it. With the `mutible` command an agent opens a file at a line with a note, shows a side-by-side diff, or runs the tests in a terminal you can watch. The Agents panel lists the sessions that worked in the folder, with the files each changed and the commands it ran, and the Processes panel shows what they left running. Claude Code's /ide can link to mutible too.
 
 ### Settings and themes
 
@@ -72,20 +72,20 @@ Settings are one text file, opened by Command comma and applied when saved. Ever
 
 The benchmark is a simple workload on this repository: clangd on a C++ file, some work in the terminal, typesetting a LaTeX document, and loading a web page. Both sides run the same clangd.
 
-On the Mac, the numbers are the RAM footprint on an M3 Mac with 16 GB, measured after a minute of settling, on 21 September 2026 with minicode 1.3.3, VS Code 1.107.1, and Chrome 153:
+On the Mac, the numbers are the RAM footprint on an M3 Mac with 16 GB, measured after a minute of settling, on 21 September 2026 with mutible 1.3.3, VS Code 1.107.1, and Chrome 153:
 
 |   | Memory |
 | --- | --- |
-| minicode | 320 MB |
+| mutible | 320 MB |
 | VS Code, Chrome and Preview | 1,283 MB |
 
-minicode has gained many features since 1.3.3 and has not been measured again on the Mac. On disk, MiniCode.app 1.5.15 is 8.6 MB and Visual Studio Code.app 1.107.1 is 659 MB.
+mutible has gained many features since 1.3.3 and has not been measured again on the Mac. On disk, Mutible.app 1.5.15 is 8.6 MB and Visual Studio Code.app 1.107.1 is 659 MB.
 
-On Linux, the numbers are the proportional set size (PSS), the median of five samples after a minute of settling, on an i7-8550U with Ubuntu 26.04 and a virtual display with no GPU, on 14 November 2026 with minicode 1.5.24, VS Code 1.145.2, Chrome 157, and Papers 50.2:
+On Linux, the numbers are the proportional set size (PSS), the median of five samples after a minute of settling, on an i7-8550U with Ubuntu 26.04 and a virtual display with no GPU, on 14 November 2026 with mutible 1.5.24, VS Code 1.145.2, Chrome 157, and Papers 50.2:
 
 |   | Memory | Without clangd |
 | --- | --- | --- |
-| minicode | 957 MB | 453 MB |
+| mutible | 957 MB | 453 MB |
 | VS Code, Chrome and Papers | 2,081 MB | 1,578 MB |
 
 The two systems count memory differently, so compare each table only within itself. `make membench-mac` and `make membench-linux` run the workload on scratch profiles, so you can measure the version you have.
@@ -95,25 +95,25 @@ The two systems count memory differently, so compare each table only within itse
 On a Mac with Apple silicon and macOS 11 or later:
 
 ```
-brew install --cask e-c-hansen/tap/minicode
+brew install --cask ible-ai/tap/mutible
 ```
 
 The app is not notarized, which needs a paid Apple Developer account, so the cask clears the quarantine flag for you. On Ubuntu 26.04, use the PPA:
 
 ```
 sudo add-apt-repository ppa:echansen/minicode
-sudo apt install minicode
+sudo apt install mutible
 ```
 
-For Android phones with a hardware keyboard, the APK is on the [releases page](https://github.com/e-c-hansen/minicode/releases/latest); [android/README.md](android/README.md) covers setting it up with Termux.
+For Android phones with a hardware keyboard, the APK is on the [releases page](https://github.com/ible-ai/mutible/releases/latest); [android/README.md](android/README.md) covers setting it up with Termux.
 
-Either install puts a `minicode` command on your PATH: give it folders, files, or a web address, or nothing for the current folder, and `minicode -h` lists the options. Scripts and agents use the same command to drive a running minicode (`minicode open main.py:42 --note "..."`, `minicode diff`, `minicode term --run "make test"`), as the [reference](docs/REFERENCE.md#driving-minicode-from-the-command-line-and-agents) describes.
+Either install puts a `mutible` command on your PATH: give it folders, files, or a web address, or nothing for the current folder, and `mutible -h` lists the options. Scripts and agents use the same command to drive a running mutible (`mutible open main.py:42 --note "..."`, `mutible diff`, `mutible term --run "make test"`), as the [reference](docs/REFERENCE.md#driving-mutible-from-the-command-line-and-agents) describes.
 
 To build it on a Mac you need only the Xcode command line tools:
 
 ```
-git clone https://github.com/e-c-hansen/minicode.git
-cd minicode
+git clone https://github.com/ible-ai/mutible.git
+cd mutible
 make
 make run DIR=demo
 ```

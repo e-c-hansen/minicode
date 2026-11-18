@@ -20,9 +20,9 @@ static void testHtmlPage() {
         const std::string written = Settings::withValue(Settings::defaultFileText(), "html.scripts",
                                                          HtmlPage::rememberedValue(true));
         CHECK(written.find("\nhtml.scripts = on\n") != std::string::npos);
-        CHECK(HtmlPage::answeredLine(true, true) == "This page's scripts run, until minicode quits.");
+        CHECK(HtmlPage::answeredLine(true, true) == "This page's scripts run, until mutible quits.");
         CHECK(HtmlPage::answeredLine(false, true) ==
-              "This page's scripts stay off, until minicode quits.");
+              "This page's scripts stay off, until mutible quits.");
         CHECK(HtmlPage::answeredLine(true, false) == "This page's scripts run.");
         CHECK(HtmlPage::answeredLine(false, false) == "This page's scripts stay off.");
     }
@@ -508,7 +508,7 @@ static void testJsonOutline() {
     using namespace JsonOutline;
     GROUP("jsonoutline:tree");
     {
-        const std::string text = "{\n  \"name\": \"minicode\",\n  \"tags\": [1, true, null],\n"
+        const std::string text = "{\n  \"name\": \"mutible\",\n  \"tags\": [1, true, null],\n"
                                  "  \"nested\": {\"k\": -2.5e3}\n}\n";
         JsonOutline::Outline o = parse(text);
         CHECK(o.ok);
@@ -520,9 +520,9 @@ static void testJsonOutline() {
         CHECK(summary(root) == "{3}");
         const Node &name = o.nodes[root.children[0]];
         CHECK(name.key == "name" && name.isMember);
-        CHECK(summary(name) == "\"minicode\"");
-        CHECK(text.substr(name.start, name.end - name.start) == "\"minicode\"");
-        CHECK(text.substr(name.memberStart, name.end - name.memberStart) == "\"name\": \"minicode\"");
+        CHECK(summary(name) == "\"mutible\"");
+        CHECK(text.substr(name.start, name.end - name.start) == "\"mutible\"");
+        CHECK(text.substr(name.memberStart, name.end - name.memberStart) == "\"name\": \"mutible\"");
         const Node &tags = o.nodes[root.children[1]];
         CHECK(tags.kind == Kind::Array && tags.children.size() == 3);
         CHECK(summary(tags) == "[3]");

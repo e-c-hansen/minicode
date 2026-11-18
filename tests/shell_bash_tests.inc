@@ -1,6 +1,6 @@
 // shell_bash_tests.inc — the `shell:*` and `bash:*` groups of
 // run_tests.cpp: the Linux port's bash integration
-// (linux/resources/minicode-bash-integration.bash) in a real bash reading a
+// (linux/resources/mutible-bash-integration.bash) in a real bash reading a
 // pipe, as zsh_integration_tests.inc runs zsh (its runZsh, which this file
 // follows into run_tests.cpp; skipped where /bin/bash is older than 4.4, as
 // on the Mac). Its marks are the zsh script's (OSC 133, 633;E and 7 with
@@ -46,13 +46,13 @@ void testShellBash() {
     {
         const unsigned char raw[] = {0x00, 0x0f, 0xa5, 0xff};
         CHECK(nonceHex(raw, 4) == "000fa5ff");
-        CHECK(zshenvStub(true).find("typeset -g __minicode_mode=grid\n") != std::string::npos);
-        CHECK(zshenvStub(false).find("typeset -g __minicode_mode=line\n") != std::string::npos);
-        CHECK(zshenvStub(true).find("__minicode_term") == std::string::npos);
+        CHECK(zshenvStub(true).find("typeset -g __mutible_mode=grid\n") != std::string::npos);
+        CHECK(zshenvStub(false).find("typeset -g __mutible_mode=line\n") != std::string::npos);
+        CHECK(zshenvStub(true).find("__mutible_term") == std::string::npos);
     }
 
     std::random_device rd;
-    const zfs::path root = zfs::temp_directory_path() / ("minicode-shell-" + std::to_string(rd()));
+    const zfs::path root = zfs::temp_directory_path() / ("mutible-shell-" + std::to_string(rd()));
     zfs::create_directories(root / "home");
     struct Cleanup {
         zfs::path p;
@@ -60,11 +60,11 @@ void testShellBash() {
     } cleanup{root};
 
     GROUP("bash:integration");
-    const std::string bashScript = readFile("linux/resources/minicode-bash-integration.bash");
+    const std::string bashScript = readFile("linux/resources/mutible-bash-integration.bash");
     const int bashV = bashScript.empty() ? 0 : bashVersion(root);
     if (bashV < 404) {
         std::printf("  (no bash 4.4 or later at /bin/bash, or no "
-                    "linux/resources/minicode-bash-integration.bash here; bash checks skipped)\n");
+                    "linux/resources/mutible-bash-integration.bash here; bash checks skipped)\n");
     } else {
         // As Terminal.cpp starts it: bash --rcfile <the script>, the nonce in
         // the environment. The user's .bashrc is read (its PROMPT_COMMAND

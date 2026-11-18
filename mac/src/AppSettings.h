@@ -9,7 +9,7 @@ extern NSNotificationName const MCSettingsDidChangeNotification;
 @interface AppSettings : NSObject
 + (instancetype)shared;
 
-// ~/.config/minicode/settings.conf, or $MINICODE_SETTINGS when set.
+// ~/.config/mutible/settings.conf, or $MUTIBLE_SETTINGS when set.
 @property(nonatomic, readonly, copy) NSString *path;
 // Problems in the file, as "line N: message"; empty when it parsed cleanly.
 @property(nonatomic, readonly, copy) NSArray<NSString *> *errors;
@@ -43,7 +43,7 @@ extern NSNotificationName const MCSettingsDidChangeNotification;
 @property(class, nonatomic, copy) void (^writeProblemHandler)(NSString *message);
 @end
 
-// Writes `text` to a file minicode keeps for the user (settings.conf,
+// Writes `text` to a file mutible keeps for the user (settings.conf,
 // keys.conf) through FolderSearch::writeFileAtomically: a symlink, a
 // dangling one too, stays a link and the file it names changes; a hard
 // link is written in place; mode and extended attributes are kept. With

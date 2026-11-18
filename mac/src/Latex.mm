@@ -2,7 +2,7 @@
 // double-click on the page opens the source that produced that text.
 //
 // The parts worth knowing:
-//   * The buffer is typeset from a hidden sibling file (".<name>.minicode.tex")
+//   * The buffer is typeset from a hidden sibling file (".<name>.mutible.tex")
 //     so \input and \includegraphics still resolve, and so the preview never
 //     saves over the user's file behind their back.
 //   * SyncTeX maps a point on the page back to a source line; LatexDoc turns
@@ -65,7 +65,7 @@ static NSString *const kTectonicSha256 =
 static NSString *MCSupportDir(void) {
     NSString *base = NSSearchPathForDirectoriesInDomains(
         NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject;
-    return [base stringByAppendingPathComponent:@"MiniCode"];
+    return [base stringByAppendingPathComponent:@"Mutible"];
 }
 
 static NSString *MCManagedTectonic(void) {
@@ -75,7 +75,7 @@ static NSString *MCManagedTectonic(void) {
 NSString *MCTectonicPath(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSMutableArray<NSString *> *candidates = [NSMutableArray array];
-    NSString *override = MCEnvironment()[@"MINICODE_TECTONIC"];
+    NSString *override = MCEnvironment()[@"MUTIBLE_TECTONIC"];
     if (override.length) [candidates addObject:override];
     [candidates addObject:MCManagedTectonic()];
     NSString *path = MCEnvironment()[@"PATH"] ?: @"";
@@ -165,14 +165,14 @@ static double ProcessStart(pid_t pid) {
 // ------------------------------------------------------- the output folders
 
 // Every preview's output goes in a folder of its own under this one:
-// MiniCode-latex in the user's temporary folder ($MINICODE_LATEX_WORK in
+// Mutible-latex in the user's temporary folder ($MUTIBLE_LATEX_WORK in
 // the GUI checks, since NSTemporaryDirectory() ignores TMPDIR).
 static NSString *const kSiblingRecordName = @"sibling.record";
 
 NSString *MCLatexWorkRoot(void) {
-    NSString *override = MCEnvironment()[@"MINICODE_LATEX_WORK"];
+    NSString *override = MCEnvironment()[@"MUTIBLE_LATEX_WORK"];
     if (override.length) return override;
-    return [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-latex"];
+    return [NSTemporaryDirectory() stringByAppendingPathComponent:@"Mutible-latex"];
 }
 
 // Preview `view` of this process, as its folder and sibling are named.
@@ -252,7 +252,7 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
             if (SweepSiblingRecord(record, YES)) removed++;
             // A preview's folder outlives a crash of its process: it goes
             // once that process has (a folder of a live one, or one named
-            // as an older minicode names them, stays).
+            // as an older mutible names them, stays).
             LatexScratch::Owner owner;
             if (!LatexScratch::parseFolderName(Utf8(name), &owner) || owner.pid == getpid())
                 continue;
@@ -269,7 +269,7 @@ void MCLatexRemoveStaleSiblings(void (^done)(NSUInteger removed)) {
 @implementation MCLatexProblem
 @end
 
-static NSString *const kProblemLink = @"minicode-latex-problem:";
+static NSString *const kProblemLink = @"mutible-latex-problem:";
 
 // tectonic's output and TeX's transcript as problems in the user's files:
 // the hidden sibling's lines are the document's. Any thread (it asks the
@@ -622,13 +622,13 @@ static const CGFloat kStatusHeight = 26;
 
 // The hidden sibling we actually hand to tectonic, so relative paths in the
 // document still resolve while the user's own file stays untouched.
-// Named for this preview (".paper.<pid>-<view>.minicode.tex"), so another
+// Named for this preview (".paper.<pid>-<view>.mutible.tex"), so another
 // window's preview of the same file has a copy of its own.
 - (NSString *)scratchTexPath {
     NSString *dir = self.texPath.stringByDeletingLastPathComponent;
     NSString *base = self.texPath.lastPathComponent.stringByDeletingPathExtension;
     if (!dir.length || !base.length) return [self.workFolder
-        stringByAppendingPathComponent:@"untitled.minicode.tex"];
+        stringByAppendingPathComponent:@"untitled.mutible.tex"];
     return [dir stringByAppendingPathComponent:NsStr(LatexScratch::siblingName(Utf8(base), _owner))];
 }
 
@@ -1195,9 +1195,9 @@ static const CGFloat kStatusHeight = 26;
     self.warningsButton.hidden = YES;
     self.logView.string =
         @"The LaTeX preview needs tectonic, a single-binary TeX engine.\n\n"
-        @"MiniCode uses whichever tectonic is already on your machine "
+        @"Mutible uses whichever tectonic is already on your machine "
         @"(brew install tectonic), or it can download the official build for "
-        @"you, about 22 MB, into ~/Library/Application Support/MiniCode.\n\n"
+        @"you, about 22 MB, into ~/Library/Application Support/Mutible.\n\n"
         @"The first document you typeset also downloads the LaTeX packages it "
         @"uses, roughly 40 MB, which tectonic caches for later.";
     self.logScroll.hidden = NO;
@@ -1397,7 +1397,7 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
         _editingSrc.clear();
     }
     if (!span) {
-        [self setStatus:@"That is not text MiniCode can trace back to the source"
+        [self setStatus:@"That is not text Mutible can trace back to the source"
                    busy:NO];
         return;
     }
@@ -1715,7 +1715,7 @@ void MCDownloadTectonic(void (^done)(NSString *problem)) {
         @"tectonic%%40%@/%@", kTectonicVersion, file];
     // The GUI checks fetch a file:// stand-in, which is held to the same
     // checksum.
-    NSString *override = MCEnvironment()[@"MINICODE_TECTONIC_DOWNLOAD"];
+    NSString *override = MCEnvironment()[@"MUTIBLE_TECTONIC_DOWNLOAD"];
     if (override.length) urlText = override;
     NSURL *url = [NSURL URLWithString:urlText];
     if (!url) {

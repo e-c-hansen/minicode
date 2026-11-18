@@ -1,4 +1,4 @@
-// ControlPageCommands.mm — `minicode browse` and `minicode page`: agents
+// ControlPageCommands.mm — `mutible browse` and `mutible page`: agents
 // checking pages in the browser pane (R6.1-R6.5). Everything happens in the
 // pane's agent page (Browser.h), never the user's, unless `yours` asks to
 // read the user's page; reads of a page (text, console, screenshot) work
@@ -136,7 +136,7 @@ void MCControlRegisterPageCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
         BrowserView *b = [c browserPane];
         if (!b || (!yours && !b.hasAgentPage)) {
             respond(Result::failure(yours ? "the browser pane is not open"
-                                          : "there is no agent page: minicode browse opens one"));
+                                          : "there is no agent page: mutible browse opens one"));
             return;
         }
         MCPageProbe *probe = yours ? b.userProbe : b.agentProbe;

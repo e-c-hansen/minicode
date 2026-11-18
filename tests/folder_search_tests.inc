@@ -75,7 +75,7 @@ std::string randomText(std::mt19937& rng, int lines) {
 static void testFolderSearchParallel() {
     using namespace FolderSearch;
     const fsys::path root = fsys::temp_directory_path() /
-                            ("minicode-search-test-" + std::to_string(::getpid()));
+                            ("mutible-search-test-" + std::to_string(::getpid()));
     std::error_code ec;
     fsys::remove_all(root, ec);
 

@@ -1,13 +1,13 @@
 // Commands.h — the command registry and the user's keymap file.
 //
-// Every command minicode has a key for (and most it has none for) is one row
+// Every command mutible has a key for (and most it has none for) is one row
 // of a table here: a stable ID, in VS Code's spelling where VS Code has the
 // command (workbench.action.showCommands, editor.action.formatDocument, ...)
-// and minicode.* where it does not, its title and menu, its default keys in
-// minicode's key notation, where it applies (the editor, the terminal, the
+// and mutible.* where it does not, its title and menu, its default keys in
+// mutible's key notation, where it applies (the editor, the terminal, the
 // file tree, or anywhere), and the selector its menu item sends.
 //
-// The keymap file, ~/.config/minicode/keys.conf (or $MINICODE_KEYS), adds to
+// The keymap file, ~/.config/mutible/keys.conf (or $MUTIBLE_KEYS), adds to
 // and takes from the defaults, one line at a time, as VS Code's
 // keybindings.json does:
 //

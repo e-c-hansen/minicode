@@ -361,7 +361,7 @@ gui_sources = [
   'src/EvidencePage.cpp',
   'src/AgentWorktrees.cpp',
   'src/ChangeReviewPage.cpp',
-  '..' / 'tools' / 'minicode-cli.cpp',
+  '..' / 'tools' / 'mutible-cli.cpp',
   'src/NavHistoryUi.cpp',
   # The command line's options, and a terminal given back at once: the
   # plain C++ rules (LaunchOptions.cpp) and the fork (Detach.cpp).
@@ -479,24 +479,24 @@ install_data('resources' / 'minicode-browser.js',
 # (Linux only) and zsh's, which is the Mac's own file, never a copy that
 # could drift.
 configure_file(
-  input  : 'resources' / 'minicode-bash-integration.bash',
-  output : 'minicode-bash-integration.bash',
+  input  : 'resources' / 'mutible-bash-integration.bash',
+  output : 'mutible-bash-integration.bash',
   copy   : true)
 configure_file(
-  input  : '..' / 'resources' / 'minicode-zsh-integration.zsh',
-  output : 'minicode-zsh-integration.zsh',
+  input  : '..' / 'resources' / 'mutible-zsh-integration.zsh',
+  output : 'mutible-zsh-integration.zsh',
   copy   : true)
-install_data('resources' / 'minicode-bash-integration.bash',
-             '..' / 'resources' / 'minicode-zsh-integration.zsh',
+install_data('resources' / 'mutible-bash-integration.bash',
+             '..' / 'resources' / 'mutible-zsh-integration.zsh',
   install_dir : get_option('datadir') / 'minicode')
 
 # The Claude Code skill, for `minicode install-skill`: beside the binary in a
 # build folder, in share/minicode when installed.
 configure_file(
-  input  : '..' / 'skills' / 'minicode' / 'SKILL.md',
+  input  : '..' / 'skills' / 'mutible' / 'SKILL.md',
   output : 'SKILL.md',
   copy   : true)
-install_data('..' / 'skills' / 'minicode' / 'SKILL.md',
+install_data('..' / 'skills' / 'mutible' / 'SKILL.md',
   install_dir : get_option('datadir') / 'minicode' / 'skills' / 'minicode')
 
 # PNGs extracted from the macOS resources/AppIcon.icns, which stays the single

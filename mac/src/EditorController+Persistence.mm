@@ -20,7 +20,7 @@ static const unsigned long long kMaxRestoredFileBytes = 16ull * 1024 * 1024;
 
 static BOOL MCSessionsEnabled(void) {
     NSDictionary *env = MCEnvironment();
-    return !env[@"MINICODE_DEMO"] && !env[@"MINICODE_BENCH"];
+    return !env[@"MUTIBLE_DEMO"] && !env[@"MUTIBLE_BENCH"];
 }
 
 // The folder's session as stored, nil when there is none.
@@ -313,7 +313,7 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g) {
 }
 
 // ------------------------------------------------- every window, next launch
-// VS Code's window.restoreWindows "all": the windows open when minicode
+// VS Code's window.restoreWindows "all": the windows open when mutible
 // quit (or the last one closed, which quits it) come back on the next
 // launch that is asked to open nothing, from the Dock, Finder, a restart
 // or a `brew upgrade`'s reopening, each as it was. The record is the core's

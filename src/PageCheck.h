@@ -1,5 +1,5 @@
 // PageCheck.h — pure C++. The rules behind agents checking pages in the
-// browser pane (`minicode browse`, `minicode page`; BrowserPages.mm does the
+// browser pane (`mutible browse`, `mutible page`; BrowserPages.mm does the
 // WebKit side): which addresses an agent may load, which pages its reads
 // may look at (the origin limit), the console record kept for the agent
 // page, the caller's place read from a JavaScript stack, and how much of a
@@ -37,7 +37,7 @@ bool isLocalAddress(const std::string& url);
 // The error a read of a page that is not local answers with.
 std::string originError(const std::string& url);
 
-// What `minicode browse` loads for what it was given: an http, https or
+// What `mutible browse` loads for what it was given: an http, https or
 // file address as it is, about:blank, "localhost:5173" or "127.0.0.1:8000/x"
 // (or a bare "localhost") as http, an absolute path of a file that exists
 // (`exists`) as a file address, and a name with a dot ("example.com") as

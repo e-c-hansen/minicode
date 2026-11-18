@@ -185,7 +185,7 @@ const NSTimeInterval kTypingPause = 0.6;
 - (instancetype)initWithHost:(id<MCLineHistoryHost>)host {
     if ((self = [super init])) {
         _host = host;
-        _queue = dispatch_queue_create("minicode.line-history", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.line-history", DISPATCH_QUEUE_SERIAL);
         _cache = [NSMutableDictionary dictionary];
         _cacheOrder = [NSMutableArray array];
         _hoverLine = _wantPopupLine = _popupLine = NSNotFound;
@@ -430,7 +430,7 @@ const NSTimeInterval kTypingPause = 0.6;
         }
         if (!a->hasBlame) {
             known = false;
-            a->trouble = "git blame answered in a way minicode does not read.";
+            a->trouble = "git blame answered in a way mutible does not read.";
         }
     } else {
         NSString *why = r.errorText ?: @"";

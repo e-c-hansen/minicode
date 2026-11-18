@@ -389,7 +389,7 @@ MC_GUI_SUITE(terminal_reflow) {
     MCGuiStep(@"marks with the nonce while another program has the terminal", ^{
         // The shell's own function prints them from a background job, so
         // they are real, but cat holds the foreground.
-        [term runCommand:@"(sleep 0.6; __minicode_mark '133;A'; __minicode_mark '133;B') & cat"];
+        [term runCommand:@"(sleep 0.6; __mutible_mark '133;A'; __mutible_mark '133;B') & cat"];
     });
     MCGuiWait(@"cat runs", 10, ^BOOL { return term.busy && !term.atPrompt; });
     MCGuiWait(@"the marks arrive", 10, ^BOOL { return term.atPrompt; });
@@ -430,7 +430,7 @@ MC_GUI_SUITE(terminal_reflow) {
     showIfNot(@"read timed out with nothing, then the second ran", readThenSecond);
 
     MCGuiStep(@"the programs it runs never see the nonce", ^{
-        [term runCommand:@"env | grep -c MINICODE_NONCE"];
+        [term runCommand:@"env | grep -c MUTIBLE_NONCE"];
     });
     MCGuiWait(@"none", 10, ^BOOL { return term.atPrompt && hasLine(@"0"); });
 

@@ -419,7 +419,7 @@ static void testTabSessions() {
         CHECK(back.windows[0].haveFrame && back.windows[0].frame.w == 1200);
         CHECK(back.windows[0].sidebarHidden && back.windows[0].terminal);
         // The file is the Mac's window record too: decodeWindows reads its
-        // windows, and decode (a minicode from before) only its folders,
+        // windows, and decode (a mutible from before) only its folders,
         // never "windows" as a folder.
         CHECK(decodeWindows(text).size() == 2);
         const Sessions old = decode(text);
@@ -430,7 +430,7 @@ static void testTabSessions() {
         // The Mac's MCOpenWindows record: its windows, no folder.
         const Store mac = decodeStore(encodeWindows(st.windows));
         CHECK(mac.folders.empty() && mac.windows.size() == 2);
-        // No windows: no key at all, so a minicode from before reads the file
+        // No windows: no key at all, so a mutible from before reads the file
         // as it always did.
         Store none;
         none.folders = st.folders;
@@ -465,8 +465,8 @@ static void testTabSessions() {
         CHECK(afterClosing({}, 0).empty());
     }
 
-    // Two minicodes at once share the record (a build beside the Homebrew
-    // copy, `minicode -n`, the GUI checks' parent and its child apps): each
+    // Two mutibles at once share the record (a build beside the Homebrew
+    // copy, `mutible -n`, the GUI checks' parent and its child apps): each
     // writes its own windows over its own, never over the other's.
     GROUP("tab-sessions:windows-of-several");
     {
@@ -494,8 +494,8 @@ static void testTabSessions() {
         const Process me{100, 5000}, other{200, 4000}, last{300, 1000};
         Window mine;
         mine.root = "/mine";
-        // One minicode, as always: its windows replace the last run's, the
-        // untagged ones of minicode 1.5.31 and before too, stamped as its.
+        // One mutible, as always: its windows replace the last run's, the
+        // untagged ones of mutible 1.5.31 and before too, stamped as its.
         std::vector<Window> out = mergeWindows(
             {mine}, {win("/last", last.pid, last.start, 4900), win("/old", 0, 0, 0)}, me, 5100,
             isRunning, &running);
@@ -509,7 +509,7 @@ static void testTabSessions() {
         // Its own earlier windows go too (a window closed since).
         out = mergeWindows({mine}, {win("/closed", 100, 5000.4, 5050)}, me, 5100, isRunning, &running);
         CHECK(roots(out) == "/mine ");
-        // Another running minicode's windows stay, after this one's, even
+        // Another running mutible's windows stay, after this one's, even
         // written before this one started.
         running.live = {other};
         out = mergeWindows({mine}, {win("/other", other.pid, other.start, 4500)}, me, 5100, isRunning,
@@ -534,7 +534,7 @@ static void testTabSessions() {
         CHECK(roots(out) == "/other ");
 
         // A launch with nothing to open brings back all but what another
-        // running minicode holds open.
+        // running mutible holds open.
         running.live = {other};
         const std::vector<Window> stored = {win("/other", other.pid, other.start, 4500),
                                             win("/last", last.pid, last.start, 900),

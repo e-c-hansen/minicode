@@ -2,7 +2,7 @@
 // History (EditorLineHistory.h). A scratch repository holds hello.py,
 // committed; a Claude Code session (a transcript in a scratch projects
 // folder, beside copies of tests/fixtures/claude, named through
-// MINICODE_CLAUDE_PROJECTS) then edited two places in it, and a line was
+// MUTIBLE_CLAUDE_PROJECTS) then edited two places in it, and a line was
 // typed by hand after. Resting on a line number shows the line's commit,
 // the session (its title, the prompt the edit answered, when) or "Not
 // committed"; View > Show Line History puts the words beside every line,
@@ -141,8 +141,8 @@ void BuildWorld() {
     [t appendFormat:@"%@\n", Json(title)];
     MCGuiWriteFile([sessDir stringByAppendingFormat:@"/%@.jsonl", kSid], t);
     MCGuiWriteFile(gFile, kNow);
-    MCSetEnv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
-    MCSetEnv("MINICODE_CLAUDE_TMP", [gBase stringByAppendingPathComponent:@"claude-tmp"].fileSystemRepresentation);
+    MCSetEnv("MUTIBLE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
+    MCSetEnv("MUTIBLE_CLAUDE_TMP", [gBase stringByAppendingPathComponent:@"claude-tmp"].fileSystemRepresentation);
 }
 
 EditorController *Win() {
@@ -342,8 +342,8 @@ MC_GUI_SUITE(line_history) {
         [c.window close];
         c = nil;
         MCGuiSetKeyWindow(nil);
-        MCSetEnv("MINICODE_CLAUDE_PROJECTS", nullptr);
-        MCSetEnv("MINICODE_CLAUDE_TMP", nullptr);
+        MCSetEnv("MUTIBLE_CLAUDE_PROJECTS", nullptr);
+        MCSetEnv("MUTIBLE_CLAUDE_TMP", nullptr);
         GCHECK(Win() == nil);
     });
 }

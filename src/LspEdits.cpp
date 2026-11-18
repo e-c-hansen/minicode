@@ -79,7 +79,7 @@ WorkspaceEdit parseWorkspaceEdit(const Json& j, const CanonicalUri& canonical) {
     }
     we.files.swap(kept);
     if (we.resourceOperations)
-        we.problem = "The edit creates, renames or deletes files, which minicode does not do";
+        we.problem = "The edit creates, renames or deletes files, which mutible does not do";
     return we;
 }
 

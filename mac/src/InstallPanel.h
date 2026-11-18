@@ -1,25 +1,25 @@
-// InstallPanel.h — Objective-C++. How MiniCode tells the user to install a
+// InstallPanel.h — Objective-C++. How Mutible tells the user to install a
 // language server or formatter it could not find, at the moment it matters:
 // the bar over the editor when a file's server is missing, the popover its
 // Install… button opens (also from the status bar), the rows in the Language
 // Servers popover, and Format Document's note. The commands come from
-// InstallHints (the core's one table); MiniCode never runs them itself. Copy
+// InstallHints (the core's one table); Mutible never runs them itself. Copy
 // puts one on the pasteboard and Run in Terminal types it into the terminal
 // for the user to press Return.
 #import <Cocoa/Cocoa.h>
 
 // Where Copy puts a command: the general pasteboard, or the private one
-// named by $MINICODE_PASTEBOARD (tests, so the user's clipboard is left alone).
+// named by $MUTIBLE_PASTEBOARD (tests, so the user's clipboard is left alone).
 NSPasteboard *MCInstallPasteboard(void);
 
 // Is an installer (uv, pipx, npm, brew, go, rustup) on this Mac? MCFindProgram,
-// or, for tests, membership in $MINICODE_INSTALL_HAVE (comma-separated).
+// or, for tests, membership in $MUTIBLE_INSTALL_HAVE (comma-separated).
 BOOL MCInstallerAvailable(NSString *program);
 
 // How to install one missing tool: a sentence on what it gives, the command
 // to run in a selectable box with Copy and Run in Terminal, how to get the
 // installer first when it is missing too, the other ways (each with Copy),
-// and a note that MiniCode finds the tool once it is installed.
+// and a note that Mutible finds the tool once it is installed.
 @interface MCInstallView : NSView
 // For a language server key ("python"). `message`, when given, comes first
 // ("lsp.python in the settings runs foo, which was not found."). `run` nil

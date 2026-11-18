@@ -134,9 +134,9 @@ BOOL FirstPageTopInView(LatexView *v, NSString **why) {
     return top >= NSMinY(seen) - 0.5 && top <= NSMaxY(seen) + 0.5;
 }
 
-NSString *const kStale = @"stale/.old.minicode.tex";    // a dead process's copy
-NSString *const kMine = @"stale/.mine.minicode.tex";    // the user's, changed since
-NSString *const kLive = @"stale/.live.minicode.tex";    // a running process's
+NSString *const kStale = @"stale/.old.mutible.tex";    // a dead process's copy
+NSString *const kMine = @"stale/.mine.mutible.tex";    // the user's, changed since
+NSString *const kLive = @"stale/.live.mutible.tex";    // a running process's
 
 }  // namespace
 
@@ -158,7 +158,7 @@ MC_GUI_SUITE(latex) {
     NSString *b = Project(@"latex-b/paper.tex");
 
     MCGuiStep(@"a stand-in tectonic, two paper.tex files and a crash's leftovers", ^{
-        MCSetEnv("MINICODE_LATEX_WORK", Scratch(@"latex/work").UTF8String);
+        MCSetEnv("MUTIBLE_LATEX_WORK", Scratch(@"latex/work").UTF8String);
         NSString *pdfs = Scratch(@"latex/pdfs");
         [[NSFileManager defaultManager] createDirectoryAtPath:pdfs withIntermediateDirectories:YES
                                                    attributes:nil error:nil];
@@ -180,7 +180,7 @@ MC_GUI_SUITE(latex) {
         NSString *tool = Scratch(@"latex/tectonic");
         MCGuiWriteFile(tool, script);
         chmod(tool.fileSystemRepresentation, 0755);
-        MCSetEnv("MINICODE_TECTONIC", tool.UTF8String);
+        MCSetEnv("MUTIBLE_TECTONIC", tool.UTF8String);
         GCHECK_EQ_STR(MCTectonicPath(), tool);
 
         MCGuiWriteFile(a, @"\\documentclass{article}\\begin{document}ALPHA\\end{document}\n");
@@ -231,11 +231,11 @@ MC_GUI_SUITE(latex) {
         NSString *outArg = [NSString stringWithFormat:@"[--outdir] [%@]", folderA];
         GCHECK([log containsString:outArg]);
         GCHECK([folderA hasPrefix:Scratch(@"latex/work/")]);
-        // Named for the file and the preview: ".paper.<pid>-<n>.minicode.tex".
+        // Named for the file and the preview: ".paper.<pid>-<n>.mutible.tex".
         NSString *sibling = tabA.latex.siblingPath;
         GCHECK_EQ_STR(sibling.stringByDeletingLastPathComponent, Project(@"latex-a"));
         NSString *prefix = [NSString stringWithFormat:@".paper.%d-", getpid()];
-        GCHECK([sibling.lastPathComponent hasPrefix:prefix] && [sibling hasSuffix:@".minicode.tex"]);
+        GCHECK([sibling.lastPathComponent hasPrefix:prefix] && [sibling hasSuffix:@".mutible.tex"]);
         NSString *siblingArg = [NSString stringWithFormat:@"[%@]", sibling];
         GCHECK([log containsString:siblingArg]);
         // The sibling and its record were there while it ran, and are gone.
@@ -395,7 +395,7 @@ MC_GUI_SUITE(latex) {
         NSString *tool = Scratch(@"latex/tectonic2");
         MCGuiWriteFile(tool, script);
         chmod(tool.fileSystemRepresentation, 0755);
-        MCSetEnv("MINICODE_TECTONIC", tool.UTF8String);
+        MCSetEnv("MUTIBLE_TECTONIC", tool.UTF8String);
         MCGuiWriteFile(fwd, @"\\documentclass{article}\n\\begin{document}\nFORWARD on page one\n"
                             @"\\newpage\nPage two,\nin one line.\n\\end{document}\n");
         MCGuiWriteFile(broken, @"\\documentclass{article}\n\\begin{document}\nBROKEN here\n"
@@ -552,21 +552,21 @@ MC_GUI_SUITE(latex) {
             @"for a in \"$@\"; do [ \"$prev\" = --outdir ] && out=\"$a\"; prev=\"$a\"; input=\"$a\"; done\n"
             @"dir=$(dirname \"$input\"); stem=$(basename \"$input\" .tex); fx='%@'\n"
             @"if grep -q mypkg \"$input\"; then\n"
-            @"  sed \"s/\\.warnings\\.minicode/$stem/g\" \"$fx/logs/warnings.txt\"\n"
-            @"  sed \"s/\\.warnings\\.minicode/$stem/g\" \"$fx/logs/warnings.log\" > \"$out/$stem.log\"\n"
+            @"  sed \"s/\\.warnings\\.mutible/$stem/g\" \"$fx/logs/warnings.txt\"\n"
+            @"  sed \"s/\\.warnings\\.mutible/$stem/g\" \"$fx/logs/warnings.log\" > \"$out/$stem.log\"\n"
             @"  cp \"$fx/fixtures/main.pdf\" \"$out/$stem.pdf\"; exit 0\n"
             @"fi\n"
             @"if ! grep -q documentclass \"$input\"; then\n"
             @"  echo \"error: $(basename \"$input\"):1: Undefined control sequence\"; exit 1\n"
             @"fi\n"
             @"cp \"$fx/fixtures/main.pdf\" \"$out/$stem.pdf\"\n"
-            @"sed -e \"s#@DIR@/.main.minicode.tex#$input#\" -e \"s#@DIR@#$dir#g\" "
+            @"sed -e \"s#@DIR@/.main.mutible.tex#$input#\" -e \"s#@DIR@#$dir#g\" "
             @"\"$fx/fixtures/main.synctex\" | gzip > \"$out/$stem.synctex.gz\"\n",
             Fixtures(@"")];
         NSString *tool = Scratch(@"latex/tectonic3");
         MCGuiWriteFile(tool, script);
         chmod(tool.fileSystemRepresentation, 0755);
-        MCSetEnv("MINICODE_TECTONIC", tool.UTF8String);
+        MCSetEnv("MUTIBLE_TECTONIC", tool.UTF8String);
         for (NSString *rel in @[@"logs/warnings.tex", @"logs/parts/chapter.tex",
                                 @"fixtures/main.tex", @"fixtures/chapter.tex",
                                 @"fixtures/appendix.tex"])
@@ -879,7 +879,7 @@ MC_GUI_SUITE(latex) {
         NSString *real = Project(@"latex-real/forward.tex");
         NSString *main = Project(@"latex-real/main.tex");
         MCGuiStep(@"real tectonic: the forward search fixture", ^{
-            MCSetEnv("MINICODE_TECTONIC", realTool.UTF8String);
+            MCSetEnv("MUTIBLE_TECTONIC", realTool.UTF8String);
             GCHECK_EQ_STR(MCTectonicPath(), realTool);
             NSString *src = [NSString stringWithContentsOfFile:
                 [MCGuiBuildDir().stringByDeletingLastPathComponent
@@ -974,7 +974,7 @@ MC_GUI_SUITE(latex) {
     // The download. The managed copy goes in Application Support under the
     // scratch home; never run it anywhere else.
     NSString *bin = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,
-        NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"MiniCode/bin"];
+        NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"Mutible/bin"];
     const BOOL safe = [bin hasPrefix:[MCGuiScratch() stringByAppendingString:@"/"]] ||
                       [bin hasPrefix:[@"/private" stringByAppendingString:MCGuiScratch()]];
     MCGuiAsync(@"a download that does not match the checksum is refused", 20, ^(MCGuiDone done) {
@@ -982,7 +982,7 @@ MC_GUI_SUITE(latex) {
         if (!safe) { MCGuiNote(@"Application Support is %@, not in the scratch world", bin); done(); return; }
         NSString *fake = Scratch(@"latex/fake.tar.gz");
         MCGuiWriteFile(fake, @"not the tectonic archive");
-        MCSetEnv("MINICODE_TECTONIC_DOWNLOAD", [NSURL fileURLWithPath:fake].absoluteString.UTF8String);
+        MCSetEnv("MUTIBLE_TECTONIC_DOWNLOAD", [NSURL fileURLWithPath:fake].absoluteString.UTF8String);
         MCDownloadTectonic(^(NSString *problem) {
             GCHECK([problem containsString:@"checksum"]);
             if (![problem containsString:@"checksum"]) MCGuiNote(@"the download said: %@", problem);
@@ -997,7 +997,7 @@ MC_GUI_SUITE(latex) {
     if (real.length) {
         MCGuiAsync(@"the real archive installs tectonic", 60, ^(MCGuiDone done) {
             if (!safe) { done(); return; }
-            MCSetEnv("MINICODE_TECTONIC_DOWNLOAD", [NSURL fileURLWithPath:real].absoluteString.UTF8String);
+            MCSetEnv("MUTIBLE_TECTONIC_DOWNLOAD", [NSURL fileURLWithPath:real].absoluteString.UTF8String);
             MCDownloadTectonic(^(NSString *problem) {
                 GCHECK(problem == nil);
                 if (problem) MCGuiNote(@"the download said: %@", problem);
@@ -1010,7 +1010,7 @@ MC_GUI_SUITE(latex) {
         });
     }
     MCGuiStep(@"clean up", ^{
-        MCSetEnv("MINICODE_TECTONIC_DOWNLOAD", nullptr);
-        MCSetEnv("MINICODE_TECTONIC", nullptr);
+        MCSetEnv("MUTIBLE_TECTONIC_DOWNLOAD", nullptr);
+        MCSetEnv("MUTIBLE_TECTONIC", nullptr);
     });
 }

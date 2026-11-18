@@ -63,7 +63,7 @@ static const NSTimeInterval kProgressEvery = 0.08;
     MCAgentRun *r = [MCAgentRun new];
     r->_completion = [completion copy];
     r->_progress = [progress copy];
-    r->_streamQueue = dispatch_queue_create("minicode.agent.stream", DISPATCH_QUEUE_SERIAL);
+    r->_streamQueue = dispatch_queue_create("mutible.agent.stream", DISPATCH_QUEUE_SERIAL);
     [r startWithPrompt:prompt folder:folder];
     return r;
 }
@@ -1092,7 +1092,7 @@ static size_t MCAgentBytes(NSString *text, NSUInteger utf16) {
     t.lastLine = _ctx.lastLine;
     t.screen = Std(_ctx.screen);
     const std::string prompt = InlineAgent::taskPrompt(t);
-    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-agent"];
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"Mutible-agent"];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES
                                                attributes:@{NSFilePosixPermissions: @0700}
                                                     error:nil];

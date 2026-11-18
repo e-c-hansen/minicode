@@ -3,7 +3,7 @@
 // that open the source at the line) and the gutter's error dots.
 //
 // tectonic sums up TeX's first error on a line of its own,
-//     error: .paper.minicode.tex:5: Undefined control sequence
+//     error: .paper.mutible.tex:5: Undefined control sequence
 // (the file as TeX named it: the preview's hidden sibling, or an \input
 // file without its extension), then prints TeX's transcript between rules of
 // '=' signs. A complaint without a place (an emergency stop, a runaway

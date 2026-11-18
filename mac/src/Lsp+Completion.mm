@@ -165,7 +165,7 @@ static dispatch_queue_t CompletionQueue(void) {
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        queue = dispatch_queue_create("minicode.lsp.completion", DISPATCH_QUEUE_SERIAL);
+        queue = dispatch_queue_create("mutible.lsp.completion", DISPATCH_QUEUE_SERIAL);
     });
     return queue;
 }

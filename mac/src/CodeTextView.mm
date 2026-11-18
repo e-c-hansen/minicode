@@ -491,7 +491,7 @@ static BOOL MCIsSpellingMenu(NSMenu *submenu) {
 static const NSUInteger kDropGlyphsAtEdits = 64;
 
 static os_log_t MCEditLog() {
-    static os_log_t log = os_log_create("com.minicode.editor", "edit");
+    static os_log_t log = os_log_create("ai.ible.mutible", "edit");
     return log;
 }
 

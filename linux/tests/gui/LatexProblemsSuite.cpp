@@ -132,7 +132,7 @@ MC_GUI_SUITE(latex_problems) {
         EnvLock::envSet("XDG_RUNTIME_DIR", base.c_str(), TRUE);
         g_mkdir_with_parents(base.c_str(), 0755);
         for (int k = 0; k < 2; ++k) {
-            const std::string sib = F(k ? ".keep.tex.7.minicode.tex" : ".gone.tex.7.minicode.tex");
+            const std::string sib = F(k ? ".keep.tex.7.mutible.tex" : ".gone.tex.7.mutible.tex");
             const std::string dir = base + "/minicode-latex/0123456789abcdef-4194000-5-" +
                                     std::to_string(k + 1);
             MCGuiWriteFile(sib, "recorded bytes\n");

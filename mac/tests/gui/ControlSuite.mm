@@ -1,5 +1,5 @@
 // ControlSuite.mm — `make guitest SUITES=control`: the control channel
-// (ControlServer, ControlCommands, the minicode-cli client), agent notes and
+// (ControlServer, ControlCommands, the mutible-cli client), agent notes and
 // tours, the agent preview tab and the side-by-side diff, driven through the
 // real command line against this process's own socket (--pid), as an agent
 // would drive it.
@@ -22,7 +22,7 @@ static BOOL Env_Verbose() { return NSProcessInfo.processInfo.environment[@"MC_GU
 
 namespace {
 
-NSString *CLIPath() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"minicode-cli"]; }
+NSString *CLIPath() { return [MCGuiBuildDir() stringByAppendingPathComponent:@"mutible-cli"]; }
 
 // The command line against this process, as a step: `check` gets the exit
 // status, stdout and stderr.
@@ -98,7 +98,7 @@ static void CollectKeys(NSMenu *menu, NSMutableDictionary<NSString *, NSMutableA
         if (!item.keyEquivalent.length || item.isAlternate) continue;
         // AppKit's own Edit items: once a Control+Command key has reached the
         // menu it shows them in their Globe-key form (fn E), beside a hidden
-        // twin with the same key. Not minicode's keys to clash.
+        // twin with the same key. Not mutible's keys to clash.
         if (item.action == @selector(orderFrontCharacterPalette:) ||
             item.action == @selector(startDictation:))
             continue;
@@ -244,21 +244,21 @@ MC_GUI_SUITE(control) {
         GCHECK(s == 0 && [ParseJSON(out)[@"pid"] intValue] == getpid());
     });
 
-    MCGuiAsync(@"with no minicode running, the command line starts one and waits", 30,
+    MCGuiAsync(@"with no mutible running, the command line starts one and waits", 30,
                ^(MCGuiDone done) {
         NSString *empty = [MCGuiScratch() stringByAppendingPathComponent:@"no-app"];
         [fm createDirectoryAtPath:empty withIntermediateDirectories:YES attributes:nil error:nil];
         MCGuiRunProcess(@[CLIPath(), @"browse", @"https://example.com"],
-                        @{@"TMPDIR": empty, @"MINICODE_LAUNCHER_DRYRUN": @"1",
+                        @{@"TMPDIR": empty, @"MUTIBLE_LAUNCHER_DRYRUN": @"1",
                           // Only there: the command line also looks in the
                           // user's own temporary folder, where a real
-                          // minicode may be listening.
-                          @"MINICODE_CONTROL_DIR": [empty stringByAppendingPathComponent:@"MiniCode"],
-                          @"MINICODE_CLI_WAIT": @"0.4"},
+                          // mutible may be listening.
+                          @"MUTIBLE_CONTROL_DIR": [empty stringByAppendingPathComponent:@"Mutible"],
+                          @"MUTIBLE_CLI_WAIT": @"0.4"},
                         ^(int s, NSString *out, NSString *err) {
             GCHECK(s == 3);
             if ([err containsString:@"does not answer"]) {
-                // An older minicode is open on this Mac: it is told so, and
+                // An older mutible is open on this Mac: it is told so, and
                 // nothing is launched.
                 GCHECK(out.length == 0);
             } else {
@@ -272,10 +272,10 @@ MC_GUI_SUITE(control) {
 
     MCGuiAsync(@"the launcher in the bundle hands subcommands to the client", 30, ^(MCGuiDone done) {
         NSString *launcher = [[MCGuiBuildDir().stringByDeletingLastPathComponent
-            stringByAppendingPathComponent:@"MiniCode.app"]
-            stringByAppendingPathComponent:@"Contents/Resources/minicode"];
+            stringByAppendingPathComponent:@"Mutible.app"]
+            stringByAppendingPathComponent:@"Contents/Resources/mutible"];
         if (![fm isExecutableFileAtPath:launcher]) {
-            MCGuiNote(@"no MiniCode.app built here (make app): launcher check skipped");
+            MCGuiNote(@"no Mutible.app built here (make app): launcher check skipped");
             done();
             return;
         }

@@ -35,7 +35,7 @@ void removeSocketAtExit() {
 // only once the answer to the last has been written, so a client cannot
 // queue unbounded work on the main thread by sending many lines at once,
 // and the kernel's buffer holds back a client that sends faster than
-// minicode answers. Writes never block the queue every connection shares:
+// mutible answers. Writes never block the queue every connection shares:
 // the socket is non-blocking, an answer the peer is slow to take waits for
 // a write source, and a peer that takes nothing for kStallSeconds is
 // dropped.
@@ -243,7 +243,7 @@ BOOL prepareFolder(NSString *folder) {
 // has it set to the user's own temporary folder), else the same folder from
 // the system; NSTemporaryDirectory() does not read TMPDIR.
 NSString *MCControlSocketFolder(void) {
-    const char *forced = getenv("MINICODE_CONTROL_DIR");
+    const char *forced = getenv("MUTIBLE_CONTROL_DIR");
     if (forced && *forced) return [NSString stringWithUTF8String:forced];
     const char *t = getenv("TMPDIR");
     NSString *tmp = t && *t ? [NSString stringWithUTF8String:t] : nil;
@@ -252,11 +252,11 @@ NSString *MCControlSocketFolder(void) {
         size_t n = confstr(_CS_DARWIN_USER_TEMP_DIR, buf, sizeof buf);
         tmp = n > 0 && n <= sizeof buf ? [NSString stringWithUTF8String:buf] : NSTemporaryDirectory();
     }
-    return [tmp stringByAppendingPathComponent:@"MiniCode"];
+    return [tmp stringByAppendingPathComponent:@"Mutible"];
 }
 
 // Whether something listens on the socket at `path` (a live pid may be a
-// later process that reused a dead minicode's number).
+// later process that reused a dead mutible's number).
 static BOOL MCSocketAnswers(NSString *path) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof addr);
@@ -283,7 +283,7 @@ NSUInteger MCControlRemoveStaleSockets(NSString *folder) {
         if (pid <= 0 || pid == getpid()) continue;
         NSString *path = [folder stringByAppendingPathComponent:name];
         if (kill(pid, 0) == 0) {
-            // Alive, but perhaps a later process with a dead minicode's pid:
+            // Alive, but perhaps a later process with a dead mutible's pid:
             // then nothing listens.
             if (MCSocketAnswers(path)) continue;
         } else if (errno != ESRCH) {
@@ -304,11 +304,11 @@ void MCControlServerStart(id<MCControlAppHost> host) {
         gDispatcher = new ControlChannel::Dispatcher();
         MCControlRegisterCommands(*gDispatcher, host);
     }
-    const char *off = getenv("MINICODE_CONTROL");
+    const char *off = getenv("MUTIBLE_CONTROL");
     if (off && strcmp(off, "off") == 0) return;
     NSString *folder = MCControlSocketFolder();
     if (!prepareFolder(folder)) {
-        NSLog(@"minicode: control channel off: cannot use %@", folder);
+        NSLog(@"mutible: control channel off: cannot use %@", folder);
         return;
     }
     MCControlRemoveStaleSockets(folder);
@@ -319,7 +319,7 @@ void MCControlServerStart(id<MCControlAppHost> host) {
     addr.sun_family = AF_UNIX;
     const char *fs = path.fileSystemRepresentation;
     if (strlen(fs) >= sizeof addr.sun_path) {
-        NSLog(@"minicode: control channel off: the socket path is too long: %@", path);
+        NSLog(@"mutible: control channel off: the socket path is too long: %@", path);
         return;
     }
     strlcpy(addr.sun_path, fs, sizeof addr.sun_path);
@@ -328,7 +328,7 @@ void MCControlServerStart(id<MCControlAppHost> host) {
     if (fd < 0) return;
     if (bind(fd, (struct sockaddr *)&addr, sizeof addr) != 0 || chmod(fs, 0600) != 0 ||
         listen(fd, 16) != 0) {
-        NSLog(@"minicode: control channel off: %s", strerror(errno));
+        NSLog(@"mutible: control channel off: %s", strerror(errno));
         close(fd);
         unlink(fs);
         return;
@@ -339,7 +339,7 @@ void MCControlServerStart(id<MCControlAppHost> host) {
     strlcpy(gSocketPath, fs, sizeof gSocketPath);
     static dispatch_once_t once;
     dispatch_once(&once, ^{ atexit(removeSocketAtExit); });
-    gQueue = dispatch_queue_create("minicode.control", DISPATCH_QUEUE_SERIAL);
+    gQueue = dispatch_queue_create("mutible.control", DISPATCH_QUEUE_SERIAL);
     gListenSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)fd, 0, gQueue);
     dispatch_source_set_event_handler(gListenSource, ^{ acceptConnections(); });
     dispatch_source_set_cancel_handler(gListenSource, ^{ close(fd); });

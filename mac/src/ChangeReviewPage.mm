@@ -1021,7 +1021,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     if ((self = [super init])) {
         _root = [root copy];
         _panel = panel;
-        _queue = dispatch_queue_create("minicode.review", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.review", DISPATCH_QUEUE_SERIAL);
         _currentBlockRow = -1;
         [self build];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(panelRefreshed:)

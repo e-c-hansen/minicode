@@ -315,7 +315,7 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
         NSButton *again = [self button:@"Ask Again" action:@selector(forgetToolsAnswer:)
                                    key:@"tools"];
         again.toolTip = @"Forget the answer: the servers stop using the folder's environment, "
-                        @"and minicode asks the next time one of its programs would run.";
+                        @"and mutible asks the next time one of its programs would run.";
         NSStackView *line = [NSStackView stackViewWithViews:@[l, gap, again]];
         line.orientation = NSUserInterfaceLayoutOrientationHorizontal;
         line.distribution = NSStackViewDistributionFill;
@@ -358,7 +358,7 @@ static NSFont *Small(void) { return [NSFont systemFontOfSize:11]; }
     }
     NSTextField *note = Label(@"Commands come from the lsp lines in the settings file "
                               @"(lsp.python.also for a second Python server), and "
-                              @"python.interpreter sets the default Python. MiniCode never "
+                              @"python.interpreter sets the default Python. Mutible never "
                               @"installs a server itself.",
                               Small(), PHex(0x9D9D9D), YES, NO);
     NSButton *settings = [NSButton buttonWithTitle:@"Open Settings" target:self

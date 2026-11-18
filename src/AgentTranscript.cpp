@@ -115,7 +115,7 @@ double parseTime(const std::string &s) {
 
 // ================================================================ skimming
 // A JSON skimmer: it checks a value is well formed and says where it ends,
-// without building anything, so the parts of a line MiniCode does not use
+// without building anything, so the parts of a line Mutible does not use
 // cost a memchr and nothing more.
 namespace {
 

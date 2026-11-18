@@ -176,7 +176,7 @@ MC_GUI_SUITE(format_offer) {
         GMenuModel* bar = Keys::menuBar();
         GCHECK(hasItem(bar, "Format on Save", "app.formatonsave"));
         g_object_unref(bar);
-        GCHECK(Keys::label("minicode.toggleFormatOnSave").empty());
+        GCHECK(Keys::label("mutible.toggleFormatOnSave").empty());
     });
     MCGuiStep("Edit > Format on Save turns it off", [] {
         g_action_group_activate_action(G_ACTION_GROUP(MCGuiApplication()), "formatonsave", nullptr);

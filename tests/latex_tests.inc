@@ -30,7 +30,7 @@ static void testLatexForwardAndLog() {
         std::printf("    (skipped: run from the repository root for tests/latex)\n");
     } else {
         SyncTexIndex idx = SyncTexIndex::parse(fwd);
-        const int tag = idx.tagForPath("/elsewhere/.fwd.minicode.tex");
+        const int tag = idx.tagForPath("/elsewhere/.fwd.mutible.tex");
         CHECK(tag == 1);
         int found = -1;
         // "First paragraph words here." (line 3): the first line of text on
@@ -93,7 +93,7 @@ static void testLatexForwardAndLog() {
         // them.
         SyncTexIndex idx = SyncTexIndex::parse(
             "SyncTeX Version:1\n"
-            "Input:1:/private/tmp/doc/.main.4242-1.minicode.tex\n"
+            "Input:1:/private/tmp/doc/.main.4242-1.mutible.tex\n"
             "Input:2:\nInput:3:\nInput:4:\n"
             "Input:5:/private/tmp/doc/parts/intro.tex\n"
             "Input:6:./parts/../chapters/two.tex\n"
@@ -134,7 +134,7 @@ static void testLatexForwardAndLog() {
             std::printf("    (skipped: run from the repository root for tests/latex)\n");
         } else {
             SyncTexIndex idx = SyncTexIndex::parse(fx);
-            const int mainTag = idx.tagForPath("@DIR@/.main.minicode.tex");
+            const int mainTag = idx.tagForPath("@DIR@/.main.mutible.tex");
             CHECK(mainTag == 1);
             CHECK(idx.inputs().size() == 3);   // the engine's own files have no path
             CHECK(idx.pathForTag(7) == "@DIR@/chapter.tex");
@@ -194,12 +194,12 @@ static void testLatexForwardAndLog() {
         const char *message;
     };
     const Case cases[] = {
-        {"twoerr", ".twoerr.minicode.tex", 3, "Undefined control sequence"},
+        {"twoerr", ".twoerr.mutible.tex", 3, "Undefined control sequence"},
         {"child", "child", 2, "Undefined control sequence"},
-        {"env", ".env.minicode.tex", 5,
+        {"env", ".env.mutible.tex", 5,
          "LaTeX Error: \\begin{itemize} on input line 3 ended by \\end{enumerate}"},
-        {"missing-dollar", ".missing-dollar.minicode.tex", 3, "Missing $ inserted"},
-        {"missing-sty", ".missing-sty.minicode.tex", 3,
+        {"missing-dollar", ".missing-dollar.mutible.tex", 3, "Missing $ inserted"},
+        {"missing-sty", ".missing-sty.mutible.tex", 3,
          "LaTeX Error: File `nosuchpackage.sty' not found"},
         {"noend", "", 0, "Emergency stop (job aborted, no legal \\end found)"},
         {"runaway", "", 0, "File ended while scanning use of \\textbf"},
@@ -300,14 +300,14 @@ static void testLatexForwardAndLog() {
     GROUP("latexlog:source");
     {
         using LatexLog::sourcePath;
-        const std::string tex = "/w/doc/paper.tex", sib = "/w/doc/.paper.minicode.tex";
+        const std::string tex = "/w/doc/paper.tex", sib = "/w/doc/.paper.mutible.tex";
         auto exists = [](const std::string &p) {
             return p == "/w/doc/child.tex" || p == "/w/doc/parts/intro.tex" ||
                    p == "/abs/x.tex" || p == "/w/doc/data";
         };
-        CHECK(sourcePath(".paper.minicode.tex", tex, sib, exists) == tex);
-        CHECK(sourcePath(".paper.minicode", tex, sib, exists) == tex);
-        CHECK(sourcePath("./.paper.minicode.tex", tex, sib, exists) == tex);
+        CHECK(sourcePath(".paper.mutible.tex", tex, sib, exists) == tex);
+        CHECK(sourcePath(".paper.mutible", tex, sib, exists) == tex);
+        CHECK(sourcePath("./.paper.mutible.tex", tex, sib, exists) == tex);
         CHECK(sourcePath(sib, tex, sib, exists) == tex);
         CHECK(sourcePath("", tex, sib, exists) == tex);
         CHECK(sourcePath("child", tex, sib, exists) == "/w/doc/child.tex");
@@ -317,7 +317,7 @@ static void testLatexForwardAndLog() {
         CHECK(sourcePath("data", tex, sib, exists) == "/w/doc/data");
         CHECK(sourcePath("missing", tex, sib, exists).empty());
         // A sibling's name in another folder is that folder's file.
-        CHECK(sourcePath("/other/.paper.minicode.tex", tex, sib, exists).empty());
+        CHECK(sourcePath("/other/.paper.mutible.tex", tex, sib, exists).empty());
     }
 
     // tests/latex/logs/warnings.txt and warnings.log: what tectonic 0.17.0
@@ -350,8 +350,8 @@ static void testLatexForwardAndLog() {
                 CHECK(ps[0].severity == Severity::Warning && ps[0].file == "parts/chapter" &&
                       ps[0].line == 3 &&
                       ps[0].message == "Overfull \\hbox (86.74pt too wide) detected at line 3");
-                CHECK(ps[1].file == ".warnings.minicode.tex" && ps[1].line == 11);
-                CHECK(ps[2].file == ".warnings.minicode.tex" && ps[2].line == 13 &&
+                CHECK(ps[1].file == ".warnings.mutible.tex" && ps[1].line == 11);
+                CHECK(ps[2].file == ".warnings.mutible.tex" && ps[2].line == 13 &&
                       ps[2].message.find("in paragraph at lines 13--17") != std::string::npos);
             } else {
                 show(ps);
@@ -363,16 +363,16 @@ static void testLatexForwardAndLog() {
                 for (const LatexLog::Problem &p : ps) CHECK(p.severity == Severity::Warning);
                 CHECK(ps[0].file.empty() && ps[0].line == 0 &&
                       ps[0].message == "LaTeX Warning: Label `sec:intro' multiply defined");
-                CHECK(ps[1].file == ".warnings.minicode.tex" && ps[1].line == 4 &&
+                CHECK(ps[1].file == ".warnings.mutible.tex" && ps[1].line == 4 &&
                       ps[1].message == "LaTeX Warning: Reference `sec:missing' on page 1 undefined");
-                CHECK(ps[2].file == ".warnings.minicode.tex" && ps[2].line == 4 &&
+                CHECK(ps[2].file == ".warnings.mutible.tex" && ps[2].line == 4 &&
                       ps[2].message == "LaTeX Warning: Citation `nobody' on page 1 undefined");
                 CHECK(ps[3].line == 7 &&
                       ps[3].message == "LaTeX Warning: Reference `a-label-long-enough-to-make-"
                                        "latex-wrap-the-warning-line-in-the-log' on page 1 undefined");
                 CHECK(ps[4].file == "parts/chapter" && ps[4].line == 1 &&
                       ps[4].message == "LaTeX Warning: Reference `nowhere' on page 1 undefined");
-                CHECK(ps[5].file == ".warnings.minicode.tex" && ps[5].line == 16 &&
+                CHECK(ps[5].file == ".warnings.mutible.tex" && ps[5].line == 16 &&
                       ps[5].message == "Package mypkg Warning: Something odd here, over two lines");
             } else {
                 show(ps);

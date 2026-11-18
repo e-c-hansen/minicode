@@ -204,7 +204,7 @@ std::string summaryText(const AgentEvidence::Summary &s) {
     if (s.errors > 0) parts.push_back(grouped(s.errors) + (s.errors == 1 ? " error" : " errors"));
     parts.push_back(grouped(s.passed) + " passed");
     if (s.skipped > 0) parts.push_back(grouped(s.skipped) + " skipped");
-    // minicode's own "N passed, 0 failed" says so even with none failed.
+    // mutible's own "N passed, 0 failed" says so even with none failed.
     if (s.failed == 0 && s.format == "count") parts.push_back("0 failed");
     std::string out;
     for (const std::string &p : parts) {

@@ -1,15 +1,15 @@
 // Harness.h — offscreen GUI checks for the macOS app (`make guitest`).
 //
 // build/guitest is the whole app (every src/*.mm and .cpp, with main.mm's
-// main renamed minicode_main) plus the suites in mac/tests/gui/*.mm. It never
+// main renamed mutible_main) plus the suites in mac/tests/gui/*.mm. It never
 // puts a window on screen or activates the app, so it runs while someone
 // works at the Mac, and in the macOS CI job:
 //
 //   - It first re-executes itself with a scratch world under /tmp/mcgui-*:
 //     HOME and CFFIXED_USER_HOME, ZDOTDIR (an empty .zshrc and its own
-//     history), TMPDIR (short, for Unix socket paths), MINICODE_SETTINGS
-//     (language servers off), MINICODE_DEFAULTS_SUITE, MINICODE_BACKUP_DIR,
-//     MINICODE_PASTEBOARD, and git's identity with no global config. The
+//     history), TMPDIR (short, for Unix socket paths), MUTIBLE_SETTINGS
+//     (language servers off), MUTIBLE_DEFAULTS_SUITE, MUTIBLE_BACKUP_DIR,
+//     MUTIBLE_PASTEBOARD, and git's identity with no global config. The
 //     folder is deleted at the end (MC_GUI_KEEP=1 keeps it).
 //   - Window ordering (makeKeyAndOrderFront:, orderFront:,
 //     orderWindow:relativeTo:, ...), activation, the activation policy
@@ -18,7 +18,7 @@
 //     private one) and NSWorkspace's openURL: are swizzled. keyWindow,
 //     mainWindow and isKeyWindow report the test window (the newest editor
 //     window, or MCGuiSetKeyWindow), since an offscreen window is never key.
-//   - minicode_main runs with the scratch project folder as its argument, so
+//   - mutible_main runs with the scratch project folder as its argument, so
 //     applicationDidFinishLaunching: opens the window as it would for a user.
 //
 // A suite is a function registered with MC_GUI_SUITE that queues steps. The
@@ -152,7 +152,7 @@ BOOL MCGuiCheckTime(double ms, double bound, NSString *what, const char *file, i
 NSString *MCGuiScratch(void);               // the scratch root
 NSString *MCGuiProject(void);               // the folder the first window shows
 NSString *MCGuiProjectFile(NSString *name); // a path in it
-NSString *MCGuiBuildDir(void);              // build/, where guitest and minicode-cli are
+NSString *MCGuiBuildDir(void);              // build/, where guitest and mutible-cli are
 EditorController *MCGuiController(void);    // the newest editor window's controller
 NSArray<EditorController *> *MCGuiControllers(void);
 void MCGuiSetKeyWindow(NSWindow *window);   // what keyWindow reports (nil: the newest)
@@ -170,7 +170,7 @@ void MCGuiWriteFile(NSString *path, NSString *text);
 // <name>.png into $MC_GUI_SNAPSHOTS when that is set, for looking at.
 void MCGuiSnapshot(NSView *view, NSString *name);
 
-// Writes the settings file (MINICODE_SETTINGS) and has the app read it now.
+// Writes the settings file (MUTIBLE_SETTINGS) and has the app read it now.
 void MCGuiSetSettings(NSString *text);
 
 // ---- a scripted language server (build/fakelsp; tests/fakelsp/fakelsp.cpp

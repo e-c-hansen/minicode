@@ -291,7 +291,7 @@ static void testGitModel() {
         // What a credential failure says.
         std::string https = networkFailureText(
             128, "", "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n");
-        CHECK(https.find("terminal prompts disabled\nminicode never asks for a password") !=
+        CHECK(https.find("terminal prompts disabled\nmutible never asks for a password") !=
               std::string::npos);
         std::string ssh = networkFailureText(
             128, "", "git@github.com: Permission denied (publickey).\nfatal: Could not read from "

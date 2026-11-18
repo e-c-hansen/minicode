@@ -24,7 +24,7 @@ static std::string Std(NSString *s) {
 // Where a plan's program may be found. `local`: the project's own copy, in
 // its virtualenv for a Python tool or its node_modules/.bin for Prettier and
 // Biome (at the version the project pins), nil for none; `outside`: one the
-// user installed, from $VIRTUAL_ENV (activated where minicode started, so
+// user installed, from $VIRTUAL_ENV (activated where mutible started, so
 // trusted as the servers trust it) or the usual search (PATH, Homebrew,
 // ~/.local/bin, ..., never /usr/bin's xcrun shims). A path as given (from
 // the settings) is only ever `outside`. A project copy outside the window's
@@ -303,7 +303,7 @@ void MCFormatText(NSString *text, NSString *path, NSString *root, NSInteger firs
                 result.error = [NSString stringWithFormat:
                     @"%@ can run code when %@ reads it, and this folder's own programs are not "
                      "allowed to run, so %@ did not run. Ask Again About This Folder's Tools "
-                     "(minicode menu) asks again.",
+                     "(mutible menu) asks again.",
                     FolderRelativeName(NS(codeConfig), realRoot), name, name];
                 finish();
                 return;

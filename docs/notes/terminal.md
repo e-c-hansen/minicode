@@ -33,25 +33,25 @@ for full-screen programs. Both can be open at once.
   synchronized output). A shell's last output is parsed before "[shell
   exited]".
 - **The integration is one script for both modes** (2026-11-08):
-  `resources/minicode-zsh-integration.zsh`, in the bundle's Resources and
+  `resources/mutible-zsh-integration.zsh`, in the bundle's Resources and
   `build/` (the GUI checks). Terminal.mm reads it once per process and
   writes a copy beside a `.zshenv` stub (`ShellIntegration::zshenvStub`,
-  `src/ShellIntegration.h`: `__minicode_mode=grid|line`, then source the
+  `src/ShellIntegration.h`: `__mutible_mode=grid|line`, then source the
   copy) in each mode's ZDOTDIR folder, so a running app never sources a
   newer bundle's script. The folders are the process's own
-  (`ShellIntegration::folderName`: `MiniCode-zsh-grid-<pid>-<start>` and
-  `MiniCode-zsh-<pid>-<start>` in `NSTemporaryDirectory()`; 2026-11-08,
-  round 6's defect 6: one shared folder let two minicodes running at once
+  (`ShellIntegration::folderName`: `Mutible-zsh-grid-<pid>-<start>` and
+  `Mutible-zsh-<pid>-<start>` in `NSTemporaryDirectory()`; 2026-11-08,
+  round 6's defect 6: one shared folder let two mutibles running at once
   source each other's copy); the first terminal of a launch removes those
   of processes gone, and quitting removes its own. The old shared folders
-  are left to the older minicodes using them. The private ZLE keys live in
+  are left to the older mutibles using them. The private ZLE keys live in
   ShellIntegration.h.
   `make test`'s `zsh:*` groups (`tests/zsh_integration_tests.inc`) run it in
   a real interactive zsh reading a pipe (precmd and preexec run there):
   `zsh -n`, the marks of both modes, the nonce, OSC 7's encoding, and the
   exec hook case by case; skipped without /bin/zsh (CI's Linux jobs).
 - **Grid mode's shell**: `zsh -l -i`, `ZDOTDIR` at the process's
-  `MiniCode-zsh-grid-<pid>-<start>`, whose .zshenv hands ZDOTDIR back
+  `Mutible-zsh-grid-<pid>-<start>`, whose .zshenv hands ZDOTDIR back
   and at the first precmd (after .zshrc, so last in line) installs hooks that
   only print: precmd `133;D;status` (if preexec ran), OSC 7, `133;A`; a
   `zle-line-init` hook (`add-zle-hook-widget`) `133;B`; preexec
@@ -59,16 +59,16 @@ for full-screen programs. Both can be open at once.
   PROMPT_SP and tty modes are untouched; HIST_IGNORE_SPACE keeps
   `setDirectory:`'s ` cd` out of history; `TERM=xterm-256color`.
   `terminal.activate-venv` (both modes, 2026-11-06): the panel asks the
-  window for each new terminal's environment, and `MINICODE_VENV` (with
-  `MINICODE_VENV_PROMPT`) makes the first precmd do what bin/activate does,
+  window for each new terminal's environment, and `MUTIBLE_VENV` (with
+  `MUTIBLE_VENV_PROMPT`) makes the first precmd do what bin/activate does,
   VIRTUAL_ENV, the bin first on PATH (after .zshrc and path_helper), PYTHONHOME
   unset, the name before PS1, a deactivate; nothing of the environment's is
   sourced or run. The interpreter is Run File's choice from the terminal's
   folder, but the folder's own .venv only once allowed by the P5 consent
   (`terminalPythonInterpreterInDirectory:waiting:`), since a prompt that runs
   git would otherwise run a planted .venv/bin/git unasked.
-  Every mark ends in `;mc=<nonce>` (`__minicode_mark`): 128 random bits per
-  shell in `MINICODE_NONCE`, which the .zshenv reads and unsets, and
+  Every mark ends in `;mc=<nonce>` (`__mutible_mark`): 128 random bits per
+  shell in `MUTIBLE_NONCE`, which the .zshenv reads and unsets, and
   `TerminalStream::setMarkNonce` drops marks without it (2026-11-06; any
   program could print them: a remote shell with iTerm2's integration made
   Run File type into ssh). OSC 7 percent-encodes `%`, `;` and control
@@ -80,9 +80,9 @@ for full-screen programs. Both can be open at once.
 - **exec**: preexec looks for `exec` as a command word (first, or after `; &&
   || & |`, `then`, `do`, `else`, `{`, `!`, and past `builtin`, `command`,
   `noglob`). The exec's program, and nothing else on the line, gets ZDOTDIR
-  as the integration folder (the user's in `MINICODE_USER_ZDOTDIR`) with
-  `MINICODE_EXEC=1` (`__minicode_exec_env`): for the line, preexec puts a
-  function named `exec` (`__minicode_exec`) in front of the builtin, which
+  as the integration folder (the user's in `MUTIBLE_USER_ZDOTDIR`) with
+  `MUTIBLE_EXEC=1` (`__mutible_exec_env`): for the line, preexec puts a
+  function named `exec` (`__mutible_exec`) in front of the builtin, which
   exports them just before `builtin exec` and puts the shell's back if it
   returns; the next precmd removes it (2026-11-08, round 6's defect 2:
   exported from preexec, `make && exec zsh` gave make the nonce). Functions
@@ -93,10 +93,10 @@ for full-screen programs. Both can be open at once.
   nonce goes only to zsh (2026-11-06: a bash, or `exec claude`, kept it in
   its environment for everything it ran, any of which could forge marks; so
   a zsh exec'd from that bash no longer marks), only one that reads its
-  startup files (`__minicode_reads_rcs`: not `-f` or a cluster holding f,
+  startup files (`__mutible_reads_rcs`: not `-f` or a cluster holding f,
   `--no-rcs`, `-o norcs`, `+o rcs`, unless a later option turns them back
   on; `exec zsh -f` kept it), and not one emulating sh or ksh, which reads
-  .profile instead (`__minicode_takes_nonce`: `--emulate`, or a name, exec
+  .profile instead (`__mutible_takes_nonce`: `--emulate`, or a name, exec
   -a's or the program's, starting with s, b or k after an optional r, zsh's
   own rule; `exec -a sh zsh` kept it), so an exec'd zsh loads the
   integration and reports the exec finished (133;D;0). zsh 5.9 exits when
@@ -111,11 +111,11 @@ for full-screen programs. Both can be open at once.
   `_zleReady`; `CommandStart` carries 633;E's text as `_runningCommand`
   (titles, `runningCommands`, close questions); OSC 0/2 `Title` names the tab
   only between 133;C and the next prompt (an empty title, the prompt or exit
-  restore the rule; `minicode term --title` wins). `busy`, `atPrompt`,
+  restore the rule; `mutible term --title` wins). `busy`, `atPrompt`,
   `gridMode` (a program has the alternate screen), `lineMode` and
   `MCTerminalCommandDidFinishNotification` work in both modes.
 - **Typing for the user** (`typeLine:run:`): first a private key, `ESC [9999~`,
-  bound in emacs, viins and vicmd to `zle push-input` (`__minicode_push`), so a
+  bound in emacs, viins and vicmd to `zle push-input` (`__mutible_push`), so a
   half-typed line returns at the next prompt; `runCommand:` adds Return;
   `typeCommand:` pastes in brackets when ZLE asked, never pressing Return;
   outside brackets control characters are dropped. Both go through
@@ -198,7 +198,7 @@ for full-screen programs. Both can be open at once.
   at the prompt. Trap: the harness can run zsh; an agent's own shell may
   be refused it by the worktree guard.
 - **VT conformance** (2026-11-08, `term:vt-conformance`): DA1 `?62;22c`,
-  DA2 `>1;<version as MMmmpp>;0c`, XTVERSION `DCS >|minicode <version> ST`
+  DA2 `>1;<version as MMmmpp>;0c`, XTVERSION `DCS >|mutible <version> ST`
   (the host's `setVersion`), OSC 4/10/11/12 `?` answered from
   `setThemeColors` (Terminal.mm `tellScreenTheme`, on applySettings),
   ended with BEL or ST as asked (`TermParser::oscEndedWithBel`); DECSCUSR
@@ -322,7 +322,7 @@ for full-screen programs. Both can be open at once.
   cell, the input line and log re-font (keeping weight and slant), the panel
   relays out and the pty gets the rows and columns that fit.
 - **Line mode**: `zsh -l -i +Z`, `ZDOTDIR` at the process's
-  `MiniCode-zsh-<pid>-<start>` (hooks emit 133 A/C/D and OSC 7, blank
+  `Mutible-zsh-<pid>-<start>` (hooks emit 133 A/C/D and OSC 7, blank
   `PS1`, `PROMPT_SP` unset); echo is off while zsh reads, so the master's ECHO
   flag shows hidden input. The last log line is "live" (replaced from
   `_liveStart`), so panel-written lines go through `ensureNewline`
@@ -434,17 +434,17 @@ for full-screen programs. Both can be open at once.
   `TermLinks::hyperlink`), the span is the cells with that id in the wrapped
   line, and the address is the view's tooltip while Cmd hovers.
 - **BROWSER** (2026-11-06): every shell gets `BROWSER=<bundle>/Contents/
-  Resources/minicode-browser.js` (`resources/`; build/'s copy for the GUI
+  Resources/mutible-browser.js` (`resources/`; build/'s copy for the GUI
   checks), a file that is sh and JavaScript at once: Claude Code (on a clicked
   link, with mouse reporting on) and Python's webbrowser exec it with the
   address; Vite and CRA run a BROWSER ending in .js with node, their own
   arguments first (with any other value Vite would run `open -a <value>`).
-  Both hand the last argument to `minicode-cli open-url`, which sends pages
+  Both hand the last argument to `mutible-cli open-url`, which sends pages
   that are not local (`ControlChannel::opensInPane`: sign-in pages refuse an
-  embedded web view) and every page when `MINICODE_PID`'s minicode does not
-  answer to `/usr/bin/open` (`MINICODE_OPEN_FALLBACK` in tests, a recorder),
-  and never launches minicode. The `open-url` command loads the user's page in
-  the window of `MINICODE_TERMINAL_ID`. The npm `open` package and `open`
+  embedded web view) and every page when `MUTIBLE_PID`'s mutible does not
+  answer to `/usr/bin/open` (`MUTIBLE_OPEN_FALLBACK` in tests, a recorder),
+  and never launches mutible. The `open-url` command loads the user's page in
+  the window of `MUTIBLE_TERMINAL_ID`. The npm `open` package and `open`
   itself ignore BROWSER.
 - Testing: a scratch `HOME` and `ZDOTDIR`, or commands land in the user's
   `~/.zsh_history`; an app-typed command snaps a scrolled view, so test "stays

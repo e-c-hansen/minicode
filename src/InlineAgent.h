@@ -1,5 +1,5 @@
 // InlineAgent.h — pure C++. The inline agent (Cmd+I, as in VS Code): what
-// minicode asks Claude Code, and what it does with the answer. No I/O; the
+// mutible asks Claude Code, and what it does with the answer. No I/O; the
 // Mac's AgentPanel.mm runs Claude Code and shows the bar.
 //
 // What has the keyboard decides the kind of request:

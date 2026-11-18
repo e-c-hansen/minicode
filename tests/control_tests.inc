@@ -190,7 +190,7 @@ static void testControlProtocol() {
         CHECK(!parse({"diff", "a.txt", "--base=-p"}).error.empty());
         CHECK(isSafeRef("main~2") && isSafeRef("HEAD") && !isSafeRef("") && !isSafeRef("-x") &&
               !isSafeRef(std::string("a\nb")));
-        // Reads never start minicode; everything else does.
+        // Reads never start mutible; everything else does.
         CHECK(!launchesApp("state") && !launchesApp("selection") && !launchesApp("term-output"));
         CHECK(launchesApp("open") && launchesApp("browse") && launchesApp("term") &&
               launchesApp("diff") && launchesApp("tour") && launchesApp("window"));
@@ -238,18 +238,18 @@ static void testControlProtocol() {
         // Linux's folder: the test's folder, else the runtime folder's, else
         // one of the user's own in the temporary folder.
         CHECK(socketFolder("/x/y/", "/run/user/1000", "/tmp", 1000) == "/x/y");
-        CHECK(socketFolder("", "/run/user/1000/", "/tmp", 1000) == "/run/user/1000/minicode");
-        CHECK(socketFolder(nullptr, "/run/user/7", nullptr, 7) == "/run/user/7/minicode");
-        CHECK(socketFolder(nullptr, nullptr, "/var/tmp/", 42) == "/var/tmp/minicode-42");
-        CHECK(socketFolder(nullptr, "relative", "", 5) == "/tmp/minicode-5");
+        CHECK(socketFolder("", "/run/user/1000/", "/tmp", 1000) == "/run/user/1000/mutible");
+        CHECK(socketFolder(nullptr, "/run/user/7", nullptr, 7) == "/run/user/7/mutible");
+        CHECK(socketFolder(nullptr, nullptr, "/var/tmp/", 42) == "/var/tmp/mutible-42");
+        CHECK(socketFolder(nullptr, "relative", "", 5) == "/tmp/mutible-5");
     }
 
     GROUP("control:launcher-words");
     {
         // The launcher (bash, so it cannot ask the core) hands the words of
-        // one case pattern to minicode-cli; they must be exactly the core's
+        // one case pattern to mutible-cli; they must be exactly the core's
         // subcommands, or a new subcommand opens a file of that name instead.
-        std::ifstream lf("scripts/minicode-launcher");
+        std::ifstream lf("scripts/mutible-launcher");
         if (!lf) {
             std::printf("  (scripts/ not found here; launcher check skipped)\n");
         } else {

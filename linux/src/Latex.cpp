@@ -375,7 +375,7 @@ std::string LatexPreview::bufferText() const {
     return out;
 }
 
-// `.<file name>.<preview>.minicode.tex`: the whole name, extension included,
+// `.<file name>.<preview>.mutible.tex`: the whole name, extension included,
 // so notes.tex and notes.ltx in one folder do not share a copy, and this
 // preview's number, so two windows on one file do not either. Each run's
 // removal of its copy would otherwise delete the other's input mid-typeset.
@@ -383,7 +383,7 @@ std::string LatexPreview::scratchPath() const {
     char* b = g_path_get_basename(path_.c_str());
     const std::string name = b ? b : "";
     g_free(b);
-    const std::string tag = "." + std::to_string(instance_) + ".minicode.tex";
+    const std::string tag = "." + std::to_string(instance_) + ".mutible.tex";
     if (path_.empty() || name.empty() || name == "." || name == "/")
         return outDir() + "/untitled" + tag;
     return dirName(path_) + "/." + name + tag;

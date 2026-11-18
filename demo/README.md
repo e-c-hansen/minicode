@@ -1,6 +1,6 @@
 # Field notes
 
-A small folder for trying minicode: a Python script, some C++, a LaTeX
+A small folder for trying mutible: a Python script, some C++, a LaTeX
 paper, a table of cities, and this page.
 
 ## What is here

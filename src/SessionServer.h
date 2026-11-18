@@ -1,5 +1,5 @@
 // SessionServer.h — a headless session host on a Unix socket, and a
-// renderer's connection to it (SESSION-DESIGN.md, stage 6). `minicode host
+// renderer's connection to it (SESSION-DESIGN.md, stage 6). `mutible host
 // --folder <dir>` runs a HostServer: a SessionHost with no window, which
 // renderers attach to and detach from over the socket, speaking the
 // session's protocol (SessionProtocol.h) one JSON line a message. Several
@@ -132,7 +132,7 @@ private:
     std::atomic<bool> closed_{false};
 };
 
-// What `minicode attach --dump` prints: the session `client` is connected
+// What `mutible attach --dump` prints: the session `client` is connected
 // to, as text. The folder, then each document (path, version, unsaved or
 // not) with its text, then each terminal (size, shell, what runs) with its
 // screen as a renderer attaching would draw it from the host's replay. The

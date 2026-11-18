@@ -441,12 +441,12 @@ MC_GUI_SUITE(bookmarks) {
         return Loaded(BrowserWindow().browser, @"Two");
     });
 
-    MCGuiStep(@"a web request (minicode https://...) joins the browser window", ^{
+    MCGuiStep(@"a web request (mutible https://...) joins the browser window", ^{
         EditorController *b = BrowserWindow();
-        NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"MiniCode-open"];
+        NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"Mutible-open"];
         [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-        NSString *req = [dir stringByAppendingPathComponent:@"suite.minicode-open"];
-        NSString *body = [NSString stringWithFormat:@"minicode-open-1%Cweb%C%@%Cjavascript:x%C%@%C",
+        NSString *req = [dir stringByAppendingPathComponent:@"suite.mutible-open"];
+        NSString *body = [NSString stringWithFormat:@"mutible-open-1%Cweb%C%@%Cjavascript:x%C%@%C",
                                                     (unichar)0, (unichar)0, Page(@"four"),
                                                     (unichar)0, (unichar)0, Page(@"two"), (unichar)0];
         GCHECK([[body dataUsingEncoding:NSUTF8StringEncoding] writeToFile:req atomically:YES]);
@@ -487,20 +487,20 @@ MC_GUI_SUITE(bookmarks) {
         // The checkout's copy, which is not executable (make copies it into
         // the bundle).
         NSString *launcher = [[MCGuiBuildDir() stringByDeletingLastPathComponent]
-            stringByAppendingPathComponent:@"scripts/minicode-launcher"];
+            stringByAppendingPathComponent:@"scripts/mutible-launcher"];
         MCGuiRunProcess(@[@"/bin/bash", launcher, @"https://a.example/x", notes, @"HTTP://b.example"],
-                        @{@"TMPDIR": launcherTmp, @"MINICODE_LAUNCHER_DRYRUN": @"1"},
+                        @{@"TMPDIR": launcherTmp, @"MUTIBLE_LAUNCHER_DRYRUN": @"1"},
                         ^(int s, NSString *out, NSString *err) {
             GCHECK(s == 0);
             GCHECK(err.length == 0);
             GCHECK([out containsString:notes]);
-            NSString *dir = [launcherTmp stringByAppendingPathComponent:@"MiniCode-open"];
+            NSString *dir = [launcherTmp stringByAppendingPathComponent:@"Mutible-open"];
             NSArray *reqs = Names(dir);
             GCHECK(reqs.count == 1);
             NSData *d = [NSData dataWithContentsOfFile:
                                     [dir stringByAppendingPathComponent:reqs.firstObject]];
             NSString *t = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
-            NSString *want = [NSString stringWithFormat:@"minicode-open-1%Cweb%Chttps://a.example/x%C"
+            NSString *want = [NSString stringWithFormat:@"mutible-open-1%Cweb%Chttps://a.example/x%C"
                                                         @"HTTP://b.example%C",
                                                         (unichar)0, (unichar)0, (unichar)0, (unichar)0];
             GCHECK([t isEqualToString:want]);
@@ -512,9 +512,9 @@ MC_GUI_SUITE(bookmarks) {
         // The checkout's copy, which is not executable (make copies it into
         // the bundle).
         NSString *launcher = [[MCGuiBuildDir() stringByDeletingLastPathComponent]
-            stringByAppendingPathComponent:@"scripts/minicode-launcher"];
+            stringByAppendingPathComponent:@"scripts/mutible-launcher"];
         MCGuiRunProcess(@[@"/bin/bash", launcher, @"https://exa mple.com", @"https:///x"],
-                        @{@"TMPDIR": launcherTmp, @"MINICODE_LAUNCHER_DRYRUN": @"1"},
+                        @{@"TMPDIR": launcherTmp, @"MUTIBLE_LAUNCHER_DRYRUN": @"1"},
                         ^(int s, NSString *out, NSString *err) {
             GCHECK(s == 1);
             GCHECK(out.length == 0);

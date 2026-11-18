@@ -1,4 +1,4 @@
-// Settings.h — pure C++. MiniCode's settings file: parsing it, and resolving
+// Settings.h — pure C++. Mutible's settings file: parsing it, and resolving
 // the colors each part of the window is drawn with.
 //
 // The file is plain `key = value` lines. Blank lines and lines starting with
@@ -80,7 +80,7 @@ struct AppearanceSurface {
 // settings file's `theme` key picks one (dark-modern, VS Code's own
 // default, when unset), and a color set in the file wins over the theme's,
 // as workbench.colorCustomizations do in VS Code. The themes are VS Code's
-// own built-in ones, read off their theme files and mapped onto minicode's
+// own built-in ones, read off their theme files and mapped onto mutible's
 // fewer keys: a surface's background and text, the seven syntax styles,
 // the Markdown preview's colors, its code background, the ruler, the
 // terminal's input line, the gutter's line numbers and the bracket match.
@@ -229,7 +229,7 @@ public:
     const std::string& material() const { return material_; }
     // False when anything behind the window can show through.
     bool windowIsOpaque() const;
-    // The title bar is drawn by MiniCode rather than the system: when any
+    // The title bar is drawn by Mutible rather than the system: when any
     // titlebar key is set, or the window isn't opaque (a system title bar
     // would sit there as a solid strip).
     bool customTitlebar() const;
@@ -460,7 +460,7 @@ public:
     // python.interpreter: the Python the Python language server analyses
     // with, for folders that have not chosen their own (Select Python
     // Interpreter). A path, which may hold spaces; "" (or auto) lets
-    // MiniCode pick: the folder's .venv, venv or env, then $VIRTUAL_ENV,
+    // Mutible pick: the folder's .venv, venv or env, then $VIRTUAL_ENV,
     // then the server's own choice.
     const std::string& pythonInterpreter() const { return pythonInterpreter_; }
 
@@ -492,11 +492,11 @@ public:
     enum class FormatOnSave { Off, On, Project };
     FormatOnSave formatOnSaveMode() const { return formatOnSave_; }
     bool formatOnSave() const { return formatOnSave_ != FormatOnSave::Off; }
-    // Request a Change to minicode (macOS). develop.command is the Claude
+    // Request a Change to mutible (macOS). develop.command is the Claude
     // Code command line the request is handed to, a whole command line like
-    // lsp.* ("claude" when unset). develop.source is minicode's source
+    // lsp.* ("claude" when unset). develop.source is mutible's source
     // folder, a path that may hold spaces (a leading ~ is the GUI's to
-    // expand); "" lets minicode find it (the folder its own build is in,
+    // expand); "" lets mutible find it (the folder its own build is in,
     // else its own clone in Application Support, made on first use).
     std::string developCommand() const {
         return developCommand_.empty() ? "claude" : developCommand_;
@@ -515,15 +515,15 @@ public:
     // in the window). Off by default.
     bool ideLink() const { return ideLink_; }
     // control.page-any-origin: whether agents may read the text, console
-    // and pictures of any page in the browser pane (`minicode page`), not
+    // and pictures of any page in the browser pane (`mutible page`), not
     // only local ones (off by default; PageCheck.h).
     bool pageAnyOrigin() const { return pageAnyOrigin_; }
     // browser.bookmarks: the folder of web bookmarks (.url files) that
-    // `minicode https://...` opens its browser window on and Save Page as
+    // `mutible https://...` opens its browser window on and Save Page as
     // Bookmark writes to, as written in the file ("~" not expanded); empty
     // for the default, ~/Bookmarks (WebBookmark.h).
     const std::string& browserBookmarks() const { return browserBookmarks_; }
-    // control.page-input: whether `minicode page --paste` may type Cmd+A and
+    // control.page-input: whether `mutible page --paste` may type Cmd+A and
     // Cmd+V into the field the user clicked into on the agent page (off by
     // default; PageCheck.h).
     bool pageInput() const { return pageInput_; }

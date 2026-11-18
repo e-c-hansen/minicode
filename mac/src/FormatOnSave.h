@@ -1,6 +1,6 @@
 // FormatOnSave.h — Objective-C++. Turning format on save on and off
 // without finding its line in the settings file:
-//   - Edit > Format on Save (minicode.toggleFormatOnSave), checked while
+//   - Edit > Format on Save (mutible.toggleFormatOnSave), checked while
 //     format.on-save is on (true or project); it writes false, or project,
 //     the setting that never formats a file in a style its project did not
 //     choose (Formatter::projectChose);

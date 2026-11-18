@@ -60,7 +60,7 @@ struct Summary {
 //   cargo   "test result: ok. 12 passed; 0 failed; 1 ignored; ..." (summed over binaries)
 //   go      "ok  \tpkg\t0.1s" and "FAIL\tpkg\t0.2s" lines (counted as packages; only with
 //           hint Go)
-//   count   "4466 passed, 0 failed" (minicode's own `make test`)
+//   count   "4466 passed, 0 failed" (mutible's own `make test`)
 //   unittest "Ran 12 tests in 0.004s" and the verdict after it, "OK (skipped=1)"
 //           or "FAILED (failures=2, errors=1)"; `line` is both, joined by "; "
 //   jest    "Tests:       1 failed, 2 skipped, 10 passed, 13 total"

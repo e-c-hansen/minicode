@@ -183,7 +183,7 @@ static NSMutableSet<MCLspServer *> *gServers;   // every running server
     // stops reading (hung, not crashed) blocks the queue's write(), and
     // every didChange after that waited in memory for ever.
     std::shared_ptr<std::atomic<size_t>> _queued;
-    NSString *_stopReason;     // why minicode ended it, for exitDescription
+    NSString *_stopReason;     // why mutible ended it, for exitDescription
 }
 
 // More than this waiting for a server to read, and it is taken as hung.
@@ -227,7 +227,7 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     // request there, and a full pipe would stall the server mid-reply). Its
     // last lines say why a server that dies died.
     _task.standardError = errors;
-    NSString *logPath = MCEnvironment()[@"MINICODE_LSP_LOG"];
+    NSString *logPath = MCEnvironment()[@"MUTIBLE_LSP_LOG"];
     if (logPath.length) {
         // O_APPEND, so several servers (and their stderr) share one file
         // without writing over each other.
@@ -236,7 +236,7 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     }
 
     __weak MCLspServer *weakSelf = self;
-    _readQueue = dispatch_queue_create("minicode.lsp.read", DISPATCH_QUEUE_SERIAL);
+    _readQueue = dispatch_queue_create("mutible.lsp.read", DISPATCH_QUEUE_SERIAL);
     _reader = std::make_shared<Lsp::Reader>();
     dispatch_queue_t readQueue = _readQueue;
     std::shared_ptr<Lsp::Reader> reader = _reader;
@@ -279,7 +279,7 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
 
     NSError *err = nil;
     if (![_task launchAndReturnError:&err]) {
-        NSLog(@"MiniCode: could not start %@: %@", _name, err.localizedDescription);
+        NSLog(@"Mutible: could not start %@: %@", _name, err.localizedDescription);
         return nil;
     }
     _running = YES;
@@ -290,7 +290,7 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     // A server that dies mid-write must not take the editor with it: with
     // NOSIGPIPE the write fails with EPIPE instead of raising SIGPIPE.
     fcntl(_inputFd, F_SETNOSIGPIPE, 1);
-    _writeQueue = dispatch_queue_create("minicode.lsp.write", DISPATCH_QUEUE_SERIAL);
+    _writeQueue = dispatch_queue_create("mutible.lsp.write", DISPATCH_QUEUE_SERIAL);
     _client = std::make_unique<Lsp::Client>([weakSelf](const std::string &bytes) {
         [weakSelf writeBytes:bytes];
     });
@@ -350,10 +350,10 @@ void MCLspSetMaxQueuedBytes(size_t bytes) { gMaxQueuedBytes = bytes ? bytes : 64
     if (_unresponsive) return;
     _unresponsive = YES;
     _stopReason = [NSString stringWithFormat:
-        @"stopped reading what minicode sent (%@ waiting), so it was stopped",
+        @"stopped reading what mutible sent (%@ waiting), so it was stopped",
         [NSByteCountFormatter stringFromByteCount:(long long)waiting
                                        countStyle:NSByteCountFormatterCountStyleFile]];
-    NSLog(@"MiniCode: %@ %@", _name, _stopReason);
+    NSLog(@"Mutible: %@ %@", _name, _stopReason);
     if (_running && _pid > 0) kill(_pid, SIGKILL);
 }
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cut a MiniCode release and update the Homebrew tap in one shot.
+# Cut a Mutible release and update the Homebrew tap in one shot.
 #   scripts/release.sh 1.2.0
 #   scripts/release.sh --linux 1.2.1   a Linux-only release: the PPA alone
 #
@@ -14,7 +14,7 @@
 #      commits that, and pushes main,
 #   5. publishes a GitHub Release here, tagged vVERSION, with the zip and the
 #      APK attached (Obtainium and people installing by hand take it from there),
-#      its notes from MINICODE_RELEASE_NOTES (a Markdown file) or else the
+#      its notes from MUTIBLE_RELEASE_NOTES (a Markdown file) or else the
 #      commit subjects since the last tag,
 #   6. copies packaging/mutible.rb into the tap as the live cask, and the old,
 #      deprecated cask into the old tap when it changed (OLD_CASK below),
@@ -33,7 +33,7 @@
 # the APK the Android SDK, JDK 21, and the release key: the keystore at
 # ~/.config/minicode/release.keystore with its password in the Keychain
 # (service minicode-android-keystore). Every Android update must be signed with
-# that one key, so keep a backup of it. MINICODE_NO_APK=1 releases without it.
+# that one key, so keep a backup of it. MUTIBLE_NO_APK=1 releases without it.
 # The PPA upload needs gpg, the key id in MINICODE_PPA_KEY or
 # ~/.config/minicode/ppa-key-id, and Docker or the packaging tools installed
 # (scripts/ppa.sh); MINICODE_NO_PPA=1 releases without it. It runs last, so a
@@ -84,8 +84,8 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 # The notes are read only after main is pushed, so a bad path must stop the
 # release here (1.5.22 was given the text itself and stopped half released).
-if [ -n "${MINICODE_RELEASE_NOTES:-}" ] && [ ! -f "$MINICODE_RELEASE_NOTES" ]; then
-    echo "error: MINICODE_RELEASE_NOTES must name a Markdown file, not hold the notes" >&2; exit 1
+if [ -n "${MUTIBLE_RELEASE_NOTES:-}" ] && [ ! -f "$MUTIBLE_RELEASE_NOTES" ]; then
+    echo "error: MUTIBLE_RELEASE_NOTES must name a Markdown file, not hold the notes" >&2; exit 1
 fi
 if gh release view "v$VERSION" --repo "$APP_REPO" >/dev/null 2>&1; then
     echo "error: v$VERSION is already released on $APP_REPO" >&2; exit 1
@@ -169,14 +169,14 @@ if [ -n "$LINUX_ONLY" ]; then
 fi
 
 # Android is frozen (owner, 2026-11-17; docs/ci.md): no APK unless
-# MINICODE_NO_APK is set to the empty string (MINICODE_NO_APK= scripts/release.sh ...).
-: "${MINICODE_NO_APK=1}"
+# MUTIBLE_NO_APK is set to the empty string (MUTIBLE_NO_APK= scripts/release.sh ...).
+: "${MUTIBLE_NO_APK=1}"
 APK=""
-if [ -z "${MINICODE_NO_APK:-}" ]; then
+if [ -z "${MUTIBLE_NO_APK:-}" ]; then
     KEYSTORE="$HOME/.config/minicode/release.keystore"
     if [ ! -f "$KEYSTORE" ] ||
        ! security find-generic-password -a minicode -s minicode-android-keystore -w >/dev/null 2>&1; then
-        echo "error: no Android release key (see the top of this script), or set MINICODE_NO_APK=1" >&2
+        echo "error: no Android release key (see the top of this script), or set MUTIBLE_NO_APK=1" >&2
         exit 1
     fi
 fi
@@ -197,7 +197,7 @@ else
     make guitest
 fi
 
-if [ -z "${MINICODE_NO_APK:-}" ]; then
+if [ -z "${MUTIBLE_NO_APK:-}" ]; then
     echo "==> Building the Android APK"
     APK="MiniCode-$VERSION.apk"
     (
@@ -223,15 +223,15 @@ echo "==> Stamping version $VERSION"
 echo "==> Building release artifact"
 make dist-zip RELEASE=1
 # A release build leaves the demo scenes and the benchmark out (Makefile, RELEASE).
-if nm MiniCode.app/Contents/MacOS/MiniCode | grep -q 'MCDemoStart\|MCBenchStart'; then
+if nm Mutible.app/Contents/MacOS/Mutible | grep -q 'MCDemoStart\|MCBenchStart'; then
     echo "error: the built app still has the demo scenes or the benchmark in it" >&2; exit 1
 fi
-BUILT="$("$BUDDY" -c "Print :CFBundleShortVersionString" MiniCode.app/Contents/Info.plist)"
+BUILT="$("$BUDDY" -c "Print :CFBundleShortVersionString" Mutible.app/Contents/Info.plist)"
 if [ "$BUILT" != "$VERSION" ]; then
     echo "error: the built app says $BUILT, expected $VERSION" >&2; exit 1
 fi
-scripts/check-minos.sh MiniCode.app
-SHA="$(shasum -a 256 MiniCode.zip | awk '{print $1}')"
+scripts/check-minos.sh Mutible.app
+SHA="$(shasum -a 256 Mutible.zip | awk '{print $1}')"
 echo "    version $VERSION   sha256 $SHA"
 
 /usr/bin/sed -i '' "s/version \"[^\"]*\"/version \"$VERSION\"/" "$CASK"
@@ -242,11 +242,11 @@ git diff --cached --quiet || git commit -q -m "Release $VERSION"
 echo "==> Pushing main"
 git push -q origin main
 
-# What changed: MINICODE_RELEASE_NOTES names a Markdown file written for users;
+# What changed: MUTIBLE_RELEASE_NOTES names a Markdown file written for users;
 # without one, the commit subjects since the last tag stand in, never a
 # placeholder.
-if [ -n "${MINICODE_RELEASE_NOTES:-}" ]; then
-    CHANGES="$(cat "$MINICODE_RELEASE_NOTES")"
+if [ -n "${MUTIBLE_RELEASE_NOTES:-}" ]; then
+    CHANGES="$(cat "$MUTIBLE_RELEASE_NOTES")"
 else
     PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
     CHANGES="### What changed
@@ -255,11 +255,11 @@ $(git log --no-merges --format='- %s' ${PREV_TAG:+"$PREV_TAG"..}HEAD | grep -v '
 fi
 
 echo "==> Publishing GitHub Release v$VERSION on $APP_REPO"
-gh release create "v$VERSION" MiniCode.zip ${APK:+"$APK"} \
+gh release create "v$VERSION" Mutible.zip ${APK:+"$APK"} \
     --repo "$APP_REPO" \
     --target "$(git rev-parse HEAD)" \
-    --title "MiniCode $VERSION" \
-    --notes "**macOS:** \`brew install --cask e-c-hansen/tap/minicode\`, or download MiniCode.zip below.
+    --title "Mutible $VERSION" \
+    --notes "**macOS:** \`brew install --cask ible-ai/tap/mutible\`, or download Mutible.zip below.
 ${APK:+
 **Android:** download $APK on your phone and open it; Android asks once whether your browser may install apps. Termux setup and updates through Obtainium: [android/README.md](https://github.com/$APP_REPO/blob/main/android/README.md#install).
 }
@@ -271,7 +271,7 @@ gh repo clone "$TAP_REPO" "$TMP" -- -q
 cp "$CASK" "$TMP/Casks/mutible.rb"
 git -C "$TMP" add -A
 if ! git -C "$TMP" diff --cached --quiet; then
-    git -C "$TMP" commit -q -m "MiniCode $VERSION"
+    git -C "$TMP" commit -q -m "Mutible $VERSION"
     git -C "$TMP" push -q
 fi
 rm -rf "$TMP"
@@ -306,7 +306,7 @@ else
     ppa_step "everything else is released" || PPA_FAILED=1
 fi
 
-echo "==> Done. brew upgrade --cask e-c-hansen/tap/minicode will now pull $VERSION."
+echo "==> Done. brew upgrade --cask ible-ai/tap/mutible will now pull $VERSION."
 if [ -n "$PPA_FAILED" ]; then
     echo "error: the Ubuntu PPA step failed (the error above says how to finish it)" >&2
     exit 1

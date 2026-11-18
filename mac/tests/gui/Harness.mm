@@ -30,7 +30,7 @@
 - (BOOL)removeTerminal:(TerminalView *)terminal;
 @end
 
-int minicode_main(int argc, const char *argv[]);   // mac/src/main.mm, renamed
+int mutible_main(int argc, const char *argv[]);   // mac/src/main.mm, renamed
 
 // ------------------------------------------------------------- registry
 namespace {
@@ -304,7 +304,7 @@ void MCGuiWriteFile(NSString *path, NSString *text) {
 }
 
 void MCGuiSetSettings(NSString *text) {
-    MCGuiWriteFile(Env(@"MINICODE_SETTINGS"), text);
+    MCGuiWriteFile(Env(@"MUTIBLE_SETTINGS"), text);
     [[AppSettings shared] reload];
 }
 
@@ -382,9 +382,9 @@ void MCGuiSnapshot(NSView *view, NSString *name) {
 // MC_GUI_LEAKS=note prints the lines without failing or putting anything
 // back.
 static NSString *KeysPath(void) {
-    NSString *env = Env(@"MINICODE_KEYS");
+    NSString *env = Env(@"MUTIBLE_KEYS");
     return env.length ? env.stringByExpandingTildeInPath
-                      : [NSHomeDirectory() stringByAppendingPathComponent:@".config/minicode/keys.conf"];
+                      : [NSHomeDirectory() stringByAppendingPathComponent:@".config/mutible/keys.conf"];
 }
 
 static NSString *FileText(NSString *path) {
@@ -442,7 +442,7 @@ static World LookAtWorld(void) {
         }
     }
     w.browser = browsers.count ? [browsers componentsJoinedByString:@"; "] : @"none shown";
-    w.settings = FileText(Env(@"MINICODE_SETTINGS"));
+    w.settings = FileText(Env(@"MUTIBLE_SETTINGS"));
     w.keys = FileText(KeysPath());
     NSUserDefaults *d = MCAppDefaults();
     w.editorZoom = [d doubleForKey:@"MCEditorZoom"];
@@ -472,7 +472,7 @@ static void Leak(NSString *suite, NSString *what, BOOL fails = YES) {
     }
 }
 
-// With the session's host on (editor.session-host, MINICODE_SESSION_HOST),
+// With the session's host on (editor.session-host, MUTIBLE_SESSION_HOST),
 // every tab's text as the host has it must be the tab's own, the editor's
 // storage for the tab on show: the mirrors never drift, whatever a suite
 // did to them. GTK's harness checks the same (checkSessionMirrors).
@@ -724,11 +724,11 @@ void MCGuiRunProcess(NSArray<NSString *> *argv, NSDictionary<NSString *, NSStrin
 }
 
 void MCGuiRunChild(NSString *suite, NSString *folder, void (^done)(int status, NSString *out)) {
-    NSString *defaults = [Env(@"MINICODE_DEFAULTS_SUITE") stringByAppendingString:@".child"];
+    NSString *defaults = [Env(@"MUTIBLE_DEFAULTS_SUITE") stringByAppendingString:@".child"];
     NSString *program = [MCGuiBuildDir() stringByAppendingPathComponent:@"guitest"];
     MCGuiRunProcess(folder.length ? @[program, folder] : @[program],
                     @{@"MC_GUI_CHILD": @"1", @"MC_GUI_SUITES": suite, @"MC_GUI_KEEP": @"1",
-                      @"MINICODE_DEFAULTS_SUITE": defaults, @"MC_GUI_RESULTS": @"",
+                      @"MUTIBLE_DEFAULTS_SUITE": defaults, @"MC_GUI_RESULTS": @"",
                       @"MC_GUI_SHUFFLE": @""},
                     ^(int status, NSString *out, NSString *err) {
                         done(status, [out stringByAppendingString:err ?: @""]);
@@ -935,7 +935,7 @@ static NSArray<NSString *> *SuiteNames(NSString *list) {
     // child app's parent reads the file next.
     MCSessionsFlush();
     MCControlServerStop();
-    NSString *suite = Env(@"MINICODE_DEFAULTS_SUITE");
+    NSString *suite = Env(@"MUTIBLE_DEFAULTS_SUITE");
     if (suite.length) [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:suite];
     NSString *scratch = MCGuiScratch();
     if (scratch.length && !Env(@"MC_GUI_KEEP").length && [scratch hasPrefix:@"/tmp/mcgui-"])
@@ -1036,7 +1036,7 @@ static void InstallSwizzles(void) {
         if (handler) dispatch_async(dispatch_get_main_queue(), ^{ handler(r); });
     });
     ReplaceClass(NSPasteboard.class, @selector(generalPasteboard), ^NSPasteboard *(id) {
-        return [NSPasteboard pasteboardWithName:Env(@"MINICODE_PASTEBOARD") ?: @"org.minicode.guitest"];
+        return [NSPasteboard pasteboardWithName:Env(@"MUTIBLE_PASTEBOARD") ?: @"ai.ible.mutible.guitest"];
     });
     Replace(NSWorkspace.class, @selector(openURL:), ^BOOL(id, NSURL *) { return YES; });
 }
@@ -1072,7 +1072,7 @@ int main(int argc, const char *argv[]) {
             // Re-run this program in the scratch world, so nothing the app
             // reads at startup (home, defaults, settings) is the user's.
             NSString *root = MakeWorld();
-            NSString *suite = [NSString stringWithFormat:@"org.minicode.guitest.%d", getpid()];
+            NSString *suite = [NSString stringWithFormat:@"ai.ible.mutible.guitest.%d", getpid()];
             NSDictionary *env = @{
                 @"MC_GUI_CHILD": @"1",
                 @"MC_GUI_SCRATCH": root,
@@ -1080,11 +1080,11 @@ int main(int argc, const char *argv[]) {
                 @"CFFIXED_USER_HOME": [root stringByAppendingPathComponent:@"home"],
                 @"ZDOTDIR": [root stringByAppendingPathComponent:@"zdot"],
                 @"TMPDIR": [[root stringByAppendingPathComponent:@"t"] stringByAppendingString:@"/"],
-                @"MINICODE_SETTINGS": [root stringByAppendingPathComponent:@"settings.conf"],
-                @"MINICODE_DEFAULTS_SUITE": suite,
-                @"MINICODE_BACKUP_DIR": [root stringByAppendingPathComponent:@"backups"],
-                @"MINICODE_PASTEBOARD": [suite stringByAppendingString:@".pasteboard"],
-                @"MINICODE_MATH_CACHE": [root stringByAppendingPathComponent:@"math"],
+                @"MUTIBLE_SETTINGS": [root stringByAppendingPathComponent:@"settings.conf"],
+                @"MUTIBLE_DEFAULTS_SUITE": suite,
+                @"MUTIBLE_BACKUP_DIR": [root stringByAppendingPathComponent:@"backups"],
+                @"MUTIBLE_PASTEBOARD": [suite stringByAppendingString:@".pasteboard"],
+                @"MUTIBLE_MATH_CACHE": [root stringByAppendingPathComponent:@"math"],
                 // Claude Code's settings and lock files, never ~/.claude's.
                 @"CLAUDE_CONFIG_DIR": [root stringByAppendingPathComponent:@"claude"],
                 @"GIT_CONFIG_GLOBAL": @"/dev/null",
@@ -1102,7 +1102,7 @@ int main(int argc, const char *argv[]) {
             pid_t dead = fork();
             if (dead == 0) _exit(0);
             waitpid(dead, nullptr, 0);
-            NSString *folder = [root stringByAppendingPathComponent:@"t/MiniCode"];
+            NSString *folder = [root stringByAppendingPathComponent:@"t/Mutible"];
             mkdir(folder.fileSystemRepresentation, 0700);
             NSString *stale = [folder stringByAppendingFormat:@"/%d.sock", dead];
             int fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -1174,5 +1174,5 @@ int main(int argc, const char *argv[]) {
             [[MCGuiRunner shared] finish];
         });
     }
-    return minicode_main(argc, argv);
+    return mutible_main(argc, argv);
 }

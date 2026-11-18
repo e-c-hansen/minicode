@@ -600,7 +600,7 @@ std::vector<HunkLink> HunkLinks(NSTextView *tv) {
     [ts enumerateAttribute:NSLinkAttributeName inRange:NSMakeRange(0, ts.length) options:0
                 usingBlock:^(id v, NSRange r, BOOL *stop) {
         (void)stop;
-        if (![v isKindOfClass:NSString.class] || ![v hasPrefix:@"minicode-hunk:"]) return;
+        if (![v isKindOfClass:NSString.class] || ![v hasPrefix:@"mutible-hunk:"]) return;
         NSArray<NSString *> *p = [v componentsSeparatedByString:@":"];
         out.push_back({v, r, p[1].intValue, (NSUInteger)p[2].integerValue});
     }];

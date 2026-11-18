@@ -714,7 +714,7 @@ static const CGFloat kStopWidth = 40;
         NSMutableArray *tip = [NSMutableArray arrayWithObject:p.command ?: @""];
         if (p.cwd.length) [tip addObject:[p.cwd stringByAbbreviatingWithTildeInPath]];
         [tip addObject:[NSString stringWithFormat:@"Process %d, group %d, parent %d", p.pid, p.pgid, p.ppid]];
-        if (p.outside) [tip addObject:@"Not started in minicode"];
+        if (p.outside) [tip addObject:@"Not started in mutible"];
         else if (p.orphan)
             [tip addObject:[NSString stringWithFormat:@"Its terminal (%ld) was closed", (long)p.terminal]];
         if (p.session.length)
@@ -813,7 +813,7 @@ static const CGFloat kStopWidth = 40;
     MCProcItem *p = [self procAtRow:row];
     if (!p) { NSBeep(); return; }
     if (p.outside) {
-        [self note:[NSString stringWithFormat:@"%@ was not started in minicode", p.name]];
+        [self note:[NSString stringWithFormat:@"%@ was not started in mutible", p.name]];
         return;
     }
     if (!(self.onRevealTerminal && self.onRevealTerminal(p.terminal))) {
@@ -829,7 +829,7 @@ static const CGFloat kStopWidth = 40;
         NSAlert *a = [NSAlert new];
         a.messageText = [NSString stringWithFormat:@"Stop %@?", p.name];
         NSString *where = p.outside
-            ? @"was not started in minicode"
+            ? @"was not started in mutible"
             : [NSString stringWithFormat:@"was started in terminal %ld (%@)", (long)p.terminal,
                p.terminalTitle.length ? p.terminalTitle : @"its shell"];
         a.informativeText = [NSString stringWithFormat:

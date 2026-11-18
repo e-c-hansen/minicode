@@ -19,7 +19,7 @@
 // Everything else follows the Mac: tectonic from MINICODE_TECTONIC, then
 // ~/.local/share/minicode/bin, then PATH, with an offer to download the
 // pinned release; the buffer typeset from a hidden sibling
-// `.<file name>.<preview number>.minicode.tex` (so relative \input and
+// `.<file name>.<preview number>.mutible.tex` (so relative \input and
 // \includegraphics resolve and the user's file is never written; the full
 // name and the number keep notes.tex, notes.ltx and a second window's copy
 // apart) into $XDG_RUNTIME_DIR, or a private folder in /tmp; debounced 0.6 s and

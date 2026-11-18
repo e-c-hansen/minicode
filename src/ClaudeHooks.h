@@ -1,13 +1,13 @@
-// ClaudeHooks.h — pure C++. Claude Code's hooks, as `minicode notify` and
-// `minicode hooks` use them (spec feature 7): what a hook hands its command
+// ClaudeHooks.h — pure C++. Claude Code's hooks, as `mutible notify` and
+// `mutible hooks` use them (spec feature 7): what a hook hands its command
 // on stdin, what each event means for the terminal the session runs in, the
-// hook configuration minicode offers, and merging it into a Claude Code
+// hook configuration mutible offers, and merging it into a Claude Code
 // settings file without touching anything else in it.
 //
 // A hook's command gets one JSON object on stdin: hook_event_name,
 // session_id, transcript_path, cwd, and for a Notification its message.
-// The terminal it came from is named by the environment minicode gives
-// every terminal: MINICODE_TERMINAL_ID and MINICODE_PID (Terminal.mm).
+// The terminal it came from is named by the environment mutible gives
+// every terminal: MUTIBLE_TERMINAL_ID and MUTIBLE_PID (Terminal.mm).
 //
 // The format is Claude Code's and may change, so it is read defensively:
 // unknown fields are ignored, and anything unreadable is "nothing to do",
@@ -49,7 +49,7 @@ int parsePositive(const char *text);
 
 // ------------------------------------------------------- the configuration
 // The command each hook runs.
-extern const char *const kCommand;   // "minicode notify --from-hook"
+extern const char *const kCommand;   // "mutible notify --from-hook"
 // The events it is installed for, in order.
 const std::vector<std::string> &events();
 // {"hooks": {"Notification": [{"hooks": [{"type": "command", "command": ...}]}], ...}}
@@ -58,10 +58,10 @@ Json configuration();
 // these events (every event when empty): what an install adds, to show.
 Json configuration(const std::string &command, const std::vector<std::string> &onlyEvents);
 
-// The command to install: kCommand when `minicode` is on the PATH Claude
+// The command to install: kCommand when `mutible` is on the PATH Claude
 // Code's hooks see (`launcher` empty), else the launcher's full path,
 // quoted for the shell, then " notify --from-hook" (an app copied by hand,
-// with no `minicode` on the PATH).
+// with no `mutible` on the PATH).
 std::string commandFor(const std::string &launcher);
 
 struct MergeResult {
@@ -90,7 +90,7 @@ bool installed(const std::string &settingsText);
 // Oxford comma, for the messages that name what was added.
 std::string eventList(const std::vector<std::string> &events);
 
-// Does this hook entry (one element of an event's list) run minicode's
+// Does this hook entry (one element of an event's list) run mutible's
 // command?
 bool runsOurCommand(const Json &entry);
 
@@ -132,10 +132,10 @@ struct InstallResult {
     std::string backup;              // where the old file was copied, "" for a new file
 };
 
-// `minicode hooks --install`, and the app's Install Claude Code Hooks…
+// `mutible hooks --install`, and the app's Install Claude Code Hooks…
 // after the user said yes to what it adds: reads the file at `path`,
 // merges `command` in (merge), and when that changes it, first copies the
-// file as it was to `<path>.minicode-backup-<YYYYmmdd-HHMMSS>` (local time
+// file as it was to `<path>.mutible-backup-<YYYYmmdd-HHMMSS>` (local time
 // of `now`, never over an earlier backup), then writes the new text
 // (writeSettingsFile; a new file gets mode 0600 in a folder made 0700).
 InstallResult install(const std::string &path, const std::string &command, long now);

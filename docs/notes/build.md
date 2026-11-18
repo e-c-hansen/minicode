@@ -13,7 +13,7 @@ found through that list.
   folder, the microphone a terminal program asks for) to its designated
   requirement, and an ad-hoc one is `cdhash H"..."`, the exact binary, so every
   build, every restart into one and every release asked again. With the
-  certificate it is `identifier "com.minicode.editor" and certificate leaf =
+  certificate it is `identifier "ai.ible.mutible" and certificate leaf =
   H"..."`, the same from build to build. It is self-signed and untrusted, which
   neither codesign nor TCC minds. `scripts/make-signing-identity.sh` makes it
   once (openssl, then `security import -T /usr/bin/codesign`, so codesign uses
@@ -22,7 +22,7 @@ found through that list.
   (1.5.6 was the first), so installs keep their answers across releases.
   Info.plist carries the usage descriptions (microphone, camera, Apple events,
   Desktop, Documents, Downloads, removable and network volumes): programs in
-  the terminal count as minicode to macOS, and without
+  the terminal count as mutible to macOS, and without
   `NSMicrophoneUsageDescription` Claude Code's voice input was refused without
   a prompt.
 - Each source file is its own object in `build/obj` with a `-MMD -MP`

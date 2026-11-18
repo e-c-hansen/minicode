@@ -29,10 +29,10 @@ const char* const kMarkdownNames[kMarkdownColorCount] = {
 // terminal input text; line numbers, the caret line's number, the bracket
 // match box; the semantic colors (class, variable, parameter, property,
 // constant); the bracket-pair colors (1, 2, 3, unexpected).
-// Dark Modern, VS Code's own default, is minicode's too when the file names
+// Dark Modern, VS Code's own default, is mutible's too when the file names
 // no theme (Dark+ was until 2026-11-14), so its values are the defaults the
 // settings file documents. The rows come from the themes' own files, where
-// Dark+ keeps minicode's old Markdown colors (editor, sideBar, titleBar, panel and statusBar colors, the token colors
+// Dark+ keeps mutible's old Markdown colors (editor, sideBar, titleBar, panel and statusBar colors, the token colors
 // for comments, strings, keywords, keyword.control, types, numbers and
 // function names, editorLineNumber's foreground and activeForeground,
 // editorBracketMatch's border), the nearest where a theme leaves a color to
@@ -1636,10 +1636,10 @@ std::string Settings::formatCommand(const std::string& lang) const {
 }
 
 const char* Settings::defaultFileText() {
-    return R"CONF(# MiniCode settings
+    return R"CONF(# Mutible settings
 #
 # Changes apply as soon as this file is saved. Each line is key = value, and
-# everything here is commented out, so MiniCode uses its built-in defaults
+# everything here is commented out, so Mutible uses its built-in defaults
 # until you uncomment a line. Remove the leading "# " to use one.
 #
 # Colors are #RRGGBB, or #RRGGBBAA with an alpha channel. Opacity is a number
@@ -1647,7 +1647,7 @@ const char* Settings::defaultFileText() {
 # background only, so text stays solid while the desktop shows through.
 
 # The color theme, one of VS Code's built-in themes: dark-modern (VS Code's
-# own default, and minicode's), dark-plus, monokai, solarized-dark,
+# own default, and mutible's), dark-plus, monokai, solarized-dark,
 # tomorrow-night-blue, light-modern, light-plus, quiet-light, or
 # solarized-light. View > Theme sets this line for you. Every color below
 # that you uncomment wins over the theme's, so a theme can be adjusted color
@@ -1667,7 +1667,7 @@ const char* Settings::defaultFileText() {
 # header, sidebar, menu, popover, hud, sheet, fullscreen, or tooltip.
 # window.material = under-window
 # Linux only: the folders opened lately and Open Folder in the menu of
-# minicode's icon in the dock. minicode writes them into its own copy of the
+# mutible's icon in the dock. mutible writes them into its own copy of the
 # desktop entry in ~/.local/share/applications; false removes that copy.
 # window.dock-menu = true
 
@@ -1729,7 +1729,7 @@ const char* Settings::defaultFileText() {
 # either way.
 # editor.auto-close = on
 # Each file's text and undo history, and each terminal's shell, are kept by
-# minicode's session host, a part of the app on a thread of its own that
+# mutible's session host, a part of the app on a thread of its own that
 # lets a second screen see and use one session (macOS; on Linux they always
 # are). Off, the editor and the terminals keep them themselves, as before.
 # Files and terminals opened after a change follow it.
@@ -1742,9 +1742,9 @@ const char* Settings::defaultFileText() {
 # editor.large-file-optimizations = on
 # A language server that says what each name is (semantic tokens, as
 # basedpyright, clangd, rust-analyzer and gopls do) colors it so, over the
-# colors minicode gives it by itself: a parameter, a property, a class, a
+# colors mutible gives it by itself: a parameter, a property, a class, a
 # constant (macOS). The colors are syntax.class and the rest, below. Off,
-# only minicode's own colors show. Never in large-file mode.
+# only mutible's own colors show. Never in large-file mode.
 # editor.semantic-highlighting = on
 # Brackets in code colored by how deeply they are nested, three colors in
 # turn, and a closer with nothing open before it in a color of its own, as
@@ -1853,7 +1853,7 @@ const char* Settings::defaultFileText() {
 # browser.text = #CCCCCC
 # The folder of web bookmarks: pages saved with Save Page as Bookmark (Cmd+D
 # in the browser, macOS only for now) as .url files, the Internet Shortcuts
-# every browser opens. `minicode https://...` opens a window on it with the
+# every browser opens. `mutible https://...` opens a window on it with the
 # page in a browser tab; a .url or .webloc file opened from Finder or this
 # folder's tree loads in the browser. auto is ~/Bookmarks.
 # browser.bookmarks = auto
@@ -1926,7 +1926,7 @@ const char* Settings::defaultFileText() {
 # html.scripts = ask
 
 # Language servers, for completion, go to definition and error underlines
-# (macOS only for now). MiniCode only talks to them, so install the ones you
+# (macOS only for now). Mutible only talks to them, so install the ones you
 # want; clangd comes with the Xcode command line tools. When a file of that
 # language is opened, its server is looked for on PATH and in the Homebrew,
 # npm, pipx, Cargo and Go folders. Give a command to use a different server
@@ -1934,7 +1934,7 @@ const char* Settings::defaultFileText() {
 # basedpyright is tried first, then pyright, pylsp and jedi-language-server.
 #
 # The status bar shows the open file's server: click it, or choose Language
-# Servers... in the MiniCode menu, to see each server's state, where it was
+# Servers... in the Mutible menu, to see each server's state, where it was
 # found and how to install a missing one, and to restart or stop it. A file
 # whose server is missing says so in a line over the editor, with the
 # command to install it. "Installing servers and formatters" in the
@@ -2039,7 +2039,7 @@ const char* Settings::defaultFileText() {
 # The Python the Python server analyses your code with, so it finds the
 # packages installed there. auto picks the folder's .venv, venv or env, then
 # $VIRTUAL_ENV; a path (such as ~/envs/work/bin/python) is used for every
-# folder. Select Python Interpreter... in the MiniCode menu chooses one for
+# folder. Select Python Interpreter... in the Mutible menu chooses one for
 # the open folder alone, which wins over this.
 # python.interpreter = auto
 
@@ -2054,7 +2054,7 @@ const char* Settings::defaultFileText() {
 # git.autofetch = false
 # git.autofetch-period = 180
 
-# Agents can check pages in the browser pane (minicode browse and minicode
+# Agents can check pages in the browser pane (mutible browse and mutible
 # page, macOS only for now): they load into a page of their own beside
 # yours, and read its text, its console and pictures of it. Those reads work
 # only for local pages (localhost, 127.0.0.1, ::1, *.localhost and file://),
@@ -2063,20 +2063,20 @@ const char* Settings::defaultFileText() {
 # control.page-any-origin = false
 #
 # Nothing an agent sends types into a page either, unless this is true: then
-# minicode page --paste shows the agent page, gives it the keyboard and types
+# mutible page --paste shows the agent page, gives it the keyboard and types
 # Cmd+V there (Cmd+A first with --all), as you would, into the field you last
 # clicked into on that page (it refuses when none has the keyboard). For
 # practising in a site's editor with your own code from the clipboard.
 # control.page-input = false
 
-# Request a Change to minicode (Shift+Cmd+K, macOS only for now) hands what
-# you describe to Claude Code, in a terminal tab opened in minicode's own
+# Request a Change to mutible (Shift+Cmd+K, macOS only for now) hands what
+# you describe to Claude Code, in a terminal tab opened in mutible's own
 # source folder, and offers to restart into the new build once Claude has
 # rebuilt it with make. develop.command is the command it runs, with your
 # request added at the end; add flags here (such as --model). develop.source
-# is the source folder, a clone of github.com/e-c-hansen/minicode; auto uses
-# the folder this minicode was built in, else clones the release you are
-# running into ~/Library/Application Support/MiniCode/source on first use.
+# is the source folder, a clone of github.com/ible-ai/mutible; auto uses
+# the folder this mutible was built in, else clones the release you are
+# running into ~/Library/Application Support/Mutible/source on first use.
 # develop.command = claude
 # develop.source = auto
 
@@ -2091,7 +2091,7 @@ const char* Settings::defaultFileText() {
 # agent.command = claude
 
 # The Claude Code IDE link: Claude Code's /ide command, which VS Code and
-# JetBrains answer, answered by each minicode window (macOS only for now).
+# JetBrains answer, answered by each mutible window (macOS only for now).
 # On, Claude Code started in a window's folder, or in one of its terminals
 # (which it then joins by itself), sees the file and the selection you have
 # in the editor and the language servers' problems, opens files in a tab

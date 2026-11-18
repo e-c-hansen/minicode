@@ -15,7 +15,7 @@ const char* kServerGives =
 // where pyright from npm needs a working one (Homebrew's node has broken
 // under it before). uv and pipx put their tools in ~/.local/bin, npm -g in
 // Homebrew's bin or the user's prefix, go install in ~/go/bin and rustup in
-// ~/.cargo/bin; MiniCode's search (MCSearchDirs) covers every one. On
+// ~/.cargo/bin; Mutible's search (MCSearchDirs) covers every one. On
 // Linux (kOnLinux) the distribution's packages come where Homebrew's do on
 // the Mac, through apt (Ubuntu and Debian), and the Linux port's search
 // (LspSearchDirs) covers the same folders.

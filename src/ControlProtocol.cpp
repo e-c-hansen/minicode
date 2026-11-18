@@ -24,7 +24,7 @@ void addTarget(std::vector<ArgSpec>& args) {
 
 std::vector<CommandSpec> makeCommands() {
     std::vector<CommandSpec> c;
-    c.push_back({"ping", "Is minicode there: its process id and version", {}});
+    c.push_back({"ping", "Is mutible there: its process id and version", {}});
     {
         CommandSpec s{"open", "Open files, at a line and column, with a note", {
             arg("files", ArgType::Objects, true,
@@ -45,7 +45,7 @@ std::vector<CommandSpec> makeCommands() {
         addTarget(s.args);
         c.push_back(s);
     }
-    // What BROWSER runs in minicode's terminals (open-url): the user's own
+    // What BROWSER runs in mutible's terminals (open-url): the user's own
     // page, in the window of the terminal the program runs in.
     c.push_back({"open-url", "Open a web address in the user's page of the browser pane",
                  {arg("url", ArgType::String, true), arg("terminal", ArgType::Int)}});
@@ -386,7 +386,7 @@ struct Help { const char* name; const char* text; };
 
 const Help kHelp[] = {
     {"open",
-     "minicode open <path>[:line[:col]] ... [--to line[:col]] [--note TEXT]\n"
+     "mutible open <path>[:line[:col]] ... [--to line[:col]] [--note TEXT]\n"
      "              [--from NAME] [--keep]\n"
      "    Opens files in the window whose folder holds them, at a line and\n"
      "    column. With --note the file opens in the window's agent preview tab\n"
@@ -396,12 +396,12 @@ const Help kHelp[] = {
      "    (default Claude). Notes are plain text, up to 500 characters, never\n"
      "    saved, and close on Escape, their x, or an edit inside the lines.\n"},
     {"window",
-     "minicode window [--folder DIR] [--new]\n"
+     "mutible window [--folder DIR] [--new]\n"
      "    Brings the window showing DIR forward, opening one if none does\n"
      "    (always a new one with --new), and prints its id. Without --folder,\n"
      "    the frontmost window.\n"},
     {"browse",
-     "minicode browse <url> [--wait]\n"
+     "mutible browse <url> [--wait]\n"
      "    Opens the address in the agent page of the window's browser pane,\n"
      "    beside the editor: a page of its own, so the user's page stays as it\n"
      "    was (the pane's switcher shows Yours and Agent). Takes http, https\n"
@@ -409,17 +409,17 @@ const Help kHelp[] = {
      "    searches. With --wait it returns when the page has loaded, or after\n"
      "    15 seconds, and prints JSON: url, status (HTTP), title, loading.\n"},
     {"open-url",
-     "minicode open-url <url>\n"
-     "    What BROWSER names in minicode's terminals, so a program that opens a\n"
+     "mutible open-url <url>\n"
+     "    What BROWSER names in mutible's terminals, so a program that opens a\n"
      "    web page (Claude Code when a link is clicked, Python's webbrowser,\n"
      "    vite --open) opens it here: a local page (localhost, 127.0.0.1, ::1,\n"
      "    *.localhost, 0.0.0.0, a file) loads in the browser pane of the\n"
      "    terminal's window, the user's page, without taking the keyboard;\n"
-     "    any other address, or any address when minicode does not answer,\n"
+     "    any other address, or any address when mutible does not answer,\n"
      "    goes to the default browser through /usr/bin/open. Never starts\n"
-     "    minicode. With several arguments the last is the address.\n"},
+     "    mutible. With several arguments the last is the address.\n"},
     {"page",
-     "minicode page --url | --text | --console [--since SEQ] | --reload [--wait]\n"
+     "mutible page --url | --text | --console [--since SEQ] | --reload [--wait]\n"
      "              | --screenshot OUT.png [--full] [--overwrite]   [--yours]\n"
      "    Reads the agent page: --url prints JSON (url, status, title,\n"
      "    loading); --text its visible text (up to 1 MB); --console the\n"
@@ -433,46 +433,46 @@ const Help kHelp[] = {
      "    console and screenshots work only for local pages (localhost,\n"
      "    127.0.0.1, ::1, *.localhost, file://) unless the settings file has\n"
      "    control.page-any-origin = true. No command runs JavaScript of yours.\n"
-     "minicode page --paste [--all]\n"
+     "mutible page --paste [--all]\n"
      "    Shows the agent page, gives it the keyboard and types Cmd+V there\n"
      "    (Cmd+A first with --all, so the clipboard replaces what the field\n"
      "    holds), into the field the user last clicked into on that page; it\n"
      "    refuses when nothing there takes text. Off unless the settings file\n"
      "    has control.page-input = true.\n"},
     {"term",
-     "minicode term [--cwd DIR] [--title TITLE] [--run COMMAND]\n"
+     "mutible term [--cwd DIR] [--title TITLE] [--run COMMAND]\n"
      "    Opens a new terminal tab and prints its id. --run types COMMAND at\n"
      "    the prompt and presses Return, in plain sight, as if typed there.\n"
      "    On Linux a window has one terminal: it is used when its shell is at\n"
      "    a prompt, and an error says why when it is busy or its shell does not\n"
      "    report (nothing is typed then). --cwd types a cd; --title is ignored.\n"},
     {"diff",
-     "minicode diff <path> [--base REF]\n"
-     "minicode diff <a> <b>\n"
+     "mutible diff <path> [--base REF]\n"
+     "mutible diff <a> <b>\n"
      "    Shows a side-by-side diff of a file against a git ref (HEAD by\n"
      "    default), or of two files, in the window's diff preview tab (one tab\n"
      "    that each diff replaces, beside the note's; --keep for a tab of its\n"
      "    own). Each file may be up to 16 MB of text.\n"},
     {"split",
-     "minicode split [--right|--below] <open|browse|term> ...\n"
+     "mutible split [--right|--below] <open|browse|term> ...\n"
      "    Runs the command into a new split: term --right splits the active\n"
      "    terminal, term --below opens a terminal tab in the dock, browse\n"
      "    --right shows the browser beside the editor. The editor itself has\n"
      "    one pane, so open in a split is refused.\n"},
     {"state",
-     "minicode state [--pretty]\n"
+     "mutible state [--pretty]\n"
      "    Prints JSON: each window's id, folder, tabs (path, dirty, active),\n"
      "    selection (path, lines, text up to 64 KB), terminals (id, cwd,\n"
      "    title, foreground command) and browser (url, title).\n"},
     {"selection",
-     "minicode selection\n"
+     "mutible selection\n"
      "    Prints the text selected in the window's editor.\n"},
     {"term-output",
-     "minicode term-output <id> [--lines N]\n"
+     "mutible term-output <id> [--lines N]\n"
      "    Prints the last N lines (200 by default) of a terminal's screen and\n"
      "    scrollback, as plain text.\n"},
     {"procs",
-     "minicode procs [--folder DIR] [--json]\n"
+     "mutible procs [--folder DIR] [--json]\n"
      "    Lists what the window's terminals started (their children, and what\n"
      "    those left running after their terminal closed: \"orphans\") and what\n"
      "    other programs run in its folder (\"not started here\"), with each\n"
@@ -480,24 +480,24 @@ const Help kHelp[] = {
      "    --json prints it as JSON. Nothing is stopped: stop only a process\n"
      "    you started, with kill <pid>.\n"},
     {"tour",
-     "minicode tour <file.json>\n"
+     "mutible tour <file.json>\n"
      "    A tour of notes: the file holds a list of {\"path\", \"line\", \"to\",\n"
      "    \"note\"} stops (relative paths are taken from the current folder).\n"
      "    The first stop opens in the agent preview tab; Option+] and\n"
      "    Option+[ go to the next and previous stop. A tour replaces the\n"
      "    window's earlier one.\n"},
     {"notify",
-     "minicode notify --from-hook\n"
-     "minicode notify --terminal ID --state waiting|done|clear [--message TEXT]\n"
-     "    Marks a minicode terminal's tab: an orange dot while it waits for\n"
+     "mutible notify --from-hook\n"
+     "mutible notify --terminal ID --state waiting|done|clear [--message TEXT]\n"
+     "    Marks a mutible terminal's tab: an orange dot while it waits for\n"
      "    you (TEXT as its tooltip), a green one when it is done; clear\n"
      "    takes the mark away, as typing in the terminal does. --from-hook\n"
      "    reads a Claude Code hook's JSON on stdin and finds the terminal\n"
-     "    from MINICODE_TERMINAL_ID and MINICODE_PID, which every minicode\n"
-     "    terminal has. With no minicode, or outside one, it does nothing and\n"
+     "    from MUTIBLE_TERMINAL_ID and MUTIBLE_PID, which every mutible\n"
+     "    terminal has. With no mutible, or outside one, it does nothing and\n"
      "    exits 0, so a hook never fails because of it.\n"},
     {"host",
-     "minicode host --folder DIR [--idle-minutes N] [--web PORT [--edit]]\n"
+     "mutible host --folder DIR [--idle-minutes N] [--web PORT [--edit]]\n"
      "    Runs the session's host for a folder with no window, until it has had\n"
      "    no renderer for N minutes (10 by default) and nothing in it is\n"
      "    unsaved or running. Renderers attach and detach over its socket;\n"
@@ -508,8 +508,8 @@ const Help kHelp[] = {
      "    with --edit as well, the page may type into the documents and\n"
      "    terminals and undo, which is control of this machine.\n"},
     {"attach",
-     "minicode attach --folder DIR --dump\n"
-     "minicode attach --folder DIR --web PORT [--edit]\n"
+     "mutible attach --folder DIR --dump\n"
+     "mutible attach --folder DIR --web PORT [--edit]\n"
      "    Prints the session a folder's host holds (its documents and\n"
      "    terminals' screens) and detaches, leaving everything running; or\n"
      "    serves a read-only view of it to a browser on 127.0.0.1:PORT until\n"
@@ -517,29 +517,29 @@ const Help kHelp[] = {
      "    --edit, a view that may edit, as for host).\n"
      "    Exits 3 when no host serves the folder.\n"},
     {"hooks",
-     "minicode hooks --print\n"
-     "minicode hooks --install\n"
-     "    Prints the Claude Code hooks that run `minicode notify --from-hook`,\n"
+     "mutible hooks --print\n"
+     "mutible hooks --install\n"
+     "    Prints the Claude Code hooks that run `mutible notify --from-hook`,\n"
      "    or adds them to ~/.claude/settings.json ($CLAUDE_CONFIG_DIR's when\n"
      "    set): the file is backed up first, nothing in it is removed or\n"
      "    moved, and running it again changes nothing. Only this command\n"
-     "    writes there; minicode never installs hooks by itself.\n"},
+     "    writes there; mutible never installs hooks by itself.\n"},
 };
 
 const char* kCommon =
     "Options for the commands above:\n"
-    "  --window ID   the window to act in (ids come from `minicode state`)\n"
+    "  --window ID   the window to act in (ids come from `mutible state`)\n"
     "  --folder DIR  the window showing DIR, opened if none does\n"
-    "  --pid PID     the minicode process to talk to (default: the newest)\n"
+    "  --pid PID     the mutible process to talk to (default: the newest)\n"
     "Commands act in the frontmost window unless told otherwise, and never\n"
     "move the keyboard or close, replace or reorder tabs and terminals the\n"
     "user has; they only add. While the user is typing in the editor, a file\n"
     "or diff opens in a tab beside theirs without being shown. `window` and\n"
-    "--folder can bring another window to the front. When minicode is not\n"
+    "--folder can bring another window to the front. When mutible is not\n"
     "running, it is started and the command waits up to 10 seconds for it;\n"
     "state, selection, term-output, procs and page exit with 3 instead.\n"
     "Exit codes: 0 done, 1 the command failed (why is on stderr), 2 a usage\n"
-    "error, 3 no minicode to talk to.\n";
+    "error, 3 no mutible to talk to.\n";
 
 }  // namespace
 
@@ -628,7 +628,7 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
     c.cmd = sub;
     if (sub == "host" || sub == "attach") {
         // The session's host (SessionServer.h): run by the command line
-        // itself, no minicode asked.
+        // itself, no mutible asked.
         for (size_t i = 0; i < a.size() && c.error.empty(); i++) {
             const std::string& w = a[i];
             std::string v;

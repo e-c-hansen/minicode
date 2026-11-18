@@ -125,20 +125,20 @@ found through that list.
   A read that fails moves no date.
 - **Sessions** (since stage 3c, 2026-11-17, `SessionStore.{h,mm}`): a
   folder's `TabSessions::Session` in sessions.json
-  (`~/Library/Application Support/MiniCode/sessions.json`, NSHomeDirectory,
-  or `$MINICODE_SESSIONS_FILE`; the GTK port's format, by resolved folder,
+  (`~/Library/Application Support/Mutible/sessions.json`, NSHomeDirectory,
+  or `$MUTIBLE_SESSIONS_FILE`; the GTK port's format, by resolved folder,
   50 folders) reopens its tabs and its browser pane (each tab's
   `interactionState` as base64, `archived` for NSKeyedArchiver's form,
   `browserShown`, `browserFraction`), else a read-only empty editor. Every
   read and write runs on one serial queue: a save is handed over at once
   and written in that turn over the file as it is then (another
-  minicode's folders stay); a read waits for the writes queued before it;
+  mutible's folders stay); a read waits for the writes queued before it;
   `applicationWillTerminate` waits for all (`MCSessionsFlush`). The user
   defaults' `MCTabSessions` and `MCOpenWindows` are carried over once,
-  by the first minicode with no file (`MCSessionsFromDefaults`, checked in
+  by the first mutible with no file (`MCSessionsFromDefaults`, checked in
   window_restore; `MCSessionsMovedToFile` marks it, and the old keys stay
-  for an older minicode). Off under `MINICODE_DEMO` and `MINICODE_BENCH`;
-  the harness's scratch home holds the file, and `MINICODE_DEFAULTS_SUITE`
+  for an older mutible). Off under `MUTIBLE_DEMO` and `MUTIBLE_BENCH`;
+  the harness's scratch home holds the file, and `MUTIBLE_DEFAULTS_SUITE`
   the old keys. The checks read it through `storedSession`. A tab over 16 MB or
   not a plain file waits for a click. Windows on one folder share it: each save
   lists the saving window's files then the others'. Agent preview tabs are left
@@ -162,13 +162,13 @@ found through that list.
   `applicationWillTerminate`, by `windowWillClose:` (`noteWindowClosing`,
   `TabSessions::afterClosing`: the last window is kept, since closing it
   quits) and 3 s after a tab switch (saveSession), never empty. **Several
-  minicodes at once** (2026-11-17, `TabSessions::mergeWindows`,
+  mutibles at once** (2026-11-17, `TabSessions::mergeWindows`,
   `toRestore`, `tab-sessions:windows-of-several`): each window carries its
   writer's pid, start time and save time, and a process writes its own
   windows over its own and the last run's only, keeping those of one still
   running or one that wrote since it started (it quit meanwhile); a launch
-  skips windows a running minicode holds open. Before, each wrote its list
-  over the whole record, so a build beside the Homebrew copy, `minicode
+  skips windows a running mutible holds open. Before, each wrote its list
+  over the whole record, so a build beside the Homebrew copy, `mutible
   -n`, or the GUI harness's parent beside its child apps wrote each
   other's windows away (main's CI 44044357638: the parent's 3 s save
   landed between window_restore's children; the suite now writes the
@@ -187,7 +187,7 @@ found through that list.
   keeps the same `TabSessions::Window` list under the key `"windows"`,
   beside the folders' sessions (`TabSessions::Store`,
   `encodeStore`/`decodeStore`, `tab-sessions:store`); an older file reads
-  as folders only and an older minicode skips the key. The GTK app
+  as folders only and an older mutible skips the key. The GTK app
   reopens those windows on a launch with no path from the home folder or
   `/` (its size, own tabs, sidebar, terminal, Problems; linux/HANDOFF.md
   item 76). The Mac keeps the same file since 3c (see "Sessions").
@@ -242,8 +242,8 @@ found through that list.
   `Store` over an `Fs`, `plan`, `foldersToReopen`, `expired`, `compare`),
   `BackupStore.mm` (folder, write queue, which process holds a backup),
   +Persistence (what and when). Store: `~/Library/Application
-  Support/MiniCode/Backups` (NSHomeDirectory, so `CFFIXED_USER_HOME` moves it)
-  or `$MINICODE_BACKUP_DIR`; never in the project. One `<uuid>.mcbackup` per
+  Support/Mutible/Backups` (NSHomeDirectory, so `CFFIXED_USER_HOME` moves it)
+  or `$MUTIBLE_BACKUP_DIR`; never in the project. One `<uuid>.mcbackup` per
   tab whose header is its own index entry, so processes never race. Written to
   a temporary (0600), flushed with `fcntl(F_FULLFSYNC)` (plain `fsync` leaves
   data in the drive's cache; fsync where a volume refuses, and on Linux),

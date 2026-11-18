@@ -168,7 +168,7 @@
 // spelled from rootPath, in its tab (a new one unless it is open already).
 - (BOOL)showFile:(NSString *)path;
 - (void)openFolder:(id)sender;    // menu action
-// This window moves to `dir` (minicode -r), asking about unsaved tabs first;
+// This window moves to `dir` (mutible -r), asking about unsaved tabs first;
 // NO when the user cancelled.
 - (BOOL)switchToFolder:(NSString *)dir;
 - (void)toggleHiddenFiles:(id)sender; // Cmd+Shift+. show/hide dotfiles, every window
@@ -268,9 +268,9 @@
 // (VS Code's window.restoreWindows "all"): frames, folders, tabs with their
 // carets and scroll, both editor groups, the panels and their sizes, the
 // terminals' folders and splits, the tree's open folders and selected row
-// (TabSessions::Window). Written as minicode quits, as a window closes (the
+// (TabSessions::Window). Written as mutible quits, as a window closes (the
 // last one is kept, since closing it quits), and a moment after a tab
-// switch, so a crash loses little. Another minicode running at once keeps
+// switch, so a crash loses little. Another mutible running at once keeps
 // its own windows in the record (SessionStore's MCSessionsPutWindows).
 + (void)saveOpenWindows;
 // The windows saveOpenWindows writes down: the app's open windows on a
@@ -278,7 +278,7 @@
 + (NSArray<EditorController *> *)openWindowsFrontFirst;
 // The windows to bring back, front first: @{@"root": folder, @"record":
 // what restoreWindowRecord: takes}, for folders still there, but those
-// another running minicode holds open. None for the demos and the
+// another running mutible holds open. None for the demos and the
 // benchmark, which start the same way every time.
 + (NSArray<NSDictionary *> *)windowsToRestore;
 // Before showWindow: the window comes back as `record` says, its tabs from
@@ -374,7 +374,7 @@
 // EditorController+Bookmarks.mm: web bookmarks as .url files (Bookmarks.h).
 @interface EditorController (Bookmarks)
 // The window on the bookmark folder (browser.bookmarks, ~/Bookmarks), where
-// `minicode https://...` and bookmarks opened from Finder go.
+// `mutible https://...` and bookmarks opened from Finder go.
 @property(nonatomic, readonly) BOOL isBrowserWindow;
 // Each http or https address in a browser tab of this window's pane (shown,
 // in the browser window over the editor's side while no file is open);
@@ -412,7 +412,7 @@
 // The source folder of a Request a Change conversation still running in
 // this window, which a restart continues; nil when there is none.
 - (NSString *)changeSourceToResume;
-// Shift+Cmd+K: Request a Change to minicode (see ChangePanel.h).
+// Shift+Cmd+K: Request a Change to mutible (see ChangePanel.h).
 - (void)requestChange:(id)sender;
 // Edit > New Agent Task… (Option+Shift+Cmd+A): Claude Code on a fresh
 // worktree, from a prompt (AgentTaskBar.h).
@@ -424,7 +424,7 @@
 // ---- the control channel (ControlCommands.mm) and agent notes (AgentNotes.h)
 // None of these moves the keyboard; they only add tabs and terminals.
 @property(nonatomic, readonly) MCAgentNotes *agentNotes;   // made on first use
-// Opens a file as `minicode open` does: in its tab when open already, else
+// Opens a file as `mutible open` does: in its tab when open already, else
 // in the window's agent preview tab (replacing the file it showed) or a tab
 // of its own. YES when it is on show.
 - (BOOL)openFileForAgent:(NSString *)path preview:(BOOL)preview;
@@ -444,18 +444,18 @@
 // A new terminal starting in `dir`: a new tab, or beside the active terminal
 // (nil when there is no room to split).
 - (TerminalView *)newTerminalForAgentIn:(NSString *)dir beside:(BOOL)beside;
-// The browser pane for `minicode browse` and `page`, made and shown beside
+// The browser pane for `mutible browse` and `page`, made and shown beside
 // the editor if need be, the keyboard left where it was; or nil-able as it
 // is. Agents load into its agent page (Browser.h), never the user's.
 - (BrowserView *)agentBrowserPane;
 - (BrowserView *)browserPane;
 // A web address from a terminal (a Cmd+click on a link, or a program
-// through BROWSER and `minicode open-url`): the user's page loads it, the
+// through BROWSER and `mutible open-url`): the user's page loads it, the
 // pane shows beside the editor if it was hidden, and the keyboard stays
 // where it was. 0.0.0.0 and [::] are read as localhost
 // (TermLinks::browserAddress).
 - (void)openWebAddressFromTerminal:(NSString *)url;
-// For `minicode state`: each tab (path, title, kind, dirty, active, preview),
+// For `mutible state`: each tab (path, title, kind, dirty, active, preview),
 // the editor's selection (path, text up to 64 KB, start and end line and
 // column; nil when no text file shows), the terminals, the browser's page.
 - (NSArray<NSDictionary *> *)controlTabs;

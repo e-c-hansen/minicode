@@ -29,7 +29,7 @@ namespace {
 
 [[maybe_unused]] inline TerminalGridView *Grid(TerminalView *t) { return [t valueForKey:@"grid"]; }
 
-[[maybe_unused]] inline NSString *SettingsPath() { return NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"]; }
+[[maybe_unused]] inline NSString *SettingsPath() { return NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"]; }
 
 // Writes the settings file and reads it at once.
 [[maybe_unused]] inline void SetSettings(NSString *text) {
@@ -431,7 +431,7 @@ MC_GUI_SUITE(terminal_exec) {
     // The nonce went to the exec'd zsh only: bash, and what bash runs,
     // never see it (any of them could print marks the tab believed).
     MCGuiStep(@"bash has no nonce", ^{
-        [s.term runCommand:@"echo nonce-count-$(env | grep -c MINICODE_NONCE)"];
+        [s.term runCommand:@"echo nonce-count-$(env | grep -c MUTIBLE_NONCE)"];
     });
     MCGuiWait(@"none", 10, ^BOOL {
         return [[s.term recentText:4] containsString:@"\nnonce-count-0"];

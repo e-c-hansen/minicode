@@ -225,7 +225,7 @@ static NSArray<NSString *> *Lines(const std::vector<std::string> &v) {
         _transcript = [transcript copy];
         _name = [name copy] ?: transcript.lastPathComponent;
         _model = model;
-        _queue = dispatch_queue_create("minicode.evidence", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.evidence", DISPATCH_QUEUE_SERIAL);
         _reader.reset(new AgentEvidence::Reader(PU8(transcript)));
         _commands = @[];
         _entries = @[];
@@ -744,7 +744,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
     auto link = [&](NSString *title, NSString *action) {
         add(title, @{NSFontAttributeName: small, NSParagraphStyleAttributeName: first,
                      NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
-                         @"minicode-evidence://%@/%lu", action, (unsigned long)i]]});
+                         @"mutible-evidence://%@/%lu", action, (unsigned long)i]]});
     };
     // The heading line: number, description, marks, Open in Terminal.
     add([NSString stringWithFormat:@"%lu\t", (unsigned long)i + 1],
@@ -840,7 +840,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
         if (c.fullCut) add(@"(cut at 1 MB)\n", noteAttrs);
         add(@"Show less", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: indented,
                             NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
-                                @"minicode-evidence://less/%lu", (unsigned long)i]]});
+                                @"mutible-evidence://less/%lu", (unsigned long)i]]});
         add(@"\n", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: indented});
     } else if (!c.head.count && !c.tail.count) {
         add(@"(no output)\n", @{NSFontAttributeName: small, NSForegroundColorAttributeName: Muted(),
@@ -852,7 +852,7 @@ static std::string OutputKey(const AgentEvidence::Command &c) {
             add([NSString stringWithFormat:@"⋯ %@  ", PNS(AgentView::moreLinesText(c.omitted))], noteAttrs);
             add(@"Show all", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: boxed,
                                NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
-                                   @"minicode-evidence://expand/%lu", (unsigned long)i]]});
+                                   @"mutible-evidence://expand/%lu", (unsigned long)i]]});
             add(@"\n", @{NSFontAttributeName: small, NSParagraphStyleAttributeName: boxed});
         }
         for (NSString *l in c.tail) outLine(l, stderrFrom);
@@ -1083,7 +1083,7 @@ static NSString *MarkdownOf(MCEvEntry *e) {
             add([self shownPath:e.path],
                 @{NSFontAttributeName: MCMonoFont(12, NSFontWeightRegular),
                   NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
-                      @"minicode-evidence://open/%lu", (unsigned long)i]]});
+                      @"mutible-evidence://open/%lu", (unsigned long)i]]});
         }
         if (e.text.length)
             add([@"  " stringByAppendingString:e.text],
@@ -1144,7 +1144,7 @@ static NSString *MarkdownOf(MCEvEntry *e) {
     NSString *shown = [self shownPath:e.path];
     add(shown, @{NSFontAttributeName: MCMonoFont(12, NSFontWeightRegular),
                  NSLinkAttributeName: [NSURL URLWithString:[NSString stringWithFormat:
-                     @"minicode-evidence://file/%lu", (unsigned long)i]]});
+                     @"mutible-evidence://file/%lu", (unsigned long)i]]});
     if (e.answered && e.isError)
         add(@"   refused", @{NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold],
                              NSForegroundColorAttributeName: Red()});
@@ -1176,7 +1176,7 @@ static NSString *MarkdownOf(MCEvEntry *e) {
 - (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)charIndex {
     (void)tv; (void)charIndex;
     NSURL *url = [link isKindOfClass:NSURL.class] ? link : [NSURL URLWithString:[link description]];
-    if (![url.scheme isEqualToString:@"minicode-evidence"]) {
+    if (![url.scheme isEqualToString:@"mutible-evidence"]) {
         // A link in a message: a web address, or a file named from the
         // session's folder.
         NSString *href = [link isKindOfClass:NSURL.class] ? [link absoluteString] : [link description];
@@ -1274,7 +1274,7 @@ static std::u16string U16Of(NSString *s) {
         _path = [path copy];
         _name = name.length ? [name copy] : transcript.lastPathComponent;
         _model = model;
-        _queue = dispatch_queue_create("minicode.session-file", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.session-file", DISPATCH_QUEUE_SERIAL);
         _changes = @[];
         [self build];
         [self pageApplySettings];
@@ -1492,14 +1492,14 @@ static NSString *CountLines(NSString *s) {
         add(line, @{NSFontAttributeName: body, NSForegroundColorAttributeName: text});
         add(@"   ", @{NSFontAttributeName: small});
         add(@"Compare Before and Now", @{NSFontAttributeName: small,
-            NSLinkAttributeName: [NSURL URLWithString:@"minicode-session-file://compare"]});
+            NSLinkAttributeName: [NSURL URLWithString:@"mutible-session-file://compare"]});
     } else if (_why.length && _changes.count) {
         add(_why, @{NSFontAttributeName: body, NSForegroundColorAttributeName: Muted()});
     }
     if (_existsNow) {
         add(@"   ", @{NSFontAttributeName: small});
         add(@"Open the File", @{NSFontAttributeName: small,
-            NSLinkAttributeName: [NSURL URLWithString:@"minicode-session-file://open"]});
+            NSLinkAttributeName: [NSURL URLWithString:@"mutible-session-file://open"]});
     }
     if (_unreadable && _changes.count)
         add([NSString stringWithFormat:@"\n%ld more could not be read from the transcript.",
@@ -1675,7 +1675,7 @@ static NSString *CountLines(NSString *s) {
 - (BOOL)textView:(NSTextView *)tv clickedOnLink:(id)link atIndex:(NSUInteger)charIndex {
     (void)tv; (void)charIndex;
     NSURL *url = [link isKindOfClass:NSURL.class] ? link : [NSURL URLWithString:[link description]];
-    if (![url.scheme isEqualToString:@"minicode-session-file"]) return NO;
+    if (![url.scheme isEqualToString:@"mutible-session-file"]) return NO;
     if ([url.host isEqualToString:@"compare"]) [self compareBeforeAndNow];
     else if ([url.host isEqualToString:@"open"] && self.onOpenFile) self.onOpenFile(_path);
     return YES;

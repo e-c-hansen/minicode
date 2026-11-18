@@ -22,6 +22,6 @@ EditorController *MCControlTarget(id<MCControlAppHost> host, const Json &args,
                                   EditorController *fallback, std::string &error);
 
 // Ids that stay the same for the life of a window or terminal, given out on
-// first use (`minicode state` lists them).
+// first use (`mutible state` lists them).
 NSInteger MCControlWindowID(EditorController *controller);
 NSInteger MCControlTerminalID(TerminalView *terminal);

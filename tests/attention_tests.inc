@@ -59,7 +59,7 @@ static void testClaudeHooks() {
         CHECK(!notifyArgsFromHook(stop, "3", "-1", a, pid));
         CHECK(!notifyArgsFromHook(stop, "3", "12345678901", a, pid));
         CHECK(!notifyArgsFromHook(stop, "0", "4242", a, pid));
-        // `echo '{}' | minicode notify --from-hook`, garbage, other events.
+        // `echo '{}' | mutible notify --from-hook`, garbage, other events.
         CHECK(!notifyArgsFromHook("{}", "3", "4242", a, pid));
         CHECK(!notifyArgsFromHook("not json", "3", "4242", a, pid));
         CHECK(!notifyArgsFromHook(R"({"hook_event_name":"PreToolUse"})", "3", "4242", a, pid));
@@ -159,7 +159,7 @@ static void testClaudeHooks() {
         CHECK(again.ok && !again.changed && again.added.empty() && again.text.empty());
         // A command spelled with the launcher's whole path counts as ours.
         MergeResult spelled = merge(R"({"hooks":{"Notification":[{"hooks":[{"type":"command",
-            "command":"/opt/homebrew/bin/minicode notify --from-hook"}]}]}})");
+            "command":"/opt/homebrew/bin/mutible notify --from-hook"}]}]}})");
         CHECK(spelled.ok && spelled.changed &&
               (spelled.added == std::vector<std::string>{"Stop", "UserPromptSubmit", "PostToolUse"}));
         // An event list that has ours among other entries keeps all of them.
@@ -191,7 +191,7 @@ static void testClaudeHooks() {
         namespace fs = std::filesystem;
         std::error_code ec;
         const fs::path dir = fs::temp_directory_path() /
-                             ("minicode-hooks-" + std::to_string((long)getpid()));
+                             ("mutible-hooks-" + std::to_string((long)getpid()));
         fs::remove_all(dir, ec);
         fs::create_directories(dir / "dotfiles", ec);
         fs::create_directories(dir / "claude", ec);
@@ -213,7 +213,7 @@ static void testClaudeHooks() {
         CHECK(::stat(real.c_str(), &st) == 0 && (st.st_mode & 07777) == 0640);
         int temporaries = 0;
         for (const auto &e : fs::directory_iterator(dir / "dotfiles"))
-            if (e.path().filename().string().find(".minicode-") != std::string::npos) temporaries++;
+            if (e.path().filename().string().find(".mutible-") != std::string::npos) temporaries++;
         CHECK(temporaries == 0);
         // A dangling link: the file it names is made, with the mode asked.
         const fs::path later = dir / "dotfiles" / "later.json", dangling = dir / "claude" / "later.json";
@@ -248,20 +248,20 @@ static void testClaudeHooks() {
     GROUP("hooks:command");
     {
         CHECK(commandFor("") == kCommand);
-        CHECK(commandFor("/Applications/MiniCode.app/Contents/Resources/minicode") ==
-              "/Applications/MiniCode.app/Contents/Resources/minicode notify --from-hook");
-        CHECK(commandFor("/Users/a b/Mini'Code.app/minicode") ==
-              "'/Users/a b/Mini'\\''Code.app/minicode' notify --from-hook");
+        CHECK(commandFor("/Applications/Mutible.app/Contents/Resources/mutible") ==
+              "/Applications/Mutible.app/Contents/Resources/mutible notify --from-hook");
+        CHECK(commandFor("/Users/a b/Mini'Code.app/mutible") ==
+              "'/Users/a b/Mini'\\''Code.app/mutible' notify --from-hook");
         // Any of these spellings counts as installed, so a second press
         // after a move to Homebrew adds nothing.
-        Json e = configuration(commandFor("/x y/minicode"), {})["hooks"]["Stop"][0];
+        Json e = configuration(commandFor("/x y/mutible"), {})["hooks"]["Stop"][0];
         CHECK(runsOurCommand(e));
         Json some = configuration(kCommand, {"Stop", "PostToolUse"});
         CHECK(some["hooks"].size() == 2 && some["hooks"].has("Stop") &&
               some["hooks"].has("PostToolUse") && !some["hooks"].has("Notification"));
-        MergeResult r = merge("{}", commandFor("/opt/m/minicode"));
+        MergeResult r = merge("{}", commandFor("/opt/m/mutible"));
         CHECK(r.ok && r.changed && r.added.size() == 4 &&
-              r.text.find("/opt/m/minicode notify --from-hook") != std::string::npos);
+              r.text.find("/opt/m/mutible notify --from-hook") != std::string::npos);
         CHECK(installed(r.text) && !installed("{}") && !installed("[1]") && !installed(""));
         CHECK(eventList({"A"}) == "A" && eventList({"A", "B"}) == "A and B" &&
               eventList({"A", "B", "C"}) == "A, B, and C" && eventList({}).empty());
@@ -275,7 +275,7 @@ static void testClaudeHooks() {
         namespace fs = std::filesystem;
         std::error_code ec;
         const fs::path dir = fs::temp_directory_path() /
-                             ("minicode-hooks-install-" + std::to_string((long)getpid()));
+                             ("mutible-hooks-install-" + std::to_string((long)getpid()));
         fs::remove_all(dir, ec);
         fs::create_directories(dir, ec);
         auto read = [](const fs::path &p) {
@@ -306,7 +306,7 @@ static void testClaudeHooks() {
         ::chmod(mine.c_str(), 0640);
         InstallResult b = install(mine.string(), kCommand, 1763200000);
         CHECK(b.ok && b.changed && !b.backup.empty() && read(b.backup) == original);
-        CHECK(b.backup.find("settings.json.minicode-backup-") != std::string::npos);
+        CHECK(b.backup.find("settings.json.mutible-backup-") != std::string::npos);
         CHECK(::stat(mine.c_str(), &st) == 0 && (st.st_mode & 07777) == 0640);
         CHECK(read(mine).find("\"model\": \"opus\"") != std::string::npos && installed(read(mine)));
         { std::ofstream(mine) << original; }
@@ -321,7 +321,7 @@ static void testClaudeHooks() {
         CHECK(read(broken) == "{ \"model\": ");
         int backups = 0;
         for (const auto &e : fs::directory_iterator(dir))
-            if (e.path().filename().string().rfind("broken.json.minicode-backup-", 0) == 0) backups++;
+            if (e.path().filename().string().rfind("broken.json.mutible-backup-", 0) == 0) backups++;
         CHECK(backups == 0);
         // A folder where the file should be.
         fs::create_directories(dir / "folder.json", ec);
@@ -379,7 +379,7 @@ static void testNotifyCommandLine() {
     CHECK(!parse({"notify", "--terminal", "x", "--state", "done"}).error.empty());
     CHECK(!parse({"notify", "--from-hook", "--terminal", "3"}).error.empty());
     CHECK(!parse({"notify", "--from-hook", "extra"}).error.empty());
-    // A hook's command never starts minicode.
+    // A hook's command never starts mutible.
     CHECK(!launchesApp("notify"));
     c = parse({"hooks", "--print"});
     CHECK(c.error.empty() && c.hooksAction == "print" && c.cmd.empty());
@@ -390,7 +390,7 @@ static void testNotifyCommandLine() {
     CHECK(!parse({"hooks", "--print", "x"}).error.empty());
     CHECK(isSubcommand("notify") && isSubcommand("hooks"));
     CHECK(parse({"hooks", "-h"}).help && usageText("hooks").find("--install") != std::string::npos);
-    CHECK(usageText().find("minicode notify --from-hook") != std::string::npos);
+    CHECK(usageText().find("mutible notify --from-hook") != std::string::npos);
 }
 
 static void testAttentionBoard() {

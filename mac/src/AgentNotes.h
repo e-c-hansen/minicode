@@ -1,5 +1,5 @@
-// AgentNotes.h — notes an agent puts over the code (`minicode open --note`,
-// `minicode tour`): a range of lines highlighted, scrolled to the upper third
+// AgentNotes.h — notes an agent puts over the code (`mutible open --note`,
+// `mutible tour`): a range of lines highlighted, scrolled to the upper third
 // of the editor, with a one- or two-sentence note above it, labelled with
 // who wrote it ("Claude"). A tour is a sequence of such notes, stepped
 // through with Option+] and Option+[ and counted in the note ("2 of 5").
@@ -33,7 +33,7 @@
 - (NSTextView *)notesTextView;
 // Something that stays the same object while the same tab is on show.
 - (id)notesActiveTab;
-// Opens a file the way `minicode open --note` does (the agent preview tab,
+// Opens a file the way `mutible open --note` does (the agent preview tab,
 // the keyboard where it was) and returns its tab, as notesActiveTab names
 // tabs, whether on show or not: with `quiet`, while the user is typing in
 // the editor, it opens beside their tab without being shown. nil when it
@@ -94,7 +94,7 @@
 // Closes the note on show (and the tour), as its × does.
 - (void)closeNote;
 
-// The note on show, for `minicode state` and tests: its text, its label
+// The note on show, for `mutible state` and tests: its text, its label
 // ("Claude", "Claude · 2 of 3"), the highlighted range, and the view.
 @property(nonatomic, readonly) BOOL noteShown;
 @property(nonatomic, readonly) NSString *noteText;

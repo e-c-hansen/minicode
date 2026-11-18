@@ -113,7 +113,7 @@ static void MCLspWatchDeliver(MCLspWatchBox *box, std::vector<Lsp::FileChange> c
     _box->active.store(true);
     _box.handler = handler;
     _box.owner = self;
-    _queue = dispatch_queue_create("minicode.lsp-watch", DISPATCH_QUEUE_SERIAL);
+    _queue = dispatch_queue_create("mutible.lsp-watch", DISPATCH_QUEUE_SERIAL);
     FSEventStreamContext ctx = {0, (__bridge void *)_box, CFRetain, CFRelease, NULL};
     _stream = FSEventStreamCreate(
         NULL, &MCLspWatchCallback, &ctx, (__bridge CFArrayRef)_paths,

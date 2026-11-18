@@ -245,7 +245,7 @@ static void updateKeyPlace();
 // The status bar's note on the shortcut hints, with their key as keys.conf
 // leaves it.
 static std::string hintsHintText(bool showing) {
-    const std::string key = Keys::label("minicode.toggleShortcutHints", "+");
+    const std::string key = Keys::label("mutible.toggleShortcutHints", "+");
     return (key.empty() ? std::string() : key + "  ") +
            (showing ? "Hide shortcuts" : "Shortcuts");
 }
@@ -3321,7 +3321,7 @@ static std::string hintsText(App* app) {
     row("toggleFindInSelection", "Find in selection");
     row("workbench.action.findInFiles", "Find in folder");
     row("workbench.action.replaceInFiles", "Replace in folder");
-    row("minicode.showTodos", "TODOs in folder");
+    row("mutible.showTodos", "TODOs in folder");
     row("inlineChat.start", "Ask the inline agent");
     row("editor.action.commentLine", "Toggle comment");
     row("editor.action.jumpToBracket", "Go to bracket");
@@ -3331,8 +3331,8 @@ static std::string hintsText(App* app) {
     row("editor.unfoldAll", "Unfold all");
     plain("Tab, Shift Tab", "Indent, outdent lines");
     row("editor.action.formatDocument", "Format document (or the selected lines)");
-    row("minicode.sortLines", "Sort lines");
-    row("minicode.sortKeepSortedBlocks", "Sort keep-sorted blocks");
+    row("mutible.sortLines", "Sort lines");
+    row("mutible.sortKeepSortedBlocks", "Sort keep-sorted blocks");
     row("workbench.action.openSettings", "Settings");
     row("workbench.action.focusSideBar", "Focus the file tree");
     row("workbench.action.focusFirstEditorGroup", "Focus the editor (its left group)");
@@ -3397,7 +3397,7 @@ static std::string hintsText(App* app) {
     row("explorer.newFolder", "New folder");
     row("renameFile", "Rename (in the tree)");
     row("moveFileToTrash", "Move to Trash (in the tree)");
-    row("minicode.toggleHiddenFiles",
+    row("mutible.toggleHiddenFiles",
         std::string("Hidden files (") + (g.showHidden ? "shown" : "hidden") + ")");
 
     heading("Language servers");
@@ -3416,9 +3416,9 @@ static std::string hintsText(App* app) {
 
     heading("Panes");
     row("workbench.action.toggleSidebarVisibility", "Sidebar");
-    row("minicode.toggleEditor",
+    row("mutible.toggleEditor",
         std::string("Editor      (") + (app->layout->editorShown() ? "shown" : "collapsed") + ")");
-    row("minicode.toggleMaximizedPane",
+    row("mutible.toggleMaximizedPane",
         std::string("Maximize    (") + (app->layout->maximized() ? "maximized" : "off") + ")");
 #ifdef MINICODE_ENABLE_TERMINAL
     row("workbench.action.terminal.toggleTerminal",
@@ -3427,7 +3427,7 @@ static std::string hintsText(App* app) {
     row("workbench.action.terminal.toggleTerminal", "Terminal, too", 1);
 #endif
 #ifdef MINICODE_ENABLE_BROWSER
-    row("minicode.toggleBrowser",
+    row("mutible.toggleBrowser",
         std::string("Browser     (") +
             (app->layout->browserShown() ? "open" : "hidden") + ")");
 #endif
@@ -3447,24 +3447,24 @@ static std::string hintsText(App* app) {
         if (app->editor->inPreview()) {
             plain("Click a box", "Check or clear a task");
         } else {
-            row("minicode.markdown.toggleTask", "Toggle task");
-            row("minicode.markdown.toggleTask", "Toggle task, too", 1);
+            row("mutible.markdown.toggleTask", "Toggle task");
+            row("mutible.markdown.toggleTask", "Toggle task, too", 1);
         }
     }
     if (app->editor->isLatex()) {
         row("markdown.showPreview", std::string("LaTeX       (") +
                                         (app->editor->inPreview() ? "preview" : "source") + ")");
-        row("minicode.latex.exportPDF", "Export PDF");
+        row("mutible.latex.exportPDF", "Export PDF");
         row("latex-workshop.synctex", "Show the caret's line in the PDF");
     }
     if (app->editor->showingPdf()) {
-        row("minicode.page.zoomIn", "Zoom the PDF in (or Ctrl wheel)");
-        row("minicode.page.zoomOut", "Zoom it out");
-        row("minicode.page.fitWidth", "Fit width");
+        row("mutible.page.zoomIn", "Zoom the PDF in (or Ctrl wheel)");
+        row("mutible.page.zoomOut", "Zoom it out");
+        row("mutible.page.fitWidth", "Fit width");
     }
     if (app->editor->canPlayMedia()) {
         heading("Video and audio");
-        row("minicode.togglePlayback", "Play or pause");
+        row("mutible.togglePlayback", "Play or pause");
     }
 
 #ifdef MINICODE_ENABLE_TERMINAL
@@ -3488,7 +3488,7 @@ static std::string hintsText(App* app) {
 #endif
 
     rows.push_back({HintRow::Text, "", ""});
-    row("minicode.toggleShortcutHints", "Hide these hints");
+    row("mutible.toggleShortcutHints", "Hide these hints");
 
     size_t width = 0;
     for (const HintRow& r : rows)
@@ -4022,12 +4022,12 @@ static void initShared() {
             g_object_unref(mi);
         };
         GMenu* focus = g_menu_new();
-        item(focus, title("minicode.tree.focusFolder"), "win.focusfolderrow");
-        item(focus, title("minicode.tree.showWholeFolder"), "win.showwholefolder");
+        item(focus, title("mutible.tree.focusFolder"), "win.focusfolderrow");
+        item(focus, title("mutible.tree.showWholeFolder"), "win.showwholefolder");
         g_menu_append_section(G_MENU(g.treeMenu), nullptr, G_MENU_MODEL(focus));
         g_object_unref(focus);
         GMenu* bar = g_menu_new();
-        g_menu_append(bar, title("minicode.tree.showWholeFolder"), "win.showwholefolder");
+        g_menu_append(bar, title("mutible.tree.showWholeFolder"), "win.showwholefolder");
         g.focusBarMenu = G_MENU_MODEL(bar);
     }
     {   // the bookmark items, enabled by the row (updateBookmarkActions)
@@ -5265,12 +5265,12 @@ static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
 // The client half of the control channel (tools/minicode-cli.cpp): `minicode
 // open|window|state|selection ...` talks to the running minicode over its
 // socket and exits, with no GTK started (PARITY.md 3.1).
-int minicodeCliMain(int argc, char** argv);
-int minicodeInstallSkill(int argc, char** argv);
+int mutibleCliMain(int argc, char** argv);
+int mutibleInstallSkill(int argc, char** argv);
 
 int main(int argc, char** argv) {
-    if (argc > 1 && std::string(argv[1]) == "install-skill") return minicodeInstallSkill(argc, argv);
-    if (argc > 1 && ControlChannel::isSubcommand(argv[1])) return minicodeCliMain(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "install-skill") return mutibleInstallSkill(argc, argv);
+    if (argc > 1 && ControlChannel::isSubcommand(argv[1])) return mutibleCliMain(argc, argv);
 #ifndef MINICODE_GUITEST
     // A run with the startup log stays in the terminal it was asked from: a
     // detached app gives that terminal up, and the log with it (Detach.h).

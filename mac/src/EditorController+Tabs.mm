@@ -679,7 +679,7 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 }
 
 // ------------------------------------------------- closed tabs, reopened
-// Option+Shift+Cmd+T (VS Code's Shift+Cmd+T is minicode's Toggle Terminal):
+// Option+Shift+Cmd+T (VS Code's Shift+Cmd+T is mutible's Toggle Terminal):
 // the last tab closed in this window comes back where it was in the strip,
 // with its selection, scroll and preview as it left them. A file already
 // open again is just shown; one no longer on disk is passed over.
@@ -875,7 +875,7 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 }
 
 // Write a tab's text to its file, YES when nothing is left unsaved. The
-// active tab saves as a save MiniCode makes itself does (saveCurrentFile:
+// active tab saves as a save Mutible makes itself does (saveCurrentFile:
 // with no sender). A tab in the background saves where it is by the same
 // rules: the disk is checked first (Keep Mine, Reload, Cancel), and with
 // editor.keep-sorted-on-save its blocks are sorted unless it shows a
@@ -1105,7 +1105,7 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
     if (sender) [self saveLatexInputsOfActiveTab];
     // editor.organize-imports-on-save, then format.on-save: Cmd+S (a sender)
     // has the imports organized and the file formatted first, and saves when
-    // they are done; saves asked for by MiniCode itself (nil, auto-save
+    // they are done; saves asked for by Mutible itself (nil, auto-save
     // among them) never wait.
     if (sender && [self organizeOrFormatBeforeSaving:YES]) return;
     // Never over a change made outside, or a file deleted outside, unasked.

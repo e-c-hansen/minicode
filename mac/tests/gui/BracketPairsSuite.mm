@@ -147,7 +147,7 @@ MC_GUI_SUITE(bracket_pairs) {
         GCHECK(c != nil);
         MCGuiSetKeyWindow(c.window);
         saved = [NSString stringWithContentsOfFile:NSProcessInfo.processInfo.environment[
-                                                       @"MINICODE_SETTINGS"]
+                                                       @"MUTIBLE_SETTINGS"]
                                           encoding:NSUTF8StringEncoding
                                              error:nil] ?: @"";
         // Large enough to read the colors off the pixels; no auto-closing,

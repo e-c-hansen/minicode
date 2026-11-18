@@ -1,5 +1,5 @@
 // MarkdownHtml.h — pure C++. A Markdown file as a standalone HTML page, for
-// File > Export as HTML… (VS Code has no built-in export; this is minicode's
+// File > Export as HTML… (VS Code has no built-in export; this is mutible's
 // own). It is written from the parser's runs, the same ones the preview
 // draws, so the page says what the preview says: headings carry GitHub's
 // anchors (MarkdownParser::anchor, repeats numbered as GitHub numbers them),

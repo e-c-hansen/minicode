@@ -463,7 +463,7 @@ MC_GUI_SUITE(format_consent) {
 // question); the same file with Prettier configured but missing names it
 // and never goes to the language server; with no Prettier set up, the
 // file's server formats it (textDocument/formatting from fakelsp) as one
-// undo step; and a kind of file minicode has no formatter for is
+// undo step; and a kind of file mutible has no formatter for is
 // formatted by its server, also before a save with format.on-save.
 MC_GUI_SUITE(format_coverage) {
     __block EditorController *c = nil;
@@ -553,7 +553,7 @@ MC_GUI_SUITE(format_coverage) {
         [Text(c).undoManager undo];
         GCHECK_EQ_STR(Text(c).string, @"#  Title\n");
         GCHECK(![[c valueForKey:@"dirty"] boolValue]);
-        // A kind of file minicode has no formatter for.
+        // A kind of file mutible has no formatter for.
         MCGuiWriteFile(other, @"a=1\n");
         GCHECK([c showFile:other]);
     });

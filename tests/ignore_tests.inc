@@ -82,7 +82,7 @@ static void testIgnoreFiles() {
     {
         std::random_device rd;
         const fsys::path root = fsys::temp_directory_path() /
-            ("minicode-ignore-test-" + std::to_string(rd()));
+            ("mutible-ignore-test-" + std::to_string(rd()));
         fsys::remove_all(root);
         writeFile(root / ".gitignore", "*.log\nout/\n.env\n");
         writeFile(root / ".ignore", "a2.txt\n");

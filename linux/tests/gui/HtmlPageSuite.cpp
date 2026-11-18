@@ -120,7 +120,7 @@ MC_GUI_SUITE(html_page) {
     MCGuiStep("the line keeps the bar's place, nothing is written to the settings", [] {
         GCHECK(page()->runsScripts());
         GCHECK(gtk_widget_get_visible(page()->bar()));
-        GCHECK_EQ_STR(page()->barText(), "This page's scripts run, until minicode quits.");
+        GCHECK_EQ_STR(page()->barText(), "This page's scripts run, until mutible quits.");
         GCHECK(!MCGuiFindButton(page()->bar(), "Run Scripts") ||
                !gtk_widget_get_visible(MCGuiFindButton(page()->bar(), "Run Scripts")));
         GCHECK(!has(settingsText(), "\nhtml.scripts"));

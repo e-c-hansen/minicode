@@ -569,7 +569,7 @@ std::string render(const std::vector<MdRun>& runs, const std::string& title) {
     std::string out =
         "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-        "<meta name=\"generator\" content=\"minicode\">\n<title>";
+        "<meta name=\"generator\" content=\"mutible\">\n<title>";
     out += escape(title);
     out += "</title>\n<style>\n";
     out += kStyle;

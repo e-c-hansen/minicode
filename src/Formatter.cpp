@@ -931,13 +931,13 @@ bool hasDefault(const std::string& lang) {
 
 std::string unplannedMessage(const std::string& lang, const std::string& extension) {
     const Language* l = findLanguage(lang);
-    if (!l) return "minicode has no formatter for ." + extension + " files.";
+    if (!l) return "mutible has no formatter for ." + extension + " files.";
     bool biome = false, prettier = false;
     for (const Tool& t : l->tools) {
         if (std::string(t.program) == "biome") biome = true;
         if (std::string(t.program) == "prettier") prettier = true;
     }
-    return std::string("minicode formats ") + l->display + " files only in projects set up for " +
+    return std::string("mutible formats ") + l->display + " files only in projects set up for " +
            (biome ? "Prettier or Biome" : "Prettier") +
            (prettier ? ", or when the settings say format." + lang +
                            " = prettier (your own Prettier) or give a command of your own."

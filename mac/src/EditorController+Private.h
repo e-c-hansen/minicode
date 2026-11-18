@@ -108,8 +108,8 @@ static inline NSString *FromU16(const std::u16string &u) {
 }
 
 // Link value marking a clickable color in the settings file.
-static NSString *const kColorLink = @"minicode-color";
-static NSString *const kOpacityLink = @"minicode-opacity";
+static NSString *const kColorLink = @"mutible-color";
+static NSString *const kOpacityLink = @"mutible-opacity";
 // On rendered Markdown: the 0-based source line a stretch of text came from.
 static NSAttributedStringKey const kMarkdownSourceLine = @"MCMarkdownSourceLine";
 // On a fenced block's label line above it (a notebook's "In [3]"), for tests.
@@ -126,14 +126,14 @@ static NSAttributedStringKey const kMarkdownMath = @"MCMarkdownMath";
 // tectonic is missing.
 static NSAttributedStringKey const kMarkdownMathNote = @"MCMarkdownMathNote";
 // The link in that line that downloads tectonic.
-static NSString *const kMathDownloadLink = @"minicode-math:download-tectonic";
+static NSString *const kMathDownloadLink = @"mutible-math:download-tectonic";
 // Link value on a task's box in rendered Markdown, followed by its 0-based
 // source line: a click ticks or clears it.
-static NSString *const kTaskLinkPrefix = @"minicode-task:";
+static NSString *const kTaskLinkPrefix = @"mutible-task:";
 // Link value on a <details> block's summary in rendered Markdown:
-// "minicode-details:<tag line>:<summary run's line>:<1 open, 0 closed>". A
+// "mutible-details:<tag line>:<summary run's line>:<1 open, 0 closed>". A
 // click opens or closes it (toggleMarkdownDetails:atIndex:inPage:).
-static NSString *const kDetailsLinkPrefix = @"minicode-details:";
+static NSString *const kDetailsLinkPrefix = @"mutible-details:";
 
 // Panel, text and syntax colors come from the settings file (AppSettings);
 // Hex is for the fixed accents that aren't configurable.

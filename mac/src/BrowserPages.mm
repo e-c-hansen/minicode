@@ -7,8 +7,8 @@
 
 namespace {
 
-NSString *const kWorldName = @"minicode-page-check";
-NSString *const kHandlerName = @"minicodeConsole";
+NSString *const kWorldName = @"mutible-page-check";
+NSString *const kHandlerName = @"mutibleConsole";
 
 // The page-world wrapper: each console call is passed on as a DOM event
 // carrying JSON text (a string crosses worlds as it is), then made as
@@ -104,7 +104,7 @@ NSString *IsolatedListener(NSString *eventName) {
     WKUserContentController *ucc = [[WKUserContentController alloc] init];
     // A name of its own per page, so the event is not one a page knows of
     // before it reads the wrapper.
-    NSString *event = [@"minicode-console-" stringByAppendingString:
+    NSString *event = [@"mutible-console-" stringByAppendingString:
                        [[NSUUID UUID].UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""]];
     MCPageConsoleHandler *handler = [MCPageConsoleHandler new];
     handler.probe = probe;

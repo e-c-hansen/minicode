@@ -2,7 +2,7 @@
 //
 //   makegif <frames-dir> <out.gif> [--width 960] [--poster out.png] [--hold 2.5]
 //
-// <frames-dir> is what MINICODE_DEMO writes (see mac/src/Demo.mm): PNG window
+// <frames-dir> is what MUTIBLE_DEMO writes (see mac/src/Demo.mm): PNG window
 // captures plus manifest.txt, which gives each frame's time and any windows
 // in front of it. A child window (a popover) is already in the main capture,
 // which grows to take it in, so only its position is given; another window

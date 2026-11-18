@@ -247,7 +247,7 @@
             for (int k = 0; k < 3 && um.canUndo && ![_tv.string isEqualToString:texts[i]]; k++)
                 [um undoNestedGroup];
             if (![_tv.string isEqualToString:texts[i]]) {
-                NSLog(@"MiniCode: could not put %@ back after a failed edit", paths[i]);
+                NSLog(@"Mutible: could not put %@ back after a failed edit", paths[i]);
                 why = [NSString stringWithFormat:@"%@; %@ was changed and could not be put "
                                                   "back, so check it before saving",
                                                  why ?: @"The edit could not be made",

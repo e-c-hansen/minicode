@@ -1,6 +1,6 @@
 // SessionWeb.h — a browser's view of a session's host (SESSION-DESIGN.md,
-// "Browser screen": stage 6b, which reads, and 8b, which edits). `minicode host --folder
-// DIR --web PORT`, or `minicode attach --folder DIR --web PORT` for a host
+// "Browser screen": stage 6b, which reads, and 8b, which edits). `mutible host --folder
+// DIR --web PORT`, or `mutible attach --folder DIR --web PORT` for a host
 // already running, serves one page on 127.0.0.1:PORT, never another
 // interface. The page's script opens a WebSocket back to the same address
 // and draws what the host describes: the session's tabs, the folder's
@@ -376,7 +376,7 @@ struct Options {
     std::string token;        // "" for a fresh one
     int pollMs = 500;         // how often the session's state is looked at
     // The settings file the page's colors come from ("" for
-    // $MINICODE_SETTINGS, else ~/.config/minicode/settings.conf), looked at
+    // $MUTIBLE_SETTINGS, else ~/.config/mutible/settings.conf), looked at
     // every second: a change recolors every page.
     std::string settingsPath;
 };

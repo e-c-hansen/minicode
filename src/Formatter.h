@@ -63,7 +63,7 @@ struct Plan {
     std::string configFile;
     // What to install when none of the candidates is found, as a command to
     // type ("uv tool install pyink"), from InstallHints. "" for a program
-    // MiniCode does not know.
+    // Mutible does not know.
     std::string installHint;
 };
 
@@ -110,7 +110,7 @@ bool offersOnSave(const Plan& plan);
 std::string onSaveQuestion(const std::string& lang, const std::string& tool,
                            const std::string& configFile);
 // The note when nothing is planned and no server formats the file:
-// "minicode formats Markdown files only in projects set up for Prettier,
+// "mutible formats Markdown files only in projects set up for Prettier,
 // or when the settings say format.markdown = prettier (your own Prettier)
 // or give a command of your own."; for
 // `lang` "" it names the file's extension.

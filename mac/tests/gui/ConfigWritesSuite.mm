@@ -1,4 +1,4 @@
-// ConfigWritesSuite.mm — `make guitest SUITES=config_writes`: minicode's own
+// ConfigWritesSuite.mm — `make guitest SUITES=config_writes`: mutible's own
 // writes to settings.conf and keys.conf (D4). With each file a symlink into
 // a dotfiles folder, View > Theme, the Claude Code IDE link toggle and
 // Keyboard Shortcuts' first write change the file the link names and leave
@@ -64,7 +64,7 @@ MC_GUI_SUITE(config_writes) {
         // No temporary left beside either.
         for (NSString *dir in @[Dots(@""), settings.stringByDeletingLastPathComponent])
             for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil])
-                GCHECK(![name containsString:@".minicode-"]);
+                GCHECK(![name containsString:@".mutible-"]);
     });
     MCGuiStep(@"the IDE link toggle too, on and off", ^{
         // With no Claude Code folder, so the link never starts: the idelink

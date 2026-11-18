@@ -4,11 +4,11 @@
 // are the registry's own rows and do not change here.
 //
 // The rule (linux/PARITY.md, D1), in order:
-//   - A feature minicode shares with VS Code takes VS Code's Linux key.
-//   - minicode's own Shift+Cmd key is the same letter with Ctrl+Shift, and
+//   - A feature mutible shares with VS Code takes VS Code's Linux key.
+//   - mutible's own Shift+Cmd key is the same letter with Ctrl+Shift, and
 //     does not move.
-//   - minicode's own Cmd-only key is the same letter with Ctrl, unless VS
-//     Code's Linux keys use it for something else; then minicode's yields.
+//   - mutible's own Cmd-only key is the same letter with Ctrl, unless VS
+//     Code's Linux keys use it for something else; then mutible's yields.
 //   - While the terminal has the keyboard, plain Ctrl keys are the
 //     program's unless the command is Global (linuxTerminalTakes), so a
 //     terminal command takes Ctrl+Shift.
@@ -26,14 +26,14 @@ namespace Commands {
 
 const std::vector<LinuxRow>& linuxRows() {
     static const std::vector<LinuxRow> rows = {
-        // ---- the Mac's minicode menu: on Linux Settings and Keyboard
+        // ---- the Mac's mutible menu: on Linux Settings and Keyboard
         // Shortcuts are in the Edit menu and Quit in the File menu, as in
         // GNOME's applications.
         {"workbench.action.openSettings", "ctrl+,", 0, nullptr, "Edit"},
         {"workbench.action.openGlobalKeybindings", "", 0, nullptr, "Edit"},
         // Takes back the folder's answer about running its own tools
         // (PARITY.md 2.3); no key, as on the Mac.
-        {"minicode.forgetFolderToolsAnswer", "", 0, nullptr, "Edit"},
+        {"mutible.forgetFolderToolsAnswer", "", 0, nullptr, "Edit"},
         {"workbench.action.quit", "ctrl+q", 0, "Quit", "File"},
 
         // ---- File
@@ -43,8 +43,8 @@ const std::vector<LinuxRow>& linuxRows() {
         {"explorer.newFile", "ctrl+n", 0, nullptr, nullptr},
         {"workbench.action.newWindow", "ctrl+shift+n", 0, nullptr, nullptr},
         // VS Code's Linux Open Folder is a chord (Ctrl+K Ctrl+O), which
-        // minicode has none of, and its Ctrl+O opens a file, a command
-        // minicode does not have: Ctrl+O stays the folder's.
+        // mutible has none of, and its Ctrl+O opens a file, a command
+        // mutible does not have: Ctrl+O stays the folder's.
         {"workbench.action.files.openFolder", "ctrl+o", 0, nullptr, nullptr},
         {"workbench.action.files.save", "ctrl+s", 0, nullptr, nullptr},
         // VS Code's Linux Save All is a chord (Ctrl+K S), so the Mac's
@@ -53,13 +53,13 @@ const std::vector<LinuxRow>& linuxRows() {
         // VS Code's Linux key and the Mac's. A plain Ctrl key, so the
         // terminal keeps it for the shell's history search (not Global).
         {"workbench.action.openRecent", "ctrl+r", 0, nullptr, nullptr},
-        {"minicode.latex.exportPDF", "ctrl+shift+s", 0, nullptr, nullptr},
+        {"mutible.latex.exportPDF", "ctrl+shift+s", 0, nullptr, nullptr},
         // Export as HTML has no key on the Mac either.
-        {"minicode.markdown.exportHtml", "", 0, nullptr, nullptr},
+        {"mutible.markdown.exportHtml", "", 0, nullptr, nullptr},
         // The Linux browsers' own key and the Mac's Cmd+D as a page key: a
         // Page command, so the editor keeps Ctrl+D for Add Next Occurrence.
-        {"minicode.browser.saveBookmark", "ctrl+d", 0, nullptr, nullptr},
-        {"minicode.browser.saveAllTabs", "", 0, nullptr, nullptr},
+        {"mutible.browser.saveBookmark", "ctrl+d", 0, nullptr, nullptr},
+        {"mutible.browser.saveAllTabs", "", 0, nullptr, nullptr},
         {"explorer.newFolder", "ctrl+alt+n", 0, nullptr, nullptr},
         // The tree's own keys, as in VS Code's explorer on Linux. The port
         // gives them to the tree's shortcut controller, never to the menu
@@ -69,13 +69,13 @@ const std::vector<LinuxRow>& linuxRows() {
         {"revealFileInOS", "", 0, "Open Containing Folder", nullptr},
         {"copyFilePath", "", 0, nullptr, nullptr},
         // Focus on Folder and back (FileTree.h): no key, as on the Mac.
-        {"minicode.tree.focusFolder", "", 0, nullptr, nullptr},
-        {"minicode.tree.showWholeFolder", "", 0, nullptr, nullptr},
+        {"mutible.tree.focusFolder", "", 0, nullptr, nullptr},
+        {"mutible.tree.showWholeFolder", "", 0, nullptr, nullptr},
         // The tab on show (PARITY.md 1.1): VS Code's Linux keys where it has
         // them, the rest from the menu and the tab's right click menu, as on
         // the Mac. Ctrl+W and Ctrl+F4 are plain Ctrl keys, so the shell keeps
         // them while the terminal has the keyboard. Reopen Closed Tab is VS
-        // Code's Ctrl+Shift+T, which is Toggle Terminal's here (minicode's
+        // Code's Ctrl+Shift+T, which is Toggle Terminal's here (mutible's
         // own Shift key does not move), so the Mac's Option+Shift+Cmd+T with
         // Alt and Ctrl, as the Mac moved it off Shift+Cmd+T.
         {"workbench.action.files.copyPathOfActiveFile", "", 0, nullptr, nullptr},
@@ -114,16 +114,16 @@ const std::vector<LinuxRow>& linuxRows() {
         {"editor.action.commentLine", "ctrl+/", 0, nullptr, nullptr},
         // Ctrl+L is Select Line's (D1), so the task key is the Mac's Option+Cmd+L
         // with Alt and Ctrl; Alt+C is markdown-all-in-one's, in Markdown only.
-        {"minicode.markdown.toggleTask", "ctrl+alt+l alt+c", 0, nullptr, nullptr},
+        {"mutible.markdown.toggleTask", "ctrl+alt+l alt+c", 0, nullptr, nullptr},
         // VS Code's Linux key (PARITY.md 2.4; the Mac's Shift+Option+F is VS
         // Code's Mac and Windows key). With lines selected it formats those
         // lines, as on the Mac: VS Code's Format Selection is a chord. An
         // editor command, so in the terminal the key is the program's.
         {"editor.action.formatDocument", "ctrl+shift+i", 0, nullptr, nullptr},
         // Edit > Format on Save: no key, as on the Mac.
-        {"minicode.toggleFormatOnSave", "", 0, nullptr, nullptr},
-        {"minicode.sortLines", "f9", 0, nullptr, nullptr},
-        {"minicode.sortKeepSortedBlocks", "shift+f9", 0, nullptr, nullptr},
+        {"mutible.toggleFormatOnSave", "", 0, nullptr, nullptr},
+        {"mutible.sortLines", "f9", 0, nullptr, nullptr},
+        {"mutible.sortKeepSortedBlocks", "shift+f9", 0, nullptr, nullptr},
         {"editor.action.triggerSuggest", "ctrl+space", 0, nullptr, nullptr},
         // VS Code's is a chord (Ctrl+K Ctrl+I) and Ctrl+I is the inline
         // agent's (D1), so the Mac's Option+Cmd+I with Alt and Ctrl.
@@ -155,11 +155,11 @@ const std::vector<LinuxRow>& linuxRows() {
         {"togglePreserveCase", "alt+p", 0, nullptr, nullptr},
         {"toggleFindInSelection", "alt+l", 0, nullptr, nullptr},
         {"workbench.action.findInFiles", "ctrl+shift+f", 0, nullptr, nullptr},
-        // VS Code's Ctrl+Shift+H is the shortcut hints' (minicode's own
+        // VS Code's Ctrl+Shift+H is the shortcut hints' (mutible's own
         // Shift key, which does not move), so the Mac's Option+Shift+Cmd+F
         // with Ctrl+Alt for Option+Cmd, as Reopen Closed Tab's.
         {"workbench.action.replaceInFiles", "ctrl+alt+shift+f", 0, nullptr, nullptr},
-        {"minicode.showTodos", "ctrl+shift+d", 0, nullptr, nullptr},
+        {"mutible.showTodos", "ctrl+shift+d", 0, nullptr, nullptr},
 
         // ---- View
         // VS Code's Linux keys (PARITY.md 1.5). F1 has no modifier, so the
@@ -168,7 +168,7 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.showCommands", "ctrl+shift+p f1", 0, nullptr, nullptr},
         // In the terminal Ctrl+Shift+V pastes (linuxTerminalOwnKey).
         {"markdown.showPreview", "ctrl+shift+v", 0, nullptr, nullptr},
-        // VS Code's Linux key is the chord Ctrl+K V, and minicode has no
+        // VS Code's Linux key is the chord Ctrl+K V, and mutible has no
         // chords. The Mac's Ctrl+Cmd+V with Ctrl+Alt for Cmd (as the task
         // key's Ctrl+Alt+L); GNOME takes no Ctrl+Alt+V.
         {"markdown.showPreviewToSide", "ctrl+alt+v", 0, nullptr, nullptr},
@@ -176,7 +176,7 @@ const std::vector<LinuxRow>& linuxRows() {
         // folding family's key, below), so Shift joins it; an Editor command like
         // Unfold All, so the two cannot share the key.
         {"latex-workshop.synctex", "ctrl+alt+shift+j", 0, nullptr, nullptr},
-        {"minicode.toggleShortcutHints", "ctrl+shift+h", 0, nullptr, nullptr},
+        {"mutible.toggleShortcutHints", "ctrl+shift+h", 0, nullptr, nullptr},
         // The editor's zoom (PARITY.md 1.11), VS Code's Linux Ctrl+= and
         // Ctrl+- (its window's zoom; here the editor's and the Markdown
         // preview's). The reset is VS Code's Ctrl+keypad 0 alone, since
@@ -190,9 +190,9 @@ const std::vector<LinuxRow>& linuxRows() {
         // A PDF or the LaTeX preview on show, or the browser with the
         // keyboard. Ctrl+0 is Focus File Tree, as Cmd+0 is outside a page on
         // the Mac, so fit width is Ctrl+Alt+0, Fold All in the editor.
-        {"minicode.page.zoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
-        {"minicode.page.zoomOut", "ctrl+-", 0, nullptr, nullptr},
-        {"minicode.page.fitWidth", "ctrl+alt+0", 0, nullptr, nullptr},
+        {"mutible.page.zoomIn", "ctrl+= ctrl+shift+=", 0, nullptr, nullptr},
+        {"mutible.page.zoomOut", "ctrl+-", 0, nullptr, nullptr},
+        {"mutible.page.fitWidth", "ctrl+alt+0", 0, nullptr, nullptr},
         // VS Code's Linux key. An editor command, so in the terminal Alt+Z
         // is the program's (Meta), as Option+Z is on the Mac.
         {"editor.action.toggleWordWrap", "alt+z", 0, nullptr, nullptr},
@@ -226,7 +226,7 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.view.scm", "ctrl+shift+g", 0, nullptr, nullptr},
         // View > Source Control (PARITY.md 2.9). VS Code has these without
         // keys on Linux too.
-        {"minicode.git.reviewChanges", "", 0, nullptr, nullptr},
+        {"mutible.git.reviewChanges", "", 0, nullptr, nullptr},
         {"git.fetch", "", 0, nullptr, nullptr},
         {"git.pull", "", 0, nullptr, nullptr},
         {"git.push", "", 0, nullptr, nullptr},
@@ -234,7 +234,7 @@ const std::vector<LinuxRow>& linuxRows() {
         {"git.stageAll", "", 0, nullptr, nullptr},
         {"git.unstageAll", "", 0, nullptr, nullptr},
         {"git.clean", "", 0, nullptr, nullptr},
-        {"minicode.git.undoDiscard", "", 0, nullptr, nullptr},
+        {"mutible.git.undoDiscard", "", 0, nullptr, nullptr},
         {"git.checkout", "", 0, nullptr, nullptr},
         {"git.commitAmend", "", 0, nullptr, nullptr},
         {"git.undoCommit", "", 0, nullptr, nullptr},
@@ -248,17 +248,17 @@ const std::vector<LinuxRow>& linuxRows() {
         // the terminal too.
         // The Mac's Shift+Cmd+A (PARITY.md 3.5); with Shift, so it works from
         // the terminal too.
-        {"minicode.toggleAgents", "ctrl+shift+a", 0, nullptr, nullptr},
+        {"mutible.toggleAgents", "ctrl+shift+a", 0, nullptr, nullptr},
         // No key yet; the Mac's is Shift+Cmd+J.
-        {"minicode.toggleProcesses", "", 0, nullptr, nullptr},
+        {"mutible.toggleProcesses", "", 0, nullptr, nullptr},
         // The Claude Code IDE link (PARITY.md 3.9); no key, as on the Mac.
-        {"minicode.toggleIdeLink", "", 0, nullptr, nullptr},
+        {"mutible.toggleIdeLink", "", 0, nullptr, nullptr},
         {"workbench.actions.view.problems", "ctrl+shift+m", 0, nullptr, nullptr},
-        {"minicode.toggleEditor", "ctrl+shift+e", 0, nullptr, nullptr},
+        {"mutible.toggleEditor", "ctrl+shift+e", 0, nullptr, nullptr},
         // The Mac's Ctrl+Cmd+M; VS Code has no key (its Toggle Maximize
         // Editor Group is a chord), so Ctrl+Alt with the letter, which GNOME
         // leaves alone. It has Alt, so it works from the terminal too.
-        {"minicode.toggleMaximizedPane", "ctrl+alt+m", 0, nullptr, nullptr},
+        {"mutible.toggleMaximizedPane", "ctrl+alt+m", 0, nullptr, nullptr},
         // The split editor (PARITY.md 4.6). Split Editor is VS Code's Linux
         // Ctrl+\, an editor command, so in the terminal the program keeps it
         // (SIGQUIT). VS Code's Ctrl+Alt+Right and Left move a tab between
@@ -273,16 +273,16 @@ const std::vector<LinuxRow>& linuxRows() {
          "View > Editor Layout"},
         {"workbench.action.moveEditorToPreviousGroup", "ctrl+alt+shift+pageup", 0, nullptr,
          "View > Editor Layout"},
-        {"minicode.toggleHiddenFiles", "ctrl+shift+.", 0, nullptr, nullptr},
+        {"mutible.toggleHiddenFiles", "ctrl+shift+.", 0, nullptr, nullptr},
         // The Mac's Cmd+J would be Ctrl+J here, which a Global command would
         // take from the shell (it ends a line), so Ctrl+` and Ctrl+Shift+T.
         {"workbench.action.terminal.toggleTerminal", "ctrl+shift+t ctrl+`", Global, nullptr,
          nullptr},
-        {"minicode.toggleBrowser", "ctrl+shift+b", 0, nullptr, nullptr},
+        {"mutible.toggleBrowser", "ctrl+shift+b", 0, nullptr, nullptr},
         // Safari's Cmd+T on the Mac, the same letter with Ctrl here; a Page
         // command, so Go to Symbol in Workspace keeps Ctrl+T everywhere else.
-        {"minicode.browser.newTab", "ctrl+t", 0, nullptr, nullptr},
-        {"minicode.togglePlayback", "ctrl+shift+space", 0, nullptr, nullptr},
+        {"mutible.browser.newTab", "ctrl+t", 0, nullptr, nullptr},
+        {"mutible.togglePlayback", "ctrl+shift+space", 0, nullptr, nullptr},
 
         // ---- Terminal
         // The terminals' own zoom, with the editor's keys while the terminal
@@ -303,13 +303,13 @@ const std::vector<LinuxRow>& linuxRows() {
         // arrows move the window between them): they have no key and
         // are in the Terminal menu and the palette.
         {"workbench.action.terminal.split", "ctrl+shift+5", Global, nullptr, nullptr},
-        {"minicode.terminal.splitDown", "", 0, nullptr, nullptr},
+        {"mutible.terminal.splitDown", "", 0, nullptr, nullptr},
         {"workbench.action.terminal.focusNext", "ctrl+alt+pagedown", Global, nullptr, nullptr},
         {"workbench.action.terminal.focusPrevious", "ctrl+alt+pageup", Global, nullptr, nullptr},
         {"workbench.action.terminal.kill", "ctrl+alt+shift+w", Global, nullptr, nullptr},
         // The Mac's Ctrl+Cmd+W; Ctrl+Alt+W on Linux, Global so it also works
         // from the terminal, where the waiting sessions are (PARITY.md 3.6).
-        {"minicode.terminal.nextWaiting", "ctrl+alt+w", Global, nullptr, nullptr},
+        {"mutible.terminal.nextWaiting", "ctrl+alt+w", Global, nullptr, nullptr},
         // Clear Terminal has no key: the Mac's Cmd+K would be Ctrl+K, the
         // shell's kill-line, and VS Code has none (PARITY.md 4.7).
         {"workbench.action.terminal.clear", "", 0, nullptr, nullptr},
@@ -317,15 +317,15 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.terminal.fontZoomOut", "ctrl+-", 0, nullptr, nullptr},
         {"workbench.action.terminal.fontZoomReset", "ctrl+alt+0 ctrl+numpad0", 0, nullptr, nullptr},
         {"workbench.action.terminal.rename", "", 0, nullptr, nullptr},
-        {"minicode.terminal.moveLeft", "", 0, nullptr, nullptr},
-        {"minicode.terminal.moveRight", "", 0, nullptr, nullptr},
+        {"mutible.terminal.moveLeft", "", 0, nullptr, nullptr},
+        {"mutible.terminal.moveRight", "", 0, nullptr, nullptr},
         {"workbench.action.terminal.resizePaneLeft", "", 0, nullptr, nullptr},
         {"workbench.action.terminal.resizePaneRight", "", 0, nullptr, nullptr},
         {"workbench.action.terminal.resizePaneUp", "", 0, nullptr, nullptr},
         {"workbench.action.terminal.resizePaneDown", "", 0, nullptr, nullptr},
         // Run File: the Mac's Shift+Cmd+Return. Global, so it also works
         // with the keyboard in the terminal.
-        {"minicode.runFile", "ctrl+shift+enter", Global, nullptr, nullptr},
+        {"mutible.runFile", "ctrl+shift+enter", Global, nullptr, nullptr},
         // No key, as on the Mac (VS Code's is a chord): the Terminal menu
         // and the palette. The ▶ beside each test runs that one.
         {"testing.runAtCursor", "", 0, nullptr, nullptr},
@@ -357,7 +357,7 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.focusSecondEditorGroup", "ctrl+2", Global, nullptr, nullptr},
         // VS Code's Linux Ctrl+PageDown and Ctrl+PageUp, and the Mac's Ctrl+Tab
         // and Ctrl+Shift+Tab (VS Code's are its recently used list, which
-        // minicode has not). Global, as Ctrl+Tab was before the tabs, so they
+        // mutible has not). Global, as Ctrl+Tab was before the tabs, so they
         // leave the terminal too.
         {"workbench.action.nextEditor", "ctrl+pagedown ctrl+tab", Global, nullptr, nullptr},
         {"workbench.action.previousEditor", "ctrl+pageup ctrl+shift+tab", Global, nullptr,
@@ -390,8 +390,8 @@ const std::vector<LinuxRow>& linuxRows() {
         {"workbench.action.editor.nextChange", "alt+f5", 0, nullptr, nullptr},
         {"workbench.action.editor.previousChange", "alt+shift+f5", 0, nullptr, nullptr},
         // Only while a tour is on (AgentNotes.h, PARITY.md 3.4).
-        {"minicode.tour.next", "alt+]", 0, nullptr, nullptr},
-        {"minicode.tour.previous", "alt+[", 0, nullptr, nullptr},
+        {"mutible.tour.next", "alt+]", 0, nullptr, nullptr},
+        {"mutible.tour.previous", "alt+[", 0, nullptr, nullptr},
 
         // ---- the editor's own keys (PARITY.md 1.9). Move and Copy Line
         // are VS Code's (see Add Cursor above), in the Edit menu here, which

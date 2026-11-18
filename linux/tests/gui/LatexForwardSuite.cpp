@@ -71,7 +71,7 @@ MC_GUI_SUITE(latex_forward) {
             // that now and then, and the key typeset the same text again).
             "printf x >> \"$d/runs.txt\"; sleep 0.5\n"
             "cp \"$d/main.pdf\" \"$out/$stem.pdf\"\n"
-            "sed -e \"s|@DIR@/.main.minicode.tex|$file|\" -e \"s|@DIR@|$(dirname \"$file\")|\" "
+            "sed -e \"s|@DIR@/.main.mutible.tex|$file|\" -e \"s|@DIR@|$(dirname \"$file\")|\" "
             "\"$d/main.synctex\" | gzip -c > \"$out/$stem.synctex.gz\"\n");
         g_chmod((D() + "/tectonic").c_str(), 0755);
         EnvLock::envSet("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);

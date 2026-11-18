@@ -411,7 +411,7 @@ static void testRegex() {
         CHECK(cancelled && !third.tooSlow());
         // Find in Folder stops at the first such line and says why.
         const fsys::path root = fsys::temp_directory_path() /
-                                ("minicode-regex-test-" + std::to_string(::getpid()));
+                                ("mutible-regex-test-" + std::to_string(::getpid()));
         std::error_code ec;
         fsys::remove_all(root, ec);
         writeFile(root / "a.txt", "aaz\n" + std::string(20000, 'a') + "\n");

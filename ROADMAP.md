@@ -32,7 +32,7 @@ up to date with 1.5.15 and the round-7 fixes on 2026-11-08.
   is shown.
 - **A line of millions of characters.** A keystroke in a 5,000,000-character
   line costs about 0.35 s, all of it TextKit typesetting the paragraph again;
-  minicode's own work on it is a few characters. It would need a view that
+  mutible's own work on it is a few characters. It would need a view that
   lays out only the visible part of a line.
 - **The command registry's fixed keys.** The keys the editor and terminal
   handle themselves (the editor's Command arrows, the terminal's Command

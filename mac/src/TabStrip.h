@@ -12,7 +12,7 @@ NSFont *MCTabStripFont(void);
 CGFloat MCTabStripHeight(void);
 
 // A dot before a tab's title: a terminal waiting for the user (orange) or
-// done (green), from `minicode notify` (TerminalAttention.h); an editor tab
+// done (green), from `mutible notify` (TerminalAttention.h); an editor tab
 // holding an agent's note not yet seen (blue, the notes' color: the note
 // opened beside a user who was typing, AgentNotes.h).
 typedef NS_ENUM(NSInteger, MCTabAttention) {

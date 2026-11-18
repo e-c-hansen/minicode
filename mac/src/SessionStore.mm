@@ -14,21 +14,21 @@ namespace {
 std::string U8(NSString *s) { return s.UTF8String ?: ""; }
 NSString *NS(const std::string &s) { return [NSString stringWithUTF8String:s.c_str()] ?: @""; }
 
-// Where the records of minicode 1.5.30 and before are: the user defaults,
+// Where the records of mutible 1.5.30 and before are: the user defaults,
 // or the scratch suite the checks point them at.
 NSUserDefaults *OldDefaults() {
-    NSString *suite = MCEnvironment()[@"MINICODE_DEFAULTS_SUITE"];
+    NSString *suite = MCEnvironment()[@"MUTIBLE_DEFAULTS_SUITE"];
     return suite.length ? [[NSUserDefaults alloc] initWithSuiteName:suite]
                         : [NSUserDefaults standardUserDefaults];
 }
 NSString *const kOldTabSessionsKey = @"MCTabSessions";
 NSString *const kOldOpenWindowsKey = @"MCOpenWindows";
 // Set once the old records have been carried over (they stay, for a
-// minicode from before to read).
+// mutible from before to read).
 NSString *const kMovedKey = @"MCSessionsMovedToFile";
 
 dispatch_queue_t Queue() {
-    static dispatch_queue_t q = dispatch_queue_create("minicode.sessions", DISPATCH_QUEUE_SERIAL);
+    static dispatch_queue_t q = dispatch_queue_create("mutible.sessions", DISPATCH_QUEUE_SERIAL);
     return q;
 }
 
@@ -57,20 +57,20 @@ void WriteFile(const TabSessions::Store &store) {
                               withIntermediateDirectories:YES attributes:nil error:nil];
     std::string error;
     if (!FolderSearch::writeFileAtomically(U8(path), TabSessions::encodeStore(store), &error))
-        NSLog(@"minicode: could not write %@: %s", path, error.c_str());
+        NSLog(@"mutible: could not write %@: %s", path, error.c_str());
 }
 
 void Apply(TabSessions::Store &store) {
     for (auto &kv : gFolders)
         TabSessions::put(store.folders, kv.first, kv.second.first, kv.second.second);
     // This process's windows over its own and the last run's; another
-    // minicode's, running or quit since this one started, stay.
+    // mutible's, running or quit since this one started, stay.
     if (gWindows)
         store.windows = TabSessions::mergeWindows(*gWindows, store.windows, MCSessionsThisProcess(),
                                                   gWindowsSaved, MCSessionsIsRunning, nullptr);
 }
 
-// The first time: a minicode with no file yet takes the user defaults'
+// The first time: a mutible with no file yet takes the user defaults'
 // records over, once.
 void CarryOverOnce() {
     if (gChecked) return;
@@ -133,10 +133,10 @@ std::vector<TabSessions::Window> MCSessionsWindowsToRestore(void) {
 }
 
 NSString *MCSessionsFilePath(void) {
-    NSString *env = MCEnvironment()[@"MINICODE_SESSIONS_FILE"];
+    NSString *env = MCEnvironment()[@"MUTIBLE_SESSIONS_FILE"];
     if (env.length) return env.stringByStandardizingPath;
     return [NSHomeDirectory()
-        stringByAppendingPathComponent:@"Library/Application Support/MiniCode/sessions.json"];
+        stringByAppendingPathComponent:@"Library/Application Support/Mutible/sessions.json"];
 }
 
 TabSessions::Store MCSessionsRead(void) {
@@ -183,7 +183,7 @@ void MCSessionPutBrowserPage(NSDictionary *page, TabSessions::Session *s) {
     if (![page isKindOfClass:NSDictionary.class]) return;
     NSArray *entries = [page[@"tabs"] isKindOfClass:NSArray.class] ? page[@"tabs"] : nil;
     int active = IndexIn(page[@"active"], entries.count);
-    if (!entries) {   // the one page an older minicode kept
+    if (!entries) {   // the one page an older mutible kept
         entries = @[page];
         active = 0;
     }

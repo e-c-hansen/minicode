@@ -500,7 +500,7 @@ MC_GUI_SUITE(language) {
     MCGuiStep(@"still nothing ran; the answer is forgotten for the next check", ^{
         GCHECK(![[NSFileManager defaultManager] fileExistsAtPath:marker]);
         NSUserDefaults *d = [[NSUserDefaults alloc]
-            initWithSuiteName:NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"]];
+            initWithSuiteName:NSProcessInfo.processInfo.environment[@"MUTIBLE_DEFAULTS_SUITE"]];
         [d removeObjectForKey:@"MCPythonEnvironmentConsent"];
         GCHECK([c showFile:notes]);
         GCHECK([c showFile:mainPy]);
@@ -520,7 +520,7 @@ MC_GUI_SUITE(language) {
     MCGuiStep(@"put off with ×: hidden for this launch, still not allowed", ^{
         MCGuiSetSettings(@"lsp.enabled = false\n");
         NSUserDefaults *d = [[NSUserDefaults alloc]
-            initWithSuiteName:NSProcessInfo.processInfo.environment[@"MINICODE_DEFAULTS_SUITE"]];
+            initWithSuiteName:NSProcessInfo.processInfo.environment[@"MUTIBLE_DEFAULTS_SUITE"]];
         [d removeObjectForKey:@"MCPythonEnvironmentConsent"];
     });
     MCGuiWait(@"the .venv server is gone", 10, ^BOOL { return !Session(c).hasServer; });

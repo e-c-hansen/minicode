@@ -6,7 +6,7 @@ the Kotlin checks, and the Android release APK) and a seventh, **CI passed**,
 which is green only when all six are. **Android is frozen** (owner,
 2026-11-17): its two jobs run only when CI is started by hand (Actions >
 CI > Run workflow), CI passed waits for the other four, and releases go
-out without an APK (release.sh sets `MINICODE_NO_APK=1` unless it is
+out without an APK (release.sh sets `MUTIBLE_NO_APK=1` unless it is
 set to the empty string). The comment above the jobs in
 ci.yml says how to unfreeze. CLAUDE.md ("Build, test, run,
 release" and "Verification reality", with the rest in

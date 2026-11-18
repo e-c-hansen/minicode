@@ -197,11 +197,11 @@ MC_GUI_SUITE(markdown_side) {
     MCGuiStep(@"a task box ticked in the page ticks the source, one undo step", ^{
         NSTextView *page = Side(c).textView;
         NSString *before = Source(c).string;
-        const NSUInteger box = LinkAt(page, @"minicode-task:4");
+        const NSUInteger box = LinkAt(page, @"mutible-task:4");
         GCHECK(box != NSNotFound);
         if (box == NSNotFound) return;
         MCGuiUndoGroup(Source(c).undoManager, ^{
-            [page.delegate textView:page clickedOnLink:@"minicode-task:4" atIndex:box];
+            [page.delegate textView:page clickedOnLink:@"mutible-task:4" atIndex:box];
         });
         GCHECK([Source(c).string containsString:@"- [x] a task to tick"]);
         GCHECK(Active(c).dirty);
@@ -220,11 +220,11 @@ MC_GUI_SUITE(markdown_side) {
         Type(tv, @"Two new lines\n\n");
         GCHECK(Side(c).renderPending && ![c sidePageIsCurrent]);
         NSString *before = [tv.string copy];
-        const NSUInteger box = LinkAt(page, @"minicode-task:4");   // the box, as the page has it
+        const NSUInteger box = LinkAt(page, @"mutible-task:4");   // the box, as the page has it
         GCHECK(box != NSNotFound);
         if (box == NSNotFound) return;
         MCGuiUndoGroup(tv.undoManager, ^{
-            GCHECK([page.delegate textView:page clickedOnLink:@"minicode-task:4" atIndex:box]);
+            GCHECK([page.delegate textView:page clickedOnLink:@"mutible-task:4" atIndex:box]);
         });
         // Nothing ticked (line 4 is now the heading's blank line, the task on 6) ...
         GCHECK([tv.string isEqualToString:before]);
@@ -332,10 +332,10 @@ MC_GUI_SUITE(markdown_side) {
     __block EditorController *w = nil;
     NSString *dir = MCGuiProjectFile(@"side_switch");
     NSString *jobs = [dir stringByAppendingPathComponent:@"JOBS.md"];
-    NSString *settingsPath = NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"];
+    NSString *settingsPath = NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"];
     __block NSString *settingsText = nil, *original = nil;
     NSMutableString *jobsText = [NSMutableString stringWithString:
-        @"# Jobs minicode has to do better\n\nTwo layers.\n\n"];
+        @"# Jobs mutible has to do better\n\nTwo layers.\n\n"];
     for (int i = 1; i <= 30; i++)
         [jobsText appendFormat:@"- [%@] Job %d: a line long enough to wrap in a narrow pane, "
                                 @"said plainly.\n", i % 3 ? @" " : @"x", i];
@@ -413,7 +413,7 @@ MC_GUI_SUITE(markdown_side) {
             gRecordMarks = NO;
             NSTextView *tv = Source(w);
             GCHECK(w.previewMode && !tv.editable);
-            GCHECK([tv.string hasPrefix:@"Jobs minicode has to do better"]);
+            GCHECK([tv.string hasPrefix:@"Jobs mutible has to do better"]);
             GCHECK(![tv.string containsString:@"ruler-color"]);
             const NSRect left = LeftMargin(tv), right = RightMargin(tv);
             MCGuiNote(@"visible %@, margins %@ and %@, %lu marks after the switch: %@",
@@ -935,13 +935,13 @@ MC_GUI_SUITE(markdown_side_sync) {
     });
     MCGuiStep(@"a click on its summary opens it, built as a whole render builds it", ^{
         NSTextView *page = Side(c).textView;
-        NSString *link = @"minicode-details:40:41:0";
+        NSString *link = @"mutible-details:40:41:0";
         const NSUInteger at = LinkAt(page, link);
         GCHECK(at != NSNotFound);
         if (at == NSNotFound) return;
         GCHECK([c sidePreviewClickedLink:link atIndex:at]);
         GCHECK([Page(c) containsString:@"Hidden 39."]);
-        GCHECK(LinkAt(page, @"minicode-details:40:41:1") != NSNotFound);
+        GCHECK(LinkAt(page, @"mutible-details:40:41:1") != NSNotFound);
         GCHECK_EQ_STR(Page(c), WholePage(c));
         ScrollSourceToLine(c, 63);
         MCGuiNote(@"open: source at 63, page at %ld", (long)PageTop(c));

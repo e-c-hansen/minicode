@@ -275,7 +275,7 @@ MC_GUI_SUITE(idelink) {
         GCHECK_EQ_STR(ide()->lockPath(), lockDir() + "/" + std::to_string(gPort) + ".lock");
         IdeLink::LockInfo info;
         GCHECK(IdeLink::parseLockFile(readLock(), info));
-        GCHECK(info.pid == (int)getpid() && info.ideName == "minicode" && info.transport == "ws");
+        GCHECK(info.pid == (int)getpid() && info.ideName == "mutible" && info.transport == "ws");
         GCHECK_EQ_STR(info.authToken, gToken);
         bool folder = false;
         for (const std::string& f : info.workspaceFolders) folder = folder || real(f) == real(MCGuiProject());
@@ -324,7 +324,7 @@ MC_GUI_SUITE(idelink) {
     MCGuiWait("initialize is answered", 5, [] { return answered(1); });
     MCGuiStep("it names itself and the protocol", [] {
         Json r = gA.answer(1)["result"];
-        GCHECK_EQ_STR(r["serverInfo"]["name"].asString(), "minicode");
+        GCHECK_EQ_STR(r["serverInfo"]["name"].asString(), "mutible");
         GCHECK(!r["protocolVersion"].asString().empty());
         gA.notify("notifications/initialized", Json::object());
         gA.notify("ide_connected", args({{"pid", (int)getpid()}}));

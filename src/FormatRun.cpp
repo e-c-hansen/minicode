@@ -45,7 +45,7 @@ std::string resolved(const Env& env, const std::string& p) {
 // Where a plan's program may be found. `local`: the project's own copy, in
 // its virtualenv for a Python tool or its node_modules/.bin for Prettier and
 // Biome, "" for none; `outside`: one the user installed, from $VIRTUAL_ENV
-// (activated where minicode started, so trusted as the servers trust it) or
+// (activated where mutible started, so trusted as the servers trust it) or
 // the usual search. A path as given (from the settings) is only ever
 // `outside`. A project copy outside the window's folder is never used: no
 // folder's answer covers it.
@@ -357,9 +357,9 @@ Question consentQuestion(const Decision& d) {
         q.message = "Run " + d.tool + " from this folder's " + d.consentFolder + "?";
     q.detail = !d.consentConfig.empty()
                    ? d.consentConfig + " can run code when " + d.tool + " reads it, with your "
-                     "rights, so minicode asks first. With Don't Allow, " + d.tool +
+                     "rights, so mutible asks first. With Don't Allow, " + d.tool +
                      " does not run for this folder. " + keep
-                   : "Programs in the folder run with your rights, so minicode asks before "
+                   : "Programs in the folder run with your rights, so mutible asks before "
                      "running one. " + keep;
     return q;
 }

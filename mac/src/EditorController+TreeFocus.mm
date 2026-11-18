@@ -351,7 +351,7 @@ BOOL MCPathAtOrBelow(NSString *path, FileItem *folder) {
     }
 }
 
-// Add Folder to Focus…: minicode's folder picker (PalettePanel.h,
+// Add Folder to Focus…: mutible's folder picker (PalettePanel.h,
 // MCFolderPick) scoped to the window's folder: the folders of the open
 // tabs not shown yet first, most recent first, then the window's
 // subfolders; a typed path ("linux/src") goes deeper. The folder chosen is

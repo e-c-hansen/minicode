@@ -190,7 +190,7 @@ static BOOL IsRunnable(NSString *path) {
         return nil;
     PythonEnvs::Context ctx = [self pythonContext];
     std::string project = PythonEnvs::projectInterpreter(ctx.fileDir, ctx.root);
-    // The same one active where minicode started ($VIRTUAL_ENV) is trusted.
+    // The same one active where mutible started ($VIRTUAL_ENV) is trusted.
     if (project.empty() || PythonEnvs::automatic(ctx, false) == project) return nil;
     // bin/python's environment folder, as the folder names it (".venv").
     NSString *env = NS(project).stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;

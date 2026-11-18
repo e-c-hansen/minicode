@@ -197,7 +197,7 @@ static void testIdeLink() {
 
     GROUP("ide:mcp");
     {
-        McpServer server("minicode", "1.5.7");
+        McpServer server("mutible", "1.5.7");
         std::vector<std::string> sent;
         std::vector<std::string> notes;
         server.send = [&](const std::string &t) { sent.push_back(t); };
@@ -228,7 +228,7 @@ static void testIdeLink() {
         server.handle(R"({"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.319"}}})");
         Json init = last();
         CHECK(init["id"].asInt() == 2 && init["result"]["protocolVersion"].asString() == "2025-06-18");
-        CHECK(init["result"]["serverInfo"]["name"].asString() == "minicode");
+        CHECK(init["result"]["serverInfo"]["name"].asString() == "mutible");
         CHECK(init["result"]["capabilities"]["tools"].isObject());
         server.handle(R"({"jsonrpc":"2.0","id":3,"method":"initialize","params":{"protocolVersion":"1999-01-01"}})");
         CHECK(last()["result"]["protocolVersion"].asString() == kProtocolVersion);
@@ -276,7 +276,7 @@ static void testIdeLink() {
         // An answer that comes after its server is gone goes nowhere.
         std::function<void(ToolResult)> orphan;
         {
-            McpServer gone("minicode", "1");
+            McpServer gone("mutible", "1");
             gone.send = [&](const std::string &t) { sent.push_back(t); };
             gone.addTool(wait);
             gone.handle(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})");
@@ -299,7 +299,7 @@ static void testIdeLink() {
         Json j;
         CHECK(Json::parse(text, j));
         CHECK(j["pid"].asInt() == 4242 && j["transport"].asString() == "ws" &&
-              j["ideName"].asString() == "minicode" && j["authToken"].asString() == "tok" &&
+              j["ideName"].asString() == "mutible" && j["authToken"].asString() == "tok" &&
               j["runningInWindows"].isBool() && !j["runningInWindows"].asBool());
         LockInfo back;
         CHECK(parseLockFile(text, back) && back.workspaceFolders.size() == 2 &&
@@ -309,7 +309,7 @@ static void testIdeLink() {
         CHECK(portFromLockName("51234.lock") == 51234 && portFromLockName("x.lock") == 0 &&
               portFromLockName(".lock") == 0 && portFromLockName("70000.lock") == 0 &&
               portFromLockName("12.lock.tmp") == 0 && portFromLockName("0.lock") == 0);
-        // Only minicode's own, of a dead process that is not this one.
+        // Only mutible's own, of a dead process that is not this one.
         CHECK(isStaleOwnLock(info, 1, false));
         CHECK(!isStaleOwnLock(info, 1, true));
         CHECK(!isStaleOwnLock(info, 4242, false));

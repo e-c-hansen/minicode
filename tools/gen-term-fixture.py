@@ -33,7 +33,7 @@ COLS, ROWS = 120, 40
 ESC = "\x1b"
 SYNC_ON, SYNC_OFF = ESC + "[?2026h", ESC + "[?2026l"
 # Between the agent's frames and the build output, so the suite can split.
-MARKER = ESC + "]1337;minicode-fixture-build\x07"
+MARKER = ESC + "]1337;mutible-fixture-build\x07"
 
 rng = random.Random(2026)
 

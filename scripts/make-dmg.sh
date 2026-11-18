@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build MiniCode.app and package it into a distributable disk image (.dmg).
+# Build Mutible.app and package it into a distributable disk image (.dmg).
 #
 # This works WITHOUT an Apple Developer account, but the result is unsigned, so
 # people who download it will need to right-click the app and choose Open the
@@ -11,15 +11,15 @@ cd "$(dirname "$0")/.."
 
 make app RELEASE=1   # no demo scenes or benchmark (Makefile, RELEASE)
 
-APP="MiniCode.app"
-DMG="MiniCode.dmg"
+APP="Mutible.app"
+DMG="Mutible.dmg"
 STAGING="$(mktemp -d)"
 
 cp -R "$APP" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"   # drag-to-install target
 
 rm -f "$DMG"
-hdiutil create -volname "MiniCode" -srcfolder "$STAGING" \
+hdiutil create -volname "Mutible" -srcfolder "$STAGING" \
     -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGING"
 

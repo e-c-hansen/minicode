@@ -103,7 +103,7 @@ typedef NS_ENUM(NSInteger, MCAgentBarMode) {
 @end
 
 // Runs agent.command in print mode with a prompt on stdin, in a login shell
-// (so the user's PATH finds claude) with minicode's search folders added.
+// (so the user's PATH finds claude) with mutible's search folders added.
 // Its stream is read as it comes (InlineAgent::Stream): `progress` gets the
 // reply so far (InlineAgent::preview of it) and what Claude is doing, a few
 // times a second; `output` is the whole reply. Both run on the main queue,

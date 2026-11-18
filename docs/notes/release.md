@@ -31,13 +31,13 @@ found through that list.
 
 ## Distribution
 
-- `e-c-hansen/minicode` (public); each `vX.Y.Z` GitHub Release carries the zip
+- `ible-ai/mutible` (public); each `vX.Y.Z` GitHub Release carries the zip
   and the signed APK.
-- `e-c-hansen/homebrew-tap` holds only `Casks/minicode.rb`, written by
-  `release.sh` from `packaging/minicode.rb` (the only copy anyone edits). The
+- `ible-ai/homebrew-tap` holds only `Casks/mutible.rb`, written by
+  `release.sh` from `packaging/mutible.rb` (the only copy anyone edits). The
   cask clears the quarantine flag in `postflight_steps` (Homebrew 7 deprecated
   `postflight`; `{{appdir}}` is the token); check edits with `brew style` in
-  `/opt/homebrew/Library/Taps/e-c-hansen/homebrew-tap`. Homebrew is the only
+  `/opt/homebrew/Library/Taps/ible-ai/homebrew-tap`. Homebrew is the only
   updater, so the cask must not declare `auto_updates` (a plain `brew upgrade`
   would skip it). Homebrew runs `lsregister` only when it reopens apps it quit;
   macOS registers a new bundle in /Applications itself.

@@ -545,7 +545,7 @@ void MCForgetFolderToolsConsent(NSString *root);
 
 // ---- the servers, for the Language Servers popover (Lsp+Servers.mm)
 @interface LspSession (Servers)
-// Every language MiniCode knows, the open file's first, each followed by its
+// Every language Mutible knows, the open file's first, each followed by its
 // second server when it has one (or the built-in rule would give it one).
 - (NSArray<MCLspServerInfo *> *)serverInfos;
 // The open file's language key when its server is wanted (lsp.enabled on,

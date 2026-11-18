@@ -5,7 +5,7 @@ purpose: every construct the preview draws, for tests and for eyes
 
 # Markdown corpus
 
-Open this file in MiniCode and compare the preview with GitHub's rendering of
+Open this file in Mutible and compare the preview with GitHub's rendering of
 the same file. `tests/run_tests.cpp` parses it too, and checks what it can
 without a screen. Each section names what it exercises.
 

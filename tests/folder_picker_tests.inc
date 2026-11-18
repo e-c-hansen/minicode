@@ -1,5 +1,5 @@
 // folder_picker_tests.inc — the `folderpick:*` groups of run_tests.cpp
-// (FolderPicker.h: minicode's own folder picker), kept in their own file and
+// (FolderPicker.h: mutible's own folder picker), kept in their own file and
 // included there.
 
 namespace {
@@ -163,7 +163,7 @@ static void testFolderPicker() {
         const Listing l = fpListing({".git", "docs", "linux", "src"});
         // Recent folders inside it first (labelled from it), those outside
         // dropped; then its subfolders; no Choose in Finder.
-        const std::vector<std::string> recent = {"/Users/me/Code/minicode", base + "/linux/src",
+        const std::vector<std::string> recent = {"/Users/me/Code/mutible", base + "/linux/src",
                                                  base, "/Users/me/Code/app2/x"};
         auto rs = rows(parse("", home, base, scope), recent, l, home);
         CHECK(fpLabels(rs) == (std::vector<std::string>{"linux/src", "docs", "linux", "src"}));
@@ -184,7 +184,7 @@ static void testFolderPicker() {
         CHECK(fpLabels(ps) == (std::vector<std::string>{"open linux", "linux/gtk", "linux/src"}));
         // Nothing outside it: its parent, an absolute path elsewhere, home,
         // nor the scope itself typed out.
-        const Listing up = fpListing({"app", "app2", "minicode"});
+        const Listing up = fpListing({"app", "app2", "mutible"});
         auto u = rows(parse("../", home, base, scope), {}, up, home);
         CHECK(u.empty());
         CHECK(emptyText(parse("../", home, base, scope), up, home) ==

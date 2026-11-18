@@ -31,7 +31,7 @@ BOOL IsLink(NSString *path) {
     return lstat(path.fileSystemRepresentation, &st) == 0 && S_ISLNK(st.st_mode);
 }
 void SetSettings(NSString *text) {
-    MCGuiWriteFile(NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"], text);
+    MCGuiWriteFile(NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"], text);
     [[AppSettings shared] reload];
 }
 // Bytes written over the file in place (same inode), as a writer that

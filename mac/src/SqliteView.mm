@@ -173,7 +173,7 @@ static NSColor *Muted(void) {
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        _queue = dispatch_queue_create("minicode.sqlite", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("mutible.sqlite", DISPATCH_QUEUE_SERIAL);
         _timeLimit = 5;
         self.wantsLayer = YES;
 

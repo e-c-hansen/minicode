@@ -61,7 +61,7 @@ view is disposed (on `unrealize`), or dispose loops forever.
   between \r and \n, over 256 regions, or ranges as big as the text send
   the whole text, and every save compares the whole text (didSave), which
   repairs a copy an edit the tracker missed made wrong.
-  `MINICODE_LSP_SYNC_CHECK=1` compares after every flush (`setCheckSync`,
+  `MUTIBLE_LSP_SYNC_CHECK=1` compares after every flush (`setCheckSync`,
   counted in `syncRepairs`), and `lsp:sync-oracle` checks the copy against
   a server applying what it is sent. **The GTK port counts characters**
   (2026-11-16): its tracker's regions, length and reader are code points,
@@ -142,7 +142,7 @@ view is disposed (on `unrealize`), or dispose loops forever.
   stays single-threaded, and are freed back on the read queue (a 6 MB
   answer parsed on main stalled it 50 ms); writes on
   a serial queue with raw `write()` and `F_SETNOSIGPIPE`; stderr drained (a
-  full pipe stalls clangd); `$MINICODE_LSP_LOG` logs all traffic. Window close:
+  full pipe stalls clangd); `$MUTIBLE_LSP_LOG` logs all traffic. Window close:
   shutdown, exit, stdin closed, SIGTERM at 2 s, SIGKILL at 3; quit:
   `MCLspTerminateAllServers` with 0.5 s; a crash closes stdin, which ends them.
   `LspSession dealloc` cancels performs scheduled on itself (it crashed 50 ms
@@ -181,7 +181,7 @@ view is disposed (on `unrealize`), or dispose loops forever.
   the Language Servers popover offers Allow and Don't Allow while the
   folder has no answer (`environmentPopoverText`). Linux's bar keeps the
   old words. Format Document shares the answer (see
-  "Formatting"). minicode > Ask Again About This Folder's Tools (and Ask
+  "Formatting"). mutible > Ask Again About This Folder's Tools (and Ask
   Again in the Language Servers popover, which sends the same action) takes
   it back (`MCForgetFolderToolsConsent`) and clears a × put-off, so the bar
   asks at once (`make guitest SUITES=tools_consent`).

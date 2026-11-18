@@ -112,7 +112,7 @@ static BOOL OfferDue(void) {
                        "off again. Don't Ask Again stops this offer; the menu item stays."
                button:@"Turn On"
                  mute:@"Don't Ask Again"
-                close:@"Close (asked again after minicode starts again)"];
+                close:@"Close (asked again after mutible starts again)"];
     [self applyColors];
     _bar.hidden = NO;
     if (_relayout) _relayout();

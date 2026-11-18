@@ -5,7 +5,7 @@
 # This file is the cask. scripts/release.sh stamps the version and checksum into
 # it and copies it into the homebrew-tap repo, which holds nothing else, so edit
 # it here and never there. To cut a new version: scripts/release.sh 1.6.1
-# mutible was called minicode until 1.6.0: packaging/minicode.rb is the old
+# mutible was called mutible until 1.6.0: packaging/mutible.rb is the old
 # cask, deprecated, in the old tap.
 cask "mutible" do
   version "1.5.36"
@@ -24,7 +24,7 @@ cask "mutible" do
   # here. A higher minimum is written `depends_on macos: :ventura` (13 and up);
   # scripts/check-minos.sh checks this line against Info.plist.
   depends_on :macos
-  # The old cask links the same `minicode` command; uninstall it first.
+  # The old cask links the same `mutible` command; uninstall it first.
   conflicts_with cask: "e-c-hansen/tap/minicode" # rename-mutible: keep
 
   app "Mutible.app"

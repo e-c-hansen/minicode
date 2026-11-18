@@ -23,7 +23,7 @@
 // folders gone since dropped; a record in the old single-path form still
 // restores; a root deleted on disk leaves the others.
 //
-// Add Folder to Focus… (2026-11-18): the focus row's + opens minicode's
+// Add Folder to Focus… (2026-11-18): the focus row's + opens mutible's
 // folder picker scoped to the window's folder; a sibling's name and Return
 // add it (two roots); the palette's Add to Focus with nothing new to add
 // opens the picker too, where a typed path (linux/s) completes; nothing

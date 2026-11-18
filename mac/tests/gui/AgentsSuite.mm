@@ -7,7 +7,7 @@
 // The world is scratch: a git repository with a worktree where Claude Code
 // would make one, and a transcripts folder and a temp root built from
 // tests/fixtures/claude (the paths in them rewritten to the scratch ones),
-// named through MINICODE_CLAUDE_PROJECTS and MINICODE_CLAUDE_TMP. The real
+// named through MUTIBLE_CLAUDE_PROJECTS and MUTIBLE_CLAUDE_TMP. The real
 // ~/.claude and /private/tmp/claude-<uid> are never read or written.
 #import "Harness.h"
 #import "EditorController.h"
@@ -130,7 +130,7 @@ void BuildWorld() {
     // worktree changes Terminal.mm and adds LspClient.h in a commit, and has
     // an untracked notes.md.
     MCGuiWriteFile([gProj stringByAppendingPathComponent:@"src/Terminal.mm"], Lines(1, 1500, @"main"));
-    MCGuiWriteFile([gProj stringByAppendingPathComponent:@"scripts/minicode-launcher"], @"#!/bin/sh\n");
+    MCGuiWriteFile([gProj stringByAppendingPathComponent:@"scripts/mutible-launcher"], @"#!/bin/sh\n");
     MCGuiWriteFile([gProj stringByAppendingPathComponent:@".gitignore"], @".claude/\n");
     Git(gProj, @[@"init", @"-q", @"-b", @"main"]);
     Git(gProj, @[@"add", @"-A"]);
@@ -278,8 +278,8 @@ void BuildWorld() {
     [k appendFormat:@"%@\n", Reply(kinds, 584, @"mk2", @"Done: tabs are *faster*.")];
     MCGuiWriteFile([gBase stringByAppendingPathComponent:@"kinds/sess-kinds.jsonl"], k);
 
-    MCSetEnv("MINICODE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
-    MCSetEnv("MINICODE_CLAUDE_TMP", gTmp.fileSystemRepresentation);
+    MCSetEnv("MUTIBLE_CLAUDE_PROJECTS", gProjects.fileSystemRepresentation);
+    MCSetEnv("MUTIBLE_CLAUDE_TMP", gTmp.fileSystemRepresentation);
 }
 
 NSString *Real(NSString *p) {
@@ -442,7 +442,7 @@ MC_GUI_SUITE(agents) {
         NSInteger sub = RowWith(p, @"S 1 finished LSP rename, references, quick fixes");
         GCHECK(sub > mainRow);
         GCHECK(RowWith(p, @"G In the folder") > mainRow);
-        GCHECK(RowWith(p, @"scripts/minicode-launcher") < 0);   // the group is closed
+        GCHECK(RowWith(p, @"scripts/mutible-launcher") < 0);   // the group is closed
         // Right on the subagent opens it.
         [ov selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)sub] byExtendingSelection:NO];
         [ov keyDown:Key(c.window, 124, Arrow(NSRightArrowFunctionKey))];
@@ -711,7 +711,7 @@ MC_GUI_SUITE(agents) {
         GCHECK([e.finalMessageText isEqualToString:@"Done: tabs are *faster*."]);
         MCGuiSnapshot(e.pageView, @"agents-evidence-kinds");
         // The Read's file opens from its link.
-        NSURL *open = [NSURL URLWithString:@"minicode-evidence://open/2"];
+        NSURL *open = [NSURL URLWithString:@"mutible-evidence://open/2"];
         [(id<NSTextViewDelegate>)e textView:e.commandsView clickedOnLink:open atIndex:0];
         GCHECK([[ActiveTab(c)[@"path"] description] hasSuffix:@"src/Terminal.mm"]);
     });
@@ -772,7 +772,7 @@ MC_GUI_SUITE(agents) {
         GCHECK_TIME(gaps->worstCpu, 1000, @"the main thread's busiest gap while expanding");
         [gapTimer invalidate];
         gapTimer = nil;
-        NSURL *less = [NSURL URLWithString:@"minicode-evidence://less/0"];
+        NSURL *less = [NSURL URLWithString:@"mutible-evidence://less/0"];
         [(id<NSTextViewDelegate>)e textView:e.commandsView clickedOnLink:less atIndex:0];
         GCHECK(![e isExpanded:0]);
         GCHECK(![e.commandsView.string containsString:@"number line 30000\n"]);
@@ -781,7 +781,7 @@ MC_GUI_SUITE(agents) {
     MCGuiStep(@"Open in Terminal types the command at the session's folder and does not run it", ^{
         MCEvidencePage *e = ActivePage(c);
         NSUInteger before = [c controlTerminals].count;
-        NSURL *open = [NSURL URLWithString:@"minicode-evidence://terminal/1"];
+        NSURL *open = [NSURL URLWithString:@"mutible-evidence://terminal/1"];
         [(id<NSTextViewDelegate>)e textView:e.commandsView clickedOnLink:open atIndex:0];
         GCHECK([c controlTerminals].count == before + 1);
         term = [c controlTerminals].lastObject;
@@ -1074,8 +1074,8 @@ MC_GUI_SUITE(agents) {
         c = nil;
         term = nil;
         MCGuiSetKeyWindow(nil);
-        MCSetEnv("MINICODE_CLAUDE_PROJECTS", nullptr);
-        MCSetEnv("MINICODE_CLAUDE_TMP", nullptr);
+        MCSetEnv("MUTIBLE_CLAUDE_PROJECTS", nullptr);
+        MCSetEnv("MUTIBLE_CLAUDE_TMP", nullptr);
         GCHECK(Win() == nil);
     });
 }

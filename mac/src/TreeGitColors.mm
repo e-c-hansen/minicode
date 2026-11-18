@@ -23,7 +23,7 @@ std::string MCUtf8(NSString *s) { return s.UTF8String ?: ""; }
 
 - (instancetype)init {
     if ((self = [super init]))
-        _queue = dispatch_queue_create("minicode.tree-git",
+        _queue = dispatch_queue_create("mutible.tree-git",
                                        dispatch_queue_attr_make_with_qos_class(
                                            DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
     return self;

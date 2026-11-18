@@ -90,7 +90,7 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
 - (BOOL)canMoveSelectedTab:(NSInteger)delta;
 // Rename Terminal…: asks for a name (namePrompt, else an alert with the
 // current one filled in) and gives it to `terminal`, where it wins over the
-// program's title and `minicode term --title`; an empty name clears it. NO
+// program's title and `mutible term --title`; an empty name clears it. NO
 // when cancelled.
 - (BOOL)renameTerminal:(TerminalView *)terminal;
 // Returns the name, or nil for Cancel. nil: an alert asks.

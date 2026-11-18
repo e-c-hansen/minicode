@@ -181,7 +181,7 @@ MC_GUI_SUITE(zoomfit) {
             @"<html><head><title>Other</title></head><body>Another local page</body></html>");
         GCHECK(WriteLetterPDF(F(@"letter.pdf"), 2));
         settingsBefore = [NSString stringWithContentsOfFile:
-            NSProcessInfo.processInfo.environment[@"MINICODE_SETTINGS"]
+            NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"]
                                                    encoding:NSUTF8StringEncoding error:nil] ?: @"";
         [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:gDir];
         c = MCGuiController();

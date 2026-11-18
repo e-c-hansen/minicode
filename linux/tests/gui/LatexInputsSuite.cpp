@@ -99,7 +99,7 @@ MC_GUI_SUITE(latex_inputs) {
             "d=$(dirname \"$0\")\n"
             "printf x >> \"$d/runs.txt\"\n"
             "cp \"$d/main.pdf\" \"$out/$stem.pdf\"\n"
-            "sed -e \"s|@DIR@/.main.minicode.tex|$file|\" -e \"s|@DIR@|$(dirname \"$file\")|\" "
+            "sed -e \"s|@DIR@/.main.mutible.tex|$file|\" -e \"s|@DIR@|$(dirname \"$file\")|\" "
             "\"$d/main.synctex\" | gzip -c > \"$out/$stem.synctex.gz\"\n");
         g_chmod((D() + "/tectonic").c_str(), 0755);
         EnvLock::envSet("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);

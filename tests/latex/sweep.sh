@@ -6,7 +6,7 @@
 #   tests/latex/sweep.sh --fixture [-v]
 #
 # The first typesets the document the way the preview does, which needs
-# tectonic: MINICODE_TECTONIC, else the copy the app downloads. Set
+# tectonic: MUTIBLE_TECTONIC, else the copy the app downloads. Set
 # TECTONIC_CACHE_DIR to a scratch cache to keep the run out of your real
 # one. It writes a hidden sibling of the document (removed afterwards), as
 # the app does, and nothing else beside it.
@@ -30,27 +30,27 @@ make -C "$root" build/latex-sweep >/dev/null
 if [ "$1" = "--fixture" ]; then
     shift
     fx="$here/fixtures"
-    "$root/build/latex-sweep" "$here/torture.tex" "/fixture/.torture.minicode.tex" \
+    "$root/build/latex-sweep" "$here/torture.tex" "/fixture/.torture.mutible.tex" \
         "$fx/torture.pdf" "$fx/torture.synctex.gz" --bound "$(cat "$here/sweep_bound.txt")" "$@"
     # A document of three files (fixtures/main.tex reads chapter.tex and
     # appendix.tex): clicks on the \input files' text edit those files.
-    exec "$root/build/latex-sweep" "$fx/main.tex" "@DIR@/.main.minicode.tex" \
+    exec "$root/build/latex-sweep" "$fx/main.tex" "@DIR@/.main.mutible.tex" \
         "$fx/main.pdf" "$fx/main.synctex" --bound "$(cat "$here/sweep_bound_inputs.txt")" "$@"
 fi
 
 tex=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 shift
-tectonic=${MINICODE_TECTONIC:-"$HOME/Library/Application Support/MiniCode/bin/tectonic"}
-out=${TMPDIR:-/tmp}/minicode-sweep
+tectonic=${MUTIBLE_TECTONIC:-"$HOME/Library/Application Support/Mutible/bin/tectonic"}
+out=${TMPDIR:-/tmp}/mutible-sweep
 mkdir -p "$out"
 
 dir=$(dirname "$tex")
 name=$(basename "$tex" .tex)
-scratch="$dir/.$name.minicode.tex"
+scratch="$dir/.$name.mutible.tex"
 cp "$tex" "$scratch"
 trap 'rm -f "$scratch"' EXIT
 (cd "$dir" && "$tectonic" --synctex --untrusted --chatter minimal --color never \
     --outdir "$out" "$scratch" >"$out/log.txt" 2>&1) || {
     cat "$out/log.txt"; exit 1; }
-"$root/build/latex-sweep" "$tex" "$scratch" "$out/.$name.minicode.pdf" \
-    "$out/.$name.minicode.synctex.gz" "$@"
+"$root/build/latex-sweep" "$tex" "$scratch" "$out/.$name.mutible.pdf" \
+    "$out/.$name.mutible.synctex.gz" "$@"
