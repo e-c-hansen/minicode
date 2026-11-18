@@ -257,8 +257,27 @@ private:
     Shared::TermId hostTerm_ = 0;
     Shared::TermShell host_;
     std::vector<Shared::TermMark> marks_;
-    long long hostCursor_ = -1;    // the host screen's cursor line after the last bytes fed
+    long long hostCursor_ = -1;    // the host screen's cursor line after the bytes VTE has parsed
     bool altScreen_ = false;
+    // VTE parses what it is fed on a later turn of the main loop (a few
+    // milliseconds on, then contents-changed or cursor-moved), while the
+    // host's word on the shell and its marks come with the bytes. They are
+    // held until VTE has caught up, so the prompt count never runs ahead of
+    // the screen (a command seen to end before its output showed: CI's
+    // terminal_find, 2026-11-17) and rowOfLine reads VTE's cursor after the
+    // same bytes as the host's. A fallback timer lets them through when the
+    // bytes changed nothing VTE reports.
+    bool vteBehind_ = false;
+    long long fedCursor_ = -1;
+    bool fedAlt_ = false;
+    bool heldShellSet_ = false, heldMarksSet_ = false;
+    Shared::TermShell heldShell_;
+    std::vector<Shared::TermMark> heldMarks_;
+    guint catchUpTimer_ = 0;
+    void vteCaughtUp();
+    void forgetHeld();
+    void applyShell(const Shared::TermShell& s);
+    void applyMarks(const std::vector<Shared::TermMark>& m);
     std::size_t unacked_ = 0;      // fed to VTE, not yet acknowledged
     guint ackIdle_ = 0;
     int sentCols_ = 0, sentRows_ = 0;
