@@ -13,7 +13,10 @@
 # It reads the PPA's public build records (no login, read only):
 #   https://api.launchpad.net/1.0/~OWNER/+archive/ubuntu/NAME
 #       ?ws.op=getBuildRecords&source_name=mutible
-# and waits until every build of this exact version has ended. The source
+# asked with "Cache-Control: no-cache": Launchpad's squid cache kept the
+# answer for one exact URL for eight hours on 2026-11-18, so the wait for
+# 1.6.1 saw only 1.6.0 and gave up while the build was uploading. It
+# waits until every build of this exact version has ended. The source
 # package is mutible from 1.6.0; for an upload from before, minicode, as it
 # was then. Exit status:
 #   0  every build of it is "Successfully built"
@@ -116,7 +119,7 @@ def fetch():
         with open(os.path.join(answers, chosen), "rb") as f:
             body = f.read()
     else:
-        r = subprocess.run(["curl", "-fsS", "--max-time", "60", url],
+        r = subprocess.run(["curl", "-fsS", "--max-time", "60", "-H", "Cache-Control: no-cache", url],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if r.returncode != 0:
             say("    could not read Launchpad: " +

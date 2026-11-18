@@ -6347,3 +6347,94 @@ The second step of stage 6's GTK half; `../docs/notes/session-host.md`,
 - **Checks**: `host_reattach` (and `_host_reattach_child`), `host:detach`,
   `host:window-records`, `host:term-answers`. The harness ends what closed
   windows left on their hosts between suites (`SessionLink::endDetached`).
+
+
+### 102. Latin-1, Windows-1252 and UTF-16 files open as text (C3b; November 2026)
+
+The Mac's #176 on GTK; `../docs/notes/sessions.md` has the rules.
+
+- **What a user meets.** A file that is not UTF-8 and holds no zero byte,
+  such as an old Latin-1 or Windows-1252 file, opens as text, read as
+  Windows-1252 by the core's rule (`FolderSearch::readsAsWindows1252`, the
+  one Find in Folder searches by), where it had said "Cannot display";
+  UTF-16 with its byte order mark opens as text too, and a UTF-8 file's
+  mark is kept apart instead of sitting in the buffer as U+FEFF. Each is
+  saved in its own encoding, byte for byte when nothing changed. The
+  status bar names any encoding but plain UTF-8 ("Windows-1252", "UTF-16
+  LE", "UTF-16 BE", "UTF-8 with BOM"), left of the problem counts. A
+  character Windows-1252 cannot store (an arrow, an emoji) has the file
+  saved as UTF-8, and the status bar says so ("Saved notes.txt as UTF-8:
+  Windows-1252 cannot store “→”"); auto-save says it through its note. A
+  search hit in such a file opens it at its line; Replace in Folder still
+  leaves it alone, and now says why when a row's Replace reaches one.
+- **Code.** `Document::readText` decodes through `decodeFileText` and
+  gives the encoding (`Document::FileEncoding`); the document keeps it
+  from `loadText`, a reload, the background load (LargeFileView.cpp),
+  `attachHeld` and a restored backup (Persistence, from the disk, else the
+  backup's `file-encoding`, which `writeBackup` now records). `save`
+  writes `encodeFileText`, or UTF-8 when `canEncode` says no, with
+  `takeSaveNote`; `encodingLabel` feeds main.cpp's label. The git gutter
+  reads the index's blob in the file's encoding (`readOriginal`).
+- **Checks**: `latin1_files` (and its `_latin1_restore` child, which
+  restores a backup of a file gone since and saves it in Windows-1252).
+- **Left**: the GTK port has no Save As or encoding picker (neither has
+  the Mac); a file changed on disk to the same text in another encoding
+  is followed only while its buffer is clean.
+
+### 103. The plan usage forecast in the Agents panel (done, November 2026)
+
+The Mac's A13 of 2026-11-18 (PR 178; `../docs/notes/agents.md`, "The plan
+usage forecast"; `mac/src/UsageView.mm` and `StatusLineOffer.mm`), over
+the same core: `ClaudeUsage` (the transcripts' tokens, prices, blocks,
+burn rate, the status line's samples, the fit, `describe`'s lines) and
+`ClaudeStatusLine` (`planInstall`, `install`, `planUninstall`,
+`uninstall`, the record, the log). The CLI's `mutible statusline` was
+already in the Linux build; this adds the panel's side.
+
+- **What a user meets.** Under the Agents panel's heading, PLAN USAGE:
+  the 5-hour window, the week, the burn rate, any unseen usage (the fit's
+  line is the text's tooltip), and "Log plan usage from Claude Code's
+  status line…", which becomes "Stop logging plan usage…" once it is in.
+  Before the transcripts are read it says "Reading Claude Code's
+  transcripts…"; without readings each window says "no reading yet".
+- **The model** (`UsageView.{h,cpp}`, `UsageModel`): one per app, never
+  freed. A `GThreadPool` of one thread keeps the `Scanner` and `Tally`
+  and reads the transcripts incrementally (`AgentModel::
+  defaultProjectsDir`, 8 days back) and the log (`StatusLineOffer::
+  usageDir`: `$MUTIBLE_USAGE_DIR`, else `$XDG_STATE_HOME/mutible/usage`);
+  the lines come back with `g_idle_add`. Where to look is read on the
+  main loop. `refresh` skips a look within 5 s of the last;
+  `refreshThen` forces one (the checks, and after an install or undo).
+  The panel's `rebuild` refreshes it while the panel shows (its model's
+  changes and the 30 s timer), as the Mac's `reload` does.
+- **The view** (`UsageView`): a box in `AgentsPanel` between the heading
+  and the notice or sessions; the text a wrapping, selectable label (not
+  a Tab stop) in the sidebar's text at 0.8 (`minicode-usage-text`), the
+  action a flat button whose label is the accent, ellipsized
+  (`minicode-usage-action`, ThemeCss.cpp). Its click goes through a
+  shared handle the view clears when it goes, so a question still up
+  when a window closes answers into nothing.
+- **Install and undo** (`StatusLineOffer.{h,cpp}`): the Mac's wording and
+  steps through `Question`, as the hooks offer (item 83) asks: the
+  question names the settings file, the command and the usage folder,
+  with the `statusLine` JSON in the preview box; Log Plan Usage or
+  Cancel; the core reads and plans again, backs the file up and writes
+  it, then a notice says where (and where the backup is). Undo asks (Put
+  It Back, Cancel) and says whether the file is exactly as before. The
+  command is `mutible statusline` when `mutible` is on the PATH, else
+  this program by its full path (`/proc/self/exe`), as the hooks' is;
+  but the core knows the wrapper by its program's name, so a copy named
+  otherwise (`mutible-guitest`) names the `mutible` beside it.
+- **Checks**: the `plan_usage` suite (a scratch CLAUDE_CONFIG_DIR,
+  transcripts folder and usage folder of its own, checked to be under the
+  harness's scratch root before anything is written): "no reading yet",
+  then the fitted forecast's lines and the fit's tooltip, the section
+  above what follows it, Cancel writing nothing, Log Plan Usage over an
+  existing `statusLine` (the rest kept, one backup, the record in the
+  usage folder), the built `mutible statusline` logging a reading and
+  running the old command with the same stdin, Put It Back restoring the
+  file byte for byte, and a settings file that is a symbolic link staying
+  one through install and undo, its target written and restored.
+- **Left**: the look of the section in a narrow sidebar on a real screen,
+  and a real Claude Code session with the wrapper installed (the readings
+  arrive after a reply), as on the Mac.

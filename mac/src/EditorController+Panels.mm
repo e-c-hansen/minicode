@@ -17,7 +17,8 @@
         initWithDirectory:_root.path firstIn:first
               environment:^NSDictionary<NSString *, NSString *> *(NSString *dir) {
                   return [weakSelf terminalEnvironmentForDirectory:dir];
-              }];
+              }
+             sessionPlace:^MCSessionTermPlace * { return [weakSelf sessionTerminalPlace]; }];
     self.terminalPanel.projectRoot = _root.path;
     self.terminalPanel.extraLinkRoots = ^NSArray<NSString *> *{
         EditorController *s = weakSelf;

@@ -151,12 +151,13 @@ bool Editor::loadText(Document* d, const std::string& path) {
         return true;
     }
     std::string content;
-    const Document::Read r = Document::readText(path, content);
-    return textRead(d, path, (int)r, content);
+    Document::FileEncoding encoding;
+    const Document::Read r = Document::readText(path, content, &encoding);
+    return textRead(d, path, (int)r, content, encoding);
 }
 
 bool Editor::textRead(Document* d, const std::string& path, int result,
-                      const std::string& content) {
+                      const std::string& content, const Document::FileEncoding& encoding) {
     const std::string name = baseName(path);
     auto refuse = [&](const std::string& why) {
         d->setMessage(path, "\n  Cannot display “" + name + "”.\n\n  (" + why + ")");
@@ -176,7 +177,7 @@ bool Editor::textRead(Document* d, const std::string& path, int result,
         d->setMessage(path, "\n  Could not open: " + path);
         return false;
     }
-    d->loadText(path, content);
+    d->loadText(path, content, encoding);
     const bool blank = std::all_of(content.begin(), content.end(),
                                    [](unsigned char c) { return std::isspace(c); });
     d->setShowsPreview((d->isMarkdown() || d->isLatex() || d->isNotebook()) && !blank);

@@ -99,6 +99,19 @@ std::string replaceSizeLimit() {
     return std::to_string(FolderSearchOptions().maxFileSize / (1024 * 1024)) + " MB";
 }
 
+// Text that is not UTF-8 and holds no NUL: what the search reads, and the
+// editor opens, as Windows-1252 (FolderSearch::readsAsWindows1252), and
+// Replace in Folder, which writes UTF-8 or UTF-16 only, leaves alone. The
+// Mac's MCReadsAsWindows1252.
+bool readsAsWindows1252(const std::string& path) {
+    std::string bytes;
+    FolderSearch::FileStamp st;
+    if (FolderSearch::readFileStable(path, FolderSearchOptions().maxFileSize, &bytes, &st) !=
+        FolderSearch::ReadStatus::Ok)
+        return false;
+    return FolderSearch::readsAsWindows1252(bytes);
+}
+
 GtkWidget* optionToggle(const char* label, const std::string& tip) {
     GtkWidget* b = gtk_toggle_button_new_with_label(label);
     gtk_widget_set_focus_on_click(b, FALSE);
@@ -925,6 +938,9 @@ void SearchPanel::replaceInPaths(const std::vector<std::string>& paths,
                 if (st.exists && st.size > FolderSearchOptions().maxFileSize)
                     j->failed.push_back(baseName(p) + " is larger than " + replaceSizeLimit() +
                                         ", which Replace in Folder leaves alone");
+                else if (readsAsWindows1252(p))
+                    j->failed.push_back(baseName(p) + " is not UTF-8 (read as Windows-1252), "
+                                                      "which Replace in Folder leaves alone");
                 else
                     j->failed.push_back(baseName(p) + " could not be read as text");
                 continue;

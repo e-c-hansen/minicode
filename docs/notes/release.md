@@ -27,7 +27,10 @@ found through that list.
   public getBuildRecords) and fails unless it is "Successfully built" (exit 3
   failed: upload N+1; 4 not seen to end: run ppa-wait.sh again; `--no-wait`
   or `MINICODE_PPA_NO_WAIT=1` skips it; `ppa:wait` tests it on canned
-  answers). 1.5.13's build failed unseen when the scripts stopped at dput. The ThinkPad has its
+  answers). 1.5.13's build failed unseen when the scripts stopped at dput.
+  Every Launchpad API query sends `Cache-Control: no-cache`: on 2026-11-18
+  Launchpad's squid cache kept getBuildRecords' answer for one URL eight
+  hours old, and the wait for 1.6.1 gave up while the build was uploading. The ThinkPad has its
   own key (AEE321CE...DB7F9335) and no Docker, so there ppa.sh runs the
   packaging tools directly (`packaging/PPA.md`, step 9). On the Mac it needs
   Docker, which must not be started unattended (see "Verification").
@@ -51,7 +54,7 @@ found through that list.
   move), never stamped again; `release.sh` writes it into the old tap when
   it differs. The new cask links `mutible`, `mbl` and `minicode`, so it <!-- rename-mutible: keep -->
   `conflicts_with` the old one, which links `minicode` too. The cask's <!-- rename-mutible: keep -->
-  `desc` is "Take back your space" (brew style refuses a full stop).
+  `desc` is "Your machine, in plain sight" (brew style refuses a full stop).
   The Android APK keeps its name and key, and the PPA its name, through
   the rename. Both casks load with
   `brew ruby -e 'Cask::CaskLoader::FromPathLoader.new(Pathname(ARGV[0])).load(config: nil)' <file>`
@@ -91,4 +94,5 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- PPA: Every Launchpad API query sends `Cache-Control: no-cache`.
 - Distribution: Traps: macOS `tar` adds `._*` files `dpkg-source` rejects (`git archive`);

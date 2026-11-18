@@ -307,6 +307,31 @@ for full-screen programs. Both can be open at once.
   programs turn ICANON off); the grid calls Enable/DisableSecureEventInput
   in pairs (`_secureOn`) only while it has the keyboard. Carbon is linked
   for it.
+- **Drops** (2026-11-18, the owner could not drop an image into Claude
+  Code): the grid registers file URLs, PNG, TIFF, strings, URLs and file
+  promises. `performDragOperation:` focuses the grid (the panel's
+  firstResponder observer makes it the active split) and sends, in this
+  order: file URLs as `TermDrop::paths` (core, header only, `term:drop`:
+  Terminal.app's backslash quoting, `$'...'` for a name with a control
+  character, a space after each path); else a picture's PNG or TIFF data
+  written to `$TMPDIR/Mutible-drop/drop-<date>-<n>.png` (TMPDIR as
+  ControlServer reads it, so the GUI checks write to their scratch;
+  files a day old are deleted at each drop); else file promises
+  received into a new folder there; else the text. Everything goes
+  through `pasteString:`, Edit > Paste's path: bracketed when asked, the
+  paste question, `sendTyped:`, so on the session host it is
+  `TermInput` without flag 1 and counts as typing for the size rule.
+  A screenshot thumbnail's file (`TemporaryItems/...screencaptureui...`)
+  is copied first, since screencaptureui deletes it after the drag.
+  Refused (no copy cursor) while the paste question is up. Checked in
+  terminal_paste (a scratch pasteboard and a fake NSDraggingInfo; zsh
+  reads the paths back) and needs a real drag from Finder into Claude
+  Code by eye. Trap: quote dropped paths with backslashes, never single
+  quotes. Claude Code 2.1.327 reads a pasted path by trimming it,
+  taking off one outer pair of quotes and then every backslash before a
+  character, and splits several at a space before "/" (or a quote and
+  "/"): single quotes around each path would keep `'it'\''s'` from
+  reading back, which backslashes do not.
 - **Keys**: Ctrl with a letter, symbol or Space is claimed in the grid's
   `performKeyEquivalent:` (the window asks views before the menu), so
   Ctrl+Space reaches zsh; Ctrl+Tab, Ctrl+Return and Ctrl+digits stay the app's.
@@ -560,6 +585,7 @@ text is in place in its section.
 - The terminal: Traps: paste only once the tty is raw; check reaping with `kill(pid, 0) == ESRCH`, not `waitpid`.
 - The terminal: **Trap** (2026-11-16): the queue was one line, and a second `runCommand:` while the first still waited (a prompt between its 133;A and B) replaced it: the first never ran (terminal_reflow's flake on CI, `read` missing from the screen).
 - The terminal: Trap: the harness can run zsh; an agent's own shell may be refused it by the worktree guard.
+- The terminal: Trap: quote dropped paths with backslashes, never single quotes.
 - The terminal: Trap: a CGColor taken from a temporary NSColor can be freed before it is retained; hold the NSColor with `objc_precise_lifetime` until then.
 - The terminal: **Trap**: the panel's `closeTerminal:` and `renameTerminal:` share their selectors with the menu's actions, so with the keyboard in a terminal the panel received Ctrl+Shift+W as `closeTerminal:(NSMenuItem *)` and closed nothing (until 2026-11-08); both take a non-terminal argument as "the active one".
 - Terminals owned by the session's host (stage 5): **The host's screen answers no queries**: `takeReplies` is thrown away, since the renderer's emulator answers DA, DSR and the rest through its input, and two answers would reach the program.

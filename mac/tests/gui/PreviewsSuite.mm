@@ -1003,6 +1003,85 @@ static void JsonSteps(void) {
     MCGuiWait(@"the strict file's verdict", 5, ^BOOL {
         return [Outline(MCGuiController()).statusText hasPrefix:@"Not valid JSON"];
     });
+    // The owner's report (2026-11-18): a string with \n escapes (a Markdown
+    // answer) or just a long one wrapped inside its fixed-height row and
+    // drew over the rows below, the selection covering one line of it.
+    static NSString *answer;   // as written in the file, escapes and all
+    static NSString *longKey;
+    MCGuiStep(@"a long, many-line value and a long key", ^{
+        NSMutableString *a = [NSMutableString stringWithString:@"# Answer\\n\\nThe first paragraph"];
+        for (int i = 0; i < 40; i++) [a appendString:@" goes on and on\\n\\t- a point"];
+        answer = a;
+        longKey = [@"" stringByPaddingToLength:300 withString:@"a long key " startingAtIndex:0];
+        MCGuiWriteFile(Fixture(@"answer.json"),
+                       [NSString stringWithFormat:@"{\n  \"sources\": [\"%@\", \"short\"],\n"
+                                                  @"  \"%@\": \"%@\",\n  \"tags\": [1]\n}\n",
+                                                  answer, longKey, answer]);
+        GCHECK([MCGuiController() showFile:Fixture(@"answer.json")]);
+    });
+    MCGuiWait(@"the long values' outline", 5, ^BOOL {
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        return !p.parsing && !p.stale && RowStarting(p, @"sources [2]") >= 0;
+    });
+    MCGuiStep(@"every row is one line inside its row, cut with its escapes shown", ^{
+        MCJsonOutlinePane *p = Outline(MCGuiController());
+        NSOutlineView *ov = p.outline;
+        [ov expandItem:[ov itemAtRow:0] expandChildren:YES];
+        [ov layoutSubtreeIfNeeded];
+        GCHECK(ov.numberOfRows == 7);
+        const CGFloat rowHeight = NSHeight([ov rectOfRow:0]);
+        for (NSInteger r = 0; r < ov.numberOfRows; r++) {
+            NSTableCellView *cell = [ov viewAtColumn:0 row:r makeIfNecessary:YES];
+            NSTextField *tf = cell.textField;
+            GCHECK(tf != nil);
+            if (!tf) continue;
+            NSString *shown = tf.stringValue;
+            NSCharacterSet *breaks = [NSCharacterSet characterSetWithCharactersInString:@"\n\r\t  "];
+            GCHECK([shown rangeOfCharacterFromSet:breaks].location == NSNotFound);
+            const NSRect rowRect = [ov rectOfRow:r];
+            GCHECK(fabs(NSHeight(rowRect) - rowHeight) < 0.5);   // constant height
+            // The field sits inside its row, and its text needs one line.
+            const NSRect f = [ov convertRect:tf.bounds fromView:tf];
+            if (!(NSMinY(f) >= NSMinY(rowRect) - 0.5 && NSMaxY(f) <= NSMaxY(rowRect) + 0.5))
+                NSLog(@"row %ld: field %@ outside row %@", (long)r, NSStringFromRect(f),
+                      NSStringFromRect(rowRect));
+            GCHECK(NSMinY(f) >= NSMinY(rowRect) - 0.5 && NSMaxY(f) <= NSMaxY(rowRect) + 0.5);
+            const NSSize need = [tf.cell cellSizeForBounds:NSMakeRect(0, 0, NSWidth(tf.bounds), 10000)];
+            if (need.height > rowHeight + 0.5)
+                NSLog(@"row %ld: text needs %.1f in a %.1f row: %@", (long)r, need.height, rowHeight,
+                      shown);
+            GCHECK(need.height <= rowHeight + 0.5);
+        }
+        const NSInteger first = RowStarting(p, @"[0] \"# Answer");
+        GCHECK(first >= 0);
+        NSTableCellView *cell = first >= 0 ? [ov viewAtColumn:0 row:first makeIfNecessary:YES] : nil;
+        NSString *shown = cell.textField.stringValue;
+        GCHECK([shown hasPrefix:@"[0]  \"# Answer\\n\\nThe first paragraph goes on and on\\n\\t- a point"]);
+        GCHECK([shown hasSuffix:@"…"]);   // cut before layout, not only by the column
+        GCHECK(shown.length < 260);
+        // The whole value is in the tooltip, with its line breaks.
+        NSString *decoded = [[answer stringByReplacingOccurrencesOfString:@"\\n" withString:@"\n"]
+            stringByReplacingOccurrencesOfString:@"\\t" withString:@"\t"];
+        GCHECK_EQ_STR(cell.textField.toolTip, decoded);
+        // The long key is cut too, and given whole in its tooltip.
+        const NSInteger keyRow = RowStarting(p, @"a long key");
+        GCHECK(keyRow >= 0);
+        NSTableCellView *keyCell = keyRow >= 0 ? [ov viewAtColumn:0 row:keyRow makeIfNecessary:YES] : nil;
+        GCHECK([keyCell.textField.toolTip hasPrefix:[longKey stringByAppendingString:@"\n\n# Answer\n"]]);
+        GCHECK(RowStarting(p, @"short \"short\"") < 0 && RowStarting(p, @"[1] \"short\"") >= 0);
+        MCGuiSnapshot(MCGuiController().window.contentView, @"previews-json-long");
+    });
+    MCGuiStep(@"selecting the long value still selects its text", ^{
+        EditorController *c = MCGuiController();
+        MCJsonOutlinePane *p = Outline(c);
+        const NSInteger first = RowStarting(p, @"[0] \"# Answer");
+        GCHECK(first >= 0);
+        if (first < 0) return;
+        [p selectRow:first];
+        NSTextView *tv = EditorText(c);
+        GCHECK_EQ_STR([tv.string substringWithRange:tv.selectedRange],
+                      ([NSString stringWithFormat:@"\"%@\"", answer]));
+    });
 }
 
 // ---------------------------------------------------------------- notebooks

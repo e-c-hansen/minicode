@@ -95,8 +95,15 @@ found through that list.
   and the review read a Windows-1252 file's blob the same way
   (`QuickDiff::readOriginal`, `encodingOfBlob`) and stage it back so.
   Replace in Folder still leaves these files alone (it writes UTF-8 and
-  UTF-16 only). The GTK editor still opens UTF-8 only
-  (`DocumentView.cpp`'s `g_utf8_validate`).
+  UTF-16 only). The GTK editor follows the same rules (2026-11-18,
+  `linux/HANDOFF.md` item 102): `Document::readText` decodes through
+  `decodeFileText` (UTF-16 and a UTF-8 mark too, which it had not
+  handled: UTF-16 was "Cannot display", a UTF-8 mark sat in the buffer
+  as U+FEFF), `Document::FileEncoding` is kept per document (read,
+  reload, the background load, attachHeld, a backup's record), `save`
+  writes `encodeFileText` or UTF-8 by `canEncode` with the same note,
+  and main.cpp's status bar shows `Document::encodingLabel` left of the
+  problem counts; the git gutter reads the blob in the file's encoding.
 - **One writer**: Cmd+S, `saveTab:` and auto-save all go through
   `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
   (a symlink stays a link, a dangling one too, creating the file it names;

@@ -318,6 +318,10 @@ public:
     void latexFileSaved(Document* saved);
     void saveLatexInputs(const std::function<bool(Document*)>& save);
     bool canSave() const { return active_ && active_->canSave(); }
+    // The encoding of the file on show when it is not plain UTF-8
+    // ("Windows-1252", "UTF-16 LE", "UTF-8 with BOM"), else "" (the status
+    // bar's label, Document::encodingLabel).
+    std::string encodingLabel() const { return active_ ? active_->encodingLabel() : ""; }
 
     // Changes made to the open files by something else (the Mac's
     // checkExternalChange). Each file is watched while its tab is open, and
@@ -550,7 +554,8 @@ private:
     bool loadText(Document* d, const std::string& path);
     // The file as read (`result`, a Document::Read): in the document, or a
     // message saying why not.
-    bool textRead(Document* d, const std::string& path, int result, const std::string& content);
+    bool textRead(Document* d, const std::string& path, int result, const std::string& content,
+                  const Document::FileEncoding& encoding = Document::FileEncoding());
     bool opensInPreview(EditorTabs::OpenFrom from) const;
     EditorTabs::PreviewSettings previewSettings() const;
     // A new document, known by its id until destroy() lets it go.

@@ -610,6 +610,14 @@ struct MCHostTermListener : Shared::Client::TermListener {
     // terminal opens, for its life. The host forwards the pty's output and
     // what it knows of the tty (TermShell); _master stays -1.
     BOOL _onHost;
+    // The host's link (SessionLink.h), for the view's life but for a
+    // Reconnect (rehostOn:); told when its host goes (_lostToken).
+    std::shared_ptr<MCSession::Link> _link;
+    MCSessionLinkRef *_linkRef;
+    int _lostToken;
+    BOOL _hostGone;              // its host went: no shell starts here until rehostOn:
+    MCSessionTermPlace *_held;   // a held terminal to take over, until it is
+    NSUInteger _replayUnacked;   // replay bytes in the backlog: never acknowledged
     Shared::TermId _hostTerm;    // the shell's terminal on the host, 0 when none
     Shared::TermShell _hostShell;   // the host's last word on it
     std::unique_ptr<struct MCHostTermListener> _hostListener;
@@ -683,7 +691,7 @@ struct MCHostTermListener : Shared::Client::TermListener {
 @property(nonatomic, strong) NSTextField *input;
 @property(nonatomic, strong) NSSecureTextField *secureInput;
 - (void)hostOpened:(Shared::TermId)term pid:(int)pid;
-- (void)hostOutput:(Shared::TermId)term bytes:(const std::string &)bytes;
+- (void)hostOutput:(Shared::TermId)term bytes:(const std::string &)bytes replay:(BOOL)replay;
 - (void)hostShell:(Shared::TermId)term state:(const Shared::TermShell &)shell;
 - (void)hostExited:(Shared::TermId)term error:(const std::string &)error;
 @end
@@ -696,6 +704,12 @@ struct MCHostTermListener : Shared::Client::TermListener {
 
 - (instancetype)initWithDirectory:(NSString *)dir
                       environment:(NSDictionary<NSString *, NSString *> *)environment {
+    return [self initWithDirectory:dir environment:environment place:nil];
+}
+
+- (instancetype)initWithDirectory:(NSString *)dir
+                      environment:(NSDictionary<NSString *, NSString *> *)environment
+                            place:(MCSessionTermPlace *)place {
     if ((self = [super initWithFrame:NSMakeRect(0, 0, 400, 220)])) {
         _extraEnvironment = [environment copy];
         static NSInteger lastID;
@@ -708,6 +722,14 @@ struct MCHostTermListener : Shared::Client::TermListener {
         // Line mode keeps its own pty: its log reads the tty's echo flag
         // and modes directly, and it is a fallback for a release.
         _onHost = !_lineMode && MCSessionHostEnabled();
+        if (_onHost) {
+            MCSessionLinkRef *ref = place.link;
+            if (!ref)
+                ref = [[MCSessionLinkRef alloc]
+                    initWithLink:MCSession::linkForPath(std::string(_cwd.fileSystemRepresentation ?: ""))];
+            [self useLink:ref];
+            if (place.heldTerm) _held = place;
+        }
         _ioQueue = dispatch_queue_create("mutible.terminal.io",
                                          DISPATCH_QUEUE_SERIAL);
         self.wantsLayer = YES;
@@ -724,9 +746,150 @@ struct MCHostTermListener : Shared::Client::TermListener {
                               "`clear` resets the panel."
                        color:THex(0x6A9955)];
         [self updatePrompt];
-        [self startShell];
+        if (_held) [self attachHeldShell];
+        else [self startShell];
     }
     return self;
+}
+
+- (MCSessionLinkRef *)sessionLink { return _onHost ? _linkRef : nil; }
+
+- (Shared::Client &)hostClient { return _link->client(); }
+
+// The link this view's shells go on, told when its host goes.
+- (void)useLink:(MCSessionLinkRef *)ref {
+    if (_link) _link->removeLostListener(_lostToken);
+    _linkRef = ref;
+    _link = ref.link;
+    __weak TerminalView *weakSelf = self;
+    _lostToken = _link->addLostListener([weakSelf] { [weakSelf hostWentAway]; });
+    _hostGone = _link->lost();
+}
+
+// The host went (killed, its socket closed): its shell went with it, and no
+// other starts here until a Reconnect (rehostOn:).
+- (void)hostWentAway {
+    _hostGone = YES;
+    const BOOL had = _hostTerm != 0;
+    _generation++;
+    _hostTerm = 0;
+    _hostShell = Shared::TermShell();
+    _shellPid = 0;
+    _atPrompt = NO;
+    _zleReady = NO;
+    _backlog = nil;
+    _backlogStart = 0;
+    _replayUnacked = 0;
+    _ptySizes.clear();
+    if (had && !_closed) [self note:@"[the session's host went away, and this terminal's shell with it]" color:0xF48771];
+}
+
+- (void)detachFromSessionHost {
+    _held = nil;   // never attached: nothing to let go of
+    if (!_hostTerm) return;
+    [self flushHostInput];
+    if (!_link->lost()) [self hostClient].detachTerminal(_hostTerm);
+    _generation++;
+    _hostTerm = 0;
+    _shellPid = 0;   // the host's, running on: closing this view ends nothing
+    _hostShell = Shared::TermShell();
+    _backlog = nil;
+    _backlogStart = 0;
+    _replayUnacked = 0;
+}
+
+- (void)rehostOn:(MCSessionLinkRef *)link {
+    if (!_onHost || !link || link.link == _link) return;
+    if (_hostTerm && !_link->lost()) [self hostClient].closeTerminal(_hostTerm);
+    _hostTerm = 0;
+    _shellPid = 0;
+    _held = nil;
+    [self useLink:link];
+    if (_closed) return;
+    [self note:@"[the session's host is back: a new shell]" color:0x6A9955];
+    [self startShell];
+}
+
+// The nonce of each shell this process opened on a host, by its terminal
+// id: a held one this process started keeps its marks believed when a
+// window takes it over (a shell from before a relaunch has none here, and
+// runs without the integration's marks).
+static std::map<Shared::TermId, std::string> &HostNonces() {
+    static auto *m = new std::map<Shared::TermId, std::string>();
+    return *m;
+}
+
+// A terminal the host holds (initWithDirectory:environment:place:): its
+// shell runs on, so this view attaches (TermAttach), the host's replay drawn
+// on a fresh screen, then live output. Its marks are believed only with
+// the nonce this process gave it; the prompt state comes from the host's
+// word on the shell until the next mark.
+- (void)attachHeldShell {
+    MCSessionTermPlace *h = _held;
+    _held = nil;
+    if (_hostGone || _link->lost()) {
+        _hostGone = YES;
+        [self note:@"[the session's host went away: no shell can start here]" color:0xF48771];
+        return;
+    }
+    auto known = HostNonces().find(h.heldTerm);
+    std::string nonce;
+    if (known != HostNonces().end()) nonce = known->second;
+    _integrated = !nonce.empty();
+    _integrationFile = _integrated;
+    if (nonce.empty()) {
+        // One nobody has, so no mark is believed.
+        unsigned char raw[16];
+        arc4random_buf(raw, sizeof raw);
+        static const char hex[] = "0123456789abcdef";
+        for (unsigned char b : raw) { nonce += hex[b >> 4]; nonce += hex[b & 15]; }
+    }
+    _stream = TerminalStream();
+    _markNonce = nonce;
+    _stream.setMarkNonce(nonce);
+    _stream.setEventsOnly(YES);
+    const Shared::TermShell sh = h.heldShell;
+    _promptTime = 0;
+    _seenPrompt = _integrated && sh.known;
+    _atPrompt = _integrated && sh.atPrompt && !sh.busy;
+    _zleReady = _atPrompt && sh.inputReady;
+    _runningCommand = nil;
+    _programTitle = nil;
+    _commandStarted = _integrated && sh.busy;
+    _userCommand = NO;
+    _stickyGrid = NO;
+    _winsize = {};
+    [self updateWindowSize];
+    const int cols = h.heldCols > 1 ? h.heldCols : _winsize.ws_col, rows = h.heldRows > 0 ? h.heldRows : _winsize.ws_row;
+    _screen = TerminalScreen(cols, rows);
+    _screen.setScrollbackLimit([AppSettings shared].settings.terminalScrollback());
+    _screenMade = YES;
+    _screen.setMarkNonce(nonce);
+    [self tellScreenTheme];
+    _hostTerm = h.heldTerm;
+    _hostShell = sh;
+    _shellPid = h.heldPid;
+    _ptyCols = cols;
+    _ptyRows = rows;
+    _hostInput.clear();
+    _shellStarted = [NSDate date];
+    ++_generation;
+    _backlog = [NSMutableData data];
+    _backlogStart = 0;
+    _replayUnacked = 0;
+    if (!_hostListener) {
+        _hostListener.reset(new MCHostTermListener);
+        _hostListener->view = self;
+    }
+    Shared::Client &client = [self hostClient];
+    client.attachTerminal(_hostTerm, _hostListener.get());
+    // This view's size, said as any renderer's (the pty takes it once this
+    // window types).
+    client.resizeTerminal(_hostTerm, _winsize.ws_col, _winsize.ws_row);
+    [self.grid screenChanged];
+    [self placeGrid];
+    client.settle(5000);   // the replay, and the host's word on the tty
+    [self updateGridHiddenInput];
 }
 
 - (NSTextField *)makeInputField:(Class)cls {
@@ -1987,6 +2150,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
     // screen is our member: a redraw after this would read, and since the
     // screen hands over its dirty rows, write, freed memory.
     self.grid.screen = nullptr;
+    if (_link) _link->removeLostListener(_lostToken);
 }
 
 // ---------------------------------------------------------------- links
@@ -2167,7 +2331,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
         [self flushHostInput];
         // The host hangs it up (the master closed, SIGHUP) and reaps it,
         // with SIGKILL 2 s on for a shell that stays (HostPty.h).
-        MCSessionClient().closeTerminal(_hostTerm);
+        if (!_link->lost()) [self hostClient].closeTerminal(_hostTerm);
         _hostTerm = 0;
         _hostShell = Shared::TermShell();
     } else if (_shellPid > 0) {
@@ -2211,7 +2375,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
         // typed), and the screen follows the pty's size from TermShell
         // (hostShell:), never this view's, so another screen's program is
         // not reflowed to fit here.
-        MCSessionClient().resizeTerminal(_hostTerm, ws.ws_col, ws.ws_row);
+        [self hostClient].resizeTerminal(_hostTerm, ws.ws_col, ws.ws_row);
         [self placeGrid];
         return;
     }
@@ -2407,6 +2571,11 @@ static NSString *MCBrowserHelperPath(void) {
     _screen.setMarkNonce(nonce);
     [self tellScreenTheme];
 
+    if (_onHost && (_hostGone || _link->lost())) {
+        _hostGone = YES;
+        [self note:@"[the session's host went away: no shell can start here]" color:0xF48771];
+        return;
+    }
     if (_onHost) {
         // The session's host forks the same shell with the same
         // environment on its thread (Shared::Pty, by MCPty's rules) and
@@ -2420,7 +2589,8 @@ static NSString *MCBrowserHelperPath(void) {
         spec.rows = ws.ws_row;
         spec.scrollback = [AppSettings shared].settings.terminalScrollback();
         spec.nonce = nonce;
-        _hostTerm = MCSessionClient().newId();   // from the client's range on the host
+        _hostTerm = [self hostClient].newId();   // from the client's range on the host
+        if (_integrated) HostNonces()[_hostTerm] = nonce;
         _hostShell = Shared::TermShell();
         _hostInput.clear();
         _shellStarted = [NSDate date];
@@ -2431,7 +2601,8 @@ static NSString *MCBrowserHelperPath(void) {
             _hostListener.reset(new MCHostTermListener);
             _hostListener->view = self;
         }
-        Shared::Client &client = MCSessionClient();
+        _replayUnacked = 0;
+        Shared::Client &client = [self hostClient];
         client.openTerminal(_hostTerm, spec, _hostListener.get());
         // The shell's pid (TermOpened) and the host's first look at the tty,
         // before anything asks whether there is a shell: runCommand: starts
@@ -2584,7 +2755,7 @@ static NSString *MCBrowserHelperPath(void) {
     if (_onHost) {
         if (!_hostTerm) return;
         [self flushHostInput];
-        MCSessionClient().terminalInput(_hostTerm, replies, true);
+        [self hostClient].terminalInput(_hostTerm, replies, true);
         return;
     }
     [self sendBytes:replies.data() length:replies.size()];
@@ -2592,7 +2763,7 @@ static NSString *MCBrowserHelperPath(void) {
 
 - (void)flushHostInput {
     _hostInputQueued = NO;
-    if (_hostTerm && !_hostInput.empty()) MCSessionClient().terminalInput(_hostTerm, std::move(_hostInput));
+    if (_hostTerm && !_hostInput.empty()) [self hostClient].terminalInput(_hostTerm, std::move(_hostInput));
     _hostInput.clear();
 }
 
@@ -2642,8 +2813,11 @@ static NSString *MCBrowserHelperPath(void) {
 // The pty's output, as the host read it: parsed in slices as MCPty's is,
 // and acknowledged as it is (drainBacklog), so the host stops reading a
 // program this screen has not kept up with.
-- (void)hostOutput:(Shared::TermId)term bytes:(const std::string &)bytes {
+- (void)hostOutput:(Shared::TermId)term bytes:(const std::string &)bytes replay:(BOOL)replay {
     if (term != _hostTerm || !_backlog || bytes.empty()) return;
+    // A replay (attaching) is drawn but not read from the pty: the host
+    // counts none of it against this view's credit.
+    if (replay) _replayUnacked += bytes.size();
     [_backlog appendBytes:bytes.data() length:bytes.size()];
     [self scheduleDrain];
 }
@@ -2724,7 +2898,13 @@ static NSString *MCBrowserHelperPath(void) {
     }
     // The host reads the pty again once less than its credit (1 MB) waits
     // here unparsed.
-    if (_hostTerm && _backlogStart > from) MCSessionClient().ackTerminal(_hostTerm, _backlogStart - from);
+    if (_hostTerm && _backlogStart > from) {
+        NSUInteger parsed = _backlogStart - from;
+        const NSUInteger skip = MIN(parsed, _replayUnacked);
+        _replayUnacked -= skip;
+        parsed -= skip;
+        if (parsed) [self hostClient].ackTerminal(_hostTerm, parsed);
+    }
     if (_backlogStart >= _backlog.length) {
         _backlog.length = 0;
         _backlogStart = 0;
@@ -3028,8 +3208,8 @@ static NSString *MCBrowserHelperPath(void) {
 
 // ---------------------------------------------------------------- the host's terminal
 void MCHostTermListener::termOpened(Shared::TermId t, int pid) { [view hostOpened:t pid:pid]; }
-void MCHostTermListener::termOutput(Shared::TermId t, const std::string &bytes, long long, bool, bool) {
-    [view hostOutput:t bytes:bytes];
+void MCHostTermListener::termOutput(Shared::TermId t, const std::string &bytes, long long, bool, bool replay) {
+    [view hostOutput:t bytes:bytes replay:replay];
 }
 void MCHostTermListener::termShell(Shared::TermId t, const Shared::TermShell &shell) {
     [view hostShell:t state:shell];

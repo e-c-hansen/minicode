@@ -378,7 +378,17 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   first, the built mutible-cli logging and chaining, undo restoring the
   file byte for byte). Not yet run against a real Claude Code session's
   status line; the look of the section in a narrow sidebar needs the
-  owner's eyes. Not in the Linux app yet (its CLI has the wrapper).
+  owner's eyes.
+- **Linux** (2026-11-18, `linux/HANDOFF.md` item 103): the same section
+  in the GTK Agents panel, over the same core and wording
+  (`linux/src/UsageView.{h,cpp}`: `UsageModel`, one per app, on a
+  GThreadPool of one thread; `StatusLineOffer.{h,cpp}`: the two presses
+  through `Question`, the JSON in its preview box). The log is in
+  `$XDG_STATE_HOME/mutible/usage`. Checked by the `plan_usage` GUI suite
+  (both "no reading yet" and the fitted forecast, Cancel then install
+  over an existing statusLine in a scratch CLAUDE_CONFIG_DIR, the built
+  `mutible statusline` logging and chaining, undo byte for byte, and a
+  symlinked settings file kept a link through both).
 
 ## Traps
 

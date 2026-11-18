@@ -13,8 +13,8 @@ cask "mutible" do
 
   url "https://github.com/ible-ai/mutible/releases/download/v#{version}/Mutible.zip"
   name "Mutible"
-  # "Take back your space." without its full stop, which brew style refuses.
-  desc "Take back your space"
+  # "Your machine, in plain sight." without its full stop, which brew style refuses.
+  desc "Your machine, in plain sight"
   homepage "https://mut.ible.ai"
 
   # Built for Apple silicon only (the Makefile builds the host's architecture).

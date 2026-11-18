@@ -208,7 +208,23 @@ NSString *MCEncodingStatusLabel(MCTextEncoding encoding, BOOL bom) {
 
 - (void)setCurrentPath:(NSString *)path {
     _currentPath = [path copy];
+    [_session pathChanged];   // the host finds it by its path (Save As, a rename)
     [_owner tabPathChanged:self];
+}
+
+- (BOOL)attachHeld:(uint64_t)docId link:(MCSessionLinkRef *)link {
+    if (_session || !link) return NO;
+    MCSessionDoc *d = [[MCSessionDoc alloc] initWithTab:self held:docId link:link];
+    if (!d.heldText) {
+        [d detach];   // the host did not answer: nothing of it is closed there
+        return NO;
+    }
+    _session = d;
+    _live = nil;
+    _sourceText = [d.heldText copy];
+    _textGeneration++;
+    _heldFromHost = YES;
+    return YES;
 }
 
 - (BOOL)preview { return [_owner tabIsPreview:self]; }
