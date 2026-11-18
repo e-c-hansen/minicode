@@ -136,4 +136,28 @@ std::vector<std::string> expired(const std::vector<Entry> &all, double now,
 
 constexpr double kMaxAge = 30 * 24 * 3600.0;   // orphans go after 30 days
 
+// ------------------------------------------------- shared by every writer
+// The apps (the Mac's MCBackupStore, GTK's BackupStore) and a headless
+// session host (SessionHost.h, Host::keepBackups) write into one store, so
+// they agree on where it is, how an owner is named and how ids look.
+
+// The store's folder: `override` ($MUTIBLE_BACKUP_DIR) when set, else
+// ~/Library/Application Support/Mutible/Backups on the Mac and
+// $XDG_DATA_HOME/mutible/Backups (~/.local/share/mutible/Backups) elsewhere;
+// "" when there is no home to put it in.
+std::string defaultDir(const char *override, const char *home, const char *xdgDataHome, bool mac);
+// A process's start as Entry::ownerStart records it on this system: on the
+// Mac its wall-clock start (sysctl), elsewhere seconds since boot
+// (/proc/<pid>/stat), so a clock set back or forward never makes a running
+// owner look gone. 0 when there is no such process, or only a zombie of it.
+double processStart(int64_t pid);
+// A fresh id: 32 random hex digits in the 8-4-4-4-12 form (validId).
+std::string newId();
+// The path a backup gives a buffer that has no file (an untitled
+// document): `folder`/Untitled-1, Untitled-2, ..., the first that `taken`
+// (a file there, or a buffer already named so) does not refuse. Nothing is
+// written there: a buffer restored under it saves to it.
+std::string untitledPath(const std::string &folder,
+                         const std::function<bool(const std::string &)> &taken);
+
 }  // namespace Backups

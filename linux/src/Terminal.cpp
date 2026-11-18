@@ -16,6 +16,7 @@
 #include "SessionLink.h"
 #include "StartupLog.h"
 #include "TerminalAttention.h"
+#include "TerminalFrame.h"
 #include "TermLinkPath.h"
 #include "TermLinks.h"
 
@@ -286,13 +287,18 @@ void Terminal::makeTerminal() {
     gtk_widget_add_css_class(scroller, "minicode-scroller");
 
     vte_ = vte_terminal_new();
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), vte_);
+    // VTE in its frame, the scroller's scrollable child, which lays it out
+    // at another renderer's grid when that is the pty's (followPtySize).
+    frame_ = terminalFrameNew(vte_);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), frame_);
 
     underline_ = gtk_drawing_area_new();
     gtk_widget_set_can_target(underline_, FALSE);   // clicks go through to VTE
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(underline_), drawHover, this, nullptr);
     g_signal_connect(underline_, "resize", G_CALLBACK(+[](GtkDrawingArea*, int, int, gpointer p) {
-        static_cast<Terminal*>(p)->watchSize();
+        Terminal* self = static_cast<Terminal*>(p);
+        self->panToCursor();   // the part on show, in the view's new size
+        self->watchSize();
     }), this);
 
     applyTheme();
@@ -318,8 +324,21 @@ void Terminal::makeTerminal() {
     // is laid out (and when its font changes), and the host gives them to
     // the pty. The underline's drawing area covers the terminal, so its
     // resize says when.
-    g_signal_connect(vte_, "char-size-changed", G_CALLBACK(+[](VteTerminal*, guint, guint, gpointer p) {
-        static_cast<Terminal*>(p)->watchSize();
+    // The cell known since followPtySize measured it follows the font (it
+    // comes with the signal: nothing is measured, so a hidden VTE's zoom is
+    // safe), and a grid held at another renderer's size is laid out again
+    // in the new cells.
+    g_signal_connect(vte_, "char-size-changed", G_CALLBACK(+[](VteTerminal*, guint w, guint h, gpointer p) {
+        Terminal* self = static_cast<Terminal*>(p);
+        if (self->cellW_ > 0 && w > 0 && h > 0) {
+            self->cellW_ = (int)w;
+            self->cellH_ = (int)h;
+        }
+        if (self->atPtySize()) {
+            self->placeGrid();
+            self->panToCursor();
+        }
+        self->watchSize();
     }), this);
     // Run in Terminal waits for the shell's prompt, and a Return typed here
     // starts the look for the command's end (typeText, onCommandFinished).
@@ -331,6 +350,13 @@ void Terminal::makeTerminal() {
         auto caughtUp = +[](VteTerminal*, gpointer p) { static_cast<Terminal*>(p)->vteCaughtUp(); };
         g_signal_connect(vte_, "contents-changed", G_CALLBACK(caughtUp), this);
         g_signal_connect(vte_, "cursor-moved", G_CALLBACK(caughtUp), this);
+        // A grid larger than the view (another renderer's size) follows the
+        // cursor; nothing is done while it fits.
+        auto moved = +[](VteTerminal*, gpointer p) {
+            Terminal* self = static_cast<Terminal*>(p);
+            if (self->ptyCols_ || self->ptyRows_) self->panToCursor();
+        };
+        g_signal_connect(vte_, "cursor-moved", G_CALLBACK(moved), this);
     }
     // A key pressed in the terminal: what VTE commits while it is handled
     // is the user's typing, which ends the terminal's mark (onCommit; a
@@ -483,7 +509,7 @@ void Terminal::makeTerminal() {
     gtk_overlay_set_child(GTK_OVERLAY(root_), scroller);
     gtk_overlay_add_overlay(GTK_OVERLAY(root_), underline_);
     // A pty larger than the view (another renderer typed last) is drawn
-    // larger and clipped here, with no scroll bar of its own
+    // larger and clipped by the frame, with no scroll bar of its own
     // (followPtySize).
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_EXTERNAL, GTK_POLICY_AUTOMATIC);
     if (heldTerm_) attachShell();
@@ -564,53 +590,128 @@ void Terminal::rehost(std::shared_ptr<SessionLink::Link> link) {
     spawnShell();
 }
 
-bool Terminal::viewCells(int* cols, int* rows) const {
-    if (!vte_) return false;
-    GtkWidget* scroller = gtk_widget_get_parent(vte_);
+// VTE's cell, and what its laid out size holds beyond its cells: its CSS
+// padding and border (ThemeCss's 6px; not its natural size, which is
+// VTE's default 80x24 grid whatever its grid is). Only while VTE is on
+// screen: measuring a VTE that is not (its cell size, from every
+// TermShell) left a second window's hidden terminal showing nothing it was
+// typed (`processes`, its second window).
+bool Terminal::measureCells() {
+    if (!vte_ || !gtk_widget_get_mapped(vte_)) return false;
     VteTerminal* t = VTE_TERMINAL(vte_);
-    const double cw = (double)vte_terminal_get_char_width(t), ch = (double)vte_terminal_get_char_height(t);
-    if (!scroller || cw <= 0 || ch <= 0) return false;
-    // VTE's padding: what its allocation holds beyond its cells.
-    const int padW = std::max(0, gtk_widget_get_width(vte_) - (int)(vte_terminal_get_column_count(t) * cw));
-    const int padH = std::max(0, gtk_widget_get_height(vte_) - (int)(vte_terminal_get_row_count(t) * ch));
-    *cols = (int)((gtk_widget_get_width(scroller) - padW) / cw);
-    *rows = (int)((gtk_widget_get_height(scroller) - padH) / ch);
+    const int cw = (int)vte_terminal_get_char_width(t), ch = (int)vte_terminal_get_char_height(t);
+    if (cw <= 0 || ch <= 0) return false;
+    GtkBorder pad{}, border{};
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS   // GTK 4.10 left no other way to read them
+    gtk_style_context_get_padding(gtk_widget_get_style_context(vte_), &pad);
+    gtk_style_context_get_border(gtk_widget_get_style_context(vte_), &border);
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    cellW_ = cw;
+    cellH_ = ch;
+    padW_ = pad.left + pad.right + border.left + border.right;
+    padH_ = pad.top + pad.bottom + border.top + border.bottom;
+    return true;
+}
+
+// The view's own size in cells: the frame's (the scroller's viewport, less
+// a scroll bar that takes room), as VTE would have it laid out there.
+bool Terminal::viewCells(int* cols, int* rows) const {
+    if (!frame_ || cellW_ <= 0 || cellH_ <= 0) return false;
+    *cols = (gtk_widget_get_width(frame_) - padW_) / cellW_;
+    *rows = (gtk_widget_get_height(frame_) - padH_) / cellH_;
     return *cols >= 2 && *rows >= 1;
 }
 
 // The pty's size as the host says it (TermShell's cols and rows), the Mac's
 // rule (docs/notes/session-host.md, "Size"): never reflowing a program's
-// screen to this view. Larger than the view: VTE takes the pty's size and
-// the scroller clips it (no panning to the cursor yet). Smaller: VTE keeps
-// the view's grid, and the program draws in its top left.
+// screen to this view. While another renderer's size is in force, VTE has
+// exactly the pty's columns and rows, so the program's screen and plain
+// output's wrap are the pty's: larger than the view, the frame clips VTE
+// and the part on show follows the cursor (panToCursor); smaller, the rest
+// of the view is left empty, in the terminal's background.
 void Terminal::followPtySize(int cols, int rows) {
     if (!vte_ || cols < 2 || rows < 1) return;
     // This view's own size on its way (a size it sent), or a terminal not on
-    // screen (nothing to draw, and its cells not measured yet): no clipping.
+    // screen (nothing to draw, and its cells not to be measured): VTE at the
+    // view's own size. The host answers sizes in the order they were sent,
+    // so once the latest comes back the ones before it never will.
     bool own = !gtk_widget_get_mapped(vte_);
-    for (const auto& [c, r] : sentSizes_) own = own || (c == cols && r == rows);
+    for (size_t i = 0; i < sentSizes_.size(); i++) {
+        if (sentSizes_[i].first != cols || sentSizes_[i].second != rows) continue;
+        own = true;
+        if (i + 1 == sentSizes_.size()) sentSizes_.erase(sentSizes_.begin(), sentSizes_.begin() + (long)i);
+        break;
+    }
     if (own) {
-        if (ptyCols_ || ptyRows_) gtk_widget_set_size_request(vte_, -1, -1);
-        ptyCols_ = ptyRows_ = 0;
+        releasePtySize();
         return;
     }
+    if (!measureCells()) return;
     int vc = 0, vr = 0;
     if (!viewCells(&vc, &vr)) return;
-    const bool wider = cols > vc, taller = rows > vr;
-    if (own || (!wider && !taller)) {
-        if (ptyCols_ || ptyRows_) gtk_widget_set_size_request(vte_, -1, -1);
-        ptyCols_ = ptyRows_ = 0;
+    if (cols == vc && rows == vr) {   // the view's own grid already
+        releasePtySize();
         return;
     }
     if (cols == ptyCols_ && rows == ptyRows_) return;
     ptyCols_ = cols;
     ptyRows_ = rows;
+    placeGrid();
+    panToCursor();
+}
+
+void Terminal::releasePtySize() {
+    ptyCols_ = ptyRows_ = panRow_ = panCol_ = 0;
+    if (frame_) terminalFrameHold(frame_, 0, 0, 0, 0);
+}
+
+// The pty's grid, in VTE's cells and padding, moved up and left by the pan:
+// the frame lays VTE out so and clips it.
+void Terminal::placeGrid() {
+    if (!frame_ || (!ptyCols_ && !ptyRows_) || cellW_ <= 0 || cellH_ <= 0) return;
+    terminalFrameHold(frame_, ptyCols_ * cellW_ + padW_, ptyRows_ * cellH_ + padH_, panCol_ * cellW_,
+                      panRow_ * cellH_);
+}
+
+// tmux's pan: the cursor's cell kept in the part of the grid on show, the
+// part moved only as far as it takes. The cursor's row is counted from the
+// top of the program's screen (VTE's last rows), whatever is scrolled back.
+// An axis where the pty is no larger than the view is never panned.
+void Terminal::panToCursor() {
+    if (!vte_ || (!ptyCols_ && !ptyRows_)) return;
+    int vc = 0, vr = 0;
+    if (!viewCells(&vc, &vr)) return;
     VteTerminal* t = VTE_TERMINAL(vte_);
-    const double cw = (double)vte_terminal_get_char_width(t), ch = (double)vte_terminal_get_char_height(t);
-    const int padW = std::max(0, gtk_widget_get_width(vte_) - (int)(vte_terminal_get_column_count(t) * cw));
-    const int padH = std::max(0, gtk_widget_get_height(vte_) - (int)(vte_terminal_get_row_count(t) * ch));
-    gtk_widget_set_size_request(vte_, wider ? (int)(cols * cw) + padW + 1 : -1,
-                                taller ? (int)(rows * ch) + padH + 1 : -1);
+    long col = 0, row = 0;
+    vte_terminal_get_cursor_position(t, &col, &row);
+    const long rowsNow = vte_terminal_get_row_count(t), colsNow = vte_terminal_get_column_count(t);
+    long screenTop = 0;
+    if (GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(vte_)))
+        screenTop = (long)gtk_adjustment_get_upper(adj) - rowsNow;
+    const long r = std::max(0L, row - std::max(0L, screenTop)), c = std::max(0L, col);
+    int top = panRow_, left = panCol_;
+    if (ptyRows_ > vr) {
+        if (r < top) top = (int)r;
+        else if (r >= top + vr) top = (int)(r - vr + 1);
+        top = std::max(0, std::min(top, (int)std::max(0L, std::min<long>(ptyRows_, rowsNow) - vr)));
+    } else {
+        top = 0;
+    }
+    if (ptyCols_ > vc) {
+        if (c < left) left = (int)c;
+        else if (c >= left + vc) left = (int)(c - vc + 1);
+        left = std::max(0, std::min(left, (int)std::max(0L, std::min<long>(ptyCols_, colsNow) - vc)));
+    } else {
+        left = 0;
+    }
+    setPan(top, left);
+}
+
+void Terminal::setPan(int row, int col) {
+    if (row == panRow_ && col == panCol_) return;
+    panRow_ = row;
+    panCol_ = col;
+    placeGrid();
 }
 
 std::string Terminal::title() const {
@@ -664,8 +765,10 @@ Terminal::~Terminal() {
         g_source_remove(runTimer_);
         if (runDone_) runDone_("the window was closed");
     }
-    if (underline_)
+    if (underline_) {
+        g_signal_handlers_disconnect_by_data(underline_, this);   // its resize pans and sends the size
         gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(underline_), nullptr, nullptr, nullptr);
+    }
 }
 
 // ---------------------------------------------------------------- links
@@ -1175,6 +1278,7 @@ void Terminal::applyColors(const Settings& s) {
     // The block cursor's text is the background color, solid so it stays legible.
     GdkRGBA cursorFg = gdk(Rgba::hex(bgColor.rgb()));
     vte_terminal_set_colors(VTE_TERMINAL(vte_), &fg, &bg, palette_, 16);
+    if (frame_) terminalFrameSetBackground(frame_, bg);   // where VTE leaves the view empty
     vte_terminal_set_color_cursor_foreground(VTE_TERMINAL(vte_), &cursorFg);
     linkColor_ = fg;   // the underline under a hovered link
 }
@@ -1365,13 +1469,24 @@ void Terminal::sendSize() {
     if (!vte_ || !hostTerm_) return;
     VteTerminal* t = VTE_TERMINAL(vte_);
     int cols = (int)vte_terminal_get_column_count(t), rows = (int)vte_terminal_get_row_count(t);
-    // VTE held at a larger pty's size: the view's own size is the scroller's.
-    if ((ptyCols_ || ptyRows_) && !viewCells(&cols, &rows)) return;
+    // The view's own size is the frame's once VTE's cell is known: VTE's
+    // grid is another renderer's while held, and still that one until VTE
+    // is laid out again after it is let go (sent then, it made this view
+    // the pty's size back, 40x6 after 104x10 in `host_wrap`).
+    int vc = 0, vr = 0;
+    if (viewCells(&vc, &vr)) {
+        cols = vc;
+        rows = vr;
+    } else if (ptyCols_ || ptyRows_) {
+        return;
+    }
     if (cols < 2 || rows < 1 || (cols == sentCols_ && rows == sentRows_)) return;
     sentCols_ = cols;
     sentRows_ = rows;
+    // On their way until the latest comes back (followPtySize); a divider
+    // dragged sends many before the first answer.
     sentSizes_.push_back({cols, rows});
-    if (sentSizes_.size() > 4) sentSizes_.erase(sentSizes_.begin());
+    if (sentSizes_.size() > 32) sentSizes_.erase(sentSizes_.begin());
     link_->client().resizeTerminal(hostTerm_, cols, rows);
     if (navLine_ >= 0) gtk_widget_queue_draw(underline_);
 }

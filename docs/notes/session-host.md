@@ -172,6 +172,9 @@ top of a turn, never inside a text system callback.
 
 - **A tree listing runs on the host's thread**, between typing messages;
   hence `kMaxListed`. Stage 7's bigger reads belong on a worker.
+- **GtkStack moves the keyboard to a tab's first pane** when it shows
+  another tab with the keyboard in the one going ("Terminal splits in the
+  record"): `TerminalDock::activate` hands it to the tab's active pane.
 - **Confine with `confinedPath`, never by spelling.** A path from a page
   is held inside the folder by its `realpath` (symlinks followed) and
   must not hold "..", ".", empty names or a leading '/'; the Mac's `open`
@@ -209,6 +212,12 @@ top of a turn, never inside a text system callback.
   every message, and `SessionHost::inspect` waits at most its timeout, so
   a hang on the host's thread fails a check instead of hanging it
   (`term:dispatch`).
+- **A scrolled window gives a scrollable child its own size**, whatever
+  the child asks for (GTK's): VTE held at a larger pty never grew (step
+  2), and growing it by negative margins drew a Gtk-WARNING on every pan
+  (step 3). A child laid out larger or smaller than the view sits in a
+  scrollable box of its own that passes the adjustments through
+  (`linux/src/TerminalFrame.{h,cpp}`, "VTE pans").
 
 ## Terminals on the host (stage 5, the Mac)
 
@@ -322,8 +331,8 @@ reaches it over a socket. Both are in `mutible-cli` (the Mac's
 `Contents/MacOS/mutible-cli`, and the GTK binary, which hands the control
 channel's subcommands to the same `mutibleCliMain`), built from the core
 alone: `src/SessionServer.{h,cpp}` over `SessionHost`. GTK attaches with
-`editor.session-host = headless` (below, "GTK attaches"); the Mac does not
-yet.
+`editor.session-host = headless` (below, "GTK attaches"), and the Mac too
+(below, "The Mac reattaches").
 
 - **The socket.** `host-<FNV-1a of the resolved folder, 16 hex>.sock` in the
   first of `ControlChannel::socketFolders()` (ControlPaths.h, now shared by
@@ -465,9 +474,12 @@ document, terminal (dying ones included) or window is held
   grid ("Terminals on the host", **Size**) and the page (`tsize`, and the
   view following `TermShell`; 2026-11-18). GTK's VTE sends its answers
   as answers and follows the pty's size since step 2 ("GTK reattaches",
-  below), minimally: clipped when larger, no panning yet.
-- Saving, dirty, backups and the disk are still the app's (stage 7): a
-  headless host's unsaved document is only as safe as the host process.
+  below): clipped when larger, panned to the cursor since step 3, and at
+  the pty's own grid when smaller, so plain output wraps where the pty
+  wraps (2026-11-18, "VTE pans").
+- Saving, dirty and the disk are still the app's (stage 7). Backups are
+  the app's while one of its windows has the document open, and the
+  headless host's once none has (step 3, below).
 
 ### GTK attaches (stage 6, step 1)
 
@@ -614,8 +626,9 @@ it after the app quits; an in-process one while the app runs.
   `Document::attachHeld` reads the file, whose text counts as saved, so
   the tab is unsaved when the two differ. The undo history is the host's.
   After the session, the record's tab on show is put on show.
-- **Terminals** go to the dock in order, one tab each (splits are not
-  kept): `makeTerminal` gives each its held id (`Terminal::attachHeld`,
+- **Terminals** go to the dock as the record's layout has them (below,
+  "Terminal splits in the record"; a tab each for a record without one):
+  `makeTerminal` gives each its held id (`Terminal::attachHeld`,
   the pid and the host's TermShell at once, so busy() and the title work
   before it is shown), and when VTE is made it attaches (`attachShell`:
   TermAttach, the replay fed to VTE, then live output; the shell is zsh
@@ -642,29 +655,387 @@ it after the app quits; an in-process one while the app runs.
   (`termLooksLikeAnswer`: CSI ending in c, n, R, t, x or y, an OSC, a
   DCS, each whole) goes as an answer (`terminalInput(..., true)`), so it
   never takes the pty's size. TermShell's cols and rows are followed
-  (`followPtySize`): a pty larger than the view gets VTE at its size,
-  clipped by the scroller (its horizontal policy is EXTERNAL), with the
-  view's own size, from the scroller, still sent as this renderer's
-  (`viewCells`); a smaller one is drawn at the top left of VTE's own
-  grid. No panning to the cursor yet, and plain lines wrap at VTE's width
-  rather than the pty's. A size this view sent itself, or a VTE not
-  mapped, is never followed. **Trap:** measuring a VTE that is not on
-  screen (its cell size, from every TermShell) left a second window's
-  hidden terminal showing nothing it was typed (`processes`, its second
-  window); `followPtySize` returns before it measures.
+  (`followPtySize`): while another renderer's size is in force, VTE has
+  exactly the pty's columns and rows, laid out by its frame
+  (`TerminalFrame`, "VTE pans" below), clipped where it is larger than
+  the view and at the top left, the rest of the view the terminal's
+  background, where it is smaller; plain lines wrap at the pty's width.
+  The view's own size, from the frame, is still sent as this renderer's
+  (`viewCells`), and is from the frame whenever VTE's cell is known, held
+  or not: **trap**, VTE's grid is still the held one until VTE is laid
+  out again after it is let go, and a size tick sent it then as the
+  view's own, so the window's typing took the pty to 104x10 and back to
+  40x6 (`host_wrap` caught it). The part on show follows the cursor since step 3
+  (below). A size this view sent itself, or a VTE not mapped, is never
+  followed (`sentSizes_`, those still on their way: once the latest
+  comes back, the host having fitted in order, those before it go).
+  **Trap:** measuring a VTE that is not on screen (its cell size, from
+  every TermShell) left a second window's hidden terminal showing nothing
+  it was typed (`processes`, its second window); `followPtySize` returns
+  before it measures (`measureCells`), and the frame never measures a
+  cell: it is told sizes in pixels, and a new cell while held comes with
+  `char-size-changed`.
 - **Checks**: `make guitest`'s `host_reattach` (linux/tests/gui/
   HostReattachSuite.cpp; its header says what it checks), with
   `_host_reattach_child`, a second app process, for quit and relaunch.
 
-**Left before the default flips:** the Mac's half (closing detaching,
-reattaching); the browser's view lists a closed window's record among the
-windows; panning a larger pty to the cursor in VTE, and VTE's own wrap of
-plain output at a smaller pty's width; a held document with no path (none
-GTK makes) is left on the host; two held documents of one path (two
-windows on one file) come back as one tab, the other left on the host;
-terminal splits come back as tabs; a headless host's unsaved file is only
-as safe as the host process (no backup is kept for it once its window
-closes).
+### The host's own backups, untitled buffers, one path twice, panning (stage 6, step 3)
+
+The host-side items left before the default can flip (2026-11-18).
+
+- **Backups of what no window shows** (`Host::keepBackups`,
+  SessionHost.h's "Backups"; `HostOptions::backupDir`). `mutible host`
+  keeps them in the apps' own store and format (`Backups::defaultDir`:
+  `$MUTIBLE_BACKUP_DIR`, else `~/.local/share/mutible/Backups`, the Mac's
+  `~/Library/Application Support/Mutible/Backups`), owned by the host's
+  pid and start (`Backups::processStart`, each system's form, so the
+  apps' `isLive` reads them), so no app takes one while the host lives.
+  A document needs one when it is unsaved (dirty, or with no path and
+  some text) and no app's window has it open: an app is a renderer whose
+  Hello says it keeps backups (flag 4, `Client::setKeepsBackups`; GTK
+  sets it on every link, the Mac on the process's client and every folder
+  link's; a browser's view, a guest or `mutible attach` does not). Written at once when the last app seat goes (DocDetach, a
+  connection lost), then after edits from other renderers as the apps
+  time theirs (`SavePlan::Planner` on the host's thread, its due time
+  folded into `tick()`'s wait: a second after typing stops, at most five
+  after the first change not yet written); removed when the document is
+  saved, closed, or opened again by an app (whose own backup takes over:
+  GTK writes its own at once after reattaching, `backUpHeldDocuments`,
+  the Mac in `finishSessionAttach`).
+  What a stop by signal leaves unwritten is written as the host's thread
+  ends (`writeBackupsNow`). The entry's base is the file as the host finds
+  it when writing: its stamp when it reads as the host's saved text, a
+  stamp that cannot match when it holds something else (a restore then
+  asks Keep Mine or Reload), never there when it is missing and nothing
+  was saved. Writes are synchronous on the host's thread (an fsync each;
+  only for documents no window shows). After a crash, a kill or a reboot
+  the folder's next window restores them as its own (`planForRoot`), and
+  a launch opens a window for the folder (`foldersToReopen`).
+- **An untitled buffer** (a held document with no path, which only
+  another renderer makes): unsaved whatever its history says while it
+  holds text (`busyReason` keeps the host for it), and backed up under a
+  name in the folder that no file and no other buffer has
+  (`Backups::untitledPath`: Untitled-1, -2, ...); nothing is written
+  there. A window reattaching takes it (`Shared::reattachFrom`, below)
+  and shows it as the tab of that name, a file not on disk yet, unsaved
+  (`Editor::attachTab(id, name, false)`); the host keeps it pathless until
+  Ctrl+S writes the file, which tells the host the path
+  (`Document::tellHostPath` from `Editor::saveDocument`). A pathless
+  document with no text and nothing unsaved (a renderer's document before
+  it had a file) is never taken. GTK's `hostSavedFromDisk` now counts a
+  buffer whose file is not on disk as all unsaved (saved text ""), so a
+  restored backup of such a file keeps the host alive and backed up.
+- **What a window takes** moved to the core (`Shared::reattachFrom`,
+  SessionClient.h; GTK's `Link::free` and the Mac's `MCSession::Link::free`
+  call it): the latest free record and what it names, then what no record
+  names, oldest id first. **Never two documents of one path** in one
+  window: the record's own first, then those no record names; the others
+  stay on the host for the folder's next window, so two windows on one
+  file, both closed unsaved, come back as the latest one's text in the
+  next window and the other's in the window after it. `all` (the checks'
+  `endDetached`) takes everything free.
+- **VTE pans** (`Terminal::panToCursor`, on `cursor-moved` only while
+  clipped, and when the clipping starts): the first row and column on
+  show (`panRow`, `panCol`) move only as far as keeps the cursor's cell
+  in the frame. **Step 2's clipping had never grown VTE**: the
+  scrolled window gives a scrollable child its own size whatever it asks
+  for, so VTE stayed at the view's grid (104x10 against a 300x120 pty in
+  `host_pan`). Step 3 grew it by negative margins, which drew a
+  Gtk-WARNING ("adjusted size ... must not decrease below min") on every
+  pan; since 2026-11-18 VTE sits in a frame instead
+  (`linux/src/TerminalFrame.{h,cpp}`, a GtkWidget implementing
+  GtkScrollable): the frame is the scrolled window's child and passes
+  its adjustments and scroll policies through to VTE, so the scroll bar,
+  the wheel and the scrollback are VTE's as before; it measures as VTE
+  does (VTE's natural size is its default 80x24 grid whatever it is laid
+  out at, so a held grid asks the view for nothing and a pane beside it
+  never moves), lays VTE out at its own size, or at the
+  size and offset `Terminal::placeGrid` holds it at (the pty's cells and
+  VTE's padding, moved up and left by the pan), clips it (overflow
+  hidden), and paints the terminal's background (`applyColors`) to the
+  right of and below VTE, never under it (a translucent color would
+  double). A press in that empty part gives VTE the keyboard. The
+  cursor's row counts from the top of the program's screen (VTE's last
+  rows). Released (`releasePtySize`), VTE has the frame's size at (0, 0)
+  again. **A smaller pty** gets the same hold with no pan: VTE has the
+  pty's columns and rows, so a line longer than the pty with no cursor
+  positioning wraps where the pty wraps (VTE rewraps what it has when
+  held, so output that came before the TermShell wraps there too).
+- **Checks**: `make test`'s `hostbackup:helpers`, `hostbackup:detach-
+  unsaved`, `hostbackup:untitled`, `hostbackup:restore` (over the socket,
+  stopped as a signal stops it), `reattach:two-of-one-path`,
+  `reattach:untitled` (tests/session_backups_tests.inc); `make guitest`'s
+  `host_backups` (the host's backup at Keep Unsaved, reattached while it
+  lives, an untitled buffer a client left, the host SIGKILLed and a new
+  window restoring both, two windows on one file), `host_pan` (with no
+  Gtk-WARNING or Gtk-CRITICAL while it pans: `MCGuiLogWatchStart`, the
+  harness's GLib log writer) and `host_wrap` (a smaller pty: VTE's grid
+  is the pty's, the line wraps at its width, the empty part is VTE's
+  background by pixels, the wheel, a drag's selection and a click's
+  focus still VTE's, and the window typing takes the pty back in one
+  step).
+
+### Terminal splits in the record (stage 6, 2026-11-18)
+
+A window's record keeps how its dock's terminals sit, so the folder's
+next window puts split panes back as splits (linux/HANDOFF.md item 106).
+`src/TermDockRecord.{h,cpp}` (core, `Shared::TermDock`) writes and reads
+it for both apps; GTK does both, **the Mac's session should** (below).
+
+- **The field.** `"termLayout"` in the record's tabs (the WindowTabs
+  json), beside `"terms"`, which stays the flat list it was (an app
+  before the layout reads `terms` alone; the browser's view still reads
+  only `terms`):
+
+      "terms": [11, 12, 13, 14],
+      "termLayout": {
+        "tabs": [
+          {"columns": [[11], [12, 13]],
+           "columnShares": [0.6, 0.4],
+           "rowShares": [[1], [0.25, 0.75]],
+           "activeColumn": 1, "activeRow": 0},
+          {"columns": [[14]], "columnShares": [1], "rowShares": [[1]],
+           "activeColumn": 0, "activeRow": 0}
+        ],
+        "activeTab": 1
+      }
+
+  One entry per dock tab, in the strip's order. `columns` holds host
+  terminal ids, columns left to right, each top to bottom: the shape of
+  `TerminalLayout::Layout`, which both docks use (GTK's `TerminalGroup`,
+  the Mac's `MCTerminalPanel`), one level deep, so a split's direction is
+  where its pane is (Split Terminal makes a column, Split Terminal Down
+  stacks a pane in its column). `columnShares` are the columns' shares of
+  the width, `rowShares[c]` the panes' shares of column c's height (the
+  layout's fractions, written to four places), `activeColumn` and
+  `activeRow` the tab's pane with the keyboard, `activeTab` the tab on
+  show. The keys are the window list's for a terminal tab
+  (TabSessions.cpp's `encodeTerminalTab`) with ids where that has panes.
+  A pane not on the window's host (a terminal from before Open Folder) or
+  with no shell yet is left out of `terms` and of the layout alike
+  (`termLayoutJson` drops id 0, its share to its neighbour); a dock with
+  none writes no `termLayout`.
+- **Reading** (`termDockFrom(Reattach::tabs, ids of Reattach::terms)`,
+  after `reattachFrom`): only the terminals the window took, each once.
+  A pane naming one that is gone (its shell ended while no window showed
+  it: the host ends the terminal and its state no longer lists it) or
+  that another window shows drops out, its share given to its neighbour
+  as closing it would (`TerminalLayout::removePane`), the others keeping
+  their places; the active pane, if it went, is the one the keyboard
+  would move to (above, else below; a column gone, the column before,
+  else after); a tab left with none goes, the tab on show moving as
+  closing it would. Shares that do not read or do not match their panes
+  are equal ones. Taken terminals the layout does not place (a record
+  with no `termLayout`, terminals no record names) follow as a tab each
+  in `terms` order, and with no layout the first tab is on show.
+  `TermDock::order()` is the order a dock makes them back: tab by tab,
+  column by column, top to bottom.
+- **GTK writes it** in `reportTerminals` (main.cpp), from each
+  `TerminalGroup`'s columns, layout and active pane, on every dock change
+  (`onChanged`: a split, a pane closed, a tab added, closed, moved or
+  selected, a pane given the keyboard) and when a boundary moves (a bar
+  dragged, the keyboard's resize: `TerminalGroup::onSharesChanged`, told
+  by the dock 300 ms after the last move, `TerminalDock::onSharesChanged`),
+  and once more as the window detaches. `Link::windowTerminals` keeps it
+  beside `terms`; a record that changes only past the fourth place of a
+  share is not sent again.
+- **GTK rebuilds it** (`takeHeldTerminals`, `buildHeldTerminals`): the
+  held terminals queued in `order()`, so `makeTerminal` gives each pane
+  its held id as the dock makes it; the dock's first tab (made with the
+  window) is the layout's first; `TerminalDock::restoreTab` makes the
+  rest of each tab's panes (`TerminalGroup::append`: a new column or the
+  foot of the last, with no size rule, since the record's panes fit
+  where they were) and sets the shares (`setShares`) and the active
+  pane; then the record's tab on show is shown with its active pane as
+  the window's terminal (`focusPane(t, false)`: the keyboard stays where
+  it was). Open Folder adds the new folder's tabs after the dock's own.
+  **Trap:** with the keyboard in the dock, GtkStack showing another tab
+  gives it to that tab's first pane (`gtk_widget_child_focus`), whose
+  focus-in took the tab's active place, so every tab switch (a click on
+  the strip, Next Terminal) lost the pane the record named and put the
+  first one in it (`host_splits` saw the restored pane replaced as soon as
+  the dock was shown and a tab picked). `TerminalDock::activate` now
+  ignores focus-ins while it switches and gives the keyboard, when the
+  dock had it, to the tab's active pane.
+- **For the Mac's session:** `MCSessionWindow`'s record adds
+  `termLayout` from each panel tab's `columns` and `layout` (`Shared::
+  termLayoutJson`, ids as in its `terms`), and its reattach builds the
+  panel's tabs from `termDockFrom` rather than one tab each (the panel's
+  split code already keeps `TerminalLayout::Layout` per tab). The
+  window's `terms` and the held terminals' order stay as they are.
+- **Checks**: `make test`'s `termdock:*` (tests/term_dock_record_tests.inc:
+  the exact shape, a record without the layout, terminals gone from the
+  middle, top or a whole column with the neighbours and active pane
+  following, whole tabs, records that do not read, through
+  `reattachFrom`), and `make guitest`'s `host_splits` (HostSplitsSuite.cpp:
+  over a headless host, split right then down with boundaries moved and a
+  second tab, a plain detach, back the same; a shell killed while
+  detached, its pane left out; the record rewritten without the layout,
+  a tab each).
+
+**Left before the default flips:** the browser's view lists a closed
+window's record among the windows;
+the Mac's half of the terminal splits in the record (above).
+
+### The Mac reattaches (stage 6, step 2)
+
+The Mac's half of the above, with GTK's behavior and words (Keep Unsaved,
+Reconnect, the status bar's sentences). `mac/src/SessionLink.{h,mm}` now
+has links (`MCSession::Link`), `mac/src/SessionWindow.{h,mm}` a window's
+place on its link, and `EditorController+Session.mm` the window's hooks.
+
+- **Links.** The process's link (`processLink()`) wraps the one in-process
+  host and client there always were: `editor.session-host = on`, and the
+  fallback. With `headless` (or `MUTIBLE_HOST=socket`; any other
+  `MUTIBLE_HOST` keeps the process's), `forFolder` gives one link per
+  resolved folder: the folder's `mutible host`, found by its socket or
+  started as `mutible-cli host --folder DIR` from beside the executable
+  (the bundle's Contents/MacOS, build/ for the checks) with `posix_spawn`
+  (`POSIX_SPAWN_SETSID`, `CLOEXEC_DEFAULT`, signals at their defaults,
+  stdout and stderr to `~/Library/Logs/Mutible/host-<hash>.log`,
+  `--idle-minutes` from `MUTIBLE_HOST_IDLE_MINUTES`), reaped by a thread
+  of its own when it ends while the app runs. The window waits up to 5 s
+  for its socket, connects (`HostLink::connect`), settles and checks
+  `idBase()`; anything failing logs why (os_log, category session) and
+  the window takes the process's link. A link's wake dispatches on the
+  main queue through a weak pointer. Each `MCSessionDoc` and host
+  `TerminalView` keeps the link it was opened on (`MCSessionLinkRef`):
+  a tab's is its window's (`MCTabOwner sessionLinkForTab:`), else the
+  live folder link holding its path (`linkForPath`), else the process's;
+  a terminal's comes from its panel (`MCTerminalPanel sessionPlace`).
+  `MCSessionCheckTabs` checks each tab against its own link's host.
+- **The record.** `MCSessionWindow` (an associated object of the
+  controller, so no new ivars) holds the window's link, its id there
+  (`Link::newWindow`) and its record, the shape `MCSessionBrowser` used
+  to report, now sent every half second while the setting is on
+  (`Link::windowTabs` sends only a change), whether or not a page
+  serves it. The page's server takes the window's id and link from it
+  (a folder link's page attaches over the host's socket, `hostSocket`)
+  and no longer closes the record when it stops.
+- **Opening** (`attachSessionHeld`, before `restoreWindowLayout`, and
+  `finishSessionAttach` after `finishRestoringWindow`; Open Folder calls
+  `sessionFolderChanged` and the same two around its `restoreSession`).
+  `Link::takeForWindow` is GTK's `free()`, plus one rule for the
+  process's link, which serves every folder: only records whose `root` is
+  the window's folder, and only unnamed held documents under it (unnamed
+  terminals only on a folder's host). Each held document becomes a tab
+  (`MCTab attachHeld:link:`: `DocOpen` with an empty text, the host's text
+  taken as one insertion while `initWithTab:held:link:` settles, set as
+  the tab's text without telling the host); unsaved when the file on disk
+  differs. The tab keeps `heldFromHost` until first shown:
+  `loadActiveTab` then reads the file as the saved text without
+  forgetting the history or resetting the host. `restoreSession` passes
+  over a path open already and removes that path's backup. Held
+  terminals wait in the window (`nextTermPlace`): a window brought back
+  with terminal tabs gives them to those, and the rest open as tabs in
+  the dock, which is shown. A `TerminalView` given a held terminal
+  (`attachHeldShell`) makes a fresh screen at the host's size, attaches
+  (the replay, then output; replay bytes are never acknowledged), and
+  says its own size. Its marks count only with the nonce this process gave
+  the shell (`HostNonces`); its prompt state starts from the host's
+  `TermShell`. A shell from before a relaunch has no nonce here and runs
+  without the integration's marks (the foreground decides, as after
+  `exec bash`).
+- **Closing** (`detachFromSessionHost`, first in `windowWillClose:`, and
+  for every window in `applicationWillTerminate:`): the record goes once
+  more, marked `"detached": true` (`Link::windowDetached`; `WindowClose`
+  instead when it names nothing), each terminal `detachFromSessionHost`s
+  (`TermDetach`; its pid forgotten, so closing the view hangs nothing up),
+  each document `detach`es (`DocDetach`) but those the question's Don't
+  Save named, which close; then every link involved settles.
+- **The question** (`confirmCloseAllTabsClosing:`, from
+  `windowShouldClose:` and quitting): on a headless host that is there it
+  is Save (Save All), Keep Unsaved, Don't Save, Cancel (1000 to 1003),
+  with GTK's detail line. Otherwise the three answers as before; either
+  way the tabs still unsaved after a Don't Save close on the host.
+- **Paths.** `MCTab setCurrentPath:` tells its document (`pathChanged`:
+  `DocPath` when it differs from what the host has).
+- **The host gone.** The window's lost listener flashes GTK's sentence
+  and adds a Reconnect button to the status bar (left of ↻); each host
+  terminal on the link writes a line and starts no shell. Reconnect
+  (`reconnectSessionHost:`), or a new window on the folder, makes a new
+  link, and every window still on the lost one moves (`moveToSessionLink:`):
+  its record anew, each document `rehostOn:saved:` (a new id, the buffer's
+  text, the file's text as the host's saved text and the difference an
+  edit outside the history, so the host counts it unsaved), each terminal
+  `rehostOn:` (a new shell). A host that cannot be had again: the
+  process's link takes them, so nothing typed is lost either way.
+- **Checks.** `make guitest SUITES=host_reattach` (HostReattachSuite.mm;
+  its header says what it checks): with `on`, a closed window's saved
+  file and running shell back in the folder's next window under the same
+  ids, the replay, another command; with `headless`, a host the window
+  started, Keep Unsaved, `attach --dump` showing the file unsaved and the
+  shell, the next window's tab back with the typed text and unsaved, the
+  same shell; the host killed, Reconnect shown, typing on, Reconnect
+  starting a new host with everything typed unsaved there and a new
+  shell; Don't Save. The harness ends what closed windows left between
+  suites (`MCSession::endDetached`).
+- **Not yet:** quitting asks Keep Unsaved on a headless host but Restart
+  keeps its backups as before.
+
+### The Mac's half of step 3
+
+GTK's step 3 ("The host's own backups, untitled buffers, one path twice,
+panning", above), on the Mac. All of it applies with
+`editor.session-host` on or headless; the default (off) is unchanged.
+
+- **Hello flag 4.** The process's client (`Start`) and each folder link's
+  (`startSocket`) call `setKeepsBackups(true)`; `MCSessionConnectViewer`'s
+  clients (the browser's view) do not.
+- **The backup folder.** A host the Mac starts gets `MUTIBLE_BACKUP_DIR`
+  set to `[MCBackupStore shared].directory` (`MCSessionHostEnvironment`):
+  the CLI finds the store by `$HOME`, and the app's is by
+  `NSHomeDirectory` (`CFFIXED_USER_HOME` in the checks), or
+  `$MUTIBLE_BACKUP_DIR` already. Under `MUTIBLE_DEMO` and `MUTIBLE_BENCH`
+  (no store) the environment is passed as it is.
+- **What a window takes** is `Shared::reattachFrom`'s (`Link::free`). The
+  process's link serves every folder, so before the core chooses, a record
+  whose `root` is another folder is added to the open windows' ids (left
+  alone, with what it names), and of the documents only those a record
+  names or under the folder stay, and of the terminals only those a record
+  names. `takeForWindow` closes the window's own id on the host when it
+  takes a record (WindowClose, whether or not it was ever reported).
+- **An untitled buffer** (a held document with no path) becomes the tab of
+  `Backups::untitledPath` in the folder as the host names it (the link's,
+  resolved: `/private/tmp` where the window's root says `/tmp`, so the tab
+  is the file the host's backup names; no file, no tab and no other held
+  document of that name), marked `MCTab untitled`: unsaved, not
+  "(deleted)", no disk stamp, never auto-saved. The Mac has no untitled
+  tabs of its own (New File asks for a name and makes the file), so it is
+  a file's tab whose file is not on disk yet. Its `MCSessionDoc` has the
+  host's path "" (`HostPathOf`), so a rename tells the host nothing; Cmd+S
+  writes the file, clears `untitled` and sends `DocPath` before
+  `DocSaved` (`saveTab:` in EditorController+Tabs.mm).
+- **Its own backups at once** (`finishSessionAttach`, after the session
+  restored the rest): `writeBackups` when any held document became a tab,
+  since the host let go of its own as the tab opened it.
+- **A file not on disk is wholly unsaved** (`MCSessionDoc hostSaved:`,
+  GTK's `hostSavedFromDisk`: the host's copy reset to the saved text, the
+  difference an edit outside the history). `rehostOn:saved:` takes ""
+  for an untitled tab, a gone one, or a file that is not there
+  (`hostSavedTextOf:`); a backup restored when its tab is first shown
+  (`loadActiveTab`, `sessionRestoredBackupOf:saved:`) counts against the
+  file's text, "" when gone, where it had been the host's saved text; a
+  held document the host has saved whose file is gone from disk is reset
+  that way as it attaches (its undo history goes), so a headless host
+  keeps it, and backs it up, if this window leaves it again.
+- **Checks:** `host_reattach`'s step 3 part (HostReattachSuite.mm's
+  header): the host started with `MUTIBLE_BACKUP_DIR` out of the app's
+  environment backs up into the app's store under its pid at Keep
+  Unsaved, the window's backup gone; a saved file deleted on disk, an
+  untitled buffer and a second document of the unsaved file (a script
+  over the socket) left on the host; the next window has one tab of the
+  file (the record's document, the other still held), the deleted file
+  unsaved and gone (and unsaved in `attach --dump`), Untitled-1 unsaved
+  and not on disk with the host keeping no path, its own backups written
+  as it opened and the host's gone; Cmd+S writes Untitled-1 and the dump
+  then shows its path, saved.
+- **Trap:** `stringByResolvingSymlinksInPath` drops `/private` from
+  `/private/tmp/...`, so the Mac's backup root (`sessionKey`) for a folder
+  under /tmp is not the host's (`resolveFolder`, realpath): a host's
+  backup of a folder under /tmp is not found by the window's restore.
+  Real folders under the home are the same either way; the checks use a
+  realpath'd folder.
 
 ## The browser's view (stage 6b)
 
@@ -794,11 +1165,12 @@ Cancel.
   returns stops deliveries before the client goes). The state's folder is
   not checked then (one host serves every window), and `run()` does not
   look for a socket file.
-- **One window's tabs.** The Mac reports nothing to the host about windows
-  otherwise, so while a server runs the window sends `Client::windowTabs`
+- **One window's tabs.** The window's record (`MCSessionWindow`, since
+  stage 6 sent while the setting is on, a server running or not; "The Mac
+  reattaches") is what the page shows: the window sends `Client::windowTabs`
   (`windowJson`'s shape, by hand: groups of tabs with a document on the
   host, each group's tab on show) every half second when it changed, and
-  `windowClosed` when it stops. `Web::Options::window` keeps the state the
+  closing, leaves it marked detached. `Web::Options::window` keeps the state the
   browsers get to that window and its documents, and a `show` of any other
   document answers `gone`. The window's id is the client's (`newId()`,
   below).

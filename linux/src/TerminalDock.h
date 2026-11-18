@@ -68,8 +68,17 @@ public:
     bool resizeActive(TerminalGroup::Dir d);
     // The active pane is alone in its column: Up and Down resize the dock.
     bool activeAloneInColumn() const;
-    // The keyboard to `t`, in its tab (shown first).
-    void focusPane(Terminal* t);
+    // The keyboard to `t`, in its tab (shown first); `focus` false makes it
+    // the active pane and shows its tab, the keyboard left where it is.
+    void focusPane(Terminal* t, bool focus = true);
+    // Reattaching (stage 6, TermDockRecord.h): a tab with the shape a
+    // window's record kept: `rows[c]` panes in column c, made by the factory
+    // column by column, top to bottom, the shares and the active pane as
+    // recorded. `into` is a tab holding one pane, the shape's first; -1
+    // makes a new tab at the end, its first pane too. No size rule: the
+    // panes fit where they were. Returns the tab's index.
+    int restoreTab(int into, const std::vector<size_t>& rows, const TerminalLayout::Layout& shares,
+                   int activeColumn, int activeRow);
 
     // A new terminal right of the active one, shown. `title` is a user title.
     Terminal* newTerminal(const std::string& title = std::string());
@@ -89,8 +98,12 @@ public:
     std::function<void(Terminal*)> onActiveChanged;
     // The last tab was closed: hide the dock.
     std::function<void()> onEmpty;
-    // A tab added, closed, moved or renamed.
+    // A tab added, closed, moved or renamed; a pane split, closed or given
+    // the keyboard.
     std::function<void()> onChanged;
+    // A boundary between panes moved (a bar dragged, the keyboard's
+    // resize), a third of a second after the last move.
+    std::function<void()> onSharesChanged;
     // Asked before a busy terminal closes; `proceed` closes it. Unset: closes.
     std::function<void(Terminal*, std::function<void()> proceed)> confirmClose;
 
@@ -102,6 +115,7 @@ private:
     void remove(int i);          // a whole tab
     void removePane(Terminal* t);
     void step(int by);
+    void sharesMoved();
 
     std::function<Terminal*()> make_;
     GtkWidget* root_ = nullptr;
@@ -113,6 +127,8 @@ private:
     std::vector<std::unique_ptr<TerminalGroup>> groups_;
     int active_ = 0;
     bool closingAll_ = false;
+    bool switching_ = false;   // activate() showing another tab
+    guint sharesTimer_ = 0;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
 

@@ -2,7 +2,7 @@
 // a bracketed paste can never end its bracket early or send an escape
 // sequence (TerminalScreen::encodePaste), and when a paste of several lines
 // asks first (TerminalScreen::checkPaste, VS Code's multi-line paste
-// warning).
+// warning), and what a drop of files types (TermDrop, term:drop).
 
 namespace {
 
@@ -228,5 +228,126 @@ void testTerminalPaste() {
         CHECK(!TerminalScreen::checkPaste("\x1b[201~", true, "auto").ask);
         CHECK(!TerminalScreen::checkPaste("echo hi\x0f", true, "always").ask);
         CHECK(TerminalScreen::checkPaste("a\x0f\nb", true, "always").ask);
+    }
+}
+
+namespace {
+
+// The words bash makes of `line`, each ended by a NUL; "<no shell>" when
+// there is no bash to ask.
+std::string dropShellWords(const std::string& line) {
+    if (access("/bin/bash", X_OK) != 0) return "<no shell>";
+    char tmpl[] = "/tmp/mcdropXXXXXX";
+    const int fd = mkstemp(tmpl);
+    if (fd < 0) return "<no shell>";
+    const std::string script = "printf '%s\\0' " + line + "\n";
+    const bool wrote = write(fd, script.data(), script.size()) == (ssize_t)script.size();
+    close(fd);
+    std::string out = "<no shell>";
+    if (wrote) {
+        FILE* p = popen(("/bin/bash " + std::string(tmpl)).c_str(), "r");
+        if (p) {
+            out.clear();
+            char buf[4096];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof buf, p)) > 0) out.append(buf, n);
+            pclose(p);
+        }
+    }
+    unlink(tmpl);
+    return out;
+}
+
+// How Claude Code reads one pasted path (2.1.327's image paste): trimmed,
+// one outer pair of quotes taken off, then "\\" kept as one backslash and
+// every other backslash dropped before the character it escapes.
+std::string claudeReadsPath(std::string s) {
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\n')) s.pop_back();
+    while (!s.empty() && s.front() == ' ') s.erase(0, 1);
+    if (s.size() >= 2 && (s.front() == '"' || s.front() == '\'') && s.back() == s.front())
+        s = s.substr(1, s.size() - 2);
+    std::string out;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            out += s[i + 1];
+            i++;
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
+// Claude Code's split of one pasted line into paths: at a space followed by
+// "/" (or a quote and "/").
+std::vector<std::string> claudeSplits(const std::string& line) {
+    std::vector<std::string> out;
+    size_t from = 0;
+    for (size_t i = 0; i + 1 < line.size(); i++) {
+        if (line[i] != ' ') continue;
+        const size_t next = (line[i + 1] == '"' || line[i + 1] == '\'') ? i + 2 : i + 1;
+        if (next < line.size() && line[next] == '/') {
+            out.push_back(line.substr(from, i - from));
+            from = i + 1;
+        }
+    }
+    out.push_back(line.substr(from));
+    return out;
+}
+
+}  // namespace
+
+void testTerminalDrop() {
+    using TermDrop::quotePath;
+    GROUP("term:drop");
+    CHECK(quotePath("/Users/me/shot.png") == "/Users/me/shot.png");
+    CHECK(quotePath("/a b/Screen Shot.png") == "/a\\ b/Screen\\ Shot.png");
+    CHECK(quotePath("/x/it's \"so\".png") == "/x/it\\'s\\ \\\"so\\\".png");
+    CHECK(quotePath("/x/$HOME`id`!.png") == "/x/\\$HOME\\`id\\`\\!.png");
+    CHECK(quotePath("/x/back\\slash") == "/x/back\\\\slash");
+    CHECK(quotePath("/x/a;b&c|d(e)<f>*?[g]{h}~#=^") ==
+          "/x/a\\;b\\&c\\|d\\(e\\)\\<f\\>\\*\\?\\[g\\]\\{h\\}\\~\\#\\=\\^");
+    CHECK(quotePath("/x/a+b,c:d@e%f_g-h.i") == "/x/a+b,c:d@e%f_g-h.i");
+    // Non-ASCII goes as it is, a decomposed é (Finder's) included.
+    CHECK(quotePath("/x/caf\xC3\xA9 \xE6\x97\xA5\xE6\x9C\xAC.png") ==
+          "/x/caf\xC3\xA9\\ \xE6\x97\xA5\xE6\x9C\xAC.png");
+    CHECK(quotePath("/x/cafe\xCC\x81.png") == "/x/cafe\xCC\x81.png");
+    // A control character: ANSI-C quoting, since backslash-newline is a
+    // line continuation the shell drops.
+    CHECK(quotePath("/x/two\nlines.png") == "$'/x/two\\nlines.png'");
+    CHECK(quotePath("/x/t\tab 'q' \\ \x01\x7F") == "$'/x/t\\tab \\'q\\' \\\\ \\x01\\x7f'");
+    CHECK(quotePath("") == "''");
+    // Several: separated by spaces, with one after the last.
+    CHECK(TermDrop::paths({"/a b.png", "/c.png"}) == "/a\\ b.png /c.png ");
+    CHECK(TermDrop::paths({"/c.png"}) == "/c.png ");
+    CHECK(TermDrop::paths({}).empty());
+    {
+        // The shell reads each back as the very path, whatever it holds.
+        const std::vector<std::string> names = {
+            "/Users/me/Screen Shot 2026-11-18 at 10.00.00.png",
+            "/x/it's \"so\" $HOME `id` $(id) !! \\n \\ back\\slash",
+            "/x/a;b&c|d(e)<f>*?[g]{h}~#=^ ",
+            "/x/caf\xC3\xA9 \xE6\x97\xA5\xE6\x9C\xAC.png",
+            "/x/two\nlines\r\tand 'quotes' \\ \x1b[31m",
+            "~/not-home",
+            "-n",
+        };
+        std::string want;
+        for (const std::string& n : names) want += n + '\0';
+        const std::string got = dropShellWords(TermDrop::paths(names));
+        if (got != "<no shell>") {
+            CHECK(got == want);
+            if (got != want) std::printf("    bash read: %s\n", got.c_str());
+        }
+    }
+    {
+        // Claude Code finds each path, unquoted, in a drop of several, so it
+        // attaches each picture.
+        const std::vector<std::string> names = {"/Users/me/Screen Shot 1.png", "/tmp/it's.png",
+                                                "/tmp/a\\b.jpg"};
+        const std::vector<std::string> parts = claudeSplits(TermDrop::paths(names));
+        CHECK(parts.size() == names.size());
+        for (size_t i = 0; i < parts.size() && i < names.size(); i++)
+            CHECK(claudeReadsPath(parts[i]) == names[i]);
     }
 }

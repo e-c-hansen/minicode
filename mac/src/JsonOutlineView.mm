@@ -249,13 +249,42 @@ static NSColor *Muted(void) {
     return n && !n->children.empty();
 }
 
+// One line in a run of color: escapes (a value's line breaks, tabs, ...)
+// dimmed, what was cut ending in an ellipsis.
+static void AppendLine(NSMutableAttributedString *s, const JsonOutline::Line &line, NSFont *font,
+                       NSColor *color, NSParagraphStyle *para) {
+    NSDictionary *plain = @{NSFontAttributeName: font, NSForegroundColorAttributeName: color,
+                            NSParagraphStyleAttributeName: para};
+    NSDictionary *dim = @{NSFontAttributeName: font,
+                          NSForegroundColorAttributeName: [color colorWithAlphaComponent:0.45],
+                          NSParagraphStyleAttributeName: para};
+    size_t at = 0;
+    auto add = [&](size_t from, size_t to, NSDictionary *attrs) {
+        if (to > from)
+            [s appendAttributedString:[[NSAttributedString alloc]
+                                          initWithString:Str(line.text.substr(from, to - from))
+                                              attributes:attrs]];
+    };
+    for (const auto &e : line.escapes) {
+        add(at, e.first, plain);
+        add(e.first, e.second, dim);
+        at = e.second;
+    }
+    add(at, line.text.size(), plain);
+}
+
+// A row is one line, whatever its key or value holds: a string with line
+// breaks (a Markdown answer) wrapped inside the fixed-height row and drew
+// over the rows below. JsonOutline::oneLine escapes and caps it; the
+// paragraph style truncates it to the column, since an attributed string's
+// own style (word wrapping) overrides the field's lineBreakMode.
 - (NSAttributedString *)textFor:(const Node &)n {
     AppSettings *cfg = [AppSettings shared];
     NSFont *font = MCMonoFont(11.5, NSFontWeightRegular);
-    NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
-        initWithString:Str(JsonOutline::label(n))
-            attributes:@{NSFontAttributeName: font,
-                         NSForegroundColorAttributeName: [cfg text:Surface::Sidebar]}];
+    NSMutableParagraphStyle *para = [NSMutableParagraphStyle new];
+    para.lineBreakMode = NSLineBreakByTruncatingTail;
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    AppendLine(s, JsonOutline::oneLine(JsonOutline::label(n)), font, [cfg text:Surface::Sidebar], para);
     NSColor *valueColor = Muted();
     switch (n.kind) {
     case Kind::String: valueColor = [cfg syntax:TokenStyle::String]; break;
@@ -264,13 +293,34 @@ static NSColor *Muted(void) {
     case Kind::Null: valueColor = [cfg syntax:TokenStyle::Keyword]; break;
     default: break;
     }
-    std::string summary = JsonOutline::summary(n);
-    for (char &ch : summary)
-        if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
     [s appendAttributedString:[[NSAttributedString alloc]
-        initWithString:[@"  " stringByAppendingString:Str(summary)]
-            attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: valueColor}]];
+                                  initWithString:@"  "
+                                      attributes:@{NSFontAttributeName: font,
+                                                   NSParagraphStyleAttributeName: para}]];
+    AppendLine(s, JsonOutline::oneLine(JsonOutline::summary(n)), font, valueColor, para);
     return s;
+}
+
+// The row's tooltip: a string's value read from the text, longer than the
+// preview and with its line breaks, and a key the row had to escape or cut.
+- (NSString *)toolTipFor:(const Node &)n {
+    std::string value;
+    NSTextView *tv = _textView;
+    if (n.kind == Kind::String && !_stale && tv) {
+        NSString *text = tv.string;
+        const NSUInteger len = text.length;
+        const NSUInteger start = MIN((NSUInteger)n.start16, len);
+        // Enough of the literal for kTooltipChars characters, each at most
+        // a 12-unit surrogate escape; never a whole megabyte.
+        const NSUInteger end = MIN(MIN((NSUInteger)n.end16, len),
+                                   start + JsonOutline::kTooltipChars * 12 + 2);
+        // Whole characters: half a surrogate pair has no UTF-8.
+        const NSRange r = [text rangeOfComposedCharacterSequencesForRange:NSMakeRange(start, end - start)];
+        const char *c = [text substringWithRange:r].UTF8String;
+        if (c) value = JsonOutline::decodeString(c);
+    }
+    const std::string tip = JsonOutline::tooltip(n, value);
+    return tip.empty() ? nil : Str(tip);
 }
 
 - (NSView *)outlineView:(NSOutlineView *)ov viewForTableColumn:(NSTableColumn *)col item:(id)item {
@@ -280,25 +330,35 @@ static NSColor *Muted(void) {
         cell.identifier = @"node";
         NSTextField *tf = [NSTextField labelWithString:@""];
         tf.lineBreakMode = NSLineBreakByTruncatingTail;
+        tf.usesSingleLineMode = YES;
+        tf.maximumNumberOfLines = 1;
+        tf.cell.wraps = NO;
+        tf.cell.scrollable = NO;
+        tf.cell.truncatesLastVisibleLine = YES;
         tf.translatesAutoresizingMaskIntoConstraints = NO;
+        // A long value never widens the cell: it is cut at the column.
+        [tf setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+                                     forOrientation:NSLayoutConstraintOrientationHorizontal];
         [cell addSubview:tf];
         cell.textField = tf;
         [NSLayoutConstraint activateConstraints:@[
             [tf.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:2],
             [tf.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-2],
             [tf.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+            [tf.heightAnchor constraintLessThanOrEqualToAnchor:cell.heightAnchor],
         ]];
     }
     const Node *n = [self node:item];
     cell.textField.attributedStringValue = n ? [self textFor:*n] : [NSAttributedString new];
+    cell.textField.toolTip = n ? [self toolTipFor:*n] : nil;
     return cell;
 }
 
 - (NSString *)rowText:(NSInteger)row {
     const Node *n = [self node:[_outline itemAtRow:row]];
     if (!n) return @"";
-    return [NSString stringWithFormat:@"%@ %@", Str(JsonOutline::label(*n)),
-                                      Str(JsonOutline::summary(*n))];
+    return [NSString stringWithFormat:@"%@ %@", Str(JsonOutline::oneLine(JsonOutline::label(*n)).text),
+                                      Str(JsonOutline::oneLine(JsonOutline::summary(*n)).text)];
 }
 
 // ------------------------------------------------------------ linking

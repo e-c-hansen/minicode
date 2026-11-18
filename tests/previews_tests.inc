@@ -575,6 +575,75 @@ static void testJsonOutline() {
         CHECK(d.nodes[1].preview.substr(d.nodes[1].preview.size() - 3) == "\xE2\x80\xA6");
         CHECK(parse("[-1.5e3]").nodes[1].preview == "-1.5e3");
     }
+    GROUP("jsonoutline:one-line");
+    {
+        // A Markdown answer: its line breaks, tabs and CRs become escapes the
+        // outline draws dimmed, so the row stays one line.
+        JsonOutline::Line l = oneLine("# Title\n\nSome\ttext\r\nend");
+        CHECK(l.text == "# Title\\n\\nSome\\ttext\\r\\nend");
+        CHECK(l.text.find('\n') == std::string::npos && l.text.find('\t') == std::string::npos);
+        CHECK(l.escapes.size() == 5);
+        CHECK(l.escapes.size() == 5 && l.escapes[0].first == 7 && l.escapes[0].second == 9);
+        CHECK(l.escapes.size() == 5 && l.text.substr(l.escapes[2].first, 2) == "\\t");
+        CHECK(!l.cut && l.changed);
+        // Plain text is left alone.
+        JsonOutline::Line plain = oneLine("mutible");
+        CHECK(plain.text == "mutible" && plain.escapes.empty() && !plain.changed);
+        // Other control characters, NEL and the line separators too.
+        JsonOutline::Line ctl = oneLine(std::string("a\x01" "b\x7f" "c\xC2\x85" "d\xE2\x80\xA8" "e"));
+        CHECK(ctl.text == "a\\u0001b\\u007fc\\u0085d\\u2028e");
+        CHECK(ctl.escapes.size() == 4);
+        // Non-ASCII is kept, and counted in characters, not bytes.
+        JsonOutline::Line na = oneLine("Zo\xC3\xAB \xF0\x9F\x98\x80 \xE6\x97\xA5\xE6\x9C\xAC", 6);
+        CHECK(na.text == "Zo\xC3\xAB \xF0\x9F\x98\x80 \xE2\x80\xA6");
+        CHECK(na.cut);
+        CHECK(oneLine("Zo\xC3\xAB \xF0\x9F\x98\x80").text == "Zo\xC3\xAB \xF0\x9F\x98\x80");
+        // A byte that is not UTF-8 is U+FFFD, so the line can be shown at all.
+        CHECK(oneLine("a\xFF" "b").text == "a\xEF\xBF\xBD" "b");
+        CHECK(oneLine("a\xC3").text == "a\xEF\xBF\xBD");
+        // An escape is never split by the cut.
+        CHECK(oneLine("abc\ndef", 4).text == "abc\xE2\x80\xA6");
+        CHECK(oneLine("abc\ndef", 5).text == "abc\\n\xE2\x80\xA6");
+        // A megabyte costs what the kept part costs.
+        std::string huge(1 << 20, 'x');
+        for (size_t i = 0; i < huge.size(); i += 80) huge[i] = '\n';
+        const double t0 = cpuMs();
+        JsonOutline::Line h;
+        for (int k = 0; k < 100; k++) h = oneLine(huge);
+        CHECK_TIME(cpuMs() - t0, 20.0);
+        CHECK(h.cut);
+        CHECK(h.text.size() <= kLineChars + 3);
+        CHECK(h.text.find('\n') == std::string::npos);
+        // Keys too: a row's label goes the same way.
+        JsonOutline::Outline o = parse("{\"two\\nlines\": \"a\\n\\tb\", \"k\": 1}");
+        CHECK(o.ok && o.nodes.size() == 3);
+        CHECK(oneLine(label(o.nodes[1])).text == "two\\nlines");
+        CHECK(oneLine(summary(o.nodes[1])).text == "\"a\\n\\tb\"");
+    }
+    GROUP("jsonoutline:tooltip");
+    {
+        // The tooltip's value is read from the text, past the preview's cut,
+        // with its line breaks.
+        std::string lit = "\"line one\\nline two\\t\\u00e9\\ud83d\\ude00 \\\"q\\\" \\\\ end\"";
+        CHECK(decodeString(lit) == "line one\nline two\t\xC3\xA9\xF0\x9F\x98\x80 \"q\" \\ end");
+        CHECK(decodeString("\"ab\" trailing") == "ab");
+        // Cut by characters, or where the text given stops.
+        CHECK(decodeString("\"\xC3\xA9\xC3\xA9\xC3\xA9\"", 2) == "\xC3\xA9\xC3\xA9\xE2\x80\xA6");
+        CHECK(decodeString("\"abc", 10) == "abc\xE2\x80\xA6");
+        CHECK(decodeString("\"ab\\", 10) == "ab\xE2\x80\xA6");
+        std::string big = "\"" + std::string(100000, 'y') + "\"";
+        const std::string d = decodeString(big);
+        CHECK(d.size() == kTooltipChars + 3);
+        // What the row's tooltip says.
+        JsonOutline::Outline o = parse("{\"a\": \"x\\ny\", \"long\\nkey\": 2, \"n\": 3, \"e\": \"\"}");
+        CHECK(o.ok && o.nodes.size() == 5);
+        CHECK(tooltip(o.nodes[1], "") == "x\ny");
+        CHECK(tooltip(o.nodes[1], "whole value") == "whole value");
+        CHECK(tooltip(o.nodes[2], "") == "long\nkey");
+        CHECK(tooltip(o.nodes[3], "") == "");
+        CHECK(tooltip(o.nodes[4], "") == "");
+        CHECK(tooltip(o.nodes[0], "") == "");
+    }
     GROUP("jsonoutline:errors");
     {
         JsonOutline::Outline o = parse("{\n  \"a\": 1,\n  \"b\" 2\n}");

@@ -171,7 +171,10 @@ void TerminalGroup::dragTo(Bar* b, double offset) {
         moved = TerminalLayout::dragBoundary(layout_.rows[(size_t)b->col], (size_t)b->idx, pos,
                                              total(false), kGap, kMinRows * ch);
     }
-    if (moved) gtk_widget_queue_allocate(area_);
+    if (moved) {
+        gtk_widget_queue_allocate(area_);
+        if (onSharesChanged) onSharesChanged();
+    }
 }
 
 // One bar per boundary, kept while the boundary exists: bars are reused in
@@ -268,8 +271,35 @@ bool TerminalGroup::resize(const Terminal* of, Dir d, int cells) {
     else
         moved = TerminalLayout::nudge(layout_.rows[(size_t)c], (size_t)r, d == Dir::Down, cells * ch,
                                       total(false), kGap, kMinRows * ch);
-    if (moved) gtk_widget_queue_allocate(area_);
+    if (moved) {
+        gtk_widget_queue_allocate(area_);
+        if (onSharesChanged) onSharesChanged();
+    }
     return moved;
+}
+
+void TerminalGroup::append(Terminal* fresh, bool newColumn) {
+    if (newColumn || cols_.empty()) {
+        cols_.push_back({fresh});
+        layout_.columns = TerminalLayout::even(cols_.size());
+        layout_.rows.push_back(TerminalLayout::Fractions{1.0});
+    } else {
+        cols_.back().push_back(fresh);
+        layout_.rows.back() = TerminalLayout::even(cols_.back().size());
+    }
+    gtk_widget_set_overflow(fresh->widget(), GTK_OVERFLOW_HIDDEN);
+    gtk_box_append(GTK_BOX(area_), fresh->widget());
+    syncBars();
+    gtk_widget_queue_allocate(area_);
+}
+
+bool TerminalGroup::setShares(const TerminalLayout::Layout& l) {
+    if (l.columns.size() != cols_.size() || l.rows.size() != cols_.size()) return false;
+    for (size_t c = 0; c < cols_.size(); c++)
+        if (l.rows[c].size() != cols_[c].size()) return false;
+    layout_ = l;
+    gtk_widget_queue_allocate(area_);
+    return true;
 }
 
 bool TerminalGroup::aloneInColumn(const Terminal* of) const {

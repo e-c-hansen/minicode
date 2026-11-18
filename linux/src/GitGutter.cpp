@@ -347,9 +347,13 @@ void GitGutter::look() {
                 return;
             }
             auto text = std::make_shared<std::string>(editor_->text());
-            post([this, alive, src, path, gen, buffer, text] {
+            // The blob read as the file is (a Windows-1252 file's as
+            // Windows-1252, UTF-16 unit for unit), and staged back so.
+            const Document::FileEncoding enc =
+                editor_->active() ? editor_->active()->fileEncoding() : Document::FileEncoding();
+            post([this, alive, src, path, gen, buffer, text, enc] {
                 auto original = std::make_shared<QuickDiff::Original>(QuickDiff::readOriginal(
-                    src->blob, FolderSearch::TextEncoding::Utf8, false));
+                    src->blob, enc.encoding, enc.bom));
                 auto bars = std::make_shared<std::vector<QuickDiff::Bar>>(
                     QuickDiff::bars(original->text, utf16::fromUtf8(*text)));
                 deliver(alive, [this, src, path, gen, buffer, original, bars] {

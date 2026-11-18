@@ -229,10 +229,17 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
     if (r.files.empty()) return;
     if (r.active < 0) r.active = 0;
     for (const std::string &f : r.files) {
+        auto b = backupFor.find(f);
+        if (MCTab *open = [self tabForPath:[NSString stringWithUTF8String:f.c_str()]]) {
+            // Open here already: from the session's host when the window
+            // took what it held (stage 6), whose live text wins over a
+            // backup a process that went left of it.
+            if (b != backupFor.end() && open.session) [[MCBackupStore shared] removeID:@(b->second.c_str())];
+            continue;
+        }
         MCTab *t = [MCTab new];
         t.currentPath = [NSString stringWithUTF8String:f.c_str()];
         t.sidePreview = [besides containsObject:t.currentPath];
-        auto b = backupFor.find(f);
         if (b != backupFor.end() && ![self takeBackup:@(b->second.c_str()) intoTab:t] &&
             ![fm fileExistsAtPath:t.currentPath])
             continue;   // nothing to show: the backup does not read and the file is gone
@@ -621,7 +628,7 @@ static double MCMonoNow(void) { return NSProcessInfo.processInfo.systemUptime; }
     p.dirty = t.dirty;
     p.keepsText = [self tabTakesBackup:t];
     // What tabTakesAutoSave asks besides those two.
-    p.mayAutoSave = t.loaded && !t.gone && t != _formatSaveTab &&
+    p.mayAutoSave = t.loaded && !t.gone && !t.untitled && t != _formatSaveTab &&
                     !(t == _activeTab && _agent.editPending);
     p.generation = t.textGeneration;
     if (const char *path = t.currentPath.UTF8String) p.path = path;
@@ -834,8 +841,10 @@ static NSString *MCTabEncodingName(MCTab *t) {
 // Cmd+S, as VS Code leaves it with afterDelay), no keep-sorted (it would
 // rewrite text under the caret), and never a question. A file changed on
 // disk since it was read is skipped and named in the status bar, and Cmd+S
-// asks Keep Mine or Reload as before; a file gone from disk, a tab never
-// read yet, and a tab whose Cmd+S waits for its formatter are left alone.
+// asks Keep Mine or Reload as before; a file gone from disk, an untitled
+// buffer the session's host held (it gets a file only by Cmd+S), a tab
+// never read yet, and a tab whose Cmd+S waits for its formatter are left
+// alone.
 // Claude Code editing the same files is the case this is for: buffers are
 // written within a second, so they rarely differ from the disk when it
 // writes, and clean tabs follow its writes quietly (checkTabsOnDisk).
@@ -847,7 +856,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
 // Not a tab with an inline agent edit waiting for Keep or Discard (the
 // agent edits only the tab on show): it is written once the bar closes.
 - (BOOL)tabTakesAutoSave:(MCTab *)t {
-    return t.dirty && t.loaded && !t.gone && [self tabTakesBackup:t] &&
+    return t.dirty && t.loaded && !t.gone && !t.untitled && [self tabTakesBackup:t] &&
            t != _formatSaveTab && !(t == _activeTab && _agent.editPending);
 }
 

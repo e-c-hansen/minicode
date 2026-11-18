@@ -43,6 +43,7 @@
 #include <gtk/gtk.h>
 
 #include "EnvLock.h"
+#include "Backups.h"
 #include "AppSettings.h"
 #include "Appearance.h"
 #include "Bookmarks.h"
@@ -60,6 +61,7 @@
 #include "DocumentView.h"
 #include "Editor.h"
 #include "SessionLink.h"
+#include "TermDockRecord.h"
 #include "FileTree.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
 #include "FolderPicker.h"  // inScope (Add Folder to Focus…)
@@ -113,6 +115,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <deque>
+#include <map>
 #include <set>
 #include <cstring>
 #include <functional>
@@ -133,6 +136,7 @@ struct App {
     int             controlId = 0;             // what the control channel calls this window
     GtkWidget*      window = nullptr;
     GtkWidget*      statusLabel = nullptr;
+    GtkWidget*      encodingLabel = nullptr;   // the file's encoding, when not plain UTF-8
     GtkWidget*      settingsLabel = nullptr;   // first problem in the settings file
     GtkWidget*      statusBar = nullptr;       // the bar holding both
 
@@ -213,6 +217,9 @@ struct App {
     // and the status bar's Reconnect, shown while the host is gone.
     SessionLink::Link::Held held;
     std::deque<SessionLink::Link::HeldTerm> heldTerms;
+    // The record's tabs and panes over those terminals (TermDockRecord.h),
+    // heldTerms in the order the dock makes them back.
+    Shared::TermDock heldDock;
     std::set<uint64_t> dropOnClose;
     GtkWidget* reconnectButton = nullptr;
 
@@ -372,6 +379,21 @@ static void updateTitle(void* userp) {
                        app->editor->isDiff() ? app->editor->diffTitle().c_str()
                        : p.empty()           ? "Ready"
                                              : p.c_str());
+    // The file's encoding, when it is not plain UTF-8 (the Mac's
+    // updateEncodingLabel): a Windows-1252 file opened as text, UTF-16, or
+    // UTF-8 with its mark.
+    if (app->encodingLabel) {
+        const std::string enc = app->editor->encodingLabel();
+        gtk_label_set_text(GTK_LABEL(app->encodingLabel), enc.c_str());
+        gtk_widget_set_tooltip_text(
+            app->encodingLabel,
+            enc.empty() ? nullptr
+            : enc == "Windows-1252"
+                ? "The file's encoding, kept when it is saved; a character Windows-1252 cannot "
+                  "store has it saved as UTF-8"
+                : "The file's encoding, kept when it is saved");
+        gtk_widget_set_visible(app->encodingLabel, !enc.empty());
+    }
 }
 
 static std::string baseName(const std::string& p) {
@@ -417,6 +439,8 @@ static bool saveDocument(App* app, Document* d) {
         sortProblem = app->editor->sortBlocksBeforeSave();
     std::string err;
     const bool ok = app->editor->saveDocument(d, &err);
+    // Written as UTF-8, since its encoding cannot store what it now holds.
+    const std::string encodingNote = ok ? d->takeSaveNote() : std::string();
     updateTitle(app);
     if (ok && app->git) app->git->refresh();   // (refresh() does nothing unless the panel or the review shows)
     // The tree watches only the folders it listed (TreeGitColors.h).
@@ -424,6 +448,8 @@ static bool saveDocument(App* app, Document* d) {
     if (!ok)
         showError(app, "Could not save “" + baseName(d->path()) + "”",
                   err + "\n\nYour changes are still here, unsaved.");
+    else if (!encodingNote.empty())
+        flashStatus(app, sortProblem.empty() ? encodingNote : sortProblem + "; " + encodingNote);
     else if (!sortProblem.empty())
         flashStatus(app, sortProblem);
     return ok;
@@ -456,6 +482,9 @@ static void flashStatus(App* app, const std::string& message) {
 // editor.session-host and MUTIBLE_HOST say, with its going in the status bar.
 static void rehostWindows(const std::shared_ptr<SessionLink::Link>& link);
 static void attachHeldDocuments(App* app);
+static void takeHeldTerminals(App* app);
+static void buildHeldTerminals(App* app, bool firstMade);
+static void backUpHeldDocuments(App* app);
 static void showHeldActive(App* app);
 
 static void listenForLoss(App* app) {
@@ -988,16 +1017,10 @@ static void openFolder(App* app, const std::string& dir) {
     // What the new folder's host holds for a window (stage 6, step 2).
     if (app->link && !app->link->lost()) {
         app->held = app->link->takeForWindow(app->editor->sessionWindowId());
-        for (const SessionLink::Link::HeldTerm& t : app->held.terms) app->heldTerms.push_back(t);
+        takeHeldTerminals(app);
         attachHeldDocuments(app);
-#ifdef MUTIBLE_ENABLE_TERMINAL
-        if (app->termDock && !app->heldTerms.empty()) {
-            const int first = app->termDock->count();
-            while (!app->heldTerms.empty()) app->termDock->newTerminal();
-            app->termDock->select(first, false);
-        }
-#endif
-        app->heldTerms.clear();
+        // After the dock's own tabs, as the record had them.
+        buildHeldTerminals(app, false);
     }
     app->nav->clear();   // Go Back's places were the old folder's
     // After the tabs close, so no old file is reopened under the new root.
@@ -1008,6 +1031,7 @@ static void openFolder(App* app, const std::string& dir) {
 #endif
     app->persist->setRoot(dir);
     app->persist->restoreSession();   // the new folder's tabs from last time
+    backUpHeldDocuments(app);
     showHeldActive(app);
     updateTitle(app);
     refreshHints(app);
@@ -4302,16 +4326,40 @@ static void disconnectOwners(GtkWidget* w, const std::vector<gpointer>& owners) 
 // window opening on the folder takes what a closed one left.
 
 // The host terminals the window's dock shows on its link, for its record
-// ("terms"), so the next window on the folder knows them for its own.
+// ("terms"), so the next window on the folder knows them for its own, and
+// how they sit ("termLayout", TermDockRecord.h: each tab's columns and
+// panes, their shares, the active pane, the tab on show), so it puts
+// splits back as splits. A pane on another host (a terminal from before
+// Open Folder) or with no shell yet is left out of both.
 static void reportTerminals(App* app) {
     if (app->dead || !app->link || !app->editor) return;
     std::vector<uint64_t> ids;
+    Json layout;
 #ifdef MUTIBLE_ENABLE_TERMINAL
-    if (app->termDock)
-        for (Terminal* t : app->termDock->all())
-            if (t->sessionLink() == app->link.get() && t->hostTerminal()) ids.push_back(t->hostTerminal());
+    if (app->termDock) {
+        Shared::TermDock dock;
+        dock.activeTab = app->termDock->activeIndex();
+        for (int i = 0; i < app->termDock->count(); i++) {
+            const TerminalGroup* g = app->termDock->group(i);
+            Shared::TermDock::Tab tab;
+            for (const std::vector<Terminal*>& column : g->columns()) {
+                std::vector<uint64_t> c;
+                for (Terminal* t : column) {
+                    const uint64_t id = t->sessionLink() == app->link.get() ? t->hostTerminal() : 0;
+                    c.push_back(id);
+                    if (id) ids.push_back(id);
+                }
+                tab.columns.push_back(std::move(c));
+            }
+            tab.layout = g->layout();
+            g->find(g->active(), &tab.activeColumn, &tab.activeRow);
+            dock.tabs.push_back(std::move(tab));
+        }
+        layout = Shared::termLayoutJson(std::move(dock));
+    }
 #endif
-    app->link->windowTerminals(app->editor->sessionWindowId(), app->editor->window(), std::move(ids));
+    app->link->windowTerminals(app->editor->sessionWindowId(), app->editor->window(), std::move(ids),
+                               std::move(layout));
 }
 
 // The window is going (onWindowRemoved): its record, documents and
@@ -4383,9 +4431,32 @@ static void reconnectHost(App* app) {
 // made, App::held): each document as a tab with the host's text, before the
 // session restores the rest from sessions.json and backups (Persistence),
 // which passes over a path open already.
+// An untitled buffer the host holds (no file: another renderer's) comes back
+// as the tab of a file not on disk yet, named as a backup of it would be
+// (Backups::untitledPath: Untitled-1, ...), unsaved; Ctrl+S writes it there.
+// The host keeps it without a path until then.
 static void attachHeldDocuments(App* app) {
-    for (const SessionLink::Link::HeldDoc& d : app->held.docs)
-        if (!app->editor->documentFor(d.path)) app->editor->attachTab(d.id, d.path);
+    for (const SessionLink::Link::HeldDoc& d : app->held.docs) {
+        if (!d.path.empty()) {
+            if (!app->editor->documentFor(d.path)) app->editor->attachTab(d.id, d.path);
+            continue;
+        }
+        const std::string folder = app->link ? app->link->folder() : app->rootDir;
+        const std::string name = Backups::untitledPath(folder, [app](const std::string& p) {
+            struct stat st;
+            if (lstat(p.c_str(), &st) == 0 || app->editor->documentFor(p)) return true;
+            for (const SessionLink::Link::HeldDoc& o : app->held.docs)
+                if (o.path == p) return true;
+            return false;
+        });
+        app->editor->attachTab(d.id, name, false);
+    }
+}
+
+// The held documents now this window's: their backups written at once, as
+// the host lets go of its own as they attach (Host::keepBackups).
+static void backUpHeldDocuments(App* app) {
+    if (!app->held.docs.empty() && app->persist) app->persist->writeBackups();
 }
 
 // After the session: the record's tab on show, if it is back.
@@ -4403,17 +4474,53 @@ static void showHeldActive(App* app) {
     if (show) app->editor->activate(show);
 }
 
-// The terminals the host held beyond the dock's first (which took one as it
-// was made): a tab each, the first on show.
-static void attachHeldTerminals(App* app) {
-#ifdef MUTIBLE_ENABLE_TERMINAL
-    if (!app->termDock) return;
-    const bool any = !app->heldTerms.empty();
-    while (!app->heldTerms.empty()) app->termDock->newTerminal();
-    if (any) app->termDock->select(0, false);
-#else
+// The terminals the folder's host held for this window, in the order the
+// dock makes them back: its record's tabs and panes (Shared::termDockFrom:
+// tab by tab, column by column, top to bottom; a terminal that ended while
+// no window showed it left out, its neighbours keeping their places), then
+// any the record does not place, a tab each. makeTerminal takes them one by
+// one from the front.
+static void takeHeldTerminals(App* app) {
+    std::vector<uint64_t> ids;
+    std::map<uint64_t, SessionLink::Link::HeldTerm> byId;
+    for (const SessionLink::Link::HeldTerm& t : app->held.terms) {
+        ids.push_back(t.id);
+        byId[t.id] = t;
+    }
+    app->heldDock = Shared::termDockFrom(app->held.tabs, ids);
     app->heldTerms.clear();
+    for (uint64_t id : app->heldDock.order()) app->heldTerms.push_back(byId[id]);
+}
+
+// The held terminals as the record's tabs, each with its panes, shares and
+// active pane, after the dock's own tabs (`firstMade`: the dock's first
+// tab, made as the window was, holds the first of them), and the record's
+// tab on show; the keyboard stays where it is.
+static void buildHeldTerminals(App* app, bool firstMade) {
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (app->termDock && !app->heldDock.tabs.empty()) {
+        std::vector<int> made;
+        for (size_t k = 0; k < app->heldDock.tabs.size(); k++) {
+            const Shared::TermDock::Tab& t = app->heldDock.tabs[k];
+            std::vector<size_t> rows;
+            for (const auto& column : t.columns) rows.push_back(column.size());
+            made.push_back(app->termDock->restoreTab(k == 0 && firstMade ? 0 : -1, rows, t.layout,
+                                                     t.activeColumn, t.activeRow));
+        }
+        const int show = made[(size_t)std::max(0, std::min(app->heldDock.activeTab, (int)made.size() - 1))];
+        if (TerminalGroup* g = app->termDock->group(show)) app->termDock->focusPane(g->active(), false);
+    }
+#else
+    (void)firstMade;
 #endif
+    app->heldTerms.clear();
+    app->heldDock = Shared::TermDock();
+}
+
+// The terminals the host held beyond the dock's first (which took one as it
+// was made): the record's tabs and panes.
+static void attachHeldTerminals(App* app) {
+    buildHeldTerminals(app, true);
     reportTerminals(app);
 }
 
@@ -4638,7 +4745,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     // them as it makes its terminals).
     if (app->link && !app->link->lost()) {
         app->held = app->link->takeForWindow(app->editor->sessionWindowId());
-        for (const SessionLink::Link::HeldTerm& t : app->held.terms) app->heldTerms.push_back(t);
+        takeHeldTerminals(app);
     }
     StartupLog::mark("window: editor");
     app->editor->setTitleCallback(updateTitle, app);
@@ -4813,6 +4920,8 @@ static App* newWindow(const std::string& root, const std::string& file,
         if (!app->dead && app->testGutter) app->testGutter->terminalsChanged();
         reportTerminals(app);
     };
+    // A boundary between panes moved: the record's shares.
+    app->termDock->onSharesChanged = [app] { reportTerminals(app); };
     app->termDock->confirmClose = [app](Terminal* t, std::function<void()> proceed) {
         askCloseBusyTerminal(app, t, std::move(proceed));
     };
@@ -4882,6 +4991,10 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->lspLabel = gtk_label_new("");
     gtk_label_set_ellipsize(GTK_LABEL(app->lspLabel), PANGO_ELLIPSIZE_START);
     gtk_box_append(GTK_BOX(statusBar), app->editor->largeFileNote());   // LargeFileView.h
+    // Right of the large-file note, left of the problem counts, as the Mac.
+    app->encodingLabel = gtk_label_new("");
+    gtk_widget_set_visible(app->encodingLabel, FALSE);
+    gtk_box_append(GTK_BOX(statusBar), app->encodingLabel);
     gtk_box_append(GTK_BOX(statusBar), app->lspLabel);
     gtk_box_append(GTK_BOX(statusBar), app->settingsLabel);
     gtk_box_append(GTK_BOX(statusBar), app->hintsHint);
@@ -4950,7 +5063,7 @@ static App* newWindow(const std::string& root, const std::string& file,
         }});
     app->layout->setProblemsPane(app->problems->widget());
     gtk_box_insert_child_after(GTK_BOX(statusBar), app->problems->statusLabel(),
-                               app->editor->largeFileNote());
+                               app->encodingLabel);
     app->lsp->onProblemsChanged = [app] {
         if (!app->dead && app->problems) app->problems->update();
     };
@@ -5237,6 +5350,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     // back, else the folder's.
     attachHeldDocuments(app);
     app->persist->restoreSession(record ? &record->tabs : nullptr);
+    backUpHeldDocuments(app);
     showHeldActive(app);
 #ifdef MUTIBLE_ENABLE_BROWSER
     if (app->browser) {   // the browser's tabs, suspended; the one on show loads when the pane is

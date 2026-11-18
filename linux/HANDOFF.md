@@ -6347,3 +6347,198 @@ The second step of stage 6's GTK half; `../docs/notes/session-host.md`,
 - **Checks**: `host_reattach` (and `_host_reattach_child`), `host:detach`,
   `host:window-records`, `host:term-answers`. The harness ends what closed
   windows left on their hosts between suites (`SessionLink::endDetached`).
+
+
+### 102. Latin-1, Windows-1252 and UTF-16 files open as text (C3b; November 2026)
+
+The Mac's #176 on GTK; `../docs/notes/sessions.md` has the rules.
+
+- **What a user meets.** A file that is not UTF-8 and holds no zero byte,
+  such as an old Latin-1 or Windows-1252 file, opens as text, read as
+  Windows-1252 by the core's rule (`FolderSearch::readsAsWindows1252`, the
+  one Find in Folder searches by), where it had said "Cannot display";
+  UTF-16 with its byte order mark opens as text too, and a UTF-8 file's
+  mark is kept apart instead of sitting in the buffer as U+FEFF. Each is
+  saved in its own encoding, byte for byte when nothing changed. The
+  status bar names any encoding but plain UTF-8 ("Windows-1252", "UTF-16
+  LE", "UTF-16 BE", "UTF-8 with BOM"), left of the problem counts. A
+  character Windows-1252 cannot store (an arrow, an emoji) has the file
+  saved as UTF-8, and the status bar says so ("Saved notes.txt as UTF-8:
+  Windows-1252 cannot store “→”"); auto-save says it through its note. A
+  search hit in such a file opens it at its line; Replace in Folder still
+  leaves it alone, and now says why when a row's Replace reaches one.
+- **Code.** `Document::readText` decodes through `decodeFileText` and
+  gives the encoding (`Document::FileEncoding`); the document keeps it
+  from `loadText`, a reload, the background load (LargeFileView.cpp),
+  `attachHeld` and a restored backup (Persistence, from the disk, else the
+  backup's `file-encoding`, which `writeBackup` now records). `save`
+  writes `encodeFileText`, or UTF-8 when `canEncode` says no, with
+  `takeSaveNote`; `encodingLabel` feeds main.cpp's label. The git gutter
+  reads the index's blob in the file's encoding (`readOriginal`).
+- **Checks**: `latin1_files` (and its `_latin1_restore` child, which
+  restores a backup of a file gone since and saves it in Windows-1252).
+- **Left**: the GTK port has no Save As or encoding picker (neither has
+  the Mac); a file changed on disk to the same text in another encoding
+  is followed only while its buffer is clean.
+
+### 103. The plan usage forecast in the Agents panel (done, November 2026)
+
+The Mac's A13 of 2026-11-18 (PR 178; `../docs/notes/agents.md`, "The plan
+usage forecast"; `mac/src/UsageView.mm` and `StatusLineOffer.mm`), over
+the same core: `ClaudeUsage` (the transcripts' tokens, prices, blocks,
+burn rate, the status line's samples, the fit, `describe`'s lines) and
+`ClaudeStatusLine` (`planInstall`, `install`, `planUninstall`,
+`uninstall`, the record, the log). The CLI's `mutible statusline` was
+already in the Linux build; this adds the panel's side.
+
+- **What a user meets.** Under the Agents panel's heading, PLAN USAGE:
+  the 5-hour window, the week, the burn rate, any unseen usage (the fit's
+  line is the text's tooltip), and "Log plan usage from Claude Code's
+  status line…", which becomes "Stop logging plan usage…" once it is in.
+  Before the transcripts are read it says "Reading Claude Code's
+  transcripts…"; without readings each window says "no reading yet".
+- **The model** (`UsageView.{h,cpp}`, `UsageModel`): one per app, never
+  freed. A `GThreadPool` of one thread keeps the `Scanner` and `Tally`
+  and reads the transcripts incrementally (`AgentModel::
+  defaultProjectsDir`, 8 days back) and the log (`StatusLineOffer::
+  usageDir`: `$MUTIBLE_USAGE_DIR`, else `$XDG_STATE_HOME/mutible/usage`);
+  the lines come back with `g_idle_add`. Where to look is read on the
+  main loop. `refresh` skips a look within 5 s of the last;
+  `refreshThen` forces one (the checks, and after an install or undo).
+  The panel's `rebuild` refreshes it while the panel shows (its model's
+  changes and the 30 s timer), as the Mac's `reload` does.
+- **The view** (`UsageView`): a box in `AgentsPanel` between the heading
+  and the notice or sessions; the text a wrapping, selectable label (not
+  a Tab stop) in the sidebar's text at 0.8 (`minicode-usage-text`), the
+  action a flat button whose label is the accent, ellipsized
+  (`minicode-usage-action`, ThemeCss.cpp). Its click goes through a
+  shared handle the view clears when it goes, so a question still up
+  when a window closes answers into nothing.
+- **Install and undo** (`StatusLineOffer.{h,cpp}`): the Mac's wording and
+  steps through `Question`, as the hooks offer (item 83) asks: the
+  question names the settings file, the command and the usage folder,
+  with the `statusLine` JSON in the preview box; Log Plan Usage or
+  Cancel; the core reads and plans again, backs the file up and writes
+  it, then a notice says where (and where the backup is). Undo asks (Put
+  It Back, Cancel) and says whether the file is exactly as before. The
+  command is `mutible statusline` when `mutible` is on the PATH, else
+  this program by its full path (`/proc/self/exe`), as the hooks' is;
+  but the core knows the wrapper by its program's name, so a copy named
+  otherwise (`mutible-guitest`) names the `mutible` beside it.
+- **Checks**: the `plan_usage` suite (a scratch CLAUDE_CONFIG_DIR,
+  transcripts folder and usage folder of its own, checked to be under the
+  harness's scratch root before anything is written): "no reading yet",
+  then the fitted forecast's lines and the fit's tooltip, the section
+  above what follows it, Cancel writing nothing, Log Plan Usage over an
+  existing `statusLine` (the rest kept, one backup, the record in the
+  usage folder), the built `mutible statusline` logging a reading and
+  running the old command with the same stdin, Put It Back restoring the
+  file byte for byte, and a settings file that is a symbolic link staying
+  one through install and undo, its target written and restored.
+- **Left**: the look of the section in a narrow sidebar on a real screen,
+  and a real Claude Code session with the wrapper installed (the readings
+  arrive after a reply), as on the Mac.
+
+### 104. The headless host keeps backups, untitled buffers come back, one path twice, VTE pans (stage 6, step 3; November 2026)
+
+The host-side items left before `editor.session-host = headless` can be
+the default (`../docs/notes/session-host.md`, "The host's own backups,
+untitled buffers, one path twice, panning (stage 6, step 3)").
+
+- **What a user meets.** A file left unsaved on the folder's headless
+  host (Keep Unsaved) is in the backups folder at once, held by the
+  host's process; a crash, `kill -9` or a reboot of the host loses
+  nothing: the folder's next window restores it as an unsaved tab. While
+  the host lives, the next window gets the host's document as before and
+  nothing is restored twice. A buffer with no file that another renderer
+  left on the host comes back as the tab of `Untitled-1` (not on disk
+  until saved). Two windows on one file, both closed unsaved: the next
+  window shows the last one's text, the window after it the other's. A
+  terminal another renderer made larger follows the cursor.
+- **Code.** Core: `Host::keepBackups`, `writeBackupsNow`, `backupId`,
+  `backupPath`, `SessionHost::keepBackups`, `HostOptions::backupDir`
+  (`mutible host` sets it from `Backups::defaultDir`), the Hello's flag 4
+  (`Client::setKeepsBackups`), `busyReason` counting an untitled buffer
+  with text, `Backups::defaultDir`, `processStart`, `newId`,
+  `untitledPath`, `Shared::reattachFrom`. GTK: `SessionLink` (the flag,
+  `free` over `reattachFrom`, its Held types now the core's), main.cpp
+  (`attachHeldDocuments` naming untitled buffers, `backUpHeldDocuments`),
+  `Editor::attachTab(..., hostNamed)`, `Editor::saveDocument` telling the
+  host a new path, `Document::attachHeld(..., hostNamed)`,
+  `hostSavedFromDisk` for a file not on disk, `Terminal::panToCursor`.
+  The top-level Makefile's CLI links Backups.cpp and SavePlan.cpp.
+- **Checks**: `host_backups`, `host_pan`, and the `hostbackup:*` and
+  `reattach:*` groups of `make test`.
+
+### 105. VTE in a frame of its own: no warnings while it pans, and a smaller pty's wrap (stage 6, step 3; November 2026)
+
+Two of item 104's leftovers (`../docs/notes/session-host.md`, "VTE as a
+renderer among several" and "VTE pans").
+
+- **What a user meets.** A terminal another renderer (the browser's
+  view, a guest) made smaller shows the program's screen at the pty's
+  own width and height, at the top left of the panel, the rest of the
+  panel the terminal's background: a long line with no cursor
+  positioning wraps where it wraps for the renderer that typed, not at
+  the panel's width. Typing in the panel takes the pty back to the
+  panel's size, as before. A larger one pans as in item 104, and GTK no
+  longer prints a warning on every pan.
+- **Code.** `src/TerminalFrame.{h,cpp}` (new): a GtkWidget implementing
+  GtkScrollable, the scrolled window's child in VTE's place, passing the
+  adjustments and scroll policies through to VTE (the scroll bar, the
+  wheel and the scrollback stay VTE's); it lays VTE out at its own size,
+  or at the size and offset it is held at, clips it, paints the
+  terminal's background where VTE does not reach, and gives VTE the
+  keyboard on a press there. `Terminal`: `followPtySize` holds VTE at
+  any size of another renderer's (larger or smaller), `measureCells`
+  (only while mapped), `viewCells` from the frame, `placeGrid` (was
+  `applyPan` and its negative margins), `releasePtySize`; `sendSize`
+  sends the frame's cells whenever VTE's cell is known (VTE's grid is
+  still the held one for a layout after a release, and sent then it took
+  the pty back to the other renderer's size); `char-size-changed` keeps
+  the cell and lays a held grid out in the new cells; a resize of
+  the view pans again; `sentSizes_` keeps the sizes still on their way
+  (up to 32, those before the latest dropped once it comes back);
+  `clipped()` is `atPtySize()`. The harness: `MCGuiLogWatchStart` and
+  `MCGuiLogWatchStop`, GLib's one log writer, keeping every warning and
+  critical while on.
+- **Checks**: `host_pan` (VTE laid out up in its frame by the rows
+  panned, no margins, the scroll bar VTE's adjustment, no Gtk-WARNING or
+  Gtk-CRITICAL from the other renderer's attach to the pty coming back)
+  and `host_wrap` (new; its header says what it checks).
+- **Left for a real screen**: the empty part's look beside a translucent
+  terminal color, trackpad scrolling over it, and a hidden terminal
+  shown while another renderer's size is in force (it follows at the
+  host's next TermShell, as before).
+
+### 106. Terminal splits come back as splits (stage 6; November 2026)
+
+The last terminal item of "Left before the default flips"
+(`../docs/notes/session-host.md`, "Terminal splits in the record").
+
+- **What a user meets.** A window closed with split terminals (Split
+  Terminal, Split Terminal Down) and the folder's next window, in this app
+  or after a relaunch, has the same terminal tabs with the same panes in
+  the same columns and rows, the boundaries where they were, each tab's
+  pane with the keyboard and the tab on show as they were. A shell that
+  ended while no window showed it leaves its pane out, its neighbours
+  where they were. A record an older app left (or a terminal no record
+  names) still comes back as a tab each.
+- **Code.** Core: `src/TermDockRecord.{h,cpp}` (`Shared::TermDock`,
+  `termLayoutJson`, `termDockFrom`, `prune`): the record's `termLayout`
+  beside `terms`, written and read by both apps; built into the top-level
+  Makefile's app and tests, linux/Makefile and meson.build (not the Mac's
+  CLI: nothing of the host reads it). GTK: `reportTerminals` (main.cpp)
+  writes it from the dock's groups; `Link::windowTerminals` takes it;
+  `takeHeldTerminals` orders the held terminals as the dock makes them
+  back, `buildHeldTerminals` makes the tabs (`TerminalDock::restoreTab`,
+  `TerminalGroup::append` and `setShares`, no size rule); the dock tells a
+  moved boundary (`TerminalGroup::onSharesChanged`, the dock's
+  `onSharesChanged` 300 ms after the last move); `focusPane(t, false)`
+  shows a tab's pane without the keyboard and reports a pane made active.
+  **Fixed on the way:** with the keyboard in the dock, a tab switch gave
+  it to the tab's first pane (GtkStack's `gtk_widget_child_focus`), whose
+  focus-in made it the tab's active pane; `TerminalDock::activate` now
+  gives it to the tab's active pane and ignores focus-ins meanwhile.
+- **Checks**: `host_splits` (HostSplitsSuite.cpp; its header says what it
+  checks) and the `termdock:*` groups of `make test`.

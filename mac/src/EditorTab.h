@@ -2,7 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #import "FileViewers.h"
 
-@class LatexView, MCComparison, MCTab, MCSessionDoc, CodeTextView;
+@class LatexView, MCComparison, MCTab, MCSessionDoc, MCSessionLinkRef, CodeTextView;
 @protocol MCEditorPage;
 
 // The window a tab is open in keeps its place among the tabs (the core's
@@ -19,6 +19,8 @@
 // changed by the host while not in the storage.
 - (CodeTextView *)textViewShowingSourceOf:(MCTab *)t;
 - (void)tabTextChangedByHost:(MCTab *)t;
+// The link its document goes on: its window's (stage 6).
+- (MCSessionLinkRef *)sessionLinkForTab:(MCTab *)t;
 @end
 
 // ---------------------------------------------------------------------------
@@ -203,6 +205,20 @@ NSString *MCEncodingStatusLabel(MCTextEncoding encoding, BOOL bom);
 // difference sent again would be applied twice. Without a document on the
 // host, the same as setting sourceText.
 - (void)takeTextFromStorage:(NSString *)text;
+// A document the session's host holds (a window opening takes what a
+// closed one left, EditorController+Session.mm): the tab's document is that
+// one, and its text the host's, set without telling the host anything. NO
+// when the host did not answer. heldFromHost stays set until the tab is
+// first shown (loadActiveTab reads the file then, keeping this text).
+- (BOOL)attachHeld:(uint64_t)docId link:(MCSessionLinkRef *)link;
+@property(nonatomic, assign) BOOL heldFromHost;
+// A buffer with no file yet: the session's host held it without a path
+// (another renderer's untitled document), and the tab shows it under a name
+// of its own in the folder (Backups::untitledPath: Untitled-1, ...), a file
+// not on disk, unsaved but not "(deleted)", and left alone by auto-save.
+// The host is told the path (DocPath) once Cmd+S has written the file
+// there, which clears this.
+@property(nonatomic, assign) BOOL untitled;
 // When it last came on show in its window (Model::Window::lastUsed), larger
 // for later: the tab shown after a close, the files Quick Open lists first.
 @property(nonatomic, readonly) uint64_t lastActive;

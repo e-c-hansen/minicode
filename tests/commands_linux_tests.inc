@@ -481,9 +481,10 @@ static void testLinuxKeymapFile() {
     CHECK(text.find("# ---- File") != std::string::npos && text.find("# ---- mutible") == std::string::npos);
 }
 
-// docs/REFERENCE.md's Linux column against the table: every key in the table is in it,
-// and every key in it is the table's or one the editor and the tree handle
-// themselves, so a key that moves cannot stay behind there.
+// docs/REFERENCE.md's Linux column (its <kbd> chords, "Ctrl+Shift+P") against
+// the table: every key in the table is in it, and every key in it is the
+// table's or one the editor and the tree handle themselves, so a key that
+// moves cannot stay behind there.
 static void testLinuxCommandsReadme() {
     using namespace Commands;
     GROUP("commands:linux-readme");
@@ -500,6 +501,7 @@ static void testLinuxCommandsReadme() {
     if (start == std::string::npos) return;
     const size_t end = readme.find("\n\n", start);
     std::set<std::string> listed;
+    std::vector<std::string> bad;
     std::istringstream rows(readme.substr(start, end - start));
     std::string row;
     while (std::getline(rows, row)) {
@@ -507,8 +509,12 @@ static void testLinuxCommandsReadme() {
         size_t b = a == std::string::npos ? a : row.find('|', a + 1);
         size_t c = b == std::string::npos ? b : row.find('|', b + 1);
         if (c == std::string::npos) continue;
-        for (const Key &k : ReadmeKeys(row.substr(b + 1, c - b - 1), true)) listed.insert(format(k));
+        for (const Key &k : ReadmeKeys(row.substr(b + 1, c - b - 1), true, &bad)) listed.insert(format(k));
     }
+    // Every chord in it is words joined by + that name a key.
+    for (const std::string &chord : bad) std::printf("  docs/REFERENCE.md's Linux column has <kbd>%s</kbd>\n", chord.c_str());
+    CHECK(bad.empty());
+    CHECK(listed.size() > 100);
     std::set<std::string> table;
     const Keymap d = defaults(Platform::Linux);
     for (const LinuxRow &r : linuxRows())

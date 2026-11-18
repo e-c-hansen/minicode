@@ -16,6 +16,7 @@
 #import "Browser.h"
 #import "SessionBrowser.h"
 #import "SessionLink.h"
+#import "SessionWindow.h"
 #import "TreeDetails.h"
 #include <objc/runtime.h>
 
@@ -74,10 +75,17 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     return YES;
 }
 
+// What the window's host sent, taken now.
+- (void)dispatchSessionLink {
+    MCSessionWindow *w = [self sessionWindow];
+    if (w) w.link.link->dispatch();
+    else MCSessionClient().dispatch();
+}
+
 // A page's save: every edit it made is in the tab first, then the tab's
 // own save, as Cmd+S on it (or on the tab on show) would.
 - (void)saveSessionDocument:(uint64_t)docId {
-    MCSessionClient().dispatch();
+    [self dispatchSessionLink];
     for (MCTab *t in [self tabs]) {
         if (!t.session || t.session.docId != docId) continue;
         if (t == _activeTab) [self saveCurrentFile:self];
@@ -101,7 +109,7 @@ static BOOL MCSessionBrowserEditableChoice(void) {
 // with unsaved changes stays (the core refused it already; typing since
 // may have made it so), said in the status bar.
 - (void)closeSessionDocument:(uint64_t)docId {
-    MCSessionClient().dispatch();
+    [self dispatchSessionLink];
     for (MCTab *t in [self tabs]) {
         if (!t.session || t.session.docId != docId) continue;
         if (t.dirty) {
@@ -147,36 +155,14 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     MCSessionBrowser *b = self.sessionBrowser;
     if (!b) {
         __weak EditorController *weakSelf = self;
-        b = [[MCSessionBrowser alloc] initWithWindow:self.window
-            folder:self.rootPath
-            tabs:^NSArray<NSArray<MCTab *> *> * {
-                EditorController *s = weakSelf;
-                if (!s) return @[];
-                NSArray<MCTab *> *parked = [s parkedTabs];
-                return parked.count ? @[ [s groupTabs], parked ] : @[ [s groupTabs] ];
-            }
-            active:^NSArray<MCTab *> * {
-                EditorController *s = weakSelf;
-                if (!s) return @[];
-                NSMutableArray<MCTab *> *on = [NSMutableArray array];
-                [on addObject:s->_activeTab ?: (id)NSNull.null];
-                if ([s parkedTabs].count) [on addObject:[s parkedActive] ?: (id)NSNull.null];
-                return on;
-            }];
+        MCSessionWindow *session = [self sessionWindow];
+        if (!session) return nil;
+        b = [[MCSessionBrowser alloc] initWithWindow:self.window session:session];
+        __weak MCSessionBrowser *weakBrowser = b;
+        session.onReported = ^{ [weakBrowser lookNow]; };
         b.save = ^(uint64_t docId) { [weakSelf saveSessionDocument:docId]; };
         b.open = ^(NSString *path, BOOL keep) { [weakSelf openSessionPath:path keep:keep]; };
-        // This window's terminals on the host, and no other window's.
-        b.terminals = ^NSArray<NSNumber *> * {
-            EditorController *s = weakSelf;
-            if (!s) return @[];
-            NSMutableArray<NSNumber *> *ids = [NSMutableArray array];
-            for (TerminalView *t in [s controlTerminals])
-                if (t.sessionTerminal) [ids addObject:@(t.sessionTerminal)];
-            return ids;
-        };
         b.close = ^(uint64_t docId) { [weakSelf closeSessionDocument:docId]; };
-        b.panes = ^NSDictionary * { return [weakSelf sessionBrowserPanes]; };
-        b.browserTabs = ^NSDictionary * { return [weakSelf sessionBrowserTabs]; };
         b.browse = ^(NSString *url) { [weakSelf openSessionAddress:url]; };
         objc_setAssociatedObject(self, &kSessionBrowserKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }

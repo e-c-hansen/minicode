@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
@@ -28,6 +31,7 @@ void Host::disconnect(ClientId c) {
         d.seats.erase(c);
         trimLog(d);
     }
+    backupsChanged();   // an app gone: what it had unsaved is the host's to keep
 }
 
 void Host::send(ClientId to, Message&& m) {
@@ -172,6 +176,18 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::FsRead: onRead(from, m); break;
     default: error(from, m.doc, std::string("the host takes no ") + kindName(m.kind)); break;
     }
+    switch (m.kind) {
+    case Kind::Hello:
+    case Kind::DocOpen:
+    case Kind::DocReset:
+    case Kind::DocClose:
+    case Kind::DocEdit:
+    case Kind::DocUndo:
+    case Kind::DocSaved:
+    case Kind::DocPath:
+    case Kind::DocDetach: backupsChanged(); break;
+    default: break;
+    }
 }
 
 bool Host::slotFree(std::uint64_t slot) const {
@@ -230,6 +246,7 @@ void Host::onHello(ClientId c, Message& m) {
     r.hello = true;
     r.readOnly = (m.flag & 1) != 0;
     r.guest = !r.readOnly && (m.flag & 2) != 0;
+    r.keepsBackups = !r.readOnly && !r.guest && (m.flag & 4) != 0;
     // Its id base, kept for a second Hello: what it made with it stays its.
     if (!r.idBase) r.idBase = chooseIdBase();
     Message w;
@@ -341,6 +358,7 @@ void Host::onClose(ClientId c, Message& m) {
         g.doc = m.doc;
         send(id, std::move(g));
     }
+    discardBackup(d);   // closed: what it held is let go of
     docs_.erase(it);
 }
 
@@ -718,9 +736,13 @@ Json Host::state() const {
 }
 
 std::string Host::busyReason() const {
-    for (const auto& [id, d] : docs_)
+    for (const auto& [id, d] : docs_) {
         if (d.doc.dirty())
             return (d.path.empty() ? "a document" : d.path) + " has unsaved changes";
+        // A document with no file holding text is unsaved whatever its
+        // history says (one opened with text was never written anywhere).
+        if (d.path.empty() && d.doc.text().size() > 0) return "a document with no file holds text";
+    }
     for (const auto& [id, t] : terms_) {
         if (!t.pty) continue;
         if (t.shell.busy)
@@ -730,6 +752,175 @@ std::string Host::busyReason() const {
             return "terminal " + std::to_string(id) + " is running a program";
     }
     return "";
+}
+
+// ---------------------------------------------------------------- backups
+
+void Host::keepBackups(BackupKeeping k) {
+    keep_ = std::move(k);
+    keeping_ = !keep_.store.dir.empty() && keep_.store.fs.writeAtomic;
+    backupsChanged();
+}
+
+double Host::monoNow() const {
+    if (keep_.monoNow) return keep_.monoNow();
+    using namespace std::chrono;
+    return (double)duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count() / 1e6;
+}
+
+bool Host::unsaved(const Doc& d) {
+    return d.doc.dirty() || (d.path.empty() && d.doc.text().size() > 0);
+}
+
+bool Host::shownByApp(const Doc& d) const {
+    for (const auto& [c, seat] : d.seats) {
+        if (seat.viewer) continue;
+        auto r = renderers_.find(c);
+        if (r != renderers_.end() && r->second.keepsBackups) return true;
+    }
+    return false;
+}
+
+std::string Host::keptPath(DocId id, Doc& d) {
+    if (!d.path.empty()) return d.path;
+    if (d.kept.untitled.empty()) {
+        // A name in the folder that no file and no other buffer has.
+        const std::string folder = keep_.root.empty() ? folder_ : keep_.root;
+        d.kept.untitled = Backups::untitledPath(folder, [&](const std::string& p) {
+            struct stat st;
+            if (lstat(p.c_str(), &st) == 0) return true;
+            for (const auto& [other, o] : docs_)
+                if (other != id && (o.path == p || o.kept.untitled == p)) return true;
+            return false;
+        });
+    }
+    return d.kept.untitled;
+}
+
+std::vector<SavePlan::Tab> Host::keptTabs() {
+    std::vector<SavePlan::Tab> out;
+    for (auto& [id, d] : docs_) {
+        SavePlan::Tab t;
+        t.id = id;
+        // Whether it is unsaved is asked only of what an app does not show
+        // (a text the same length as the saved one is compared whole).
+        t.keepsText = !shownByApp(d);
+        t.dirty = t.keepsText && unsaved(d);
+        t.generation = d.v;
+        t.path = t.dirty && t.keepsText ? keptPath(id, d) : d.path;
+        t.backupWritten = d.kept.written;
+        t.backupGeneration = d.kept.v;
+        t.backupPath = d.kept.path;
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
+void Host::backupsChanged() {
+    if (!keeping_) return;
+    for (auto& [id, d] : docs_) {
+        const bool shown = shownByApp(d);
+        const bool justLeft = d.kept.wasShown && !shown;
+        d.kept.wasShown = shown;
+        if (shown || !unsaved(d)) {   // shown first: no compare for what an app has
+            // An app's window has it (the window's backup is the one), or
+            // there is nothing to keep: the host's goes now.
+            if (d.kept.written) discardBackup(d);
+            continue;
+        }
+        // The last app's window let go of it unsaved: on disk at once.
+        if (justLeft) writeBackup(id, d);
+    }
+    // The rest (edits from renderers that keep no backups, a document an
+    // app never showed) when typing pauses, as the apps time theirs.
+    keepPlan_.backupsChanged(keptTabs(), monoNow());
+}
+
+namespace {
+
+// What the file is as the backup's base (Backups::compare at a restore):
+// its stamp when it holds the text the host counts saved, so a change on
+// disk after now is seen as one; a stamp that cannot match when it holds
+// something else already (it changed since the buffer was based on it); and
+// never there when there is none and the buffer never had a file's text.
+void diskBase(const std::string& path, const std::u16string& saved, Backups::Entry* e) {
+    e->diskExisted = false;
+    e->diskMtime = 0;
+    e->diskInode = 0;
+    if (path.empty()) return;
+    std::string bytes;
+    FolderSearch::FileStamp st;
+    const FolderSearch::ReadStatus r = FolderSearch::readFileStable(path, 512ull << 20, &bytes, &st);
+    if (r == FolderSearch::ReadStatus::Missing) {
+        e->diskExisted = !saved.empty();   // gone, when the buffer had text from it
+        return;
+    }
+    e->diskExisted = true;
+    e->diskInode = st.inode;
+    const double mtime = (double)st.mtimeSec + st.mtimeNsec / 1e9;
+    e->diskMtime = mtime - 1;   // changed, unless it reads as the saved text
+    if (r != FolderSearch::ReadStatus::Ok) return;
+    FolderSearch::TextEncoding enc;
+    bool bom = false;
+    if (!FolderSearch::decodeFileText(&bytes, &enc, &bom)) return;
+    if (Model::utf16FromUtf8(bytes) != saved) return;
+    e->diskMtime = mtime;
+    e->fileEncoding = FolderSearch::encodingName(enc, bom);
+}
+
+}  // namespace
+
+void Host::writeBackup(DocId id, Doc& d) {
+    if (!keeping_) return;
+    if (d.kept.id.empty()) d.kept.id = keep_.newId ? keep_.newId() : Backups::newId();
+    Backups::Entry e;
+    e.id = d.kept.id;
+    e.path = keptPath(id, d);
+    e.root = keep_.root.empty() ? folder_ : keep_.root;
+    diskBase(d.path, d.doc.savedText(), &e);
+    if (keep_.wallNow) {
+        e.saved = keep_.wallNow();
+    } else {
+        using namespace std::chrono;
+        e.saved = (double)duration_cast<microseconds>(system_clock::now().time_since_epoch()).count() / 1e6;
+    }
+    e.ownerPid = keep_.ownerPid;
+    e.ownerStart = keep_.ownerStart;
+    if (!keep_.store.save(e, Model::utf8FromUtf16(d.doc.text().str()))) {
+        std::fprintf(stderr, "mutible: could not write the backup of %s in %s\n", e.path.c_str(),
+                     keep_.store.dir.c_str());
+        return;
+    }
+    d.kept.written = true;
+    d.kept.v = d.v;
+    d.kept.path = e.path;
+}
+
+void Host::discardBackup(Doc& d) {
+    if (!d.kept.written) return;
+    keep_.store.discard(d.kept.id);
+    d.kept.written = false;
+    d.kept.v = 0;
+    d.kept.path.clear();
+}
+
+void Host::writeBackupsNow() {
+    if (!keeping_) return;
+    for (const SavePlan::Tab& t : keptTabs()) {
+        if (!SavePlan::needsBackup(t)) continue;
+        auto it = docs_.find(t.id);
+        if (it != docs_.end()) writeBackup(t.id, it->second);
+    }
+}
+
+std::string Host::backupId(DocId d) const {
+    auto it = docs_.find(d);
+    return it != docs_.end() && it->second.kept.written ? it->second.kept.id : std::string();
+}
+
+std::string Host::backupPath(DocId d) const {
+    auto it = docs_.find(d);
+    return it != docs_.end() && it->second.kept.written ? it->second.kept.path : std::string();
 }
 
 // ---------------------------------------------------------------- terminals
@@ -1043,14 +1234,32 @@ int Host::tick() {
         }
     }
     for (TermId id : exited) endTerminal(id, true);
-    if (!dying_.empty()) return 50;
-    if (terms_.empty()) return -1;
+    // Backups planned for now (keepBackups), and when the next is.
+    long long backupWait = -1;
+    if (keeping_) {
+        const double mono = monoNow();
+        if (keepPlan_.nextDue() <= mono) {
+            const SavePlan::Plan p = keepPlan_.tick(keptTabs(), mono);
+            for (std::uint64_t id : p.writeBackups) {
+                auto it = docs_.find(id);
+                if (it != docs_.end()) writeBackup(id, it->second);
+            }
+        }
+        const double due = keepPlan_.nextDue();
+        if (due != SavePlan::kNever)
+            backupWait = std::max(1LL, (long long)std::ceil((due - monoNow()) * 1000.0));
+    }
+    auto sooner = [backupWait](long long ms) {
+        return (int)(backupWait < 0 ? ms : ms < 0 ? backupWait : std::min(ms, backupWait));
+    };
+    if (!dying_.empty()) return sooner(50);
+    if (terms_.empty()) return sooner(-1);
     long long wait = 200;
     for (const auto& [id, t] : terms_) {
         const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t.nextLook - now).count();
         wait = std::max(1LL, std::min(wait, ms));
     }
-    return (int)wait;
+    return sooner(wait);
 }
 
 const TerminalScreen* Host::screen(TermId t) const {
@@ -1153,6 +1362,15 @@ void SessionHost::setFolder(std::string folder) {
     wake();
 }
 
+void SessionHost::keepBackups(Host::BackupKeeping k) {
+    auto shared = std::make_shared<Host::BackupKeeping>(std::move(k));
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        queue_.push_back(Item{0, Message(), [this, shared] { host_.keepBackups(std::move(*shared)); }});
+    }
+    wake();
+}
+
 bool SessionHost::inspect(const std::function<void(const Host&)>& f, int timeoutMs) {
     // Shared with the queued item, which may outlive this call when it
     // times out: it then finds `abandoned` and leaves `f` (whose captures
@@ -1212,7 +1430,12 @@ void SessionHost::loop() {
             if (item.run) item.run();
             else host_.handle(item.from, std::move(item.m));
         }
-        if (stopping && items.empty()) return;   // everything posted is done
+        if (stopping && items.empty()) {
+            // Everything posted is done; what typing left unwritten goes to
+            // disk before the host ends (a signal ended it unsaved).
+            host_.writeBackupsNow();
+            return;
+        }
         const int timeout = host_.tick();
         fds.clear();
         host_.pollSet(&fds);

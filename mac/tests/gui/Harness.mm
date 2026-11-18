@@ -516,6 +516,10 @@ static void CheckWhatSuiteLeft(NSString *suite) {
     // A "_" suite runs alone in a process of its own, which it may end.
     if (!suite || [suite hasPrefix:@"_"]) return;
     CheckSessionMirrors(suite);
+    // What windows that closed left on the session's hosts (their documents,
+    // terminals and records) is ended, so one suite's never comes back in
+    // the next suite's window on the same folder (GTK's endDetached).
+    MCSession::endDetached();
     const BOOL putBack = LeaksFail();
     if (gKeyWindow) {
         Leak(suite, @"left the key window pinned (MCGuiSetKeyWindow(nil) at its end)");

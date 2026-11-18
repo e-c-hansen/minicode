@@ -119,6 +119,8 @@ core_sources = [
   # How the right side of a window is shared (WindowLayout.cpp shows it).
   core_dir / 'RightAreaLayout.cpp',
   core_dir / 'TerminalLayout.cpp',
+  # A window's terminal dock in its record on the session's host.
+  core_dir / 'TermDockRecord.cpp',
   # Getting around (PARITY.md 1.11): Go Back and Forward's history and what
   # a window records in it (NavHistoryUi.cpp drives it), and the zoom and
   # word wrap rules (Zoom.cpp keeps their state).
@@ -223,6 +225,7 @@ gui_sources = [
   # Terminal.cpp and Browser.cpp are always compiled but their bodies are
   # #ifdef-guarded, so without the feature macros they are empty and harmless.
   'src/Terminal.cpp',
+  'src/TerminalFrame.cpp',
   'src/TerminalDock.cpp',
   'src/TerminalGroup.cpp',
   'src/Bookmarks.cpp',
@@ -370,6 +373,10 @@ gui_sources = [
   'src/ProcessesPanel.cpp',
   'src/AgentModel.cpp',
   'src/AgentsPanel.cpp',
+  # The panel's plan usage forecast and the status line log's two-press
+  # install and undo (A13; the core's ClaudeUsage and ClaudeStatusLine).
+  'src/UsageView.cpp',
+  'src/StatusLineOffer.cpp',
   'src/EvidencePage.cpp',
   'src/AgentWorktrees.cpp',
   'src/ChangeReviewPage.cpp',

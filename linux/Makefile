@@ -39,7 +39,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/EditorTabs.cpp ../src/Backups.cpp ../src/TabSessions.cpp ../src/SavePlan.cpp ../src/BrowserTabs.cpp ../src/WebBookmark.cpp \
         ../src/LineIndex.cpp ../src/QuickDiff.cpp ../src/SideBySide.cpp ../src/LineDiff.cpp \
         ../src/MergeConflicts.cpp ../src/ChangeReview.cpp ../src/ChangeReviewRead.cpp \
-        ../src/RightAreaLayout.cpp ../src/TerminalLayout.cpp \
+        ../src/RightAreaLayout.cpp ../src/TerminalLayout.cpp ../src/TermDockRecord.cpp \
         ../src/NavHistory.cpp ../src/NavRecorder.cpp ../src/ViewZoom.cpp \
         ../src/CommandPalette.cpp ../src/SymbolOutline.cpp \
         ../src/BracketMatch.cpp ../src/BracketPairs.cpp ../src/AutoClose.cpp \
@@ -55,7 +55,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/HtmlView.cpp src/SqliteView.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
        src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp src/EditorConflicts.cpp \
-       src/Terminal.cpp src/TerminalDock.cpp src/TerminalGroup.cpp src/Browser.cpp src/Bookmarks.cpp src/BrowserPages.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
+       src/Terminal.cpp src/TerminalFrame.cpp src/TerminalDock.cpp src/TerminalGroup.cpp src/Browser.cpp src/Bookmarks.cpp src/BrowserPages.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
        src/ThemeCss.cpp \
        src/Search.cpp src/FindBar.cpp src/MultiEdit.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
        src/LatexClick.cpp src/Latex.cpp src/TermLinkPath.cpp \
@@ -77,7 +77,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
        src/Bench.cpp src/StartupLog.cpp src/WhenDrawn.cpp \
        src/Zoom.cpp src/NavHistoryUi.cpp \
-       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/mutible-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/ChangeReviewPage.cpp
+       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/mutible-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/UsageView.cpp src/StatusLineOffer.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/ChangeReviewPage.cpp
 
 SRCS := $(GUI) $(CORE)
 

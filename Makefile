@@ -62,7 +62,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/ClaudeUsage.cpp src/ClaudeStatusLine.cpp \
             src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp src/LatexScratch.cpp \
             src/LatexLog.cpp \
-            src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/RightAreaLayout.cpp \
+            src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/TermDockRecord.cpp src/RightAreaLayout.cpp \
             src/Snippet.cpp src/EditBatch.cpp \
             src/BrowserTabs.cpp src/WebBookmark.cpp src/SpellCheck.cpp src/ProcessEnv.cpp
 
@@ -80,7 +80,7 @@ SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.
             src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/IdeLink.cpp src/MarkdownHtml.cpp \
             src/SyntaxHighlighter.cpp src/Settings.cpp src/AutoIndent.cpp src/LineComments.cpp \
-            src/SessionFiles.cpp src/FileDetails.cpp src/FileSniff.cpp src/Csv.cpp
+            src/SessionFiles.cpp src/FileDetails.cpp src/FileSniff.cpp src/Backups.cpp src/SavePlan.cpp src/Csv.cpp
 OBJ      := $(patsubst mac/src/%,$(OBJDIR)/%.o,$(patsubst src/%,$(OBJDIR)/%.o,$(SRC)))
 
 # A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)

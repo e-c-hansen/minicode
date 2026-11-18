@@ -77,7 +77,9 @@ enum class Kind {
                  // flag 2: a guest (a browser's view that may edit): its documents are
                  // view seats as a reader's, and it may edit and undo them, type into
                  // terminals and say its view's size (TermResize), nothing else that
-                 // changes the session
+                 // changes the session; flag 4: an app that keeps backups of the
+                 // unsaved documents it has open (a headless host keeps none of
+                 // those while it has them: Host::keepBackups)
     DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved.
                  // From a renderer that only reads, a view of the document as it is: it
                  // never makes one, and keeps none open (DocGone when there is none, or
@@ -273,7 +275,8 @@ Message roundTrip(const Message& m);
 // changing (stage 6, which gives them to a second screen, adds them).
 // The Mac's window adds "terms", the ids of the host terminals in its
 // panel: a browser's view of one window (SessionWeb.h, Options::window)
-// shows and types into those and no others.
+// shows and types into those and no others. Beside it "termLayout" says
+// how they sit in the dock's tabs and split panes (TermDockRecord.h).
 Json windowJson(const Model::Window& w);
 // Whether `bytes` read as an emulator's answers to a program's queries and
 // nothing else (TermInput's flag 1): one or more of a CSI ending in c, n,

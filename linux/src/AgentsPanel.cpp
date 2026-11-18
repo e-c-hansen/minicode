@@ -8,6 +8,7 @@
 #include "Appearance.h"
 #include "AgentView.h"
 #include "FileDetails.h"
+#include "UsageView.h"
 
 namespace {
 
@@ -60,6 +61,10 @@ AgentsPanel::AgentsPanel(const std::string& folder) : model_(folder) {
     gtk_box_append(GTK_BOX(head), summary_);
     gtk_widget_set_margin_bottom(head, 6);
     gtk_box_append(GTK_BOX(root_), head);
+    // The plan usage forecast and its action, between the heading and the
+    // sessions (the Mac's MCUsageView).
+    usage_ = new UsageView();
+    gtk_box_append(GTK_BOX(root_), usage_->widget());
     notice_ = gtk_label_new("");
     gtk_label_set_wrap(GTK_LABEL(notice_), TRUE);
     gtk_label_set_xalign(GTK_LABEL(notice_), 0);
@@ -132,6 +137,7 @@ AgentsPanel::~AgentsPanel() {
     if (timer_) g_source_remove(timer_);
     dropMenu();
     if (actions_) g_object_unref(actions_);
+    delete usage_;
 }
 
 void AgentsPanel::setActive(bool active) {
@@ -257,6 +263,9 @@ void AgentsPanel::rebuild() {
                        AgentView::emptyText(snap->projectsMissing, snap->loaded, dir).c_str());
     gtk_widget_set_visible(notice_, snap->sessions.empty());
     gtk_widget_set_visible(scroll_, !snap->sessions.empty());
+    // The forecast follows the same reloads while the panel shows (at most
+    // one look in 5 s), and the action the settings file as it is.
+    if (active_) usage_->refresh();
 
     while (GtkWidget* c = gtk_widget_get_first_child(list_))
         gtk_list_box_remove(GTK_LIST_BOX(list_), c);

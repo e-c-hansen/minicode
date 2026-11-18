@@ -201,8 +201,10 @@ public:
     // A tab at the end of the row viewing a document the host holds (a
     // window opening takes what a closed one left; SessionLink's
     // takeForWindow), its text the host's: unsaved when it differs from
-    // the file. Not put on show.
-    Document* attachTab(uint64_t heldId, const std::string& path);
+    // the file. Not put on show. `hostNamed` false: an untitled buffer the
+    // host holds with no path, shown under `path`, a name for a file not on
+    // disk yet (Document::attachHeld).
+    Document* attachTab(uint64_t heldId, const std::string& path, bool hostNamed = true);
     // The window closes and detaches (stage 6, step 2): every document stays
     // on the host but those in `drop` (the question's Don't Save), which
     // close there with their tabs; the window's record stays for the
@@ -318,6 +320,10 @@ public:
     void latexFileSaved(Document* saved);
     void saveLatexInputs(const std::function<bool(Document*)>& save);
     bool canSave() const { return active_ && active_->canSave(); }
+    // The encoding of the file on show when it is not plain UTF-8
+    // ("Windows-1252", "UTF-16 LE", "UTF-8 with BOM"), else "" (the status
+    // bar's label, Document::encodingLabel).
+    std::string encodingLabel() const { return active_ ? active_->encodingLabel() : ""; }
 
     // Changes made to the open files by something else (the Mac's
     // checkExternalChange). Each file is watched while its tab is open, and
@@ -550,7 +556,8 @@ private:
     bool loadText(Document* d, const std::string& path);
     // The file as read (`result`, a Document::Read): in the document, or a
     // message saying why not.
-    bool textRead(Document* d, const std::string& path, int result, const std::string& content);
+    bool textRead(Document* d, const std::string& path, int result, const std::string& content,
+                  const Document::FileEncoding& encoding = Document::FileEncoding());
     bool opensInPreview(EditorTabs::OpenFrom from) const;
     EditorTabs::PreviewSettings previewSettings() const;
     // A new document, known by its id until destroy() lets it go.

@@ -27,6 +27,44 @@ void appendUtf8(std::string &out, uint32_t cp) {
     }
 }
 
+// Four hex digits at `at`, or -1.
+int hex4(const std::string &s, size_t at) {
+    if (at + 4 > s.size()) return -1;
+    int v = 0;
+    for (size_t i = at; i < at + 4; i++) {
+        char c = s[i];
+        v <<= 4;
+        if (c >= '0' && c <= '9') v |= c - '0';
+        else if (c >= 'a' && c <= 'f') v |= c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v |= c - 'A' + 10;
+        else return -1;
+    }
+    return v;
+}
+
+// The UTF-8 character at s[i]: its code point and length, or U+FFFD and
+// 1 for a byte that does not start a whole, shortest-form character.
+uint32_t utf8At(const std::string &s, size_t i, size_t *len) {
+    const unsigned char c = (unsigned char)s[i];
+    *len = 1;
+    if (c < 0x80) return c;
+    const size_t n = c >= 0xF5 ? 0 : c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC2 ? 2 : 0;
+    if (n == 0 || i + n > s.size()) return 0xFFFD;
+    uint32_t cp = c & (n == 2 ? 0x1F : n == 3 ? 0x0F : 0x07);
+    for (size_t k = 1; k < n; k++) {
+        const unsigned char d = (unsigned char)s[i + k];
+        if ((d & 0xC0) != 0x80) return 0xFFFD;
+        cp = (cp << 6) | (d & 0x3F);
+    }
+    if ((n == 3 && cp < 0x800) || (n == 4 && (cp < 0x10000 || cp > 0x10FFFF)) ||
+        (cp >= 0xD800 && cp <= 0xDFFF))
+        return 0xFFFD;
+    *len = n;
+    return cp;
+}
+
+const char *const kEllipsis = "\xE2\x80\xA6";   // …
+
 struct Parser {
     const std::string &s;
     size_t pos = 0;
@@ -66,19 +104,7 @@ struct Parser {
         return true;
     }
 
-    int hex4(size_t at) const {
-        if (at + 4 > s.size()) return -1;
-        int v = 0;
-        for (size_t i = at; i < at + 4; i++) {
-            char c = s[i];
-            v <<= 4;
-            if (c >= '0' && c <= '9') v |= c - '0';
-            else if (c >= 'a' && c <= 'f') v |= c - 'a' + 10;
-            else if (c >= 'A' && c <= 'F') v |= c - 'A' + 10;
-            else return -1;
-        }
-        return v;
-    }
+    int hex4(size_t at) const { return JsonOutline::hex4(s, at); }
 
     // A string at pos (the opening quote). Decodes up to `keep` bytes into
     // `decoded` (all of it when keep is SIZE_MAX); `cut` says more followed.
@@ -388,6 +414,120 @@ std::string summary(const Node &n) {
     case Kind::String: return "\"" + n.preview + "\"";
     default: return n.preview;
     }
+}
+
+Line oneLine(const std::string &s, size_t maxChars) {
+    Line out;
+    size_t chars = 0, i = 0;
+    out.text.reserve(std::min(s.size(), maxChars * 4) + 3);
+    while (i < s.size()) {
+        size_t len = 1;
+        const uint32_t cp = utf8At(s, i, &len);
+        std::string esc;
+        switch (cp) {
+        case '\n': esc = "\\n"; break;
+        case '\r': esc = "\\r"; break;
+        case '\t': esc = "\\t"; break;
+        default:
+            // The rest of C0, DEL, C1 (NEL is a line break to AppKit), and
+            // the line and paragraph separators.
+            if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F) || cp == 0x2028 || cp == 0x2029) {
+                static const char *hex = "0123456789abcdef";
+                esc = "\\u";
+                for (int shift = 12; shift >= 0; shift -= 4) esc += hex[(cp >> shift) & 0xF];
+            }
+        }
+        const size_t width = esc.empty() ? 1 : esc.size();
+        if (chars + width > maxChars) {
+            out.cut = true;
+            break;
+        }
+        chars += width;
+        if (!esc.empty()) {
+            out.escapes.emplace_back(out.text.size(), out.text.size() + esc.size());
+            out.text += esc;
+        } else if (cp == 0xFFFD && len == 1) {
+            out.text += "\xEF\xBF\xBD";
+        } else {
+            out.text.append(s, i, len);
+        }
+        i += len;
+    }
+    if (out.cut) out.text += kEllipsis;
+    out.changed = out.cut || out.text != s;
+    return out;
+}
+
+std::string decodeString(const std::string &lit, size_t maxChars) {
+    std::string out;
+    size_t i = !lit.empty() && lit[0] == '"' ? 1 : 0, chars = 0;
+    while (i < lit.size()) {
+        if (lit[i] == '"') return out;
+        if (chars >= maxChars) break;
+        chars++;
+        if (lit[i] != '\\') {
+            size_t len = 1;
+            const uint32_t cp = utf8At(lit, i, &len);
+            if (cp == 0xFFFD && len == 1) appendUtf8(out, cp);
+            else out.append(lit, i, len);
+            i += len;
+            continue;
+        }
+        if (i + 1 >= lit.size()) break;
+        const char e = lit[i + 1];
+        uint32_t cp = (unsigned char)e;
+        size_t used = 2;
+        switch (e) {
+        case 'b': cp = '\b'; break;
+        case 'f': cp = '\f'; break;
+        case 'n': cp = '\n'; break;
+        case 'r': cp = '\r'; break;
+        case 't': cp = '\t'; break;
+        case 'u': {
+            const int h = hex4(lit, i + 2);
+            if (h < 0) { cp = 0xFFFD; break; }
+            cp = (uint32_t)h;
+            used = 6;
+            if (cp >= 0xD800 && cp <= 0xDBFF && i + 7 < lit.size() && lit[i + 6] == '\\' &&
+                lit[i + 7] == 'u') {
+                const int lo = hex4(lit, i + 8);
+                if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + ((uint32_t)lo - 0xDC00);
+                    used = 12;
+                }
+            }
+            if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
+            break;
+        }
+        default: break;   // \" \\ \/ and anything else: the character itself
+        }
+        appendUtf8(out, cp);
+        i += used;
+    }
+    // Cut, or the text stopped before the closing quote: more followed.
+    return out + kEllipsis;
+}
+
+std::string tooltip(const Node &n, const std::string &value) {
+    std::string out;
+    if (n.isMember && oneLine(n.key).changed) {
+        // The key as it is, cut as a value is.
+        size_t i = 0, chars = 0;
+        while (i < n.key.size() && chars < kTooltipChars) {
+            size_t len = 1;
+            utf8At(n.key, i, &len);
+            i += len;
+            chars++;
+        }
+        out = n.key.substr(0, i);
+        if (i < n.key.size()) out += kEllipsis;
+    }
+    if (n.kind == Kind::String) {
+        const std::string &v = value.empty() ? n.preview : value;
+        if (!out.empty() && !v.empty()) out += "\n\n";
+        out += v;
+    }
+    return out;
 }
 
 }  // namespace JsonOutline

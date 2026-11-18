@@ -43,6 +43,20 @@
 // host's screen. busyReason() says whether anything would be lost if the
 // host went now.
 //
+// Backups (a headless host, Host::keepBackups): a document the host holds
+// with unsaved changes (or with no file and some text) that no app's window
+// has open (no seat of a renderer whose Hello said it keeps backups) is
+// backed up by the host itself, in the apps' store and format (Backups.h),
+// owned by the host's process, so no app takes it while the host lives and
+// any app restores it once the host is gone (a crash, a kill, a reboot).
+// Written at once when the last such window lets go of it, then again after
+// edits from other renderers (a browser's view that edits), as the apps'
+// planner times them (SavePlan.h: a second after typing stops, at most five
+// after the first change not yet written); removed when the document is
+// saved, closed, or opened by an app's window again (whose own backup takes
+// over). A document with no file is named for its backup only
+// (Backups::untitledPath); the host's document keeps no path.
+//
 // Stage 7's first reads (SessionFiles.h): FsRead lists one folder of the
 // session's (the headless host's own folder, else the folder its window's
 // renderer reported), confined to it, for a browser's tree, or reads a
@@ -67,8 +81,10 @@
 #include <thread>
 #include <vector>
 
+#include "Backups.h"
 #include "Document.h"
 #include "HostPty.h"
+#include "SavePlan.h"
 #include "SessionProtocol.h"
 #include "TerminalScreen.h"
 #include "TerminalStream.h"
@@ -122,6 +138,28 @@ public:
     // other than the shell's).
     std::string busyReason() const;
 
+    // ---- backups of what no app's window shows (see the top of the file).
+    struct BackupKeeping {
+        Backups::Store store;
+        std::string root;              // Entry::root: the folder, resolved
+        std::int64_t ownerPid = 0;     // the host's process, and its start
+        double ownerStart = 0;         // (Backups::processStart)
+        // Clocks: Entry::saved's (Unix seconds), and the planner's (any
+        // that only goes forward, in seconds); the system's when unset.
+        std::function<double()> wallNow, monoNow;
+        std::function<std::string()> newId;   // Backups::newId when unset
+    };
+    // From now on (called once, before any renderer, by `mutible host`).
+    void keepBackups(BackupKeeping k);
+    bool keepsBackups() const { return keeping_; }
+    // Every backup a document needs written now, not when planned: the host
+    // is about to end (a signal), or a check wants it on disk.
+    void writeBackupsNow();
+    // For checks: the id of a document's backup on disk, "" for none; and
+    // the path that backup names (the document's, or the untitled name).
+    std::string backupId(DocId d) const;
+    std::string backupPath(DocId d) const;
+
     // ---- terminals: what the loop polls, and what it calls when a pty is
     // ready. A terminal's renderers are the one that opened it and every
     // one that attached to it since; all of them hear of it.
@@ -156,6 +194,7 @@ private:
         bool hello = false;
         bool readOnly = false;   // Hello's flag 1: a view, which changes nothing
         bool guest = false;      // flag 2: a view that may edit, undo and type
+        bool keepsBackups = false;   // flag 4: an app that backs up what it has open
         std::uint64_t idBase = 0;   // its Welcome's: the ids it makes are above it
     };
     // One applied edit, as every renderer may need it again: by whom, in
@@ -188,6 +227,17 @@ private:
         std::uint64_t stepId = 0;
         Model::UndoHistory::StepInfo stepInfo;
         Selection stepAfter;
+        // Its backup while the host keeps one (keepBackups): the file's id,
+        // whether it is on disk, the version and path it holds; and the
+        // name it was given for having no path (Backups::untitledPath).
+        struct Kept {
+            std::string id;
+            bool written = false;
+            std::uint64_t v = 0;
+            std::string path;
+            std::string untitled;
+            bool wasShown = false;   // an app's window had it, as last looked
+        } kept;
     };
 
     struct Term {
@@ -260,6 +310,27 @@ private:
     std::uint64_t windowOrder_ = 0;
     std::uint64_t order_ = 0;   // counts terminals' typing and joining (Term::Viewer)
 
+    // Backups (keepBackups): the planner of when they are written, on the
+    // monotonic clock.
+    bool keeping_ = false;
+    BackupKeeping keep_;
+    SavePlan::Planner keepPlan_;
+    double monoNow() const;
+    // Whether the document has text a backup should hold (unsaved, or no
+    // file and some text), and whether an app's window has it open (then
+    // the host keeps no backup of it).
+    static bool unsaved(const Doc& d);
+    bool shownByApp(const Doc& d) const;
+    // The path its backup names: its own, or a name for one with none.
+    std::string keptPath(DocId id, Doc& d);
+    std::vector<SavePlan::Tab> keptTabs();
+    // After anything that may change which documents need one: removed at
+    // once where none is needed, written at once for a document the host has
+    // just taken over, and planned for the rest.
+    void backupsChanged();
+    void writeBackup(DocId id, Doc& d);
+    void discardBackup(Doc& d);
+
     void send(ClientId to, Message&& m);
     void error(ClientId to, DocId d, const std::string& what);
     Model::Unit unitOf(ClientId c) const;
@@ -321,6 +392,9 @@ public:
     void disconnect(ClientId c);
     // The folder a headless host serves (Host::setFolder), on its thread.
     void setFolder(std::string folder);
+    // Backups of what no app's window shows (Host::keepBackups), on its
+    // thread; before any renderer connects.
+    void keepBackups(Host::BackupKeeping k);
     // Runs `f` on the host's thread with the Host, after everything posted
     // before it, and waits for it, at most `timeoutMs`: false, and `f` never
     // run, when the thread did not come to it in time (a hang there fails

@@ -245,6 +245,14 @@ std::string stylesheet(const Settings& s) {
     css += ".minicode-procs label.minicode-procs-group { font-weight: 600; }";
     css += ".minicode-procs label.minicode-procs-heading { color: #9CA3AF; font-size: 10px;"
            " font-weight: 600; letter-spacing: 0.6px; }";
+    // The Agents panel's plan usage section (UsageView.h): the forecast in
+    // the sidebar's text a little faded, the action as a link, as the Mac's.
+    css += ".minicode-procs label.minicode-usage-text { color: alpha(" + fg(Surface::Sidebar) +
+           ", 0.8); font-size: 11px; }";
+    css += ".minicode-procs button.minicode-usage-action { padding: 0; min-height: 0;"
+           " background: none; border: none; box-shadow: none; }";
+    css += ".minicode-procs button.minicode-usage-action label { color: #4EA1F7; font-size: 11.5px; }";
+    css += ".minicode-procs button.minicode-usage-action:hover label { text-decoration: underline; }";
     css += ".minicode-git label { color: " + fg(Surface::Sidebar) + "; }";
     css += ".minicode-git label.minicode-git-branch { font-weight: 600; font-size: 12px; }";
     css += ".minicode-git label.minicode-git-error { color: #F48771; font-size: 11px; }";

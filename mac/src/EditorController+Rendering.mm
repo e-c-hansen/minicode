@@ -497,11 +497,16 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     NSString *restored = restoring.sourceText;
     NSDate *restoredBase = restoring.fileModDate;
     const uint64_t restoredInode = restoring.fileID;
+    // A document the session's host held (a closed window's, stage 6): its
+    // text and undo history are the host's, kept; the file's text counts as
+    // saved, so the tab is unsaved where the two differ.
+    NSString *held = _activeTab.heldFromHost ? (_activeTab.sourceText ?: @"") : nil;
+    _activeTab.heldFromHost = NO;
     _activeTab.restoredBackup = NO;
     _activeTab.loaded = YES;
     _activeTab.gone = NO;
     _activeTab.pendingSort = nil;
-    [self forgetHistoryOf:_activeTab];   // the text is read afresh
+    if (!held) [self forgetHistoryOf:_activeTab];   // the text is read afresh
     [self resetViewMode];
     // Images are routed by extension before any attempt to read them as text.
     if ([EditorController isImagePath:path] && [self showImageAtPath:path]) {
@@ -521,7 +526,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     // opened as text; a backup, being text, still is, and in the viewer its
     // kind of file has over its text (a CSV's table, a JSON outline).
     MCViewerKind viewer = MCViewerKindForFile(path);
-    if (restored && MCViewerKindWithoutText(viewer)) viewer = MCViewerNone;
+    if ((restored || held) && MCViewerKindWithoutText(viewer)) viewer = MCViewerNone;
     if (MCViewerKindWithoutText(viewer) && [self showViewer:viewer]) {
         [self recordModDate];
         return;
@@ -530,8 +535,9 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     // read never counts as matching the disk (FolderSearch::readFileStable).
     MCDiskText *disk = MCReadDiskText(path, ULLONG_MAX);
     NSString *content = disk.text;
-    // The file is gone, or no longer reads as text: the backup is all there is.
-    if (!content && restored) content = @"";
+    // The file is gone, or no longer reads as text: the backup (or the
+    // host's text) is all there is.
+    if (!content && (restored || held)) content = @"";
     // Not UTF-8, nor UTF-16 that decodes exactly: Quick Look shows what
     // it can (text in another encoding, or the file's icon).
     if (!content && [[NSFileManager defaultManager] fileExistsAtPath:path] &&
@@ -553,7 +559,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         return;
     }
     NSString *ext = path.pathExtension.lowercaseString;
-    self.sourceText = content;
+    self.sourceText = held ?: content;   // the host's own text: nothing to tell it
     self.currentExt = ext;
     self.isMarkdown = [ext isEqualToString:@"md"] ||
                       [ext isEqualToString:@"markdown"];
@@ -561,7 +567,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
                    [ext isEqualToString:@"latex"];
     // Markdown and LaTeX both open in their preview, unless the file is
     // empty: a blank preview of a new file looks like nothing opened.
-    BOOL blank = [content stringByTrimmingCharactersInSet:
+    BOOL blank = [(held ?: content) stringByTrimmingCharactersInSet:
                      NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0;
     // A CSV opens as its table, the text a Shift+Cmd+V away; a JSON file
     // gets an outline beside its text.
@@ -571,7 +577,11 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     self.previewMode = (self.isMarkdown || self.isLatex || MCViewerKindOverText(viewer) ||
                         MCViewerKindRendersMarkdown(viewer)) && !blank;
     self.savedText = content;
-    self.dirty = NO;
+    self.dirty = held && (!disk.text || ![held isEqualToString:content]);
+    // A held file gone from disk says so; an untitled buffer (MCTab
+    // untitled) never had one.
+    if (held && !disk.text && !_activeTab.untitled && ![[NSFileManager defaultManager] fileExistsAtPath:path])
+        _activeTab.gone = YES;
     // How the file is written, as read; a restored buffer whose file is
     // gone keeps what its backup said (takeBackup:intoTab:).
     if (disk.text) {
@@ -579,7 +589,13 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         _activeTab.encoding = disk.encoding;
     }
     [self recordStamp:disk.stamp ofTab:_activeTab];
-    if (restored) [self showRestoredText:restored base:restoredBase inode:restoredInode];
+    if (restored) {
+        [self showRestoredText:restored base:restoredBase inode:restoredInode];
+        // The session's host counts the backup's text unsaved too (against
+        // the file's, "" for a file not on disk), so a headless host keeps
+        // it and backs it up if the window leaves it there.
+        if (self.dirty) [self sessionRestoredBackupOf:_activeTab saved:self.savedText ?: @""];
+    }
     [self noteLargeFileText:self.sourceText];   // large-file mode, before it shows
     [self refreshDisplay];
     // Previews show rendered text, which no language server should see, nor

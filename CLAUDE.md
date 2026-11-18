@@ -91,7 +91,7 @@ a trap.
   so CI runs it on Linux (the sanitizers job's g++ build; since 2026-11-17
   the GTK job runs no plain copy); `make test CXX=g++-16` reproduces CI's
   libstdc++ build on the Mac. Checks that read the docs: `commands:readme` (every default key
-  is in `docs/REFERENCE.md`'s macOS column), `commands:linux-readme` (its
+  is in `docs/REFERENCE.md`'s macOS column, each `<kbd>` as `glyphs` draws it), `commands:linux-readme` (its
   Linux column against the Linux table, both ways), `install:readme` (every
   install command is in `docs/REFERENCE.md` in backticks), `linux:build-lists` (linux/Makefile and
   meson.build name the same core files, and Android's CMakeLists names every
@@ -229,7 +229,13 @@ adding a file or looking for where something lives.
   forwarding method on AppDelegate if needed); a hints row (`appendHintsRow:`
   with `[self hk:@"id"]`, which reads the registry); a row in `docs/REFERENCE.md`'s
   table, sorted by action, a column per platform (the README's short table
-  only for an essential key). The hints panel is an attributed string on
+  only for an essential key). Keys in the docs, tables and prose alike, are
+  one `<kbd>` per chord (2026-11-18): the Mac's as its menus draw them
+  (`Commands::glyphs`, ⌃ ⌥ ⇧ ⌘ then the key: `<kbd>⇧⌘P</kbd>`,
+  `<kbd>⌘⏎</kbd>`), Linux's and Android's as words joined by +
+  (`<kbd>Ctrl+Shift+P</kbd>`), a click as `<kbd>⌘</kbd>-click`, a backtick
+  and a backslash as `&#96;` and `&#92;` (GitHub breaks on them inside
+  `<kbd>`); `commands:readme` fails on a Mac chord written otherwise. The hints panel is an attributed string on
   tab stops; never align it with spaces (⌘ ⇧ ⌃ ⌫ ⏎ differ in width). Its
   stops come from the drawn widths of each column's keys and labels
   (`PageMeasure::layoutHints`): two columns when they fit the window, else
@@ -391,7 +397,7 @@ session has a display. Check first.
   git_gutter, line_history;
   agents and control: agents, agent_panel, agent_places, agent_task, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
-  idelink, processes, session_web, session_browser;
+  idelink, processes, session_web, session_browser, host_reattach;
   run only when named: _backups_writer, _backups_restore, _restore_writer,
   _restore_reader.
   A suite's file is usually its name in CamelCase; the exceptions are

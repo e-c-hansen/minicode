@@ -544,72 +544,148 @@ static void testKeymapFile() {
 }
 
 // ------------------------------------------- the reference's key table
-// The keys a cell of docs/REFERENCE.md's shortcut table names, spelled as
-// it spells them (the README's short table spells them the same way): "Shift
-// Command P", "Control 1 to 9", "Option Command [", "Command equals (or
-// Command plus)". In the Linux column (`onLinux`) the words are Ctrl, Alt and
-// Shift, and Delete is the forward delete key.
-static std::vector<Commands::Key> ReadmeKeys(const std::string &cell, bool onLinux = false) {
+// The keys a cell of docs/REFERENCE.md's shortcut table names (the README's
+// short table writes them the same way). Each chord is one <kbd>: in the
+// macOS column as the Mac's menus and the shortcut hints draw it
+// (Commands::glyphs: "⇧⌘P", "⌃Space", "⌥⌘⏎", "⌘Keypad 0"), in the Linux
+// (`onLinux`) and Android columns as words joined by + ("Ctrl+Shift+P",
+// "Ctrl+Alt+Page Down"), where Delete is the forward delete key. A backtick
+// and a backslash are written &#96; and &#92;, which GitHub needs inside
+// <kbd>. "<kbd>⌃1</kbd> to <kbd>⌃9</kbd>" is the range; "⌘+" and "Ctrl++"
+// are the plus key (shift and =); "fn⌘←" is ⌘← on a laptop; modifiers alone
+// ("<kbd>⌘</kbd>-click") name no key. A chord that is none of these, or a
+// Mac chord not spelled as glyphs() spells it (⌘⇧P for ⇧⌘P), goes in `bad`.
+static std::string ReadmeUnescape(std::string s) {
+    static const std::pair<const char *, const char *> entities[] = {
+        {"&#96;", "`"}, {"&#92;", "\\"}, {"&#124;", "|"}, {"&lt;", "<"}, {"&gt;", ">"},
+        {"&quot;", "\""}, {"&amp;", "&"}};
+    for (const auto &e : entities)
+        for (size_t at; (at = s.find(e.first)) != std::string::npos;) s.replace(at, std::strlen(e.first), e.second);
+    return s;
+}
+
+static bool ReadmeChord(const std::string &chord, bool onLinux, Commands::Key *out, std::vector<std::string> *bad) {
     using namespace Commands;
-    std::vector<std::string> words;
-    std::string w;
-    for (char ch : cell + " ") {
-        if (ch == ' ') {
-            while (w.size() > 1 && (w.back() == ',' || w.back() == ';' || w.back() == ')'))
-                w.pop_back();
-            while (w.size() > 1 && w.front() == '(') w.erase(w.begin());
-            if (!w.empty()) words.push_back(w);
-            w.clear();
-        } else {
-            w += ch;
-        }
-    }
-    static const std::map<std::string, std::string> named = {
-        {"Space", "space"}, {"Return", "enter"}, {"Tab", "tab"}, {"Escape", "escape"},
-        {"Delete", "backspace"}, {"Up", "up"}, {"Down", "down"}, {"Left", "left"},
-        {"Right", "right"}, {"Home", "home"}, {"End", "end"}, {"backslash", "\\"},
-        {"backtick", "`"}, {"comma", ","}, {"period", "."}, {"minus", "-"}, {"equals", "="},
-        {"Menu", "contextmenu"},
+    Key k;
+    std::string rest = chord;
+    auto fail = [&]() {
+        if (bad) bad->push_back(chord);
+        return false;
     };
+    if (onLinux) {
+        std::vector<std::string> parts;
+        if (rest.size() >= 2 && rest.compare(rest.size() - 2, 2, "++") == 0) {
+            rest.erase(rest.size() - 2);
+            parts.push_back("+");
+        } else if (rest.size() == 1 && rest == "+") {
+            rest.clear();
+            parts.push_back("+");
+        } else {
+            size_t plus = rest.rfind('+');
+            parts.push_back(plus == std::string::npos ? rest : rest.substr(plus + 1));
+            rest = plus == std::string::npos ? std::string() : rest.substr(0, plus);
+        }
+        std::string name = parts[0];
+        std::vector<std::string> mods;
+        for (size_t from = 0; !rest.empty() && from <= rest.size();) {
+            size_t plus = rest.find('+', from);
+            mods.push_back(rest.substr(from, plus == std::string::npos ? std::string::npos : plus - from));
+            if (plus == std::string::npos) break;
+            from = plus + 1;
+        }
+        if (name == "Ctrl" || name == "Alt" || name == "Shift") {   // modifiers alone
+            mods.push_back(name);
+            name.clear();
+        }
+        for (const std::string &m : mods) {
+            if (m == "Ctrl") k.mods |= Ctrl;
+            else if (m == "Alt") k.mods |= Alt;
+            else if (m == "Shift") k.mods |= Shift;
+            else return fail();
+        }
+        if (name.empty()) return false;
+        static const std::map<std::string, std::string> named = {
+            {"Up", "up"}, {"Down", "down"}, {"Left", "left"}, {"Right", "right"},
+            {"Home", "home"}, {"End", "end"}, {"Page Up", "pageup"}, {"Page Down", "pagedown"},
+            {"Enter", "enter"}, {"Tab", "tab"}, {"Space", "space"}, {"Escape", "escape"},
+            {"Backspace", "backspace"}, {"Delete", "delete"}, {"Menu", "contextmenu"}};
+        if (named.count(name)) k.name = named.at(name);
+        else if (name == "+") { k.name = "="; k.mods |= Shift; }
+        else if (name.size() == 8 && name.compare(0, 7, "Keypad ") == 0) k.name = "numpad" + name.substr(7);
+        else if (name.size() >= 2 && name[0] == 'F' && std::isdigit((unsigned char)name[1])) k.name = "f" + name.substr(1);
+        else if (name.size() == 1 && !std::isspace((unsigned char)name[0])) k.name = std::string(1, (char)std::tolower((unsigned char)name[0]));
+        else return fail();
+        *out = k;
+        return true;
+    }
+    if (rest.compare(0, 2, "fn") == 0 && rest.size() > 2) rest.erase(0, 2);
+    else if (rest == "fn") return false;
+    const std::string spelled = rest;
+    static const std::pair<const char *, unsigned> glyph[] = {
+        {"⌃", Ctrl}, {"⌥", Alt}, {"⇧", Shift}, {"⌘", Cmd}};
+    for (bool more = true; more;) {
+        more = false;
+        for (const auto &g : glyph)
+            if (rest.compare(0, std::strlen(g.first), g.first) == 0) {
+                k.mods |= g.second;
+                rest.erase(0, std::strlen(g.first));
+                more = true;
+            }
+    }
+    if (rest.empty()) return false;   // modifiers alone: a click or a drag
+    if (rest == "+") {
+        k.name = "=";
+        k.mods |= Shift;
+        *out = k;
+        return true;
+    }
+    for (const char *n : {"up", "down", "left", "right", "home", "end", "pageup", "pagedown", "enter", "tab",
+                          "space", "escape", "backspace", "delete", "contextmenu"}) {
+        Key g;
+        g.name = n;
+        if (glyphs(g) == rest) k.name = n;
+    }
+    if (k.name.empty()) {
+        if (rest.size() == 8 && rest.compare(0, 7, "Keypad ") == 0) k.name = "numpad" + rest.substr(7);
+        else if (rest.size() >= 2 && rest[0] == 'F' && std::isdigit((unsigned char)rest[1])) k.name = "f" + rest.substr(1);
+        else if (rest.size() == 1 && !std::isspace((unsigned char)rest[0])) k.name = std::string(1, (char)std::tolower((unsigned char)rest[0]));
+        else return fail();
+    }
+    if (glyphs(k) != spelled) return fail();
+    *out = k;
+    return true;
+}
+
+static std::vector<Commands::Key> ReadmeKeys(const std::string &cell, bool onLinux = false,
+                                             std::vector<std::string> *bad = nullptr) {
+    using namespace Commands;
     std::vector<Key> out;
-    unsigned mods = 0;
-    for (size_t i = 0; i < words.size(); i++) {
-        const std::string &t = words[i];
-        if (t == "Shift") { mods |= Shift; continue; }
-        if (t == "Command") { mods |= Cmd; continue; }
-        if (t == "Option") { mods |= Alt; continue; }
-        if (t == "Control") { mods |= Ctrl; continue; }
-        if (onLinux && t == "Ctrl") { mods |= Ctrl; continue; }
-        if (onLinux && t == "Alt") { mods |= Alt; continue; }
-        if (t == "with" || t == "fn") continue;
-        std::string name;
-        unsigned extra = 0;
-        if (onLinux && t == "Delete") name = "delete";
-        else if (onLinux && t == "Backspace") name = "backspace";
-        else if (onLinux && t == "Enter") name = "enter";
-        else if (named.count(t)) name = named.at(t);
-        else if (t == "plus") { name = "="; extra = Shift; }
-        else if (t == "keypad" && i + 1 < words.size()) name = "numpad" + words[++i];
-        else if (t == "Forward" && i + 1 < words.size() && words[i + 1] == "Delete") { name = "delete"; i++; }
-        else if (t == "Page" && i + 1 < words.size()) name = "page" + std::string(words[++i] == "Up" ? "up" : "down");
-        else if (t.size() >= 2 && t[0] == 'F' && std::isdigit((unsigned char)t[1])) name = "f" + t.substr(1);
-        else if (t.size() == 1 && !std::isspace((unsigned char)t[0])) name = std::string(1, (char)std::tolower((unsigned char)t[0]));
-        if (name.empty()) { mods = 0; continue; }
+    bool lastWasDigit = false;
+    size_t lastEnd = 0;
+    for (size_t at = 0; (at = cell.find("<kbd>", at)) != std::string::npos;) {
+        size_t close = cell.find("</kbd>", at);
+        if (close == std::string::npos) {
+            if (bad) bad->push_back(cell.substr(at));
+            break;
+        }
+        const std::string between = cell.substr(lastEnd, at - lastEnd);
         Key k;
-        k.mods = mods | extra;
-        k.name = name;
-        out.push_back(k);
-        // "Control 1 to 9"
-        if (name.size() == 1 && std::isdigit((unsigned char)name[0]) && i + 2 < words.size() &&
-            words[i + 1] == "to" && words[i + 2].size() == 1 && std::isdigit((unsigned char)words[i + 2][0])) {
-            for (char d = (char)(name[0] + 1); d <= words[i + 2][0]; d++) {
+        const bool ok = ReadmeChord(ReadmeUnescape(cell.substr(at + 5, close - at - 5)), onLinux, &k, bad);
+        at = lastEnd = close + 6;
+        if (!ok) {
+            lastWasDigit = false;
+            continue;
+        }
+        const bool digit = k.name.size() == 1 && std::isdigit((unsigned char)k.name[0]);
+        // "<kbd>⌃1</kbd> to <kbd>⌃9</kbd>": the keys between as well.
+        if (digit && lastWasDigit && between == " to " && out.back().mods == k.mods)
+            for (char d = (char)(out.back().name[0] + 1); d < k.name[0]; d++) {
                 Key r = k;
                 r.name = std::string(1, d);
                 out.push_back(r);
             }
-            i += 2;
-        }
-        mods = 0;
+        out.push_back(k);
+        lastWasDigit = digit;
     }
     return out;
 }
@@ -617,14 +693,40 @@ static std::vector<Commands::Key> ReadmeKeys(const std::string &cell, bool onLin
 static void testCommandsReadme() {
     using namespace Commands;
     GROUP("commands:readme");
-    std::vector<Key> spelled = ReadmeKeys("Shift Command 1 to 9, or Control Command [ (Option Command ] too); "
-                                          "Command equals (or Command plus), Command with keypad 0, the Menu key");
+    std::vector<std::string> bad;
+    std::vector<Key> spelled = ReadmeKeys("<kbd>⇧⌘1</kbd> to <kbd>⇧⌘9</kbd>, or <kbd>⌃⌘[</kbd> (<kbd>⌥⌘]</kbd> too); "
+                                          "<kbd>⌘=</kbd> (or <kbd>⌘+</kbd>), <kbd>⌘Keypad 0</kbd>, the <kbd>Menu</kbd> key, "
+                                          "<kbd>⌘</kbd>-click, <kbd>⌃&#96;</kbd>, <kbd>⇧⌘&#92;</kbd>, <kbd>fn⌘←</kbd>, "
+                                          "<kbd>⌥⇧⌘⏎</kbd>, <kbd>⌃Space</kbd>, <kbd>⇧F12</kbd>",
+                                          false, &bad);
     std::vector<std::string> got;
     for (const Key &k : spelled) got.push_back(format(k));
-    CHECK(got.size() == 15);
+    CHECK(got.size() == 21);
     CHECK(got.size() > 9 && got[0] == "shift+cmd+1" && got[8] == "shift+cmd+9" && got[9] == "ctrl+cmd+[");
     CHECK(got.size() > 14 && got[10] == "alt+cmd+]" && got[11] == "cmd+=" && got[12] == "shift+cmd+=");
     CHECK(got.size() > 14 && got[13] == "cmd+numpad0" && got[14] == "contextmenu");
+    CHECK(got.size() > 20 && got[15] == "ctrl+`" && got[16] == "shift+cmd+\\" && got[17] == "cmd+left");
+    CHECK(got.size() > 20 && got[18] == "alt+shift+cmd+enter" && got[19] == "ctrl+space" && got[20] == "shift+f12");
+    CHECK(bad.empty());
+    // The Linux column's words.
+    got.clear();
+    for (const Key &k : ReadmeKeys("<kbd>Ctrl+Shift+P</kbd>, <kbd>Ctrl++</kbd> (or <kbd>Ctrl+=</kbd>), "
+                                   "<kbd>Ctrl+Alt+Page Down</kbd>, <kbd>Ctrl+&#96;</kbd>, <kbd>Shift+Alt</kbd>-click, "
+                                   "<kbd>Alt+1</kbd> to <kbd>Alt+3</kbd>, <kbd>Delete</kbd>, <kbd>Ctrl+Keypad 0</kbd>",
+                                   true, &bad))
+        got.push_back(format(k));
+    CHECK(got.size() == 10);
+    CHECK(got.size() > 4 && got[0] == "ctrl+shift+p" && got[1] == "ctrl+shift+=" && got[2] == "ctrl+=");
+    CHECK(got.size() > 4 && got[3] == "ctrl+alt+pagedown" && got[4] == "ctrl+`");
+    CHECK(got.size() > 9 && got[5] == "alt+1" && got[7] == "alt+3" && got[8] == "delete" && got[9] == "ctrl+numpad0");
+    CHECK(bad.empty());
+    // Spelled out, a chord is no key; in the wrong order, or a word the
+    // column does not use, it is a mistake.
+    CHECK(ReadmeKeys("Shift Command P").empty());
+    CHECK(ReadmeKeys("<kbd>⌘⇧P</kbd>, <kbd>Shift+Cmd+P</kbd>", false, &bad).empty() && bad.size() == 2);
+    bad.clear();
+    CHECK(ReadmeKeys("<kbd>Cmd+P</kbd>, <kbd>Ctrl+Page Middle</kbd>", true, &bad).empty() && bad.size() == 2);
+    bad.clear();
 
     std::ifstream f("docs/REFERENCE.md");
     if (!f) {
@@ -646,8 +748,12 @@ static void testCommandsReadme() {
         size_t a = row.find('|', 1);
         size_t b = a == std::string::npos ? a : row.find('|', a + 1);
         if (b == std::string::npos) continue;
-        for (const Key &k : ReadmeKeys(row.substr(a + 1, b - a - 1))) listed.insert(format(k));
+        for (const Key &k : ReadmeKeys(row.substr(a + 1, b - a - 1), false, &bad)) listed.insert(format(k));
     }
+    // Every chord in it is written as the menus draw it.
+    for (const std::string &chord : bad) std::printf("  docs/REFERENCE.md's macOS column has <kbd>%s</kbd>\n", chord.c_str());
+    CHECK(bad.empty());
+    CHECK(listed.size() > 100);
     // Every command's default keys are in it.
     for (const Command &c : all())
         for (const Key &k : defaultKeys(c)) {

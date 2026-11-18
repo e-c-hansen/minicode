@@ -55,6 +55,7 @@ extern NSNotificationName const MCTerminalDidCloseNotification;
 // (ClaudeHooksOffer.h).
 extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 
+@class MCSessionTermPlace, MCSessionLinkRef;
 @interface TerminalView : NSView
 // Cmd+click on a link in the output. The window opens files and URLs.
 @property(nonatomic, copy) void (^onOpenLink)(MCTermLink *link);
@@ -77,6 +78,22 @@ extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 // bin/activate would, running nothing of the environment's.
 - (instancetype)initWithDirectory:(NSString *)dir
                       environment:(NSDictionary<NSString *, NSString *> *)environment;
+// On the session's host: `place` names the link its shell goes on (nil: the
+// one for its folder) and, when it holds one, the held terminal it takes
+// over instead of starting a shell (a window opening takes what a closed
+// one left, stage 6): attached with the host's replay, then live output.
+- (instancetype)initWithDirectory:(NSString *)dir
+                      environment:(NSDictionary<NSString *, NSString *> *)environment
+                            place:(MCSessionTermPlace *)place;
+// Its link on the session's host, nil off it.
+@property(nonatomic, readonly) MCSessionLinkRef *sessionLink;
+// The window closes and detaches: the shell runs on, on the host, for the
+// folder's next window (Client::detachTerminal); closing this view then
+// ends nothing.
+- (void)detachFromSessionHost;
+// Its link's host went and `link` was found or started for its folder
+// since: a new shell there (the old one ended with the old host).
+- (void)rehostOn:(MCSessionLinkRef *)link;
 // A program other than the shell holds the terminal (a REPL it started).
 @property(nonatomic, readonly) BOOL programHasTerminal;
 // That program asked for bracketed paste (Python 3.13's REPL does).

@@ -5,7 +5,9 @@
 </picture>
 </h1>
 
-Take back your space. Quickly explore your files, open and render just about anything, edit it in realtime, or watch your agents work through it all.
+*Your machine, in plain sight.*
+
+Quickly explore your files, open and render just about anything, edit it in realtime, or watch your agents work through it all.
 
 mutible is a small native app for macOS and Linux, with no Electron and no third-party libraries. Code opens in an editor with language servers behind it, Markdown and LaTeX as pages you can edit, and PDFs, pictures, video, spreadsheets, and databases in viewers of their own. A terminal, a browser, a git panel, and a dashboard of what your Claude Code sessions did are a keystroke away.
 
@@ -25,7 +27,7 @@ Ubuntu, Android, and building from source are under [Get started](#get-started).
 
 ### A folder, opened in place
 
-The file tree follows the disk and colors each name by its git status. A click opens a file in a preview tab, as in VS Code, and a double click keeps it. Tabs come back with the folder, and unsaved changes are backed up as you type, so a crash loses nothing. Shift Command P runs any command by name, and Command P opens any file from a few letters of its name.
+The file tree follows the disk and colors each name by its git status. A click opens a file in a preview tab, as in VS Code, and a double click keeps it. Tabs come back with the folder, and unsaved changes are backed up as you type, so a crash loses nothing. <kbd>⇧⌘P</kbd> runs any command by name, and <kbd>⌘P</kbd> opens any file from a few letters of its name.
 
 ### An IDE
 
@@ -37,19 +39,19 @@ With a language server installed (clangd, basedpyright, gopls, rust-analyzer, ty
 
 ![Saving a change, then staging that hunk and committing it in the source control panel](docs/demos/git.gif)
 
-Shift Command G or Control Shift G swaps the tree for a source control panel: changes and their diffs, the commit graph with what is and is not pushed, and push, pull, and fetch. Stage or discard a file, a hunk, or the lines you select, and a discard can be undone. Bars beside the line numbers mark what changed, and a click on one reverts or stages that change alone.
+Pressing <kbd>⇧⌘G</kbd> or <kbd>⌃⇧G</kbd> swaps the tree for a source control panel: changes and their diffs, the commit graph with what is and is not pushed, and push, pull, and fetch. Stage or discard a file, a hunk, or the lines you select, and a discard can be undone. Bars beside the line numbers mark what changed, and a click on one reverts or stages that change alone.
 
 ### A real terminal
 
 ![The terminal panel running ls, git log and a Python script](docs/demos/terminal.gif)
 
-Control backtick opens your own zsh, with your prompt, completion, and plugins. On the Mac the terminal emulator is mutible's own: vim, htop, ssh, and Claude Code draw in it as in Terminal.app, lines rewrap when it resizes, and Command Up and Down jump between the commands you ran. Terminals open in tabs and side by side, and Command clicking src/main.cpp:42:7 opens that line.
+Pressing <kbd>⌃&#96;</kbd> opens your own zsh, with your prompt, completion, and plugins. On the Mac the terminal emulator is mutible's own: vim, htop, ssh, and Claude Code draw in it as in Terminal.app, lines rewrap when it resizes, and <kbd>⌘↑</kbd> and <kbd>⌘↓</kbd> jump between the commands you ran. Terminals open in tabs and side by side, and <kbd>⌘</kbd>-clicking src/main.cpp:42:7 opens that line.
 
 ### A browser beside the code
 
 ![Command clicking a grep result to open it at its line, then a URL that opens in the browser panel](docs/demos/links.gif)
 
-Shift Command B opens a browser with tabs to the right of the editor, the terminal across the bottom under both. URLs printed in the terminal open there, and so do the local pages that Vite and Claude Code open. Bookmarks are .url files in a folder, and `mutible https://example.com` opens the browser in a window of its own.
+Pressing <kbd>⇧⌘B</kbd> opens a browser with tabs to the right of the editor, the terminal across the bottom under both. URLs printed in the terminal open there, and so do the local pages that Vite and Claude Code open. Bookmarks are .url files in a folder, and `mutible https://example.com` opens the browser in a window of its own.
 
 ### Markdown and LaTeX, edited on the page
 
@@ -69,13 +71,13 @@ Pictures, PDFs, video, and audio open in the editor's pane. CSV files open as a 
 
 ![The Agents panel listing the folder's Claude Code sessions, and one session's final message and test runs](docs/demos/agents.gif)
 
-mutible works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), which you install yourself. Command I asks it for a change at the cursor and shows the diff before applying it. With the `mutible` command an agent opens a file at a line with a note, shows a side-by-side diff, or runs the tests in a terminal you can watch. The Agents panel lists the sessions that worked in the folder, with the files each changed and the commands it ran, and the Processes panel shows what they left running. Claude Code's /ide can link to mutible too.
+mutible works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), which you install yourself. <kbd>⌘I</kbd> asks it for a change at the cursor and shows the diff before applying it. With the `mutible` command an agent opens a file at a line with a note, shows a side-by-side diff, or runs the tests in a terminal you can watch. The Agents panel lists the sessions that worked in the folder, with the files each changed and the commands it ran, and the Processes panel shows what they left running. Claude Code's /ide can link to mutible too.
 
 ### Settings and themes
 
 ![Picking new colors for the file tree, the editor and the status bar](docs/demos/settings.gif)
 
-Settings are one text file, opened by Command comma and applied when saved. Every color shows as a swatch that opens the color picker, panels can be translucent, and View > Theme switches between VS Code's built-in themes. Adjust Settings, at the end of every right click menu, opens the file at that part's keys, and keys.conf changes any shortcut.
+Settings are one text file, opened by <kbd>⌘,</kbd> and applied when saved. Every color shows as a swatch that opens the color picker, panels can be translucent, and View > Theme switches between VS Code's built-in themes. Adjust Settings, at the end of every right click menu, opens the file at that part's keys, and keys.conf changes any shortcut.
 
 ## Memory
 
@@ -131,29 +133,31 @@ make run DIR=demo
 
 ## Keys
 
-Linux uses Ctrl where the Mac uses Command, with VS Code's Linux key where VS Code has the command. Shift Command H shows the keys that apply right now, and the [reference](docs/REFERENCE.md#keyboard-shortcuts) lists every one, Android's included.
+Linux uses Ctrl where the Mac uses Command, with VS Code's Linux key where VS Code has the command. <kbd>⇧⌘H</kbd> shows the keys that apply right now, and the [reference](docs/REFERENCE.md#keyboard-shortcuts) lists every one, Android's included.
+
+⌘ is Command, ⇧ Shift, ⌥ Option, ⌃ Control.
 
 | Action | macOS | Linux |
 | --- | --- | --- |
-| Run any command by name | Shift Command P | Ctrl Shift P |
-| Open a file of the folder by name | Command P | Ctrl P |
-| Find in the file, or in the whole folder | Command F, Shift Command F | Ctrl F, Ctrl Shift F |
-| Toggle the sidebar | Command B | Ctrl B |
-| Toggle the terminal | Control backtick | Ctrl backtick |
-| Toggle the browser | Shift Command B | Ctrl Shift B |
-| Toggle the source control panel | Shift Command G or Control Shift G | Ctrl Shift G |
-| Toggle the Markdown or LaTeX preview | Shift Command V | Ctrl Shift V |
-| Show the Markdown page beside its source | Control Command V | Ctrl Alt V |
-| Split the editor | Command backslash | Ctrl backslash |
-| Add the next occurrence to the selection | Command D | Ctrl D |
-| Go to definition, rename | F12, F2 | F12, F2 |
-| Show quick fixes | Command period | Ctrl period |
-| Format the file | Shift Option F | Ctrl Shift I |
-| Run the open file in the terminal | Shift Command Return | Ctrl Shift Return |
-| Ask the inline agent | Command I | Ctrl I |
-| Toggle the Agents panel | Shift Command A | Ctrl Shift A |
-| Open the settings file | Command comma | Ctrl comma |
-| Show the shortcut hints | Shift Command H | Ctrl Shift H |
+| Run any command by name | <kbd>⇧⌘P</kbd> | <kbd>Ctrl+Shift+P</kbd> |
+| Open a file of the folder by name | <kbd>⌘P</kbd> | <kbd>Ctrl+P</kbd> |
+| Find in the file, or in the whole folder | <kbd>⌘F</kbd>, <kbd>⇧⌘F</kbd> | <kbd>Ctrl+F</kbd>, <kbd>Ctrl+Shift+F</kbd> |
+| Toggle the sidebar | <kbd>⌘B</kbd> | <kbd>Ctrl+B</kbd> |
+| Toggle the terminal | <kbd>⌃&#96;</kbd> | <kbd>Ctrl+&#96;</kbd> |
+| Toggle the browser | <kbd>⇧⌘B</kbd> | <kbd>Ctrl+Shift+B</kbd> |
+| Toggle the source control panel | <kbd>⇧⌘G</kbd> or <kbd>⌃⇧G</kbd> | <kbd>Ctrl+Shift+G</kbd> |
+| Toggle the Markdown or LaTeX preview | <kbd>⇧⌘V</kbd> | <kbd>Ctrl+Shift+V</kbd> |
+| Show the Markdown page beside its source | <kbd>⌃⌘V</kbd> | <kbd>Ctrl+Alt+V</kbd> |
+| Split the editor | <kbd>⌘&#92;</kbd> | <kbd>Ctrl+&#92;</kbd> |
+| Add the next occurrence to the selection | <kbd>⌘D</kbd> | <kbd>Ctrl+D</kbd> |
+| Go to definition, rename | <kbd>F12</kbd>, <kbd>F2</kbd> | <kbd>F12</kbd>, <kbd>F2</kbd> |
+| Show quick fixes | <kbd>⌘.</kbd> | <kbd>Ctrl+.</kbd> |
+| Format the file | <kbd>⌥⇧F</kbd> | <kbd>Ctrl+Shift+I</kbd> |
+| Run the open file in the terminal | <kbd>⇧⌘⏎</kbd> | <kbd>Ctrl+Shift+Enter</kbd> |
+| Ask the inline agent | <kbd>⌘I</kbd> | <kbd>Ctrl+I</kbd> |
+| Toggle the Agents panel | <kbd>⇧⌘A</kbd> | <kbd>Ctrl+Shift+A</kbd> |
+| Open the settings file | <kbd>⌘,</kbd> | <kbd>Ctrl+,</kbd> |
+| Show the shortcut hints | <kbd>⇧⌘H</kbd> | <kbd>Ctrl+Shift+H</kbd> |
 
 ## More
 

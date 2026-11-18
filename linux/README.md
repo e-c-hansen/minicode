@@ -102,6 +102,10 @@ variables are still read where the `MUTIBLE_*` name is not set
   editing a block from the preview (`../src/MarkdownEdit`).
 - `src/Terminal.{h,cpp}` — VTE terminal panel, behind `MUTIBLE_ENABLE_TERMINAL`,
   with Ctrl+click on file references and URLs found by `../src/TermLinks`.
+- `src/TerminalFrame.{h,cpp}` — the box VTE is laid out in, the scrolled
+  window's scrollable child: VTE at another renderer's pty grid, clipped
+  and panned when larger, at the top left with the rest painted in the
+  terminal's background when smaller.
 - `src/TermLinkPath.{h,cpp}` — pure C++: resolves a file reference from the
   terminal against the shell's folder and the project folder. Tested in
   `tests/run_tests.cpp`.
