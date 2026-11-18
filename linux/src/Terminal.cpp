@@ -585,10 +585,17 @@ bool Terminal::viewCells(int* cols, int* rows) const {
 // the view's grid, and the program draws in its top left.
 void Terminal::followPtySize(int cols, int rows) {
     if (!vte_ || cols < 2 || rows < 1) return;
+    // This view's own size on its way (a size it sent), or a terminal not on
+    // screen (nothing to draw, and its cells not measured yet): no clipping.
+    bool own = !gtk_widget_get_mapped(vte_);
+    for (const auto& [c, r] : sentSizes_) own = own || (c == cols && r == rows);
+    if (own) {
+        if (ptyCols_ || ptyRows_) gtk_widget_set_size_request(vte_, -1, -1);
+        ptyCols_ = ptyRows_ = 0;
+        return;
+    }
     int vc = 0, vr = 0;
     if (!viewCells(&vc, &vr)) return;
-    bool own = false;
-    for (const auto& [c, r] : sentSizes_) own = own || (c == cols && r == rows);
     const bool wider = cols > vc, taller = rows > vr;
     if (own || (!wider && !taller)) {
         if (ptyCols_ || ptyRows_) gtk_widget_set_size_request(vte_, -1, -1);

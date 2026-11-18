@@ -647,7 +647,11 @@ it after the app quits; an in-process one while the app runs.
   view's own size, from the scroller, still sent as this renderer's
   (`viewCells`); a smaller one is drawn at the top left of VTE's own
   grid. No panning to the cursor yet, and plain lines wrap at VTE's width
-  rather than the pty's.
+  rather than the pty's. A size this view sent itself, or a VTE not
+  mapped, is never followed. **Trap:** measuring a VTE that is not on
+  screen (its cell size, from every TermShell) left a second window's
+  hidden terminal showing nothing it was typed (`processes`, its second
+  window); `followPtySize` returns before it measures.
 - **Checks**: `make guitest`'s `host_reattach` (linux/tests/gui/
   HostReattachSuite.cpp; its header says what it checks), with
   `_host_reattach_child`, a second app process, for quit and relaunch.
