@@ -246,7 +246,10 @@ static void testTextModel() {
         // Bytes that are not text change nothing.
         CHECK(!d.reload(std::string("\xFF\xFE\x00", 3), stampAt(103, 8, 3)) && d.text() == u"new\n" &&
               d.stamp().mtimeSec == 102);
-        CHECK(!d.load("a\xC3(", stampAt(104, 8, 3)) && d.text() == u"new\n");
+        CHECK(!d.load(std::string("a\xC3(\0", 4), stampAt(104, 8, 4)) && d.text() == u"new\n");
+        // Not UTF-8 and no NUL: Windows-1252 text (since 2026-11-18, C3b).
+        CHECK(d.load("a\xC3(", stampAt(104, 8, 3)) && d.text() == u"a\u00C3(" &&
+              d.encoding() == FolderSearch::TextEncoding::Windows1252);
     }
 
     GROUP("document:stamp");

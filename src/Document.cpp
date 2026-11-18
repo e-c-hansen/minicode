@@ -90,7 +90,15 @@ bool Document::bytesToWrite(std::string* bytes, std::string* why) const {
         if (why) *why = "the text holds a character UTF-8 cannot store";
         return false;
     }
-    *bytes = FolderSearch::encodeFileText(utf8FromUtf16(text), encoding_, bom_);
+    const std::string utf8 = utf8FromUtf16(text);
+    std::string unheld;
+    if (!FolderSearch::canEncode(utf8, encoding_, &unheld)) {
+        if (why)
+            *why = std::string("the text holds \u201C") + unheld + "\u201D, which " +
+                   FolderSearch::encodingLabel(encoding_, bom_) + " cannot store";
+        return false;
+    }
+    *bytes = FolderSearch::encodeFileText(utf8, encoding_, bom_);
     return true;
 }
 

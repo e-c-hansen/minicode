@@ -195,14 +195,22 @@ void LspSession::syncOpenDocuments() {
         if (entries.count(key)) continue;
         // The host's text, followed from here on: what the server gets
         // now, and every edit after it.
+        const std::shared_ptr<SessionLink::Link>& link = w.doc->sessionLinkShared();
+        auto was = sync_->watched.find(key.first);
+        if (was != sync_->watched.end() && was->second != link) {
+            // The id of a document on another host (the window opened
+            // another folder): that one is let go.
+            was->second->client().unwatch(key.first, this);
+            sync_->watched.erase(was);
+        }
         if (!sync_->watched.count(key.first)) {
-            if (!SessionLink::client().watch(key.first, this, [this](Shared::DocId d, const Ot::Ops& ops) {
+            if (!link->client().watch(key.first, this, [this](Shared::DocId d, const Ot::Ops& ops) {
                     for (const Ot::Op& o : ops) noteEdit(d, o.pos, o.del, o.ins.size());
                 }))
                 continue;
-            sync_->watched.insert(key.first);
+            sync_->watched[key.first] = link;
         }
-        const Model::Text* text = SessionLink::client().hostCopy(key.first);
+        const Model::Text* text = link->client().hostCopy(key.first);
         if (!text) continue;
         SyncState::Entry e;
         e.docId = key.first;
@@ -223,11 +231,11 @@ void LspSession::watchDocuments() {
     std::set<uint64_t> docs;
     for (auto& [key, e] : sync_->entries) docs.insert(e.docId);
     for (auto it = sync_->watched.begin(); it != sync_->watched.end();) {
-        if (docs.count(*it)) {
+        if (docs.count(it->first)) {
             ++it;
             continue;
         }
-        SessionLink::client().unwatch(*it, this);
+        it->second->client().unwatch(it->first, this);
         it = sync_->watched.erase(it);
     }
 }
@@ -293,13 +301,19 @@ void LspSession::noteEdit(uint64_t docId, size_t start, size_t removed, size_t i
 // through the host's queue.
 void LspSession::flushChanges() {
     // The host's last edits reach the copy (and mark the entries) first.
-    if (!sync_->watched.empty()) SessionLink::client().settle();
+    {
+        std::set<SessionLink::Link*> links;
+        for (const auto& [id, link] : sync_->watched)
+            if (links.insert(link.get()).second) link->client().settle();
+    }
     if (sync_->changeTimer) g_source_remove(sync_->changeTimer);
     sync_->changeTimer = 0;
     for (auto& [key, e] : sync_->entries) {
         if (!e.pending) continue;
         e.pending = false;
-        const Model::Text* text = SessionLink::client().hostCopy(e.docId);
+        auto link = sync_->watched.find(e.docId);
+        const Model::Text* text =
+            link == sync_->watched.end() ? nullptr : link->second->client().hostCopy(e.docId);
         if (!text || !e.server->running() || e.server->stopping()) {
             e.changes.reset();
             continue;

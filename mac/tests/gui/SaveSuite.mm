@@ -187,13 +187,15 @@ MC_GUI_SUITE(save) {
         EditorController *c = MCGuiController();
         MCGuiWriteFile(F(@"enc.txt"), @"hello\n");
         GCHECK([c showFile:F(@"enc.txt")]);
-        // Neither UTF-8 nor UTF-16 (FF FE "hi" would be UTF-16LE text now).
-        WriteInPlace(F(@"enc.txt"), [NSData dataWithBytes:"\xC3(hi" length:4]);
+        // Neither UTF-8 nor UTF-16 (FF FE "hi" would be UTF-16LE text now),
+        // nor Windows-1252: a NUL with it marks it binary (since 2026-11-18,
+        // "\xC3(hi" alone reads as Windows-1252 text).
+        WriteInPlace(F(@"enc.txt"), [NSData dataWithBytes:"\xC3(h\0i" length:5]);
         [c checkExternalChange];
         GCHECK_EQ_STR(TV(c).string, @"hello\n");
         GCHECK(!c.dirty);
         // Not marked as in step with the disk: the next look reads it again.
-        GCHECK([Active(c) fileSize] != 4);
+        GCHECK([Active(c) fileSize] != 5);
         GCHECK([c tab:Active(c) changedOnDisk:MCStampOfFile(F(@"enc.txt"))]);
         WriteInPlace(F(@"enc.txt"), Utf8(@"fixed\n"));
         [c checkExternalChange];

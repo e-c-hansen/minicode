@@ -99,10 +99,22 @@ Terminal* Terminal::byId(int id) {
     return it == terminalRegistry().end() ? nullptr : it->second;
 }
 
-Terminal::Terminal(const std::string& cwd) : cwd_(cwd) {
+Terminal::Terminal(const std::string& cwd, std::shared_ptr<SessionLink::Link> link)
+    : link_(std::move(link)), cwd_(cwd) {
     static int nextId = kFirstId;
     controlId_ = nextId++;
     terminalRegistry()[controlId_] = this;
+    // Its host going (a headless one, killed): the shell went with it, and
+    // nothing starts another until the host can be reached again (stage 6,
+    // step 2 reconnects).
+    lostListener_ = link_->addLostListener([this](const std::string&) {
+        hostGone_ = true;
+        const bool had = hostTerm_ != 0;
+        hostTerm_ = 0;
+        shellPid_ = -1;
+        navLine_ = -1;
+        if (vte_ && had) feedNotice("[the session's host went away, and this terminal's shell with it]");
+    });
     // The scroller sits in an overlay so the hovered link's underline can be
     // drawn over the terminal: VTE underlines only its own regex matches, and
     // a regex cannot know which paths exist.
@@ -496,7 +508,8 @@ Terminal::~Terminal() {
     terminalRegistry().erase(controlId_);
     TerminalAttention::forget(controlId_);   // the mark goes with it
     // The host hangs the shell up and reaps it.
-    if (hostTerm_) SessionLink::client().closeTerminal(hostTerm_);
+    if (hostTerm_) link_->client().closeTerminal(hostTerm_);
+    link_->removeLostListener(lostListener_);
     if (ackIdle_) g_source_remove(ackIdle_);
     if (catchUpTimer_) g_source_remove(catchUpTimer_);
     if (sizeTick_ && vte_) gtk_widget_remove_tick_callback(vte_, sizeTick_);
@@ -1104,7 +1117,7 @@ void Terminal::HostListener::termOutput(Shared::TermId id, const std::string& by
         t->ackIdle_ = g_idle_add_full(G_PRIORITY_LOW, [](gpointer q) -> gboolean {
             Terminal* self = static_cast<Terminal*>(q);
             self->ackIdle_ = 0;
-            if (self->hostTerm_ && self->unacked_) SessionLink::client().ackTerminal(self->hostTerm_, self->unacked_);
+            if (self->hostTerm_ && self->unacked_) self->link_->client().ackTerminal(self->hostTerm_, self->unacked_);
             self->unacked_ = 0;
             return G_SOURCE_REMOVE;
         }, t, nullptr);
@@ -1220,7 +1233,7 @@ void Terminal::sendSize() {
     if (cols < 2 || rows < 1 || (cols == sentCols_ && rows == sentRows_)) return;
     sentCols_ = cols;
     sentRows_ = rows;
-    SessionLink::client().resizeTerminal(hostTerm_, cols, rows);
+    link_->client().resizeTerminal(hostTerm_, cols, rows);
     if (navLine_ >= 0) gtk_widget_queue_draw(underline_);
 }
 
@@ -1301,6 +1314,11 @@ bool Terminal::moveToCommand(int direction) {
 }
 
 void Terminal::spawnShell() {
+    if (hostGone_ || link_->lost()) {
+        hostGone_ = true;
+        feedNotice("[the session's host went away: no shell can start here]");
+        return;
+    }
     shellSpoke_ = false;   // a text to type waits for this shell's prompt
     std::string shellText;
     {
@@ -1429,11 +1447,11 @@ void Terminal::spawnShell() {
     spec.rows = std::max(1, (int)vte_terminal_get_row_count(t));
     spec.scrollback = (int)vte_terminal_get_scrollback_lines(t);
     spec.nonce = nonce_;
-    hostTerm_ = SessionLink::client().newId();   // from the client's range on the host
+    hostTerm_ = link_->client().newId();   // from the client's range on the host
     sentCols_ = spec.cols;
     sentRows_ = spec.rows;
     shellPid_ = -1;
-    SessionLink::client().openTerminal(hostTerm_, spec, &listener_);
+    link_->client().openTerminal(hostTerm_, spec, &listener_);
 }
 
 void Terminal::focus() {
@@ -1633,7 +1651,7 @@ void Terminal::onCommit(VteTerminal*, char* text, guint size, gpointer selfp) {
     // VTE's size first: a key typed right after a resize (a zoom) is read by
     // a program that asks for the width at once.
     self->sendSize();
-    if (self->hostTerm_) SessionLink::client().terminalInput(self->hostTerm_, std::string(text, size));
+    if (self->hostTerm_) self->link_->client().terminalInput(self->hostTerm_, std::string(text, size));
     if (self->userInput_) self->userTyped();
     if (!memchr(text, '\r', size) && !memchr(text, '\n', size)) return;
     if (self->finishTimer_) return;   // already looking

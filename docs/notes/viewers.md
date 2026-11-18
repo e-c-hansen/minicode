@@ -14,7 +14,9 @@ found through that list.
 - `FileSniff::classify` (first 8 KB and name): a NUL byte means binary, never
   text, unless the head is UTF-16 with its BOM (`isUtf16Text`); SQLite's
   header means a database; Office, iWork, OpenDocument, ePub,
-  archives and fonts go to Quick Look, and so does a file that is not UTF-8;
+  archives and fonts go to Quick Look; a file that is not UTF-8 and has no
+  NUL anywhere opens as Windows-1252 text (2026-11-18, sessions.md), one
+  with a NUL past the head goes to Quick Look when it fails to decode;
   .csv, .tsv, .json, .ipynb and .html (.htm, .xhtml) get viewers. `MCFileViewers` per window; a tab's
   `viewerKind` is without text (Quick Look, big CSV, SQLite), over text (the
   CSV table, whose edits go through `setViewerText:actionName:reshow:` so

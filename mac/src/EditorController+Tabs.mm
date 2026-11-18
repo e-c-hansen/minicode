@@ -1052,16 +1052,22 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 // FolderSearch::writeFileAtomically, so a symlink stays a link (its file
 // is written), a hard-linked file is written in place, and the mode,
 // owner, extended attributes and creation date stay; the text is written
-// in the tab's encoding (UTF-8, or UTF-16 as read) with its byte order
-// mark back in front. On success the tab is clean and in step with
-// the file as written (its stamp taken from the write itself), and its
+// in the tab's encoding (UTF-8, UTF-16 or Windows-1252, as read) with its
+// byte order mark back in front. A Windows-1252 file whose text now holds
+// a character Windows-1252 cannot store (an arrow, an emoji) is written as
+// UTF-8 instead, and the status bar says so: never a '?' in its place,
+// never a question on every save (C3b, 2026-11-18). On success the tab is
+// clean and in step with the file as written (its stamp taken from the write itself), and its
 // language servers hear of the save. `interactive` says a failure in an
 // alert, else in the status bar (auto-save never asks anything).
 - (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive {
     if (!t || !text || ![self tabHasTextToWrite:t]) return NO;
     NSString *name = t.currentPath.lastPathComponent;
     std::string bytes, error;
-    const BOOL encoded = MCEncodeFileText(text, t.encoding, t.bom, &bytes, &error);
+    NSString *unheld = nil;
+    const MCTextEncoding encoding = MCEncodingToWrite(text, t.encoding, &unheld);
+    const BOOL bom = encoding == t.encoding ? t.bom : NO;
+    const BOOL encoded = MCEncodeFileText(text, encoding, bom, &bytes, &error);
     FolderSearch::FileStamp written;
     if (!encoded || !FolderSearch::writeFileAtomically(t.currentPath.fileSystemRepresentation,
                                                        bytes, &error, &written)) {
@@ -1076,6 +1082,12 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
                                   name, why]];
         }
         return NO;
+    }
+    if (encoding != t.encoding) {
+        [self showStatusNote:[NSString stringWithFormat:
+            @"Saved %@ as UTF-8: Windows-1252 cannot store “%@”", name, unheld]];
+        t.encoding = encoding;
+        t.bom = bom;
     }
     t.savedText = text;
     t.gone = NO;

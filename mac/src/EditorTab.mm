@@ -48,7 +48,8 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes) {
 
 static_assert((int)MCTextEncodingUtf8 == (int)FolderSearch::TextEncoding::Utf8 &&
                   (int)MCTextEncodingUtf16LE == (int)FolderSearch::TextEncoding::Utf16LE &&
-                  (int)MCTextEncodingUtf16BE == (int)FolderSearch::TextEncoding::Utf16BE,
+                  (int)MCTextEncodingUtf16BE == (int)FolderSearch::TextEncoding::Utf16BE &&
+                  (int)MCTextEncodingWindows1252 == (int)FolderSearch::TextEncoding::Windows1252,
               "MCTextEncoding mirrors FolderSearch::TextEncoding");
 
 BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::string *bytes,
@@ -61,6 +62,23 @@ BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::st
     *bytes = FolderSearch::encodeFileText(std::string((const char *)utf8.bytes, utf8.length),
                                           (FolderSearch::TextEncoding)encoding, bom);
     return YES;
+}
+
+MCTextEncoding MCEncodingToWrite(NSString *text, MCTextEncoding encoding, NSString **unheld) {
+    if (encoding != MCTextEncodingWindows1252) return encoding;
+    NSData *utf8 = [text ?: @"" dataUsingEncoding:NSUTF8StringEncoding];
+    if (!utf8) return encoding;   // a lone surrogate: MCEncodeFileText says so
+    std::string first;
+    if (FolderSearch::canEncode(std::string((const char *)utf8.bytes, utf8.length),
+                                FolderSearch::TextEncoding::Windows1252, &first))
+        return encoding;
+    if (unheld) *unheld = [NSString stringWithUTF8String:first.c_str()] ?: @"?";
+    return MCTextEncodingUtf8;
+}
+
+NSString *MCEncodingStatusLabel(MCTextEncoding encoding, BOOL bom) {
+    if (encoding == MCTextEncodingUtf8 && !bom) return nil;
+    return @(FolderSearch::encodingLabel((FolderSearch::TextEncoding)encoding, bom));
 }
 
 // A tab's undo manager. While the session's host owns the tab's history

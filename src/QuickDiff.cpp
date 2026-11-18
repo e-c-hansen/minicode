@@ -208,7 +208,15 @@ Original readOriginal(const std::string& blob, FolderSearch::TextEncoding fileEn
                       bool fileBom) {
     using FolderSearch::TextEncoding;
     Original o;
-    if (fileEncoding != TextEncoding::Utf8 && blob.size() >= 2 && !(blob.size() & 1)) {
+    // A Windows-1252 file's blob that is not UTF-8 either is read as the
+    // file is (FolderSearch::readsAsWindows1252), byte for character.
+    if (fileEncoding == TextEncoding::Windows1252 && FolderSearch::readsAsWindows1252(blob)) {
+        o.encoding = fileEncoding;
+        o.text = fromUtf8(FolderSearch::decodeWindows1252(blob));
+        return o;
+    }
+    if ((fileEncoding == TextEncoding::Utf16LE || fileEncoding == TextEncoding::Utf16BE) &&
+        blob.size() >= 2 && !(blob.size() & 1)) {
         const bool le = fileEncoding == TextEncoding::Utf16LE;
         const unsigned char a = (unsigned char)blob[0], b = (unsigned char)blob[1];
         if (le ? (a == 0xFF && b == 0xFE) : (a == 0xFE && b == 0xFF)) {
@@ -234,6 +242,8 @@ std::string stagedBlob(const std::u16string& staged, const Original& how) {
         restoreBom(text, how.bom);
         return toUtf8(text);
     }
+    if (how.encoding == TextEncoding::Windows1252)
+        return FolderSearch::encodeText(toUtf8(staged), TextEncoding::Windows1252);
     const bool le = how.encoding == TextEncoding::Utf16LE;
     std::string out;
     out.reserve(staged.size() * 2 + 2);

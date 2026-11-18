@@ -88,6 +88,14 @@
     problems.onClick = ^{ [weakSelf toggleProblems:nil]; };
     self.problemsLabel = problems;
     [self.statusBar addSubview:problems];
+    // Left of them: the file's encoding, when it is not plain UTF-8.
+    NSTextField *encoding = [NSTextField labelWithString:@""];
+    encoding.font = [NSFont systemFontOfSize:11];
+    encoding.alignment = NSTextAlignmentRight;
+    encoding.autoresizingMask = NSViewMinXMargin;
+    encoding.hidden = YES;
+    self.encodingLabel = encoding;
+    [self.statusBar addSubview:encoding];
     [container addSubview:self.statusBar];
     [self layoutStatusRight];
 }
@@ -106,7 +114,34 @@
         self.problemsLabel.frame = NSMakeRect(right - lw - 16 - pw, 3, pw, 16);
         left = right - lw - 16 - pw;
     }
+    if (!self.encodingLabel.hidden) {
+        const CGFloat ew = ceil(self.encodingLabel.attributedStringValue.size.width) + 6;
+        self.encodingLabel.frame = NSMakeRect(left - 16 - ew, 3, ew, 16);
+        left -= 16 + ew;
+    }
     [self layoutLargeFileNoteEndingAt:left - 16];
+}
+
+// The encoding of the file on show, when it is not plain UTF-8: a
+// Windows-1252 file opened as text, UTF-16, or UTF-8 with its mark. A tab
+// without text of its file (a picture, a viewer, a diff) shows none.
+- (void)updateEncodingLabel {
+    MCTab *t = _activeTab;
+    NSString *label = t.currentPath && [self tabHasTextToWrite:t]
+                          ? MCEncodingStatusLabel(t.encoding, t.bom) : nil;
+    const BOOL hidden = label.length == 0;
+    if (hidden == self.encodingLabel.hidden &&
+        [self.encodingLabel.stringValue isEqualToString:label ?: @""])
+        return;
+    self.encodingLabel.stringValue = label ?: @"";
+    self.encodingLabel.toolTip =
+        hidden ? nil
+        : t.encoding == MCTextEncodingWindows1252
+            ? @"The file's encoding, kept when it is saved; a character Windows-1252 cannot "
+              @"store has it saved as UTF-8"
+            : @"The file's encoding, kept when it is saved";
+    self.encodingLabel.hidden = hidden;
+    [self layoutStatusRight];
 }
 
 // The hints panel: a search box over a scroll view over a text view, at
@@ -814,6 +849,7 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
     self.savedLabel.toolTip = tip;
     self.savedLabel.hidden = text.length == 0;
     [self layoutStatusLabels];
+    [self updateEncodingLabel];
 }
 
 // The left of the status bar: "Saved ..." then any settings problem.

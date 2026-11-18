@@ -59,7 +59,7 @@
 
 // ---------------------------------------------------------------- construction
 
-Editor::Editor() {
+Editor::Editor(std::shared_ptr<SessionLink::Link> link) : link_(std::move(link)) {
     // The window's tabs, in the process's session (EditorTabs.h).
     winId_ = session().addWindow();
     win_ = session().window(winId_);
@@ -392,7 +392,7 @@ Editor::~Editor() {
     delete compare_;
     g_object_unref(welcome_);
     g_object_unref(tags_.table);
-    SessionLink::windowClosed(winId_);
+    if (link_) link_->windowClosed(winId_);
     session().removeWindow(winId_);
     win_ = nullptr;
 }

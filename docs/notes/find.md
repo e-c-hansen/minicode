@@ -96,9 +96,10 @@ found through that list.
   that is not UTF-8, keeping the matches before), and Replace in Folder,
   which writes UTF-8 and UTF-16 only, leaves such a file alone and names
   it when it holds a match (`FolderReplacePlan::otherEncoding`; Replace
-  Match on one of its rows says why); clicking its row opens it as the
-  editor opens any file not UTF-8, in Quick Look (the editor has no
-  Windows-1252 yet); the files left out counted and named (`skipped`,
+  Match on one of its rows says why); clicking its row opens it as text
+  at the hit's line (C3b, 2026-11-18: it had opened in Quick Look; the
+  editor reads it by the same rule, `readsAsWindows1252`, see
+  sessions.md); the files left out counted and named (`skipped`,
   shown under the results, one by name);
   a file over 1 MB (`maxFileSize`) read and matched in 4 MB pieces cut at
   line breaks (`Matcher::stream`, 2026-11-16, C3: an 82 MB log had been
