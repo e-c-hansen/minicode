@@ -418,6 +418,90 @@ Json browserViewJson(const Json& report) {
     return view;
 }
 
+Json panesReportJson(bool browser, bool terminal, double browserShare) {
+    Json panes = Json::object();
+    panes.set("browser", Json(browser));
+    panes.set("terminal", Json(terminal));
+    panes.set("browserShare", Json(browserShare));
+    return panes;
+}
+
+Json panesViewJson(const Json& report) {
+    if (!report.isObject()) return Json();
+    double share = report["browserShare"].asNumber(0.5);
+    if (!(share == share)) share = 0.5;   // NaN
+    share = std::min(0.9, std::max(0.1, share));
+    Json view = Json::object();
+    view.set("browser", Json(report["browser"].asBool()));
+    view.set("terminal", Json(report["terminal"].asBool()));
+    view.set("browserShare", Json(share));
+    return view;
+}
+
+Json localFileJson(const std::string& folder, const std::string& rel, bool hidden) {
+    Json j = Json::object();
+    j.set("t", Json("filetext"));
+    j.set("path", Json(rel));
+    auto refuse = [&](const std::string& why) {
+        j.set("error", Json(why));
+        return j;
+    };
+    const std::string name = baseName(rel);
+    std::string abs, why;
+    if (folder.empty()) return refuse("This session has no folder to read in.");
+    if (!confinedPath(folder, rel, &abs, &why))
+        return refuse("That file is not one of this session's folder's: " + why + ".");
+    // Dotfiles only where the tree shows them.
+    if (!hidden) {
+        std::size_t at = 0;
+        while (at <= rel.size()) {
+            const std::size_t slash = rel.find('/', at);
+            const std::size_t end = slash == std::string::npos ? rel.size() : slash;
+            if (end > at && rel[at] == '.') return refuse(name + " is hidden in this session's tree.");
+            if (slash == std::string::npos) break;
+            at = slash + 1;
+        }
+    }
+    // Opened without following a last link out (confinedPath held the
+    // real path inside), and never blocking on a FIFO: a regular file only.
+    const int fd = ::open(abs.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return refuse(name + " could not be read: " + std::strerror(errno) + ".");
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        ::close(fd);
+        return refuse(name + " is not a file.");
+    }
+    if ((std::uint64_t)st.st_size > kMaxLocalFileBytes) {
+        ::close(fd);
+        return refuse(name + " is too large to show on this page; it opens in the mutible window.");
+    }
+    std::string bytes;
+    bytes.reserve((std::size_t)st.st_size);
+    char buf[65536];
+    for (;;) {
+        const ssize_t n = ::read(fd, buf, sizeof buf);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        bytes.append(buf, (std::size_t)n);
+        if (bytes.size() > kMaxLocalFileBytes) break;
+    }
+    ::close(fd);
+    if (bytes.size() > kMaxLocalFileBytes)
+        return refuse(name + " is too large to show on this page; it opens in the mutible window.");
+    if (std::memchr(bytes.data(), 0, std::min<std::size_t>(bytes.size(), 8192)))
+        return refuse(name + " is not text: this page shows text files; it opens in the mutible window.");
+    DocView view(0, abs);
+    Ot::Op op;
+    op.ins = Model::utf16FromUtf8(bytes);
+    if (!op.ins.empty()) view.apply(Ot::Ops{op});
+    // The document's own message, as a page's file rather than the host's.
+    const Json snap = view.snapshot();
+    for (const auto& [key, value] : snap.items())
+        if (key != "t" && key != "id" && key != "path") j.set(key, value);
+    j.set("abs", Json(abs));
+    return j;
+}
+
 Answer answer(const Request& r, const std::string& token, const std::string& page) {
     if (r.state != Request::Complete) return refuse(400, "Bad Request", "the request was not HTTP");
     if (r.method != "GET") return refuse(405, "Method Not Allowed", "only GET is served");
@@ -956,6 +1040,17 @@ struct Server::Session : Client::Listener, Client::TermListener {
         if (!replay) client->ackTerminal(t, bytes.size());
         pending = true;
     }
+    // The shell went (closed by its window, or exited): its view goes, and
+    // the pages are told at once rather than at the next look.
+    void termExited(TermId t, int, const std::string&) override {
+        terms.erase(t);
+        shells.erase(t);
+        typist.erase(t);
+        sized.erase(t);
+        exited = true;
+        pending = true;
+    }
+    bool exited = false;   // a terminal went since the last look
     // The pty's size follows whoever typed last (Host::sizer); TermShell
     // says it where the host's screen reflowed, so the view reflows there
     // too, and the pages get the terminal whole at the new size.
@@ -1068,6 +1163,11 @@ std::string Server::helloText() const {
     hello.set("editable", Json(opt_.editable));
     hello.set("canSave", Json(opt_.editable && (bool)opt_.save));
     hello.set("canBrowse", Json(opt_.editable && (bool)opt_.browse));
+    // Opening a file as a window's tab, and closing one, change the
+    // window: only a page that may edit. A page that only reads shows
+    // files in tabs of its own (readfile).
+    hello.set("canOpen", Json(opt_.editable && (bool)opt_.open));
+    hello.set("canClose", Json(opt_.editable && (bool)opt_.close));
     return hello.dump();
 }
 
@@ -1195,12 +1295,15 @@ void Server::handleMessage(Conn& c, const std::string& text) {
         showTo(c);
         return;
     }
-    // The tree: reading the folder and opening a tab change no text, so a
-    // page that only reads may.
+    // The tree: reading the folder, and a file for a tab of the page's own,
+    // change nothing, so a page that only reads may.
     if (t == "list") return onList(c, j);
-    if (t == "open") return onOpen(c, j);
-    // The rest changes the session: only from a page that may.
-    if (t == "edit") onEdit(c, j);
+    if (t == "readfile") return onReadFile(c, j);
+    // The rest changes the session or the window: only from a page that
+    // may (each says so to one that only reads).
+    if (t == "open") onOpen(c, j);
+    else if (t == "close") onClose(c, j);
+    else if (t == "edit") onEdit(c, j);
     else if (t == "undo") onUndo(c, j);
     else if (t == "save") onSave(c, j);
     else if (t == "tkey" || t == "ttext" || t == "tpaste") onTermInput(c, t, j);
@@ -1534,12 +1637,63 @@ void Server::onOpen(Conn& c, const Json& j) {
         why = "That file is not one of this session's folder's: " + why + ".";
     } else if (::stat(abs.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
         why = "That is not a file.";
+    } else if (!opt_.editable) {
+        // Opening a tab changes the window, which a page that only reads
+        // leaves as it is: it reads the file for a tab of its own.
+        why = "This page only reads: it shows files in tabs of its own, not in the window.";
     } else if (!opt_.open) {
         why = "This page cannot open files from a headless host yet.";
     } else if (!opt_.open(abs, j["keep"].asBool())) {
         why = "The mutible window could not open that file.";
     } else {
         m.set("abs", Json(abs));
+        m.set("ok", Json(true));
+        return sendJson(c, m);
+    }
+    m.set("ok", Json(false));
+    m.set("why", Json(why));
+    sendJson(c, m);
+}
+
+// A file of the folder for a tab of the page's own: read here, from the
+// folder the server serves, never through the window, so the window's tabs
+// stay as they are. Any page may.
+void Server::onReadFile(Conn& c, const Json& j) {
+    if (!j["path"].isString()) return;
+    sendJson(c, localFileJson(opt_.folder, j["path"].asString(), opt_.showHidden));
+}
+
+// A page closes a tab of the window's: only a page that may edit, only a
+// document of this window's, and never one with unsaved changes (the
+// window would ask about it, on its own screen): that one is saved first,
+// or closed in the window.
+void Server::onClose(Conn& c, const Json& j) {
+    const DocId doc = (DocId)std::max<int64_t>(0, j["doc"].asInt());
+    Json m = Json::object();
+    m.set("t", Json("closing"));
+    m.set("doc", Json((int64_t)doc));
+    std::string why;
+    std::string path;
+    bool known = false, dirty = false;
+    if (session_)
+        for (const Json& d : session_->state["documents"].elements())
+            if ((DocId)d["doc"].asInt() == doc) {
+                known = true;
+                path = d["path"].asString();
+                dirty = d["dirty"].asBool();
+            }
+    const bool ours = known && (!opt_.window || (session_ && session_->allowed.count(doc)));
+    if (!opt_.editable) {
+        why = "This page only reads: the window's tabs close in the window.";
+    } else if (!session_ || !doc || !ours) {
+        why = "That tab is not one of this window's.";
+    } else if (!opt_.close) {
+        why = "This session's tabs close in its window.";
+    } else if (dirty) {
+        why = baseName(path) + " has unsaved changes: save it first, or close it in the mutible window.";
+    } else if (!opt_.close(doc)) {
+        why = "The mutible window could not close that tab.";
+    } else {
         m.set("ok", Json(true));
         return sendJson(c, m);
     }
@@ -1640,6 +1794,8 @@ void Server::lookAtState() {
         // The window's browser pane, checked again here: the report is a
         // renderer's. A window without one (GTK's, the checks') has none.
         if (tabs.isObject() && tabs.has("browser")) tabs.set("browser", browserViewJson(tabs["browser"]));
+        // Which panes the window shows, so the page lays itself out alike.
+        if (tabs.isObject() && tabs.has("panes")) tabs.set("panes", panesViewJson(tabs["panes"]));
         windows.push(std::move(tabs));
         for (const Json& g : w["tabs"]["groups"].elements())
             for (const Json& t : g["tabs"].elements()) s.allowed.insert((DocId)t["doc"].asInt());
@@ -1657,6 +1813,7 @@ void Server::lookAtState() {
     }
     out.set("docs", std::move(docs));
     Json terms = Json::array();
+    std::set<TermId> listed;
     for (const Json& t : st["terminals"].elements()) {
         const TermId id = (TermId)t["term"].asInt();
         // One window's view: only the terminals that window reports. A
@@ -1673,19 +1830,20 @@ void Server::lookAtState() {
         o.set("busy", Json(sh.busy));
         o.set("command", Json(sh.command));
         terms.push(std::move(o));
+        listed.insert(id);
         // A size change is not looked for here: TermShell says it, in the
         // output where it happened (Session::termShell).
     }
     out.set("terms", std::move(terms));
-    if (opt_.window) {
-        // A terminal the window no longer reports: nobody here shows it, and
-        // the view keeps no copy of its screen.
-        for (auto& c : conns_)
-            if (c->term && !s.allowedTerms.count(c->term)) c->term = 0;
-        for (auto it = s.terms.begin(); it != s.terms.end();) {
-            if (s.allowedTerms.count(it->first)) ++it;
-            else it = s.terms.erase(it);
-        }
+    // A terminal the pages may no longer see (the window stopped reporting
+    // it, or the host closed it): nobody here shows it, and the view keeps
+    // no copy of its screen.
+    s.exited = false;
+    for (auto& c : conns_)
+        if (c->term && !listed.count(c->term)) c->term = 0;
+    for (auto it = s.terms.begin(); it != s.terms.end();) {
+        if (listed.count(it->first)) ++it;
+        else it = s.terms.erase(it);
     }
     std::string text = out.dump();
     if (text == s.sentState) return;
@@ -1918,7 +2076,8 @@ bool Server::run() {
                 detach();
                 return true;
             }
-            if (look_.exchange(false) || msSince(session_->lastLook) >= opt_.pollMs) lookAtState();
+            if (look_.exchange(false) || session_->exited || msSince(session_->lastLook) >= opt_.pollMs)
+                lookAtState();
             if (session_->pending && msSince(session_->lastTermFlush) >= 30) flush();
         } else if (!opt_.connect && msSince(lastSocketLook) >= 1000) {
             // Nobody looking: the host's socket going means it ended.
