@@ -11,6 +11,7 @@
 #pragma once
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace JsonOutline {
@@ -60,5 +61,32 @@ long nodeAt16(const Outline &o, size_t offset16);
 // container its size ("{4}", "[12]") and for a scalar its value.
 std::string label(const Node &n);
 std::string summary(const Node &n);
+
+// A label or summary as one line of the outline, which never wraps: a line
+// break, tab or other control character becomes a visible escape (\n, \t,
+// \r, \u0008, \u2028, ...) that the outline draws dimmed, a byte that is
+// not UTF-8 becomes U+FFFD, and past maxChars characters (an escape counts
+// its length) the line is cut, never mid-character, with an ellipsis. Only
+// what is kept is read, so a 1 MB value costs no more than a short one.
+struct Line {
+    std::string text;
+    std::vector<std::pair<size_t, size_t>> escapes;   // [start, end) bytes in text
+    bool cut = false;       // ended early, "…" appended
+    bool changed = false;   // text differs from what was given
+};
+constexpr size_t kLineChars = 200;
+Line oneLine(const std::string &s, size_t maxChars = kLineChars);
+
+// A JSON string literal decoded (from its opening quote; the text may stop
+// before the closing one), to at most maxChars characters, with an
+// ellipsis when more followed. The outline's tooltip shows a string's
+// value this way, longer than the preview and with its line breaks.
+constexpr size_t kTooltipChars = 2000;
+std::string decodeString(const std::string &literal, size_t maxChars = kTooltipChars);
+
+// What a row's tooltip says, "" for none: the key when the row could not
+// show it as it is (escaped or cut), then a string's value; `value` is
+// decodeString's, or "" to use the node's preview.
+std::string tooltip(const Node &n, const std::string &value);
 
 }  // namespace JsonOutline
