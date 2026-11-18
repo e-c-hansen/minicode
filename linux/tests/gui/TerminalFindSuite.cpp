@@ -12,7 +12,10 @@
 //   - after a split and its close, with the view left up the scrollback by
 //     a find, a command typed into the remaining pane runs and the view
 //     comes back to the end to show it (CI's long prompt left a find's match
-//     a few rows up, and the pane looked dead);
+//     a few rows up, and the pane looked dead), and the command's output is
+//     in VTE's text by the time the shell's new prompt is counted (VTE
+//     parses what it is fed a turn later than the host's word arrives;
+//     main's run failed here on 2026-11-17);
 //   - Clear Terminal at the prompt clears the screen (from a view scrolled
 //     up too) and the shell is still at a prompt; while a program runs it
 //     sends nothing;
@@ -39,6 +42,7 @@ bool gHadShell = false;
 Terminal* gA = nullptr;
 Terminal* gB = nullptr;
 long long gPrompts = 0;
+bool gPromptSeen = false, gShownWithPrompt = false;
 double gHeight = 0;
 std::function<void(Terminal*, std::function<void()>)> gOldConfirm;
 
@@ -199,12 +203,24 @@ MC_GUI_SUITE(terminal_find) {
     MCGuiWait("closed after the find", 5, [] { return !gA->findOpen(); });
     MCGuiStep("the view is above the end; a command typed there", [] {
         GCHECK(!atEnd(gA));
+        // What VTE holds at the moment the new prompt is counted.
+        gPromptSeen = gShownWithPrompt = false;
+        gA->onShellStateChanged = [] {
+            if (gPromptSeen || gA->shellState().prompts <= gPrompts) return;
+            gPromptSeen = true;
+            gShownWithPrompt = gA->recentText(20).find("pane-left-42") != std::string::npos;
+        };
         runAndNote(gA, "echo pane-left-$((6*7))");
     });
     MCGuiWait("the command ran in the remaining pane", 30, [] {
         return gA->shellState().prompts > gPrompts && atPrompt(gA);
     });
     MCGuiStep("and the view came back to the end to show it", [] {
+        gA->onShellStateChanged = nullptr;
+        GCHECK(gPromptSeen);
+        if (gPromptSeen && !gShownWithPrompt)
+            MCGuiNote("the prompt was counted before VTE had the output: %s", gA->recentText(4).c_str());
+        GCHECK(gShownWithPrompt);
         GCHECK(atEnd(gA));
         GCHECK(onScreen(gA).find("pane-left-42") != std::string::npos);
     });
