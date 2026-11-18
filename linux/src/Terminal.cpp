@@ -1424,8 +1424,7 @@ void Terminal::spawnShell() {
     spec.rows = std::max(1, (int)vte_terminal_get_row_count(t));
     spec.scrollback = (int)vte_terminal_get_scrollback_lines(t);
     spec.nonce = nonce_;
-    static Shared::TermId nextTerm = 0;
-    hostTerm_ = ++nextTerm;
+    hostTerm_ = SessionLink::client().newId();   // from the client's range on the host
     sentCols_ = spec.cols;
     sentRows_ = spec.rows;
     shellPid_ = -1;

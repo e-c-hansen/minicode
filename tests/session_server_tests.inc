@@ -271,6 +271,62 @@ static void testSessionServer() {
         }
     }
 
+    GROUP("hostserver:id-bases");
+    {
+        // Two renderers over the socket take their ids from the bases their
+        // Welcomes gave: their documents and terminals never clash, and a
+        // document the host holds keeps its id when the other edits it.
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        SocketRenderer a, b;
+        CHECK(a.attach(rig.path(), "a"));
+        CHECK(b.attach(rig.path(), "b"));
+        const std::string home = scratchFolder();
+        if (a.client && b.client) {
+            CHECK(a.client->settle() && b.client->settle());
+            const std::uint64_t ba = a.client->idBase(), bb = b.client->idBase();
+            CHECK(ba >= Shared::kIdRange && bb >= Shared::kIdRange && ba != bb);
+            CHECK(ba % Shared::kIdRange == 0 && bb % Shared::kIdRange == 0);
+            const Shared::DocId da = a.client->newId(), db = b.client->newId();
+            const Shared::TermId ta = a.client->newId(), tb = b.client->newId();
+            CHECK(da == ba + 1 && db == bb + 1 && ta == ba + 2 && tb == bb + 2);
+            a.openDoc(da, u"from a\n");
+            b.openDoc(db, u"from b\n");
+            a.client->openTerminal(ta, shellSpec(home, {"sh"}), &a);
+            b.client->openTerminal(tb, shellSpec(home, {"sh"}), &b);
+            CHECK(a.wait([&] { return a.pid > 0; }) && b.wait([&] { return b.pid > 0; }));
+            CHECK(a.pid != b.pid);
+            const Json s = a.client->sessionState();
+            std::set<std::uint64_t> docs, terms;
+            for (const Json& d : s["documents"].elements()) docs.insert((std::uint64_t)d["doc"].asInt());
+            for (const Json& t : s["terminals"].elements()) terms.insert((std::uint64_t)t["term"].asInt());
+            CHECK(docs == (std::set<std::uint64_t>{da, db}) && terms == (std::set<std::uint64_t>{ta, tb}));
+            // Each terminal's input reaches its own shell.
+            a.client->terminalInput(ta, "echo mine-$((1+1))\n");
+            b.client->terminalInput(tb, "echo theirs-$((2+2))\n");
+            CHECK(a.wait([&] { return a.screen.text().find("mine-2") != std::string::npos; }));
+            CHECK(b.wait([&] { return b.screen.text().find("theirs-4") != std::string::npos; }));
+            CHECK(a.screen.text().find("theirs-4") == std::string::npos);
+            // b edits a's document under its id; a's mirror follows.
+            TestMirror other;
+            other.client = b.client.get();
+            other.doc = da;
+            b.client->open(da, "/notes.txt", "", &other);
+            CHECK(b.client->settle());
+            CHECK(other.text == u"from a\n");
+            other.caret = 0;
+            other.type(u">");
+            CHECK(b.client->settle());
+            CHECK(a.wait([&] { return a.mirror.text == u">from a\n"; }));
+            CHECK(a.client->hostDocument(da).text == u">from a\n");
+            CHECK(a.client->sessionState()["documents"].size() == 2);
+            b.client->close(da);   // before `other` goes
+            a.client->closeTerminal(ta);
+            b.client->closeTerminal(tb);
+            CHECK(waitUntil([&] { return gone(a.pid) && gone(b.pid); }, 5000));
+        }
+    }
+
     GROUP("hostserver:terminals-across-detach");
     {
         ServerRig rig;

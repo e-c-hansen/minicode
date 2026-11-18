@@ -78,6 +78,8 @@ void Start() {
         delayUs);
     gId = gHost->connect();
     gClient->connect([](Shared::Message &&m) { gHost->post(gId, Wire(std::move(m))); });
+    // The Welcome, with the base of this renderer's ids (Client::newId).
+    if (!gClient->settle()) os_log_error(SessionLog(), "the session's host did not answer");
 }
 
 }  // namespace
@@ -179,7 +181,6 @@ struct DocListener : Shared::Client::Listener {
         [doc hostEdited:ops flag:flag select:select];
     }
 };
-uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 }  // namespace
 
 @implementation MCSessionDoc {
@@ -204,7 +205,7 @@ uint64_t gNextDoc = 0;   // ids on the host: the main thread's only
 - (instancetype)initWithTab:(MCTab *)tab text:(NSString *)text {
     if ((self = [super init])) {
         _tab = tab;
-        _docId = ++gNextDoc;
+        _docId = MCSessionClient().newId();   // from the client's range on the host
         _listener = std::make_unique<DocListener>();
         _listener->doc = self;
         // UTF-8 cannot carry a lone surrogate (no text read from a file has

@@ -69,7 +69,19 @@ found through that list.
   on a narrow row; switching one on widens a narrow sidebar
   (`MCTreeCellWidthFor`, up to 40%). Trap: NSTableCellView moves its textField
   to the cell's width without a layout pass, so `MCTreeCell` places its fields
-  again in `viewWillDraw`.
+  again in `viewWillDraw`. **The name column is the sidebar's width**
+  (2026-11-18, C3): `fitTreeColumn` (`sizeLastColumnToFit`) after every
+  reload (`applyTreeListings:`, `reloadTreeKeepingState:`, a focus change)
+  and on the sidebar scroll view's frame changes, and
+  `autoresizesOutlineColumn` is off, so a deeper row never widens the
+  column past the sidebar (there is no horizontal scroller; the columns
+  went off its edge). Trap: `NSTableViewLastColumnOnlyAutoresizingStyle`
+  moves the column only by the change in the outline's frame, so a width
+  lost once (the 80-point minimum) stayed lost while the outline kept the
+  sidebar's, and the next reload (a file added to the folder) gave every
+  row a cell that narrow: names cut at about 90 points in a 250-point
+  sidebar. The `tree` suite leaves the column at its minimum, adds a file
+  and checks every top row's name reaches the sidebar's edge again.
 - **Folder totals** (`FolderSizes::measure`, `MCFolderSizer`, last asked
   first): every regular file below, hidden ones included (as Finder and du
   count), never through a symlink or into another device; subfolders cached by
@@ -147,3 +159,4 @@ Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
 - The file tree (Mac): Trap: NSTableCellView moves its textField to the cell's width without a layout pass, so `MCTreeCell` places its fields again in `viewWillDraw`.
+- The file tree (Mac): Trap: `NSTableViewLastColumnOnlyAutoresizingStyle` moves the column only by the change in the outline's frame, so a width lost once stayed lost and a reload cut every name off; `fitTreeColumn` fits it after each reload and frame change.
