@@ -221,9 +221,11 @@ MC_GUI_SUITE(search) {
         MCGuiNote(@"%lu rows: %@", (unsigned long)Hits(c).count, p.status.stringValue);
         GCHECK(Hits(c).count == 20000);
         GCHECK([p.status.stringValue hasSuffix:@". Stopped at 20,000 results"]);
-        // Failed once on CI with "in 3 files" (PR #8, run 43610029465): the
-        // files, so the next time says which one was the third.
-        if (!GCHECK([p.status.stringValue hasPrefix:@"20,000 matches in 2 files"])) {
+        // a.txt, latin1.txt (searched since 2026-11-18) and many.txt, in
+        // the walk's order (big/ comes after). Failed once on CI with "in 3
+        // files" when it was two (PR #8, run 43610029465): the files, so
+        // the next time says which one was the extra.
+        if (!GCHECK([p.status.stringValue hasPrefix:@"20,000 matches in 3 files"])) {
             NSMutableOrderedSet *files = [NSMutableOrderedSet orderedSet];
             for (id h in Hits(c)) [files addObject:[h valueForKey:@"path"] ?: @"?"];
             MCGuiNote(@"the files: %@", [files.array componentsJoinedByString:@", "]);
