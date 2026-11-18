@@ -99,6 +99,27 @@ void CodeView::setViewBuffer(GtkTextView* view, GtkTextBuffer* buffer) {
         }
         gtk_text_tag_changed(tag, FALSE);
     }
+    // The view goes to its top before it takes the new buffer, which it
+    // then shows from its start. GtkTextView's scroll offset is the view's,
+    // not the buffer's: set_buffer puts the view's first line at the new
+    // buffer's start but keeps the offset and leaves the adjustments as they
+    // were. Far down a long file or a Markdown page, GTK then set the
+    // adjustment to 0 for the new text before laying any of it out, and an
+    // unlaid buffer's lines have no height, so it took the view's first line
+    // to be the last one; laid out, that line moved down and GTK moved the
+    // offset after it, asking the adjustment for a value it clamped back to
+    // the 0 it had, so value-changed, the one thing that puts the offset back
+    // in step, never came. A short file opened next showed its empty last
+    // line or nothing at all, the adjustment at 0 and the view past the text
+    // (`symbols` then `brackets` in the nightly soak; `gutter_switch` checks
+    // it). At 0 first, while the old text is laid out, there is nothing for
+    // GTK to move. A tab's own place is put back after this
+    // (Editor::restorePlace), which is captured before (Editor::stash).
+    GtkAdjustment* adjs[] = {gtk_scrollable_get_hadjustment(GTK_SCROLLABLE(view)),
+                             gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(view))};
+    if (old)
+        for (GtkAdjustment* a : adjs)
+            if (a) gtk_adjustment_set_value(a, 0);
     gtk_text_view_set_buffer(view, buffer);
 }
 
