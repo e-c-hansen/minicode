@@ -421,24 +421,59 @@ double contrast(double a, double b) {
     return (a + 0.05) / (b + 0.05);
 }
 
+// The menu bar's and the terminal's +'s pixels from a picture of the
+// window: "" when they are the theme's titlebar and strip colors, else what
+// is wrong. The picture is the window's last drawn frame, empty while a
+// restyle after a theme change is still to be drawn (CI's main run at
+// 46cc230b caught one), so this is waited for, never read once.
+bool near(int r, int g, int b, const Rgba& want) {
+    return std::abs(r - want.r) <= 6 && std::abs(g - want.g) <= 6 && std::abs(b - want.b) <= 6;
+}
+std::string lookPixels() {
+    const Settings s = fileSettings();
+    GtkWidget* bar = menuBar();
+    if (!bar) return "no menu bar";
+    GtkWidget* window = GTK_WIDGET(MCGuiApp().window);
+    graphene_rect_t r;
+    if (!gtk_widget_compute_bounds(bar, window, &r)) return "the menu bar has no bounds";
+    const Picture p = picture(window);
+    int red = 0, green = 0, blue = 0;
+    if (!p.at(r.origin.x + r.size.width - 4, r.origin.y + r.size.height / 2, &red, &green, &blue))
+        return "no picture of the menu bar yet (" + std::to_string(p.width) + "x" +
+               std::to_string(p.height) + ")";
+    const Rgba want = s.background(Surface::Titlebar);
+    if (!near(red, green, blue, want))
+        return "the menu bar is " + hex(red, green, blue) + ", not the titlebar color " +
+               hex(want.r, want.g, want.b);
+#ifdef MINICODE_ENABLE_TERMINAL
+    // The terminal's + beside its strip: the strip's color.
+    if (MCGuiApp().termDock && gtk_widget_get_mapped(MCGuiApp().termDock->newTabButton())) {
+        graphene_rect_t b;
+        if (!gtk_widget_compute_bounds(MCGuiApp().termDock->newTabButton(), window, &b))
+            return "the terminal's + has no bounds";
+        const Rgba strip = s.background(Surface::Sidebar);
+        if (!p.at(b.origin.x + 3, b.origin.y + 3, &red, &green, &blue)) return "no picture of the terminal's +";
+        if (!near(red, green, blue, strip))
+            return "the terminal's + is " + hex(red, green, blue) + ", not the strip's " +
+                   hex(strip.r, strip.g, strip.b);
+    }
+#endif
+    return "";
+}
+
 void lookChecks(const char* name) {
-    MCGuiStep(std::string("the menu bar in the titlebar color, its items spaced: ") + name, [] {
-        const Settings s = fileSettings();
+    MCGuiWait(std::string("the menu bar in the titlebar color, the terminal's + in the strip's: ") + name, 10,
+              [] {
+                  gWhy = lookPixels();
+                  return gWhy.empty();
+              });
+    MCGuiStep(std::string("so, and the bar's items spaced: ") + name, [] {
+        if (!gWhy.empty()) MCGuiNote("%s", gWhy.c_str());
+        GCHECK(gWhy.empty());
         GtkWidget* bar = menuBar();
         GCHECK(bar != nullptr);
         if (!bar) return;
         GtkWidget* window = GTK_WIDGET(MCGuiApp().window);
-        graphene_rect_t r;
-        GCHECK(gtk_widget_compute_bounds(bar, window, &r));
-        const Picture p = picture(window);
-        int red = 0, green = 0, blue = 0;
-        const Rgba want = s.background(Surface::Titlebar);
-        GCHECK(p.at(r.origin.x + r.size.width - 4, r.origin.y + r.size.height / 2, &red, &green, &blue));
-        if (std::abs(red - want.r) > 6 || std::abs(green - want.g) > 6 || std::abs(blue - want.b) > 6)
-            MCGuiNote("the menu bar is %s, not the titlebar color %s", hex(red, green, blue).c_str(),
-                      hex(want.r, want.g, want.b).c_str());
-        GCHECK(std::abs(red - want.r) <= 6 && std::abs(green - want.g) <= 6 &&
-               std::abs(blue - want.b) <= 6);
         // Each item's text starts well after the one before ends.
         GtkWidget* prevLabel = nullptr;
         int items = 0;
@@ -458,24 +493,18 @@ void lookChecks(const char* name) {
             prevLabel = l;
         }
         GCHECK(items >= 5);
-#ifdef MINICODE_ENABLE_TERMINAL
-        // The terminal's + beside its strip: the strip's color.
-        if (MCGuiApp().termDock && gtk_widget_get_mapped(MCGuiApp().termDock->newTabButton())) {
-            GtkWidget* plus = MCGuiApp().termDock->newTabButton();
-            graphene_rect_t b;
-            GCHECK(gtk_widget_compute_bounds(plus, window, &b));
-            const Rgba strip = s.background(Surface::Sidebar);
-            GCHECK(p.at(b.origin.x + 3, b.origin.y + 3, &red, &green, &blue));
-            if (std::abs(red - strip.r) > 6 || std::abs(green - strip.g) > 6 || std::abs(blue - strip.b) > 6)
-                MCGuiNote("the terminal's + is %s, not the strip's %s", hex(red, green, blue).c_str(),
-                          hex(strip.r, strip.g, strip.b).c_str());
-            GCHECK(std::abs(red - strip.r) <= 6 && std::abs(green - strip.g) <= 6 &&
-                   std::abs(blue - strip.b) <= 6);
-        }
-#endif
     });
     MCGuiStep("File opened", [] { MCGuiClick(MCGuiFindLabel(menuBar(), "File")); });
-    MCGuiWait("its menu", 10, [] { return popoverWith("Save") != nullptr; });
+    // Open and drawn: a picture of a menu not drawn yet is empty.
+    MCGuiWait("its menu, drawn", 10, [] {
+        GtkWidget* pop = popoverWith("Save");
+        GtkWidget* label = pop ? MCGuiFindLabel(pop, "Save") : nullptr;
+        GtkWidget* rw = label ? rowOf(label) : nullptr;
+        graphene_rect_t row;
+        int r = 0, g = 0, b = 0;
+        return rw && gtk_widget_compute_bounds(rw, pop, &row) &&
+               picture(pop).at(row.origin.x + row.size.width - 3, row.origin.y + row.size.height / 2, &r, &g, &b);
+    });
     MCGuiStep(std::string("the menu readable: ") + name, [name] {
         const Settings s = fileSettings();
         GtkWidget* pop = popoverWith("Save");
