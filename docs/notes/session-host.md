@@ -190,6 +190,82 @@ top of a turn, never inside a text system callback.
   sync a third copy: about 150 MB more for a 25 MB file. Large-file mode
   has no server, so two.
 
+## Terminals on the host (stage 5, the Mac)
+
+With the setting on, a grid terminal opened from then on (`TerminalView
+onSessionHost`, decided in `initWithDirectory:` for its life) has its
+shell on the process's host: `Shared::Pty` on the host's thread, the
+host's headless screen and events, and any other renderer of the host
+(the browser's view, a scripted client) able to attach, see its screen
+from a replay and type into it. Line mode keeps its MCPty: its log reads
+the tty's echo flag and modes directly, and it is a fallback for a
+release. With the setting off nothing changes, MCPty included.
+
+- **Opening.** `startShell` builds the environment as before (the
+  integration's ZDOTDIR and nonce, `BROWSER`, `MINICODE_TERMINAL_ID`,
+  `MINICODE_PID`, the venv and IDE link variables) and sends it as a
+  `TermSpec` (`/bin/zsh -zsh -i`, the grid's size, the scrollback, the
+  nonce) under a new terminal id per shell (a restart is a new id, so an
+  old shell's late `TermExited` never ends the new one). It then
+  `settle`s, so the shell's pid (`TermOpened`) and the host's first look
+  at the tty are there before anything asks whether a shell runs:
+  `runCommand:` starts one only when `shellPid` is 0. The shell is the
+  app's child, as MCPty's was, so the Processes panel's tracking,
+  `KERN_PROC_TTY` for background jobs, `proc_name` for the close
+  question and the exec-into-another-shell poll all work as before.
+- **Output.** `MCHostTermListener` (one per view, for its life; anything
+  for a terminal id the view has let go is ignored) appends the host's
+  bytes to the backlog, which `drainBacklog` parses in slices as before
+  and acknowledges (`ackTerminal`) as each slice is parsed, so the host
+  stops reading a program past 1 MB the screen has not taken, as MCPty's
+  reader did. The view's own `TerminalStream` and `TerminalScreen` read
+  the same bytes, so marks, the integration's events, the typing queue,
+  titles, links and find are the code they were; the host's `TermMarks`
+  and `TermShell`'s marks are not used.
+- **Input.** `sendBytes` is `terminalInput`: keys, pastes, `typeLine:`,
+  the private ZLE keys, and the screen's own replies (DA, DSR, OSC
+  colors), which the host's screen never answers. What one run-loop turn
+  sends goes as one write (4 KB or more at once), as MCPty's queue wrote
+  it back to back. **Trap (CI, 2026-11-17):** sent as two messages,
+  terminal_paste's Ctrl+D then Ctrl+C reached the shell apart: the D
+  ended cat, and the C came during zsh's precmd and cut its prompt mark
+  off, so the terminal stayed "running cat". `updateWindowSize` is
+  `resizeTerminal` (no pixel size: `TermResize` has none).
+- **The tty.** What read the master reads the host's `TermShell` (the
+  host looks after every read, 30 ms later, and every 200 ms):
+  `ptyForeground` (`tcgetpgrp`: `busy`, `canTypeNow`'s shell-owns-it,
+  `foregroundJob`, background jobs, the close question, Claude Code's
+  binary), `ptyRaw` (ICANON off: `canTypeNow`), `ptyHidesInput` (ECHO off
+  with ICANON on: secure keyboard entry) and `ptySignalsOff` (ISIG off:
+  the screen's `setRawTty`, zsh's widths at the prompt). `TermShell`
+  gained `signalsOff` for that last one, and the host's own screen now
+  uses it too (it used ICANON, so ZLE's prompt counted clusters there).
+  Each `TermShell` that arrives runs the hidden-input check and the
+  typing queue, since the raw tty `canTypeNow` waits for can come after
+  the B mark's bytes.
+- **Closing.** `stopShell` is `closeTerminal`: the host closes the
+  master, sends SIGHUP, and reaps, SIGKILL 2 s on. The shell's exit is
+  `TermExited` after its last output (`shellExited`, as before); a shell
+  that could not start says why on the screen.
+- **What other screens see.** Every renderer of the host sees every
+  terminal on it (the state's `terminals`); the browser's view of one
+  window (`SessionBrowser`) shows all of the app's host terminals, since
+  the Mac does not report which window holds one. Notes the panel writes
+  on the screen itself ("[shell exited — restarting]") are only on the
+  Mac's screen. Terminal size follows the Mac (any `TermResize` wins).
+
+Checks: `make guitest SUITES=terminal_host` (the setting turned on by the
+suite: the shell is the host's; a command typed on the Mac is on the
+host's screen and on a second renderer's, attached through
+`MCSessionConnectViewer` with its replay; a command that renderer types
+runs in the Mac's terminal and the marks see it end; the terminal goes on
+after it leaves). `terminal_pty` checks the host's teardown with
+`MCSessionInspectTerminal` (its master, write buffer and reaping) when
+the host owns the pty. CI's pass with the host runs terminal_pty,
+terminal_marks, terminal_paste, terminal_exec, terminal_keys, run_file,
+attention and terminal_host. `make test`'s `term:host` checks the modes
+the host reports (`echoOff`, `raw`, `signalsOff`).
+
 ## The headless host (stage 6, core and CLI)
 
 `minicode host --folder DIR` runs the session's host for one folder with no
@@ -421,9 +497,10 @@ Cancel.
   `windowClosed` when it stops. `Web::Options::window` keeps the state the
   browsers get to that window and its documents, and a `show` of any other
   document answers `gone`. Window ids start at 1000.
-- **Terminals** are the app's own, not the host's, so `Options::termNote`
-  (in the hello) puts "Terminals appear here once they run through the
-  session host" in a muted line while the state has none.
+- **Terminals** opened while the setting is on are the host's (above,
+  "Terminals on the host"), every window's; `Options::termNote` (in the
+  hello) puts "Terminals opened while the session host is on appear here"
+  in a muted line while the state has none.
 - A tab opened before the setting was on has no document on the host and
   is left out of the page until it is opened again.
 

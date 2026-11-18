@@ -235,6 +235,12 @@ bool Pty::raw() const {
     return !(t.c_lflag & ICANON);
 }
 
+bool Pty::signalsOff() const {
+    struct termios t;
+    if (fd_ < 0 || tcgetattr(fd_, &t) != 0) return false;
+    return !(t.c_lflag & ISIG);
+}
+
 void Pty::hangUp() {
     if (hungUp_) return;
     hungUp_ = true;

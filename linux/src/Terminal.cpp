@@ -312,6 +312,13 @@ void Terminal::makeTerminal() {
     // starts the look for the command's end (typeText, onCommandFinished).
     g_signal_connect(vte_, "contents-changed", G_CALLBACK(onContentsChanged), this);
     g_signal_connect(vte_, "commit", G_CALLBACK(onCommit), this);
+    // VTE has parsed what it was fed: the host's word on it may go through
+    // (vteCaughtUp; termShell and termMarks hold it till then).
+    {
+        auto caughtUp = +[](VteTerminal*, gpointer p) { static_cast<Terminal*>(p)->vteCaughtUp(); };
+        g_signal_connect(vte_, "contents-changed", G_CALLBACK(caughtUp), this);
+        g_signal_connect(vte_, "cursor-moved", G_CALLBACK(caughtUp), this);
+    }
     // A key pressed in the terminal: what VTE commits while it is handled
     // is the user's typing, which ends the terminal's mark (onCommit; a
     // key that sends the program nothing, such as Ctrl+Shift+C, does not).
@@ -490,6 +497,7 @@ Terminal::~Terminal() {
     // The host hangs the shell up and reaps it.
     if (hostTerm_) SessionLink::client().closeTerminal(hostTerm_);
     if (ackIdle_) g_source_remove(ackIdle_);
+    if (catchUpTimer_) g_source_remove(catchUpTimer_);
     if (sizeTick_ && vte_) gtk_widget_remove_tick_callback(vte_, sizeTick_);
     if (userInputIdle_) g_source_remove(userInputIdle_);
     g_signal_handlers_disconnect_by_data(root_, this);
@@ -1077,8 +1085,18 @@ void Terminal::HostListener::termOutput(Shared::TermId id, const std::string& by
                                         bool alt, bool) {
     if (id != t->hostTerm_ || !t->vte_) return;
     vte_terminal_feed(VTE_TERMINAL(t->vte_), bytes.data(), (gssize)bytes.size());
-    t->hostCursor_ = cursorLine;
-    t->altScreen_ = alt;
+    // The cursor line and the alternate screen are VTE's once it has parsed
+    // these bytes (vteCaughtUp).
+    t->fedCursor_ = cursorLine;
+    t->fedAlt_ = alt;
+    t->vteBehind_ = true;
+    if (!t->catchUpTimer_)
+        t->catchUpTimer_ = g_timeout_add(200, [](gpointer q) -> gboolean {
+            Terminal* self = static_cast<Terminal*>(q);
+            self->catchUpTimer_ = 0;
+            self->vteCaughtUp();
+            return G_SOURCE_REMOVE;
+        }, t);
     t->shellSpoke_ = true;
     t->unacked_ += bytes.size();
     if (!t->ackIdle_)
@@ -1097,6 +1115,16 @@ void Terminal::HostListener::termOutput(Shared::TermId id, const std::string& by
 // command ended: a short one's start and end come in one message.
 void Terminal::HostListener::termShell(Shared::TermId id, const Shared::TermShell& s) {
     if (id != t->hostTerm_) return;
+    if (t->vteBehind_) {   // after the bytes before it are on VTE's screen
+        t->heldShell_ = s;
+        t->heldShellSet_ = true;
+        return;
+    }
+    t->applyShell(s);
+}
+
+void Terminal::applyShell(const Shared::TermShell& s) {
+    Terminal* t = this;
     t->host_ = s;
     if (t->nonce_.empty() || !s.known) return;
     ShellIntegration::ShellState& sh = t->shell_;
@@ -1122,6 +1150,52 @@ void Terminal::HostListener::termShell(Shared::TermId id, const Shared::TermShel
 
 void Terminal::HostListener::termMarks(Shared::TermId id, const std::vector<Shared::TermMark>& m) {
     if (id != t->hostTerm_) return;
+    if (t->vteBehind_) {
+        t->heldMarks_ = m;
+        t->heldMarksSet_ = true;
+        return;
+    }
+    t->applyMarks(m);
+}
+
+// VTE has parsed what it was fed (or the fallback timer says it changed
+// nothing VTE reports): the host's cursor line, then what it said about the
+// marks and the shell, in the order it sent them.
+void Terminal::vteCaughtUp() {
+    if (!vteBehind_) return;
+    vteBehind_ = false;
+    if (catchUpTimer_) {
+        g_source_remove(catchUpTimer_);
+        catchUpTimer_ = 0;
+    }
+    hostCursor_ = fedCursor_;
+    altScreen_ = fedAlt_;
+    if (heldMarksSet_) {
+        heldMarksSet_ = false;
+        applyMarks(heldMarks_);
+        heldMarks_.clear();
+    }
+    if (heldShellSet_) {
+        heldShellSet_ = false;
+        applyShell(heldShell_);
+    }
+    if (navLine_ >= 0 && underline_) gtk_widget_queue_draw(underline_);
+}
+
+void Terminal::forgetHeld() {
+    vteBehind_ = false;
+    heldShellSet_ = heldMarksSet_ = false;
+    heldMarks_.clear();
+    fedCursor_ = -1;
+    fedAlt_ = false;
+    if (catchUpTimer_) {
+        g_source_remove(catchUpTimer_);
+        catchUpTimer_ = 0;
+    }
+}
+
+void Terminal::applyMarks(const std::vector<Shared::TermMark>& m) {
+    Terminal* t = this;
     t->marks_ = m;
     if (t->navLine_ >= 0) {
         bool still = false;
@@ -1133,6 +1207,7 @@ void Terminal::HostListener::termMarks(Shared::TermId id, const std::vector<Shar
 
 void Terminal::HostListener::termExited(Shared::TermId id, int, const std::string& error) {
     if (id != t->hostTerm_) return;
+    t->vteCaughtUp();   // what the host said before the exit, in its order
     t->shellExited(error);
 }
 
@@ -1290,6 +1365,7 @@ void Terminal::spawnShell() {
     marks_.clear();
     navLine_ = -1;
     hostCursor_ = -1;
+    forgetHeld();   // the old shell's word, held for bytes it fed
     nonce_.clear();
     bashShell_ = false;
     popOwed_ = 0;

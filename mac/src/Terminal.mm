@@ -56,6 +56,7 @@
 #import "Appearance.h"
 #import "EditorFont.h"
 #import "IdeLinkServer.h"
+#import "SessionLink.h"
 #include "TerminalStream.h"
 #include "TerminalScreen.h"
 #include "TermLinks.h"
@@ -74,6 +75,7 @@
 #include <algorithm>
 #include <atomic>
 #include <map>
+#include <memory>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -81,6 +83,7 @@
 #include <vector>
 
 #include "ProcessEnv.h"
+#include "SessionProtocol.h"
 
 // A process's command line ("sleep 100"), from KERN_PROCARGS2: argc, the
 // executable's path, padding, then the arguments. The program's path is cut
@@ -574,6 +577,20 @@ static const CFTimeInterval kSliceSeconds = 0.012;
 // a settings change can recolor it in place.
 static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 
+// What the session's host says of a terminal's shell, handed to its view.
+// The client dispatches on the main queue, so these run there. One per
+// view, for its life; what comes for a shell the view has let go (another
+// terminal id) is ignored.
+@class TerminalView;
+struct MCHostTermListener : Shared::Client::TermListener {
+    __weak TerminalView *view = nil;
+    void termOpened(Shared::TermId t, int pid) override;
+    void termOutput(Shared::TermId t, const std::string &bytes, long long cursorLine, bool alt,
+                    bool replay) override;
+    void termShell(Shared::TermId t, const Shared::TermShell &shell) override;
+    void termExited(Shared::TermId t, int status, const std::string &error) override;
+};
+
 @interface TerminalView () <NSTextFieldDelegate> {
     NSString *_cwd;
     NSMutableArray<NSString *> *_history;
@@ -587,6 +604,16 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     BOOL _drainScheduled;
     NSUInteger _logLines;        // line mode: lines in the output view
     int _master;                 // pty master fd, -1 when no shell
+    // The session's host owns this terminal's pty (editor.session-host,
+    // grid mode; docs/notes/session-host.md, "Terminals"): set when the
+    // terminal opens, for its life. The host forwards the pty's output and
+    // what it knows of the tty (TermShell); _master stays -1.
+    BOOL _onHost;
+    Shared::TermId _hostTerm;    // the shell's terminal on the host, 0 when none
+    Shared::TermShell _hostShell;   // the host's last word on it
+    std::unique_ptr<struct MCHostTermListener> _hostListener;
+    std::string _hostInput;      // this run-loop turn's input, sent as one write
+    BOOL _hostInputQueued;
     pid_t _shellPid;             // 0 when no shell
     int _generation;             // bumps per shell, so stale output is ignored
     NSDate *_shellStarted;
@@ -646,6 +673,10 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 @property(nonatomic, strong) NSTextField *prompt;
 @property(nonatomic, strong) NSTextField *input;
 @property(nonatomic, strong) NSSecureTextField *secureInput;
+- (void)hostOpened:(Shared::TermId)term pid:(int)pid;
+- (void)hostOutput:(Shared::TermId)term bytes:(const std::string &)bytes;
+- (void)hostShell:(Shared::TermId)term state:(const Shared::TermShell &)shell;
+- (void)hostExited:(Shared::TermId)term error:(const std::string &)error;
 @end
 
 @implementation TerminalView
@@ -665,6 +696,9 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
         _historyIdx = 0;
         _master = -1;
         _lineMode = [AppSettings shared].settings.terminalLineMode();
+        // Line mode keeps its own pty: its log reads the tty's echo flag
+        // and modes directly, and it is a fallback for a release.
+        _onHost = !_lineMode && MCSessionHostEnabled();
         _ioQueue = dispatch_queue_create("minicode.terminal.io",
                                          DISPATCH_QUEUE_SERIAL);
         self.wantsLayer = YES;
@@ -1194,6 +1228,47 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 - (BOOL)lineMode { return _lineMode; }
 - (NSString *)directory { return _cwd; }
 
+// ---- the pty, as this terminal's MCPty has it or the session's host says
+// (TermShell, looked at after each read and every 200 ms on the host's
+// thread: what tcgetpgrp and tcgetattr answer here otherwise).
+
+// A pty is open: MCPty's master, or a terminal on the host.
+- (BOOL)ptyOpen { return _onHost ? _hostTerm != 0 : _master >= 0; }
+
+// The terminal's foreground process group, 0 when none or not known.
+- (pid_t)ptyForeground {
+    if (_onHost) return _hostTerm ? (pid_t)MAX(0, _hostShell.foreground) : 0;
+    if (_master < 0) return 0;
+    const pid_t fg = tcgetpgrp(_master);
+    return fg > 0 ? fg : 0;
+}
+
+// Out of canonical mode (ICANON off), as ZLE and full-screen programs
+// leave it; NO when not known.
+- (BOOL)ptyRaw {
+    if (_onHost) return _hostTerm && _hostShell.raw;
+    struct termios t;
+    return _master >= 0 && tcgetattr(_master, &t) == 0 && (t.c_lflag & ICANON) == 0;
+}
+
+// A line read with echo off (ECHO off, ICANON on): a password.
+- (BOOL)ptyHidesInput {
+    if (_onHost) return _hostTerm && _hostShell.echoOff;
+    struct termios t;
+    return _master >= 0 && tcgetattr(_master, &t) == 0 && (t.c_lflag & ECHO) == 0 &&
+           (t.c_lflag & ICANON) != 0;
+}
+
+// Signals off (ISIG): a raw program, not ZLE, which keeps them.
+- (BOOL)ptySignalsOff {
+    if (_onHost) return _hostTerm && _hostShell.signalsOff;
+    struct termios t;
+    return _master >= 0 && tcgetattr(_master, &t) == 0 && (t.c_lflag & ISIG) == 0;
+}
+
+- (BOOL)onSessionHost { return _onHost; }
+- (unsigned long long)sessionTerminal { return _hostTerm; }
+
 - (BOOL)busy {
     if (_pendingCommands.count) return YES;
     if (_shellPid <= 0) return NO;
@@ -1205,15 +1280,15 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // a server), whatever the marks say. Not while the shell is still starting
 // with the integration (its startup files may run programs).
 - (BOOL)foregroundIsOther {
-    if (_shellPid <= 0 || _master < 0) return NO;
-    pid_t fg = tcgetpgrp(_master);
+    if (_shellPid <= 0 || ![self ptyOpen]) return NO;
+    pid_t fg = [self ptyForeground];
     return fg > 0 && fg != _shellPid && (_seenPrompt || !_integrated);
 }
 
 // The shell itself holds the terminal's foreground: what is typed now goes
 // to it, not to a program it runs.
 - (BOOL)shellOwnsTerminal {
-    return _shellPid > 0 && _master >= 0 && tcgetpgrp(_master) == _shellPid;
+    return _shellPid > 0 && [self ptyOpen] && [self ptyForeground] == _shellPid;
 }
 
 // Grid mode: whether a line typed now reaches ZLE at the shell's own prompt.
@@ -1236,8 +1311,7 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
     if (!_zleReady &&
         (!_atPrompt || _commandStarted || CACurrentMediaTime() - _promptTime < 0.3))
         return NO;
-    struct termios t;
-    if (tcgetattr(_master, &t) != 0 || (t.c_lflag & ICANON)) return NO;
+    if (![self ptyRaw]) return NO;
     _zleReady = YES;
     return YES;
 }
@@ -1285,8 +1359,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 - (pid_t)shellPid { return _shellPid; }
 
 - (pid_t)foregroundJob {
-    if (_closed || _shellPid <= 0 || _master < 0) return 0;
-    const pid_t fg = tcgetpgrp(_master);
+    if (_closed || _shellPid <= 0 || ![self ptyOpen]) return 0;
+    const pid_t fg = [self ptyForeground];
     return fg > 0 && fg != _shellPid ? fg : 0;
 }
 
@@ -1300,8 +1374,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // the pid that names it and whether all of it is stopped.
 - (std::vector<std::pair<pid_t, BOOL>>)backgroundJobGroups {
     std::vector<std::pair<pid_t, BOOL>> none;
-    if (_shellPid <= 0 || _master < 0 || (_integrated && !_seenPrompt)) return none;
-    pid_t fg = tcgetpgrp(_master);
+    if (_shellPid <= 0 || ![self ptyOpen] || (_integrated && !_seenPrompt)) return none;
+    pid_t fg = [self ptyForeground];
     // The pty, as the shell's controlling terminal (macOS answers nothing
     // for KERN_PROC_SESSION).
     struct kinfo_proc shell = {};
@@ -1364,8 +1438,8 @@ static NSString *const kDefaultFgAttribute = @"MCTerminalDefaultForeground";
 // server, Claude Code), even one the marks missed. nil for a shell at its
 // prompt, or still starting.
 - (NSString *)foregroundCommand {
-    if (_closed || _shellPid <= 0 || _master < 0) return nil;
-    pid_t fg = tcgetpgrp(_master);
+    if (_closed || _shellPid <= 0 || ![self ptyOpen]) return nil;
+    pid_t fg = [self ptyForeground];
     BOOL other = fg > 0 && fg != _shellPid && (_seenPrompt || !_integrated);
     BOOL marked = _integrated && _seenPrompt && !_atPrompt && _commandStarted;
     if (!other && !marked) return nil;
@@ -1631,9 +1705,9 @@ static BOOL MCIsOtherShell(pid_t pid) {
                    dispatch_get_main_queue(), ^{
         TerminalView *s = weakSelf;
         if (!s || s->_closed || s->_commandNumber != commandNumber || s->_atPrompt ||
-            s->_master < 0 || s->_shellPid <= 0)
+            ![s ptyOpen] || s->_shellPid <= 0)
             return;
-        const pid_t fg = tcgetpgrp(s->_master);
+        const pid_t fg = [s ptyForeground];
         char path[PROC_PIDPATHINFO_MAXSIZE] = {0};
         if (fg <= 0 || fg == s->_shellPid || proc_pidpath(fg, path, sizeof path) <= 0) return;
         if (!ClaudeHooks::isClaudeProgramPath(path)) return;
@@ -1873,11 +1947,9 @@ static BOOL MCIsOtherShell(pid_t pid) {
 // before echo goes off and echo comes back without output after it.
 - (void)updateGridHiddenInput {
     BOOL hidden = NO, running = NO;
-    if (_gridMode && _master >= 0 && _shellPid > 0) {
+    if (_gridMode && [self ptyOpen] && _shellPid > 0) {
         running = _integrated ? (_commandStarted && !_atPrompt) : YES;
-        struct termios t;
-        if (tcgetattr(_master, &t) == 0)
-            hidden = (t.c_lflag & ECHO) == 0 && (t.c_lflag & ICANON) != 0;
+        hidden = [self ptyHidesInput];
     }
     if (self.grid.hiddenInput != hidden) self.grid.hiddenInput = hidden;
     if ((running || hidden) && !_hiddenTimer) {
@@ -2079,7 +2151,16 @@ static BOOL MCIsOtherShell(pid_t pid) {
     _pty = nil;
     _backlog = nil;
     _backlogStart = 0;
-    if (_shellPid > 0) kill(_shellPid, SIGHUP);
+    if (_hostTerm) {
+        [self flushHostInput];
+        // The host hangs it up (the master closed, SIGHUP) and reaps it,
+        // with SIGKILL 2 s on for a shell that stays (HostPty.h).
+        MCSessionClient().closeTerminal(_hostTerm);
+        _hostTerm = 0;
+        _hostShell = Shared::TermShell();
+    } else if (_shellPid > 0) {
+        kill(_shellPid, SIGHUP);
+    }
     _shellPid = 0;
     _master = -1;
     [self updateGridHiddenInput];   // no shell, nothing hidden
@@ -2113,7 +2194,11 @@ static BOOL MCIsOtherShell(pid_t pid) {
     if (self.grid.screen) [self.grid resizeScreenToCols:ws.ws_col rows:ws.ws_row];
     else _screen.resize(ws.ws_col, ws.ws_row);
     [self.grid screenChanged];
-    if (_master >= 0) ioctl(_master, TIOCSWINSZ, &_winsize);
+    if (_onHost) {
+        if (_hostTerm) MCSessionClient().resizeTerminal(_hostTerm, ws.ws_col, ws.ws_row);
+    } else if (_master >= 0) {
+        ioctl(_master, TIOCSWINSZ, &_winsize);
+    }
 }
 
 // What BROWSER names in every terminal (resources/minicode-browser.js, run
@@ -2262,6 +2347,41 @@ static NSString *MCBrowserHelperPath(void) {
     _screen.setMarkNonce(nonce);
     [self tellScreenTheme];
 
+    if (_onHost) {
+        // The session's host forks the same shell with the same
+        // environment on its thread (Shared::Pty, by MCPty's rules) and
+        // forwards what it prints; the screen here parses it as before.
+        Shared::TermSpec spec;
+        spec.program = "/bin/zsh";
+        spec.argv = {"-zsh", "-i"};
+        spec.env = env;
+        spec.cwd = cwd;
+        spec.cols = ws.ws_col;
+        spec.rows = ws.ws_row;
+        spec.scrollback = [AppSettings shared].settings.terminalScrollback();
+        spec.nonce = nonce;
+        static Shared::TermId lastTerm;   // ids on the host: the main thread's only
+        _hostTerm = ++lastTerm;
+        _hostShell = Shared::TermShell();
+        _hostInput.clear();
+        _shellStarted = [NSDate date];
+        ++_generation;
+        _backlog = [NSMutableData data];
+        _backlogStart = 0;
+        if (!_hostListener) {
+            _hostListener.reset(new MCHostTermListener);
+            _hostListener->view = self;
+        }
+        Shared::Client &client = MCSessionClient();
+        client.openTerminal(_hostTerm, spec, _hostListener.get());
+        // The shell's pid (TermOpened) and the host's first look at the tty,
+        // before anything asks whether there is a shell: runCommand: starts
+        // one only when there is none.
+        if (!client.settle(5000))
+            [self note:@"The session's host did not start the shell in time." color:0xF48771];
+        return;
+    }
+
     // The terminal's modes, given to forkpty so the child starts with them:
     // the usual defaults plus IUTF8 (Backspace over a multi-byte character).
     // Set on the master after forkpty returned, it raced the child's own
@@ -2345,6 +2465,8 @@ static NSString *MCBrowserHelperPath(void) {
     while (_backlog.length > _backlogStart) [self drainBacklog];
     _pty = nil;
     _master = -1;
+    _hostTerm = 0;
+    _hostShell = Shared::TermShell();
     _shellPid = 0;
     _atPrompt = NO;
     _zleReady = NO;
@@ -2374,8 +2496,31 @@ static NSString *MCBrowserHelperPath(void) {
 // Never blocks: the bytes are queued and written on the I/O queue as the
 // pty takes them, in order (see MCPty).
 - (void)sendBytes:(const char *)bytes length:(size_t)length {
+    if (_onHost) {   // written on the host's thread, in order, never blocking
+        if (!_hostTerm || !length) return;
+        // One write per run-loop turn, as MCPty's queue wrote what one turn
+        // sent back to back: Ctrl+D then Ctrl+C sent together must reach the
+        // line discipline together (the C interrupts the program the D
+        // ended), not the C a moment later at the shell's precmd, where it
+        // cut the prompt mark off (CI, terminal_paste). A paste goes at once.
+        _hostInput.append(bytes, length);
+        if (_hostInput.size() >= 4096) {
+            [self flushHostInput];
+        } else if (!_hostInputQueued) {
+            _hostInputQueued = YES;
+            __weak TerminalView *weakSelf = self;
+            dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf flushHostInput]; });
+        }
+        return;
+    }
     if (!_pty || _master < 0 || length == 0) return;
     [_pty send:[NSData dataWithBytes:bytes length:length]];
+}
+
+- (void)flushHostInput {
+    _hostInputQueued = NO;
+    if (_hostTerm && !_hostInput.empty()) MCSessionClient().terminalInput(_hostTerm, std::move(_hostInput));
+    _hostInput.clear();
 }
 
 - (BOOL)programHasTerminal { return [self foregroundIsOther]; }
@@ -2412,6 +2557,44 @@ static NSString *MCBrowserHelperPath(void) {
 - (void)enqueue:(NSData *)data pty:(MCPty *)pty generation:(int)generation {
     if (generation != _generation || !pty || pty != _pty || !_backlog) return;
     [_backlog appendData:data];
+    [self scheduleDrain];
+}
+
+// ---- the session's host (MCHostTermListener)
+- (void)hostOpened:(Shared::TermId)term pid:(int)pid {
+    if (term != _hostTerm || _closed) return;
+    _shellPid = pid;
+}
+
+// The pty's output, as the host read it: parsed in slices as MCPty's is,
+// and acknowledged as it is (drainBacklog), so the host stops reading a
+// program this screen has not kept up with.
+- (void)hostOutput:(Shared::TermId)term bytes:(const std::string &)bytes {
+    if (term != _hostTerm || !_backlog || bytes.empty()) return;
+    [_backlog appendBytes:bytes.data() length:bytes.size()];
+    [self scheduleDrain];
+}
+
+// The host looked at the tty (after each read, and every 200 ms): a
+// password prompt, a foreground program, ZLE's raw mode.
+- (void)hostShell:(Shared::TermId)term state:(const Shared::TermShell &)shell {
+    if (term != _hostTerm) return;
+    _hostShell = shell;
+    [self updateGridHiddenInput];
+    if (_pendingCommands.count || _pendingTyped) [self flushPendingInput];
+}
+
+- (void)hostExited:(Shared::TermId)term error:(const std::string &)error {
+    if (term != _hostTerm) return;
+    _hostTerm = 0;
+    _hostShell = Shared::TermShell();
+    if (!error.empty())
+        [self note:[NSString stringWithFormat:@"Could not start shell: %s", error.c_str()]
+             color:0xF48771];
+    [self shellExited:_generation];
+}
+
+- (void)scheduleDrain {
     if (!_drainScheduled) {
         _drainScheduled = YES;
         // In the common modes, so output keeps coming while a divider is
@@ -2435,10 +2618,7 @@ static NSString *MCBrowserHelperPath(void) {
     // Whether the pty is raw with signals off: at zsh's prompt that is a
     // program a widget started (fzf's Ctrl+R), not ZLE, which keeps ISIG,
     // so the screen counts clusters there (TerminalScreen::setRawTty).
-    if (_master >= 0) {
-        struct termios t;
-        if (tcgetattr(_master, &t) == 0) _screen.setRawTty((t.c_lflag & ISIG) == 0);
-    }
+    if ([self ptyOpen]) _screen.setRawTty([self ptySignalsOff]);
     while (_backlogStart < total) {
         NSUInteger n = MIN((NSUInteger)kSliceBytes, total - _backlogStart);
         [self receive:[NSData dataWithBytesNoCopy:(void *)(bytes + _backlogStart) length:n
@@ -2458,6 +2638,9 @@ static NSString *MCBrowserHelperPath(void) {
                     (long)(_backlogStart - from);
         if (left < kReadLow) [pty resumeReading];
     }
+    // The host reads the pty again once less than its credit (1 MB) waits
+    // here unparsed.
+    if (_hostTerm && _backlogStart > from) MCSessionClient().ackTerminal(_hostTerm, _backlogStart - from);
     if (_backlogStart >= _backlog.length) {
         _backlog.length = 0;
         _backlogStart = 0;
@@ -2738,3 +2921,15 @@ static NSString *MCBrowserHelperPath(void) {
 }
 
 @end
+
+// ---------------------------------------------------------------- the host's terminal
+void MCHostTermListener::termOpened(Shared::TermId t, int pid) { [view hostOpened:t pid:pid]; }
+void MCHostTermListener::termOutput(Shared::TermId t, const std::string &bytes, long long, bool, bool) {
+    [view hostOutput:t bytes:bytes];
+}
+void MCHostTermListener::termShell(Shared::TermId t, const Shared::TermShell &shell) {
+    [view hostShell:t state:shell];
+}
+void MCHostTermListener::termExited(Shared::TermId t, int, const std::string &error) {
+    [view hostExited:t error:error];
+}

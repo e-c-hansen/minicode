@@ -13,11 +13,16 @@
 //     tears everything down, the program included.
 //   - Closing while `yes` floods the terminal: no crash, the shell and yes
 //     gone, no zombie left.
+// With editor.session-host on (CI's second pass) the session's host owns
+// the pty (Shared::Pty on its thread, by MCPty's rules): the same cases,
+// with the host's master, its write buffer and its reaping looked at
+// through MCSessionInspectTerminal in place of MCPty's state.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Terminal.h"
 #import "TerminalPanel.h"
 #import "TerminalGridView.h"
+#import "SessionLink.h"
 #include <libproc.h>
 #include <sys/proc.h>
 #include <sys/proc_info.h>
@@ -58,8 +63,10 @@ bool ShellNameIs(TerminalView *t, const char *name) {
     return t.shellPid > 0 && proc_name(t.shellPid, buf, sizeof buf) > 0 && strcmp(buf, name) == 0;
 }
 
-// The pty's I/O-queue state, read on that queue.
-BOOL WriteArmed(id pty) {
+// The pty's I/O-queue state, read on that queue; the host's write buffer
+// when the host owns the pty (`pty` nil).
+BOOL WriteArmed(id pty, unsigned long long hostTerm) {
+    if (hostTerm) return MCSessionInspectTerminal(hostTerm).writeWaiting;
     __block BOOL armed = NO;
     dispatch_queue_t q = [pty valueForKey:@"queue"];
     dispatch_sync(q, ^{ armed = [[pty valueForKey:@"writeArmed"] boolValue]; });
@@ -72,6 +79,7 @@ BOOL WriteArmed(id pty) {
 @property(nonatomic, strong) EditorController *c;
 @property(nonatomic, strong) TerminalView *term;
 @property(nonatomic, strong) id pty;       // the terminal's MCPty, kept past the close
+@property(nonatomic) unsigned long long hostTerm;   // or its terminal on the session's host
 @property(nonatomic) pid_t pid;            // the shell
 @property(nonatomic) pid_t child;          // its foreground program, when one runs
 @property(nonatomic) int fd;               // the pty master
@@ -134,10 +142,13 @@ void OpenTerminal(MCPtyState *s, NSString *what) {
 // Notes the shell, the master and the pty before a close.
 void Remember(MCPtyState *s) {
     s.pid = s.term.shellPid;
-    s.fd = [[s.term valueForKey:@"master"] intValue];
+    s.hostTerm = s.term.onSessionHost ? s.term.sessionTerminal : 0;
+    GCHECK(s.term.onSessionHost == MCSessionHostEnabled());
+    s.fd = s.hostTerm ? MCSessionInspectTerminal(s.hostTerm).fd : [[s.term valueForKey:@"master"] intValue];
     s.fdWas = IdentityOf(s.fd);
-    s.pty = [s.term valueForKey:@"pty"];
-    GCHECK(s.pid > 0 && s.fd >= 0 && s.pty != nil);
+    s.pty = s.hostTerm ? nil : [s.term valueForKey:@"pty"];
+    GCHECK(s.pid > 0 && s.fd >= 0 && (s.hostTerm || s.pty != nil));
+    if (s.hostTerm) GCHECK(MCSessionInspectTerminal(s.hostTerm).pid == s.pid);
 }
 
 // Closes it through the panel, answering Close if it asks (a command runs).
@@ -155,8 +166,13 @@ void Close(MCPtyState *s, BOOL asks) {
 // run. Waited for, then checked one by one so a failure names the part.
 void WaitTornDown(MCPtyState *s, NSTimeInterval timeout) {
     MCGuiWait(@"the shell reaped and the master closed", timeout, ^BOOL {
-        return PidGone(s.pid) && (s.child <= 0 || PidGone(s.child)) && FdClosed(s.fd, s.fdWas) &&
-               [s.pty valueForKey:@"exited"] == nil;
+        if (s.hostTerm) {
+            const MCSessionTerminalState h = MCSessionInspectTerminal(s.hostTerm);
+            if (h.fd >= 0 || h.dying) return NO;
+        } else if ([s.pty valueForKey:@"exited"] != nil) {
+            return NO;
+        }
+        return PidGone(s.pid) && (s.child <= 0 || PidGone(s.child)) && FdClosed(s.fd, s.fdWas);
     });
     MCGuiStep(@"each part of the teardown", ^{
         GCHECK(PidGone(s.pid));
@@ -167,6 +183,14 @@ void WaitTornDown(MCPtyState *s, NSTimeInterval timeout) {
                 MCGuiNote(@"child %d %s", (int)s.child, Zombie(s.child) ? "a zombie" : "alive");
         }
         GCHECK(FdClosed(s.fd, s.fdWas));
+        if (s.hostTerm) {
+            // The host forgot the terminal and reaped its shell.
+            const MCSessionTerminalState h = MCSessionInspectTerminal(s.hostTerm);
+            GCHECK(h.fd == -1 && h.pid == 0);
+            GCHECK(h.dying == 0);
+            s.hostTerm = 0;
+            return;
+        }
         GCHECK([[s.pty valueForKey:@"sources"] intValue] == 0);
         dispatch_source_t rd = [s.pty valueForKey:@"readSource"];
         dispatch_source_t wr = [s.pty valueForKey:@"writeSource"];
@@ -218,8 +242,7 @@ MC_GUI_SUITE(terminal_pty) {
     MCGuiStep(@"sleep 600", ^{ [s.term runCommand:@"sleep 600"]; });
     MCGuiWait(@"sleep holds the terminal", 10, ^BOOL {
         if (!s.term.busy) return NO;
-        const int fd = [[s.term valueForKey:@"master"] intValue];
-        const pid_t fg = fd >= 0 ? tcgetpgrp(fd) : -1;
+        const pid_t fg = s.term.foregroundJob;   // tcgetpgrp, or the host's look at it
         char name[PROC_PIDPATHINFO_MAXSIZE] = {0};
         if (fg <= 0 || proc_name(fg, name, sizeof name) <= 0 || strcmp(name, "sleep") != 0) return NO;
         s.child = fg;
@@ -235,10 +258,16 @@ MC_GUI_SUITE(terminal_pty) {
         TerminalGridView *grid = [s.term valueForKey:@"grid"];
         const double c0 = MCGuiThreadCpuMs();
         grid.onInput(bytes);   // what typing and pasting hand the pty
-        GCHECK_TIME(MCGuiThreadCpuMs() - c0, 50, @"handing 1 MB to the pty's queue");
+        // MINICODE_HOST=loopback (CI's pass with the host) encodes every
+        // message and decodes it again on the sending thread: base64 and
+        // JSON both ways, 25 to 30 ms for this megabyte on an M3.
+        GCHECK_TIME(MCGuiThreadCpuMs() - c0, s.hostTerm && MCSessionLoopback() ? 120 : 50,
+                    @"handing 1 MB to the pty's queue");
         [meter start];
     });
-    MCGuiWait(@"the pty is full and the rest waits on its queue", 10, ^BOOL { return WriteArmed(s.pty); });
+    MCGuiWait(@"the pty is full and the rest waits on its queue", 10, ^BOOL {
+        return WriteArmed(s.pty, s.hostTerm);
+    });
     // Time is the condition: the main thread's CPU between timer fires over
     // a second with 1 MB waiting.
     MCGuiPause(1.0);
@@ -248,7 +277,7 @@ MC_GUI_SUITE(terminal_pty) {
                   meter.busiest, (unsigned long)meter.fires);
         GCHECK(meter.fires > 50);
         GCHECK_TIME(meter.busiest, 25, @"the main thread's busiest gap with 1 MB waiting");
-        GCHECK(WriteArmed(s.pty));   // still waiting: sleep reads nothing
+        GCHECK(WriteArmed(s.pty, s.hostTerm));   // still waiting: sleep reads nothing
         Close(s, YES);
     });
     WaitTornDown(s, 10);
@@ -258,8 +287,7 @@ MC_GUI_SUITE(terminal_pty) {
     MCGuiStep(@"yes", ^{ [s.term runCommand:@"yes"]; });
     MCGuiWait(@"yes floods the terminal", 10, ^BOOL {
         if (!s.term.busy || ![[s.term recentText:4] containsString:@"y\ny\ny"]) return NO;
-        const int fd = [[s.term valueForKey:@"master"] intValue];
-        const pid_t fg = fd >= 0 ? tcgetpgrp(fd) : -1;
+        const pid_t fg = s.term.foregroundJob;
         char name[PROC_PIDPATHINFO_MAXSIZE] = {0};
         if (fg <= 0 || proc_name(fg, name, sizeof name) <= 0 || strcmp(name, "yes") != 0) return NO;
         s.child = fg;

@@ -13,8 +13,9 @@
 // host as a renderer that only reads, or as a guest that may edit
 // (MCSessionConnectViewer), while a browser is connected. The window's tabs that have a document on the host
 // are reported to it (Client::windowTabs) every half second while the server
-// runs, and the page shows only those. Terminals do not run through the
-// Mac's host yet; the page says so in one muted line. The server stops, and
+// runs, and the page shows only those. Terminals opened while
+// editor.session-host is on run through the host (every window's, for now);
+// until there is one, the page says so in one muted line. The server stops, and
 // the window's tabs leave the host's state, when the window closes.
 #pragma once
 #import <Cocoa/Cocoa.h>
