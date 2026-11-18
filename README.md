@@ -1,4 +1,9 @@
-# mutible
+<h1>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mutible-header-dark@2x.png">
+  <img alt="mutible" src="docs/brand/mutible-header-light@2x.png" width="410" height="120">
+</picture>
+</h1>
 
 Take back your space. Quickly explore your files, open and render just about anything, edit it in realtime, or watch your agents work through it all.
 

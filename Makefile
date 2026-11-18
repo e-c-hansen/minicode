@@ -403,18 +403,15 @@ latex-sweep: build/latex-sweep
 install:
 	@bash scripts/mutible-launcher install-skill
 
-# Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m.
+# Regenerate the app icon (resources/AppIcon.icns) from tools/makeicon.m,
+# which draws every size itself (the 16 and 32 px images are hand-tuned, not
+# the 1024 shrunk). tools/makebrand-mac.m draws the other images from the
+# same mark: docs/brand/, the Linux icons and demo/images/icon.png.
 icon:
 	@mkdir -p build
 	@clang -framework Cocoa tools/makeicon.m -o build/makeicon
-	@./build/makeicon /tmp/mc_icon.png
-	@rm -rf /tmp/mc.iconset && mkdir -p /tmp/mc.iconset
-	@for sz in 16 32 64 128 256 512; do \
-		sips -z $$sz $$sz /tmp/mc_icon.png --out /tmp/mc.iconset/icon_$${sz}x$${sz}.png >/dev/null; \
-		d=$$((sz*2)); \
-		sips -z $$d $$d /tmp/mc_icon.png --out /tmp/mc.iconset/icon_$${sz}x$${sz}@2x.png >/dev/null; \
-	done
-	@cp /tmp/mc_icon.png /tmp/mc.iconset/icon_512x512@2x.png
+	@rm -rf /tmp/mc.iconset
+	@./build/makeicon --iconset /tmp/mc.iconset
 	@iconutil -c icns /tmp/mc.iconset -o resources/AppIcon.icns
 	@echo "Regenerated resources/AppIcon.icns"
 
