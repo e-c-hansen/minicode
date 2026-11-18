@@ -25,6 +25,10 @@ bool gLoopback = false;
 std::atomic<bool> gDispatchQueued{false};
 // What each window's tabs were last sent as.
 std::map<std::uint64_t, std::string> gSentTabs;
+// Each window's id on the host, by its id in the app's Model::Session
+// (which numbers windows from 1 for itself): the client's (newId), so a
+// second renderer's windows never take it.
+std::map<std::uint64_t, std::uint64_t> gHostWindow;
 
 Shared::Message wire(Shared::Message&& m) { return gLoopback ? Shared::roundTrip(m) : std::move(m); }
 
@@ -54,6 +58,14 @@ void start() {
         [](Shared::ClientId, Shared::Message&& m) { gClient->deliver(wire(std::move(m))); }, delayUs);
     gId = gHost->connect();
     gClient->connect([](Shared::Message&& m) { gHost->post(gId, wire(std::move(m))); });
+    // The Welcome, with the base of this renderer's ids (Client::newId).
+    if (!gClient->settle()) g_printerr("minicode: the session's host did not answer\n");
+}
+
+std::uint64_t hostWindow(std::uint64_t window) {
+    auto it = gHostWindow.find(window);
+    if (it != gHostWindow.end()) return it->second;
+    return gHostWindow[window] = gClient->newId();
 }
 
 }  // namespace
@@ -74,12 +86,16 @@ void windowTabs(std::uint64_t window, const Model::Window& w) {
     auto it = gSentTabs.find(window);
     if (it != gSentTabs.end() && it->second == dump) return;
     gSentTabs[window] = std::move(dump);
-    client().windowTabs(window, std::move(tabs));
+    Shared::Client& c = client();
+    c.windowTabs(hostWindow(window), std::move(tabs));
 }
 
 void windowClosed(std::uint64_t window) {
     gSentTabs.erase(window);
-    client().windowClosed(window);
+    auto it = gHostWindow.find(window);
+    if (it == gHostWindow.end()) return;   // never sent
+    client().windowClosed(it->second);
+    gHostWindow.erase(it);
 }
 
 std::string check(std::uint64_t window, const Model::Window& w,
@@ -104,9 +120,10 @@ std::string check(std::uint64_t window, const Model::Window& w,
     windowTabs(window, w);
     const Json want = Shared::windowJson(w);
     const Json state = c.sessionState();
+    const std::uint64_t onHost = hostWindow(window);
     bool found = false;
     for (const Json& win : state["windows"].elements())
-        if ((std::uint64_t)win["window"].asInt() == window) {
+        if ((std::uint64_t)win["window"].asInt() == onHost) {
             found = true;
             if (win["tabs"] != want)
                 out += "the host's tabs of window " + std::to_string(window) + " are " + win["tabs"].dump() +

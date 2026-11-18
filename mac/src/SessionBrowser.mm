@@ -5,7 +5,6 @@
 #import "EditorTab.h"
 #import "SessionLink.h"
 
-#include <atomic>
 #include <memory>
 #include <string>
 #include <thread>
@@ -15,10 +14,6 @@
 
 NSString *const MCSessionBrowserTermNote = @"Terminals opened while the session host is on appear here";
 void (^MCSessionBrowserOpener)(NSURL *url) = nil;
-
-namespace {
-std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' small numbers
-}
 
 @implementation MCSessionBrowser {
     __weak NSWindow *_window;
@@ -43,7 +38,7 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
         _folder = [folder copy] ?: @"";
         _tabs = [tabs copy];
         _active = [active copy];
-        _windowId = gNextWindow++;
+        _windowId = MCSessionClient().newId();   // from the client's range on the host
         __weak MCSessionBrowser *weakSelf = self;
         _closeObserver = [NSNotificationCenter.defaultCenter
             addObserverForName:NSWindowWillCloseNotification

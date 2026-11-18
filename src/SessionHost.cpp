@@ -135,6 +135,31 @@ void Host::handle(ClientId from, Message&& m) {
     }
 }
 
+bool Host::slotFree(std::uint64_t slot) const {
+    const std::uint64_t lo = slot * kIdRange, hi = lo + kIdRange;
+    for (const auto& [id, r] : renderers_)
+        if (r.idBase == lo) return false;
+    auto holds = [lo, hi](const auto& map) {
+        auto it = map.lower_bound(lo);
+        return it != map.end() && it->first < hi;
+    };
+    if (holds(docs_) || holds(terms_) || holds(windows_)) return false;
+    for (const Dying& d : dying_)
+        if (d.term >= lo && d.term < hi) return false;
+    return true;
+}
+
+std::uint64_t Host::chooseIdBase() {
+    // A slot never given before, skipping any where something holds an id
+    // all the same (a renderer that chose its own).
+    while (lastSlot_ + 1 < kIdSlots)
+        if (slotFree(++lastSlot_)) return lastSlot_ * kIdRange;
+    // Every slot was given once (two million connections): the first free.
+    for (std::uint64_t s = 1; s < kIdSlots; s++)
+        if (slotFree(s)) return s * kIdRange;
+    return 0;
+}
+
 void Host::onHello(ClientId c, Message& m) {
     Renderer& r = renderers_[c];
     r.unit = m.unit;
@@ -142,9 +167,12 @@ void Host::onHello(ClientId c, Message& m) {
     r.hello = true;
     r.readOnly = (m.flag & 1) != 0;
     r.guest = !r.readOnly && (m.flag & 2) != 0;
+    // Its id base, kept for a second Hello: what it made with it stays its.
+    if (!r.idBase) r.idBase = chooseIdBase();
     Message w;
     w.kind = Kind::Welcome;
     w.client = c;
+    w.v = r.idBase;
     w.name = folder_;
     send(c, std::move(w));
 }
