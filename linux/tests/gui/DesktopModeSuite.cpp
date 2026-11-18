@@ -11,7 +11,8 @@
 //   - a "challenge" from CanPowerOff is said in the status bar, with no
 //     question and no call;
 //   - in a second app of its own (_desktop_mode_child, which may close its
-//     only window): closing the last window opens a fresh one on the home
+//     only window): its window has no title bar; closing the last window
+//     opens a fresh one on the home
 //     folder; Restart quits as Quit does, and a Cancel at "Save changes?"
 //     keeps the window and drops the restart; Power Off with Don't Save
 //     closes the window, opens none, and logind's PowerOff goes out at the
@@ -115,6 +116,7 @@ MC_GUI_SUITE(desktop_mode) {
         GCHECK(!enabled("desktop-suspend"));
         GCHECK(!enabled("desktop-poweroff"));
         GCHECK(!DesktopMode::keepsLastWindow(false));
+        GCHECK(gtk_window_get_decorated(MCGuiApp().window));   // a title bar, as always
     });
     MCGuiStep("with it: Suspend, Restart, Power Off and Log Out end the File menu", [] {
         setDesktop(true);
@@ -200,6 +202,7 @@ MC_GUI_SUITE(_desktop_mode_child) {
         GCHECK(DesktopMode::active());
         record();
         GCHECK(MCGuiAppWindows().size() == 1);
+        GCHECK(!gtk_window_get_decorated(MCGuiApp().window));   // no title bar
     });
     MCGuiStep("its only window closed", [] { MCGuiCloseAllWindows(); });
     MCGuiWait("a fresh window, on the home folder", 20, [] {

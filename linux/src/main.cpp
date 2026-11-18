@@ -4359,6 +4359,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     gtk_window_set_title(GTK_WINDOW(app->window), "mutible");
     gtk_application_window_set_show_menubar(
         GTK_APPLICATION_WINDOW(app->window), TRUE);
+    DesktopMode::adjustWindow(GTK_WINDOW(app->window));   // no title bar as the desktop
     // The keyboard back where it was after a choice from the menu bar.
     MenuBarFocus::attach(GTK_WINDOW(app->window));
     // The Bookmarks menu is read from the folder when the window comes to

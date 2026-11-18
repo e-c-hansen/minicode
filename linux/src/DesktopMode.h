@@ -2,6 +2,8 @@
 // the session that linux/desktop/mutible-desktop-setup.sh installs runs
 // `cage -s -- mutible --foreground` on tty1 with MUTIBLE_DESKTOP=1, and with
 // no desktop environment around it the app takes on a little of one:
+//   - its windows have no title bar (adjustWindow), cage showing one at a
+//     time, full screen;
 //   - closing the last window opens a fresh one on the home folder rather
 //     than quitting (main.cpp's onWindowRemoved asks keepsLastWindow);
 //   - the File menu ends with Suspend…, Restart…, Power Off… and Log Out…,
@@ -41,6 +43,9 @@ struct Host {
 // The actions app.desktop-suspend, -restart, -poweroff and -logout, enabled
 // while active(). Once, with the application's other actions.
 void install(GtkApplication* app, Host host);
+// A new window: without a title bar in desktop mode, since cage shows one
+// window at a time, full screen, and has nothing to minimize it to.
+void adjustWindow(GtkWindow* window);
 // A section at the end of the File menu holding the four items while
 // active(), empty otherwise.
 void extendFileMenu(GMenu* file);

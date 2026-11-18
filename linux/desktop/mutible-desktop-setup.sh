@@ -24,9 +24,9 @@
 #      /etc/pam.d/mutible-desktop, /etc/default/mutible-desktop (yours to
 #      edit; kept when it differs) and /etc/systemd/system/
 #      mutible-desktop.service, which logs NAME in on tty1 in place of its
-#      getty and starts the session again whenever it ends (2 s apart; five
-#      starts within two minutes, a crash loop, stop it and put a text login
-#      on tty1 instead);
+#      getty and starts the session again whenever it ends, 2 s later (a
+#      session that ends within 30 s of starting three times running, a
+#      crash loop, leaves a text shell on tty1 instead);
 #   4. disables getty@tty1.service (noting that it was enabled) and enables
 #      mutible-desktop.service. Nothing starts until the next boot, or now
 #      with --start (refused from tty1 itself, whose login it would end).
@@ -316,7 +316,14 @@ say "step 2: packages"
 before=$(dpkg-query -W -f='${db:Status-Status} ${Package}\n' 2>/dev/null | awk '$1=="installed"{print $2}' | sort)
 want=()
 for p in "${PACKAGES[@]}"; do installed "$p" || want+=("$p"); done
-if [ -n "$DEB" ] || ! installed mutible; then want_mutible=1; else want_mutible=0; fi
+want_mutible=0
+if [ -n "$DEB" ]; then
+    # The same version from the same .deb again is nothing to do.
+    [ "$(dpkg-query -W -f='${Version}' mutible 2>/dev/null || true)" = "$(dpkg-deb -f "$DEB" Version)" ] &&
+        installed mutible || want_mutible=1
+elif ! installed mutible; then
+    want_mutible=1
+fi
 if [ ${#want[@]} -eq 0 ] && [ "$want_mutible" = 0 ]; then
     note "everything is installed already"
 else
@@ -368,7 +375,27 @@ fi
 cd "$HOME" || cd /
 # Through the user's login shell, so ~/.profile's PATH (~/.local/bin, for
 # language servers) reaches mutible. -s: Ctrl+Alt+F1 to F12 switch consoles.
-exec "${SHELL:-/bin/sh}" -l -c 'exec cage -s -- mutible --foreground'
+start=$(cut -d. -f1 /proc/uptime)
+"${SHELL:-/bin/sh}" -l -c 'exec cage -s -- mutible --foreground'
+status=$?
+ran=$(( $(cut -d. -f1 /proc/uptime) - start ))
+# A session that ends by itself within 30 s of starting, three times running,
+# is a crash at start: rather than start it again, tty1 gets a text shell
+# (Ctrl+Alt+F2 is a login prompt whatever happens). Log Out exits 0.
+quick=${RUNTIME_DIRECTORY:-/tmp}/quick-exits
+if [ "$status" -eq 0 ] || [ "$ran" -ge 30 ]; then
+    rm -f "$quick"
+    exit "$status"
+fi
+n=$(( $(cat "$quick" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$quick"
+[ "$n" -ge 3 ] || exit "$status"
+rm -f "$quick"
+exec </dev/tty >/dev/tty 2>&1
+printf '\nmutible ended within 30 s of starting, %s times running (status %s).\n' "$n" "$status"
+printf 'This is a text shell. journalctl -b -u mutible-desktop shows what it printed;\n'
+printf 'type exit to start the desktop again.\n\n'
+exec "${SHELL:-/bin/sh}" -l
 EOF
 
 put "$PAM" 0644 <<'EOF'
@@ -415,11 +442,10 @@ Wants=dbus.socket systemd-logind.service
 Conflicts=getty@tty1.service
 After=getty@tty1.service
 ConditionPathExists=/dev/tty0
-# A session that keeps ending (a crash at start) is not started forever: the
-# fifth start within two minutes is the last, and tty1 gets its text login.
-StartLimitIntervalSec=120
-StartLimitBurst=5
-OnFailure=getty@tty1.service
+# The session script stops a crash loop itself (a text shell on tty1 after
+# three quick exits); this is the backstop if even that fails at once.
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -440,6 +466,8 @@ EnvironmentFile=-$DEFAULTS
 ExecStart=$SESSION
 Restart=always
 RestartSec=2
+RuntimeDirectory=mutible-desktop
+RuntimeDirectoryPreserve=restart
 
 [Install]
 WantedBy=multi-user.target

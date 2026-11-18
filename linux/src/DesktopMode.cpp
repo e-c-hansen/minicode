@@ -187,6 +187,10 @@ void install(GtkApplication* app, Host host) {
     refresh();
 }
 
+void adjustWindow(GtkWindow* window) {
+    if (active()) gtk_window_set_decorated(window, FALSE);
+}
+
 void extendFileMenu(GMenu* file) {
     if (!gSection) gSection = g_menu_new();   // kept for refresh, for the app's life
     g_menu_append_section(file, nullptr, G_MENU_MODEL(gSection));
