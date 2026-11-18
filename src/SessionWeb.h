@@ -32,7 +32,9 @@
 // The server is a renderer of the host (SessionClient.h) that says it only
 // reads (Client::setReadOnly), or, editable, that it is a guest
 // (Client::setGuest): the host refuses anything from it that would change
-// the session beyond a guest's edits, undo and terminal input, and its views
+// the session beyond a guest's edits, undo, terminal input and its view's
+// size for a terminal (which the pty takes only while a page of it is the
+// one typing; below, `tsize`), and its views
 // of documents keep none open (Client::view).
 //
 // Editing: the server is the pages' sequencer, as the host is its own
@@ -80,7 +82,9 @@
 //           terminal whole: `hist` the newest scrollback lines (oldest
 //           first), `screen` its rows, each line [[text, fg, bg, flags],
 //           ...] (colors 0xRRGGBB or -1, flags TermFlag), `cursor` [row, col,
-//           shown]
+//           shown]. `cols` and `rows` are the pty's: sent again whole when
+//           the host's TermShell says the size changed, at that point in
+//           the output
 //   termd   {id, hist, rows: [[row, line], ...], cursor, alt, title}: lines
 //           that went into the scrollback since, and rows that changed
 //   ended   {why}: the host went
@@ -105,6 +109,12 @@
 //   tkey    {term, key, mods}, ttext {term, text, mods}, tpaste {term, text}:
 //           keys for the terminal on show, encoded as its screen's modes ask
 //           (TerminalScreen::encodeKey, encodeChar, encodePaste)
+//   tsize   {term, cols, rows}: the cells the page's terminal pane holds.
+//           The server is one renderer for every page, so it tells the host
+//           (TermResize) the size of the page that typed into that terminal
+//           last: when that page types, or when it resizes while it is still
+//           the last to have typed. A page that only looks never sizes the
+//           pty (tmux's `window-size latest`, Host::sizer).
 //   browse  {url}: open an http or https address in the window's browser
 //           pane (Options::browse; webAddress refuses every other scheme)
 //
@@ -309,6 +319,12 @@ public:
     TermView(TermId id, int cols, int rows);
     TermId id() const { return id_; }
     void feed(const std::string& bytes);
+    // A replay from the host (TermAttach): a fresh screen fed it. The
+    // TermShell after it says the size it was made at (follow()).
+    void replay(const std::string& bytes);
+    // The pty's size from TermShell: the screen reflows to it there in the
+    // output, as the host's did, and the next update is the whole terminal.
+    void follow(int cols, int rows);
     void resize(int cols, int rows);
     void setTitle(std::string t) { title_ = std::move(t); }
     TerminalScreen& screen() { return screen_; }
@@ -325,6 +341,10 @@ private:
     int cursorRow_ = -1, cursorCol_ = -1;
     bool cursorShown_ = false, alt_ = false;
     bool fresh_ = true;   // a new screen: the next update is the whole terminal
+    // The last replay, until the TermShell after it: made again at that
+    // size when it differs from the size the view guessed.
+    std::string replay_;
+    bool replayPending_ = false;
     std::string sentTitle_;
     Json cursorJson() const;
 };
@@ -439,6 +459,11 @@ private:
     void onUndo(Conn& c, const Json& j);
     void onSave(Conn& c, const Json& j);
     void onTermInput(Conn& c, const std::string& type, const Json& j);
+    void onTermSize(Conn& c, const Json& j);
+    // Tells the host this renderer's view size for `t`, when it changed.
+    void sizeTerminal(TermId t, int cols, int rows);
+    // The most cells a page may say its pane holds, either way.
+    static constexpr int kMaxTermCells = 1000;
     void onList(Conn& c, const Json& j);
     void onOpen(Conn& c, const Json& j);
     void onBrowse(Conn& c, const Json& j);

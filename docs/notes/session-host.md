@@ -249,8 +249,28 @@ release. With the setting off nothing changes, MCPty included.
   it back to back. **Trap (CI, 2026-11-17):** sent as two messages,
   terminal_paste's Ctrl+D then Ctrl+C reached the shell apart: the D
   ended cat, and the C came during zsh's precmd and cut its prompt mark
-  off, so the terminal stayed "running cat". `updateWindowSize` is
-  `resizeTerminal` (no pixel size: `TermResize` has none).
+  off, so the terminal stayed "running cat". The screen's own replies
+  (`takeReplies`) go apart from the keys (`sendReplies:`: the turn's keys
+  flushed first, then `terminalInput(t, replies, true)`), marked as
+  answers, so they never take the size (below).
+- **Size** (2026-11-18, stage 6's rule followed): `updateWindowSize` says
+  the view's size to the host (`resizeTerminal`, no pixel size:
+  `TermResize` has none) and does not resize the screen. The screen
+  takes the pty's size from `TermShell`'s `cols` and `rows`
+  (`hostShell:`), at the place in the output where the host's screen
+  reflowed: each new size is queued with the backlog's length then
+  (`_ptySizes`), and `drainBacklog` parses up to it, resizes
+  (`takePtySizes`), and goes on. So a program another screen sized is
+  never reflowed to fit the window, and when the window types (keys,
+  pastes, `runCommand:`, all `TermInput` without flag 1) the host gives
+  it its own size before the keys are written. `placeGrid` lays the grid
+  out at the screen's size: a smaller pty at the top left with the rest
+  empty (the grid's frame is the view's bounds), a larger one in a frame
+  larger than the view, clipped by it (`clipsToBounds`, which is off by
+  default since macOS 14) and moved after each slice of output so the
+  cursor's cell stays in sight, as tmux pans; scrolled back, it stays
+  put. Off the host, and with no shell, the screen is the view's size
+  as before.
 - **The tty.** What read the master reads the host's `TermShell` (the
   host looks after every read, 30 ms later, and every 200 ms):
   `ptyForeground` (`tcgetpgrp`: `busy`, `canTypeNow`'s shell-owns-it,
@@ -273,15 +293,21 @@ release. With the setting off nothing changes, MCPty included.
   reports with its tabs (below, "One window's terminals"). Notes the panel writes
   on the screen itself ("[shell exited — restarting]") are only on the
   Mac's screen. Terminal size follows the renderer that last typed
-  (stage 6's **Size**); the browser's view sends no size, so the Mac's
-  holds.
+  (stage 6's **Size**, and **Size** above): the browser's view says the
+  size of the page that typed there last (`tsize`, below), so a page that
+  only looks never shrinks the window's terminal.
 
 Checks: `make guitest SUITES=terminal_host` (the setting turned on by the
 suite: the shell is the host's; a command typed on the Mac is on the
 host's screen and on a second renderer's, attached through
 `MCSessionConnectViewer` with its replay; a command that renderer types
-runs in the Mac's terminal and the marks see it end; the terminal goes on
-after it leaves). `terminal_pty` checks the host's teardown with
+runs in the Mac's terminal and the marks see it end; the size follows
+whoever typed: the second renderer's smaller size kept but not taken
+until it types `stty size`, then the pty, the host and the Mac's grid at
+its size and the grid's frame the view's, the Mac's `runCommand:` taking
+its own size back, the second's answer (flag 1) moving nothing, a larger
+size drawn in a larger frame clipped with the cursor's cell inside the
+view; the terminal goes on after it leaves). `terminal_pty` checks the host's teardown with
 `MCSessionInspectTerminal` (its master, write buffer and reaping) when
 the host owns the pty. CI's pass with the host runs terminal_pty,
 terminal_marks, terminal_paste, terminal_exec, terminal_keys, run_file,
@@ -434,17 +460,12 @@ document, terminal (dying ones included) or window is held
 - Tabs are still reported, not decided (4a's note): a second renderer reads
   `windows` from the state but cannot change them through the host until
   `Model::Window`'s callbacks are data.
-- Size: done in the host (stage 6's **Size**). Each renderer still has
-  to follow it. The Mac's grid on the host should resize its screen only
-  to `TermShell`'s size (today it resizes on layout, which is right only
-  while it is the one sizing), send its screen's replies (`takeReplies`)
-  with `answer`, apart from the keys, and draw at the pty's size. GTK's
-  VTE sizes itself from its widget and commits its answers with the
-  user's keys (`onCommit`); it needs both before a second renderer shares
-  its terminals. The page sends no size, and the host refuses a guest's
-  `TermResize`: so its typing moves nothing today; to send one, let a
-  guest's `TermResize` through `refusedFromViewer`, and follow
-  `TermShell`'s size rather than polling the state.
+- Size: done in the host (stage 6's **Size**), and followed by the Mac's
+  grid ("Terminals on the host", **Size**) and the page (`tsize`, and the
+  view following `TermShell`; 2026-11-18). GTK's VTE still sizes itself
+  from its widget and commits its answers with the user's keys
+  (`onCommit`); it needs both before a second renderer shares its
+  terminals.
 - Saving, dirty, backups and the disk are still the app's (stage 7): a
   headless host's unsaved document is only as safe as the host process.
 
@@ -498,8 +519,13 @@ CSS and script, no third-party code). The user's side is REFERENCE.md's
   its rows as styled runs: the whole terminal (`term`), then `termd` with
   the lines that went into the scrollback and the rows `takeDirty` marked
   (all rows once anything scrolled), at most every 30 ms. A replay starts
-  the screen over; a size change seen in the host's state (looked at every
-  `pollMs`, 500) attaches again for a fresh replay at the new size.
+  the screen over. **Size** (2026-11-18): `TermShell`'s `cols` and `rows`
+  reflow the view's screen where they come in the output
+  (`TermView::follow`, as the host's screen did there), and the pages get
+  the terminal whole (`term`) at the new size; the state is not looked
+  at for it. A view made at a size the state guessed has its replay made
+  again at the size the `TermShell` after it says. The state's `cols` and
+  `rows` only size a view's first screen.
 - **Colors** (stage 8b's first part): `Web::paletteJson(Settings)` gives
   the page every color the editor resolves (the theme, then the file's
   own): the syntax styles, each surface's background and text by its
@@ -591,8 +617,8 @@ Cancel.
   only those, `show` of another id shows nothing and attaches to nothing,
   `tkey`, `ttext` and `tpaste` for one are dropped, and a terminal the
   window stops reporting is taken off every page and its `TermView`
-  dropped. There is no resize message from a page, and the host refuses
-  a guest's `TermResize`. A window that reports no `terms` has none on
+  dropped. A page's `tsize` for another window's terminal is dropped too,
+  as is a read-only page's. A window that reports no `terms` has none on
   its page; a headless host's view (`window` 0) sees every terminal, as
   before. `Options::termNote` (in the hello) puts "Terminals opened while
   the session host is on appear here" in a muted line while the state
@@ -676,8 +702,23 @@ terminal on show. Read-only stays the default for the command line.
   `appCursorKeys`, `appKeypad` and `keyboardFlags`; `encodeChar`;
   `encodePaste` with `bracketedPaste`), and go to the host as
   `TermInput`. Mods are xterm's (Shift 1, Alt 2, Control 4); on a Mac the
-  page leaves Option out, as it composes characters there. Resizing is
-  left to the app that opened the terminal.
+  page leaves Option out, as it composes characters there.
+- **Terminal size** (`tsize {term, cols, rows}`, 2026-11-18): an
+  editable page measures the cells its terminal pane holds (a hundred
+  zeros in the terminal's font, in a box of no size so the pane gains no
+  scrolling; less the pane's padding) and says them on each whole
+  `term`, a window resize and a `ResizeObserver` change, when they
+  differ from what it last said. The server is one renderer for every
+  page, so it keeps each page's size (`Conn::termCols`) and per terminal
+  the page that typed last (`Session::typist`), and sends the host
+  `TermResize` (`sizeTerminal`, only when it differs from what it last
+  sent) with the typing page's size before its keys, or when that page
+  resizes while it is still the last to have typed. A page that only
+  looks is never the size. The host lets a guest's `TermResize` through
+  `refusedFromViewer` (a reader's is still refused): the pty takes it
+  only while the guest is the one that typed last (Host::sizer). The
+  page draws the pty's size from `term` (its rows at `cols` ch, the pane
+  scrolling sideways when wider).
 - **The page's editor** (SessionWebPage.cpp, no third-party code): each
   line `{t, s, b}` (text, spans, its break: the server sends break 0 for
   the last line, 2 for "\r\n", 3 "\r", 4 U+2029, nothing for "\n").
@@ -705,7 +746,14 @@ terminal on show. Read-only stays the default for the command line.
 
 #### Checks
 
-`sessionweb:guest` (the host's rules for a guest); `sessionweb:edit` (a
+`sessionweb:guest` (the host's rules for a guest, its `TermResize`
+let through); `sessionweb:term-size` (a phone's page and a desktop's on
+one view of a host terminal, the state looked at once: neither page's
+size taken until it types, then the pty at the typing page's size before
+its keys, `stty size` saying so, and both pages sent the terminal whole
+at it; the other page's resize kept, the typist's taken; the editor's
+renderer typing takes the opener's size back; its answer, flag 1, takes
+nothing); `sessionweb:edit` (a
 scripted page that keeps lines and pending edits as the script does,
 against a host over its socket with the editor's renderer typing at the
 same time: 120 rounds of both, ending on one text in the page, the host
@@ -872,7 +920,8 @@ the frame, the narrow layout) needs the owner's eyes.
 - Lines are re-sent whole per edit; a long line typed into from a browser
   wants character splices.
 - No snapshot or patch messages exist yet: the view polls the host's state
-  every half second for tabs, documents and terminal sizes.
+  every half second for tabs and documents (terminal sizes come with
+  `TermShell`).
 - Several carets, folding, find, completion and the rest of the editor
   are the Mac's and GTK's, not the page's; so are closing and reordering
   tabs, which wait for the host to decide tabs (stage 6's note).

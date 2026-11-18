@@ -74,8 +74,9 @@ enum class Kind {
     Hello,       // name (the renderer), unit; flag 1: it only reads (a browser's view):
                  // the host refuses anything from it that would change the session;
                  // flag 2: a guest (a browser's view that may edit): its documents are
-                 // view seats as a reader's, and it may edit and undo them and type into
-                 // terminals, nothing else that changes the session
+                 // view seats as a reader's, and it may edit and undo them, type into
+                 // terminals and say its view's size (TermResize), nothing else that
+                 // changes the session
     DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved.
                  // From a renderer that only reads, a view of the document as it is: it
                  // never makes one, and keeps none open (DocGone when there is none, or
