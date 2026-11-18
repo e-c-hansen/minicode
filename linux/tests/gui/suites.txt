@@ -120,3 +120,4 @@ HostBackupsSuite.cpp
 HostPanSuite.cpp
 PlanUsageSuite.cpp
 Latin1FilesSuite.cpp
+HostWrapSuite.cpp

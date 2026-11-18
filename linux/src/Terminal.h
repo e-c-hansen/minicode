@@ -257,30 +257,39 @@ private:
     void attachShell();    // makeTerminal's for a held one: TermAttach
     Shared::TermId heldTerm_ = 0;   // attachHeld's, until attached
     int heldPid_ = 0;
-    // The pty's size when another renderer's is larger than this view
-    // (TermShell's cols and rows): VTE drawn at it, clipped by the scroller;
-    // a smaller one is drawn at the top left of VTE's own grid.
+    // The pty's size while another renderer's is in force (TermShell's
+    // cols and rows, not this view's): VTE laid out at exactly that grid in
+    // its frame (TerminalFrame.h), clipped where it is larger than the
+    // view and the rest of the view left empty where it is smaller. 0: VTE
+    // has the view's own size.
     int ptyCols_ = 0, ptyRows_ = 0;
-    // The last sizes this view sent: a TermShell still carrying one of them
-    // is this view's own size on its way (a window made smaller), never
-    // another renderer's to draw at.
+    // The sizes this view sent that the host may still answer with: a
+    // TermShell carrying one is this view's own size on its way (a window
+    // made smaller), never another renderer's to draw at. Those sent before
+    // the latest go once the latest comes back (the host fits in order).
     std::vector<std::pair<int, int>> sentSizes_;
     void followPtySize(int cols, int rows);
-    bool viewCells(int* cols, int* rows) const;   // the scroller's size in cells
-    // While clipped, the part of the larger grid on show follows the
-    // cursor, as tmux pans: the first row and column shown (VTE moved up
-    // and left by negative margins, which the scroller clips), changed only
-    // when the cursor leaves the part on show.
+    void releasePtySize();   // VTE back at the view's own size
+    // VTE's cell and the padding around its cells, measured only while it
+    // is on screen (followPtySize; char-size-changed brings a new cell).
+    int cellW_ = 0, cellH_ = 0, padW_ = 0, padH_ = 0;
+    bool measureCells();
+    bool viewCells(int* cols, int* rows) const;   // the frame's size in cells
+    // While held at a grid larger than the view, the part on show follows
+    // the cursor, as tmux pans: the first row and column shown (VTE laid
+    // out up and left of the frame by as much), changed only when the
+    // cursor leaves the part on show.
     int panRow_ = 0, panCol_ = 0;
-    int extraCols_ = 0, extraRows_ = 0;   // the grid's beyond the view's
     void panToCursor();
     void setPan(int row, int col);
-    void applyPan();   // the four margins, from the above
+    void placeGrid();   // the frame told the grid's size and the pan
 public:
-    // For checks: the first row and column of the pty's grid on show.
+    // For checks: the first row and column of the pty's grid on show, and
+    // whether VTE is held at another renderer's size (larger or smaller).
     int panRow() const { return panRow_; }
     int panCol() const { return panCol_; }
-    bool clipped() const { return ptyCols_ || ptyRows_; }
+    bool atPtySize() const { return ptyCols_ || ptyRows_; }
+    GtkWidget* frameWidget() const { return frame_; }
 private:
     ShellIntegration::ShellState shell_;
     std::string finished_;   // finishedCommand()
@@ -363,6 +372,7 @@ private:
     std::string root_dir_;          // the window's folder, for links
     GtkWidget*  root_ = nullptr;   // container: the scroller, the underline over it
     GtkWidget*  vte_  = nullptr;   // VteTerminal
+    GtkWidget*  frame_ = nullptr;  // VTE's box in the scroller (TerminalFrame.h)
     GtkWidget*  underline_ = nullptr;   // draws the hovered link's underline
     GPid        shellPid_ = -1;
 

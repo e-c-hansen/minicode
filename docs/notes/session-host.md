@@ -209,6 +209,12 @@ top of a turn, never inside a text system callback.
   every message, and `SessionHost::inspect` waits at most its timeout, so
   a hang on the host's thread fails a check instead of hanging it
   (`term:dispatch`).
+- **A scrolled window gives a scrollable child its own size**, whatever
+  the child asks for (GTK's): VTE held at a larger pty never grew (step
+  2), and growing it by negative margins drew a Gtk-WARNING on every pan
+  (step 3). A child laid out larger or smaller than the view sits in a
+  scrollable box of its own that passes the adjustments through
+  (`linux/src/TerminalFrame.{h,cpp}`, "VTE pans").
 
 ## Terminals on the host (stage 5, the Mac)
 
@@ -465,7 +471,9 @@ document, terminal (dying ones included) or window is held
   grid ("Terminals on the host", **Size**) and the page (`tsize`, and the
   view following `TermShell`; 2026-11-18). GTK's VTE sends its answers
   as answers and follows the pty's size since step 2 ("GTK reattaches",
-  below): clipped when larger, panned to the cursor since step 3.
+  below): clipped when larger, panned to the cursor since step 3, and at
+  the pty's own grid when smaller, so plain output wraps where the pty
+  wraps (2026-11-18, "VTE pans").
 - Saving, dirty and the disk are still the app's (stage 7). Backups are
   the app's while one of its windows has the document open, and the
   headless host's once none has (step 3, below).
@@ -643,16 +651,26 @@ it after the app quits; an in-process one while the app runs.
   (`termLooksLikeAnswer`: CSI ending in c, n, R, t, x or y, an OSC, a
   DCS, each whole) goes as an answer (`terminalInput(..., true)`), so it
   never takes the pty's size. TermShell's cols and rows are followed
-  (`followPtySize`): a pty larger than the view gets VTE at its size,
-  clipped by the scroller (its horizontal policy is EXTERNAL), with the
-  view's own size, from the scroller, still sent as this renderer's
-  (`viewCells`); a smaller one is drawn at the top left of VTE's own
-  grid. Plain lines wrap at VTE's width rather than the pty's. The part
-  on show follows the cursor since step 3 (below). A size this view sent itself, or a VTE not
-  mapped, is never followed. **Trap:** measuring a VTE that is not on
-  screen (its cell size, from every TermShell) left a second window's
-  hidden terminal showing nothing it was typed (`processes`, its second
-  window); `followPtySize` returns before it measures.
+  (`followPtySize`): while another renderer's size is in force, VTE has
+  exactly the pty's columns and rows, laid out by its frame
+  (`TerminalFrame`, "VTE pans" below), clipped where it is larger than
+  the view and at the top left, the rest of the view the terminal's
+  background, where it is smaller; plain lines wrap at the pty's width.
+  The view's own size, from the frame, is still sent as this renderer's
+  (`viewCells`), and is from the frame whenever VTE's cell is known, held
+  or not: **trap**, VTE's grid is still the held one until VTE is laid
+  out again after it is let go, and a size tick sent it then as the
+  view's own, so the window's typing took the pty to 104x10 and back to
+  40x6 (`host_wrap` caught it). The part on show follows the cursor since step 3
+  (below). A size this view sent itself, or a VTE not mapped, is never
+  followed (`sentSizes_`, those still on their way: once the latest
+  comes back, the host having fitted in order, those before it go).
+  **Trap:** measuring a VTE that is not on screen (its cell size, from
+  every TermShell) left a second window's hidden terminal showing nothing
+  it was typed (`processes`, its second window); `followPtySize` returns
+  before it measures (`measureCells`), and the frame never measures a
+  cell: it is told sizes in pixels, and a new cell while held comes with
+  `char-size-changed`.
 - **Checks**: `make guitest`'s `host_reattach` (linux/tests/gui/
   HostReattachSuite.cpp; its header says what it checks), with
   `_host_reattach_child`, a second app process, for quit and relaunch.
@@ -714,32 +732,49 @@ The host-side items left before the default can flip (2026-11-18).
 - **VTE pans** (`Terminal::panToCursor`, on `cursor-moved` only while
   clipped, and when the clipping starts): the first row and column on
   show (`panRow`, `panCol`) move only as far as keeps the cursor's cell
-  in the scroller. **Step 2's clipping had never grown VTE**: the
+  in the frame. **Step 2's clipping had never grown VTE**: the
   scrolled window gives a scrollable child its own size whatever it asks
   for, so VTE stayed at the view's grid (104x10 against a 300x120 pty in
-  `host_pan`). VTE now grows by negative margins (GTK adds a margin to
-  the allocation's origin and size alike): the grid's extra rows and
-  columns, counted from VTE's own grid (the scroller's size in cells
-  left out a scroll bar's room, one column short), split between the far
-  sides and the near ones by the pan (`applyPan`). GTK warns once per
-  change that the adjusted size went below the measured one (a
-  Gtk-WARNING on stderr, harmless). The cursor's row counts from the top
-  of the program's screen (VTE's last rows). Unclipped, the margins go
-  back to 0.
+  `host_pan`). Step 3 grew it by negative margins, which drew a
+  Gtk-WARNING ("adjusted size ... must not decrease below min") on every
+  pan; since 2026-11-18 VTE sits in a frame instead
+  (`linux/src/TerminalFrame.{h,cpp}`, a GtkWidget implementing
+  GtkScrollable): the frame is the scrolled window's child and passes
+  its adjustments and scroll policies through to VTE, so the scroll bar,
+  the wheel and the scrollback are VTE's as before; it measures as VTE
+  does (VTE's natural size is its default 80x24 grid whatever it is laid
+  out at, so a held grid asks the view for nothing and a pane beside it
+  never moves), lays VTE out at its own size, or at the
+  size and offset `Terminal::placeGrid` holds it at (the pty's cells and
+  VTE's padding, moved up and left by the pan), clips it (overflow
+  hidden), and paints the terminal's background (`applyColors`) to the
+  right of and below VTE, never under it (a translucent color would
+  double). A press in that empty part gives VTE the keyboard. The
+  cursor's row counts from the top of the program's screen (VTE's last
+  rows). Released (`releasePtySize`), VTE has the frame's size at (0, 0)
+  again. **A smaller pty** gets the same hold with no pan: VTE has the
+  pty's columns and rows, so a line longer than the pty with no cursor
+  positioning wraps where the pty wraps (VTE rewraps what it has when
+  held, so output that came before the TermShell wraps there too).
 - **Checks**: `make test`'s `hostbackup:helpers`, `hostbackup:detach-
   unsaved`, `hostbackup:untitled`, `hostbackup:restore` (over the socket,
   stopped as a signal stops it), `reattach:two-of-one-path`,
   `reattach:untitled` (tests/session_backups_tests.inc); `make guitest`'s
   `host_backups` (the host's backup at Keep Unsaved, reattached while it
   lives, an untitled buffer a client left, the host SIGKILLed and a new
-  window restoring both, two windows on one file) and `host_pan`.
+  window restoring both, two windows on one file), `host_pan` (with no
+  Gtk-WARNING or Gtk-CRITICAL while it pans: `MCGuiLogWatchStart`, the
+  harness's GLib log writer) and `host_wrap` (a smaller pty: VTE's grid
+  is the pty's, the line wraps at its width, the empty part is VTE's
+  background by pixels, the wheel, a drag's selection and a click's
+  focus still VTE's, and the window typing takes the pty back in one
+  step).
 
 **Left before the default flips:** the Mac's half of step 3 (its step 2,
 below, is done: reattaching through `reattachFrom`, `setKeepsBackups`,
 untitled buffers, its own backups written at once after reattaching);
 the browser's view lists a closed window's record among the windows;
-VTE's own wrap of plain output at a smaller pty's width; terminal splits
-come back as tabs.
+terminal splits come back as tabs.
 
 ### The Mac reattaches (stage 6, step 2)
 
