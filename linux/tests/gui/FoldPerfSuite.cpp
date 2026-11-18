@@ -1,4 +1,4 @@
-// FoldPerfSuite.cpp — `./build/minicode-guitest foldperf`: folding's timings
+// FoldPerfSuite.cpp — `./build/mutible-guitest foldperf`: folding's timings
 // (linux/PARITY.md item 1.10, src/Folds.h), the counterpart of the Mac's
 // foldperf in tests/gui/FoldingSuite.mm. 40,000 lines of Python, 20,000
 // regions (100,000 lines and 50,000 regions with MC_GUI_FULL_PERF=1, as on

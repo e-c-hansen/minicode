@@ -11,8 +11,8 @@
 // and a subagent's transcript is two folders down); a folder that is not
 // there yet is watched through the nearest one above it that is.
 //
-// Where the files are: $MINICODE_CLAUDE_PROJECTS, else ~/.claude/projects;
-// $MINICODE_CLAUDE_TMP, else /tmp/claude-<uid>.
+// Where the files are: $MUTIBLE_CLAUDE_PROJECTS, else ~/.claude/projects;
+// $MUTIBLE_CLAUDE_TMP, else /tmp/claude-<uid>.
 #pragma once
 
 #include <algorithm>

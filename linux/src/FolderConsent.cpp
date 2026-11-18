@@ -47,7 +47,7 @@ void writeAll(const std::map<std::string, std::string>& all) {
     // so it is theirs alone.
     if (!g_file_set_contents_full(path.c_str(), text.data(), (gssize)text.size(),
                                   G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err)) {
-        fprintf(stderr, "minicode: could not write %s: %s\n", path.c_str(),
+        fprintf(stderr, "mutible: could not write %s: %s\n", path.c_str(),
                 err ? err->message : "unknown error");
         g_clear_error(&err);
     }
@@ -112,7 +112,7 @@ int listen(std::function<void(const std::string& key)> fn) {
 void unlisten(int id) { listeners().erase(id); }
 
 std::string file() {
-    gchar* p = g_build_filename(g_get_user_state_dir(), "minicode", "folder-tools.json", nullptr);
+    gchar* p = g_build_filename(g_get_user_state_dir(), "mutible", "folder-tools.json", nullptr);
     std::string out = p;
     g_free(p);
     return out;

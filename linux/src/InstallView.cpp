@@ -54,7 +54,7 @@ void copyClicked(GtkButton* b, gpointer) {
 }  // namespace
 
 bool InstallerAvailable(const std::string& program) {
-    if (const char* fake = getenv("MINICODE_INSTALL_HAVE")) {
+    if (const char* fake = getenv("MUTIBLE_INSTALL_HAVE")) {
         std::stringstream ss(fake);
         std::string p;
         while (std::getline(ss, p, ','))
@@ -195,7 +195,7 @@ void InstallView::build(const Install::Tool* tool, const std::vector<const Insta
         for (const std::string& a : alternatives_) row(a, false, nullptr, nullptr);
     }
     addText("Run in Terminal types the command into the terminal; press Return there to run "
-            "it. minicode finds the program by itself once it is installed, with no restart.",
+            "it. mutible finds the program by itself once it is installed, with no restart.",
             "minicode-install-quiet");
     const std::string site = tool->name + "'s website";
     GtkWidget* l = wrappingLabel("");

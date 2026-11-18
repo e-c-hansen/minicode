@@ -212,7 +212,7 @@ Editor::Editor() {
     // an NSImageView or PDFView in for the text view.
     media_ = new MediaView();
     media_->setChangedCallback(onMediaChanged, this);
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     media_->pdfView()->setShownCallback(onPdfShown, this);
 #endif
     slot_ = gtk_stack_new();
@@ -313,7 +313,7 @@ Editor::Editor() {
 // (main.cpp deletes the editor from GtkApplication's window-removed), so
 // every handler that names this object comes off before GTK disposes them.
 Editor::~Editor() {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     delete html_;
     html_ = nullptr;
 #endif
@@ -593,7 +593,7 @@ void Editor::downloadTectonicForMath() {
     LatexPreview::downloadTectonicThen([this, alive](const std::string& problem) {
         if (alive.expired()) return;
         mathDownloading_ = false;
-        if (!problem.empty()) g_message("minicode: could not install tectonic: %s", problem.c_str());
+        if (!problem.empty()) g_message("mutible: could not install tectonic: %s", problem.c_str());
         if (inMarkdownPage()) rerenderPreview(); else updateMathNote();
         syncSide();
     });
@@ -636,7 +636,7 @@ void Editor::stash() {
     capturePlace(d);
     stopPlace();
     if (d->isMarkdown() || d->isNotebook()) clearPage(d);
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (d->latexPreview()) d->latexPreview()->setActive(false);
     if (d->kind() == Document::Kind::Media && media_->kind() == MediaView::Kind::Pdf) {
         d->place().pdf = media_->pdfView()->anchor();
@@ -756,7 +756,7 @@ void Editor::showActive() {
             return;
         }
         gtk_stack_set_visible_child(GTK_STACK(slot_), media_->widget());
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
         if (d->place().havePdf && media_->kind() == MediaView::Kind::Pdf)
             media_->pdfView()->scrollTo(d->place().pdf);
 #endif
@@ -998,7 +998,7 @@ void Editor::dropTable() {
 // An HTML tab as its page. The buffer stays the view's (the text is what
 // the toggle shows), the page is the file on disk.
 void Editor::showHtml(Document* d) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     showSource(d);
     if (!html_) {
         html_ = new HtmlView(HtmlView::Host{
@@ -1357,7 +1357,7 @@ std::string Editor::titleSuffix() const { return isMedia() ? media_->titleSuffix
 // The active tab's LaTeX preview: its own, made on first use and kept with
 // its pages until the tab closes, as each Mac tab has its own LatexView.
 LatexPreview* Editor::makeLatex(Document* d) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (!d->latexPreview()) {
         LatexPreview* l = new LatexPreview(d->buffer());
         l->pdfView()->setShownCallback(onPdfShown, this);
@@ -1409,7 +1409,7 @@ Document* Editor::latexInputTab(const std::string& path) {
 // turned into `to` in its tab's buffer, unsaved, one "Edit in Preview" step.
 bool Editor::editLatexInput(const std::string& path, const std::string& from,
                             const std::string& to) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     Document* d = latexInputTab(path);
     if (!d || d->text() != from) return false;
     LatexPreview::spliceInto(d->buffer(), from, to);
@@ -1426,7 +1426,7 @@ bool Editor::editLatexInput(const std::string& path, const std::string& from,
 // again (they read it from disk), and their bars drop it from the unsaved
 // ones.
 void Editor::latexFileSaved(Document* saved) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (!saved || saved->path().empty()) return;
     for (Document* d : documents())
         if (d != saved && d->latexPreview() && d->latexPreview()->readsFile(saved->path()))
@@ -1440,7 +1440,7 @@ void Editor::latexFileSaved(Document* saved) {
 // that have unsaved changes are saved with the document, so the page shows
 // them. `save` is the window's own save (its errors shown).
 void Editor::saveLatexInputs(const std::function<bool(Document*)>& save) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (!active_ || !active_->isLatex() || !active_->showsPreview() || !latex()) return;
     for (const std::string& f : latex()->inputFiles()) {
         Document* t = documentFor(f);
@@ -1452,7 +1452,7 @@ void Editor::saveLatexInputs(const std::function<bool(Document*)>& save) {
 }
 
 void Editor::showLatex(bool on, bool focus) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     Document* d = active_;
     if (!d) return;
     LatexPreview* l = makeLatex(d);
@@ -1502,7 +1502,7 @@ bool Editor::exportHtml(GtkWindow* parent) {
         gtk_alert_dialog_choose(alert, parent, nullptr, nullptr, nullptr);
         g_object_unref(alert);
     };
-    if (const char* fixed = g_getenv("MINICODE_HTML_EXPORT_PATH"); fixed && *fixed) {
+    if (const char* fixed = g_getenv("MUTIBLE_HTML_EXPORT_PATH"); fixed && *fixed) {
         std::string why;
         if (!exportHtmlTo(fixed, &why)) fail(why);
         return true;
@@ -1542,7 +1542,7 @@ bool Editor::exportHtml(GtkWindow* parent) {
 }
 
 bool Editor::exportPdf(GtkWindow* parent) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     Document* d = active_;
     if (!d || !d->isLatex() || d->path().empty()) return false;
     LatexPreview* l = makeLatex(d);   // made hidden, to typeset for the export
@@ -1556,7 +1556,7 @@ bool Editor::exportPdf(GtkWindow* parent) {
 }
 
 bool Editor::showLineInPdf() {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     Document* d = active_;
     if (!d || !d->isLatex() || d->path().empty()) return false;
     GtkTextIter a, b, ins;
@@ -1613,7 +1613,7 @@ void Editor::onPdfShown(void* selfp) {
 }
 
 bool Editor::showingPdf() const {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (media_->pdfView()->shown()) return true;
     if (latex() && latex()->pdfView()->shown()) return true;
 #endif
@@ -1621,7 +1621,7 @@ bool Editor::showingPdf() const {
 }
 
 bool Editor::zoomPdf(int step) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     PdfView* pdf = nullptr;
     if (media_->pdfView()->shown()) pdf = media_->pdfView();
     else if (latex() && latex()->pdfView()->shown()) pdf = latex()->pdfView();
@@ -1657,7 +1657,7 @@ void Editor::applySettings(const Settings& s) {
     const bool mathBefore = settings_.math();
     const std::string mathColorBefore = mathColor();
     settings_ = s;
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (html_) html_->settingsChanged();
 #endif
     code_->applySettings(s);   // the ruler and the gutter
@@ -2036,7 +2036,7 @@ void Editor::togglePreview() {
     if (d->isHtml()) {   // the page and the source
         d->setShowsPage(!d->showsPage());
         showActive();
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
         if (d->showsPage() && html_) html_->takeKeyboard();
         else gtk_widget_grab_focus(view_);
 #endif
@@ -2293,7 +2293,7 @@ void Editor::placeArrivedPictures() {
     int placed = 0;
     for (const auto& a : batch)
         placed += Markdown::placeWebPicture(tv, buffer_, page, a.first, a.second);
-    g_log("minicode-web", G_LOG_LEVEL_DEBUG, "placed %d pictures from %zu arrivals, %zu pending",
+    g_log("mutible-web", G_LOG_LEVEL_DEBUG, "placed %d pictures from %zu arrivals, %zu pending",
           placed, batch.size(), page.pending.size());
     if (!placed) {
         gtk_text_buffer_delete_mark(buffer_, topMark);
@@ -2361,7 +2361,7 @@ gboolean Editor::onHoldTick(GtkWidget*, GdkFrameClock*, gpointer selfp) {
     }
     if (off != 0) {
         GtkAdjustment* v = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tv));
-        g_log("minicode-web", G_LOG_LEVEL_DEBUG, "top line held: moved %d px", off);
+        g_log("mutible-web", G_LOG_LEVEL_DEBUG, "top line held: moved %d px", off);
         gtk_adjustment_set_value(v, gtk_adjustment_get_value(v) + off);
         self->holdStill_ = 0;
     } else if (++self->holdStill_ >= 3) {

@@ -262,7 +262,7 @@ bool load() {
     s.errors.clear();
     for (const Commands::Error& e : errs) {
         s.errors.push_back("line " + std::to_string(e.line) + ": " + e.message);
-        std::fprintf(stderr, "MiniCode keys.conf %s\n", s.errors.back().c_str());
+        std::fprintf(stderr, "mutible keys.conf %s\n", s.errors.back().c_str());
     }
     return true;
 }
@@ -305,16 +305,16 @@ void init(GtkApplication* app, std::function<void()> changed) {
     State& s = S();
     s.app = app;
     s.changed = std::move(changed);
-    const char* env = g_getenv("MINICODE_KEYS");
+    const char* env = g_getenv("MUTIBLE_KEYS");
     if (env && *env) {
         s.path = env;
     } else {
-        gchar* p = g_build_filename(g_get_user_config_dir(), "minicode", "keys.conf", nullptr);
+        gchar* p = g_build_filename(g_get_user_config_dir(), "mutible", "keys.conf", nullptr);
         s.path = p;
         g_free(p);
     }
     for (const std::string& problem : tableProblems())
-        g_warning("minicode keys: %s", problem.c_str());
+        g_warning("mutible keys: %s", problem.c_str());
     load();
     watch();
     applyAccels();
@@ -342,7 +342,7 @@ bool ensureFileExists() {
     // dotfiles folder stays a link (PARITY.md 2.11).
     std::string why;
     if (!writeConfigFile(s.path, Commands::defaultFileText(Platform::Linux), false, &why)) {
-        std::fprintf(stderr, "minicode: %s\n", why.c_str());
+        std::fprintf(stderr, "mutible: %s\n", why.c_str());
         return false;
     }
     // Watching a path in a folder that did not exist yet may have failed.

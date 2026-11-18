@@ -1,4 +1,4 @@
-// ProblemsSuite.cpp — `./build/minicode-guitest problems`: the Problems list
+// ProblemsSuite.cpp — `./build/mutible-guitest problems`: the Problems list
 // (Ctrl+Shift+M, VS Code's Linux key) and F8 and Shift+F8 (linux/PARITY.md
 // item 2.2; the Mac's tests/gui/ProblemsSuite.mm), against the scripted
 // language server (build/fakelsp), with real keys and clicks:
@@ -137,7 +137,7 @@ MC_GUI_SUITE(problems) {
         MCGuiWriteFile(F("first.py"), kFirst);
         MCGuiWriteFile(F("second.py"), "print('two')\n");
         MCGuiWriteFile(F("unopened.py"), "print('three')\n");
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script()) +
                          "\nlsp.python.also = off\n");
         GCHECK(!panel()->shown());

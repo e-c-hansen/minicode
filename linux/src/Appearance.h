@@ -4,7 +4,7 @@
 //   - "Adjust Settings…" at the end of every part of the window's right
 //     click menu, opening the settings file at the keys that color that part
 //     (Settings::appearanceSurfaces has the map), as the owner asked on
-//     2026-11-09: "This should point to the relevant part of the minicode
+//     2026-11-09: "This should point to the relevant part of the mutible
 //     config."
 //   - View > Adjust Settings (a row per part) and View > Theme (the nine
 //     themes, the one in use checked), added to the registry's View menu.
@@ -34,7 +34,7 @@
 #include <string>
 #include <vector>
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 #include <webkit/webkit.h>
 #endif
 
@@ -71,11 +71,11 @@ void attachEditorMenu(GtkWidget* view, std::function<std::string()> surfaceNow);
 // The menu the view's right click shows now ends with the item for this
 // surface (for the checks, and for a caller that knows better).
 std::string editorMenuSurface(GtkWidget* view);
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 // The terminal's right click: Copy, Paste, Select All, and the item.
 void attachTerminalMenu(GtkWidget* vte);
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 // A page's right click (WebKitWebView's context-menu signal): its own items,
 // then the item for "browser".
 void addToWebMenu(WebKitContextMenu* menu, GtkWidget* webView);

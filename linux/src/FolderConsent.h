@@ -6,12 +6,12 @@
 // resolved), "allow" or "deny", none until the user is asked: the Mac's
 // MCFolderToolsConsent, MCSetFolderToolsConsent and MCForgetFolderToolsConsent
 // (Lsp+Python.mm), there in the defaults, here in
-// $XDG_STATE_HOME/minicode/folder-tools.json (D11; FolderTools::decode and
+// $XDG_STATE_HOME/mutible/folder-tools.json (D11; FolderTools::decode and
 // encode). Every window on a folder follows a change at once (listen), its
 // servers and its bar alike.
 //
 // A question about the folder's own tools put off with the bar's × stays
-// away until minicode starts again, or until the folder's answer is taken
+// away until mutible starts again, or until the folder's answer is taken
 // back (Ask Again About This Folder's Tools, forget).
 #pragma once
 
@@ -37,7 +37,7 @@ bool isPutOff(const std::string& root);
 int listen(std::function<void(const std::string& key)> fn);
 void unlisten(int id);
 
-// $XDG_STATE_HOME/minicode/folder-tools.json.
+// $XDG_STATE_HOME/mutible/folder-tools.json.
 std::string file();
 
 }  // namespace FolderConsent

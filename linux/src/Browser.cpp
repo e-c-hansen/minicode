@@ -1,7 +1,7 @@
-// Browser.cpp — see Browser.h. Compiled out unless MINICODE_ENABLE_BROWSER.
+// Browser.cpp — see Browser.h. Compiled out unless MUTIBLE_ENABLE_BROWSER.
 #include "Browser.h"
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 
 #include <webkit/webkit.h>
 #include <algorithm>
@@ -821,7 +821,7 @@ std::map<std::string, double>& siteZooms() {
     if (!loaded) {
         loaded = true;
         gchar* text = nullptr;
-        std::string path = std::string(g_get_user_state_dir()) + "/minicode/browser-zoom.txt";
+        std::string path = std::string(g_get_user_state_dir()) + "/mutible/browser-zoom.txt";
         if (g_file_get_contents(path.c_str(), &text, nullptr, nullptr)) {
             std::string s = text;
             g_free(text);
@@ -847,7 +847,7 @@ void saveSiteZooms() {
         g_ascii_formatd(num, sizeof num, "%.4g", kv.second);
         out += kv.first + "\t" + num + "\n";
     }
-    std::string dir = std::string(g_get_user_state_dir()) + "/minicode";
+    std::string dir = std::string(g_get_user_state_dir()) + "/mutible";
     g_mkdir_with_parents(dir.c_str(), 0700);
     g_file_set_contents((dir + "/browser-zoom.txt").c_str(), out.data(), (gssize)out.size(), nullptr);
 }
@@ -1009,4 +1009,4 @@ void Browser::restore(const std::vector<TabSessions::BrowserTab>& saved, int act
     selectTab(BrowserTabs::restoredActive(active, (int)tabs_.size()));
 }
 
-#endif // MINICODE_ENABLE_BROWSER
+#endif // MUTIBLE_ENABLE_BROWSER

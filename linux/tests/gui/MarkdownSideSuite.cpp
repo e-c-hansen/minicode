@@ -1,5 +1,5 @@
 // MarkdownSideSuite.cpp — the Markdown page right of its source, rendered in
-// pieces (`./build/minicode-guitest markdown_side`, linux/PARITY.md item 4.2,
+// pieces (`./build/mutible-guitest markdown_side`, linux/PARITY.md item 4.2,
 // first part): the key opens and closes the pane, the page matches the
 // source, an edit builds only its own piece and leaves every table widget
 // where it was, the full preview hides the pane and brings it back, the

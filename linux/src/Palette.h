@@ -1,4 +1,4 @@
-// Palette.h — minicode's default dark colors, VS Code's Dark Modern as the
+// Palette.h — mutible's default dark colors, VS Code's Dark Modern as the
 // core's Settings resolves them with no theme named (src/Settings.cpp,
 // kThemes), for what is drawn before the settings apply and what they do not
 // color. Keeping these values identical is what makes the Linux port look

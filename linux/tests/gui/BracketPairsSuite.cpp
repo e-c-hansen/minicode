@@ -1,4 +1,4 @@
-// BracketPairsSuite.cpp — `./build/minicode-guitest bracket_pairs`:
+// BracketPairsSuite.cpp — `./build/mutible-guitest bracket_pairs`:
 // bracket-pair colors in the editor (editor.bracket-pair-colorization,
 // linux/PARITY.md item 1.7, BracketColors.h), the counterpart of the Mac's
 // BracketPairsSuite. Three depths take Dark Modern's three bracket colors, as the

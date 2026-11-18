@@ -1,5 +1,5 @@
 // SqliteViewSuite.cpp — a SQLite database in the editor's slot
-// (`./build/minicode-guitest sqlite_view`, linux/PARITY.md item 4.1): the
+// (`./build/mutible-guitest sqlite_view`, linux/PARITY.md item 4.1): the
 // tables and views listed, a table's rows with NULL told from an empty
 // string, a query, 1,000 rows at most, only the first statement run, every
 // statement that writes (INSERT, UPDATE, DELETE, CREATE, BEGIN, ATTACH, a

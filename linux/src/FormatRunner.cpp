@@ -65,7 +65,7 @@ struct Job {
 };
 
 // In the formatter, between fork and exec: the signals this thread blocks
-// are not the program's, and it gets SIGTERM if minicode dies first.
+// are not the program's, and it gets SIGTERM if mutible dies first.
 void childSetup(gpointer) {
     sigset_t none;
     sigemptyset(&none);

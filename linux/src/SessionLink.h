@@ -10,9 +10,9 @@
 // One client for the whole process, in code points (what GtkTextIter
 // counts), its messages dispatched on the main loop as they arrive.
 //
-// MINICODE_HOST=loopback puts every message through the protocol's
+// MUTIBLE_HOST=loopback puts every message through the protocol's
 // encoding and back, both ways, so the GUI checks exercise the wire format
-// before any network carries it; MINICODE_HOST_DELAY_US delays each
+// before any network carries it; MUTIBLE_HOST_DELAY_US delays each
 // message on the host's thread, as a slow link would.
 #pragma once
 

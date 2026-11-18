@@ -1,4 +1,4 @@
-// BrowserTabsSuite.cpp — the browser pane's tabs (`./build/minicode-guitest
+// BrowserTabsSuite.cpp — the browser pane's tabs (`./build/mutible-guitest
 // browser_tabs`, PARITY.md 4.5; the Mac's browser_tabs). Pages are files in
 // the project folder; nothing leaves this machine.
 //   - the pane starts with one tab (the home page), a + makes more, a click

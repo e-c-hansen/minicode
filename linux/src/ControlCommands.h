@@ -20,7 +20,7 @@ class Browser;
 typedef struct _GtkWindow GtkWindow;
 
 // One terminal of a window (PARITY.md 4.7): its own id, which its shell has as
-// MINICODE_TERMINAL_ID and the board and `term-output` know it by.
+// MUTIBLE_TERMINAL_ID and the board and `term-output` know it by.
 struct ControlTerminal {
     int id = 0;
     std::string title;

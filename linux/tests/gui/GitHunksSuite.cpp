@@ -1,4 +1,4 @@
-// GitHunksSuite.cpp — `./build/minicode-guitest git_hunks` (PARITY.md 2.9),
+// GitHunksSuite.cpp — `./build/mutible-guitest git_hunks` (PARITY.md 2.9),
 // the counterpart of the Mac's git_hunks in tests/gui/GitPanelSuite.mm, by
 // real clicks and keys: a file changed in two places shows Stage Hunk and
 // Discard Hunk as links on each hunk's header line, one line of text a line

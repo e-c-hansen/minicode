@@ -1,4 +1,4 @@
-// GitVerbsSuite.cpp — `./build/minicode-guitest git_verbs` (PARITY.md 2.9),
+// GitVerbsSuite.cpp — `./build/mutible-guitest git_verbs` (PARITY.md 2.9),
 // the counterpart of the Mac's git_verbs in tests/gui/GitPanelSuite.mm, by
 // real keys and clicks: Shift with the arrows chooses rows and lets them go,
 // and Shift+F10 opens the menu for them; two rows chosen with a Ctrl click stage together on

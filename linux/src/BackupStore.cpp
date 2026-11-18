@@ -25,11 +25,11 @@ BackupStore& BackupStore::shared() {
 }
 
 BackupStore::BackupStore() {
-    const char* env = g_getenv("MINICODE_BACKUP_DIR");
+    const char* env = g_getenv("MUTIBLE_BACKUP_DIR");
     if (env && *env) {
         store_.dir = env;
     } else {
-        gchar* d = g_build_filename(g_get_user_data_dir(), "minicode", "Backups", nullptr);
+        gchar* d = g_build_filename(g_get_user_data_dir(), "mutible", "Backups", nullptr);
         store_.dir = d;
         g_free(d);
     }
@@ -101,7 +101,7 @@ void BackupStore::write(Backups::Entry e, std::string text) {
     post([this, e, s, data] {
         if (!isNewest(e.id, s)) return;   // a newer one follows
         if (!store_.save(e, *data))
-            fprintf(stderr, "minicode: could not write the backup of %s in %s\n", e.path.c_str(),
+            fprintf(stderr, "mutible: could not write the backup of %s in %s\n", e.path.c_str(),
                     store_.dir.c_str());
     });
 }

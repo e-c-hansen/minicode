@@ -1,4 +1,4 @@
-// ProcessMonitor.h — the sampler behind `minicode procs` and, later, the
+// ProcessMonitor.h — the sampler behind `mutible procs` and, later, the
 // Processes panel (PARITY.md item 3.8; the Mac's is mac/src/ProcessMonitor.mm).
 //
 // A thread of its own reads /proc through ProcFs::Source into the core's

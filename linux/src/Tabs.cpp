@@ -444,7 +444,7 @@ void Editor::selectTabNumber(int n) {
 void Editor::focusActiveDocument() {
     Document* d = active_;
     GtkWidget* target = view_;
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (d && d->isLatex() && d->showsPreview() && d->latexPreview())
         target = d->latexPreview()->widget();
     else
@@ -513,7 +513,7 @@ void Editor::destroy(Document* d) {
         colorDoc_ = nullptr;
     }
     if (d == mdEditDoc_) dropMdPopover();
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (LatexPreview* l = d->latexPreview())
         if (gtk_widget_get_parent(l->widget()) == slot_)
             gtk_stack_remove(GTK_STACK(slot_), l->widget());
@@ -639,7 +639,7 @@ void Editor::pathMoved(const std::string& from, const std::string& to) {
         const std::string now = to + d->path().substr(from.size());
         const bool wasPreview = d->showsPreview();
         d->setPath(now);
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
         if (d->latexPreview()) d->latexPreview()->setPath(now);   // the preview follows
 #endif
         if (d != active_) continue;

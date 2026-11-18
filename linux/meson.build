@@ -1,4 +1,4 @@
-project('minicode-gtk', 'cpp',
+project('mutible-gtk', 'cpp',
   version : '0.1.0',
   # debugoptimized, not Meson's default of debug: at -O0 the lexer is several
   # times slower, and typing /* over a 50,000-line file hitched for 0.1 s.
@@ -48,7 +48,7 @@ core_sources = [
   core_dir / 'SessionHost.cpp',
   core_dir / 'SessionClient.cpp',
   core_dir / 'SessionServer.cpp',
-  # A browser's read-only view of a host (`minicode host --web`, stage 6b).
+  # A browser's read-only view of a host (`mutible host --web`, stage 6b).
   core_dir / 'SessionWeb.cpp',
   core_dir / 'SessionWebPage.cpp',
   core_dir / 'SessionFiles.cpp',
@@ -169,7 +169,7 @@ core_sources = [
 ]
 
 # --- GTK GUI sources (always built) ----------------------------------------
-# main.cpp is apart from the rest so that minicode-guitest can compile it again
+# main.cpp is apart from the rest so that mutible-guitest can compile it again
 # with main renamed, and share every other object with the real program.
 main_source = 'src/main.cpp'
 gui_sources = [
@@ -341,6 +341,8 @@ gui_sources = [
   # actions in a copy of the desktop file (HANDOFF.md item 69).
   'src/RecentList.cpp',
   'src/DockMenu.cpp',
+  # The first launch as mutible copies what minicode kept (src/Rename.h).
+  'src/MigrationLinux.cpp',
   # The palette over the window: commands, Quick Open, Go to Line, symbols.
   'src/PalettePanel.cpp',
   # Big files and long lines: large-file mode, the question past 50 MB,
@@ -350,7 +352,7 @@ gui_sources = [
   # every window (Zoom.cpp), and Go Back and Forward (NavHistoryUi.cpp).
   'src/Zoom.cpp',
   # The control channel (PARITY.md 3.1): its socket, its handlers and the
-  # client `minicode open|window|state|selection` runs (the Mac's CLI, shared).
+  # client `mutible open|window|state|selection` runs (the Mac's CLI, shared).
   'src/ControlServer.cpp',
   'src/IdeLinkServer.cpp',
   'src/ControlCommands.cpp',
@@ -367,8 +369,8 @@ gui_sources = [
   # plain C++ rules (LaunchOptions.cpp) and the fork (Detach.cpp).
   'src/LaunchOptions.cpp',
   'src/Detach.cpp',
-  # MINICODE_STARTUP_LOG=1: where the time to a usable window goes (R3).
-  # MINICODE_BENCH: the memory benchmark's workload (make membench-linux).
+  # MUTIBLE_STARTUP_LOG=1: where the time to a usable window goes (R3).
+  # MUTIBLE_BENCH: the memory benchmark's workload (make membench-linux).
   'src/Bench.cpp',
   'src/StartupLog.cpp',
   # What a window puts off until it has drawn its first frame (R3).
@@ -385,7 +387,7 @@ cpp_args = []
 vte_dep = dependency('vte-2.91-gtk4', required : get_option('terminal'))
 if vte_dep.found()
   deps += vte_dep
-  cpp_args += '-DMINICODE_ENABLE_TERMINAL'
+  cpp_args += '-DMUTIBLE_ENABLE_TERMINAL'
   message('Terminal panel: ENABLED (vte-2.91-gtk4 found)')
 else
   message('Terminal panel: disabled (vte-2.91-gtk4 not found)')
@@ -395,7 +397,7 @@ endif
 webkit_dep = dependency('webkitgtk-6.0', required : get_option('browser'))
 if webkit_dep.found()
   deps += webkit_dep
-  cpp_args += '-DMINICODE_ENABLE_BROWSER'
+  cpp_args += '-DMUTIBLE_ENABLE_BROWSER'
   message('Browser panel: ENABLED (webkitgtk-6.0 found)')
 else
   message('Browser panel: disabled (webkitgtk-6.0 not found)')
@@ -407,7 +409,7 @@ endif
 poppler_dep = dependency('poppler-glib', required : get_option('pdf'))
 if poppler_dep.found()
   deps += poppler_dep
-  cpp_args += '-DMINICODE_ENABLE_PDF'
+  cpp_args += '-DMUTIBLE_ENABLE_PDF'
   message('PDF viewer: ENABLED (poppler-glib found)')
 else
   message('PDF viewer: disabled (poppler-glib not found)')
@@ -422,7 +424,7 @@ endif
 soup_dep = dependency('libsoup-3.0', required : get_option('webimages'))
 if soup_dep.found()
   deps += soup_dep
-  cpp_args += '-DMINICODE_ENABLE_WEB_IMAGES'
+  cpp_args += '-DMUTIBLE_ENABLE_WEB_IMAGES'
   message('Web pictures in the Markdown preview: ENABLED (libsoup-3.0 found)')
 else
   message('Web pictures in the Markdown preview: disabled (libsoup-3.0 not found)')
@@ -437,22 +439,28 @@ version_key = '<key>CFBundleShortVersionString</key>'
 if plist.contains(version_key)
   app_version = plist.split(version_key)[1].split('<string>')[1].split('</string>')[0].strip()
 endif
-cpp_args += '-DMINICODE_VERSION="' + app_version + '"'
+cpp_args += '-DMUTIBLE_VERSION="' + app_version + '"'
 
-minicode_exe = executable('minicode',
+mutible_exe = executable('mutible',
   sources : [main_source] + gui_sources + core_sources,
   include_directories : inc,
   dependencies : deps,
   cpp_args : cpp_args,
   install : true)
 
+# `mbl`, the short name, and `minicode`, the name before 1.6.0, which says
+# once on a terminal that it is now mutible (src/Rename.h) and goes in a
+# later release.
+install_symlink('mbl', pointing_to : 'mutible', install_dir : get_option('bindir'))
+install_symlink('minicode', pointing_to : 'mutible', install_dir : get_option('bindir'))   # rename-mutible: keep
+
 # --- desktop integration ----------------------------------------------------
 # Installs the launcher and its icons so the app shows up in the GNOME app grid
 # and can be pinned to the dock. The .desktop file and the icon files are both
-# named after the GTK application id (org.minicode.Editor) because that is how
+# named after the GTK application id (ai.ible.Mutible) because that is how
 # Wayland compositors match a window back to its launcher; get the name wrong
 # and the dock shows a second, generic icon for the running window.
-app_id = 'org.minicode.Editor'
+app_id = 'ai.ible.Mutible'
 
 desktop_conf = configuration_data()
 desktop_conf.set('BINDIR', get_option('prefix') / get_option('bindir'))
@@ -465,13 +473,13 @@ configure_file(
   install_dir   : get_option('datadir') / 'applications')
 
 # BROWSER in the app's terminals (PARITY.md 3.7): beside the binary in a build
-# folder, and in share/minicode when installed.
+# folder, and in share/mutible when installed.
 configure_file(
-  input  : 'resources' / 'minicode-browser.js',
-  output : 'minicode-browser.js',
+  input  : 'resources' / 'mutible-browser.js',
+  output : 'mutible-browser.js',
   copy   : true)
-install_data('resources' / 'minicode-browser.js',
-  install_dir  : get_option('datadir') / 'minicode',
+install_data('resources' / 'mutible-browser.js',
+  install_dir  : get_option('datadir') / 'mutible',
   install_mode : 'rwxr-xr-x')
 
 # The shell integration (PARITY.md 3.1, D10), found the same two ways and
@@ -488,16 +496,16 @@ configure_file(
   copy   : true)
 install_data('resources' / 'mutible-bash-integration.bash',
              '..' / 'resources' / 'mutible-zsh-integration.zsh',
-  install_dir : get_option('datadir') / 'minicode')
+  install_dir : get_option('datadir') / 'mutible')
 
-# The Claude Code skill, for `minicode install-skill`: beside the binary in a
-# build folder, in share/minicode when installed.
+# The Claude Code skill, for `mutible install-skill`: beside the binary in a
+# build folder, in share/mutible when installed.
 configure_file(
   input  : '..' / 'skills' / 'mutible' / 'SKILL.md',
   output : 'SKILL.md',
   copy   : true)
 install_data('..' / 'skills' / 'mutible' / 'SKILL.md',
-  install_dir : get_option('datadir') / 'minicode' / 'skills' / 'minicode')
+  install_dir : get_option('datadir') / 'mutible' / 'skills' / 'mutible')
 
 # PNGs extracted from the macOS resources/AppIcon.icns, which stays the single
 # source of truth for the artwork.
@@ -510,7 +518,7 @@ endforeach
 # --- tests: the pure-C++ pieces, no GTK and no display required -------------
 # Covers the byte-offset -> character-offset conversion that maps
 # SyntaxHighlighter output onto GtkTextBuffer iterators.
-port_tests = executable('minicode-linux-tests',
+port_tests = executable('mutible-linux-tests',
   sources : ['tests/run_tests.cpp', 'src/ThemeCss.cpp',
              core_dir / 'SyntaxHighlighter.cpp', core_dir / 'Settings.cpp',
              core_dir / 'LineComments.cpp', 'src/PageWords.cpp',
@@ -518,7 +526,8 @@ port_tests = executable('minicode-linux-tests',
              core_dir / 'TermLinks.cpp',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', core_dir / 'GitModel.cpp',
-  'src/WebImageRules.cpp', 'src/LaunchOptions.cpp', 'src/EnvLock.cpp'],
+  'src/WebImageRules.cpp', 'src/LaunchOptions.cpp', 'src/EnvLock.cpp',
+  'src/MigrationLinux.cpp'],
   include_directories : inc,
   dependencies : [dependency('gio-2.0'), dependency('threads')],
   install : false)
@@ -528,30 +537,30 @@ test('linux port core', port_tests)
 # through the preview's own click path. Needs a typeset document, so it is
 # not a test; tests/latex/sweep-linux.sh typesets one and runs it.
 if poppler_dep.found()
-  executable('minicode-latex-sweep',
+  executable('mutible-latex-sweep',
     sources : ['tests/latex_sweep.cpp', 'src/PageWords.cpp', 'src/LatexClick.cpp',
                core_dir / 'LatexDoc.cpp', core_dir / 'SyncTex.cpp'],
     include_directories : inc,
     dependencies : [poppler_dep, dependency('gio-2.0')],
-    cpp_args : ['-DMINICODE_ENABLE_PDF'],
+    cpp_args : ['-DMUTIBLE_ENABLE_PDF'],
     install : false)
 endif
 
 # --- the GUI checks (tests/gui/Harness.h): the whole app, offscreen ----------
 # The objects are the real program's; only main.cpp is compiled again, with
 # main renamed and the seam the checks reach the app through. Nothing here
-# changes the minicode target. libxtst-dev is needed only to build them.
+# changes the mutible target. libxtst-dev is needed only to build them.
 xtst_dep = dependency('xtst', required : false)
 x11_dep = dependency('x11', required : false)
 gtk_x11_dep = dependency('gtk4-x11', required : false)
 if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
-  gui_main = static_library('minicode-guitest-main',
+  gui_main = static_library('mutible-guitest-main',
     sources : [main_source],
     include_directories : inc,
     dependencies : deps,
     # The browser pane's home page must not reach the network from a check.
-    cpp_args : cpp_args + ['-Dmain=minicode_main', '-DMINICODE_GUITEST',
-                           '-DMINICODE_BROWSER_HOME="about:blank"'],
+    cpp_args : cpp_args + ['-Dmain=mutible_main', '-DMUTIBLE_GUITEST',
+                           '-DMUTIBLE_BROWSER_HOME="about:blank"'],
     install : false)
 
   # One line a suite, in tests/gui/suites.txt (fs.read makes Meson reconfigure
@@ -564,9 +573,9 @@ if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
     endif
   endforeach
 
-  guitest = executable('minicode-guitest',
+  guitest = executable('mutible-guitest',
     sources : ['tests/gui/Harness.cpp', 'tests/gui/Input.cpp', 'tests/gui/Wrapper.cpp'] + gui_suites,
-    objects : minicode_exe.extract_objects(gui_sources + core_sources),
+    objects : mutible_exe.extract_objects(gui_sources + core_sources),
     link_with : gui_main,
     include_directories : [inc, include_directories('tests/gui')],
     dependencies : deps + [xtst_dep, x11_dep, gtk_x11_dep],
@@ -576,7 +585,7 @@ if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
     install : false)
 
   # The Mac's scripted language server (tests/gui/FakeLsp.h), plain C++ over
-  # the core's JSON and framing, found beside minicode-guitest.
+  # the core's JSON and framing, found beside mutible-guitest.
   fakelsp = executable('fakelsp',
     sources : ['..' / 'tests' / 'fakelsp' / 'fakelsp.cpp', core_dir / 'Json.cpp',
                core_dir / 'Text.cpp', core_dir / 'EditSpans.cpp',
@@ -591,9 +600,9 @@ if xtst_dep.found() and x11_dep.found() and gtk_x11_dep.found()
   # `meson test -C build` leaves these out (the setup below), so it stays
   # quick and needs no display; `meson test -C build --suite gui` runs them.
   # The harness has its own limits, well inside this one.
-  # The detach suite runs the real minicode as well.
+  # The detach suite runs the real mutible as well.
   test('gui', guitest, suite : 'gui', is_parallel : false, timeout : 1800,
-       depends : [fakelsp, minicode_exe])
+       depends : [fakelsp, mutible_exe])
   add_test_setup('default', exclude_suites : ['gui'], is_default : true)
 else
   message('GUI checks: not built (they need libxtst-dev)')

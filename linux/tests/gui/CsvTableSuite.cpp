@@ -1,5 +1,5 @@
 // CsvTableSuite.cpp — a CSV or TSV file as a table, and files that are not
-// text (`./build/minicode-guitest csv_table`, linux/PARITY.md item 4.1):
+// text (`./build/mutible-guitest csv_table`, linux/PARITY.md item 4.1):
 // the cells as the core's Csv reads them, one cell edit changing one line of
 // the text and the file, undo, the toggle to the text and back, an unedited
 // file saved byte for byte, a cell being typed committed before the tab goes,

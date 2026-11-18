@@ -1,4 +1,4 @@
-// HarnessSuite.cpp — the harness checking itself (`./build/minicode-guitest
+// HarnessSuite.cpp — the harness checking itself (`./build/mutible-guitest
 // harness`): the world it gave the app is the scratch one, characters off the
 // keyboard layout type, a second app in the same world runs and can be
 // killed, and a picture of a widget is written. Every later suite leans on
@@ -8,7 +8,7 @@
 #include "Editor.h"
 #include "WindowLayout.h"
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 #include "Browser.h"
 #include <webkit/webkit.h>
 #endif
@@ -21,7 +21,7 @@
 
 static std::string notesPath() { return MCGuiProjectFile("harness.txt"); }
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 static WebKitWebView* findWebView(GtkWidget* root) {
     if (!root) return nullptr;
     if (WEBKIT_IS_WEB_VIEW(root)) return WEBKIT_WEB_VIEW(root);
@@ -120,7 +120,7 @@ MC_GUI_SUITE(harness) {
                         });
     });
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     // Every window makes a web view, and WebKit runs its page in a process
     // inside bubblewrap, which needs an unprivileged user namespace. Where
     // those are refused (Ubuntu's AppArmor restriction without its bwrap
@@ -149,7 +149,7 @@ MC_GUI_SUITE(harness) {
             done();
             return;
         }
-        // The checks' home page (MINICODE_BROWSER_HOME), so no window
+        // The checks' home page (MUTIBLE_BROWSER_HOME), so no window
         // opening in a check reaches the network.
         const char* uri = webkit_web_view_get_uri(web);
         const std::string page = uri ? uri : "";

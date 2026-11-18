@@ -1,4 +1,4 @@
-// SecondServerSuite.cpp — `./build/minicode-guitest second_server`: Ruff
+// SecondServerSuite.cpp — `./build/mutible-guitest second_server`: Ruff
 // beside the Python server (linux/PARITY.md item 2.2; the Mac's in
 // Lsp+Servers.mm, checked there by tests/gui/LspFixesSuite.mm and
 // OrganizeOnSaveSuite.mm), against two scripted servers (build/fakelsp):
@@ -148,7 +148,7 @@ MC_GUI_SUITE(second_server) {
         const char* p = g_getenv("PATH");
         gPath = p ? p : "";
         EnvLock::envSet("PATH", (bin() + ":" + gPath).c_str(), TRUE);
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kMain, mainScript()) +
                          "\n");
         showTab("withruff/a.py");

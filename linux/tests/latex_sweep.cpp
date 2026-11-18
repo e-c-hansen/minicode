@@ -4,7 +4,7 @@
 // of what was clicked. The Linux twin of tests/latex/sweep.mm; run it with
 // tests/latex/sweep-linux.sh, which typesets the document the way the app does.
 //
-//   minicode-latex-sweep <source.tex> <typeset-copy.tex> <out.pdf> <out.synctex.gz> [-v]
+//   mutible-latex-sweep <source.tex> <typeset-copy.tex> <out.pdf> <out.synctex.gz> [-v]
 //
 // Every word is double-clicked at the middle of its first, middle and last
 // character, and each click is judged against the word's own text, folded to
@@ -116,7 +116,7 @@ bool contains(const std::string& hay, const std::string& needle) {
 
 int main(int argc, char** argv) {
     if (argc < 5) {
-        std::fprintf(stderr, "usage: minicode-latex-sweep source.tex typeset.tex "
+        std::fprintf(stderr, "usage: mutible-latex-sweep source.tex typeset.tex "
                              "out.pdf out.synctex.gz [-v]\n");
         return 2;
     }

@@ -12,7 +12,7 @@
 // Scripts follow html.scripts (HtmlPage.h): turned off in the web view's
 // settings until allowed; a bar over the page asks, Run Scripts or Don't
 // Run, with a box to remember the answer in the settings file. An answer not
-// remembered holds for that file until minicode quits, and leaves a line in
+// remembered holds for that file until mutible quits, and leaves a line in
 // the bar's place saying what was chosen, with a close box. A link or
 // window.open leaving the page goes to the link handler (a local file in a
 // tab of its own, a web address in the browser pane); the page on show is
@@ -32,7 +32,7 @@
 #include <set>
 #include <string>
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 #include <webkit/webkit.h>
 
 class HtmlView {

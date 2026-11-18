@@ -1,4 +1,4 @@
-// HtmlPageSuite.cpp — an .html file as its page (`./build/minicode-guitest
+// HtmlPageSuite.cpp — an .html file as its page (`./build/mutible-guitest
 // html_page`; the Mac's html_page suite, HtmlView.h, the core's HtmlPage.h):
 // it opens as its page with the text readable and its stylesheet applied; with
 // html.scripts unset a script that writes into the page has not run, under
@@ -21,7 +21,7 @@
 
 #include <string>
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 
 namespace {
 
@@ -31,7 +31,7 @@ std::string F(const std::string& name) { return MCGuiProjectFile("html-page/" + 
 bool has(const std::string& s, const std::string& w) { return s.find(w) != std::string::npos; }
 
 std::string settingsText() {
-    const char* p = g_getenv("MINICODE_SETTINGS");
+    const char* p = g_getenv("MUTIBLE_SETTINGS");
     return p ? MCGuiReadFile(p) : "";
 }
 

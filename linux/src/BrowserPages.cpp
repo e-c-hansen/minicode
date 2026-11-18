@@ -1,7 +1,7 @@
 // BrowserPages.cpp — see BrowserPages.h.
 #include "BrowserPages.h"
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -12,7 +12,7 @@
 namespace {
 
 const char* const kWorld = "minicode-agent";
-const char* const kHandler = "minicodeConsole";
+const char* const kHandler = "mutibleConsole";
 
 // The wrapper in the page's world: each console call becomes a DOM event
 // with a name only this page load knows, read by the listener in our world.
@@ -86,7 +86,7 @@ GtkWidget* PageProbe::makeAgentView(PageProbe** probeOut) {
     GtkWidget* view = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW, "user-content-manager", ucm, nullptr));
     PageProbe* probe = new PageProbe(view, true);
     probe->ucm_ = ucm;   // the probe's own reference
-    g_signal_connect(ucm, "script-message-received::minicodeConsole",
+    g_signal_connect(ucm, "script-message-received::mutibleConsole",
                      G_CALLBACK(+[](WebKitUserContentManager*, JSCValue* v, gpointer p) {
                          if (!jsc_value_is_string(v)) return;
                          char* s = jsc_value_to_string(v);
@@ -279,7 +279,7 @@ std::string writePng(const std::string& path, const void* data, size_t size, boo
     std::string tmp;
     int fd;
     if (overwrite) {
-        std::string t = path + ".minicode-XXXXXX";
+        std::string t = path + ".mutible-XXXXXX";
         std::vector<char> buf(t.begin(), t.end());
         buf.push_back(0);
         fd = mkstemp(buf.data());
@@ -391,4 +391,4 @@ void PageProbe::snapshotTo(const std::string& path, bool full, bool overwrite,
              });
 }
 
-#endif  // MINICODE_ENABLE_BROWSER
+#endif  // MUTIBLE_ENABLE_BROWSER

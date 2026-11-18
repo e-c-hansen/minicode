@@ -1,15 +1,15 @@
-// Detach.h — `minicode` started from a terminal gives the terminal back and
+// Detach.h — `mutible` started from a terminal gives the terminal back and
 // is not tied to it (PARITY.md R2), as the Mac's launcher and VS Code's
-// `code` are. Before, the first `minicode` ran the app in the foreground:
+// `code` are. Before, the first `mutible` ran the app in the foreground:
 // the shell waited until it quit, GNOME Terminal warned that closing the
 // window would kill a running process, and closing it did, by the hang-up's
 // SIGHUP.
 //
 // How. Called first thing from main, before GLib or GTK start a thread or
 // connect to anything, so the fork is safe. Started from a terminal (a
-// controlling terminal, or a terminal on a standard stream: `minicode
+// controlling terminal, or a terminal on a standard stream: `mutible
 // >/dev/null 2>&1 </dev/null &` is still the shell's job, and was closed
-// with it) and with no --foreground (or MINICODE_FOREGROUND), the process
+// with it) and with no --foreground (or MUTIBLE_FOREGROUND), the process
 // forks once:
 //   - The child calls setsid(): a session of its own and no controlling
 //     terminal, so the terminal's hang-up never reaches it. It goes on to
@@ -19,27 +19,27 @@
 //     standard stream that is not a regular file the user sent it to (a
 //     pipe would hold the shell, or end the app with SIGPIPE once its
 //     reader went), and tells the parent through a pipe. It then asks
-//     systemd for a transient scope of its own, app-minicode-
-//     org.minicode.Editor-<pid>.scope, through the user manager's
+//     systemd for a transient scope of its own, app-mutible-
+//     ai.ible.Mutible-<pid>.scope, through the user manager's
 //     StartTransientUnit on the session bus, as GNOME Shell does for apps
 //     it starts; otherwise it would stay in the terminal's vte-spawn scope,
-//     which VTE never stops but which then lives as long as minicode does
+//     which VTE never stops but which then lives as long as mutible does
 //     and is judged with it by systemd-oomd. A failure there is not fatal.
 //   - The parent waits until the child says its window is made, then exits
 //     0 and prints nothing; or until the child ends without saying so (a
-//     second `minicode <path>` handed to the running one, or a failure such
+//     second `mutible <path>` handed to the running one, or a failure such
 //     as no display, whose message was printed to the terminal) and exits
 //     with its status. After 30 seconds without either it stops waiting.
 //
 // GNOME Terminal (VTE 0.84) puts each shell in a vte-spawn-<uuid>.scope
 // with KillMode=process and never stops it (no StopUnit or KillUnit in
 // libvte or gnome-terminal-server); the scope ends when its last process
-// does. What closed minicode with its terminal was only the SIGHUP, which a
+// does. What closed mutible with its terminal was only the SIGHUP, which a
 // process in another session does not get.
 //
 // The GUI checks' build never calls this (main.cpp's hook is left out under
-// MINICODE_GUITEST): the harness's app must stay its child. The `detach`
-// suite runs the real build/minicode on a pseudo-terminal instead.
+// MUTIBLE_GUITEST): the harness's app must stay its child. The `detach`
+// suite runs the real build/mutible on a pseudo-terminal instead.
 #pragma once
 
 namespace Detach {

@@ -1,5 +1,5 @@
 // MarkdownTablesSuite.cpp — what opening a table-heavy page costs the main
-// thread (`./build/minicode-guitest markdown_tables`, linux/PARITY.md item
+// thread (`./build/mutible-guitest markdown_tables`, linux/PARITY.md item
 // 4.2, R1): a copy of the repo's docs/REFERENCE.md (whose tables were the
 // README's until 2026-11-14) in the full preview and in the side pane, the
 // longest stall (main-thread CPU between two fires of a 5 ms timer) and the

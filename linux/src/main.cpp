@@ -1,4 +1,4 @@
-// main.cpp — MiniCode GTK4 shell.
+// main.cpp — mutible GTK4 shell.
 //
 // Layout (mirrors the macOS window: file tree left, editor right, status bar
 // at the bottom, collapsible terminal and browser panels):
@@ -13,9 +13,9 @@
 //                     the editor's side (the Editor: its tab strip and slot,
 //                     the find bar (FindBar) over its text) at the top left
 //                     the browser at the top right, a bar between them
-//                                         (#ifdef MINICODE_ENABLE_BROWSER)
+//                                         (#ifdef MUTIBLE_ENABLE_BROWSER)
 //                     the terminal below both, full width, a bar above it
-//                                         (#ifdef MINICODE_ENABLE_TERMINAL)
+//                                         (#ifdef MUTIBLE_ENABLE_TERMINAL)
 //       status bar (GtkLabel, VS Code blue)
 //
 // Toggle Editor, Toggle Browser, Toggle Terminal and Toggle Sidebar each hide
@@ -32,7 +32,7 @@
 // Browser only exist when their libraries were found at configure time.
 //
 // Windows. Everything above belongs to one window, an App, and there can be
-// several (New Window, or a second `minicode <path>` from a shell): each has its
+// several (New Window, or a second `mutible <path>` from a shell): each has its
 // own tree, editor, terminal, browser, Find in Folder panel and language
 // server session, as each macOS window has its own EditorController. What
 // they share lives in `g` below: the settings file and stylesheet, the menu
@@ -103,8 +103,11 @@
 #include "ControlServer.h"
 #include "Bench.h"
 #include "StartupLog.h"
+#include "MigrationLinux.h"
+#include "Rename.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -116,8 +119,8 @@
 
 // What the browser pane opens with. The GUI checks build this file with
 // about:blank, so that a check never reaches the network.
-#ifndef MINICODE_BROWSER_HOME
-#define MINICODE_BROWSER_HOME "https://duckduckgo.com"
+#ifndef MUTIBLE_BROWSER_HOME
+#define MUTIBLE_BROWSER_HOME "https://duckduckgo.com"
 #endif
 
 struct App {
@@ -174,14 +177,14 @@ struct App {
     // (ProblemsPanel.h, PARITY.md 2.2).
     ProblemsPanel* problems = nullptr;
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // The terminals' tabs (PARITY.md 4.7); `terminal` is always the active
     // one, as the Mac's `terminal` getter, so everything that means "the
     // terminal" keeps working.
     TerminalDock* termDock = nullptr;
     Terminal* terminal = nullptr;
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     Browser* browser = nullptr;
 #endif
 
@@ -263,7 +266,7 @@ static void showEditorArea(App* app) {
 // The browser's page or its address bar has the keyboard: Page Zoom's keys
 // are the page's then (PARITY.md 1.11).
 static bool browserHasKeyboard(App* app) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (!app->dead && app->browser && app->layout && app->layout->browserShown())
         return Keys::within(gtk_root_get_focus(GTK_ROOT(app->window)), app->browser->widget());
 #else
@@ -295,7 +298,7 @@ static void updateMediaKey(App* app) {
     bool on = app->editor->canPlayMedia();
     if (on) {
         GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         if (app->terminal && app->terminal->owns(focus)) on = false;
 #endif
         if (focus && GTK_IS_TEXT_VIEW(focus) && gtk_text_view_get_editable(GTK_TEXT_VIEW(focus)))
@@ -308,15 +311,15 @@ static void updateMediaKey(App* app) {
 
 static void updateTitle(void* userp) {
     App* app = static_cast<App*>(userp);
-    std::string title = "minicode";
+    std::string title = "mutible";
     const std::string& p = app->editor->currentPath();
     if (app->editor->isDiff()) {
         // "name (diff)" or "<short hash> <subject>", as the Mac titles it.
-        title = "minicode — " + app->editor->diffTitle();
+        title = "mutible — " + app->editor->diffTitle();
     } else if (!p.empty()) {
         auto slash = p.find_last_of('/');
         std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
-        title = "minicode — " + base + (app->editor->dirty() ? " *" : "");
+        title = "mutible — " + base + (app->editor->dirty() ? " *" : "");
         // A Markdown file with tasks: how many are done.
         if (app->editor->tasksTotal() > 0)
             title += " — " + std::to_string(app->editor->tasksDone()) + " of " +
@@ -388,7 +391,7 @@ static void showError(App* app, const std::string& message, const std::string& d
 // Save, and tell the user if that failed. The editor leaves the buffer marked
 // unsaved on failure, so the title keeps its "*".
 static void flashStatus(App* app, const std::string& message);
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 static std::vector<std::string> sessionRootsOf(App* app, int terminalId);
 static void openTerminalLink(App* app, const Terminal::Link& link);
 #endif
@@ -632,7 +635,7 @@ static void openFileThen(App* app, const std::string& path, EditorTabs::OpenFrom
 // PARITY.md 4.8, the first part (the Mac's EditorController+Bookmarks.mm): a
 // .url or .webloc opened in a window loads its address in that window's
 // browser pane; the window rooted at the bookmark folder is the browser
-// window, where `minicode https://...` opens its pages.
+// window, where `mutible https://...` opens its pages.
 
 // Open as Text on a bookmark file skips the browser once.
 static bool gOpenBookmarkAsText = false;
@@ -650,7 +653,7 @@ static bool isBrowserWindow(App* app) {
 // what had it is hidden now). In the browser window the page has the whole
 // right side until a file is opened beside it.
 static void showWebAddresses(App* app, const std::vector<std::string>& urls, bool focusPage) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (!app->browser) return;
     const std::vector<std::string> addresses = WebBookmark::tabAddresses(urls);
     if (addresses.empty()) return;
@@ -671,7 +674,7 @@ static void showWebAddresses(App* app, const std::vector<std::string>& urls, boo
 // shown in the browser. Any other file (a bookmark with another address,
 // an unreadable or binary .webloc) is left to open as text.
 static bool openBookmarkFile(App* app, const std::string& path, EditorTabs::OpenFrom from) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (gOpenBookmarkAsText || !app->browser || !WebBookmark::isBookmarkPath(path)) return false;
     const std::string url = Bookmarks::addressOf(path);
     if (url.empty()) return false;
@@ -801,7 +804,7 @@ static void fillBookmarksMenu() {
 static void refreshBookmarkUi() {
     fillBookmarksMenu();
     watchBookmarkFolders();
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     for (App* a : g.windows)
         if (a->browser) a->browser->refreshStar();
 #endif
@@ -810,7 +813,7 @@ static void refreshBookmarkUi() {
 // A bookmark from a menu or the palette loads in the tab on show; with Ctrl
 // held, as GTK reports it while the item's click is handled, in a new tab.
 static void act_open_bookmark(GSimpleAction*, GVariant* param, gpointer userp) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     App* app = static_cast<App*>(userp);
     if (!param || !app->browser) return;
     const std::string url = Bookmarks::addressOf(g_variant_get_string(param, nullptr));
@@ -908,7 +911,7 @@ static void openFolder(App* app, const std::string& dir) {
     app->nav->clear();   // Go Back's places were the old folder's
     // After the tabs close, so no old file is reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->termDock)
         for (Terminal* t : app->termDock->all()) t->setProjectRoot(dir);   // for their links
 #endif
@@ -938,7 +941,7 @@ static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
 
 // ---------------------------------------------------------------- actions
 
-#ifdef MINICODE_GUITEST
+#ifdef MUTIBLE_GUITEST
 // The GUI checks answer the folder chooser themselves (the system's goes
 // through the desktop portal): given the parent, the folder it starts in and
 // what to do with the answer ("" for a cancel).
@@ -946,12 +949,12 @@ std::function<void(GtkWindow*, const std::string&, std::function<void(const std:
     gFolderChooserHook;
 #endif
 
-// The system's folder chooser, shared by File > Open Folder and `minicode
+// The system's folder chooser, shared by File > Open Folder and `mutible
 // --open-folder` (the dock icon's Open Folder…). `done` gets the folder's
 // path, or "" when it was cancelled or failed. `parent` may be null.
 static void chooseFolder(GtkWindow* parent, const std::string& start,
                          std::function<void(const std::string&)> done) {
-#ifdef MINICODE_GUITEST
+#ifdef MUTIBLE_GUITEST
     if (gFolderChooserHook) {
         gFolderChooserHook(parent, start, std::move(done));
         return;
@@ -1040,7 +1043,7 @@ static void act_forget_folder_tools(GSimpleAction*, GVariant*, gpointer userp) {
         return;
     }
     FolderConsent::forget(app->rootDir);
-    flashStatus(app, "minicode will ask before running this folder's own tools again");
+    flashStatus(app, "mutible will ask before running this folder's own tools again");
 }
 
 // Ctrl+Shift+S: the typeset PDF of a LaTeX file, as on the Mac (Shift+Cmd+S).
@@ -1070,7 +1073,7 @@ static void act_play_pause(GSimpleAction*, GVariant*, gpointer userp) {
 // Page Zoom: the browser's page while it has the keyboard (Safari's steps,
 // and 100% for Ctrl+Alt+0), else the PDF on screen.
 static void pageZoom(App* app, int step) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (browserHasKeyboard(app)) {
         app->browser->zoom(step);
         return;
@@ -1169,9 +1172,9 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
 // window, and none of them comes back until asked (the owner's report of
 // 2026-11-09: the port used to reopen the editor when the last of them
 // closed). WindowLayout.cpp has the rules and where the keyboard goes.
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 // One terminal of the window's dock, with the window's hooks on it (the
-// dock's factory): its folder and control id (MINICODE_TERMINAL_ID, before
+// dock's factory): its folder and control id (MUTIBLE_TERMINAL_ID, before
 // the shell starts), links, the IDE link's variables, and the settings and
 // zoom as they are now.
 static Terminal* makeTerminal(App* app) {
@@ -1276,12 +1279,12 @@ static App* appOfTerminal(Terminal* t) {
     return nullptr;
 }
 
-// Run File and `minicode term --run` (PARITY.md 3.1): the window's one
+// Run File and `mutible term --run` (PARITY.md 3.1): the window's one
 // terminal shown with the keyboard left where it was, then a line typed and
 // entered at its prompt, or `done` told why not (a running command, a shell
 // that does not report). Nothing is ever typed into a busy terminal.
 static void showTerminalQuietly(App* app) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->dead || !app->terminal || app->layout->terminalShown()) return;
     GtkWidget* keep = gtk_window_get_focus(GTK_WINDOW(app->window));
     app->layout->toggleTerminal();
@@ -1293,7 +1296,7 @@ static void showTerminalQuietly(App* app) {
 }
 
 static void runInTerminal(App* app, const std::string& line, std::function<void(const std::string&)> done) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->dead || !app->terminal) {
         done("this window has no terminal");
         return;
@@ -1320,7 +1323,7 @@ static bool runFileCommand(App* app, std::string line, const std::string& dir, c
         saveCurrent(app);
         if (app->editor->dirty()) return false;   // the save failed and said why
     }
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->dead || !app->terminal) {
         done(TestGutter::Typed(), "this window has no terminal");
         return true;
@@ -1396,7 +1399,7 @@ static void act_run_file(GSimpleAction*, GVariant*, gpointer userp) {
     });
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 // The Terminal menu (PARITY.md 4.7).
 static void act_new_terminal(GSimpleAction*, GVariant*, gpointer userp) {
     newTerminalTab(static_cast<App*>(userp), "", true);
@@ -1490,7 +1493,7 @@ static void showTerminalOf(App* target, Terminal* which = nullptr) {
 }
 
 // The scratchpad and worktree of the Claude Code session this window's
-// terminal last named to `minicode notify` (the Mac's sessionLinkRoots),
+// terminal last named to `mutible notify` (the Mac's sessionLinkRoots),
 // read from the Agents model; none when no session is known.
 static void ensureAgents(App* app);
 static std::vector<std::string> sessionRootsOf(App* app, int terminalId) {
@@ -1540,11 +1543,11 @@ static void act_toggle_editor(GSimpleAction*, GVariant*, gpointer userp) {
 // View > New Browser Tab from anywhere. The pane is shown, the keyboard in
 // the new tab's address bar.
 static void act_new_browser_tab(GSimpleAction*, GVariant*, gpointer userp) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     App* app = static_cast<App*>(userp);
     if (!app->browser) return;
     app->layout->showBrowser();
-    app->browser->newTab(MINICODE_BROWSER_HOME);
+    app->browser->newTab(MUTIBLE_BROWSER_HOME);
     app->browser->focusUrlBar();
 #else
     (void)userp;
@@ -1552,7 +1555,7 @@ static void act_new_browser_tab(GSimpleAction*, GVariant*, gpointer userp) {
 }
 
 // ---- Saving pages as bookmarks (PARITY.md 4.8; the Mac's saveBrowserBookmark:)
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 // Where a bookmark is saved: in the window rooted at the bookmark folder the
 // tree's selected folder (a selected file's folder), else the bookmark
 // folder itself, made when missing. "" with a note in the status bar when it
@@ -1733,7 +1736,7 @@ static FindBar* revealFindBar(gpointer p) {
 }
 // With the keyboard in a terminal (or its find bar) Find is the terminal's.
 static Terminal* terminalWithKeyboard(App* app) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->dead || !app->termDock || !app->layout || !app->layout->terminalShown()) return nullptr;
     GtkWidget* f = gtk_root_get_focus(GTK_ROOT(app->window));
     for (Terminal* t : app->termDock->all())
@@ -1744,13 +1747,13 @@ static Terminal* terminalWithKeyboard(App* app) {
     return nullptr;
 }
 static void act_find(GSimpleAction*, GVariant*, gpointer p) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (Terminal* t = terminalWithKeyboard(static_cast<App*>(p))) {
         t->showFind();
         return;
     }
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     // With the keyboard in the browser pane (page or address bar) Find is the page's.
     if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
         static_cast<App*>(p)->browser->showFind();
@@ -1761,14 +1764,14 @@ static void act_find(GSimpleAction*, GVariant*, gpointer p) {
 }
 static void act_replace(GSimpleAction*, GVariant*, gpointer p) { revealFindBar(p)->showReplace(); }
 static void act_find_next(GSimpleAction*, GVariant*, gpointer p) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (Terminal* t = terminalWithKeyboard(static_cast<App*>(p)))
         if (t->findOpen()) {
             t->findStep(true);
             return;
         }
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
         static_cast<App*>(p)->browser->findNext(true);
         return;
@@ -1777,14 +1780,14 @@ static void act_find_next(GSimpleAction*, GVariant*, gpointer p) {
     revealFindBar(p)->findNext(true);
 }
 static void act_find_previous(GSimpleAction*, GVariant*, gpointer p) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (Terminal* t = terminalWithKeyboard(static_cast<App*>(p)))
         if (t->findOpen()) {
             t->findStep(false);
             return;
         }
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (browserHasKeyboard(static_cast<App*>(p)) && static_cast<App*>(p)->browser->webView()) {
         static_cast<App*>(p)->browser->findNext(false);
         return;
@@ -1925,13 +1928,13 @@ static void openContainingFolder(App* app, const std::string& path) {
 }
 
 // A folder in the file manager (the Mac's Reveal in Finder for a scratchpad).
-// $MINICODE_FILE_MANAGER names a program that gets the folder as its one
+// $MUTIBLE_FILE_MANAGER names a program that gets the folder as its one
 // argument instead, which is how the checks record it.
 static void revealFolder(App* app, const std::string& folder) {
     std::string fmText;
     {
         EnvLock::EnvRead env;
-        if (const char* v = g_getenv("MINICODE_FILE_MANAGER")) fmText = v;
+        if (const char* v = g_getenv("MUTIBLE_FILE_MANAGER")) fmText = v;
     }
     if (const char* fm = fmText.c_str(); *fm) {
         const char* argv[] = {fm, folder.c_str(), nullptr};
@@ -2064,7 +2067,7 @@ static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
         app->layout->focusAfterClosingPanel();
         return;
     }
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     // The agent page when it shows, else the browser's tab; the last tab
     // hides the pane (Browser::onEmpty), the keyboard to what is left.
     if (browserHasKeyboard(app)) {
@@ -2107,7 +2110,7 @@ static void act_save_all(GSimpleAction*, GVariant*, gpointer userp) {
 // comes on show with the keyboard, the editor brought back first.
 static void act_next_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (browserHasKeyboard(app) && app->browser->tabCount() > 1) {   // with one tab the editor's
         app->browser->stepTab(1);
         return;
@@ -2119,7 +2122,7 @@ static void act_next_tab(GSimpleAction*, GVariant*, gpointer userp) {
 }
 static void act_previous_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (browserHasKeyboard(app) && app->browser->tabCount() > 1) {
         app->browser->stepTab(-1);
         return;
@@ -2132,7 +2135,7 @@ static void act_previous_tab(GSimpleAction*, GVariant*, gpointer userp) {
 template <int N>
 static void act_go_to_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (browserHasKeyboard(app) && app->browser->tabCount() > 1) {
         app->browser->selectTabNumber(N);
         return;
@@ -2150,7 +2153,7 @@ static void act_go_to_tab(GSimpleAction*, GVariant*, gpointer userp) {
 static void openLink(App* app, bool isUrl, const std::string& target, bool isDir,
                      bool insideRoot, int line, int column) {
     if (isUrl) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
         if (app->browser) {
             // Shown beside the editor, the keyboard kept where it was, as the
             // Mac's openWebAddressFromTerminal: does. Loaded first, so a
@@ -2194,7 +2197,7 @@ static void openLink(App* app, bool isUrl, const std::string& target, bool isDir
     });
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 // Ctrl+click on a link in the terminal (Terminal::Link).
 static void openTerminalLink(App* app, const Terminal::Link& link) {
     openLink(app, link.isUrl, link.target, link.isDir, link.insideRoot, link.line, link.column);
@@ -2391,7 +2394,7 @@ bool copyTree(GFile* src, GFile* dst, GError** err) {
 }  // namespace
 
 // Something dropped on the tree (FileTree::setDropCallback). A row dragged
-// within MiniCode moves, as Rename moves it, and the open file follows it;
+// within mutible moves, as Rename moves it, and the open file follows it;
 // files from another program are copied. Neither ever replaces an entry of
 // the same name. The folder monitors bring the rows in, and revealPath
 // selects what arrived.
@@ -2699,7 +2702,7 @@ static void makeTestGutter(App* app) {
                               std::move(typed));
     };
     app->testGutter->terminalOpen = [](int id) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         return Terminal::byId(id) != nullptr;
 #else
         (void)id;
@@ -2779,7 +2782,7 @@ static void makeGitPanel(App* app) {
         if (!app->dead) flashStatus(app, text);
     };
     app->editor->inlineAgent()->typeLine = [app](const std::string& line) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         if (app->dead || !app->terminal) return false;
         if (!app->layout->terminalShown()) app->layout->toggleTerminal();
         if (!app->terminal->typeText(line)) return false;   // never Return: the user reads it first
@@ -3011,7 +3014,7 @@ static std::string shQuote(const std::string& s) {
 static void showEvidence(App* app, const std::string& transcript, const std::string& name) {
     auto page = std::make_shared<EvidencePage>(transcript, name);
     page->onOpenInTerminal = [app](const std::string& command, const std::string& cwd) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         if (app->dead || !app->terminal) return;
         std::string line = command;
         struct stat st;
@@ -3110,7 +3113,7 @@ static void act_inline_agent(GSimpleAction*, GVariant*, gpointer userp) {
     }
     std::string where = "a panel";
     bool inTerminal = false;
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     inTerminal = focus && app->terminal && app->terminal->owns(focus);
     if (inTerminal && !app->terminal->busy()) {
         if (!bar->open(Kind::Command)) gtk_widget_error_bell(app->window);
@@ -3126,7 +3129,7 @@ static void act_inline_agent(GSimpleAction*, GVariant*, gpointer userp) {
     } else if (focus && app->tree && Keys::within(focus, app->tree->widget())) {
         where = "the file tree";
     }
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (where == "a panel" && focus && app->browser && Keys::within(focus, app->browser->widget()))
         where = "the browser";
 #endif
@@ -3420,13 +3423,13 @@ static std::string hintsText(App* app) {
         std::string("Editor      (") + (app->layout->editorShown() ? "shown" : "collapsed") + ")");
     row("mutible.toggleMaximizedPane",
         std::string("Maximize    (") + (app->layout->maximized() ? "maximized" : "off") + ")");
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     row("workbench.action.terminal.toggleTerminal",
         std::string("Terminal    (") +
             (app->layout->terminalShown() ? "open" : "hidden") + ")");
     row("workbench.action.terminal.toggleTerminal", "Terminal, too", 1);
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     row("mutible.toggleBrowser",
         std::string("Browser     (") +
             (app->layout->browserShown() ? "open" : "hidden") + ")");
@@ -3467,7 +3470,7 @@ static std::string hintsText(App* app) {
         row("mutible.togglePlayback", "Play or pause");
     }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     heading("In the terminal");
     text("Plain Ctrl keys go to the program (Ctrl C,");
     text("Ctrl W, Ctrl H...). These still work:");
@@ -3603,7 +3606,7 @@ static void showConfigErrors(App* app) {
 // A terminal's font: terminal.font-size or the desktop's size, scaled for
 // the terminals' zoom (Zoom.h).
 static void applyTerminalZoom(App* app) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->dead || !app->termDock) return;
     const double base = Zoom::terminalBasePoints();
     for (Terminal* t : app->termDock->all()) t->setFontSize(base, Zoom::terminalPoints() / base);
@@ -3628,7 +3631,7 @@ static void applyWindowSettings(App* app) {
             if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get())) r->applySettings();
     if (app->gitGutter) app->gitGutter->applySettings(st);
     if (app->testGutter) app->testGutter->refreshSoon();   // test.<language> may have changed
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->termDock)
         for (Terminal* t : app->termDock->all()) t->applySettings(st);
 #endif
@@ -3777,7 +3780,7 @@ static void restoreWindowPanels(App* app, const TabSessions::Window& record) {
 }
 
 // A launch with no path from the home folder or / (the dock, the desktop
-// entry, GNOME's app grid): every window open when minicode last quit, the
+// entry, GNOME's app grid): every window open when mutible last quit, the
 // first in front, as the Mac's restoreOpenWindows (VS Code's
 // window.restoreWindows "all"). False when none was kept or none of their
 // folders is still there; the launch then opens its folder as before.
@@ -3807,7 +3810,7 @@ static void updateKeyPlace() {
     if (App* a = appForWindow(gtk_application_get_active_window(g.gapp))) {
         if (!a->dead) {
             GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(a->window));
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
             place.terminal = a->terminal && a->terminal->owns(focus);
 #endif
             place.editor = focus && focus == a->editor->textView();
@@ -3876,7 +3879,7 @@ static void initShared() {
     TerminalAttention::setChangedHandler([] {
         for (App* a : g.windows) {
             if (a->dead) continue;
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
             if (a->termDock) {
                 a->termDock->refreshTabs();
                 for (Terminal* t : a->termDock->all())
@@ -3952,7 +3955,7 @@ static void initShared() {
 
     Zoom::applySettings(g.settings->settings());   // the zoom from last time, before any view
     Keys::init(g.gapp, onKeysChanged);
-    // minicode's own writes to the settings file (a theme) wait while any
+    // mutible's own writes to the settings file (a theme) wait while any
     // window's tab holds it with unsaved changes; the reason goes to the
     // front window's status bar (PARITY.md 2.11, the Mac's unsavedTextCheck).
     AppSettings::unsavedTextCheck = [](const std::string& path) {
@@ -4089,12 +4092,12 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     std::vector<gpointer> owners = {app,         app->lsp,     app->tree,   app->git,
                                     app->layout, app->palette, app->findBar};
     for (void* o : app->editor->handlerOwners()) owners.push_back(o);
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     owners.push_back(app->termDock);
     if (app->termDock)
         for (Terminal* t : app->termDock->all()) owners.push_back(t);
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     owners.push_back(app->browser);
 #endif
     // A part the window never made (the LaTeX preview before any .tex was
@@ -4143,12 +4146,12 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->consentBar = nullptr;
     delete app->lsp;
     app->lsp = nullptr;
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     delete app->termDock;
     app->termDock = nullptr;
     app->terminal = nullptr;
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     delete app->browser;
     app->browser = nullptr;
 #endif
@@ -4198,7 +4201,7 @@ static App* newWindow(const std::string& root, const std::string& file,
                                     (int)record->frame.h);
     else
         gtk_window_set_default_size(GTK_WINDOW(app->window), 1100, 720);
-    gtk_window_set_title(GTK_WINDOW(app->window), "minicode");
+    gtk_window_set_title(GTK_WINDOW(app->window), "mutible");
     gtk_application_window_set_show_menubar(
         GTK_APPLICATION_WINDOW(app->window), TRUE);
     // The keyboard back where it was after a choice from the menu bar.
@@ -4320,7 +4323,7 @@ static App* newWindow(const std::string& root, const std::string& file,
         [app](const Document* d) { return !app->dead && app->format && app->format->saveWaits(d); },
         [app](int* active) {
             std::vector<TabSessions::BrowserTab> tabs;
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
             if (!app->dead && app->browser) tabs = app->browser->records(active);
 #else
             (void)app;
@@ -4389,8 +4392,8 @@ static App* newWindow(const std::string& root, const std::string& file,
     StartupLog::mark("window: sessions and the find bar");
 
     GtkWidget* browserPane = nullptr;
-#ifdef MINICODE_ENABLE_BROWSER
-    app->browser = new Browser(MINICODE_BROWSER_HOME);
+#ifdef MUTIBLE_ENABLE_BROWSER
+    app->browser = new Browser(MUTIBLE_BROWSER_HOME);
     // The last tab closed hides the pane; any change to the tabs is for the
     // session (a second later, once it has settled).
     app->browser->onEmpty = [app] {
@@ -4410,7 +4413,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     StartupLog::mark("window: browser");
 #endif
     GtkWidget* terminalPane = nullptr;
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     app->termDock = new TerminalDock([app] { return makeTerminal(app); });
     app->terminal = app->termDock->active();
     app->termDock->onActiveChanged = [app](Terminal* t) {
@@ -4445,12 +4448,12 @@ static App* newWindow(const std::string& root, const std::string& file,
         if (!app->dead) app->editor->focusActiveDocument();
     };
     app->layout->focusBrowser = [app] {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
         if (!app->dead && app->browser) app->browser->focusUrlBar();
 #endif
     };
     app->layout->focusTerminal = [app] {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         if (!app->dead && app->terminal) app->terminal->focus();
 #endif
     };
@@ -4569,7 +4572,7 @@ static App* newWindow(const std::string& root, const std::string& file,
             return g.settings ? g.settings->settings().lspCommand(key) : std::string();
         },
         [app](const std::string& command) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
             if (app->dead || !app->terminal) return;
             if (!app->layout->terminalShown()) app->layout->toggleTerminal();
             app->terminal->typeText(command);   // never Return: the user reads it first
@@ -4602,7 +4605,7 @@ static App* newWindow(const std::string& root, const std::string& file,
             if (!app->dead) saveDocument(app, d);
         },
         [app](const std::string& command) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
             if (app->dead || !app->terminal) return;
             if (!app->layout->terminalShown()) app->layout->toggleTerminal();
             app->terminal->typeText(command);   // never Return: the user reads it first
@@ -4761,7 +4764,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     addAction(app, "terminalzoomreset", G_CALLBACK(act_terminal_zoom_reset));
     addAction(app, "togglewordwrap", G_CALLBACK(act_toggle_word_wrap));
     addAction(app, "togglemaximize", G_CALLBACK(act_toggle_maximize));
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     addAction(app, "nextwaiting",    G_CALLBACK(act_next_waiting));
     addAction(app, "newterminal",    G_CALLBACK(act_new_terminal));
     addAction(app, "nextterminal",   G_CALLBACK(act_next_terminal));
@@ -4801,7 +4804,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     for (const char* off : {"zoomin", "zoomout", "zoomfit", "playpause"})   // until shown
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);
-#ifndef MINICODE_ENABLE_TERMINAL
+#ifndef MUTIBLE_ENABLE_TERMINAL
     for (const char* off : {"terminalzoomin", "terminalzoomout", "terminalzoomreset"})   // no terminal
         g_simple_action_set_enabled(G_SIMPLE_ACTION(g_action_map_lookup_action(
                                         G_ACTION_MAP(app->window), off)), FALSE);
@@ -4827,7 +4830,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     // The files open here last time: the window's own when it is brought
     // back, else the folder's.
     app->persist->restoreSession(record ? &record->tabs : nullptr);
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     if (app->browser) {   // the browser's tabs, suspended; the one on show loads when the pane is
         const TabSessions::Session saved = record ? record->tabs : app->persist->savedSession();
         app->browser->restore(saved.browser, saved.browserActive);
@@ -4841,7 +4844,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     // sidebar would give (Editor::openFile decides that).
     if (!file.empty()) openFileCb(file, app);
 
-    // make membench-linux (inert unless MINICODE_BENCH is set): the workload
+    // make membench-linux (inert unless MUTIBLE_BENCH is set): the workload
     // the memory benchmark measures, driven through this first window.
     if (Bench::active()) {
         Bench::Hooks hooks;
@@ -4852,7 +4855,7 @@ static App* newWindow(const std::string& root, const std::string& file,
             if (!app->dead) showTerminalQuietly(app);
         };
         hooks.showAddress = [app](const std::string& url) {
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
             if (app->dead || !app->browser) return;
             app->browser->openAddresses({url});
             app->layout->showBrowser();
@@ -4907,14 +4910,14 @@ struct Startup {
 }  // namespace
 
 // Work out what to open from argv[1]. It may be a directory, or a single file:
-// `minicode notes.md` should show that file, not make the user name its folder.
+// `mutible notes.md` should show that file, not make the user name its folder.
 // A file roots the tree at its parent, so the sidebar still lists the files
 // alongside it and New File / New Folder land somewhere sensible.
 //
 // The path is canonicalized because the tree, the terminal's working directory
 // and the editor all keep it, and a relative "." or "../thing" would otherwise
 // be re-resolved against whatever the process's cwd happened to be later on.
-// `cwd` is passed in rather than read here because a second `minicode foo.md`
+// `cwd` is passed in rather than read here because a second `mutible foo.md`
 // is answered by the already-running process, and the path has to be resolved
 // against the directory the user typed it in, not that process's cwd.
 // The error is returned rather than printed because the caller may be a
@@ -4952,7 +4955,7 @@ static Startup resolveStartupPath(const char* arg, const char* cwdIn) {
     const bool parentOk = parent && g_file_test(parent, G_FILE_TEST_IS_DIR);
     out.root = parentOk ? parent : cwd;
     g_free(parent);
-    out.error = std::string("minicode: ") + arg + ": no such file or directory";
+    out.error = std::string("mutible: ") + arg + ": no such file or directory";
     return out;
 }
 
@@ -4967,12 +4970,12 @@ static ControlWindow controlWindowOf(App* a) {
     w.folder = a->rootDir;
     w.editor = a->editor;
     w.window = GTK_WINDOW(a->window);
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     w.browser = a->browser;
 #endif
     w.shellPid = a->terminal ? a->terminal->shellPid() : 0;
     if (a->terminal) w.shell = a->terminal->shellState();
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     if (a->termDock)
         for (Terminal* t : a->termDock->all()) {
             ControlTerminal ct;
@@ -5033,7 +5036,7 @@ static void startControlChannel() {
         if (App* a = controlApp(w.id)) showTerminalQuietly(a);
     };
     host.newTerminal = [](const ControlWindow& w, const std::string& title) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         App* a = controlApp(w.id);
         Terminal* t = a ? newTerminalTab(a, title, false) : nullptr;
         return t ? t->controlId() : 0;
@@ -5043,7 +5046,7 @@ static void startControlChannel() {
 #endif
     };
     host.splitTerminal = [](const ControlWindow& w, const std::string& title) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         App* a = controlApp(w.id);
         Terminal* t = a ? splitTerminalPane(a, false, false) : nullptr;
         if (t && !title.empty()) t->setUserTitle(title);
@@ -5063,7 +5066,7 @@ static void startControlChannel() {
         runInTerminal(a, line, std::move(done));
     };
     host.terminalOutput = [](int id, int lines, std::string* text) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         Terminal* t = Terminal::byId(id);   // a window's id is no terminal's
         if (!t) return false;
         *text = t->made() ? t->recentText(lines) : std::string();
@@ -5082,9 +5085,9 @@ static void startControlChannel() {
             if (a->dead || !a->editor) continue;
             char buf[PATH_MAX];
             folders.push_back(realpath(a->rootDir.c_str(), buf) ? std::string(buf) : a->rootDir);
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
             // Every terminal's shell under the terminal's own id, with the
-            // session `minicode notify` last named in it (R7.4; the time in
+            // session `mutible notify` last named in it (R7.4; the time in
             // microseconds since 1970, as process start times count).
             if (a->termDock) {
                 for (Terminal* pane : a->termDock->all()) {
@@ -5106,7 +5109,7 @@ static void startControlChannel() {
         }
     });
     std::string error;
-    if (!gControl->start(&error)) g_printerr("minicode: %s\n", error.c_str());
+    if (!gControl->start(&error)) g_printerr("mutible: %s\n", error.c_str());
 }
 
 static bool sameFolder(const std::string& a, const std::string& b) {
@@ -5130,7 +5133,7 @@ static void showFolderWindow(const std::string& root) {
 // (`front`, null when none) moves to it, asking about unsaved tabs first as
 // Open Folder does, and with no window one is opened. A folder that is gone
 // beeps and changes nothing. The command line's path does not come here: a
-// dock entry runs `minicode <folder>`, the window on it or a new one.
+// dock entry runs `mutible <folder>`, the window on it or a new one.
 static void openRecentFolder(App* front, const std::string& dir) {
     struct stat sb;
     if (stat(dir.c_str(), &sb) != 0 || !S_ISDIR(sb.st_mode)) {
@@ -5148,8 +5151,8 @@ static void openRecentFolder(App* front, const std::string& dir) {
     });
 }
 
-// Handles both the first launch and every later `minicode <path>` run while
-// MiniCode is already open. GApplication is single-instance: the second
+// Handles both the first launch and every later `mutible <path>` run while
+// mutible is already open. GApplication is single-instance: the second
 // process hands its arguments to this one over D-Bus and exits, so this is
 // where every window a command line asks for is made.
 //
@@ -5191,7 +5194,7 @@ static void handleCommandLine(char** args, int n, const char* cwd,
     }
 
     // printerr on the command line object, not g_printerr: for a second
-    // `minicode <path>` this routes the message back to the shell that ran it
+    // `mutible <path>` this routes the message back to the shell that ran it
     // instead of the stderr of the process that happens to own the window.
     if (!st.error.empty()) printerr(st.error);
 
@@ -5223,7 +5226,7 @@ static void handleCommandLine(char** args, int n, const char* cwd,
             if (!a->dead && Bookmarks::sameFolder(a->rootDir, folder)) { target = a; break; }
         std::string why;
         if (!target && !Bookmarks::ensureFolder(folder, &why)) {
-            printerr("minicode: " + folder + ": " + why);
+            printerr("mutible: " + folder + ": " + why);
         } else {
             if (!target) {
                 target = newWindow(folder, "");
@@ -5262,28 +5265,39 @@ static int onCommandLine(GApplication*, GApplicationCommandLine* cl, gpointer) {
     return 0;
 }
 
-// The client half of the control channel (tools/minicode-cli.cpp): `minicode
-// open|window|state|selection ...` talks to the running minicode over its
+// The client half of the control channel (tools/mutible-cli.cpp): `mutible
+// open|window|state|selection ...` talks to the running mutible over its
 // socket and exits, with no GTK started (PARITY.md 3.1).
 int mutibleCliMain(int argc, char** argv);
 int mutibleInstallSkill(int argc, char** argv);
 
 int main(int argc, char** argv) {
+    // The names from before 1.6.0 (src/Rename.h): MINICODE_* variables count
+    // where MUTIBLE_* are unset. First, before any thread starts.
+    Rename::adoptOldEnvironment();
+    // Run as `minicode`, the old name says the new one on a terminal; never
+    // for `minicode notify --from-hook`, which Claude Code runs silently.
+    if (Rename::sayRenamed(argc > 0 ? argv[0] : "", std::vector<std::string>(argv + 1, argv + argc),
+                           isatty(STDERR_FILENO)))
+        std::fprintf(stderr, "%s\n", Rename::kRenamedNotice);
     if (argc > 1 && std::string(argv[1]) == "install-skill") return mutibleInstallSkill(argc, argv);
     if (argc > 1 && ControlChannel::isSubcommand(argv[1])) return mutibleCliMain(argc, argv);
-#ifndef MINICODE_GUITEST
+#ifndef MUTIBLE_GUITEST
     // A run with the startup log stays in the terminal it was asked from: a
     // detached app gives that terminal up, and the log with it (Detach.h).
-    const bool logStays = StartupLog::wanted() && !g_getenv("MINICODE_FOREGROUND");
-    if (logStays) EnvLock::envSet("MINICODE_FOREGROUND", "1");
+    const bool logStays = StartupLog::wanted() && !g_getenv("MUTIBLE_FOREGROUND");
+    if (logStays) EnvLock::envSet("MUTIBLE_FOREGROUND", "1");
     // The options, and a terminal given back at once (Detach.h, PARITY.md R2).
     if (const int status = Detach::start(&argc, &argv); status >= 0) return status;
-    if (logStays) EnvLock::envUnset("MINICODE_FOREGROUND");   // not for the shells it starts
+    if (logStays) EnvLock::envUnset("MUTIBLE_FOREGROUND");   // not for the shells it starts
 #endif
-    // MINICODE_STARTUP_LOG=1: each phase's time on stderr. After the fork,
+    // What minicode kept, copied to mutible's folders once, before anything
+    // reads settings or sessions (MigrationLinux.h).
+    MigrationLinux::migrateFromOldName();
+    // MUTIBLE_STARTUP_LOG=1: each phase's time on stderr. After the fork,
     // so its clock is this process's main thread's.
     StartupLog::begin();
-    GtkApplication* gapp = gtk_application_new("org.minicode.Editor",
+    GtkApplication* gapp = gtk_application_new("ai.ible.Mutible",
                                               G_APPLICATION_HANDLES_COMMAND_LINE);
     g.gapp = gapp;
     // argv[1] = a directory to open, or a file to open; default = cwd. The real
@@ -5309,7 +5323,7 @@ int main(int argc, char** argv) {
 }
 
 // What the GUI checks may reach of this file (linux/tests/gui/AppSeam.h),
-// compiled only into minicode-guitest.
-#ifdef MINICODE_GUITEST
+// compiled only into mutible-guitest.
+#ifdef MUTIBLE_GUITEST
 #include "../tests/gui/AppSeam.inc"
 #endif

@@ -478,7 +478,7 @@ void Document::beginLoading(const std::string& path) {
     path_ = path;
     ext_ = extensionOf(path);
     markdown_ = ext_ == "md" || ext_ == "markdown";
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     latex_ = ext_ == "tex" || ext_ == "ltx" || ext_ == "latex";
 #endif
     fill("");

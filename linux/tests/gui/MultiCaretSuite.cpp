@@ -1,4 +1,4 @@
-// MultiCaretSuite.cpp — `./build/minicode-guitest multicaret`: several carets
+// MultiCaretSuite.cpp — `./build/mutible-guitest multicaret`: several carets
 // in the editor (linux/PARITY.md item 1.9, Carets.h), the counterpart of the
 // Mac's MultiCaretClickSuite and the caret steps of its EditorKeysSuite and
 // MultiEditSuite, every press real (XTest).

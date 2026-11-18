@@ -13,7 +13,7 @@
 //     else the desktop's size, scaled by VTE's font scale to that plus the
 //     terminals' own zoom, which the same keys change while the terminal
 //     has the keyboard (CommandsLinux.cpp's Terminal rows).
-//   - Both zooms last between runs in $XDG_STATE_HOME/minicode/zoom.json
+//   - Both zooms last between runs in $XDG_STATE_HOME/mutible/zoom.json
 //     (PARITY.md D11), never in the settings file, and are read once, when
 //     the first window opens.
 //   - Word wrap is editor.word-wrap unless Alt+Z turned it over since, for
@@ -75,7 +75,7 @@ using Listener = std::function<void(const std::string& what)>;
 int listen(Listener l);
 void unlisten(int id);
 
-// $XDG_STATE_HOME/minicode/zoom.json.
+// $XDG_STATE_HOME/mutible/zoom.json.
 std::string statePath();
 
 }  // namespace Zoom

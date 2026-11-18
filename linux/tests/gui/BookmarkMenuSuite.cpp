@@ -1,5 +1,5 @@
 // BookmarkMenuSuite.cpp — the toolbar's star and book, the Bookmarks menu in
-// the menu bar and the palette's bookmarks (`./build/minicode-guitest
+// the menu bar and the palette's bookmarks (`./build/mutible-guitest
 // bookmark_menu`, PARITY.md 4.8, last part; the Mac's bookmarks suite).
 // Pages come from a server inside this process on 127.0.0.1, the bookmark
 // folder is a scratch one and the Trash is a folder of the scratch world
@@ -236,7 +236,7 @@ MC_GUI_SUITE(bookmark_menu) {
     MCGuiWait("it is loaded, the star filled", 60, [] { return pageIs(1, "Alpha") && starIs(true); });
     MCGuiStep("back to the first tab", [] { browser()->selectTab(0); });
     MCGuiWait("the star follows the tab: empty", 60, [] { return pageIs(0, "Epsilon") && starIs(false); });
-    MCGuiStep("a bookmark for its page is made outside minicode", [] {
+    MCGuiStep("a bookmark for its page is made outside mutible", [] {
         writeBookmark(gFolder + "/Epsilon.url", url("/four"));
     });
     MCGuiWait("the star follows the folder: filled", 20, [] { return starIs(true); });

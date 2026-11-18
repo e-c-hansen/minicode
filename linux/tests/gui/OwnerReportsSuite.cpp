@@ -1,5 +1,5 @@
 // OwnerReportsSuite.cpp — PARITY.md "Reported by the owner", R4 and R5
-// (`./build/minicode-guitest owner_reports`), by real keys and real drags in
+// (`./build/mutible-guitest owner_reports`), by real keys and real drags in
 // a window of its own.
 //
 // R4: with no tab the editor is empty and read-only, with no welcome text,
@@ -20,14 +20,14 @@
 #include "TabStrip.h"
 #include "WindowLayout.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #endif
 
 #include <cmath>
 #include <string>
 
-#if defined(MINICODE_ENABLE_TERMINAL) && defined(MINICODE_ENABLE_BROWSER)
+#if defined(MUTIBLE_ENABLE_TERMINAL) && defined(MUTIBLE_ENABLE_BROWSER)
 
 namespace {
 

@@ -1,11 +1,11 @@
 // ServerSymbolsSuite.cpp — symbols from the language servers (`./build/
-// minicode-guitest server_symbols`, linux/PARITY.md item 2.12), the language
+// mutible-guitest server_symbols`, linux/PARITY.md item 2.12), the language
 // server half of the Mac's tests/gui/SymbolsSuite.mm, against two scripted
 // servers (FakeLsp.h) and by real keys: Ctrl+Shift+O lists the Python
 // server's documentSymbol tree nested (flattened parent first, each child
 // with its container), the caret's symbol chosen, Down previews and Escape
 // puts the place back, typing and Return go there; a server that does not
-// list symbols (the C++ one) and one that refuses leave it to minicode's own
+// list symbols (the C++ one) and one that refuses leave it to mutible's own
 // outline. Ctrl+T ("#") asks both servers for workspace/symbol: a slow
 // server's answer is waited for while the other's shows, a new query cancels
 // the question still out, the answers are merged with a symbol both name
@@ -159,7 +159,7 @@ MC_GUI_SUITE(server_symbols) {
         MCGuiWriteFile(F("b.cpp"), kC);
         MCGuiWriteFile(F("c.py"), kRefused);
         MCGuiWriteFile(F("lib.py"), "# lib\n\nclass Shared:\n    pass\n");
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kA, scriptA()) +
                          "\nlsp.cpp = " + MCGuiFakeLsp(kB, scriptB()) + "\n");
         showTab("b.cpp");
@@ -171,7 +171,7 @@ MC_GUI_SUITE(server_symbols) {
 
     // ------------------------------------- a server that lists no symbols
     MCGuiStep("Ctrl+Shift+O where the server lists none", [] { MCGuiKey("ctrl+shift+o"); });
-    MCGuiWait("minicode's own outline stands in", 10, [] {
+    MCGuiWait("mutible's own outline stands in", 10, [] {
         return pal()->isOpen() && pal()->symbolSource() == "outline" && !pal()->labels().empty();
     });
     MCGuiStep("the struct and the function; the server never asked", [] {

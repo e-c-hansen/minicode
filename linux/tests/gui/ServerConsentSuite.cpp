@@ -1,5 +1,5 @@
 // ServerConsentSuite.cpp — a language server that would run the folder's
-// own code waits for the folder's answer (`./build/minicode-guitest
+// own code waits for the folder's answer (`./build/mutible-guitest
 // server_consent`, linux/PARITY.md item 2.3, Lsp::checkProjectCode), the
 // counterpart of the Mac's tests/gui/ServerConsentSuite.mm, against the
 // scripted server standing in for rust-analyzer (lsp.rust), with real

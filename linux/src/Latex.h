@@ -16,8 +16,8 @@
 //     source that was typeset; with the buffer ahead of the PDF they could
 //     name the wrong text, so the click waits for the retypeset instead.
 //
-// Everything else follows the Mac: tectonic from MINICODE_TECTONIC, then
-// ~/.local/share/minicode/bin, then PATH, with an offer to download the
+// Everything else follows the Mac: tectonic from MUTIBLE_TECTONIC, then
+// ~/.local/share/mutible/bin, then PATH, with an offer to download the
 // pinned release; the buffer typeset from a hidden sibling
 // `.<file name>.<preview number>.mutible.tex` (so relative \input and
 // \includegraphics resolve and the user's file is never written; the full
@@ -26,10 +26,10 @@
 // generation-counted; the log shown when it does not typeset; Export PDF
 // copies exactly the bytes tectonic wrote.
 //
-// Compiled only with MINICODE_ENABLE_PDF.
+// Compiled only with MUTIBLE_ENABLE_PDF.
 #pragma once
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 
 #include <gtk/gtk.h>
 
@@ -79,8 +79,8 @@ public:
     using PdfCb = std::function<void(GBytes* pdf, const std::string& error)>;
     void pdfForBuffer(PdfCb done);
 
-    // Where tectonic is, or empty: MINICODE_TECTONIC, then the copy the app
-    // downloads into ~/.local/share/minicode/bin, then PATH.
+    // Where tectonic is, or empty: MUTIBLE_TECTONIC, then the copy the app
+    // downloads into ~/.local/share/mutible/bin, then PATH.
     static std::string tectonicPath();
     static std::string managedTectonicPath();
     // Download the pinned tectonic without a preview (the Markdown math's
@@ -303,4 +303,4 @@ private:
     std::shared_ptr<LatexPreview*> alive_;
 };
 
-#endif  // MINICODE_ENABLE_PDF
+#endif  // MUTIBLE_ENABLE_PDF

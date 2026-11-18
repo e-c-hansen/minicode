@@ -1,5 +1,5 @@
 // MarkdownSideEditSuite.cpp — editing from the Markdown page to the side
-// (`./build/minicode-guitest markdown_side_edit`, linux/PARITY.md item 4.2):
+// (`./build/mutible-guitest markdown_side_edit`, linux/PARITY.md item 4.2):
 // a real double-click on a paragraph, a list item and a table cell of the
 // pane opens the block editor over the pane with that block's Markdown; an
 // edit lands in the source as one undo step, the pane shows it and the

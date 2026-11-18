@@ -1,4 +1,4 @@
-// GitReviewSuite.cpp — `./build/minicode-guitest git_review`, the counterpart
+// GitReviewSuite.cpp — `./build/mutible-guitest git_review`, the counterpart
 // of the Mac's git_review in tests/gui/GitPanelSuite.mm (the review of every
 // uncommitted change, ChangeReviewPage.h), by real clicks: the panel's Review
 // Changes button opens one tab that lists every change in one scroll in the

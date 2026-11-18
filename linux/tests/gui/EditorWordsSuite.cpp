@@ -1,4 +1,4 @@
-// EditorWordsSuite.cpp — `./build/minicode-guitest editor_words`: words by
+// EditorWordsSuite.cpp — `./build/mutible-guitest editor_words`: words by
 // VS Code's default editor.wordSeparators in source text (linux/PARITY.md
 // item 1.9, Carets.h; MultiCaret::wordSelection), the counterpart of the
 // Mac's EditorKeysSuite. A double-click on arr in arr.size selects arr, $

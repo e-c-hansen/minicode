@@ -1,4 +1,4 @@
-// GitSyncSuite.cpp — `./build/minicode-guitest git_sync` (PARITY.md 2.9):
+// GitSyncSuite.cpp — `./build/mutible-guitest git_sync` (PARITY.md 2.9):
 // Fetch, Pull, Push and Sync in the Source Control panel, and autofetch
 // (git.autofetch), against a bare repository in the scratch world, the
 // counterpart of the Mac's tests/gui/GitSyncSuite.mm, by real keys and
@@ -221,10 +221,10 @@ MC_GUI_SUITE(git_sync) {
         GCHECK(Panel()->errorLine().find("add the key to the agent (ssh-add) or connect once from "
                                        "the terminal.") != std::string::npos);
         GCHECK(QuestionGone());
-        // Not minicode's session (as the Mac's POSIX_SPAWN_SETSID), so no
-        // terminal of minicode's for ssh to ask on.
+        // Not mutible's session (as the Mac's POSIX_SPAWN_SETSID), so no
+        // terminal of mutible's for ssh to ask on.
         const std::string sid = MCGuiReadFile(Base() + "/ssh-session");
-        MCGuiNote("ssh's session %s, minicode's %d", sid.c_str(), (int)getsid(0));
+        MCGuiNote("ssh's session %s, mutible's %d", sid.c_str(), (int)getsid(0));
         GCHECK(!sid.empty() && atoi(sid.c_str()) != (int)getsid(0));
     });
     Shell("the push URL put back", "cd '" + Work() + "' && " + G() +

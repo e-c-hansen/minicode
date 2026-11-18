@@ -1,4 +1,4 @@
-// LatexForwardSuite.cpp — LaTeX forward search (`./build/minicode-guitest
+// LatexForwardSuite.cpp — LaTeX forward search (`./build/mutible-guitest
 // latex_forward`, linux/PARITY.md item 4.4, HANDOFF.md item 55): Ctrl+Alt+
 // Shift+J lights the lines of text the caret's line set on the PDF, scrolls
 // the page there, and clears the light after 1.5 s. The stand-in tectonic
@@ -16,7 +16,7 @@
 
 #include <string>
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 namespace {
 
 Editor* ed() { return MCGuiApp().editor; }
@@ -74,7 +74,7 @@ MC_GUI_SUITE(latex_forward) {
             "sed -e \"s|@DIR@/.main.mutible.tex|$file|\" -e \"s|@DIR@|$(dirname \"$file\")|\" "
             "\"$d/main.synctex\" | gzip -c > \"$out/$stem.synctex.gz\"\n");
         g_chmod((D() + "/tectonic").c_str(), 0755);
-        EnvLock::envSet("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
+        EnvLock::envSet("MUTIBLE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
         MCGuiOpenFileKept(F("main.tex"));
     });
     MCGuiWait("main.tex shows", 10, [] { return ed()->currentPath() == F("main.tex"); });

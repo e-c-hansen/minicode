@@ -298,7 +298,7 @@ bool ControlServer::start(std::string* error) {
     if (!error) error = &ignored;
     if (impl_->listenFd >= 0) return true;
     const std::string folder = ControlChannel::socketFolder(
-        getenv("MINICODE_CONTROL_DIR"), getenv("XDG_RUNTIME_DIR"), getenv("TMPDIR"), getuid());
+        getenv("MUTIBLE_CONTROL_DIR"), getenv("XDG_RUNTIME_DIR"), getenv("TMPDIR"), getuid());
     if (!privateFolderOfOurs(folder, error)) return false;
     removeStale(folder, (int)getpid());
     const std::string path = folder + "/" + ControlChannel::socketName((int)getpid());

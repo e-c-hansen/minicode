@@ -1,7 +1,7 @@
-// AttentionSuite.cpp — "Waiting for you" on Linux (`./build/minicode-guitest
+// AttentionSuite.cpp — "Waiting for you" on Linux (`./build/mutible-guitest
 // attention`, PARITY.md item 3.6; the Mac's AttentionSuite in tests/gui):
-//   - the shell in the app's terminal has MINICODE_TERMINAL_ID (the window's
-//     control id) and MINICODE_PID (the app's), and no stale copies;
+//   - the shell in the app's terminal has MUTIBLE_TERMINAL_ID (the window's
+//     control id) and MUTIBLE_PID (the app's), and no stale copies;
 //   - `mutible notify --from-hook` with canned hook JSON on stdin marks that
 //     terminal (waiting, then done), prints nothing and exits 0, and does the
 //     same with no app to talk to;
@@ -10,7 +10,7 @@
 //   - a real key typed in the terminal clears the mark;
 //   - Next Waiting Terminal (Ctrl+Alt+W) shows a hidden terminal and gives it
 //     the keyboard;
-//   - `minicode hooks --install` into the scratch HOME's ~/.claude/settings.json
+//   - `mutible hooks --install` into the scratch HOME's ~/.claude/settings.json
 //     twice gives the same file, and a symlinked settings file stays a link.
 // Nothing here touches the real ~/.claude: the harness's HOME is a scratch one.
 #include "Harness.h"
@@ -55,7 +55,7 @@ std::shared_ptr<Run> client(const std::vector<std::string>& args,
     for (const auto& kv : env) g_subprocess_launcher_setenv(l, kv.first.c_str(), kv.second.c_str(), TRUE);
     for (const std::string& u : unset) g_subprocess_launcher_unsetenv(l, u.c_str());
     std::vector<const char*> argv;
-    const std::string exe = MCGuiBuildDir() + "/minicode";
+    const std::string exe = MCGuiBuildDir() + "/mutible";
     argv.push_back(exe.c_str());
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -122,7 +122,7 @@ const char* kPermission =
 const char* kStop = R"({"hook_event_name":"Stop","session_id":"s-1","cwd":"/tmp"})";
 
 std::map<std::string, std::string> hookEnv() {
-    return {{"MINICODE_TERMINAL_ID", gTermId}, {"MINICODE_PID", gAppPid}};
+    return {{"MUTIBLE_TERMINAL_ID", gTermId}, {"MUTIBLE_PID", gAppPid}};
 }
 
 std::string stateAttention() {
@@ -161,7 +161,7 @@ MC_GUI_SUITE(attention) {
         VteTerminal* vte = findVte(MCGuiApp().terminal->widget());
         vte_terminal_feed_child(vte, "\x15", 1);
         const std::string cmd =
-            "echo \"$MINICODE_TERMINAL_ID:$MINICODE_PID\" > '" + out + "'\n";
+            "echo \"$MUTIBLE_TERMINAL_ID:$MUTIBLE_PID\" > '" + out + "'\n";
         vte_terminal_feed_child(vte, cmd.c_str(), cmd.size());
     });
     MCGuiWait("the file is written", 15, [] { return MCGuiFileExists(MCGuiProjectFile("ids.txt")) &&
@@ -205,8 +205,8 @@ MC_GUI_SUITE(attention) {
 
     MCGuiStep("with no app to talk to, and the same input, it is silent", [] {
         gRun = client({"notify", "--from-hook"},
-                      {{"MINICODE_TERMINAL_ID", gTermId}, {"MINICODE_PID", "999999"},
-                       {"MINICODE_CONTROL_DIR", MCGuiScratch() + "/no-such-sockets"}},
+                      {{"MUTIBLE_TERMINAL_ID", gTermId}, {"MUTIBLE_PID", "999999"},
+                       {"MUTIBLE_CONTROL_DIR", MCGuiScratch() + "/no-such-sockets"}},
                       {}, kPermission);
     });
     MCGuiWait("the client is done (3)", 15, [] { return gRun->done; });
@@ -215,8 +215,8 @@ MC_GUI_SUITE(attention) {
         GCHECK_EQ_STR(gRun->out + gRun->err, "");
         GCHECK_EQ_STR(stateAttention(), "done");
     });
-    MCGuiStep("outside minicode (no variables) it is silent too", [] {
-        gRun = client({"notify", "--from-hook"}, {}, {"MINICODE_TERMINAL_ID", "MINICODE_PID"},
+    MCGuiStep("outside mutible (no variables) it is silent too", [] {
+        gRun = client({"notify", "--from-hook"}, {}, {"MUTIBLE_TERMINAL_ID", "MUTIBLE_PID"},
                       kPermission);
     });
     MCGuiWait("the client is done (4)", 15, [] { return gRun->done; });
@@ -344,7 +344,7 @@ MC_GUI_SUITE(attention) {
 
 // ------------------------------------------------------------ terminal_ids
 // PARITY.md 4.7: every terminal has an id of its own. Two tabs and a split
-// (three shells), each shell's $MINICODE_TERMINAL_ID written to a file by the
+// (three shells), each shell's $MUTIBLE_TERMINAL_ID written to a file by the
 // shell itself, `state` listing all three, a notify marking one terminal only,
 // term-output by id, the process monitor under each id, and a closing tab
 // taking its mark and its id away.
@@ -402,11 +402,11 @@ MC_GUI_SUITE(terminal_ids) {
         gRun = nullptr;
     });
     MCGuiWait("three shells at their prompts", 40, [] { return gIdsReady(gT1) && gIdsReady(gT2) && gIdsReady(gT3); });
-    MCGuiStep("each shell writes its $MINICODE_TERMINAL_ID to a file", [] {
+    MCGuiStep("each shell writes its $MUTIBLE_TERMINAL_ID to a file", [] {
         int n = 1;
         for (Terminal* t : {gT1, gT2, gT3}) {
             unlink(idFile(n).c_str());
-            t->runLine("echo \"$MINICODE_TERMINAL_ID:$MINICODE_PID\" > '" + idFile(n) + "'", [](const std::string&) {});
+            t->runLine("echo \"$MUTIBLE_TERMINAL_ID:$MUTIBLE_PID\" > '" + idFile(n) + "'", [](const std::string&) {});
             n++;
         }
     });

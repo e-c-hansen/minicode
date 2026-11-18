@@ -1,5 +1,5 @@
 // TreeClicksSuite.cpp — clicks in the file tree while a folder's listing
-// goes in (`./build/minicode-guitest tree_clicks`), the follow-up to R1 in
+// goes in (`./build/mutible-guitest tree_clicks`), the follow-up to R1 in
 // linux/PARITY.md.
 //
 // Since R1 a folder's rows change when a listing made on a worker comes in,

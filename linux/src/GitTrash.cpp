@@ -220,7 +220,7 @@ bool trashCopy(const std::string& path, std::string* where, std::string* error) 
     }
     // A folder of our own beside the file, so the copy is on the file's own
     // filesystem and goes to the Trash the file would.
-    std::string tmpl = dirOf(path) + "/.minicode-discard-XXXXXX";
+    std::string tmpl = dirOf(path) + "/.mutible-discard-XXXXXX";
     std::vector<char> buf(tmpl.begin(), tmpl.end());
     buf.push_back('\0');
     if (!g_mkdtemp_full(buf.data(), 0700)) {

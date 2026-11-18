@@ -34,7 +34,7 @@ std::string expandHome(const std::string& p) {
 }
 
 // The servers' Python context: the Python file on show's folder (else the
-// window's), the window's folder, and the environment minicode started in.
+// window's), the window's folder, and the environment mutible started in.
 PythonEnvs::Context pythonContext(const std::string& path, bool pythonFile,
                                   const std::string& root) {
     PythonEnvs::Context ctx;

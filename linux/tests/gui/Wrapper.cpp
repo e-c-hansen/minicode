@@ -1,4 +1,4 @@
-// Wrapper.cpp — the first stage of minicode-guitest (Harness.h): the scratch
+// Wrapper.cpp — the first stage of mutible-guitest (Harness.h): the scratch
 // world, a private Xvfb, the run under dbus-run-session, and the cleaning up.
 //
 // A shell script could do most of this, but not the part that matters: the
@@ -7,7 +7,7 @@
 // PR_SET_CHILD_SUBREAPER keeps every process the run starts this program's
 // descendant, whatever it does, so at the end all of them can be found by
 // walking /proc from here, and only those are signalled. Nothing is ever
-// signalled by name: the owner runs a packaged minicode on this machine.
+// signalled by name: the owner runs a packaged mutible on this machine.
 #include <fcntl.h>
 #include <ftw.h>
 #include <limits.h>
@@ -241,8 +241,8 @@ void clearEnvironment() {
         const char* eq = strchr(*e, '=');
         if (!eq) continue;
         std::string name(*e, (size_t)(eq - *e));
-        // Anything a parent set for a real minicode, or an earlier run.
-        if (name.rfind("MINICODE_", 0) == 0 || name.rfind("MC_GUI_", 0) == 0) names.push_back(name);
+        // Anything a parent set for a real mutible, or an earlier run.
+        if (name.rfind("MUTIBLE_", 0) == 0 || name.rfind("MC_GUI_", 0) == 0) names.push_back(name);
     }
     for (const std::string& n : names)
         if (n != "MC_GUI_KEEP" && n != "MC_GUI_VERBOSE" && n != "MC_GUI_SNAPSHOTS" &&
@@ -251,7 +251,7 @@ void clearEnvironment() {
             n != "MC_GUI_RETRY_OF" &&
             n != "MC_GUI_WAIT_SCALE" && n != "MC_GUI_LEAKS" &&
             // The session's host through its wire format (SessionLink.h).
-            n != "MINICODE_HOST" && n != "MINICODE_HOST_DELAY_US")
+            n != "MUTIBLE_HOST" && n != "MUTIBLE_HOST_DELAY_US")
             unsetenv(n.c_str());
     for (const char* n :
          {"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS",
@@ -276,11 +276,11 @@ void setWorld(const std::string& root, const std::string& shortRoot) {
     setenv("XDG_RUNTIME_DIR", (shortRoot + "/run").c_str(), 1);
     setenv("TMPDIR", (shortRoot + "/t").c_str(), 1);
     setenv("ZDOTDIR", at("zdot").c_str(), 1);
-    setenv("MINICODE_SETTINGS", at("settings.conf").c_str(), 1);
+    setenv("MUTIBLE_SETTINGS", at("settings.conf").c_str(), 1);
     // Not written until a suite writes it: the defaults until then.
-    setenv("MINICODE_KEYS", at("keys.conf").c_str(), 1);
-    setenv("MINICODE_BACKUP_DIR", at("backups").c_str(), 1);
-    // The scratch folder is under build/, inside minicode's own checkout:
+    setenv("MUTIBLE_KEYS", at("keys.conf").c_str(), 1);
+    setenv("MUTIBLE_BACKUP_DIR", at("backups").c_str(), 1);
+    // The scratch folder is under build/, inside mutible's own checkout:
     // git looks no higher than it, so the project and the suites' folders
     // are in no repository unless a suite makes one (the change bars and
     // the tree's colors look at every window's files, PARITY.md 2.10).
@@ -357,14 +357,14 @@ int MCGuiDbusDaemonShim(char** argv) {
     if (!daemon) return 127;
     argv[0] = daemon;
     execv(daemon, argv);
-    perror("minicode-guitest: dbus-daemon");
+    perror("mutible-guitest: dbus-daemon");
     return 127;
 }
 
 int MCGuiWrapperMain(int argc, char** argv) {
     const std::string self = selfPath();
     if (self.empty()) {
-        fprintf(stderr, "minicode-guitest: cannot find this program\n");
+        fprintf(stderr, "mutible-guitest: cannot find this program\n");
         return 2;
     }
     // Asked for explicitly, the checks fail rather than skip when a tool is
@@ -372,7 +372,7 @@ int MCGuiWrapperMain(int argc, char** argv) {
     gchar* xvfb = g_find_program_in_path("Xvfb");
     gchar* dbusRun = g_find_program_in_path("dbus-run-session");
     if (!xvfb || !dbusRun) {
-        fprintf(stderr, "minicode-guitest: %s is not installed (see PARITY.md, Environment)\n",
+        fprintf(stderr, "mutible-guitest: %s is not installed (see PARITY.md, Environment)\n",
                 xvfb ? "dbus-run-session" : "Xvfb");
         return 2;
     }
@@ -397,12 +397,12 @@ int MCGuiWrapperMain(int argc, char** argv) {
     std::vector<char> rootBuf(rootTemplate.begin(), rootTemplate.end());
     rootBuf.push_back(0);
     if (!mkdtemp(rootBuf.data()) || !mkdtemp(shortTemplate)) {
-        perror("minicode-guitest: mkdtemp");
+        perror("mutible-guitest: mkdtemp");
         return 2;
     }
     const std::string root = rootBuf.data(), shortRoot = shortTemplate;
     if (!makeWorld(root, shortRoot)) {
-        fprintf(stderr, "minicode-guitest: could not make the scratch folders\n");
+        fprintf(stderr, "mutible-guitest: could not make the scratch folders\n");
         return 2;
     }
 
@@ -424,7 +424,7 @@ int MCGuiWrapperMain(int argc, char** argv) {
     if (xvfbPid <= 0) {
         // The log goes with the scratch folder, so it is printed here: on CI
         // this is all there is to go on.
-        fprintf(stderr, "minicode-guitest: Xvfb did not start. Its log:\n");
+        fprintf(stderr, "mutible-guitest: Xvfb did not start. Its log:\n");
         gchar* log = nullptr;
         if (g_file_get_contents((root + "/xvfb.log").c_str(), &log, nullptr, nullptr))
             fprintf(stderr, "%s\n", log);
@@ -457,7 +457,7 @@ int MCGuiWrapperMain(int argc, char** argv) {
                     break;
                 }
                 if (gStopSignal || nowSeconds() > deadline) {
-                    printf("\nminicode-guitest: %s; stopping the run\n",
+                    printf("\nmutible-guitest: %s; stopping the run\n",
                            gStopSignal ? "interrupted" : "the whole run overran its limit");
                     fflush(stdout);
                     status = 2;
@@ -477,7 +477,7 @@ int MCGuiWrapperMain(int argc, char** argv) {
     reapChildren({});
 
     if (status != 0 && status != 1)
-        printf("minicode-guitest: the checks ended abnormally (status %d)\n", status);
+        printf("mutible-guitest: the checks ended abnormally (status %d)\n", status);
     if (getenv("MC_GUI_KEEP") && *getenv("MC_GUI_KEEP")) {
         printf("Scratch kept in %s and %s\n", root.c_str(), shortRoot.c_str());
     } else {

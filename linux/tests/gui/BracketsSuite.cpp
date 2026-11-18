@@ -1,4 +1,4 @@
-// BracketsSuite.cpp — `./build/minicode-guitest brackets`: the bracket by
+// BracketsSuite.cpp — `./build/mutible-guitest brackets`: the bracket by
 // the caret and its partner boxed, and Go to Bracket (linux/PARITY.md item
 // 1.7, BracketView.h), the counterpart of the Mac's bracket matching
 // (EditorController+EditorView.mm's updateBracketMatch and goToBracket,
@@ -138,7 +138,7 @@ bool anyMagenta(const Picture& p) {
 }
 
 int gLookups = 0, gUpdates = 0;
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 bool gTerminalWasOpen = false;
 #endif
 
@@ -293,7 +293,7 @@ MC_GUI_SUITE(brackets) {
         return boxed({lineStart(2) + 4, lineStart(2) + 9});
     });
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // ---- the terminal's rule
     MCGuiStep("with the terminal's keyboard", [] {
         gchar** accels =

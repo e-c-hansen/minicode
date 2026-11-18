@@ -1,4 +1,4 @@
-// BackupsSuite.cpp — unsaved tabs survive a SIGKILL (`./build/minicode-guitest
+// BackupsSuite.cpp — unsaved tabs survive a SIGKILL (`./build/mutible-guitest
 // backups`, linux/PARITY.md item 1.3), the counterpart of the Mac's
 // tests/gui/BackupsSuite.mm. The suite runs the app twice more, as second
 // apps in the same scratch world: the first (_backups_writer) opens a folder
@@ -32,7 +32,7 @@ std::string PidFile() { return MCGuiScratch() + "/bk-writer.pid"; }
 
 // The backups in the store that name a file in the folder.
 int BackupsOfFolder() {
-    const char* dir = g_getenv("MINICODE_BACKUP_DIR");
+    const char* dir = g_getenv("MUTIBLE_BACKUP_DIR");
     int n = 0;
     GDir* d = dir ? g_dir_open(dir, 0, nullptr) : nullptr;
     if (!d) return 0;
@@ -244,7 +244,7 @@ MC_GUI_SUITE(_backups_writer) {
     // Written about a second after typing stops.
     MCGuiWait("three backups", 15, [] { return BackupsOfFolder() == 3; });
     MCGuiWait("the folder's session lists the three", 15, [] {
-        const std::string s = MCGuiReadFile(MCGuiScratch() + "/state/minicode/sessions.json");
+        const std::string s = MCGuiReadFile(MCGuiScratch() + "/state/mutible/sessions.json");
         return s.find(In("a.txt")) != std::string::npos && s.find(In("c.txt")) != std::string::npos;
     });
     MCGuiStep("say where it is", [] {

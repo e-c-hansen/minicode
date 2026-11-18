@@ -1,6 +1,6 @@
 // MediaView.cpp — see MediaView.h.
 #include "MediaView.h"
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 #include "PdfView.h"
 #endif
 
@@ -136,7 +136,7 @@ MediaView::MediaView() {
     gtk_widget_add_css_class(picture_, "minicode-media");
     gtk_stack_add_named(GTK_STACK(stack_), picture_, "image");
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     pdf_ = new PdfView();
     gtk_stack_add_named(GTK_STACK(stack_), pdf_->widget(), "pdf");
 #endif
@@ -199,7 +199,7 @@ MediaView::MediaView() {
 
 MediaView::~MediaView() {
     clear();
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     delete pdf_;
 #endif
 }
@@ -216,7 +216,7 @@ bool MediaView::isImagePath(const std::string& path) {
 }
 
 bool MediaView::isPdfPath(const std::string& path) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     return lowerExt(path) == "pdf";
 #else
     (void)path;
@@ -290,7 +290,7 @@ void MediaView::clear() {
     restorePos_ = -1;
     restorePlay_ = false;
     gtk_picture_set_paintable(GTK_PICTURE(picture_), nullptr);
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     pdf_->clear();
 #endif
     kind_ = Kind::None;
@@ -299,7 +299,7 @@ void MediaView::clear() {
 }
 
 int MediaView::pageCount() const {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (kind_ == Kind::Pdf) return pdf_->pageCount();
 #endif
     return 0;
@@ -397,7 +397,7 @@ void MediaView::stopAnimation() {
 // ---------------------------------------------------------------- PDFs
 
 bool MediaView::showPdf(const std::string& path, bool reload) {
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     if (!pdf_->load(path, reload)) return false;
     kind_ = Kind::Pdf;
     gtk_stack_set_visible_child(GTK_STACK(stack_), pdf_->widget());
@@ -442,7 +442,7 @@ bool MediaView::showStream(const std::string& path, gint64 position, bool play) 
                  "package\n\n"
                  "libgtk-4-media-gstreamer\n\n"
                  "and elsewhere it comes with a GTK 4 built with GStreamer. Restart "
-                 "MiniCode after installing it.");
+                 "mutible after installing it.");
         return true;
     }
 
@@ -530,7 +530,7 @@ void MediaView::streamPrepared() {
     }
     imgW_ = gdk_paintable_get_intrinsic_width(GDK_PAINTABLE(stream_));
     imgH_ = gdk_paintable_get_intrinsic_height(GDK_PAINTABLE(stream_));
-    g_log("minicode-media", G_LOG_LEVEL_DEBUG,
+    g_log("mutible-media", G_LOG_LEVEL_DEBUG,
           "%s: prepared, %s, %d x %d, %lld us, back to %lld us%s", path_.c_str(),
           hasVideo ? "video" : "audio", imgW_, imgH_, (long long)durationUs_,
           (long long)std::max<gint64>(restorePos_, 0), restorePlay_ ? ", playing" : "");
@@ -553,7 +553,7 @@ void MediaView::streamFailed() {
     restorePlay_ = false;
     const GError* e = gtk_media_stream_get_error(stream_);
     if (e)
-        g_log("minicode-media", G_LOG_LEVEL_DEBUG, "%s: %s %d: %s", path_.c_str(),
+        g_log("mutible-media", G_LOG_LEVEL_DEBUG, "%s: %s %d: %s", path_.c_str(),
               g_quark_to_string(e->domain), e->code, e->message);
     std::string text = "Cannot play “" + baseName(path_) + "”.\n\n";
     if (e && isMissingPlugin(e))
@@ -562,7 +562,7 @@ void MediaView::streamFailed() {
                 "gstreamer1.0-libav, for H.264, AAC and most other formats\n"
                 "gstreamer1.0-plugins-good, for WebM, Matroska, MP3 and FLAC\n\n"
                 "Other distributions have the same GStreamer plugins under similar "
-                "names. Restart MiniCode after installing them.\n\n";
+                "names. Restart mutible after installing them.\n\n";
     if (e && e->message) text += "(" + plainMessage(e->message) + ")";
     showNote(text, e ? e->message : nullptr);
     notifyChanged();

@@ -10,7 +10,7 @@
 //   - dragging a bar changes the shares, the keyboard resize moves a
 //     boundary 4 cells, closing a pane gives its share to its neighbour;
 //   - a click in a pane makes it the active terminal;
-//   - `minicode split --right term --run`, `--below term`, `--right browse`,
+//   - `mutible split --right term --run`, `--below term`, `--right browse`,
 //     and `open` refused.
 #include "Harness.h"
 #include "AppSeam.h"
@@ -64,7 +64,7 @@ std::shared_ptr<CliRun> gCli;
 
 void runCli(const std::vector<std::string>& args) {
     gCli = std::make_shared<CliRun>();
-    const std::string exe = MCGuiBuildDir() + "/minicode";
+    const std::string exe = MCGuiBuildDir() + "/mutible";
     std::vector<const char*> argv = {exe.c_str()};
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -303,7 +303,7 @@ MC_GUI_SUITE(terminal_splits) {
     MCGuiWait("the shell is ready", 30, [] { return ready(gA); });
 
     // ---- the control channel
-    MCGuiStep("minicode split --right term --run: a new pane, the command ran there", [] {
+    MCGuiStep("mutible split --right term --run: a new pane, the command ran there", [] {
         gPanes = grp()->count();
         runCli({"split", "--right", "term", "--run", "echo ran-in-$$ > \"$HOME/sp.out\""});
     });

@@ -219,7 +219,7 @@ std::shared_ptr<Server> LspSession::serverForKey(const std::string& key) {
     };
     std::string name = server->name();
     c.onProtocolError = [name](const std::string& problem) {
-        g_printerr("MiniCode: %s: %s\n", name.c_str(), problem.c_str());
+        g_printerr("mutible: %s: %s\n", name.c_str(), problem.c_str());
     };
     server->onExit = [alive, this](Server* s) {
         if (!alive.expired()) serverExited(s);

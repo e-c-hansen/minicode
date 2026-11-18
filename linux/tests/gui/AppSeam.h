@@ -1,7 +1,7 @@
 // AppSeam.h — what the GUI checks may reach of the running app.
 //
 // main.cpp keeps the App struct and the shared state to itself. When it is
-// compiled for minicode-guitest (MINICODE_GUITEST), AppSeam.inc is included at
+// compiled for mutible-guitest (MUTIBLE_GUITEST), AppSeam.inc is included at
 // the end of that file and implements this interface, so there is one place
 // that hands out the app's windows and nothing else has to be global. A later
 // item that needs more of a window adds a field here and a line in
@@ -95,7 +95,7 @@ void MCGuiReloadKeys();
 // Every window, closed as the app closes one, with no questions about unsaved
 // text.
 void MCGuiCloseAllWindows();
-// A new window on `folder`, as a second `minicode <folder>` opens one (the
+// A new window on `folder`, as a second `mutible <folder>` opens one (the
 // Mac's suites open theirs through application:openURLs:).
 void MCGuiOpenWindow(const std::string& folder);
 // A window's record as a launch keeps it (Persistence::windowRecord, written
@@ -104,13 +104,13 @@ void MCGuiOpenWindow(const std::string& folder);
 // brings its windows back (the Mac's openWindowAtPath:restoring:).
 std::string MCGuiWindowRecord(GtkWindow* window);
 void MCGuiOpenWindowRestoring(const std::string& folder, const std::string& record);
-// What `minicode <args...>` does in the running app (args without argv[0]);
+// What `mutible <args...>` does in the running app (args without argv[0]);
 // what it would print for the terminal is appended to `*errors`.
 void MCGuiCommandLine(const std::vector<std::string>& args, const std::string& cwd,
                       std::string* errors);
 // File > Open Recent's menu (its folders, then Clear Recently Opened).
 GMenu* MCGuiRecentMenu();
-// The folder chooser (File > Open Folder, `minicode --open-folder`) answered
+// The folder chooser (File > Open Folder, `mutible --open-folder`) answered
 // by the check instead of the portal: `answer` gets the folder the chooser
 // would start in and returns the one "chosen", "" for a cancel. An empty
 // function puts the real chooser back.

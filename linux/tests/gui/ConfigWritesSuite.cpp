@@ -1,5 +1,5 @@
-// ConfigWritesSuite.cpp — `./build/minicode-guitest config_writes`
-// (PARITY.md 2.11; the Mac's config_writes suite): minicode's own first
+// ConfigWritesSuite.cpp — `./build/mutible-guitest config_writes`
+// (PARITY.md 2.11; the Mac's config_writes suite): mutible's own first
 // writes of keys.conf and settings.conf go through the atomic writer
 // (writeConfigFile in AppSettings.h, FolderSearch::writeFileAtomically), so
 // with either file a dangling symlink into a dotfiles folder, Edit >
@@ -26,7 +26,7 @@ namespace {
 bool gKeysBefore = false;
 std::string gKeysText;
 
-std::string settingsPath() { return g_getenv("MINICODE_SETTINGS"); }
+std::string settingsPath() { return g_getenv("MUTIBLE_SETTINGS"); }
 std::string dots(const std::string& name) { return MCGuiScratch() + "/dots/" + name; }
 Editor* ed() { return MCGuiApp().editor; }
 
@@ -50,7 +50,7 @@ bool noTemporaries(const std::string& dir) {
     bool clean = true;
     GDir* d = g_dir_open(dir.c_str(), 0, nullptr);
     while (const char* name = d ? g_dir_read_name(d) : nullptr)
-        if (strstr(name, ".minicode-")) clean = false;
+        if (strstr(name, ".mutible-")) clean = false;
     if (d) g_dir_close(d);
     return clean;
 }

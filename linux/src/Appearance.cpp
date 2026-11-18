@@ -6,7 +6,7 @@
 #include "Editor.h"
 #include "Utf8Offsets.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include <vte/vte.h>
 #endif
 
@@ -168,7 +168,7 @@ std::string editorMenuSurface(GtkWidget* view) {
     return em ? em->current : std::string();
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 void attachTerminalMenu(GtkWidget* vte) {
     if (!vte || !VTE_IS_TERMINAL(vte)) return;
     // Copy, Paste and Select All, as the Mac's grid offers, on actions of
@@ -205,7 +205,7 @@ void attachTerminalMenu(GtkWidget* vte) {
 }
 #endif
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 void addToWebMenu(WebKitContextMenu* menu, GtkWidget* webView) {
     GtkRoot* root = webView ? gtk_widget_get_root(webView) : nullptr;
     GAction* action = root && G_IS_ACTION_MAP(root)

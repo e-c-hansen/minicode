@@ -1,4 +1,4 @@
-// GutterSwitchSuite.cpp — `./build/minicode-guitest gutter_switch`: a tab
+// GutterSwitchSuite.cpp — `./build/mutible-guitest gutter_switch`: a tab
 // shown and closed before GTK has laid out all of its lines, many times,
 // with the editor's drawing (the gutter, CodeView's passes) running between.
 // GtkTextLayout keeps a cache of line displays; when the view leaves a

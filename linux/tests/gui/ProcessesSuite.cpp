@@ -1,16 +1,16 @@
 // ProcessesSuite.cpp — processes and ports on Linux, part one (`./build/
-// minicode-guitest processes`, PARITY.md item 3.8; the Mac's
+// mutible-guitest processes`, PARITY.md item 3.8; the Mac's
 // tests/gui/ProcessesSuite.mm). The sampler over /proc, the control channel's
 // `procs` and the Processes panel (part two: View > Toggle Processes, its rows
 // by group, an orphan from a closed window, Stop from the row's menu).
 //   - a server started in the app's terminal (python3 -m http.server) is
-//     reported by `minicode procs --json --folder` under that terminal, with
+//     reported by `mutible procs --json --folder` under that terminal, with
 //     its listening port, its folder as cwd and a command line;
-//   - a process started outside minicode (its parent gone, so the wrapper
+//   - a process started outside mutible (its parent gone, so the wrapper
 //     subreaper holds it) with its cwd in the folder is "not started here";
 //   - Stop (ProcessMonitor::stop) ends it by SIGTERM; a sleep that ignores
 //     SIGTERM is ended by the SIGKILL 3 s later; neither the shell nor
-//     minicode is ever a target;
+//     mutible is ever a target;
 //   - a look's CPU time on the sampling thread is bounded with the thread
 //     CPU clock (never wall time), and a folder no window shows is answered
 //     for, with no window opened.
@@ -46,7 +46,7 @@ struct Run {
 std::shared_ptr<Run> runClient(const std::vector<std::string>& args) {
     auto run = std::make_shared<Run>();
     std::vector<const char*> argv;
-    const std::string exe = MCGuiBuildDir() + "/minicode";
+    const std::string exe = MCGuiBuildDir() + "/mutible";
     argv.push_back(exe.c_str());
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -181,7 +181,7 @@ int pidWithCommand(int window, const std::string& what) {
 }  // namespace
 
 MC_GUI_SUITE(processes) {
-    // Run as `minicode term --run` and Run File run a line (runLine): it
+    // Run as `mutible term --run` and Run File run a line (runLine): it
     // waits for the shell's prompt, sets aside a line another suite left
     // typed there (install_hints' "uv tool install ..."), and types this one
     // with Return. Nothing here reads the screen, which earlier suites leave
@@ -200,7 +200,7 @@ MC_GUI_SUITE(processes) {
     MCGuiStep("with no refusal", [ran] { GCHECK_EQ_STR(*ran, ""); });
     MCGuiStep("processes started elsewhere: one that ends on SIGTERM, one that ignores it", [] {
         // The shell exits at once, so the sleeps' parent is gone and the
-        // harness's subreaper holds them: outside minicode's own tree.
+        // harness's subreaper holds them: outside mutible's own tree.
         const std::string script =
             "cd \"$1\" || exit; sleep 600 & echo $! > \"$2\"; "
             "(trap '' TERM; exec sleep 601) & echo $! > \"$3\"";
@@ -223,7 +223,7 @@ MC_GUI_SUITE(processes) {
         gStubbornPid = pid("stubborn.pid");
         return gSleepPid > 0 && gStubbornPid > 0;
     });
-    MCGuiWait("`minicode procs --json` reports the server with its port", 60, [] {
+    MCGuiWait("`mutible procs --json` reports the server with its port", 60, [] {
         look();
         if (!gLast.isObject()) return false;
         for (const Json& g : gLast["groups"].elements())
@@ -333,10 +333,10 @@ MC_GUI_SUITE(processes) {
         pp->onRevealTerminal = [](int) { return false; };
         g_action_group_activate_action(pp->actionGroup(), "origin", nullptr);
         GCHECK(note.find("was closed") != std::string::npos);
-        pp->openMenuFor(gSleepPid);   // started outside minicode
+        pp->openMenuFor(gSleepPid);   // started outside mutible
         note.clear();
         g_action_group_activate_action(pp->actionGroup(), "origin", nullptr);
-        GCHECK(note.find("was not started in minicode") != std::string::npos);
+        GCHECK(note.find("was not started in mutible") != std::string::npos);
         pp->onRevealTerminal = keepT;
         pp->onNote = keepN;
     });
@@ -461,7 +461,7 @@ MC_GUI_SUITE(processes) {
             done();
         });
     });
-    MCGuiWait("the server is gone, and minicode and the shell are not", 10, [] {
+    MCGuiWait("the server is gone, and mutible and the shell are not", 10, [] {
         return !alive(gServerPid);
     });
     MCGuiStep("nothing that must not die was a target", [] {
@@ -481,7 +481,7 @@ MC_GUI_SUITE(processes) {
     });
     MCGuiStep("after SIGTERM alone it still runs", [] { GCHECK(alive(gStubbornPid)); });
     MCGuiWait("SIGKILL ended it", 15, [] { return !alive(gStubbornPid); });
-    MCGuiAsync("minicode itself is refused", 10, [](MCGuiDone done) {
+    MCGuiAsync("mutible itself is refused", 10, [](MCGuiDone done) {
         Procs::Key k;
         k.pid = (int)getpid();
         k.start = 1;

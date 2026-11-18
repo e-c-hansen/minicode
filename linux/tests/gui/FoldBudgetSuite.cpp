@@ -1,4 +1,4 @@
-// FoldBudgetSuite.cpp — `./build/minicode-guitest fold_budget`: D8's limit on
+// FoldBudgetSuite.cpp — `./build/mutible-guitest fold_budget`: D8's limit on
 // what a tab's folds hide (linux/PARITY.md item 1.10, src/Folds.h), with
 // real keys. GTK's drawing visits every line between the first and the
 // last line on screen, hidden ones too, so the folds closed in a tab hide

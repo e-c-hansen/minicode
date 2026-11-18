@@ -2,11 +2,11 @@
 // URL entry and back / forward / reload buttons. Mirrors the macOS Browser.mm
 // (a WKWebView with minimal chrome).
 //
-// Compiled only when MINICODE_ENABLE_BROWSER is defined (webkitgtk-6.0 found at
+// Compiled only when MUTIBLE_ENABLE_BROWSER is defined (webkitgtk-6.0 found at
 // configure time). Callers must guard use with the same macro.
 #pragma once
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 
 #include <gtk/gtk.h>
 #include <webkit/webkit.h>   // WebKitWebView / WebKitLoadEvent in the signatures
@@ -35,7 +35,7 @@ public:
     // The keyboard into the page on show (the address bar when the tab has
     // no web view yet).
     void focusPage();
-    // Bookmarks and `minicode https://...` (PARITY.md 4.8; the Mac's
+    // Bookmarks and `mutible https://...` (PARITY.md 4.8; the Mac's
     // -openAddresses:). Each address shows the tab already at it, else gets
     // a tab right of the one on show (the first takes the tab on show when
     // that is empty, or still the home page); the first address's tab is
@@ -61,7 +61,7 @@ public:
     void load(const std::string& url);
     // Page Zoom on Safari's steps (ViewZoom::pageStep): in (+1), out (-1),
     // back to 100% (0). Kept per site (the address's host; "file" for local
-    // files) in $XDG_STATE_HOME/minicode/browser-zoom.txt, so a page of that
+    // files) in $XDG_STATE_HOME/mutible/browser-zoom.txt, so a page of that
     // site opens at it in any tab and any launch, as the Mac's MCBrowserZoom.
     void zoom(int step);
     double zoomLevel() const;
@@ -116,7 +116,7 @@ public:
     void restore(const std::vector<TabSessions::BrowserTab>& tabs, int active);
 
     // The agent page (PARITY.md 3.7): a second web view beside the user's,
-    // made by `minicode browse`, with a Yours | Agent switcher and an x that
+    // made by `mutible browse`, with a Yours | Agent switcher and an x that
     // closes it. An address typed in the bar, or a link from elsewhere, goes
     // to the user's page, never the agent's.
     PageProbe* userProbe() const;
@@ -191,4 +191,4 @@ private:
     bool syncingSwitcher_ = false;
 };
 
-#endif // MINICODE_ENABLE_BROWSER
+#endif // MUTIBLE_ENABLE_BROWSER

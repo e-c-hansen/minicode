@@ -1,5 +1,5 @@
 // AppSeam.inc — see AppSeam.h. Included at the end of src/main.cpp when it is
-// compiled for minicode-guitest, so it can see App and the shared state `g`.
+// compiled for mutible-guitest, so it can see App and the shared state `g`.
 #include "AppSeam.h"
 
 GtkApplication* MCGuiApplication() { return g.gapp; }
@@ -37,12 +37,12 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.tests = a->testGutter;
     w.treeColors = a->treeColors;
     w.rootDir = a->rootDir;
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     w.terminal = a->terminal;
     w.termDock = a->termDock;
     w.controlId = a->controlId;
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     w.browser = a->browser;
 #endif
     return w;
@@ -84,7 +84,7 @@ void MCGuiOpenWindow(const std::string& folder) { newWindow(folder, ""); }
 
 void MCGuiCommandLine(const std::vector<std::string>& args, const std::string& cwd,
                       std::string* errors) {
-    std::vector<std::string> all = {"minicode"};
+    std::vector<std::string> all = {"mutible"};
     all.insert(all.end(), args.begin(), args.end());
     std::vector<char*> ptrs;
     for (std::string& a : all) ptrs.push_back(&a[0]);

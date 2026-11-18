@@ -1,4 +1,4 @@
-// LspWatchSuite.cpp — `./build/minicode-guitest lsp_watch`: files changed on
+// LspWatchSuite.cpp — `./build/mutible-guitest lsp_watch`: files changed on
 // disk reach the language servers (workspace/didChangeWatchedFiles;
 // linux/PARITY.md item 2.2, the Mac's tests/gui/LspWatchSuite.mm), against
 // the scripted server (build/fakelsp). It registers watchers once
@@ -136,7 +136,7 @@ MC_GUI_SUITE(lsp_watch) {
         MCGuiWriteFile(lib() + "/ext/README", "a library\n");
         gRoot = real(MCGuiProject());
         gLib = real(lib());
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script()) +
                          "\nlsp.python.also = off\n");
         showTab(F("a.py"));

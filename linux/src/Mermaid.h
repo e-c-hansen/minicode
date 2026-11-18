@@ -1,13 +1,13 @@
 // Mermaid.h — ```mermaid blocks of the Markdown preview drawn by the user's
-// mermaid-cli (`mmdc`, or $MINICODE_MMDC), as the Mac's MarkdownMermaid.mm
+// mermaid-cli (`mmdc`, or $MUTIBLE_MMDC), as the Mac's MarkdownMermaid.mm
 // does. The decisions (which runs, the key, the command line, the complaint's
 // wording) are the core's MermaidDiagram; this is the running of mmdc and the
 // keeping of its pictures.
 //
 // One run at a time, off the main thread, each in a process group of its own
 // with 90 s, a transparent PNG at scale 2 in the preview's theme. Pictures
-// are kept in memory and in $MINICODE_MERMAID_CACHE or
-// $XDG_CACHE_HOME/minicode/mermaid (50 MB, trimmed to 40). A failure is
+// are kept in memory and in $MUTIBLE_MERMAID_CACHE or
+// $XDG_CACHE_HOME/mutible/mermaid (50 MB, trimmed to 40). A failure is
 // remembered for 30 s. Nothing runs unless a page asks (want()).
 #pragma once
 
@@ -17,7 +17,7 @@
 
 namespace Mermaid {
 
-// mmdc is found ($MINICODE_MMDC, else the port's usual program lookup).
+// mmdc is found ($MUTIBLE_MMDC, else the port's usual program lookup).
 bool available();
 
 struct State {

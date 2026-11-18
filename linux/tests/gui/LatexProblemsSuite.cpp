@@ -1,5 +1,5 @@
 // LatexProblemsSuite.cpp — the LaTeX preview's problems and warnings
-// (`./build/minicode-guitest latex_problems`, linux/PARITY.md item 4.4,
+// (`./build/mutible-guitest latex_problems`, linux/PARITY.md item 4.4,
 // HANDOFF.md item 51), against a stand-in tectonic (a shell script given
 // canned output: the lines are tectonic 0.17.0's, from tests/latex/logs).
 // A failed typeset lists its problems as rows that open their file at the
@@ -16,7 +16,7 @@
 #include "LatexScratch.h"
 
 #include <cairo.h>
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 #include <cairo-pdf.h>
 #endif
 
@@ -24,7 +24,7 @@
 
 #include <string>
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 namespace {
 std::string gOldXdg;
 bool gHadXdg = false;
@@ -118,14 +118,14 @@ MC_GUI_SUITE(latex_problems) {
             "sed \"s/@SIB@/$sib/g\" \"$d/ok.log\" > \"$out/$stem.log\"\n"
             "sed \"s/@SIB@/$sib/g\" \"$d/ok.out\"\n");
         g_chmod((D() + "/tectonic").c_str(), 0755);
-        EnvLock::envSet("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
+        EnvLock::envSet("MUTIBLE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
         MCGuiWriteFile(F("lp-bad.tex"), doc("\\foo FAILME"));
         MCGuiWriteFile(F("lp-good.tex"), doc("See \\ref{sec:missing}."));
         MCGuiWriteFile(F("parts/chapter.tex"), "one\ntwo\nthree\nfour\n");
         // What a crashed process left: a folder of a dead pid with its
         // record and sibling, one still the bytes recorded and one changed.
         const std::string base = F("lp-xdg");
-        // Put back at the end: minicode's own CLI, which later suites run,
+        // Put back at the end: mutible's own CLI, which later suites run,
         // finds the control socket through XDG_RUNTIME_DIR.
         if (const char* x = getenv("XDG_RUNTIME_DIR")) gOldXdg = x;
         gHadXdg = getenv("XDG_RUNTIME_DIR") != nullptr;
@@ -133,7 +133,7 @@ MC_GUI_SUITE(latex_problems) {
         g_mkdir_with_parents(base.c_str(), 0755);
         for (int k = 0; k < 2; ++k) {
             const std::string sib = F(k ? ".keep.tex.7.mutible.tex" : ".gone.tex.7.mutible.tex");
-            const std::string dir = base + "/minicode-latex/0123456789abcdef-4194000-5-" +
+            const std::string dir = base + "/mutible-latex/0123456789abcdef-4194000-5-" +
                                     std::to_string(k + 1);
             MCGuiWriteFile(sib, "recorded bytes\n");
             LatexScratch::Record rec;
@@ -166,7 +166,7 @@ MC_GUI_SUITE(latex_problems) {
         GCHECK(MCGuiReadFile(D() + "/sibling-seen.tex").find("FAILME") != std::string::npos);
         GCHECK(MCGuiFileExists(D() + "/record-seen.txt"));
         gOut = gPreview->outDirForTest();
-        GCHECK(gOut.find("/minicode-latex/") != std::string::npos);
+        GCHECK(gOut.find("/mutible-latex/") != std::string::npos);
         GCHECK(gOut.find("-" + std::to_string(getpid()) + "-") != std::string::npos);
         // Afterwards: the copy and its record are gone.
         GCHECK(!MCGuiFileExists(gPreview->siblingPathForTest()));

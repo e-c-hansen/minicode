@@ -63,7 +63,7 @@ bool watchFolder(Shared* sh, const std::string& dir) {
     if (sh->monitors.count(dir)) return true;
     if (sh->monitors.size() >= FileWatcher::kMaxFolders) {
         if (!sh->full)
-            g_printerr("MiniCode: the language servers' file watcher keeps %zu folders at most; "
+            g_printerr("mutible: the language servers' file watcher keeps %zu folders at most; "
                        "folders past that are not watched\n", FileWatcher::kMaxFolders);
         sh->full = true;
         return false;
@@ -75,7 +75,7 @@ bool watchFolder(Shared* sh, const std::string& dir) {
     if (!m) {
         // Out of inotify instances or watches, most likely; said once.
         if (!sh->failed)
-            g_printerr("MiniCode: the language servers' file watcher cannot watch %s: %s\n", dir.c_str(),
+            g_printerr("mutible: the language servers' file watcher cannot watch %s: %s\n", dir.c_str(),
                        error ? error->message : "unknown");
         sh->failed = true;
         g_clear_error(&error);

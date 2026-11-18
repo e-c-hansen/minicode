@@ -13,8 +13,8 @@ class AppSettings {
 public:
     using ChangeCb = void(*)(void* user);
 
-    // $MINICODE_SETTINGS if set, else $XDG_CONFIG_HOME/minicode/settings.conf
-    // (~/.config/minicode/settings.conf by default), the same file macOS uses.
+    // $MUTIBLE_SETTINGS if set, else $XDG_CONFIG_HOME/mutible/settings.conf
+    // (~/.config/mutible/settings.conf by default), the same file macOS uses.
     AppSettings();
     ~AppSettings();
 
@@ -43,7 +43,7 @@ public:
     // the same refusals as writeTheme (the IDE link's menu item).
     bool writeValue(const std::string& key, const std::string& value, std::string* why);
 
-    // minicode's own rewrites of the file (a theme) are refused while a tab
+    // mutible's own rewrites of the file (a theme) are refused while a tab
     // holds it with unsaved changes, since the tab and the disk would then
     // part ways (the Mac's AppSettings.unsavedTextCheck). Set once by
     // main.cpp: whether any window has a tab of `path` with unsaved changes.
@@ -66,7 +66,7 @@ private:
     void* user_ = nullptr;
 };
 
-// Writes `text` to a file minicode keeps for the user (settings.conf,
+// Writes `text` to a file mutible keeps for the user (settings.conf,
 // keys.conf) through FolderSearch::writeFileAtomically, as the Mac's
 // MCWriteConfigFile: a symlink, a dangling one too, stays a link and the file
 // it names changes; a hard link is written in place; mode and extended

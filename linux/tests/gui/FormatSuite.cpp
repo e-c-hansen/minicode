@@ -1,4 +1,4 @@
-// FormatSuite.cpp — Format Document (`./build/minicode-guitest format
+// FormatSuite.cpp — Format Document (`./build/mutible-guitest format
 // format_on_save`, linux/PARITY.md item 2.4; VS Code's Linux Ctrl+Shift+I),
 // the counterpart of the Mac's `format` suite in tests/gui/FormatSuite.mm,
 // with real keys through XTest and stand-in formatters (scripts) on PATH.

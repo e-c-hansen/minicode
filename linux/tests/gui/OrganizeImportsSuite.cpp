@@ -1,4 +1,4 @@
-// OrganizeImportsSuite.cpp — `./build/minicode-guitest organize_imports`:
+// OrganizeImportsSuite.cpp — `./build/mutible-guitest organize_imports`:
 // Organize Imports and editor.organize-imports-on-save (linux/PARITY.md item
 // 2.2; the Mac's tests/gui/OrganizeOnSaveSuite.mm), against two scripted
 // servers (build/fakelsp): a main Python server offering the bare
@@ -127,7 +127,7 @@ MC_GUI_SUITE(organize_imports) {
     MCGuiStep("Python with Ruff beside a main server", [] {
         MCGuiSetKeyWindow(nullptr);
         ed()->closeAllTabs();
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         // A formatter that adds a line, so its run shows in the file.
         const std::string fmt = bin() + "/add-a-line";
         MCGuiWriteFile(fmt, "#!/bin/sh\n/bin/cat\necho '# formatted'\n");

@@ -1,4 +1,4 @@
-// UndoHistorySuite.cpp — `./build/minicode-guitest undo_history`: the
+// UndoHistorySuite.cpp — `./build/mutible-guitest undo_history`: the
 // editor's undo, the core's UndoHistory (src/UndoHistory.h, SESSION-DESIGN.md
 // stage 2) in place of GTK's buffer undo, with every key real: a run of
 // typing (spaces and all) is one step named Typing, and one Ctrl+Z takes it

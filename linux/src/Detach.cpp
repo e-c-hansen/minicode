@@ -19,8 +19,8 @@
 #include <string>
 #include <vector>
 
-#ifndef MINICODE_VERSION
-#define MINICODE_VERSION ""
+#ifndef MUTIBLE_VERSION
+#define MUTIBLE_VERSION ""
 #endif
 
 namespace {
@@ -68,7 +68,7 @@ bool hasControllingTerminal() {
 }
 
 // /dev/null on each standard stream, except a regular file the user sent it
-// to (`minicode 2>log` keeps its log). A terminal is what is let go of; a
+// to (`mutible 2>log` keeps its log). A terminal is what is let go of; a
 // pipe goes too, since its reader in the shell would wait for the app to
 // quit, and SIGPIPE would end the app once that reader went.
 void letGoOfTerminal() {
@@ -94,7 +94,7 @@ void scopeAnswered(GObject* source, GAsyncResult* result, gpointer) {
     } else {
         // No systemd on the session bus, or it refused: the app runs as
         // well in the terminal's scope.
-        g_debug("minicode: no systemd scope of its own: %s", error ? error->message : "?");
+        g_debug("mutible: no systemd scope of its own: %s", error ? error->message : "?");
         g_clear_error(&error);
     }
 }
@@ -102,7 +102,7 @@ void scopeAnswered(GObject* source, GAsyncResult* result, gpointer) {
 // The request GNOME Shell (gnome-desktop's gnome_start_systemd_scope) and
 // VTE make for the processes they start, for this process itself: mode
 // "fail", a description, the PID, and CollectMode inactive-or-failed so
-// systemd forgets the scope once minicode has gone.
+// systemd forgets the scope once mutible has gone.
 void moveToOwnScope(GApplication* app) {
     GDBusConnection* bus = g_application_get_dbus_connection(app);
     const char* id = g_application_get_application_id(app);
@@ -111,7 +111,7 @@ void moveToOwnScope(GApplication* app) {
     const std::string name = LaunchOptions::scopeName(id, (long)pid);
     GVariantBuilder* props = g_variant_builder_new(G_VARIANT_TYPE("a(sv)"));
     g_variant_builder_add(props, "(sv)", "Description",
-                          g_variant_new_string("minicode, started from a terminal"));
+                          g_variant_new_string("mutible, started from a terminal"));
     g_variant_builder_add(props, "(sv)", "PIDs",
                           g_variant_new_fixed_array(G_VARIANT_TYPE_UINT32, &pid, 1, sizeof pid));
     g_variant_builder_add(props, "(sv)", "CollectMode", g_variant_new_string("inactive-or-failed"));
@@ -153,7 +153,7 @@ int waitForChild(pid_t child, int fd) {
         const int ms = (int)((until - nowSeconds()) * 1000);
         if (ms <= 0) {
             fprintf(stderr,
-                    "minicode: still starting after %d seconds; it goes on apart from this "
+                    "mutible: still starting after %d seconds; it goes on apart from this "
                     "terminal\n",
                     kWaitSeconds);
             return 0;
@@ -174,7 +174,7 @@ int waitForChild(pid_t child, int fd) {
         if (errno != EINTR) return 1;
     if (WIFEXITED(status)) return WEXITSTATUS(status);
     if (WIFSIGNALED(status)) {
-        fprintf(stderr, "minicode: %s\n", strsignal(WTERMSIG(status)));
+        fprintf(stderr, "mutible: %s\n", strsignal(WTERMSIG(status)));
         return 128 + WTERMSIG(status);
     }
     return 1;
@@ -196,11 +196,11 @@ int start(int* argc, char*** argv) {
         return 0;
     }
     if (parsed.version) {
-        fputs(LaunchOptions::versionText(MINICODE_VERSION).c_str(), stdout);
+        fputs(LaunchOptions::versionText(MUTIBLE_VERSION).c_str(), stdout);
         return 0;
     }
 
-    // What GApplication gets (and hands to a running minicode), kept for
+    // What GApplication gets (and hands to a running mutible), kept for
     // the life of the process as argv is.
     static std::vector<std::string> kept;
     static std::vector<char*> pointers;
@@ -212,7 +212,7 @@ int start(int* argc, char*** argv) {
     *argv = pointers.data();
 
     const bool fromTerminal = isatty(0) || isatty(1) || isatty(2) || hasControllingTerminal();
-    if (!LaunchOptions::shouldDetach(parsed, fromTerminal, getenv("MINICODE_FOREGROUND"))) return -1;
+    if (!LaunchOptions::shouldDetach(parsed, fromTerminal, getenv("MUTIBLE_FOREGROUND"))) return -1;
     if (threadCount() != 1) return -1;
 
     int fds[2];

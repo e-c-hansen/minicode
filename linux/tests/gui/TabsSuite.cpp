@@ -1,4 +1,4 @@
-// TabsSuite.cpp — the editor's tabs (`./build/minicode-guitest tabs`,
+// TabsSuite.cpp — the editor's tabs (`./build/mutible-guitest tabs`,
 // linux/PARITY.md item 1.1), by real input: files opened from the tree with
 // the mouse, tabs chosen by clicks on the strip and by their keys, each tab
 // keeping its own text, caret, scroll and undo; the dot for unsaved changes,
@@ -203,7 +203,7 @@ MC_GUI_SUITE(tabs) {
     MCGuiStep("with no tab, an empty editor, and nothing to save", [] {
         GCHECK(!ed()->canSave() && ed()->currentPath().empty());
         GCHECK(MCGuiEditorText().empty());
-        GCHECK_EQ_STR(title(), "minicode");
+        GCHECK_EQ_STR(title(), "mutible");
     });
 
     // ---- opening from the tree

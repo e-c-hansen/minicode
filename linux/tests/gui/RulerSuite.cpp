@@ -1,4 +1,4 @@
-// RulerSuite.cpp — `./build/minicode-guitest ruler`: editor.ruler and
+// RulerSuite.cpp — `./build/mutible-guitest ruler`: editor.ruler and
 // editor.ruler-color (linux/PARITY.md item 1.4, CodeView.h), as the Mac's
 // PageMeasureSuite and ZoomFitSuite check them: a 1 px line at each column,
 // at the x where that column's character starts, read back as pixels of the

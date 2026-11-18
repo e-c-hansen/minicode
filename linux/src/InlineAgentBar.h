@@ -21,7 +21,7 @@
 // a text file or the Markdown preview (the edit is made on its source) is an
 // edit; an idle terminal a Command (Claude's answer typed at the prompt,
 // never run); anything else, or Ctrl+Enter in the bar, a Task: the prompt
-// (InlineAgent::taskPrompt) goes to a 0600 file in $TMPDIR/MiniCode-agent
+// (InlineAgent::taskPrompt) goes to a 0600 file in $TMPDIR/Mutible-agent
 // (the files of a process that quit, or a day old, removed as the next is
 // written) and `cd <root> && <agent.command> "$(cat <file>)"` is typed into
 // the window's terminal for the user to read and run. The Linux port has one

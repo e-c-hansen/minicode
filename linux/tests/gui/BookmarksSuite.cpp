@@ -1,5 +1,5 @@
 // BookmarksSuite.cpp — opening web bookmarks and the browser window
-// (`./build/minicode-guitest bookmarks`, PARITY.md 4.8, the Mac's bookmarks
+// (`./build/mutible-guitest bookmarks`, PARITY.md 4.8, the Mac's bookmarks
 // suite). Pages come from a server inside this process on 127.0.0.1; nothing
 // leaves the machine.
 //   - a .url clicked in the tree loads in a tab of the browser pane, the
@@ -9,7 +9,7 @@
 //     as text;
 //   - the tree's Open as Text shows the bookmark file itself, and Open All
 //     in Browser Tabs opens every bookmark directly in a folder, in order;
-//   - `minicode https://...`: two addresses make two tabs in the window on
+//   - `mutible https://...`: two addresses make two tabs in the window on
 //     the browser.bookmarks folder, made when missing; a later address
 //     joins it, and a path is still a path.
 #include "Harness.h"
@@ -259,9 +259,9 @@ MC_GUI_SUITE(bookmarks) {
     });
     MCGuiStep("their keyboard is the page's", [] { GCHECK(pageHasKeyboard()); });
 
-    // ---- minicode https://...
+    // ---- mutible https://...
     MCGuiStep("the command line keeps an address an address", [] {
-        const auto p = LaunchOptions::parse({"minicode", "https://example.test/x"});
+        const auto p = LaunchOptions::parse({"mutible", "https://example.test/x"});
         GCHECK(p.error.empty());
         GCHECK(p.args.size() == 2 && p.args[1] == "https://example.test/x");
         gWindows = (int)MCGuiAppWindows().size();

@@ -1,6 +1,6 @@
-// BrowserPagesSuite.cpp — agents checking pages on Linux (`./build/minicode-guitest
+// BrowserPagesSuite.cpp — agents checking pages on Linux (`./build/mutible-guitest
 // browser_pages`, PARITY.md item 3.7; the Mac's BrowserPagesSuite). The real
-// client (`build/minicode`) against the running app, pages from a small HTTP
+// client (`build/mutible`) against the running app, pages from a small HTTP
 // server inside this process and from files, nothing off this machine:
 //   - browse loads a local page in the agent page; page --url, --text and
 //     --console (a console.log with its object, an uncaught error) read it;
@@ -48,7 +48,7 @@ std::shared_ptr<Run> client(const std::vector<std::string>& args,
         (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE));
     for (const auto& kv : env) g_subprocess_launcher_setenv(l, kv.first.c_str(), kv.second.c_str(), TRUE);
     std::vector<const char*> argv;
-    const std::string exe = program.empty() ? MCGuiBuildDir() + "/minicode" : program;
+    const std::string exe = program.empty() ? MCGuiBuildDir() + "/mutible" : program;
     argv.push_back(exe.c_str());
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -112,7 +112,7 @@ std::string gPage, gShot, gRecorder, gRecorded, gBrowserVar;
 
 std::string idStr() { return std::to_string(MCGuiApp().terminal->controlId()); }
 std::map<std::string, std::string> appEnv() {
-    return {{"MINICODE_TERMINAL_ID", idStr()}, {"MINICODE_PID", std::to_string((int)getpid())}};
+    return {{"MUTIBLE_TERMINAL_ID", idStr()}, {"MUTIBLE_PID", std::to_string((int)getpid())}};
 }
 Browser* browser() { return MCGuiApp().browser; }
 bool has(const std::string& s, const std::string& w) { return s.find(w) != std::string::npos; }
@@ -161,7 +161,7 @@ MC_GUI_SUITE(browser_pages) {
     MCGuiWait("answered", 15, [] { return gRun->done; });
     MCGuiStep("it failed naming browse", [] {
         GCHECK(gRun->exitCode != 0);
-        GCHECK(has(gRun->err, "minicode browse"));
+        GCHECK(has(gRun->err, "mutible browse"));
         GCHECK(!browser()->hasAgentPage());
     });
 
@@ -325,9 +325,9 @@ MC_GUI_SUITE(browser_pages) {
     // ---- open-url and BROWSER
     MCGuiStep("open-url of a local page", [] {
         gRun = client({"open-url", "file://" + MCGuiProjectFile("agent-page.html")},
-                      {{"MINICODE_TERMINAL_ID", idStr()},
-                       {"MINICODE_PID", std::to_string((int)getpid())},
-                       {"MINICODE_OPEN_FALLBACK", gRecorder}});
+                      {{"MUTIBLE_TERMINAL_ID", idStr()},
+                       {"MUTIBLE_PID", std::to_string((int)getpid())},
+                       {"MUTIBLE_OPEN_FALLBACK", gRecorder}});
     });
     MCGuiWait("open-url answered", 30, [] { return gRun->done; });
     MCGuiWait("it lands in the user's page", 30, [] {
@@ -337,9 +337,9 @@ MC_GUI_SUITE(browser_pages) {
         GCHECK(gRun->exitCode == 0);
         GCHECK(!MCGuiFileExists(gRecorded));
         gRun = client({"open-url", "https://example.com/x"},
-                      {{"MINICODE_TERMINAL_ID", idStr()},
-                       {"MINICODE_PID", std::to_string((int)getpid())},
-                       {"MINICODE_OPEN_FALLBACK", gRecorder}});
+                      {{"MUTIBLE_TERMINAL_ID", idStr()},
+                       {"MUTIBLE_PID", std::to_string((int)getpid())},
+                       {"MUTIBLE_OPEN_FALLBACK", gRecorder}});
     });
     MCGuiWait("fallback answered", 30, [] { return gRun->done && MCGuiFileExists(gRecorded); });
     MCGuiStep("the recorder got the address and the page did not move", [] {
@@ -365,13 +365,13 @@ MC_GUI_SUITE(browser_pages) {
         gBrowserVar = MCGuiReadFile(MCGuiProjectFile("browser-var.txt"));
         while (!gBrowserVar.empty() && (gBrowserVar.back() == '\n' || gBrowserVar.back() == '\r'))
             gBrowserVar.pop_back();
-        GCHECK(has(gBrowserVar, "minicode-browser.js"));
+        GCHECK(has(gBrowserVar, "mutible-browser.js"));
         GCHECK(access(gBrowserVar.c_str(), X_OK) == 0);
         MCGuiWriteFile(MCGuiProjectFile("viaenv.html"), "<title>via BROWSER</title><p>x</p>");
         gRun = client({"file://" + MCGuiProjectFile("viaenv.html")},
-                      {{"MINICODE_TERMINAL_ID", idStr()},
-                       {"MINICODE_PID", std::to_string((int)getpid())},
-                       {"MINICODE_EXE", MCGuiBuildDir() + "/minicode"}},
+                      {{"MUTIBLE_TERMINAL_ID", idStr()},
+                       {"MUTIBLE_PID", std::to_string((int)getpid())},
+                       {"MUTIBLE_EXE", MCGuiBuildDir() + "/mutible"}},
                       gBrowserVar);
     });
     MCGuiWait("the script ran", 30, [] { return gRun->done; });

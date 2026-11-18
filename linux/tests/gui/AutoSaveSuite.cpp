@@ -1,4 +1,4 @@
-// AutoSaveSuite.cpp — editor.auto-save (`./build/minicode-guitest auto_save`,
+// AutoSaveSuite.cpp — editor.auto-save (`./build/mutible-guitest auto_save`,
 // linux/PARITY.md item 1.3), the counterpart of the Mac's checks in
 // tests/gui/SaveSuite.mm and LooseEndsSuite.mm, by real key presses:
 // after-delay writes once typing pauses; focus-change writes when the

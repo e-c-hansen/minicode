@@ -33,7 +33,7 @@
 #include <sstream>
 #include <thread>
 
-int minicode_main(int argc, char** argv);    // src/main.cpp, renamed
+int mutible_main(int argc, char** argv);    // src/main.cpp, renamed
 int MCGuiWrapperMain(int argc, char** argv); // Wrapper.cpp
 bool MCGuiIsDbusDaemonShim(int argc, char** argv);
 int MCGuiDbusDaemonShim(char** argv);
@@ -294,12 +294,12 @@ bool MCGuiFileExists(const std::string& path) {
 }
 
 void MCGuiSetSettings(const std::string& text) {
-    MCGuiWriteFile(envOr("MINICODE_SETTINGS"), text);
+    MCGuiWriteFile(envOr("MUTIBLE_SETTINGS"), text);
     MCGuiReloadSettings();
 }
 
 void MCGuiSetKeys(const std::string& text) {
-    MCGuiWriteFile(envOr("MINICODE_KEYS"), text);
+    MCGuiWriteFile(envOr("MUTIBLE_KEYS"), text);
     MCGuiReloadKeys();
 }
 
@@ -473,7 +473,7 @@ void MCGuiHideBrowserPane() {
     });
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 namespace {
 // Ctrl+U to a terminal's shell, as a key typed there.
 void sendCtrlU(Terminal* t) {
@@ -504,7 +504,7 @@ std::vector<Terminal*> allTerminals() {
 #endif
 
 void MCGuiClearTerminalLine(const std::string& typed) {
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     MCGuiStep("the line typed at the shell's prompt taken back (Ctrl+U)", [] {
         sendCtrlU(MCGuiApp().terminal);
     });
@@ -652,7 +652,7 @@ void noteState() {
     for (GtkWidget* w = f; w; w = gtk_widget_get_parent(w)) {
         char** classes = gtk_widget_get_css_classes(w);
         for (char** c = classes; c && *c; c++)
-            if (g_str_has_prefix(*c, "minicode")) where += std::string(" .") + *c;
+            if (g_str_has_prefix(*c, "minicode-")) where += std::string(" .") + *c;   // the CSS classes keep their names (rename-mutible: keep)
         g_strfreev(classes);
     }
     MCGuiNote("state: the key window %s, the keyboard in a %s, %s on top",
@@ -695,7 +695,7 @@ World lookAtWorld() {
     World w;
     const std::vector<MCGuiAppWindow> all = MCGuiAppWindows();
     w.windows = all.size();
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     for (const MCGuiAppWindow& a : all)
         if (a.termDock) {
             w.terminals += a.termDock->count();
@@ -705,12 +705,12 @@ World lookAtWorld() {
     w.otherOnTop = MCGuiTopWindow() != MCGuiApp().window;
     w.active = MCGuiApp().window && gtk_window_is_active(MCGuiApp().window);
     w.waiting = TerminalAttention::waitingCount();
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     for (Terminal* t : allTerminals())
         if (t->busy()) w.busy++;
 #endif
-    w.settings = MCGuiReadFile(envOr("MINICODE_SETTINGS"));
-    w.keys = MCGuiReadFile(envOr("MINICODE_KEYS"));
+    w.settings = MCGuiReadFile(envOr("MUTIBLE_SETTINGS"));
+    w.keys = MCGuiReadFile(envOr("MUTIBLE_KEYS"));
     return w;
 }
 
@@ -744,7 +744,7 @@ void leak(const std::string& what, bool fails = true) {
 // been answered, the host's text of every document a window has read is
 // what the buffer holds, its tabs are the window's, and it reported nothing
 // wrong. Checked as every suite ends, so a suite that left them apart
-// fails by name (under MINICODE_HOST=loopback too, every message through
+// fails by name (under MUTIBLE_HOST=loopback too, every message through
 // the protocol's encoding).
 void checkSessionMirrors() {
     for (const MCGuiAppWindow& a : MCGuiAppWindows()) {
@@ -802,7 +802,7 @@ void checkWhatSuiteLeft() {
     // A terminal marked waiting puts "(1 waiting)" before every window's
     // title: agents marked one and never cleared it, and tabs, after it in
     // the soak's shuffled order, read the title.
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // A program left running in a terminal takes what later suites type
     // there, and Run in Terminal waits for it (agents' Open in Terminal).
     if (now.busy > was.busy)
@@ -819,7 +819,7 @@ void checkWhatSuiteLeft() {
     if (now.waiting > was.waiting) {
         leak("left " + std::to_string(now.waiting) + " terminal(s) marked waiting where it found " +
              std::to_string(was.waiting) + " (a notify's mark; TerminalAttention::typed clears it)");
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
         if (putBack)
             for (Terminal* t : allTerminals())
                 if (TerminalAttention::markName(t->controlId()) == std::string("waiting"))
@@ -1179,7 +1179,7 @@ int main(int argc, char** argv) {
     std::string why;
     if (!ourDisplay(&why)) {
         fprintf(stderr,
-                "minicode-guitest: refusing to run: %s.\n"
+                "mutible-guitest: refusing to run: %s.\n"
                 "Run it without MC_GUI_CHILD; it starts its own display.\n",
                 why.c_str());
         return 2;
@@ -1193,8 +1193,8 @@ int main(int argc, char** argv) {
     gMainTid = (long)syscall(SYS_gettid);
     for (int s : {SIGSEGV, SIGBUS, SIGABRT, SIGFPE, SIGILL}) signal(s, reportCrash);
 
-    // minicode_main's main loop picks this up; it polls until the window it
+    // mutible_main's main loop picks this up; it polls until the window it
     // opens is mapped, then the suites start.
     g_timeout_add(50, startWhenWindowIsUp, nullptr);
-    return minicode_main(argc, argv);
+    return mutible_main(argc, argv);
 }

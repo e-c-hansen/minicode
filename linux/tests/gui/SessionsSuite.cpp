@@ -1,4 +1,4 @@
-// SessionsSuite.cpp — a folder reopens its tabs (`./build/minicode-guitest
+// SessionsSuite.cpp — a folder reopens its tabs (`./build/mutible-guitest
 // sessions`, linux/PARITY.md item 1.2), the counterpart of the Mac's
 // MCTabSessions checks (tests/gui/PreviewTabsSuite.mm, SplitEditorSuite.mm).
 // A second app opens a folder, opens its files in tabs (a Markdown page, a
@@ -36,7 +36,7 @@ namespace {
 
 std::string Folder() { return MCGuiScratch() + "/ses"; }
 std::string In(const std::string& name) { return Folder() + "/" + name; }
-std::string SessionsFile() { return MCGuiScratch() + "/state/minicode/sessions.json"; }
+std::string SessionsFile() { return MCGuiScratch() + "/state/mutible/sessions.json"; }
 
 TabSessions::Session SavedFor(const std::string& folder) {
     const TabSessions::Sessions all = TabSessions::decode(MCGuiReadFile(SessionsFile()));
@@ -272,7 +272,7 @@ MC_GUI_SUITE(sessions) {
     });
 
     // ---- several processes saving at once
-    // Every minicode saves into the one file, reading it and writing it
+    // Every mutible saves into the one file, reading it and writing it
     // back. Threads stand in for processes here (flock tells each open of
     // the lock file apart, within one process too): each saves its own
     // folder over and over, and no save may write over another's.

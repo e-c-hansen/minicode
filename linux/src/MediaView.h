@@ -81,7 +81,7 @@ public:
     using ChangedCb = void (*)(void* user);
     void setChangedCallback(ChangedCb cb, void* user) { changedCb_ = cb; changedUser_ = user; }
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     PdfView* pdfView() const { return pdf_; }
 #endif
 
@@ -108,7 +108,7 @@ private:
 
     GtkWidget* stack_   = nullptr;
     GtkWidget* picture_ = nullptr;
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     PdfView*   pdf_     = nullptr;
 #endif
     GtkWidget* video_    = nullptr;   // GtkVideo

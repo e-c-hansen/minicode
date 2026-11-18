@@ -6,7 +6,7 @@
 // formats Python files with ruff, set up in pyproject.toml. Format them each
 // time you save?" with Turn On (writes format.on-save = project), Don't Ask
 // Again (kept with the install bar's, in install-hints.json, under the key
-// "format-on-save"), and × (until minicode starts again). Offered once per
+// "format-on-save"), and × (until mutible starts again). Offered once per
 // launch, in the window where the save was. The save itself never waits for
 // it, and nothing is formatted until the next Ctrl+S.
 #pragma once

@@ -1,4 +1,4 @@
-// LatexInputsSuite.cpp — `./build/minicode-guitest latex_inputs`: a
+// LatexInputsSuite.cpp — `./build/mutible-guitest latex_inputs`: a
 // double-click in the LaTeX preview on text that an \input file put on the
 // page edits that file (HANDOFF.md item 80), the counterpart of the Mac's
 // latex suite step of the same name. The stand-in tectonic copies the
@@ -30,7 +30,7 @@
 
 #include <string>
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 namespace {
 
 Editor* ed() { return MCGuiApp().editor; }
@@ -102,7 +102,7 @@ MC_GUI_SUITE(latex_inputs) {
             "sed -e \"s|@DIR@/.main.mutible.tex|$file|\" -e \"s|@DIR@|$(dirname \"$file\")|\" "
             "\"$d/main.synctex\" | gzip -c > \"$out/$stem.synctex.gz\"\n");
         g_chmod((D() + "/tectonic").c_str(), 0755);
-        EnvLock::envSet("MINICODE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
+        EnvLock::envSet("MUTIBLE_TECTONIC", (D() + "/tectonic").c_str(), TRUE);
         MCGuiOpenFileKept(F("main.tex"));
     });
     MCGuiWait("main.tex shows", 10, [] { return ed()->currentPath() == F("main.tex"); });

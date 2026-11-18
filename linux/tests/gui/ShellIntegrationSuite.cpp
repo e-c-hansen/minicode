@@ -70,7 +70,7 @@ std::shared_ptr<StateRun> gState;
 
 void askState() {
     gState = std::make_shared<StateRun>();
-    const std::string exe = MCGuiBuildDir() + "/minicode";
+    const std::string exe = MCGuiBuildDir() + "/mutible";
     GError* error = nullptr;
     GSubprocess* p = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error, exe.c_str(), "state", nullptr);
     if (!p) {
@@ -114,7 +114,7 @@ std::shared_ptr<CliRun> gCli;
 
 void runCli(const std::vector<std::string>& args) {
     gCli = std::make_shared<CliRun>();
-    const std::string exe = MCGuiBuildDir() + "/minicode";
+    const std::string exe = MCGuiBuildDir() + "/mutible";
     std::vector<const char*> argv = {exe.c_str()};
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -338,7 +338,7 @@ MC_GUI_SUITE(shell_integration) {
     });
 
     // ---- part two: term, term-output, Run File, onCommandFinished. Since the
-    // terminal tabs (item 56) `minicode term` and Run File into a busy shell
+    // terminal tabs (item 56) `mutible term` and Run File into a busy shell
     // open a tab of their own: each check about such a command follows the
     // tab that ran it (its own shell's marks), and the original terminal's
     // checks are that it was left alone.

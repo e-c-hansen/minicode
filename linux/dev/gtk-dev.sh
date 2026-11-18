@@ -6,7 +6,7 @@
 #   linux/dev/gtk-dev.sh stop       remove the container
 set -e
 repo=$(cd "$(dirname "$0")/../.." && pwd)
-name=minicode-gtk
+name=mutible-gtk
 
 if [ "$1" = stop ]; then docker rm -f $name >/dev/null; exit; fi
 

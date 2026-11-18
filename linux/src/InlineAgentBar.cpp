@@ -915,7 +915,7 @@ void InlineAgentBar::runTask(const std::string& request) {
     }
     const std::string prompt = InlineAgent::taskPrompt(t);
     if (prompt.empty()) return;
-    const std::string dir = std::string(g_get_tmp_dir()) + "/MiniCode-agent";
+    const std::string dir = std::string(g_get_tmp_dir()) + "/Mutible-agent";
     g_mkdir_with_parents(dir.c_str(), 0700);
     removeStalePromptFiles(dir);
     static int counter = 0;

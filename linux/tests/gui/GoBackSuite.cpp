@@ -1,4 +1,4 @@
-// GoBackSuite.cpp — Go Back and Go Forward (`./build/minicode-guitest
+// GoBackSuite.cpp — Go Back and Go Forward (`./build/mutible-guitest
 // go_back`, linux/PARITY.md item 1.11; VS Code's Linux Ctrl+Alt+- and
 // Ctrl+Shift+-), the counterpart of the Mac's Go Back checks in
 // tests/gui/SymbolsSuite.mm, with real keys and clicks through XTest: a
@@ -94,7 +94,7 @@ MC_GUI_SUITE(go_back) {
         std::string lib;
         for (int i = 0; i < 20; i++) lib += "# lib " + std::to_string(i) + "\n";
         MCGuiWriteFile(F("gb-lib.py"), lib + "def target_function():\n    return 2\n");
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiOpenFileKept(F("gb-a.txt"));
     });
     MCGuiWait("it shows", 10, [] { return ed()->currentPath() == F("gb-a.txt"); });

@@ -1,7 +1,7 @@
-// AdjustSettingsSuite.cpp — `./build/minicode-guitest adjust_settings`
+// AdjustSettingsSuite.cpp — `./build/mutible-guitest adjust_settings`
 // (PARITY.md 2.11; the owner, 2026-11-09: "no 'change settings' when right
 // clicking on some portion of the GUI. This should point to the relevant part
-// of the minicode config."). In a window of its own, a real right click on
+// of the mutible config."). In a window of its own, a real right click on
 // each part of the window (the file tree, the editor, a Markdown page, a tab
 // and the tab strip, the status bar, the Source Control panel's branch line,
 // change list and message box, the terminal, the browser's page and its
@@ -24,11 +24,11 @@
 #include "TabStrip.h"
 #include "WindowLayout.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #include <vte/vte.h>
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 #include "Browser.h"
 #include <webkit/webkit.h>
 #endif
@@ -45,7 +45,7 @@ std::string gText;      // the settings text before an append or an undo
 bool gPressed = false;  // an undo was sent
 std::string gWhy;       // what was not as it should be at the last look
 
-std::string settingsPath() { return g_getenv("MINICODE_SETTINGS"); }
+std::string settingsPath() { return g_getenv("MUTIBLE_SETTINGS"); }
 Editor* ed() { return MCGuiApp().editor; }
 std::string F(const std::string& name) { return MCGuiProjectFile(name); }
 
@@ -248,7 +248,7 @@ void rightClickChoose(const std::string& name, std::function<GtkWidget*()> targe
     });
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 GtkWidget* findVte(GtkWidget* root) {
     if (!root) return nullptr;
     if (VTE_IS_TERMINAL(root)) return root;
@@ -373,7 +373,7 @@ MC_GUI_SUITE(adjust_settings) {
         });
     });
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // ---- the terminal
     MCGuiStep("the terminal by its key", [] {
         if (!MCGuiApp().layout->terminalShown()) MCGuiKey("ctrl+shift+t");
@@ -397,7 +397,7 @@ MC_GUI_SUITE(adjust_settings) {
     MCGuiWait("closed", 10, [] { return openMenu() == nullptr; });
 #endif
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     // ---- the browser: its page and its address bar
     MCGuiStep("the browser by its key", [] {
         if (!MCGuiApp().layout->browserShown()) MCGuiKey("ctrl+shift+b");

@@ -1,5 +1,5 @@
 // LatexClick.cpp — see LatexClick.h.
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 
 #include "LatexClick.h"
 
@@ -56,4 +56,4 @@ std::string readGzipFile(const std::string& path) {
     return out;
 }
 
-#endif  // MINICODE_ENABLE_PDF
+#endif  // MUTIBLE_ENABLE_PDF

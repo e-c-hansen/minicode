@@ -1,4 +1,4 @@
-// ZoomSuite.cpp — the editor's zoom and the terminals' (`./build/minicode-guitest
+// ZoomSuite.cpp — the editor's zoom and the terminals' (`./build/mutible-guitest
 // zoom`, linux/PARITY.md item 1.11), the counterparts of the Mac's
 // terminal_zoom (tests/gui/LooseEndsSuite.mm) and zoomfit's zoom steps
 // (tests/gui/ZoomFitSuite.mm), with real keys through XTest: Ctrl+= and
@@ -6,7 +6,7 @@
 // 0 back (Ctrl+Alt+0 is Fold All in the editor, PARITY.md D1), the text and
 // the gutter growing and shrinking
 // with it and the Markdown preview's sizes scaled; the zoom lasts into a
-// second app through $XDG_STATE_HOME/minicode/zoom.json and never touches
+// second app through $XDG_STATE_HOME/mutible/zoom.json and never touches
 // the settings file; with a PDF on show the keys zoom it and Ctrl+0 still
 // focuses the tree and Ctrl+Alt+0 fits its width, and with the browser's
 // keyboard they zoom its page and Ctrl+Alt+0 puts it back;
@@ -26,15 +26,15 @@
 #include "WindowLayout.h"
 #include "Zoom.h"
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 #include "PdfView.h"
 #include <cairo-pdf.h>
 #endif
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #include <vte/vte.h>
 #endif
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
 #include "Browser.h"
 #endif
 
@@ -78,9 +78,9 @@ double tagPoints(const char* name) {
     return pt;
 }
 
-std::string settingsText() { return MCGuiReadFile(g_getenv("MINICODE_SETTINGS")); }
+std::string settingsText() { return MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS")); }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 VteTerminal* findVte(GtkWidget* root) {
     if (!root) return nullptr;
     if (VTE_IS_TERMINAL(root)) return VTE_TERMINAL(root);
@@ -112,7 +112,7 @@ MC_GUI_SUITE(zoom) {
         for (int i = 1; i <= 120; i++) text += "zoom line " + std::to_string(i) + "\n";
         MCGuiWriteFile(F("zoom.txt"), text);
         MCGuiWriteFile(F("zoom.md"), "# Title\n\nBody text here.\n\nSome `code` too.\n");
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
         cairo_surface_t* pdf = cairo_pdf_surface_create(F("zoom.pdf").c_str(), 300, 400);
         cairo_t* pc = cairo_create(pdf);
         cairo_show_page(pc);
@@ -154,7 +154,7 @@ MC_GUI_SUITE(zoom) {
                   gutterWidth(), charWidth());
         const ViewZoom::State s = ViewZoom::decode(MCGuiReadFile(Zoom::statePath()));
         GCHECK(s.editor == 2 && s.terminal == 0);
-        GCHECK(Zoom::statePath() == MCGuiScratch() + "/state/minicode/zoom.json");
+        GCHECK(Zoom::statePath() == MCGuiScratch() + "/state/mutible/zoom.json");
         GCHECK_EQ_STR(settingsText(), gSettings);
         GCHECK(editorHasKeyboard());
     });
@@ -223,7 +223,7 @@ MC_GUI_SUITE(zoom) {
     MCGuiStep("the zoom back to none", [] { MCGuiKey("ctrl+KP_Insert"); });
     MCGuiWait("none", 10, [] { return Zoom::editorZoom() == 0 && near(fontPx(view()), gPx0); });
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     // ---- a page: a PDF on show
     MCGuiStep("a PDF", [] { MCGuiOpenFileKept(F("zoom.pdf")); });
     MCGuiWait("on show", 10, [] { return ed()->showingPdf(); });
@@ -254,7 +254,7 @@ MC_GUI_SUITE(zoom) {
     MCGuiWait("the editor has the keyboard", 10, editorHasKeyboard);
 #endif
 
-#ifdef MINICODE_ENABLE_BROWSER
+#ifdef MUTIBLE_ENABLE_BROWSER
     // ---- a page: the browser with the keyboard
     // Shown by an earlier suite, the key would hide it.
     MCGuiHideBrowserPane();
@@ -283,7 +283,7 @@ MC_GUI_SUITE(zoom) {
     MCGuiWait("hidden, the keyboard back in the editor", 10, editorHasKeyboard);
 #endif
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // ---- the terminals' zoom
     MCGuiStep("the terminal, by its key or (left open by another suite) a click", [] {
         if (MCGuiApp().layout->terminalShown()) MCGuiClick(MCGuiApp().terminal->widget());

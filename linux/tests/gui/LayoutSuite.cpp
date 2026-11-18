@@ -1,5 +1,5 @@
 // LayoutSuite.cpp — the window's panes as the Mac lays them out
-// (`./build/minicode-guitest layout`, linux/PARITY.md item 1.13), by real
+// (`./build/mutible-guitest layout`, linux/PARITY.md item 1.13), by real
 // keys and real drags in a window of its own: the browser beside the editor
 // at the same top, the terminal below both across the whole width; the bar
 // between the editor and the browser dragged (both follow, and the browser
@@ -27,7 +27,7 @@
 #include "TabStrip.h"
 #include "WindowLayout.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #endif
 
@@ -36,7 +36,7 @@
 #include <string>
 #include <vector>
 
-#if defined(MINICODE_ENABLE_TERMINAL) && defined(MINICODE_ENABLE_BROWSER)
+#if defined(MUTIBLE_ENABLE_TERMINAL) && defined(MUTIBLE_ENABLE_BROWSER)
 
 namespace {
 

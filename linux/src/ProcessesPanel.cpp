@@ -341,7 +341,7 @@ void ProcessesPanel::revealOrigin(int pid) {
     }
     const std::string name = trimmedName(row->text);
     if (row->outside) {
-        if (onNote) onNote(name + " was not started in minicode");
+        if (onNote) onNote(name + " was not started in mutible");
         return;
     }
     if (!(onRevealTerminal && onRevealTerminal(row->terminal))) {
@@ -374,7 +374,7 @@ void ProcessesPanel::stopPid(int pid) {
         go();
         return;
     }
-    std::string where = r.outside ? "was not started in minicode"
+    std::string where = r.outside ? "was not started in mutible"
                                   : "was started in terminal " + std::to_string(r.terminal);
     GtkAlertDialog* dlg = gtk_alert_dialog_new("Stop %s?", name.c_str());
     std::string detail = "“" + r.detail + "” (process " + std::to_string(r.pid) + ") " +

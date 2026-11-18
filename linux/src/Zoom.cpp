@@ -97,7 +97,7 @@ void applyCss() {
 
 }  // namespace
 
-std::string statePath() { return std::string(g_get_user_state_dir()) + "/minicode/zoom.json"; }
+std::string statePath() { return std::string(g_get_user_state_dir()) + "/mutible/zoom.json"; }
 
 void applySettings(const Settings& settings) {
     State& s = S();

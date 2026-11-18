@@ -1,16 +1,17 @@
 // Terminal.cpp — see Terminal.h. Entirely compiled out unless
-// MINICODE_ENABLE_TERMINAL is set.
+// MUTIBLE_ENABLE_TERMINAL is set.
 #include <climits>
 #include <unistd.h>
 #include "EnvLock.h"
 #include "Terminal.h"
 #include <map>
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 
 #include "Appearance.h"
 #include "BackupStore.h"
 #include "ClaudeHooks.h"
+#include "Rename.h"
 #include "Palette.h"
 #include "SessionLink.h"
 #include "StartupLog.h"
@@ -162,7 +163,7 @@ void Terminal::setAttention(const std::string& markName, const std::string& tool
 namespace {
 
 // A file the app ships: beside the binary (a build folder), else in the
-// installed share/minicode; "" when neither has it.
+// installed share/mutible; "" when neither has it.
 std::string shippedFile(const char* name) {
     char exe[PATH_MAX];
     const ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
@@ -170,7 +171,7 @@ std::string shippedFile(const char* name) {
     exe[n] = 0;
     char* dir = g_path_get_dirname(exe);
     char* beside = g_build_filename(dir, name, nullptr);
-    char* shared = g_build_filename(dir, "..", "share", "minicode", name, nullptr);
+    char* shared = g_build_filename(dir, "..", "share", "mutible", name, nullptr);
     std::string found = g_file_test(beside, G_FILE_TEST_IS_REGULAR) ? beside
                         : g_file_test(shared, G_FILE_TEST_IS_REGULAR) ? shared : "";
     g_free(beside);
@@ -1310,9 +1311,9 @@ void Terminal::spawnShell() {
 
     lastSpawn_ = g_get_monotonic_time();
 
-    // The environment the app has, less any MINICODE_TERMINAL_ID and
-    // MINICODE_PID it inherited (from a minicode this one was started in),
-    // plus this terminal's (PARITY.md 3.6): `minicode notify --from-hook`
+    // The environment the app has, less any MUTIBLE_TERMINAL_ID and
+    // MUTIBLE_PID it inherited (from a mutible this one was started in),
+    // plus this terminal's (PARITY.md 3.6): `mutible notify --from-hook`
     // finds its terminal by them. Then what the window adds, such as the IDE
     // link's CLAUDE_CODE_SSE_PORT (PARITY.md 3.9).
     gchar** envv;
@@ -1320,13 +1321,16 @@ void Terminal::spawnShell() {
         EnvLock::EnvRead env;
         envv = g_get_environ();
     }
-    envv = g_environ_unsetenv(envv, "MINICODE_TERMINAL_ID");
-    envv = g_environ_unsetenv(envv, "MINICODE_PID");
-    for (const char* inherited : {"MINICODE_NONCE", "MINICODE_USER_ZDOTDIR", "MINICODE_EXEC"})
+    // Each under its name before 1.6.0 too (src/Rename.h), as a minicode's
+    // terminal that started this app would have left them.
+    for (const char* inherited : {"MUTIBLE_TERMINAL_ID", "MUTIBLE_PID", "MUTIBLE_NONCE",
+                                  "MUTIBLE_USER_ZDOTDIR", "MUTIBLE_EXEC"}) {
         envv = g_environ_unsetenv(envv, inherited);
+        envv = g_environ_unsetenv(envv, Rename::oldEnvName(inherited).c_str());
+    }
     if (controlId_ > 0)
-        envv = g_environ_setenv(envv, "MINICODE_TERMINAL_ID", std::to_string(controlId_).c_str(), TRUE);
-    envv = g_environ_setenv(envv, "MINICODE_PID", std::to_string((int)getpid()).c_str(), TRUE);
+        envv = g_environ_setenv(envv, "MUTIBLE_TERMINAL_ID", std::to_string(controlId_).c_str(), TRUE);
+    envv = g_environ_setenv(envv, "MUTIBLE_PID", std::to_string((int)getpid()).c_str(), TRUE);
     // BROWSER: programs opening a web page open it here (PARITY.md 3.7). The
     // script beside the binary (a build folder) or in the installed share
     // folder, and the app's own binary for it to run.
@@ -1336,13 +1340,13 @@ void Terminal::spawnShell() {
         if (n > 0) {
             exe[n] = 0;
             char* dir = g_path_get_dirname(exe);
-            char* beside = g_build_filename(dir, "minicode-browser.js", nullptr);
-            char* shared = g_build_filename(dir, "..", "share", "minicode", "minicode-browser.js", nullptr);
-            char* app = g_build_filename(dir, "minicode", nullptr);
+            char* beside = g_build_filename(dir, "mutible-browser.js", nullptr);
+            char* shared = g_build_filename(dir, "..", "share", "mutible", "mutible-browser.js", nullptr);
+            char* app = g_build_filename(dir, "mutible", nullptr);
             const char* script = g_file_test(beside, G_FILE_TEST_IS_REGULAR) ? beside
                                  : g_file_test(shared, G_FILE_TEST_IS_REGULAR) ? shared : nullptr;
             if (script) envv = g_environ_setenv(envv, "BROWSER", script, TRUE);
-            envv = g_environ_setenv(envv, "MINICODE_EXE",
+            envv = g_environ_setenv(envv, "MUTIBLE_EXE",
                                     g_file_test(app, G_FILE_TEST_IS_EXECUTABLE) ? app : exe, TRUE);
             g_free(beside);
             g_free(shared);
@@ -1360,7 +1364,7 @@ void Terminal::spawnShell() {
     // stays unknown. bash: `bash --rcfile <script>`, a non-login shell as
     // before, the script reading ~/.bashrc after bash's own
     // /etc/bash.bashrc. zsh: ZDOTDIR at the folder, whose .zshenv hands the
-    // user's ZDOTDIR back (MINICODE_USER_ZDOTDIR when they had one).
+    // user's ZDOTDIR back (MUTIBLE_USER_ZDOTDIR when they had one).
     shell_ = ShellIntegration::ShellState();
     host_ = Shared::TermShell();
     marks_.clear();
@@ -1383,7 +1387,7 @@ void Terminal::spawnShell() {
         unsigned char raw[16];
         if ((bash || zsh) && getrandom(raw, sizeof raw, 0) == (ssize_t)sizeof raw) {
             nonce_ = ShellIntegration::nonceHex(raw, sizeof raw);
-            envv = g_environ_setenv(envv, "MINICODE_NONCE", nonce_.c_str(), TRUE);
+            envv = g_environ_setenv(envv, "MUTIBLE_NONCE", nonce_.c_str(), TRUE);
             bashShell_ = bash;
             if (bash) {
                 args.push_back("--rcfile");
@@ -1391,7 +1395,7 @@ void Terminal::spawnShell() {
             } else {
                 if (const char* user = g_environ_getenv(envv, "ZDOTDIR")) {
                     const std::string theirs = user;   // envv changes below
-                    envv = g_environ_setenv(envv, "MINICODE_USER_ZDOTDIR", theirs.c_str(), TRUE);
+                    envv = g_environ_setenv(envv, "MUTIBLE_USER_ZDOTDIR", theirs.c_str(), TRUE);
                 }
                 envv = g_environ_setenv(envv, "ZDOTDIR", dir.c_str(), TRUE);
             }
@@ -1643,4 +1647,4 @@ void Terminal::onCommit(VteTerminal*, char* text, guint size, gpointer selfp) {
     }, self);
 }
 
-#endif // MINICODE_ENABLE_TERMINAL
+#endif // MUTIBLE_ENABLE_TERMINAL

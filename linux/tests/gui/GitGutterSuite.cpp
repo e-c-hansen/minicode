@@ -1,4 +1,4 @@
-// GitGutterSuite.cpp — `./build/minicode-guitest git_gutter`: the editor's
+// GitGutterSuite.cpp — `./build/mutible-guitest git_gutter`: the editor's
 // change bars (GitGutter.h, the core's QuickDiff.h) on a scratch repository
 // with real git, PARITY.md item 2.10, the Mac's tests/gui/GitGutterSuite.mm
 // with real keys and clicks.

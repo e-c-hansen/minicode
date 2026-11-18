@@ -1,4 +1,4 @@
-// GutterTypingSuite.cpp — `./build/minicode-guitest gutter_typing`: what the
+// GutterTypingSuite.cpp — `./build/mutible-guitest gutter_typing`: what the
 // gutter (linux/PARITY.md item 1.4) costs while typing in a 100,000-line
 // file, the counterpart of the Mac's KeystrokeSuite for the line numbers.
 // Characters and Returns typed through XTest in the middle of the file; the

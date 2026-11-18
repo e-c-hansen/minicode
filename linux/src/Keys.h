@@ -55,7 +55,7 @@ const Action* actionFor(const std::string& commandId);
 // as messages; empty when the two tables agree.
 std::vector<std::string> tableProblems();
 
-// Reads keys.conf ($MINICODE_KEYS, else $XDG_CONFIG_HOME/minicode/keys.conf,
+// Reads keys.conf ($MUTIBLE_KEYS, else $XDG_CONFIG_HOME/mutible/keys.conf,
 // the file the Mac reads), sets the accelerators, and watches the file.
 // `changed` runs after it changed and was read again, the accelerators and
 // the tree's keys already following it.

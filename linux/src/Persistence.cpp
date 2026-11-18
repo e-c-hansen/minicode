@@ -71,14 +71,14 @@ void writeStore(const TabSessions::Store& all) {
     // alone.
     if (!g_file_set_contents_full(path.c_str(), text.data(), (gssize)text.size(),
                                   G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err)) {
-        fprintf(stderr, "minicode: could not write %s: %s\n", path.c_str(),
+        fprintf(stderr, "mutible: could not write %s: %s\n", path.c_str(),
                 err ? err->message : "unknown error");
         g_clear_error(&err);
     }
 }
 
 // Each save reads the file, changes its part and writes the file back, and
-// another minicode process may be saving at the same moment. The read and
+// another mutible process may be saving at the same moment. The read and
 // the write hold a lock on a file beside it, or one process's older copy
 // could be written over an entry the other had just saved: the GUI checks'
 // second app lost its tabs to the first app's save that way, now and then
@@ -120,7 +120,7 @@ std::string Persistence::keyFor(const std::string& root) {
 }
 
 std::string Persistence::sessionsFile() {
-    gchar* p = g_build_filename(g_get_user_state_dir(), "minicode", "sessions.json", nullptr);
+    gchar* p = g_build_filename(g_get_user_state_dir(), "mutible", "sessions.json", nullptr);
     std::string out = p;
     g_free(p);
     return out;

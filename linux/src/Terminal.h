@@ -7,12 +7,12 @@
 // pastes, its answers to queries) comes back through its "commit" signal and
 // goes to the host. VTE draws, selects, finds and scrolls as before.
 //
-// The whole feature is compiled only when MINICODE_ENABLE_TERMINAL is defined
+// The whole feature is compiled only when MUTIBLE_ENABLE_TERMINAL is defined
 // (i.e. when libvte-2.91-gtk4 was found at configure time). Callers must guard
 // their use of this class with the same macro.
 #pragma once
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 
 #include <gtk/gtk.h>
 #include <vte/vte.h>   // VteTerminal appears in the signal handler signatures
@@ -103,7 +103,7 @@ public:
     bool busy() const;
     // That foreground process group (its leader's pid), 0 when not busy.
     int foregroundJob() const;
-    // `minicode term --run` and Run File (PARITY.md 3.1): `line` (one line)
+    // `mutible term --run` and Run File (PARITY.md 3.1): `line` (one line)
     // typed at the shell's prompt as a paste and entered with Return, so it
     // runs visibly and goes through the shell's history. Nothing is typed
     // unless the integration says the shell is at a prompt and the shell
@@ -119,7 +119,7 @@ public:
     // and the checks); `*wait` says the reason is one runLine waits out.
     std::string runBlocker(bool* wait = nullptr) const;
     // The last `lines` lines the terminal shows, scrollback included,
-    // trailing blank lines left out (`minicode term-output`).
+    // trailing blank lines left out (`mutible term-output`).
     std::string recentText(int lines);
     // Find in the terminal (PARITY.md 4.7, third part): a small bar over the
     // pane's top right, searching the scrollback and the screen with VTE's
@@ -150,8 +150,8 @@ public:
     int shellPid() const { return shellPid_ > 0 ? (int)shellPid_ : 0; }
 
     // Waiting for you (PARITY.md 3.6). The terminal's id is the control
-    // channel's (`minicode state`); the shell gets it as MINICODE_TERMINAL_ID
-    // beside MINICODE_PID, set before the shell starts (an id given after the
+    // channel's (`mutible state`); the shell gets it as MUTIBLE_TERMINAL_ID
+    // beside MUTIBLE_PID, set before the shell starts (an id given after the
     // shell is running reaches only the next one). The mark is a dot over the
     // terminal's top right corner with Claude's message as its tooltip:
     // "waiting" (orange), "done" (green), "" (none). Typing in the terminal
@@ -182,10 +182,10 @@ public:
     std::function<std::vector<std::string>()> extraEnvironment;
 
     // The shell integration (PARITY.md 3.1, D10; SESSION-DESIGN.md stage 5).
-    // A bash or zsh shell is started with minicode's script (bash --rcfile,
+    // A bash or zsh shell is started with mutible's script (bash --rcfile,
     // zsh through ZDOTDIR's .zshenv, both copied once a process into a
     // folder of its own in the user's runtime folder) and a nonce of 128
-    // random bits in MINICODE_NONCE; its hooks print the Mac's marks (OSC
+    // random bits in MUTIBLE_NONCE; its hooks print the Mac's marks (OSC
     // 133, 633;E and 7), which the session's host reads from the pty's bytes,
     // believing only those carrying the nonce. What the host knows:
     // `known` stays false for another shell (fish, sh), one whose
@@ -374,4 +374,4 @@ private:
     static void onContentsChanged(VteTerminal* term, gpointer self);
 };
 
-#endif // MINICODE_ENABLE_TERMINAL
+#endif // MUTIBLE_ENABLE_TERMINAL

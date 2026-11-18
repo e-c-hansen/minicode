@@ -1,4 +1,4 @@
-// PaletteSuite.cpp — the palette over the window (`./build/minicode-guitest
+// PaletteSuite.cpp — the palette over the window (`./build/mutible-guitest
 // palette`, linux/PARITY.md item 1.5), the counterpart of the Mac's
 // tests/gui/PaletteSuite.mm, by real keys and clicks through XTest.
 // Ctrl+Shift+P lists the port's commands with their keys, only those whose
@@ -21,7 +21,7 @@
 #include "PalettePanel.h"
 #include "Settings.h"
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
 #include "WindowLayout.h"
 #include <vte/vte.h>
@@ -144,7 +144,7 @@ std::string findBarText() {
     return findText() ? gtk_editable_get_text(GTK_EDITABLE(findText())) : "(no keyboard)";
 }
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
 // The dock holds the terminal now (4.7), so its own widget is always visible.
 bool terminalShown() { return MCGuiApp().layout->terminalShown(); }
 bool terminalHasKeyboard() { return MCGuiApp().terminal->owns(focusWidget()); }
@@ -220,7 +220,7 @@ MC_GUI_SUITE(palette) {
         GCHECK(!listed("View > Page Zoom > Zoom In"));
         MCGuiSnapshot(pal()->box(), "palette-commands");
     });
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     MCGuiStep("\"tog term\" ranks Toggle Terminal first", [] {
         GCHECK_EQ_STR(keysOf("View > Toggle Terminal"), "Ctrl+Shift+T");
         gTerminalWas = terminalShown();
@@ -471,7 +471,7 @@ MC_GUI_SUITE(palette) {
     MCGuiStep("Escape", [] { MCGuiKey("escape"); });
     MCGuiWait("closed", 10, [] { return !pal()->isOpen() && editorHasKeyboard(); });
 
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
     // ------------------------------------------- an action enabled by the file
     MCGuiStep("a LaTeX file: Export PDF is offered", [] {
         MCGuiWriteFile(F("pal/paper.tex"),
@@ -511,7 +511,7 @@ MC_GUI_SUITE(palette) {
     MCGuiStep("Escape", [] { MCGuiKey("escape"); });
     MCGuiWait("closed", 10, [] { return !pal()->isOpen() && editorHasKeyboard(); });
 
-#ifdef MINICODE_ENABLE_TERMINAL
+#ifdef MUTIBLE_ENABLE_TERMINAL
     // ------------------------------------------- the terminal keeps its keys
     MCGuiStep("the terminal with the keyboard", [] {
         // An earlier suite may have left it open.
@@ -586,8 +586,8 @@ MC_GUI_SUITE(palette) {
     MCGuiStep("Return", [] { MCGuiKey("enter"); });
     MCGuiWait("the file says so and the window follows", 10, [] {
         return !pal()->isOpen() &&
-               MCGuiReadFile(g_getenv("MINICODE_SETTINGS")).find("theme = light-modern\n") != std::string::npos &&
-               themeChecked() == "light-modern" && !Settings::parse(MCGuiReadFile(g_getenv("MINICODE_SETTINGS"))).isDark();
+               MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS")).find("theme = light-modern\n") != std::string::npos &&
+               themeChecked() == "light-modern" && !Settings::parse(MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"))).isDark();
     });
     MCGuiStep("back to Dark Modern by the palette", [] { MCGuiKey("ctrl+shift+p"); });
     MCGuiWait("open", 10, [] { return pal()->isOpen() && fieldHasKeyboard(); });

@@ -11,7 +11,7 @@
 #include <cmath>
 #include <ctime>
 
-#define GIT_LOG_DOMAIN "minicode-git"
+#define GIT_LOG_DOMAIN "mutible-git"
 
 namespace {
 
@@ -140,7 +140,7 @@ bool isEnter(guint key) {
     return key == GDK_KEY_Return || key == GDK_KEY_KP_Enter || key == GDK_KEY_ISO_Enter;
 }
 
-// Keys from the panel's own debug log (G_MESSAGES_DEBUG=minicode-git).
+// Keys from the panel's own debug log (G_MESSAGES_DEBUG=mutible-git).
 void debugLines(const char* what, const std::vector<std::string>& lines) {
     g_log(GIT_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "%s (%zu)", what, lines.size());
     const size_t n = std::min<size_t>(lines.size(), 40);

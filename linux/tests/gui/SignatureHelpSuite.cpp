@@ -1,4 +1,4 @@
-// SignatureHelpSuite.cpp — `./build/minicode-guitest signature_help`: the
+// SignatureHelpSuite.cpp — `./build/mutible-guitest signature_help`: the
 // signature hint while a call's arguments are typed (linux/PARITY.md item
 // 2.5, the Mac's signature help in Lsp+Completion.mm), with real keys,
 // against the scripted server (build/fakelsp), whose trigger characters
@@ -50,7 +50,7 @@ MC_GUI_SUITE(signature_help) {
         MCGuiSetKeyWindow(nullptr);
         ed()->closeAllTabs();
         MCGuiWriteFile(F(), kText);
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script()) + "\n");
         showFile(F());
     });

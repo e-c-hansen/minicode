@@ -1,8 +1,8 @@
 // ServerFoldingSuite.cpp — the language server's folding ranges (`./build/
-// minicode-guitest server_folding`, linux/PARITY.md item 2.13), against the
+// mutible-guitest server_folding`, linux/PARITY.md item 2.13), against the
 // scripted server (FakeLsp.h): textDocument/foldingRange is asked once the
 // file is on show, its answer is nested properly (Fold::sanitize: a range
-// crossing another is dropped) and takes the place of the regions minicode
+// crossing another is dropped) and takes the place of the regions mutible
 // computes, so a region only the server knows of folds and unfolds with
 // View > Folding's keys; typing makes them stale (the computed regions stand
 // in) until the server is asked again 0.6 s after typing stops and answers
@@ -42,7 +42,7 @@ std::string fr(int a, int b, const std::string& kind = "") {
            (kind.empty() ? "" : ", \"kind\": \"" + kind + "\"") + "}";
 }
 
-// Lines 0 to 2, the comments, and x to z, which minicode's own rules do
+// Lines 0 to 2, the comments, and x to z, which mutible's own rules do
 // not fold; 1 to 7 crosses 0 to 2 and is left out.
 std::string script() {
     return "{\"capabilities\": {\"textDocumentSync\": 1, \"foldingRangeProvider\": true},"
@@ -75,7 +75,7 @@ MC_GUI_SUITE(server_folding) {
         MCGuiSetKeyWindow(nullptr);
         ed()->closeAllTabs();
         MCGuiWriteFile(F("srv.py"), kPy);
-        gSettings = MCGuiReadFile(g_getenv("MINICODE_SETTINGS"));
+        gSettings = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
         MCGuiSetSettings("lsp.enabled = true\nlsp.python = " + MCGuiFakeLsp(kServer, script()) +
                          "\n");
         MCGuiOpenFileKept(F("srv.py"));

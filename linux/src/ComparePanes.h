@@ -31,7 +31,7 @@ struct CompareSpec {
     // The tab is added without being shown (the user is typing elsewhere).
     bool quiet = false;
     // In the agents' preview tab for comparisons, replacing the last one
-    // (`minicode diff` without --keep), as the Mac's.
+    // (`mutible diff` without --keep), as the Mac's.
     bool preview = false;
 };
 

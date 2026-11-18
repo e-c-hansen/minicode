@@ -1,4 +1,4 @@
-// TreeIconsSuite.cpp — the file tree's icons by kind (`./build/minicode-guitest
+// TreeIconsSuite.cpp — the file tree's icons by kind (`./build/mutible-guitest
 // tree_icons`): a row's icon is chosen from what a click on the file opens
 // (FileIcon::kindOf), as on the Mac. The names are read off the rows' images.
 #include "Harness.h"

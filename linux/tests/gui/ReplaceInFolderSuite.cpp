@@ -1,5 +1,5 @@
 // ReplaceInFolderSuite.cpp — Replace in Folder (Ctrl+Alt+Shift+F;
-// `./build/minicode-guitest replace_in_folder`, linux/PARITY.md item 1.6),
+// `./build/mutible-guitest replace_in_folder`, linux/PARITY.md item 1.6),
 // the counterpart of the Mac's tests/gui/ReplaceInFolderSuite.mm, by real
 // keys and clicks: Replace All counts first and asks; a file open in a
 // clean tab is changed in the tab, unsaved and undoable there; a file

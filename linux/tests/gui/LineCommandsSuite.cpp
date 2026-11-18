@@ -1,4 +1,4 @@
-// LineCommandsSuite.cpp — `./build/minicode-guitest line_commands`: the line
+// LineCommandsSuite.cpp — `./build/mutible-guitest line_commands`: the line
 // commands (linux/PARITY.md item 1.9, Carets.h), VS Code's on Linux, every
 // key real: Ctrl+L selects the line and the next with each press,
 // Ctrl+Shift+K deletes it, Alt+Up and Alt+Down move it (nothing at the

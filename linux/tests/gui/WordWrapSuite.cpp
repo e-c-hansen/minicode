@@ -1,4 +1,4 @@
-// WordWrapSuite.cpp — word wrap in the editor (`./build/minicode-guitest
+// WordWrapSuite.cpp — word wrap in the editor (`./build/mutible-guitest
 // word_wrap`, linux/PARITY.md item 1.11), the counterpart of the end of the
 // Mac's zoomfit suite (tests/gui/ZoomFitSuite.mm), with real keys through
 // XTest: a long line wraps at the pane's edge by default (editor.word-wrap
@@ -53,7 +53,7 @@ std::string longText() {
     return "a short line\n" + line + "\nthe last line\n";
 }
 
-std::string settingsText() { return MCGuiReadFile(g_getenv("MINICODE_SETTINGS")); }
+std::string settingsText() { return MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS")); }
 
 std::string gSettings, gText;
 size_t gWindows = 0;

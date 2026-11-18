@@ -1,4 +1,4 @@
-// CompareSuite.cpp — the compare view (`./build/minicode-guitest compare`,
+// CompareSuite.cpp — the compare view (`./build/mutible-guitest compare`,
 // linux/PARITY.md item 3.2, the Mac's compare suite in tests/gui/CompareSuite.mm,
 // part one): two texts side by side in a tab of their own, the rows lined up
 // (a filler row opposite a line only one side has), each pane in the file's

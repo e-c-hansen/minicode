@@ -1,5 +1,5 @@
 // MarkdownSideSyncSuite.cpp — scroll sync between a Markdown source and its
-// page to the side (`./build/minicode-guitest markdown_side_sync`,
+// page to the side (`./build/mutible-guitest markdown_side_sync`,
 // linux/PARITY.md item 4.2, second part): scrolling the source scrolls the
 // page to the same place, scrolling the page scrolls the source, a caret
 // moved far down brings its block into view, the pane's own re-render does

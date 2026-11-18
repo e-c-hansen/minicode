@@ -1,6 +1,6 @@
 // FakeLsp.h — the scripted language server for the GUI checks, as on the
 // Mac (tests/gui/Harness.h's MCGuiFakeLsp): build/fakelsp is the Mac's own
-// tests/fakelsp/fakelsp.cpp, built by meson.build beside minicode-guitest.
+// tests/fakelsp/fakelsp.cpp, built by meson.build beside mutible-guitest.
 // It answers from a JSON script and logs every message the client sent, one
 // JSON object a line, so a check can see what reached a server without a
 // real one installed. The file's header in tests/fakelsp describes the

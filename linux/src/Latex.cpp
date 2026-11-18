@@ -1,5 +1,5 @@
 // Latex.cpp — see Latex.h.
-#ifdef MINICODE_ENABLE_PDF
+#ifdef MUTIBLE_ENABLE_PDF
 
 #include "EnvLock.h"
 #include "Latex.h"
@@ -76,7 +76,7 @@ std::string baseStem(const std::string& p) {
 }
 
 // A child of the app dies with it: a typeset or a download left running
-// after MiniCode quits (or crashes) would otherwise carry on alone.
+// after mutible quits (or crashes) would otherwise carry on alone.
 void dieWithParent(gpointer) { prctl(PR_SET_PDEATHSIG, SIGTERM); }
 
 GSubprocessLauncher* newLauncher(GSubprocessFlags flags) {
@@ -345,7 +345,7 @@ void LatexPreview::onShutdown(GApplication*, gpointer selfp) {
 // ---------------------------------------------------------------- tectonic
 
 std::string LatexPreview::managedTectonicPath() {
-    char* p = g_build_filename(g_get_user_data_dir(), "minicode", "bin", "tectonic", nullptr);
+    char* p = g_build_filename(g_get_user_data_dir(), "mutible", "bin", "tectonic", nullptr);
     std::string out = p;
     g_free(p);
     return out;
@@ -353,7 +353,7 @@ std::string LatexPreview::managedTectonicPath() {
 
 std::string LatexPreview::tectonicPath() {
     EnvLock::EnvRead lock;
-    if (const char* env = g_getenv("MINICODE_TECTONIC"))
+    if (const char* env = g_getenv("MUTIBLE_TECTONIC"))
         if (isExecutable(env)) return env;
     const std::string managed = managedTectonicPath();
     if (isExecutable(managed)) return managed;
@@ -390,7 +390,7 @@ std::string LatexPreview::scratchPath() const {
 }
 
 namespace {
-// The folder tectonic's output goes under: $XDG_RUNTIME_DIR/minicode-latex,
+// The folder tectonic's output goes under: $XDG_RUNTIME_DIR/mutible-latex,
 // which only the user can reach, or, with no runtime folder, one in /tmp that
 // must be the user's own. A /tmp path anyone could have made first is used
 // only if it is a real folder (not a link), owned by this user and closed to
@@ -398,17 +398,17 @@ namespace {
 std::string outputBase() {
     const char* runtime = g_getenv("XDG_RUNTIME_DIR");
     if (runtime && *runtime && g_file_test(runtime, G_FILE_TEST_IS_DIR))
-        return std::string(runtime) + "/minicode-latex";
+        return std::string(runtime) + "/mutible-latex";
     static std::string chosen;
     if (!chosen.empty()) return chosen;
-    const std::string dir = std::string(g_get_tmp_dir()) + "/minicode-latex-" + g_get_user_name();
+    const std::string dir = std::string(g_get_tmp_dir()) + "/mutible-latex-" + g_get_user_name();
     g_mkdir(dir.c_str(), 0700);   // fails harmlessly if it is there already
     GStatBuf st;
     if (g_lstat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == getuid() &&
         (st.st_mode & 077) == 0) {
         chosen = dir;
     } else {
-        char* tmp = g_dir_make_tmp("minicode-latex-XXXXXX", nullptr);
+        char* tmp = g_dir_make_tmp("mutible-latex-XXXXXX", nullptr);
         chosen = tmp ? tmp : dir;
         g_free(tmp);
     }
@@ -625,7 +625,7 @@ void LatexPreview::compileNow() {
     job->src = bufferText();
     job->scratch = scratchPath();
     const std::string out = outDir();
-    const std::string stem = baseStem(job->scratch);   // ".notes.minicode"
+    const std::string stem = baseStem(job->scratch);   // ".notes.mutible"
     job->pdf = out + "/" + stem + ".pdf";
     job->synctex = out + "/" + stem + ".synctex.gz";
 
@@ -916,8 +916,8 @@ void LatexPreview::showTectonicMissing() {
     fillRows(problemsBox_, false);
     std::string text =
         "The LaTeX preview needs tectonic, a single-binary TeX engine.\n\n"
-        "MiniCode uses whichever tectonic is already on your machine (on your PATH, "
-        "or named by MINICODE_TECTONIC)";
+        "mutible uses whichever tectonic is already on your machine (on your PATH, "
+        "or named by MUTIBLE_TECTONIC)";
     if (kTectonicArch)
         text += ", or it can download the official build for you, about 10 MB, into " +
                 dirName(managedTectonicPath()) + ".\n\n"
@@ -1255,7 +1255,7 @@ void LatexPreview::finishDownload(const std::string& problem) {
     if (!problem.empty()) {
         showFailure("Could not install tectonic.\n\n" + problem +
                     "\n\nYou can also install it yourself and put it on your PATH, or name "
-                    "it with MINICODE_TECTONIC.");
+                    "it with MUTIBLE_TECTONIC.");
         setButton("Download…", true);
         return;
     }
@@ -1365,7 +1365,7 @@ void LatexPreview::doubleClick(int page, double x, double y) {
         }
     }
     if (!span) {
-        setStatus("That is not text MiniCode can trace back to the source", false);
+        setStatus("That is not text mutible can trace back to the source", false);
         return;
     }
     editFile_ = file;
@@ -1589,7 +1589,7 @@ gboolean LatexPreview::onRedo(GtkWidget*, GVariant*, gpointer selfp) {
     return TRUE;
 }
 
-#endif  // MINICODE_ENABLE_PDF
+#endif  // MUTIBLE_ENABLE_PDF
 
 // The same download for a caller with no preview (the Markdown preview's math
 // line): `done` runs on the main loop with the problem, "" when it worked.

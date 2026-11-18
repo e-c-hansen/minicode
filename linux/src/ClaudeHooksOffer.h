@@ -1,7 +1,7 @@
 // ClaudeHooksOffer.h — the Mac's ClaudeHooksOffer.{h,mm} (mac/src). The
 // waiting dots (TerminalAttention.h) need Claude Code's hooks to run
-// `minicode notify --from-hook`; this is where the app offers them, so nobody
-// has to know `minicode hooks --install`:
+// `mutible notify --from-hook`; this is where the app offers them, so nobody
+// has to know `mutible hooks --install`:
 //   - a bar over the terminals the first time Claude Code starts in one
 //     (Terminal::onClaudeStarted), once per launch, unless the hooks are in
 //     already or Not Now was pressed once (kept as the install bar's Don't
@@ -10,7 +10,7 @@
 // writes only on a second yes, through the core's ClaudeHooks::install (a
 // backup of the file first, every key and hook of the user's kept), then says
 // where it wrote. A press when they are in says so and writes nothing. This
-// is the one place minicode writes under ~/.claude besides `minicode hooks
+// is the one place mutible writes under ~/.claude besides `mutible hooks
 // --install`, and only after those two presses. Every rule is the core's
 // (ClaudeHooks.h: merge, install, shouldOffer); this file shows them.
 #pragma once
@@ -28,7 +28,7 @@ extern const char* const kKey;
 // Claude Code's settings file: $CLAUDE_CONFIG_DIR/settings.json, else
 // ~/.claude/settings.json.
 std::string settingsPath();
-// The command the hooks run: `minicode notify --from-hook` when `minicode`
+// The command the hooks run: `mutible notify --from-hook` when `mutible`
 // is on the PATH, else this program by its full path.
 std::string command();
 // Every event's hook is in the settings file already.

@@ -75,7 +75,7 @@ std::string command() {
     gchar* found;
     {
         EnvLock::EnvRead env;
-        found = g_find_program_in_path("minicode");
+        found = g_find_program_in_path("mutible");
     }
     if (found) {
         g_free(found);
@@ -109,17 +109,17 @@ void ask(GtkWindow* parent, std::function<void(bool)> done) {
     }
     if (!plan.changed) {
         notice(parent, "The hooks are already on",
-               tilde(path) + " already runs " + cmd + " for every hook minicode needs; nothing was changed.",
+               tilde(path) + " already runs " + cmd + " for every hook mutible needs; nothing was changed.",
                [done] { if (done) done(true); });
         return;
     }
     const std::string detail =
         "This adds the lines below to " + tilde(path) + ": Claude Code's " +
         ClaudeHooks::eventList(plan.added) + " hooks then run `" + cmd +
-        "`, which marks the minicode terminal a session runs in when it waits for you or has "
+        "`, which marks the mutible terminal a session runs in when it waits for you or has "
         "finished. Your own settings and hooks stay as they are, and the file is backed up first.\n\n" +
         ControlChannel::prettyJson(ClaudeHooks::configuration(cmd, plan.added));
-    alert(parent, "Add minicode's hooks to Claude Code's settings?", detail, {"Add the Hooks", "Cancel"},
+    alert(parent, "Add mutible's hooks to Claude Code's settings?", detail, {"Add the Hooks", "Cancel"},
           [parent, path, cmd, done](int answer) {
               if (answer != 0) {
                   if (done) done(false);
@@ -140,7 +140,7 @@ void ask(GtkWindow* parent, std::function<void(bool)> done) {
                       : "The file as it was is in " + tilde(r.backup) + ".";
                   notice(parent, "The hooks are on",
                          "Written to " + tilde(path) + ". " + backup +
-                             " Claude Code sessions started from now on in minicode's terminals mark "
+                             " Claude Code sessions started from now on in mutible's terminals mark "
                              "their tabs: orange while one waits for you, green when it has finished.",
                          [done] { if (done) done(true); });
               }
@@ -153,7 +153,7 @@ GtkWidget* takeBar(GtkWindow* parent, bool shown, std::function<void()> gone) {
     gOffered = true;
     GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_add_css_class(box, "minicode-consent-bar");
-    GtkWidget* label = gtk_label_new("minicode can show which Claude Code session is waiting on you.");
+    GtkWidget* label = gtk_label_new("mutible can show which Claude Code session is waiting on you.");
     gtk_label_set_xalign(GTK_LABEL(label), 0);
     gtk_label_set_wrap(GTK_LABEL(label), TRUE);
     gtk_widget_set_hexpand(label, TRUE);
@@ -166,7 +166,7 @@ GtkWidget* takeBar(GtkWindow* parent, bool shown, std::function<void()> gone) {
     GtkWidget* later = gtk_button_new_with_label("Not Now");
     GtkWidget* close = gtk_button_new_with_label("×");
     gtk_widget_add_css_class(close, "flat");
-    gtk_widget_set_tooltip_text(close, "Close (it stays closed until minicode starts again)");
+    gtk_widget_set_tooltip_text(close, "Close (it stays closed until mutible starts again)");
     for (GtkWidget* w : {label, on, later, close}) gtk_box_append(GTK_BOX(box), w);
     for (GtkWidget* b : {on, later, close}) gtk_widget_set_valign(b, GTK_ALIGN_CENTER);
     auto leave = std::make_shared<std::function<void()>>(std::move(gone));
