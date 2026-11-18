@@ -54,6 +54,20 @@ EOF
   else echo "(This copy has no control channel.)"; fi
 }
 
+# rename-mutible: keep-begin
+# Run as `minicode`, its name before 1.6.0 (Homebrew links that name too),
+# it says the name is now mutible: on a terminal only, and never for a
+# Claude Code hook (`minicode notify --from-hook`), which stays silent.
+if [ "$(basename "${BASH_SOURCE[0]}")" = minicode ] && [ -t 2 ]; then
+  from_hook=0
+  if [ "$1" = notify ]; then
+    for a in "$@"; do [ "$a" = --from-hook ] && from_hook=1; done
+  fi
+  [ $from_hook = 1 ] ||
+    echo "minicode is now called mutible (or mbl); the minicode command will go in a later release" >&2
+fi
+# rename-mutible: keep-end
+
 # Resolve this script's real location, following the Homebrew symlink.
 src="${BASH_SOURCE[0]}"
 while [ -L "$src" ]; do
@@ -79,10 +93,11 @@ install_skill() {
     return 3
   fi
   local to="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/minicode"
+  local given=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --dir) [ -n "$2" ] || { echo "minicode: --dir needs a folder" >&2; return 2; }
-             to="$2"; shift ;;
+             to="$2"; given=1; shift ;;
       -h|--help) echo "Usage: minicode install-skill [--dir DIR]"; return 0 ;;
       *) echo "minicode: install-skill: unexpected $1" >&2; return 2 ;;
     esac
@@ -94,6 +109,12 @@ install_skill() {
   fi
   mkdir -p "$to" && cp "$skill" "$to/SKILL.md" || return 1
   echo "Installed the minicode skill in $to"
+  # The skill as installed before the rename is left alone; say where it is,
+  # so Claude Code does not load both.
+  local old="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/minicode"   # rename-mutible: keep
+  if [ $given = 0 ] && [ "$old" != "$to" ] && [ -f "$old/SKILL.md" ]; then
+    echo "The skill from before the rename is still in $old; remove that folder so Claude Code loads only the new one"
+  fi
 }
 
 # The words below are the control channel's subcommands, which

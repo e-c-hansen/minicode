@@ -20,6 +20,7 @@
 // running it, MINICODE_CLI_WAIT sets the wait in seconds, and
 // MINICODE_CONTROL_DIR names the one folder to look for sockets in.
 #include "ControlPaths.h"
+#include "Rename.h"
 #include "ControlProtocol.h"
 #include "ClaudeHooks.h"
 #include "SessionServer.h"
@@ -573,13 +574,17 @@ int minicodeInstallSkill(int argc, char **argv) {
     std::string to;
     const char *config = getenv("CLAUDE_CONFIG_DIR");
     const char *home = getenv("HOME");
-    if (config && *config) to = std::string(config) + "/skills/minicode";
-    else to = std::string(home && *home ? home : "/") + "/.claude/skills/minicode";
+    const std::string skills = config && *config
+                                   ? std::string(config) + "/skills"
+                                   : std::string(home && *home ? home : "/") + "/.claude/skills";
+    to = skills + "/minicode";
+    bool givenDir = false;
     for (int i = 2; i < argc; i++) {
         const std::string a = argv[i];
         if (a == "--dir") {
             if (i + 1 >= argc || !*argv[i + 1]) return usageError("--dir needs a folder");
             to = argv[++i];
+            givenDir = true;
         } else if (a == "-h" || a == "--help") {
             std::printf("Usage: minicode install-skill [--dir DIR]\n");
             return kExitOK;
@@ -623,6 +628,13 @@ int minicodeInstallSkill(int argc, char **argv) {
     }
     std::fclose(out);
     std::printf("Installed the minicode skill in %s\n", to.c_str());
+    // The skill as it was installed before the rename is left alone; say
+    // where it is, so Claude Code does not load both (src/Rename.h).
+    const std::string oldSkill = skills + "/" + Rename::kOldName;
+    struct stat st;
+    if (!givenDir && oldSkill != to && stat((oldSkill + "/SKILL.md").c_str(), &st) == 0)
+        std::printf("The skill from before the rename is still in %s; remove that folder so "
+                    "Claude Code loads only the new one\n", oldSkill.c_str());
     return kExitOK;
 }
 #endif
@@ -632,6 +644,7 @@ int main(int argc, char **argv) {
 #else
 int minicodeCliMain(int argc, char **argv) {
 #endif
+    Rename::adoptOldEnvironment();   // MINICODE_* still read (src/Rename.h)
     std::vector<std::string> args(argv + 1, argv + argc);
     char cwdBuf[PATH_MAX];
     std::string cwd = getcwd(cwdBuf, sizeof cwdBuf) ? cwdBuf : "/";
