@@ -76,10 +76,12 @@ typedef NS_ENUM(NSInteger, MCOpenFileState) {
 @property(nonatomic, readonly) NSTextField *includeField;
 @property(nonatomic, readonly) NSTextField *excludeField;
 @property(nonatomic, readonly) NSTextField *status;
-// Under the results: the files the search left out (not UTF-8, or with a
-// line over 64 MB; a large text file is searched), one named in the line
-// itself, all in its tooltip. Hidden when there were none.
+// Under the results: the files the search left out (a line over 64 MB;
+// a large text file is searched, and text not in UTF-8 read as
+// Windows-1252), one named in the line itself, all in its tooltip. Hidden
+// when there were none.
 @property(nonatomic, readonly) NSTextField *skippedNote;
+- (void)setSkippedNote:(NSString *)text tooltip:(NSString *)tooltip;
 @property(nonatomic, readonly) NSTableView *table;   // an NSOutlineView: files, then their lines
 @property(nonatomic, readonly) BOOL replaceShown, detailsShown;
 @property(nonatomic) BOOL matchCase, wholeWord, regex, preserveCase;
