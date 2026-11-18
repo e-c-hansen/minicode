@@ -99,6 +99,7 @@
 #include "Persistence.h"
 #include "PalettePanel.h"
 #include "ProblemsPanel.h"
+#include "Question.h"
 #include "NavHistoryUi.h"
 #include "Zoom.h"
 #include "ControlCommands.h"
@@ -380,19 +381,10 @@ static bool isInside(const std::string& path, const std::string& dir) {
 // asynchronous, so here the question takes the rest of the operation as a
 // continuation instead of returning an answer.
 
+// The detail is often a path or the system's error about one: Question wraps
+// inside a path longer than a line and keeps the window on the screen.
 static void showError(App* app, const std::string& message, const std::string& detail) {
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", message.c_str());
-    if (!detail.empty()) gtk_alert_dialog_set_detail(dlg, detail.c_str());
-    // An explicit button rather than gtk_alert_dialog_show's default one: that
-    // builds a different kind of window, which did not close when its button
-    // was activated in testing. With a button of our own it is the same window
-    // as the "Save changes?" alert.
-    const char* buttons[] = {"OK", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
-    gtk_alert_dialog_set_default_button(dlg, 0);
-    gtk_alert_dialog_set_cancel_button(dlg, 0);
-    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr, nullptr, nullptr);
-    g_object_unref(dlg);
+    Question::tell(GTK_WINDOW(app->window), message, detail);
 }
 
 // Save, and tell the user if that failed. The editor leaves the buffer marked
@@ -2522,32 +2514,24 @@ static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {
     const std::string path = app->tree->selectedPath();
     if (path.empty()) { gtk_widget_error_bell(app->window); return; }
 
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("Move “%s” to the Trash?",
-                                               baseName(path).c_str());
+    // A name with no spaces can be longer than a line: Question wraps it.
+    Question::Spec q;
+    q.message = "Move “" + baseName(path) + "” to the Trash?";
     // The Mac asks the same question. A tab of it with unsaved changes stays
     // open with them, so say so.
     for (Document* d : app->editor->dirtyDocuments())
         if (isInside(d->path(), path)) {
-            const std::string detail = "“" + baseName(d->path()) +
+            q.detail = "“" + baseName(d->path()) +
                 "” has unsaved changes. Its tab stays open with them, and saving it "
                 "writes the file again.";
-            gtk_alert_dialog_set_detail(dlg, detail.c_str());
             break;
         }
-    const char* buttons[] = {"Move to Trash", "Cancel", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
-    gtk_alert_dialog_set_cancel_button(dlg, 1);
-    gtk_alert_dialog_set_default_button(dlg, 0);
-    auto* target = new std::pair<App*, std::string>(app, path);
-    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer data) {
-            auto* t = static_cast<std::pair<App*, std::string>*>(data);
-            if (gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr) == 0 &&
-                !t->first->dead)
-                trashNow(t->first, t->second);
-            delete t;
-        }, target);
-    g_object_unref(dlg);
+    q.buttons = {"Move to Trash", "Cancel"};
+    q.defaultButton = 0;
+    q.cancelButton = 1;
+    Question::ask(GTK_WINDOW(app->window), q, [app, path](int answer) {
+        if (answer == 0 && !app->dead) trashNow(app, path);
+    });
 }
 
 // "Reveal in Finder" becomes opening the containing folder in the file

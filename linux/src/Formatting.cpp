@@ -10,6 +10,7 @@
 #include "Formatter.h"
 #include "Lsp.h"
 #include "MultiEdit.h"
+#include "Question.h"
 
 #include <algorithm>
 #include <vector>
@@ -136,13 +137,14 @@ void Formatting::ask(const FormatRun::Decision& d, bool quiet, std::function<voi
                      bool projectOnly) {
     questions_++;
     const FormatRun::Question q = FormatRun::consentQuestion(d);
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", q.message.c_str());
-    gtk_alert_dialog_set_detail(dlg, q.detail.c_str());
-    const char* buttons[] = {"Allow", "Don't Allow", "Cancel", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
-    gtk_alert_dialog_set_default_button(dlg, 0);
-    gtk_alert_dialog_set_cancel_button(dlg, 2);
-    gtk_alert_dialog_set_modal(dlg, TRUE);
+    // The detail names the program by its path (a .venv's, node_modules'),
+    // which Question wraps inside.
+    Question::Spec spec;
+    spec.message = q.message;
+    spec.detail = q.detail;
+    spec.buttons = {"Allow", "Don't Allow", "Cancel"};
+    spec.defaultButton = 0;
+    spec.cancelButton = 2;
     struct Asked {
         Formatting* self;
         std::weak_ptr<int> alive;
@@ -152,29 +154,21 @@ void Formatting::ask(const FormatRun::Decision& d, bool quiet, std::function<voi
         std::string root;
     };
     Document* on = editor_->active();
-    auto* asked = new Asked{this, alive_, quiet, projectOnly, std::move(then), on ? on->id() : 0,
-                            host_.root ? host_.root() : ""};
-    gtk_alert_dialog_choose(dlg, window_, nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer p) {
-            Asked* a = static_cast<Asked*>(p);
-            const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr);
-            if (!a->alive.expired()) {
-                Formatting* self = a->self;
-                if (choice == 0 || choice == 1) {
-                    FolderConsent::set(a->root, choice == 0);
-                    Document* now = self->editor_->active();
-                    if (now && now->id() == a->id && self->canFormat()) {
-                        self->run(a->quiet, a->then, a->projectOnly);
-                        delete a;
-                        return;
-                    }
-                }
-                if (a->then) a->then();
+    auto a = std::make_shared<Asked>(Asked{this, alive_, quiet, projectOnly, std::move(then),
+                                           on ? on->id() : 0, host_.root ? host_.root() : ""});
+    Question::ask(window_, spec, [a](int choice) {
+        if (a->alive.expired()) return;
+        Formatting* self = a->self;
+        if (choice == 0 || choice == 1) {
+            FolderConsent::set(a->root, choice == 0);
+            Document* now = self->editor_->active();
+            if (now && now->id() == a->id && self->canFormat()) {
+                self->run(a->quiet, a->then, a->projectOnly);
+                return;
             }
-            delete a;
-        },
-        asked);
-    g_object_unref(dlg);
+        }
+        if (a->then) a->then();
+    });
 }
 
 bool Formatting::formatBeforeSaving(bool projectOnly) {

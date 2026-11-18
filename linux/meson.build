@@ -264,6 +264,8 @@ gui_sources = [
   'src/ConsentBar.cpp',
   'src/FormatOffer.cpp',
   'src/ClaudeHooksOffer.cpp',
+  # Questions whose text holds a path or a command (wrapped inside it).
+  'src/Question.cpp',
   'src/InstallView.cpp',
   # Format Document (PARITY.md 2.4): the window's side (Formatting.cpp),
   # the formatter's process (FormatRunner.cpp), and a server's formatting
