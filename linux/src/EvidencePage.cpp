@@ -35,6 +35,9 @@ GtkWidget* heading(const char* text) {
 GtkWidget* textLabel() {
     GtkWidget* l = gtk_label_new("");
     gtk_label_set_wrap(GTK_LABEL(l), TRUE);
+    // A word longer than the pane (a path, a command) breaks too, or its
+    // width becomes the page's least and the page is cut off at the right.
+    gtk_label_set_wrap_mode(GTK_LABEL(l), PANGO_WRAP_WORD_CHAR);
     gtk_label_set_selectable(GTK_LABEL(l), TRUE);
     gtk_label_set_xalign(GTK_LABEL(l), 0);
     gtk_label_set_yalign(GTK_LABEL(l), 0);
@@ -64,11 +67,18 @@ EvidencePage::EvidencePage(const std::string& transcript, const std::string& nam
     gtk_widget_set_margin_end(root_, 12);
     gtk_widget_set_margin_top(root_, 10);
     gtk_widget_set_margin_bottom(root_, 10);
+    // The title and the line under it (the session's folder, its counts)
+    // shorten with "…" rather than set the page's least width: unshortened,
+    // a long folder made the page, and every page sharing the editor's slot
+    // with it, wider than the window, their right ends (Apply to Main…)
+    // out of reach.
     title_ = gtk_label_new(name.c_str());
     gtk_widget_set_halign(title_, GTK_ALIGN_START);
+    gtk_label_set_ellipsize(GTK_LABEL(title_), PANGO_ELLIPSIZE_END);
     gtk_widget_add_css_class(title_, "title-3");
     info_ = gtk_label_new("");
     gtk_widget_set_halign(info_, GTK_ALIGN_START);
+    gtk_label_set_ellipsize(GTK_LABEL(info_), PANGO_ELLIPSIZE_MIDDLE);
     gtk_widget_add_css_class(info_, "dim-label");
     gtk_box_append(GTK_BOX(root_), title_);
     gtk_box_append(GTK_BOX(root_), info_);
@@ -302,6 +312,7 @@ void EvidencePage::renderLastTest() {
 
 void EvidencePage::render() {
     gtk_label_set_text(GTK_LABEL(info_), info2_.c_str());
+    gtk_widget_set_tooltip_text(info_, info2_.c_str());   // whole, when shortened
     gtk_label_set_text(GTK_LABEL(claim_),
                        final_.empty() ? "(The session has no reply with text yet.)" : final_.c_str());
     renderLastTest();
