@@ -11,7 +11,11 @@
 //
 // The rule: any spawn or environment read off the main thread holds an
 // EnvRead while it reads (never while it waits for a child), and everything
-// that changes the environment goes through envSet and envUnset.
+// that changes the environment goes through envSet and envUnset. The core's
+// env:raw-access check fails on a setenv, unsetenv, putenv, clearenv,
+// g_setenv or g_unsetenv anywhere in linux/ but here and the harness's
+// first stage: recent_folders and terminal_marks called them directly and
+// the crash came back (2026-11-17).
 #pragma once
 
 #include <shared_mutex>

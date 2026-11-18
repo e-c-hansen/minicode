@@ -27,6 +27,7 @@
 
 #include "DockMenu.h"
 #include "Editor.h"
+#include "EnvLock.h"
 #include "FileTree.h"
 #include "PalettePanel.h"
 #include "RecentList.h"
@@ -55,7 +56,7 @@ void setEnv(const char* name, const std::string& value) {
     bool seen = false;
     for (const Saved& s : gSaved) seen = seen || std::string(s.name) == name;
     if (!seen) gSaved.push_back({name, old ? old : "", old != nullptr});
-    setenv(name, value.c_str(), 1);
+    EnvLock::envSet(name, value.c_str());
 }
 std::string dir(const std::string& name) {
     const std::string p = gBase + "/" + name;
@@ -161,7 +162,7 @@ MC_GUI_SUITE(recent_folders) {
         setEnv("XDG_DATA_HOME", gBase + "/data");
         setEnv("XDG_DATA_DIRS", gBase + "/sys");
         setEnv("MINICODE_BENCH", "");
-        unsetenv("MINICODE_BENCH");
+        EnvLock::envUnset("MINICODE_BENCH");
         MCGuiWriteFile(gSys, kInstalled);
         MCGuiSetSettings("lsp.enabled = false\n");
         gWindows = MCGuiAppWindows().size();
@@ -215,10 +216,10 @@ MC_GUI_SUITE(recent_folders) {
     });
     MCGuiStep("nothing is noted under MINICODE_BENCH", [] {
         const std::vector<std::string> before = RecentList::folders();
-        setenv("MINICODE_BENCH", "1", 1);
+        EnvLock::envSet("MINICODE_BENCH", "1");
         RecentList::note(dir("bench"));
         GCHECK(RecentList::folders().empty());   // and none listed
-        unsetenv("MINICODE_BENCH");
+        EnvLock::envUnset("MINICODE_BENCH");
         GCHECK(RecentList::folders() == before);   // the file was not written
     });
 
@@ -519,8 +520,8 @@ MC_GUI_SUITE(recent_folders) {
         MCGuiAnswerFolderChooser(nullptr);
         closeExtraWindows();
         for (const Saved& s : gSaved) {
-            if (s.had) setenv(s.name, s.value.c_str(), 1);
-            else unsetenv(s.name);
+            if (s.had) EnvLock::envSet(s.name, s.value.c_str());
+            else EnvLock::envUnset(s.name);
         }
         MCGuiSetSettings("lsp.enabled = false\n");
     });

@@ -110,16 +110,33 @@ static void testProcessEnv() {
     // (mac/src/Environment.h), and the GUI checks change it only with
     // MCSetEnv: a raw setenv in a suite raced with git copying environ on
     // the panel's queue. Comments are left out of the scan.
+    //
+    // The GTK port and its checks change it only through EnvLock::envSet
+    // and envUnset (linux/src/EnvLock.h), which take the lock every worker
+    // that copies the environment holds. recent_folders and terminal_marks
+    // called setenv and g_setenv directly, and CI's GTK job aborted with
+    // "realloc(): invalid next size" in g_environ_setenv on the git
+    // thread: GLib's g_strdupv counts environ, then copies until its NULL,
+    // so a setenv between the two writes past the copy (2026-11-17, #136).
+    // Allowed: EnvLock.cpp itself, and the harness's first stage
+    // (Wrapper.cpp), which sets up the world before any thread starts and
+    // then runs the checks as a new process.
     GROUP("env:raw-access");
     {
         struct Rule {
             const char* folder;
             std::vector<const char*> words;
+            std::vector<const char*> allowed = {};
         };
+        const std::vector<const char*> linuxWrites = {"setenv(", "unsetenv(", "putenv(",
+                                                      "clearenv(", "g_setenv(", "g_unsetenv("};
         const std::vector<Rule> rules = {
             {"mac/src", {"setenv(", "unsetenv(", "putenv(", "environ", "processInfo.environment",
                          "processInfo] environment"}},
             {"mac/tests/gui", {"setenv(", "unsetenv(", "putenv("}},
+            {"linux/src", linuxWrites, {"EnvLock.cpp"}},
+            {"linux/tests", linuxWrites},
+            {"linux/tests/gui", linuxWrites, {"Wrapper.cpp"}},
         };
         auto isWordChar = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
         int scanned = 0;
@@ -133,8 +150,11 @@ static void testProcessEnv() {
                 const std::string f = e->d_name;
                 const bool source = (f.size() > 3 && f.compare(f.size() - 3, 3, ".mm") == 0) ||
                                     (f.size() > 2 && f.compare(f.size() - 2, 2, ".h") == 0) ||
-                                    (f.size() > 2 && f.compare(f.size() - 2, 2, ".m") == 0);
+                                    (f.size() > 2 && f.compare(f.size() - 2, 2, ".m") == 0) ||
+                                    (f.size() > 4 && f.compare(f.size() - 4, 4, ".cpp") == 0);
                 if (!source) continue;
+                if (std::find(rule.allowed.begin(), rule.allowed.end(), f) != rule.allowed.end())
+                    continue;
                 std::ifstream in(std::string(rule.folder) + "/" + f);
                 std::string line;
                 int number = 0;

@@ -7,7 +7,9 @@ found through that list.
 ## The control channel, notes and tours (Mac)
 
 - Each minicode listens on `$TMPDIR/MiniCode/<pid>.sock` (0600 in a 0700
-  folder; another uid refused by `getpeereid`; removed on exit; at startup
+  folder; another uid refused by `getpeereid`, closed with no answer, which
+  the CLI reports as "closed the connection without answering" whether the
+  close beats its write (EPIPE) or its read; removed on exit; at startup
   sockets of dead pids, and of live pids where nothing listens, are removed).
   Use `getenv("TMPDIR")`: `NSTemporaryDirectory()` ignores it; without it,
   `confstr(_CS_DARWIN_USER_TEMP_DIR)`. `MINICODE_CONTROL_DIR` overrides both
@@ -22,7 +24,8 @@ found through that list.
 - A headless session host (`minicode host --folder DIR`) puts
   `host-<hash>.sock` and its `.lock` in the same folder
   (`ControlChannel::socketFolders()`, shared by the CLI); the sweep of dead
-  pids' sockets skips them (no pid in the name). See session-host.md's
+  pids' sockets skips them, and the CLI never picks one (no pid in the
+  name; `hostserver:*` checks it). See session-host.md's
   "The headless host". `--web PORT` (on `host` or `attach`) also serves a
   read-only view to a browser on 127.0.0.1 (session-host.md, "The browser's
   view").

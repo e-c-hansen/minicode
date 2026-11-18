@@ -49,7 +49,16 @@
 // Environment: SUITES or MC_GUI_SUITES, as arguments do; MC_GUI_SKIP_SUITES
 // leaves suites out (CI runs the list as two processes at once, one naming
 // its half, the other skipping it), and a name in either list that no suite
-// has fails the run; MC_GUI_KEEP=1 keeps
+// has fails the run; MC_GUI_SHUFFLE=<seed> plays the chosen suites in an
+// order drawn from the seed, the same on every machine and the Mac's
+// harness (the soak workflow's rounds; tests/GuiRetry.h);
+// MC_GUI_RETRIES=<n> (CI sets 3) has the wrapper, once the run is over,
+// run each failed suite once more, alone, as a fresh run of this program
+// (its own world and display; MC_GUI_RETRY_OF names it there), its output
+// marked "    retry| ": passing then, it is a "FLAKY [suite]" line and the
+// run passes; more than n failed suites, a crash, the run's limit or a
+// failure outside any suite retries nothing (docs/ci.md, "Retries");
+// MC_GUI_KEEP=1 keeps
 // the scratch folders; MC_GUI_VERBOSE=1 names each step; MC_GUI_SNAPSHOTS=dir
 // is where MCGuiSnapshot writes, and where a failed check leaves a picture of
 // the window on top (fail-<n>-<suite>.png, the first ten); MC_SKIP_TIMING=1

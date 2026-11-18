@@ -271,6 +271,17 @@ bool exchange(const Candidate &to, const std::string &request, std::string &answ
     while (off < request.size()) {
         ssize_t n = write(fd, request.data() + off, request.size() - off);
         if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && (errno == EPIPE || errno == ECONNRESET)) {
+            // minicode took the connection and closed it before the request
+            // was written: what it does to another user's process, which
+            // gets no answer at all. Which of the write and the close comes
+            // first is timing, so this says the same as a close seen while
+            // reading (the control suite's "state as another user" once
+            // failed on it).
+            error = "minicode closed the connection without answering";
+            close(fd);
+            return false;
+        }
         if (n <= 0) {
             error = std::string("could not send the request: ") + std::strerror(errno);
             close(fd);

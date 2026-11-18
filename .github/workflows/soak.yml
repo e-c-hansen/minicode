@@ -1,0 +1,194 @@
+name: Soak
+
+# The GUI suites of both apps run several times over, each round in an
+# order of its own, to find the checks that fail now and then
+# (docs/ci.md, "Retries" and "The soak"). It runs at night and by hand
+# (the Actions tab, or `gh workflow run Soak --ref <branch> -f rounds=2`),
+# never on a pull request, and nothing waits for it: main's branch
+# protection asks only for CI's "CI passed". What failed goes in one
+# table, on the run's page and in the issue "Soak: flaky checks", whose
+# body each run replaces.
+on:
+  schedule:
+    # 03:17 UTC, between the working days of the owner's time zones, when
+    # CI's queue for the macOS runners is short.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rounds per app (each in its own seeded order; at most 10)
+        default: '3'
+        type: string
+      suites:
+        description: >-
+          Suites to run, by name, in one process a round (a name only the
+          other app has is left out there). Empty runs every suite as CI
+          does.
+        default: ''
+        type: string
+
+# Reading the code, nothing else, except the report job's issue.
+permissions:
+  contents: read
+
+# One soak at a time; a second waits rather than sharing the runners.
+concurrency:
+  group: soak-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  macos:
+    name: macOS GUI suites, several rounds
+    runs-on: macos-26
+    # A round is about 7 minutes (two halves at once, then the suites run
+    # alone), the build about 3 with main's compiler cache: ten rounds,
+    # the most scripts/soak.sh runs, fit with room.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      # The compiler cache CI keeps (scripts/ci-ccache.sh), read only:
+      # the soak saves none of its own.
+      - name: Put ccache in front of the compiler
+        id: ccache
+        run: scripts/ci-ccache.sh setup clang++ clang++
+
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-macos-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-soak-${{ github.run_id }}
+          restore-keys: |
+            ccache-macos-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-
+            ccache-macos-${{ steps.ccache.outputs.compiler }}-
+
+      - name: Build the app and the GUI checks
+        run: make app guitest-build
+
+      - name: Run the rounds
+        env:
+          ROUNDS: ${{ inputs.rounds || '3' }}
+          SUITES: ${{ inputs.suites || '' }}
+        run: scripts/soak.sh mac "$RUNNER_TEMP/soak" "$ROUNDS" "$SUITES"
+
+      # The logs, the failure pictures, the two tables, and the report
+      # script for the report job, which has no checkout.
+      - name: Keep the results
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/soak"
+          cp scripts/soak-report.sh "$RUNNER_TEMP/soak/"
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-mac
+          path: ${{ runner.temp }}/soak
+          if-no-files-found: ignore
+          retention-days: 14
+
+  linux:
+    name: GTK4 GUI suites, several rounds
+    runs-on: ubuntu-26.04
+    # A round is about 5 minutes (two halves at once), the packages and the
+    # build about 10.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install GTK4, VTE, WebKitGTK, poppler, and the GUI checks' tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build build-essential pkg-config \
+            libgtk-4-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev \
+            libpoppler-glib-dev libsqlite3-dev \
+            xvfb libxtst-dev dbus-daemon ccache
+
+      - name: Set up ccache
+        id: ccache
+        run: scripts/ci-ccache.sh setup c++
+
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-gtk-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('linux/meson.build', 'linux/Makefile') }}-soak-${{ github.run_id }}
+          restore-keys: |
+            ccache-gtk-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('linux/meson.build', 'linux/Makefile') }}-
+            ccache-gtk-${{ steps.ccache.outputs.compiler }}-
+
+      - name: Configure and build
+        working-directory: linux
+        run: |
+          meson setup build -Dterminal=enabled -Dbrowser=enabled -Dpdf=enabled
+          meson compile -C build
+
+      - name: Run the rounds
+        env:
+          ROUNDS: ${{ inputs.rounds || '3' }}
+          SUITES: ${{ inputs.suites || '' }}
+        run: scripts/soak.sh linux "$RUNNER_TEMP/soak" "$ROUNDS" "$SUITES"
+
+      - name: Keep the results
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/soak/meson-logs"
+          cp scripts/soak-report.sh "$RUNNER_TEMP/soak/"
+          cp linux/build/meson-logs/soak-*.txt "$RUNNER_TEMP/soak/meson-logs/" 2>/dev/null || true
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-linux
+          path: ${{ runner.temp }}/soak
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # One table from both apps' rounds, on the run's page and in the issue
+  # "Soak: flaky checks" (opened once, its body replaced each run). The
+  # only job that may write anything, and only issues.
+  report:
+    name: Report
+    needs: [macos, linux]
+    if: ${{ always() }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: soak-*
+          path: soak
+
+      - name: Make the table
+        run: |
+          script="$(ls soak/*/soak-report.sh 2>/dev/null | head -1)"
+          if [ -z "$script" ]; then
+            echo "Neither soak job left results; see the jobs above." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          bash "$script" table.md soak/*/
+          cat table.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title="Soak: flaky checks"
+          number="$(gh issue list --state open --limit 100 --search "in:title \"$title\"" \
+                      --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -1)"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file table.md
+            echo "Updated issue #$number"
+          else
+            gh issue create --title "$title" --body-file table.md
+          fi

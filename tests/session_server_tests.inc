@@ -200,6 +200,10 @@ static void testSessionServer() {
         CHECK(Shared::resolveFolder(rig.proj + "/missing").empty());
         CHECK(Shared::hostSocketName(rig.proj) == Shared::hostSocketName(rig.proj + "/x/..") ||
               Shared::resolveFolder(rig.proj + "/x/..").empty());
+        // A host's socket shares the control channel's folder, so the
+        // control command line must never take it for a minicode's.
+        CHECK(ControlChannel::pidFromSocketName(Shared::hostSocketName(rig.proj)) == 0);
+        CHECK(ControlChannel::pidFromSocketName(Shared::hostSocketName("/")) == 0);
     }
 
     GROUP("hostserver:attach-edit-detach");

@@ -209,10 +209,15 @@ size_t fileCount(const std::vector<FileDiff>& diffs) {
     return paths.size();
 }
 
-size_t fingerprint(const std::vector<FileDiff>& diffs) {
-    size_t h = diffs.size();
+// Each diff `about` accepts, mixed in order.
+template <class About>
+static size_t fingerprintWhere(const std::vector<FileDiff>& diffs, About about) {
+    size_t n = 0;
+    for (const FileDiff& d : diffs) n += about(d) ? 1 : 0;
+    size_t h = n;
     auto mix = [&h](size_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
     for (const FileDiff& d : diffs) {
+        if (!about(d)) continue;
         const File& f = d.file;
         mix(std::hash<std::string>()(f.key()));
         mix(std::hash<std::string>()(f.origPath));
@@ -223,6 +228,36 @@ size_t fingerprint(const std::vector<FileDiff>& diffs) {
         mix(std::hash<std::u16string>()(f.newText));
     }
     return h;
+}
+
+size_t fingerprint(const std::vector<FileDiff>& diffs) {
+    return fingerprintWhere(diffs, [](const FileDiff&) { return true; });
+}
+
+size_t fingerprintOf(const std::vector<FileDiff>& diffs, const std::vector<std::string>& paths) {
+    if (paths.empty()) return fingerprint(diffs);
+    return fingerprintWhere(diffs, [&paths](const FileDiff& d) {
+        for (const std::string& p : paths)
+            if (!p.empty() && (p == d.file.path || p == d.file.origPath)) return true;
+        return false;
+    });
+}
+
+void ActionNote::settle(const std::vector<FileDiff>& diffs) {
+    settled = true;
+    print = fingerprintOf(diffs, paths);
+}
+
+bool ActionNote::goesWith(const std::vector<FileDiff>& diffs, bool readHeadKnown,
+                          const std::string& readHead) {
+    if (headKnown && readHeadKnown && readHead != head) return true;
+    const size_t now = fingerprintOf(diffs, paths);
+    if (!settled) {
+        settled = true;
+        print = now;
+        return false;
+    }
+    return now != print;
 }
 
 static std::u16string lineText(const std::u16string& text, const std::vector<size_t>& starts,
