@@ -78,10 +78,11 @@ void TypeAtEnd(EditorController *c, NSString *s) {
     MCGuiUndoGroup(tv.undoManager, ^{ [tv insertText:s replacementRange:NSMakeRange(tv.string.length, 0)]; });
 }
 
-// `mutible attach --folder DIR --dump`, its output to `check`.
-void Dump(NSString *name, NSString *dir, void (^check)(int status, NSString *out)) {
+// `mutible attach --folder DIR --dump` on the headless folder (read when
+// the step runs, not when it is queued), its output to `check`.
+void Dump(NSString *name, void (^check)(int status, NSString *out)) {
     MCGuiAsync(name, 30, ^(MCGuiDone done) {
-        MCGuiRunProcess(@[ CLIPath(), @"attach", @"--folder", dir, @"--dump" ], nil,
+        MCGuiRunProcess(@[ CLIPath(), @"attach", @"--folder", gDirB, @"--dump" ], nil,
                         ^(int status, NSString *out, NSString *err) {
                             if (status != 0) MCGuiNote(@"attach --dump: %d %@ %@", status, out, err);
                             check(status, out);
@@ -211,7 +212,7 @@ MC_GUI_SUITE(host_reattach) {
         GCHECK_EQ_STR([NSString stringWithContentsOfFile:gFileB encoding:NSUTF8StringEncoding error:nil], @"beta\n");
         GCHECK(kill(gHost1, 0) == 0 && kill(gShell, 0) == 0);
     });
-    Dump(@"`mutible attach --dump` shows the file unsaved and the shell on the host", gDirB, ^(int status, NSString *out) {
+    Dump(@"`mutible attach --dump` shows the file unsaved and the shell on the host", ^(int status, NSString *out) {
         GCHECK(status == 0);
         GCHECK([out containsString:@"unsaved)"]);
         GCHECK([out containsString:@"beta\nunsaved-edit\n"]);
@@ -258,14 +259,16 @@ MC_GUI_SUITE(host_reattach) {
         gHost2 = l ? l->startedHost() : 0;
         GCHECK(gHost2 > 0 && gHost2 != gHost1);
         MCTab *t = TabFor(gC, gFileB);
-        GCHECK(t.session.open && t.session.link.link == l && t.session.docId != gDocId);
+        // Opened anew on the new host (whose ids may come round to the old
+        // ones: a new host gives the first slot again).
+        GCHECK(t.session.open && t.session.link.link == l);
         GCHECK(t.dirty);
         NSButton *b = ReconnectButton(gC);
         GCHECK(!b || b.hidden);
         GCHECK(gTerm.sessionLink.link == l);
         GCHECK(MCSessionCheckTabs([gC valueForKey:@"tabs"]).length == 0);
     });
-    Dump(@"nothing typed is lost: the new host has it all, unsaved", gDirB, ^(int status, NSString *out) {
+    Dump(@"nothing typed is lost: the new host has it all, unsaved", ^(int status, NSString *out) {
         GCHECK(status == 0);
         GCHECK([out containsString:@"beta\nunsaved-edit\nafter-kill\n"]);
         GCHECK([out containsString:@"unsaved)"]);
