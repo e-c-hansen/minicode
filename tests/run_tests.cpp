@@ -71,6 +71,7 @@
 #include "FindRules.h"
 #include "PageMeasure.h"
 #include "HintsSearch.h"
+#include "TermDrop.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
 #include <atomic>
@@ -11295,6 +11296,7 @@ int main() {
     testParserFuzz();
     testTerminalHyperlinks();
     testTerminalPaste();
+    testTerminalDrop();
     testZshIntegration();
     testShellBash();
     testPpaWait();

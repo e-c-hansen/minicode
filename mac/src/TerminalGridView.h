@@ -49,6 +49,17 @@ NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
 // The paste question (several lines into a program, or control characters)
 // is up as a sheet on the window; a paste meanwhile beeps.
 @property(nonatomic, readonly) BOOL askingPaste;
+// Text sent as Edit > Paste sends the pasteboard's: in brackets when the
+// program asked, after the paste question when it applies.
+- (void)pasteString:(NSString *)str;
+// Drops (Terminal.app's and iTerm's): files from Finder or the tree type
+// their paths, quoted for the shell (TermDrop), each with a space after it;
+// a picture with no file is written to a PNG in $TMPDIR/Mutible-drop and its
+// path typed; text is typed as it is. All of it as a paste, so a program
+// that asked for bracketed paste (Claude Code) reads one paste, and Claude
+// Code attaches a dropped picture. The drop focuses this terminal.
+// The folder the pictures go in, pruned of files a day old at each drop.
++ (NSString *)dropFolder;
 // Lines the view is scrolled back from the live screen (0: following the
 // output). Set to 0 by typing and pasting.
 @property(nonatomic, readonly) int scrollOffset;

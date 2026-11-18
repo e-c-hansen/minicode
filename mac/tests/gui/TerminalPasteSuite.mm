@@ -15,6 +15,12 @@
 //     is up only beeps.
 //   - Secure keyboard entry while `read -s` reads with echo off and the grid
 //     has the keyboard, off when the keyboard leaves and when echo returns.
+//   - Drops, as Terminal.app's: files type their paths quoted for the shell
+//     (a space, a quote and a $ in the names), bracketed at zsh's prompt,
+//     a space after each, with the copy cursor, and zsh reads them back
+//     whole; the drop focuses the terminal it is on, with a split beside
+//     it; a picture with no file goes to a PNG in $TMPDIR/Mutible-drop and
+//     its path is typed; text is typed as a paste.
 // The nonce after `exec bash` is checked in terminal_exec (LooseEndsSuite).
 #import "Harness.h"
 #import "EditorController.h"
@@ -22,6 +28,7 @@
 #import "TerminalGridView.h"
 #import "TerminalPanel.h"
 #import <Carbon/Carbon.h>   // IsSecureEventInputEnabled
+#include "TermDrop.h"
 
 namespace {
 
@@ -45,11 +52,62 @@ NSString *Str(NSData *d) {
     return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"(not UTF-8)";
 }
 
+NSData *Bytes(NSString *text) { return [text dataUsingEncoding:NSUTF8StringEncoding]; }
+
+NSString *Quoted(NSString *path) {
+    return [NSString stringWithUTF8String:TermDrop::quotePath(path.fileSystemRepresentation).c_str()];
+}
+
+// A scratch pasteboard holding `objects`, as a drag's.
+NSPasteboard *DragBoard(NSArray<id<NSPasteboardWriting>> *objects) {
+    NSPasteboard *pb = [NSPasteboard pasteboardWithUniqueName];
+    [pb clearContents];
+    [pb writeObjects:objects];
+    return pb;
+}
+
+}  // namespace
+
+// What AppKit hands a drop's destination.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wprotocol"
+#pragma clang diagnostic ignored "-Wobjc-protocol-property-synthesis"
+@interface MCTerminalSuiteDrag : NSObject <NSDraggingInfo>
+@property(nonatomic, strong) NSPasteboard *board;
+@end
+@implementation MCTerminalSuiteDrag
+- (id)draggingSource { return nil; }
+- (NSPasteboard *)draggingPasteboard { return self.board; }
+- (NSDragOperation)draggingSourceOperationMask { return NSDragOperationEvery; }
+- (NSWindow *)draggingDestinationWindow { return nil; }
+- (NSPoint)draggingLocation { return NSZeroPoint; }
+- (NSInteger)draggingSequenceNumber { return 1; }
+@end
+#pragma clang diagnostic pop
+
+namespace {
+
+// The drag enters the grid (the operation it shows) and is dropped there,
+// as AppKit asks: entered, prepare, perform. The operation entering, or
+// NSDragOperationNone when the drop was refused.
+NSDragOperation Drop(TerminalGridView *g, NSPasteboard *pb) {
+    MCTerminalSuiteDrag *drag = [MCTerminalSuiteDrag new];
+    drag.board = pb;
+    const NSDragOperation op = [g draggingEntered:drag];
+    if (op == NSDragOperationNone || ![g prepareForDragOperation:drag] ||
+        ![g performDragOperation:drag])
+        return NSDragOperationNone;
+    return op;
+}
+
+NSString *OneLine(NSString *text) { return [[text componentsSeparatedByString:@"\n"] componentsJoinedByString:@""]; }
+
 }  // namespace
 
 @interface MCPasteState : NSObject
 @property(nonatomic, strong) EditorController *c;
-@property(nonatomic, strong) TerminalView *term;
+@property(nonatomic, strong) TerminalView *term, *other;
+@property(nonatomic, copy) NSString *dir;
 @property(nonatomic, strong) NSMutableData *sent;
 @property(nonatomic) NSUInteger alerts, sheets;
 @end
@@ -233,6 +291,92 @@ MC_GUI_SUITE(terminal_paste) {
     MCGuiStep(@"nothing sent", ^{
         GCHECK(s.sent.length == 0);
         MCGuiSetSettings(@"lsp.enabled = false\n");
+    });
+
+    // ---- drops
+    MCGuiStep(@"two files dropped at zsh's prompt: quoted, bracketed, a space after each", ^{
+        s.dir = [MCGuiProject() stringByAppendingPathComponent:@"drops"];
+        NSString *a = [s.dir stringByAppendingPathComponent:@"shot one.png"];
+        NSString *b = [s.dir stringByAppendingPathComponent:@"it's $x.png"];
+        MCGuiWriteFile(a, @"x");
+        MCGuiWriteFile(b, @"x");
+        [s.c.window makeFirstResponder:nil];
+        s.alerts = MCGuiAlertsShown().count;
+        Grid(s.term).onInput(Bytes(@"printf '<%s>\\n' "));
+        [s.sent setLength:0];
+        GCHECK(Drop(Grid(s.term), DragBoard(@[[NSURL fileURLWithPath:a], [NSURL fileURLWithPath:b]])) ==
+               NSDragOperationCopy);
+        NSString *want = [NSString stringWithFormat:@"\x1b[200~%@/shot\\ one.png %@/it\\'s\\ \\$x.png \x1b[201~",
+                                                    Quoted(s.dir), Quoted(s.dir)];
+        GCHECK_EQ_STR(Str(s.sent), want);
+        GCHECK(MCGuiAlertsShown().count == s.alerts);
+        GCHECK(s.c.window.firstResponder == Grid(s.term));
+        Grid(s.term).onInput(Bytes(@"\r"));
+    });
+    MCGuiWait(@"zsh reads each path back whole", 10, ^BOOL {
+        NSString *out = OneLine([s.term recentText:8]);
+        return [out containsString:@"/shot one.png>"] && [out containsString:@"/it's $x.png>"];
+    });
+    MCGuiWait(@"the prompt", 10, ^BOOL {
+        return s.term.atPrompt && !s.term.busy && [[s.term valueForKey:@"zleReady"] boolValue];
+    });
+    MCGuiStep(@"split: the drop goes to the terminal it is on, which takes the keyboard", ^{
+        MCTerminalPanel *panel = [s.c valueForKey:@"terminalPanel"];
+        s.other = [panel splitActive];
+        GCHECK(s.other != nil && s.other != s.term);
+        [s.c.window makeFirstResponder:Grid(s.other)];
+        GCHECK(panel.activeTerminal == s.other);
+        [s.sent setLength:0];
+        NSString *a = [s.dir stringByAppendingPathComponent:@"shot one.png"];
+        GCHECK(Drop(Grid(s.term), DragBoard(@[[NSURL fileURLWithPath:a]])) == NSDragOperationCopy);
+        GCHECK([Str(s.sent) containsString:@"/shot\\ one.png \x1b[201~"]);
+        GCHECK(s.c.window.firstResponder == Grid(s.term));
+        GCHECK(panel.activeTerminal == s.term);
+        GCHECK([panel closeTerminal:s.other]);
+        s.other = nil;
+        const char etx = 0x03;   // drop the line
+        Grid(s.term).onInput([NSData dataWithBytes:&etx length:1]);
+    });
+    MCGuiWait(@"a fresh prompt", 10, ^BOOL {
+        return s.term.atPrompt && [[s.term valueForKey:@"zleReady"] boolValue];
+    });
+    MCGuiStep(@"text dropped: typed as a paste", ^{
+        [s.sent setLength:0];
+        GCHECK(Drop(Grid(s.term), DragBoard(@[@"echo dropped-$((6*7))"])) == NSDragOperationCopy);
+        GCHECK_EQ_STR(Str(s.sent), @"\x1b[200~echo dropped-$((6*7))\x1b[201~");
+        Grid(s.term).onInput(Bytes(@"\r"));
+    });
+    MCGuiWait(@"it runs", 10, ^BOOL { return [[s.term recentText:4] containsString:@"\ndropped-42"]; });
+    MCGuiWait(@"the prompt", 10, ^BOOL {
+        return s.term.atPrompt && !s.term.busy && [[s.term valueForKey:@"zleReady"] boolValue];
+    });
+    MCGuiStep(@"a picture with no file: written to a PNG in the drop folder, its path typed", ^{
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+            initWithBitmapDataPlanes:NULL pixelsWide:2 pixelsHigh:2 bitsPerSample:8 samplesPerPixel:4
+                            hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+                         bytesPerRow:0 bitsPerPixel:0];
+        NSPasteboard *pb = [NSPasteboard pasteboardWithUniqueName];
+        [pb clearContents];
+        [pb setData:rep.TIFFRepresentation forType:NSPasteboardTypeTIFF];
+        [s.sent setLength:0];
+        GCHECK(Drop(Grid(s.term), pb) == NSDragOperationCopy);
+        NSString *sent = Str(s.sent);
+        NSString *folder = [TerminalGridView dropFolder];
+        NSString *head = [NSString stringWithFormat:@"\x1b[200~%@/drop-", Quoted(folder)];
+        GCHECK([sent hasPrefix:head] && [sent hasSuffix:@".png \x1b[201~"]);
+        if (![sent hasPrefix:head]) MCGuiNote(@"sent %@, folder %@", sent, folder);
+        NSString *name = [sent hasPrefix:head] && [sent hasSuffix:@".png \x1b[201~"]
+            ? [sent substringWithRange:NSMakeRange(head.length - 5, sent.length - head.length + 5 - 7)]
+            : @"";
+        NSData *png = [NSData dataWithContentsOfFile:[folder stringByAppendingPathComponent:name]];
+        const unsigned char magic[4] = {0x89, 'P', 'N', 'G'};
+        GCHECK(png.length > 8 && memcmp(png.bytes, magic, 4) == 0);
+        if (png.length <= 8) MCGuiNote(@"no PNG at %@ in %@", name, folder);
+        const char etx = 0x03;   // drop the line
+        Grid(s.term).onInput([NSData dataWithBytes:&etx length:1]);
+    });
+    MCGuiWait(@"a fresh prompt", 10, ^BOOL {
+        return s.term.atPrompt && [[s.term valueForKey:@"zleReady"] boolValue];
     });
 
     // ---- secure keyboard entry
