@@ -35,7 +35,8 @@
 # (service minicode-android-keystore). Every Android update must be signed with
 # that one key, so keep a backup of it. MUTIBLE_NO_APK=1 releases without it.
 # The PPA upload needs gpg, the key id in MINICODE_PPA_KEY or
-# ~/.config/minicode/ppa-key-id, and Docker or the packaging tools installed
+# ~/.config/mutible/ppa-key-id (else ~/.config/minicode/ppa-key-id, its
+# place before 1.6.0), and Docker or the packaging tools installed
 # (scripts/ppa.sh); MINICODE_NO_PPA=1 releases without it. It runs last, so a
 # failed upload or build leaves the GitHub release and the cask in place, and
 # the error says what retries it alone: scripts/ppa.sh VERSION for a failed
@@ -102,9 +103,11 @@ fi
 PPA_KEY=""
 if [ -z "${MINICODE_NO_PPA:-}" ]; then
     PPA_KEY="${MINICODE_PPA_KEY:-}"
-    if [ -z "$PPA_KEY" ] && [ -s "$HOME/.config/minicode/ppa-key-id" ]; then
-        PPA_KEY="$(tr -d '[:space:]' < "$HOME/.config/minicode/ppa-key-id")"
-    fi
+    for keyfile in "$HOME/.config/mutible/ppa-key-id" "$HOME/.config/minicode/ppa-key-id"; do
+        if [ -z "$PPA_KEY" ] && [ -s "$keyfile" ]; then
+            PPA_KEY="$(tr -d '[:space:]' < "$keyfile")"
+        fi
+    done
 fi
 if [ -n "$PPA_KEY" ]; then
     if ! command -v gpg >/dev/null || ! gpg --list-secret-keys "$PPA_KEY" >/dev/null 2>&1; then
@@ -141,7 +144,7 @@ ppa_step() {
 if [ -n "$LINUX_ONLY" ]; then
     if [ -z "$PPA_KEY" ]; then
         echo "error: a Linux-only release is the PPA upload, and there is no signing key" >&2
-        echo "       (MINICODE_PPA_KEY or ~/.config/minicode/ppa-key-id; packaging/PPA.md)" >&2
+        echo "       (MINICODE_PPA_KEY or ~/.config/mutible/ppa-key-id; packaging/PPA.md)" >&2
         exit 1
     fi
 
@@ -301,7 +304,7 @@ if [ -n "${MINICODE_NO_PPA:-}" ]; then
     echo "==> Skipping the Ubuntu PPA (MINICODE_NO_PPA is set)"
 elif [ -z "$PPA_KEY" ]; then
     echo "==> Skipping the Ubuntu PPA: no signing key configured (MINICODE_PPA_KEY or"
-    echo "    ~/.config/minicode/ppa-key-id; packaging/PPA.md has the one-time setup)"
+    echo "    ~/.config/mutible/ppa-key-id; packaging/PPA.md has the one-time setup)"
 else
     ppa_step "everything else is released" || PPA_FAILED=1
 fi

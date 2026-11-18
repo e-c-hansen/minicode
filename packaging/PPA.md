@@ -1,34 +1,52 @@
-# MiniCode on Ubuntu through a Launchpad PPA
+# mutible on Ubuntu through a Launchpad PPA
 
 The GTK 4 port is packaged for Ubuntu in `debian/` at the top of the
 repository, and published as source packages to the PPA
 `ppa:echansen/minicode`, where Launchpad builds the binaries. People on
-Ubuntu then install and update MiniCode with apt.
+Ubuntu then install and update mutible with apt.
+
+mutible was called minicode until 1.6.0. The PPA kept its name, since
+Launchpad cannot rename one; the source package and the app's package are
+`mutible` from 1.6.0, and `minicode` is a transitional package (below).
 
 ## Installing it (for users)
 
     sudo add-apt-repository ppa:echansen/minicode
-    sudo apt install minicode
+    sudo apt install mutible
 
-That gives `minicode` on the PATH, MiniCode in the app grid, and its manual
-page. Updates arrive with everything else: Software Updater, or
+That gives `mutible` (and `mbl`) on the PATH, mutible in the app grid, and
+its manual page. Updates arrive with everything else: Software Updater, or
 `sudo apt update && sudo apt upgrade`.
+
+Anyone who installed `minicode` from the PPA gets mutible by upgrading:
+the `minicode` package 1.6.0 is an empty transitional package that depends
+on `mutible`, which takes over its files, `/usr/bin/minicode` included (now
+a link to `mutible` that says it was renamed). `apt upgrade` installs the
+new package; `apt-get upgrade` holds it back, and `sudo apt install mutible`
+then does it. Afterwards `sudo apt remove minicode` removes only the empty
+package. On its first launch mutible copies the old settings, sessions and
+downloaded tectonic from `~/.config/minicode`, `~/.local/state/minicode`
+and `~/.local/share/minicode`, and a launcher pinned to the dock has to be
+pinned again, since the app id changed to `ai.ible.Mutible`.
 
 apt also installs the recommended packages by default: `gstreamer1.0-libav`
 and the base and good GStreamer plugins (so H.264 video and AAC audio play),
 `git` for the Source Control panel, and `curl` for downloading tectonic, the
 LaTeX preview's typesetter, which is not in Ubuntu's archive and is fetched
-into `~/.local/share/minicode/bin` the first time a `.tex` file is opened
+into `~/.local/share/mutible/bin` the first time a `.tex` file is opened
 and you ask for it. Language servers are suggestions: `sudo apt install
 clangd` and the like, when you want them.
 
-If you built MiniCode yourself earlier and installed it into your home
-folder, remove that copy first, or it shadows the packaged one: `~/.local/bin`
-comes before `/usr/bin` on the PATH, and GNOME prefers a launcher in
-`~/.local/share/applications` over the system one of the same name.
+If you built mutible (or minicode) yourself earlier and installed it into
+your home folder, remove that copy first, or it shadows the packaged one:
+`~/.local/bin` comes before `/usr/bin` on the PATH, and GNOME prefers a
+launcher in `~/.local/share/applications` over the system one of the same
+name.
 
-    rm -f ~/.local/bin/minicode \
+    rm -f ~/.local/bin/mutible ~/.local/bin/mbl ~/.local/bin/minicode \
+          ~/.local/share/applications/ai.ible.Mutible.desktop \
           ~/.local/share/applications/org.minicode.Editor.desktop \
+          ~/.local/share/icons/hicolor/*/apps/ai.ible.Mutible.png \
           ~/.local/share/icons/hicolor/*/apps/org.minicode.Editor.png
     update-desktop-database ~/.local/share/applications
     gtk4-update-icon-cache -f -t ~/.local/share/icons/hicolor
@@ -37,7 +55,7 @@ Rebuild the icon cache, not just the launcher's. The old cache still lists
 the deleted icons, and since it sits ahead of the system one, the dock looks
 there, finds no file, and shows a black square instead of the icon.
 
-To remove it again: `sudo apt remove minicode`, and
+To remove it again: `sudo apt remove mutible minicode`, and
 `sudo add-apt-repository --remove ppa:echansen/minicode` to drop the PPA.
 
 The PPA builds for Ubuntu 26.04 LTS (resolute). Other releases are not
@@ -124,22 +142,25 @@ the `.asc` file into the form. If it does not ask, skip this.
 
 At <https://launchpad.net/~echansen/+activate-ppa> create a PPA with URL
 `minicode`, display name `MiniCode`, and a line of description (for example
-"MiniCode, a small native code editor, for Ubuntu"). Then under the PPA's
-"Change details":
+"MiniCode, a small native code editor, for Ubuntu"). (That is the PPA made
+on 2026-10-07, before the rename; Launchpad cannot rename a PPA, so it
+keeps the URL, and the display name and description can be changed to
+mutible's under "Change details".) Then under the PPA's "Change details":
 
 - Processors: amd64 is on by default. Tick arm64 too if you want builds for
   ARM machines.
-- "Publish debug symbols" makes the `minicode-dbgsym` package available, for
+- "Publish debug symbols" makes the `mutible-dbgsym` package available, for
   readable crash traces. Optional.
 
 ### 7. Tell ppa.sh which key to use
 
-    mkdir -p ~/.config/minicode
-    echo FINGERPRINT > ~/.config/minicode/ppa-key-id
+    mkdir -p ~/.config/mutible
+    echo FINGERPRINT > ~/.config/mutible/ppa-key-id
 
 (or export `MINICODE_PPA_KEY=FINGERPRINT` instead). Only the id goes in that
-file, never key material, and nothing under `~/.config/minicode` is in the
-repository.
+file, never key material, and nothing under `~/.config/mutible` is in the
+repository. Until 1.6.0 the file was `~/.config/minicode/ppa-key-id`, which
+ppa.sh and release.sh still read while the new one is missing.
 
 ### 8. The first upload
 
@@ -147,27 +168,27 @@ Docker Desktop must be running (`open -a Docker`). Check everything first,
 which signs the package (gpg asks for the passphrase) and runs dput's
 checks but sends nothing:
 
-    scripts/ppa.sh --simulate 1.4.12
+    scripts/ppa.sh --simulate 1.6.0
 
 then upload the current release for real:
 
-    scripts/ppa.sh 1.4.12
+    scripts/ppa.sh 1.6.0
 
 Launchpad mails the address on the key when the upload is accepted (or
 rejected, with the reason), then builds it; the build log and status are at
 <https://launchpad.net/~echansen/+archive/ubuntu/minicode/+packages>. A
 build takes about 35 minutes, and publishing a few more after that, before
-`apt install minicode` finds it.
+`apt install mutible` finds it.
 
 ppa.sh waits for that build (`scripts/ppa-wait.sh`, which reads the PPA's
 public build records once a minute) and fails unless every build of the
 version is "Successfully built", printing the build log's address; 1.5.13
 failed to build and went unnoticed for a release, because the scripts used
 to stop at dput. Its exit status says what is left: 3, the build failed,
-so a fix goes out as the next revision (`scripts/ppa.sh 1.4.12 2`); 4, it
+so a fix goes out as the next revision (`scripts/ppa.sh 1.6.0 2`); 4, it
 stopped waiting (no build record after 30 minutes, which usually means
 Launchpad rejected the upload, or no end after 4 hours), and
-`scripts/ppa-wait.sh 1.4.12` waits again. `--no-wait` (or
+`scripts/ppa-wait.sh 1.6.0` waits again. `--no-wait` (or
 `MINICODE_PPA_NO_WAIT=1`, which release.sh passes on) uploads without
 waiting.
 
@@ -199,7 +220,7 @@ up another:
 
 2. Send it to the keyserver and add it on Launchpad, as in steps 2 and 4
    (the confirmation mail is decrypted on the new machine, with the new key).
-3. Put its fingerprint in `~/.config/minicode/ppa-key-id`, as in step 7.
+3. Put its fingerprint in `~/.config/mutible/ppa-key-id`, as in step 7.
 4. Install the tools the container has, since there is no Docker there:
 
        sudo apt install --no-install-recommends debhelper devscripts \
@@ -214,19 +235,19 @@ from either machine read the same.
 
 ## How a release flows
 
-`scripts/release.sh 1.4.13` does what it always did (tests, stamping, the
+`scripts/release.sh 1.6.1` does what it always did (tests, stamping, the
 zip, the APK, the GitHub release, the cask) and then, as its last step, runs
-`scripts/ppa.sh 1.4.13` when a key is configured. With no key it prints that
+`scripts/ppa.sh 1.6.1` when a key is configured. With no key it prints that
 it skipped the PPA and why. With a key it checks at the start that gpg has
 the secret key and that Docker is running, before anything is pushed, and
 `MINICODE_NO_PPA=1` releases without the PPA. If the upload itself fails,
-the rest of the release is already out, and `scripts/ppa.sh 1.4.13` retries
+the rest of the release is already out, and `scripts/ppa.sh 1.6.1` retries
 it alone.
 
-`scripts/release.sh --linux 1.4.13` is the release for a change only Ubuntu
+`scripts/release.sh --linux 1.6.1` is the release for a change only Ubuntu
 users would notice, and it runs on the ThinkPad as well as the Mac: it runs
 the tests, stamps the version into `Info.plist` (the Linux build reads its
-version from there), commits, pushes `main` with the tag `v1.4.13`, and
+version from there), commits, pushes `main` with the tag `v1.6.1`, and
 uploads to the PPA. There is no GitHub Release, zip, APK or cask, so
 Homebrew users and Obtainium stay on the last full release; Obtainium in
 particular would find no APK in a release without one. The next full
@@ -235,7 +256,7 @@ Either kind of release refuses a version whose tag already exists.
 
 `scripts/ppa.sh VERSION` does this:
 
-1. Makes `minicode_VERSION.orig.tar.gz` with `git archive` of the tag
+1. Makes `mutible_VERSION.orig.tar.gz` with `git archive` of the tag
    `vVERSION`, leaving out `debian/` (the tag is fetched from GitHub first if
    it is not in the local repository, since `gh release create` makes it
    there), and compresses it with zlib at level 9 and a header with no name
@@ -257,22 +278,29 @@ Either kind of release refuses a version whose tag already exists.
    and signs that the same way.
 5. Uploads with `dput ppa:echansen/minicode` from where it built.
 
-The committed `debian/changelog` is only a placeholder, numbered `0~local-0`
-so that apt replaces anything built from it; each upload's changelog is the
-single entry ppa.sh writes. The release history lives in git and on the PPA.
+The committed `debian/changelog` numbers builds from a checkout: its
+newest entry is `mutible (1.6.0-0)`, below every upload of 1.6.0 (so apt
+replaces a build from it) and at 1.6.0, so its `minicode` transitional
+package is not one that `mutible`'s `Breaks: minicode (<< 1.6.0~)` refuses.
+Each upload's changelog is the single entry ppa.sh writes; when the
+committed newest entry is for the release being uploaded (1.6.0's says
+that minicode is now mutible), its lines are added to that entry. The
+release history lives in git and on the PPA. Releases before 1.6.0 were
+the source package `minicode`, which ppa.sh no longer builds, and
+`scripts/ppa-wait.sh` looks them up under that name.
 
 ### Version numbers
 
-An upload of release 1.4.13 is numbered `1.4.13-1~ppa1~resolute1`:
+An upload of release 1.6.1 is numbered `1.6.1-1~ppa1~resolute1`:
 
-- `1.4.13` is the release, from the command line.
+- `1.6.1` is the release, from the command line.
 - `-1` is the Debian revision, always 1 here.
 - `~ppa1` counts uploads of this release. Launchpad never accepts the same
   version twice, even after a deletion, so a packaging fix for a release
-  already uploaded goes out as `scripts/ppa.sh 1.4.13 2`, which makes
+  already uploaded goes out as `scripts/ppa.sh 1.6.1 2`, which makes
   `~ppa2`; ppa.sh refuses a number the PPA already has. The tilde sorts
-  before anything, so `1.4.13-1~ppa2` is newer than `~ppa1` but older than a
-  plain `1.4.13-1`, should Ubuntu itself ever package MiniCode.
+  before anything, so `1.6.1-1~ppa2` is newer than `~ppa1` but older than a
+  plain `1.6.1-1`, should Ubuntu itself ever package mutible.
 - `~resolute1` names the Ubuntu series, so the same release can go to
   several series with distinct versions, and an older series' build
   (`~noble1`) sorts below a newer one's, which keeps upgrades between Ubuntu
@@ -283,14 +311,14 @@ its `~ppaN`, so apt always upgrades to the newest release.
 
 ### Other Ubuntu releases
 
-`MINICODE_PPA_SERIES=noble scripts/ppa.sh 1.4.13` would build for 24.04, but
+`MINICODE_PPA_SERIES=noble scripts/ppa.sh 1.6.1` would build for 24.04, but
 that has not been tried: 24.04 has GTK 4.14, VTE 0.76 and WebKitGTK 2.44,
 older than the 26.04 versions the port was developed and checked against,
 and Launchpad's build log is where you would find out whether it compiles.
 
 ## Checking the packaging without uploading
 
-    scripts/ppa.sh --dry-run 1.4.12
+    scripts/ppa.sh --dry-run 1.6.0
 
 builds the unsigned source package into `build/ppa/` and lints it, with no
 key and no upload. To build the binary package from it the way Launchpad
@@ -299,29 +327,49 @@ itself with no network and as an ordinary user):
 
     docker run --name mc-deps -v "$PWD/build/ppa:/src:ro" ubuntu:26.04 bash -c '
       apt-get update && apt-get install -y --no-install-recommends build-essential
-      cp /src/* /tmp && apt-get build-dep -y --no-install-recommends /tmp/minicode_*.dsc
+      cp /src/* /tmp && apt-get build-dep -y --no-install-recommends /tmp/mutible_*.dsc
       useradd -m builder'
-    docker commit mc-deps minicode-builddeps && docker rm mc-deps
-    docker run --rm --network none -v "$PWD/build/ppa:/src:ro" minicode-builddeps bash -c '
+    docker commit mc-deps mutible-builddeps && docker rm mc-deps
+    docker run --rm --network none -v "$PWD/build/ppa:/src:ro" mutible-builddeps bash -c '
       mkdir /b && chown builder /b && su builder -c "cd /b && cp /src/* . &&
-        dpkg-source -x minicode_*.dsc m && cd m && dpkg-buildpackage -b -us -uc"'
+        dpkg-source -x mutible_*.dsc m && cd m && dpkg-buildpackage -b -us -uc"'
 
 The image with the build dependencies is about 1.9 GB; remove it afterwards
-with `docker rmi minicode-builddeps`.
+with `docker rmi mutible-builddeps`.
 
-## What the package holds
+## What the packages hold
 
-- `/usr/bin/minicode`, built with every panel forced on (terminal, browser,
+The source package `mutible` builds two binary packages (`debian/control`).
+
+`mutible`, the app, which takes every file the Meson build installs
+(`debian/mutible.install`; `dh_missing --fail-missing` fails the build on
+one the list leaves out):
+
+- `/usr/bin/mutible`, built with every panel forced on (terminal, browser,
   PDF and LaTeX preview, web pictures in Markdown), so a missing build
-  dependency fails the build rather than quietly dropping a panel.
-- `/usr/share/applications/org.minicode.Editor.desktop`, with
-  `Exec=/usr/bin/minicode %f`, and the icon at five sizes under
-  `/usr/share/icons/hicolor/*/apps/org.minicode.Editor.png`. The launcher,
-  the icons and the GTK application id share the name `org.minicode.Editor`,
+  dependency fails the build rather than quietly dropping a panel; and
+  beside it `mbl` and `minicode`, links to it (`minicode` says it is now
+  mutible).
+- `/usr/share/applications/ai.ible.Mutible.desktop`, with
+  `Exec=/usr/bin/mutible %f`, and the icon at five sizes under
+  `/usr/share/icons/hicolor/*/apps/ai.ible.Mutible.png`. The launcher,
+  the icons and the GTK application id share the name `ai.ible.Mutible`,
   which is how GNOME matches the window to its dock icon (see
   BUILD-LINUX.md).
-- The manual page, `minicode(1)`.
-- `minicode-dbgsym`, the debugging symbols, built automatically.
+- `/usr/share/mutible/`: the terminal's browser script and shell
+  integrations, and the Claude Code skill.
+- The manual page, `mutible(1)`, with `mbl(1)` and `minicode(1)` linked to
+  it.
+- `mutible-dbgsym`, the debugging symbols, built automatically.
+
+It has `Breaks` and `Replaces` on `minicode (<< 1.6.0~)`, so it takes over
+`/usr/bin/minicode` and the old manual page's name from an installed
+minicode of before the rename.
+
+`minicode`, the transitional package: architecture all, section oldlibs,
+depending on `mutible (>= ${binary:Version})`, and holding nothing but its
+copyright and changelog. It is what brings mutible to everyone who had
+installed minicode, and can be removed once mutible is in.
 
 The build runs the port's tests (`meson test`) and the core suite (`make
 test` at the top level); neither needs a display or the network, and
@@ -337,10 +385,10 @@ Launchpad's builders have no network. `DEB_BUILD_OPTIONS=nocheck` skips them.
 - **Rejected: "Signer has no upload rights" or "not a valid key".** The key
   that signed is not on the Launchpad account that owns the PPA (step 4), or
   `ppa-key-id` names a different key.
-- **Rejected: "File minicode_X.orig.tar.gz already exists ... different
+- **Rejected: "File mutible_X.orig.tar.gz already exists ... different
   contents".** The tarball for that release was made differently before (a
   different git version can change `git archive`'s output). Upload the
   revision with `-sd`, which leaves the tarball out: ppa.sh does that for
   any `~ppa2` and later.
 - **Rejected: the version is already there.** Give a higher revision:
-  `scripts/ppa.sh 1.4.13 2`.
+  `scripts/ppa.sh 1.6.1 2`.

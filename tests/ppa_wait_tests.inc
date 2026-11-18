@@ -14,9 +14,11 @@ namespace {
 namespace pfs = std::filesystem;
 
 // One build record as getBuildRecords lists it (the fields the script reads).
+// The source package was minicode until 1.6.0 and is mutible since.
 std::string lpRecord(const std::string &version, const std::string &state,
-                     const std::string &arch = "amd64", const std::string &deps = "") {
-    return "{\"source_package_name\": \"minicode\", \"source_package_version\": \"" + version +
+                     const std::string &arch = "amd64", const std::string &deps = "",
+                     const std::string &source = "minicode") {   // rename-mutible: keep
+    return "{\"source_package_name\": \"" + source + "\", \"source_package_version\": \"" + version +
            "\", \"arch_tag\": \"" + arch + "\", \"buildstate\": \"" + state +
            "\", \"dependencies\": " + (deps.empty() ? "null" : "\"" + deps + "\"") +
            ", \"build_log_url\": \"https://launchpad.test/log/" + version + "-" + arch +
@@ -180,6 +182,26 @@ void testPpaWait() {
                        lpRecord(v15, "Successfully built")})},
             "1.5.15", "MINICODE_PPA_SERIES=questing");
         CHECK(series.status == 1);
+    }
+    {   // From 1.6.0 the source package is mutible: a record of the same
+        // version under the old name is not this upload's.
+        const std::string v160 = "1.6.0-1~ppa1~resolute1";
+        PpaWait r = runPpaWait(root, "renamed",
+            {lpAnswer({lpRecord(v160, "Failed to build", "amd64", "", "minicode"),   // rename-mutible: keep
+                       lpRecord(v160, "Currently building", "amd64", "", "mutible")}),
+             lpAnswer({lpRecord(v160, "Failed to build", "amd64", "", "minicode"),   // rename-mutible: keep
+                       lpRecord(v160, "Successfully built", "amd64", "", "mutible")})},
+            "1.6.0");
+        CHECK(r.status == 0);
+        CHECK(ppaHas(r.out, "Waiting for Launchpad to build mutible " + v160));
+        CHECK(ppaHas(r.out, "Launchpad built " + v160));
+        // And an upload from before 1.6.0 is looked for under minicode.
+        PpaWait old = runPpaWait(root, "old-name",
+            {lpAnswer({lpRecord(v15, "Successfully built", "amd64", "", "mutible")})}, "1.5.15",
+            "MINICODE_PPA_ACCEPT_MINUTES=2");
+        CHECK(old.status == 3);
+        CHECK(ppaHas(old.out, "Waiting for Launchpad to build minicode " + v15));   // rename-mutible: keep
+        if (r.status != 0) std::printf("    output:\n%s\n", r.out.c_str());
     }
     {   // Usage.
         CHECK(runPpaWait(root, "usage", {lpAnswer({})}, "1.5").status == 2);

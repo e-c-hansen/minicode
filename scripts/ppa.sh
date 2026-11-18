@@ -1,12 +1,19 @@
 #!/bin/bash
-# Build MiniCode's Ubuntu source package and upload it to the Launchpad PPA.
-#   scripts/ppa.sh 1.4.12             uploads 1.4.12-1~ppa1~resolute1
-#   scripts/ppa.sh 1.4.12 2           a packaging fix for the same release: ~ppa2
-#   scripts/ppa.sh --dry-run 1.4.12   builds and lints only, into build/ppa/;
+# Build mutible's Ubuntu source package and upload it to the Launchpad PPA.
+#   scripts/ppa.sh 1.6.0              uploads 1.6.0-1~ppa1~resolute1
+#   scripts/ppa.sh 1.6.0 2            a packaging fix for the same release: ~ppa2
+#   scripts/ppa.sh --dry-run 1.6.0    builds and lints only, into build/ppa/;
 #                                     needs no key, signs and sends nothing
-#   scripts/ppa.sh --simulate 1.4.12  everything, signing included, but dput
+#   scripts/ppa.sh --simulate 1.6.0   everything, signing included, but dput
 #                                     only checks (dput -s) and sends nothing
-#   scripts/ppa.sh --no-wait 1.4.12   uploads without waiting for the build
+#   scripts/ppa.sh --no-wait 1.6.0    uploads without waiting for the build
+#
+# The source package is mutible from 1.6.0, built into two binaries: mutible,
+# and minicode, the transitional package for the name before 1.6.0 (see
+# debian/control). Releases before 1.6.0 were the source package minicode,
+# which this debian/ cannot build, so they are refused. The PPA keeps its
+# name, ppa:echansen/minicode: Launchpad cannot rename one, and the users who
+# added it get mutible from it by upgrading.
 #
 # After a real upload it waits for Launchpad to build the package
 # (scripts/ppa-wait.sh, about 35 minutes) and fails unless every build of it
@@ -18,11 +25,14 @@
 # anything else, nothing was uploaded.
 #
 # The version given here is the one source of truth, as in release.sh: the
-# changelog entry is written from it by dch, never by hand. Launchpad builds
-# the binaries from the source package, so only that is made here.
+# changelog entry is written from it by dch, never by hand. When the
+# committed changelog's newest entry is this release's (1.6.0-0 for 1.6.0,
+# numbered below every upload of it so that apt replaces a build from a
+# checkout), its lines are added to the upload's entry. Launchpad builds the
+# binaries from the source package, so only that is made here.
 #
 # What goes in:
-#   - the upstream tarball, minicode_VERSION.orig.tar.gz, is `git archive` of
+#   - the upstream tarball, mutible_VERSION.orig.tar.gz, is `git archive` of
 #     the tag vVERSION minus debian/ (fetched from origin if it is not here
 #     yet; release.sh lets gh create the tag on GitHub), compressed by
 #     gzip_zlib below. That gives the same bytes every time and on every
@@ -46,7 +56,8 @@
 # in a scratch folder instead, and dput uses the host's own gpg.
 #
 # A real upload needs gpg and the key id in MINICODE_PPA_KEY or
-# ~/.config/minicode/ppa-key-id. The key must be one registered to the
+# ~/.config/mutible/ppa-key-id (else ~/.config/minicode/ppa-key-id, where it
+# was before 1.6.0). The key must be one registered to the
 # Launchpad account that owns the PPA (the Mac and the ThinkPad each have
 # their own); see packaging/PPA.md for the one-time setup.
 #   MINICODE_PPA_SERIES   Ubuntu series to build for (default resolute, 26.04)
@@ -69,12 +80,20 @@ done
 VERSION="${1:?usage: scripts/ppa.sh [--dry-run|--simulate|--no-wait] <version> [ppa revision]   e.g. 1.4.12}"
 REV="${2:-1}"
 SERIES="${MINICODE_PPA_SERIES:-resolute}"
-PPA="${MINICODE_PPA:-ppa:echansen/minicode}"
-IMAGE="minicode-ppa"
-KEYFILE="$HOME/.config/minicode/ppa-key-id"
+PPA="${MINICODE_PPA:-ppa:echansen/minicode}"   # rename-mutible: keep
+IMAGE="mutible-ppa"
+KEYFILE="$HOME/.config/mutible/ppa-key-id"
+# Where the key id was kept before 1.6.0, read while the new file is missing.
+OLD_KEYFILE="$HOME/.config/minicode/ppa-key-id"   # rename-mutible: keep
+if ! [ -s "$KEYFILE" ] && [ -s "$OLD_KEYFILE" ]; then KEYFILE="$OLD_KEYFILE"; fi
 
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if ! [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
     echo "error: version must look like 1.2.0, got '$VERSION'" >&2; exit 1
+fi
+if (( BASH_REMATCH[1] < 1 || (BASH_REMATCH[1] == 1 && BASH_REMATCH[2] < 6) )); then
+    echo "error: $VERSION is from before 1.6.0, when the source package was minicode;" >&2
+    echo "       this debian/ builds mutible, from 1.6.0 on" >&2
+    exit 1
 fi
 if ! [[ "$REV" =~ ^[1-9][0-9]*$ ]]; then
     echo "error: the PPA revision must be a number from 1, got '$REV'" >&2; exit 1
@@ -88,9 +107,9 @@ PPA_NAME="${BASH_REMATCH[2]}"
 # The Debian revision is always 1; ~ppaN counts uploads of this release and
 # ~SERIES1 keeps one upload per Ubuntu series apart. See packaging/PPA.md.
 PKGVER="$VERSION-1~ppa$REV~${SERIES}1"
-ORIG="minicode_$VERSION.orig.tar.gz"
-DSC="minicode_${PKGVER}.dsc"
-CHANGES="minicode_${PKGVER}_source.changes"
+ORIG="mutible_$VERSION.orig.tar.gz"
+DSC="mutible_${PKGVER}.dsc"
+CHANGES="mutible_${PKGVER}_source.changes"
 # The upstream tarball goes up with the first upload of a release only;
 # Launchpad already holds it for ~ppa2 and later.
 if [ "$REV" = 1 ]; then SRCOPT=-sa; else SRCOPT=-sd; fi
@@ -162,7 +181,7 @@ fi
 # upload itself is left to say so.
 if [ -z "$DRY" ]; then
     API="https://api.launchpad.net/1.0/~$PPA_OWNER/+archive/ubuntu/$PPA_NAME"
-    if curl -fsS "$API?ws.op=getPublishedSources&source_name=minicode&exact_match=true&version=$PKGVER" 2>/dev/null |
+    if curl -fsS "$API?ws.op=getPublishedSources&source_name=mutible&exact_match=true&version=$PKGVER" 2>/dev/null |
            grep -qE "\"source_package_version\": *\"$PKGVER\""; then
         echo "error: $PKGVER is already in $PPA; give a higher PPA revision:" >&2
         echo "       scripts/ppa.sh $VERSION $((REV + 1))" >&2
@@ -171,7 +190,7 @@ if [ -z "$DRY" ]; then
 fi
 
 TMPBASE="${TMPDIR:-/tmp}"
-WORK="$(mktemp -d "${TMPBASE%/}/minicode-ppa.XXXXXX")"
+WORK="$(mktemp -d "${TMPBASE%/}/mutible-ppa.XXXXXX")"
 CID=""
 cleanup() {
     [ -n "$CID" ] && docker rm -f "$CID" >/dev/null 2>&1
@@ -196,7 +215,7 @@ out.write(struct.pack("<II", zlib.crc32(data), len(data) & 0xffffffff))
 }
 
 echo "==> Making $ORIG from v$VERSION, and debian/ from HEAD"
-git archive --format=tar --prefix="minicode-$VERSION/" "v$VERSION" -- . ':(exclude)debian' |
+git archive --format=tar --prefix="mutible-$VERSION/" "v$VERSION" -- . ':(exclude)debian' |
     gzip_zlib > "$WORK/$ORIG"
 git archive --format=tar HEAD debian > "$WORK/debian.tar"
 
@@ -226,29 +245,40 @@ fi
 
 build_run '
     mkdir -p "$B" && cd "$B"
-    cp "$IN/minicode_$VERSION.orig.tar.gz" .
-    tar xzf "minicode_$VERSION.orig.tar.gz"
-    cd "minicode-$VERSION"
+    cp "$IN/mutible_$VERSION.orig.tar.gz" .
+    tar xzf "mutible_$VERSION.orig.tar.gz"
+    cd "mutible-$VERSION"
     tar xf "$IN/debian.tar"
-    # One entry per upload, written here: the committed changelog is only a
-    # placeholder for builds from a checkout.
+    # One entry per upload, written here: the committed changelog numbers
+    # builds from a checkout. When its newest entry is for this release, the
+    # lines of that entry (up to its signature, blank lines left out) follow
+    # the first line of the entry written here.
+    NOTES=""
+    top="$(dpkg-parsechangelog -S Version)"
+    if [ "${top%-*}" = "$VERSION" ]; then
+        NOTES="$(awk "NR > 2 && /^ -- / { exit } NR > 2 && NF { print }" debian/changelog)"
+    fi
     rm debian/changelog
-    dch --create --package minicode -v "$PKGVER" -D "$SERIES" -u medium \
+    dch --create --package mutible -v "$PKGVER" -D "$SERIES" -u medium \
         "New upstream release $VERSION (tag v$VERSION)."
+    if [ -n "$NOTES" ]; then
+        NOTES="$NOTES" awk "{ print } NR == 3 { print ENVIRON[\"NOTES\"] }" debian/changelog > debian/changelog.new
+        mv debian/changelog.new debian/changelog
+    fi
     dpkg-buildpackage -S -d -us -uc "$SRCOPT" >/dev/null
     # The .buildinfo is left out of the upload: it records the .dsc checksum,
     # which signing the .dsc changes, and Launchpad does not need it.
     rm -f ../*_source.buildinfo
     sed -i "/_source\.buildinfo /d" debian/files
-    dpkg-genchanges -S "$SRCOPT" -O"../minicode_${PKGVER}_source.changes" 2>/dev/null
+    dpkg-genchanges -S "$SRCOPT" -O"../mutible_${PKGVER}_source.changes" 2>/dev/null
     cd ..
-    lintian --fail-on error,warning "minicode_${PKGVER}_source.changes" 2>/dev/null
+    lintian --fail-on error,warning "mutible_${PKGVER}_source.changes" 2>/dev/null
 '
 
 if [ -n "$DRY" ]; then
     mkdir -p build/ppa
-    rm -f build/ppa/minicode_*
-    for f in "$ORIG" "$DSC" "minicode_${PKGVER}.debian.tar.xz" "$CHANGES"; do
+    rm -f build/ppa/mutible_* build/ppa/minicode_*
+    for f in "$ORIG" "$DSC" "mutible_${PKGVER}.debian.tar.xz" "$CHANGES"; do
         fetch "$f" build/ppa/
     done
     echo "==> Dry run: the unsigned source package is in build/ppa/; nothing was signed or uploaded."
@@ -266,7 +296,7 @@ echo "==> Signing with $KEY"
 fetch "$DSC" "$WORK/$DSC"
 sign "$DSC"
 put "$WORK/$DSC" "$DSC"
-build_run 'cd "$B/minicode-$VERSION" && dpkg-genchanges -S "$SRCOPT" -O"../minicode_${PKGVER}_source.changes" 2>/dev/null'
+build_run 'cd "$B/mutible-$VERSION" && dpkg-genchanges -S "$SRCOPT" -O"../mutible_${PKGVER}_source.changes" 2>/dev/null'
 fetch "$CHANGES" "$WORK/$CHANGES"
 sign "$CHANGES"
 put "$WORK/$CHANGES" "$CHANGES"
@@ -276,12 +306,12 @@ put "$WORK/$CHANGES" "$CHANGES"
 [ -n "$NATIVE" ] || gpg --export "$KEY" | docker exec -i "$CID" gpg --quiet --import
 if [ -n "$SIMULATE" ]; then
     echo "==> Checking the upload to $PPA (dput -s: nothing is sent)"
-    build_run "cd \"\$B\" && dput -s '$PPA' \"minicode_\${PKGVER}_source.changes\""
+    build_run "cd \"\$B\" && dput -s '$PPA' \"mutible_\${PKGVER}_source.changes\""
     echo "==> Simulated: $PKGVER is signed and passes dput's checks; nothing was uploaded."
     exit 0
 fi
 echo "==> Uploading to $PPA"
-build_run "cd \"\$B\" && dput '$PPA' \"minicode_\${PKGVER}_source.changes\""
+build_run "cd \"\$B\" && dput '$PPA' \"mutible_\${PKGVER}_source.changes\""
 
 echo "==> Uploaded $PKGVER. Launchpad mails $SIGNER_EMAIL when it is accepted and"
 echo "    built; progress at https://launchpad.net/~$PPA_OWNER/+archive/ubuntu/$PPA_NAME/+packages"
