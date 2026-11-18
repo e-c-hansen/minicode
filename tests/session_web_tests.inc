@@ -1949,7 +1949,7 @@ static void testSessionWeb() {
         // The host's read: confined as the listing is, a piece at a time.
         const std::string root = Shared::resolveFolder(scratchFolder()), elsewhere = scratchFolder();
         std::string clip;
-        for (int i = 0; i < (5 << 20) + 123; i++) clip += (char)((i * 7919) >> 3);
+        for (std::uint32_t i = 0; i < (5u << 20) + 123; i++) clip += (char)((i * 7919u) >> 3);
         writeText(root + "/clip.mp4", clip);
         writeText(root + "/.hidden.png", "h");
         writeText(elsewhere + "/secret.png", "not yours");
