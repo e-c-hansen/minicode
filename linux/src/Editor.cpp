@@ -392,7 +392,7 @@ Editor::~Editor() {
     delete compare_;
     g_object_unref(welcome_);
     g_object_unref(tags_.table);
-    if (link_) link_->windowClosed(winId_);
+    if (link_ && !windowDetached_) link_->windowClosed(winId_);
     session().removeWindow(winId_);
     win_ = nullptr;
 }

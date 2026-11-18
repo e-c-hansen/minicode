@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <set>
 #include <cstdlib>
 #include <cstring>
 
@@ -300,8 +301,144 @@ std::uint64_t Link::hostWindow(std::uint64_t window) {
     return hostWindow_[window] = client_->newId();
 }
 
-void Link::windowTabs(std::uint64_t window, const Model::Window& w) {
+Json Link::tabsJson(std::uint64_t window, const Model::Window& w) const {
     Json tabs = Shared::windowJson(w);
+    Json terms = Json::array();
+    auto t = windowTerms_.find(window);
+    if (t != windowTerms_.end())
+        for (std::uint64_t id : t->second) terms.push(Json((int64_t)id));
+    tabs.set("terms", std::move(terms));
+    return tabs;
+}
+
+void Link::windowTerminals(std::uint64_t window, const Model::Window& w, std::vector<std::uint64_t> terms) {
+    windowTerms_[window] = std::move(terms);
+    windowTabs(window, w);
+}
+
+void Link::windowDetached(std::uint64_t window, const Model::Window& w) {
+    auto it = hostWindow_.find(window);
+    const bool kept = w.count() > 0 || (windowTerms_.count(window) && !windowTerms_[window].empty());
+    if (it != hostWindow_.end() && kept) {
+        // Sent again even when unchanged: its "seen" makes it the latest
+        // record a closing window left.
+        client_->windowTabs(it->second, tabsJson(window, w));
+        hostWindow_.erase(it);
+        sentTabs_.erase(window);
+        windowTerms_.erase(window);
+        return;
+    }
+    windowClosed(window);
+}
+
+namespace {
+
+// The documents and terminals a record names (its groups' tabs; "terms").
+void namedIn(const Json& tabs, std::vector<std::uint64_t>* docs, std::vector<std::uint64_t>* terms) {
+    for (const Json& g : tabs["groups"].elements())
+        for (const Json& t : g["tabs"].elements())
+            if (std::uint64_t d = (std::uint64_t)t["doc"].asInt()) docs->push_back(d);
+    for (const Json& t : tabs["terms"].elements())
+        if (std::uint64_t id = (std::uint64_t)t.asInt()) terms->push_back(id);
+}
+
+}  // namespace
+
+Link::Held Link::free(bool all) {
+    Held out;
+    if (client_->lost()) return out;
+    const Json st = client_->sessionState();
+    if (!st.isObject()) return out;
+    const Shared::ClientId me = client_->clientId();
+    std::set<std::uint64_t> live;
+    for (const auto& [w, h] : hostWindow_) live.insert(h);
+    // Held documents (with a path: one with none cannot be shown as a file's
+    // tab) and terminals, by id.
+    std::map<std::uint64_t, HeldDoc> docs;
+    for (const Json& d : st["documents"].elements()) {
+        HeldDoc h;
+        h.id = (std::uint64_t)d["doc"].asInt();
+        h.path = d["path"].asString();
+        h.dirty = d["dirty"].asBool();
+        if (h.id && !client_->isOpen(h.id)) docs[h.id] = h;
+    }
+    std::map<std::uint64_t, HeldTerm> terms;
+    for (const Json& t : st["terminals"].elements()) {
+        HeldTerm h;
+        h.id = (std::uint64_t)t["term"].asInt();
+        h.pid = (int)t["pid"].asInt();
+        h.shell = Shared::termShellFrom(t["shell"]);
+        if (h.id && h.pid > 0 && !client_->showsTerminal(h.id)) terms[h.id] = h;
+    }
+    // Every record's names; the free records; the latest of them.
+    std::set<std::uint64_t> named, namedTerms;
+    const Json* best = nullptr;
+    std::vector<const Json*> freeRecords;
+    for (const Json& win : st["windows"].elements()) {
+        const std::uint64_t id = (std::uint64_t)win["window"].asInt();
+        const bool connected = win["connected"].isBool() ? win["connected"].asBool() : true;
+        const bool mine = (Shared::ClientId)win["renderer"].asInt() == me;
+        const bool isFree = !live.count(id) && (!connected || mine);
+        std::vector<std::uint64_t> d, t;
+        namedIn(win["tabs"], &d, &t);
+        named.insert(d.begin(), d.end());
+        namedTerms.insert(t.begin(), t.end());
+        if (!isFree) {
+            // A window still open (here or in another renderer) keeps them.
+            for (std::uint64_t x : d) docs.erase(x);
+            for (std::uint64_t x : t) terms.erase(x);
+            continue;
+        }
+        freeRecords.push_back(&win);
+        if (!best || win["seen"].asInt() > (*best)["seen"].asInt()) best = &win;
+    }
+    auto take = [&](const Json& win) {
+        std::vector<std::uint64_t> d, t;
+        namedIn(win["tabs"], &d, &t);
+        for (std::uint64_t x : d) {
+            auto it = docs.find(x);
+            if (it == docs.end() || it->second.path.empty()) continue;
+            out.docs.push_back(it->second);
+            docs.erase(it);
+        }
+        for (std::uint64_t x : t) {
+            auto it = terms.find(x);
+            if (it == terms.end()) continue;
+            out.terms.push_back(it->second);
+            terms.erase(it);
+        }
+    };
+    if (all) {
+        for (const Json* w : freeRecords) take(*w);
+    } else if (best) {
+        out.window = (std::uint64_t)(*best)["window"].asInt();
+        out.tabs = (*best)["tabs"];
+        take(*best);
+    }
+    // What no record names at all (a record lost, or opened by a renderer
+    // that kept none).
+    for (const auto& [id, d] : docs)
+        if (!named.count(id) && !d.path.empty()) out.docs.push_back(d);
+    for (const auto& [id, t] : terms)
+        if (!namedTerms.count(id)) out.terms.push_back(t);
+    if (all)
+        for (const Json* w : freeRecords) out.records.push_back((std::uint64_t)(*w)["window"].asInt());
+    return out;
+}
+
+Link::Held Link::takeForWindow(std::uint64_t window) {
+    Held h = free(false);
+    if (h.window) {
+        hostWindow_[window] = h.window;
+        sentTabs_.erase(window);
+    }
+    return h;
+}
+
+Link::Held Link::allFree() { return free(true); }
+
+void Link::windowTabs(std::uint64_t window, const Model::Window& w) {
+    Json tabs = tabsJson(window, w);
     std::string dump = tabs.dump();
     auto it = sentTabs_.find(window);
     if (it != sentTabs_.end() && it->second == dump) return;
@@ -311,6 +448,7 @@ void Link::windowTabs(std::uint64_t window, const Model::Window& w) {
 
 void Link::windowClosed(std::uint64_t window) {
     sentTabs_.erase(window);
+    windowTerms_.erase(window);
     auto it = hostWindow_.find(window);
     if (it == hostWindow_.end()) return;   // never sent
     client_->windowClosed(it->second);
@@ -345,7 +483,7 @@ std::string Link::checkWindow(std::uint64_t window, const Model::Window& w) {
     // The tabs as the host has them, once the window's are sent (the strip
     // sends them as it is drawn; a change that drew nothing is sent here).
     windowTabs(window, w);
-    const Json want = Shared::windowJson(w);
+    const Json want = tabsJson(window, w);
     const Json state = c.sessionState();
     if (!state.isObject()) return "the session's host did not answer";
     const std::uint64_t onHost = hostWindow(window);
@@ -364,11 +502,70 @@ std::string Link::checkWindow(std::uint64_t window, const Model::Window& w) {
 
 // ---------------------------------------------------------------- links
 
-std::shared_ptr<Link> forFolder(const std::string& root, bool headless) {
+namespace {
+
+std::string folderKey(const std::string& root) {
     std::string folder = Shared::resolveFolder(root);
-    if (folder.empty()) folder = root;
+    return folder.empty() ? root : folder;
+}
+
+// In-process links kept while they hold what closed windows left
+// (keepWhileHolding), by folder.
+std::map<std::string, std::shared_ptr<Link>>& kept() {
+    static auto* k = new std::map<std::string, std::shared_ptr<Link>>();
+    return *k;
+}
+
+}  // namespace
+
+bool folderLost(const std::string& root) {
+    std::shared_ptr<Link> have = registry()[folderKey(root)].lock();
+    return have && have->lost();
+}
+
+void keepWhileHolding(const std::shared_ptr<Link>& link) {
+    if (!link) return;
+    auto& k = kept();
+    if (link->kind() == Link::Kind::Socket || link->lost()) {
+        if (k.count(link->folder()) && k[link->folder()] == link) k.erase(link->folder());
+        return;
+    }
+    const Json st = link->client().sessionState();
+    const bool holding = st.isObject() && (st["documents"].size() > 0 || st["terminals"].size() > 0 ||
+                                           st["windows"].size() > 0);
+    if (holding) k[link->folder()] = link;
+    else if (k.count(link->folder()) && k[link->folder()] == link) k.erase(link->folder());
+}
+
+void endDetached() {
+    for (const std::shared_ptr<Link>& l : all()) {
+        if (l->lost()) continue;
+        Shared::Client& c = l->client();
+        const Link::Held h = l->allFree();
+        for (const Link::HeldDoc& d : h.docs) {
+            c.open(d.id, "", "", nullptr);   // a seat, to close it with
+            c.close(d.id);
+        }
+        for (const Link::HeldTerm& t : h.terms) {
+            c.attachTerminal(t.id, nullptr);
+            c.closeTerminal(t.id);
+        }
+        for (std::uint64_t w : h.records) c.windowClosed(w);
+        c.settle();
+    }
+    // Kept links holding nothing now go (their hosts' threads end).
+    std::vector<std::shared_ptr<Link>> keptNow;
+    for (const auto& [folder, l] : kept()) keptNow.push_back(l);
+    for (const std::shared_ptr<Link>& l : keptNow) keepWhileHolding(l);
+}
+
+std::shared_ptr<Link> forFolder(const std::string& root, bool headless) {
+    const std::string folder = folderKey(root);
     auto& reg = registry();
-    if (std::shared_ptr<Link> have = reg[folder].lock()) return have;
+    // A link whose host went is passed over: its holders keep it until they
+    // move to the new one.
+    if (std::shared_ptr<Link> have = reg[folder].lock(); have && !have->lost()) return have;
+    if (kept().count(folder) && kept()[folder]->lost()) kept().erase(folder);
     std::shared_ptr<Link> link(new Link());
     link->folder_ = folder;
     link->wake_ = std::make_shared<Link::Wake>();
@@ -412,6 +609,7 @@ std::vector<std::shared_ptr<Link>> all() {
 
 void detachAll() {
     for (const std::shared_ptr<Link>& l : all()) l->detach();
+    kept().clear();   // in-process hosts end, their shells hung up
 }
 
 }  // namespace SessionLink

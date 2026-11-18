@@ -653,6 +653,115 @@ static void testSessionHost() {
         CHECK(a.client->sessionState()["windows"].size() == 0);
     }
 
+    GROUP("host:detach");
+    {
+        // A window closing detaches (stage 6, step 2): its document stays on
+        // the host, unsaved, with its path and history, and the renderer
+        // opens it again with an empty text and gets the host's.
+        Net net(true, true);
+        Net::Link& a = net.add(Unit::CodePoint, "gtk");
+        CHECK(a.client->settle());
+        TestMirror& ma = net.open(a, 41, u"saved\n");
+        CHECK(a.client->settle());
+        a.client->setPath(41, "/proj/renamed.txt");
+        ma.caret = ma.length();
+        ma.type(u"typed");
+        ma.type(u"!");
+        // Detached with an edit still waiting for the one in flight: both
+        // go first, then the seat.
+        CHECK(a.client->unconfirmed() == 2);
+        a.client->detach(41);
+        CHECK(a.client->isOpen(41));   // until its last message is out
+        CHECK(a.client->settle());
+        CHECK(!a.client->isOpen(41));
+        CHECK(net.host.text(41) == u"saved\ntyped!");
+        Json st = a.client->sessionState();
+        CHECK(st["documents"].size() == 1 && st["documents"][0]["path"].asString() == "/proj/renamed.txt" &&
+              st["documents"][0]["dirty"].asBool());
+        // Nothing reaches the listener after detach.
+        const int before = ma.hostEdits;
+        Net::Link& b = net.add(Unit::Utf16, "other");
+        CHECK(b.client->settle());
+        TestMirror& mb = net.open(b, 41, u"");
+        CHECK(b.client->settle());
+        CHECK(mb.text == u"saved\ntyped!");
+        mb.caret = 0;
+        mb.type(u">");
+        CHECK(b.client->settle() && a.client->settle());
+        CHECK(ma.hostEdits == before);
+        // Opened again with an empty text: the host's, and its history.
+        TestMirror again;
+        again.client = a.client.get();
+        again.doc = 41;
+        again.unit = Unit::CodePoint;
+        a.client->open(41, "/proj/renamed.txt", "", &again);
+        CHECK(a.client->settle());
+        CHECK(again.text == u">saved\ntyped!");
+        CHECK(a.client->undoInfo(41).canUndo);
+        // Kept with nobody on it, as when a renderer's connection goes.
+        a.client->detach(41);
+        b.client->detach(41);
+        CHECK(a.client->settle() && b.client->settle());
+        CHECK(net.host.text(41) == u">saved\ntyped!");
+        CHECK(a.client->sessionState()["documents"].size() == 1);
+        // Not open here: no path is sent.
+        a.client->setPath(41, "/elsewhere");
+        CHECK(a.client->sessionState()["documents"][0]["path"].asString() == "/proj/renamed.txt");
+        CHECK(a.client->takeErrors().empty() && b.client->takeErrors().empty());
+    }
+
+    GROUP("host:term-answers");
+    {
+        using Shared::termLooksLikeAnswer;
+        // What VTE (or any emulator) answers a program with.
+        CHECK(termLooksLikeAnswer("\x1b[?65;1;9c"));           // DA1
+        CHECK(termLooksLikeAnswer("\x1b[>65;8000;1c"));        // DA2
+        CHECK(termLooksLikeAnswer("\x1b[24;80R"));             // a cursor report
+        CHECK(termLooksLikeAnswer("\x1b[0n"));                 // DSR
+        CHECK(termLooksLikeAnswer("\x1b[?2004;1$y"));          // DECRQM
+        CHECK(termLooksLikeAnswer("\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\"));   // OSC 11, ST
+        CHECK(termLooksLikeAnswer("\x1b]10;rgb:cccc/cccc/cccc\x07"));      // OSC 10, BEL
+        CHECK(termLooksLikeAnswer("\x1bP>|VTE(8000)\x1b\\"));            // XTVERSION
+        CHECK(termLooksLikeAnswer("\x1b[?65;1;9c\x1b[24;80R"));           // two at once
+        // The user's keys, pastes and the app's own private keys.
+        CHECK(!termLooksLikeAnswer(""));
+        CHECK(!termLooksLikeAnswer("ls\r"));
+        CHECK(!termLooksLikeAnswer("\x1b[A"));                 // Up
+        CHECK(!termLooksLikeAnswer("\x1b[15~"));               // F5
+        CHECK(!termLooksLikeAnswer("\x1bOP"));                 // F1
+        CHECK(!termLooksLikeAnswer("\x1b[Z"));                 // Shift+Tab
+        CHECK(!termLooksLikeAnswer("\x1b[<0;10;5M"));          // a mouse press
+        CHECK(!termLooksLikeAnswer("\x1b[200~text\x1b[201~"));  // a bracketed paste
+        CHECK(!termLooksLikeAnswer("\x1b[9999~"));             // the integration's own key
+        CHECK(!termLooksLikeAnswer("\x1b["));                  // Alt+[
+        CHECK(!termLooksLikeAnswer("\x1b]11;rgb:0/0/0"));       // an OSC not ended
+        CHECK(!termLooksLikeAnswer("\x1b[0nx"));               // an answer and a key
+        CHECK(!termLooksLikeAnswer("\x1bx"));                  // Alt+x
+    }
+
+    GROUP("host:window-records");
+    {
+        // The state says which records' renderers are here, and when each
+        // was last reported: what a reattaching window chooses by.
+        Net net(true, true);
+        Net::Link& a = net.add(Unit::CodePoint, "gtk");
+        Net::Link& b = net.add(Unit::CodePoint, "gtk2");
+        Model::Window w;
+        w.setRoot("/proj");
+        w.append(11, "/proj/a.c");
+        a.client->windowTabs(5, Shared::windowJson(w));
+        b.client->windowTabs(6, Shared::windowJson(w));
+        a.client->windowTabs(7, Shared::windowJson(w));
+        net.host.disconnect(b.id);
+        const Json s = a.client->sessionState();
+        CHECK(s["windows"].size() == 3);
+        std::map<int64_t, Json> by;
+        for (const Json& j : s["windows"].elements()) by[j["window"].asInt()] = j;
+        CHECK(by[5]["connected"].asBool() && !by[6]["connected"].asBool() && by[7]["connected"].asBool());
+        CHECK(by[5]["seen"].asInt() < by[6]["seen"].asInt() && by[6]["seen"].asInt() < by[7]["seen"].asInt());
+        CHECK((Shared::ClientId)by[5]["renderer"].asInt() == a.client->clientId() && a.client->clientId() != 0);
+    }
+
     GROUP("host:id-bases");
     {
         // Each renderer takes the ids of what it opens from the base its

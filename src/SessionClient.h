@@ -99,6 +99,9 @@ public:
     // answered, or it had none left) or this connection used up its range.
     std::uint64_t newId(int timeoutMs = 10000);
     std::uint64_t idBase() const { return idBase_; }
+    // This renderer's id on the host (the Welcome's), 0 before it: what the
+    // state's windows name as the renderer that reported them.
+    ClientId clientId() const { return id_; }
     // Documents and terminals the host holds already (StateQuery) keep their
     // ids: a renderer attaching opens them under those.
 
@@ -133,6 +136,15 @@ public:
     // its history forgotten.
     void reset(DocId doc, std::string text8);
     void close(DocId doc);
+    // The document's file is now `path` (Save As, a rename): the host's
+    // state names it so, and a renderer reattaching finds it by it.
+    void setPath(DocId doc, const std::string& path);
+    // Lets go of the document and keeps it on the host (a window closing
+    // detaches, stage 6): what this renderer recorded for it is sent first,
+    // in order, then its seat goes; the listener hears nothing from now on.
+    // The host keeps its text and history for a renderer to open again
+    // (open() with an empty text gets the host's text).
+    void detach(DocId doc);
     // A read-only renderer's view of a document the host has: its text comes
     // to `listener` as one insertion, then every edit. The host neither makes
     // the document nor keeps it open for this; hostGone when it goes.
@@ -237,6 +249,11 @@ public:
     void ackTerminal(TermId t, std::size_t bytes);
     // Hangs the shell up; the listener hears nothing more.
     void closeTerminal(TermId t);
+    // No longer shows it: the listener hears nothing more, and the shell
+    // runs on for a renderer to attach to (attachTerminal).
+    void detachTerminal(TermId t);
+    // Whether this renderer shows the terminal (opened or attached here).
+    bool showsTerminal(TermId t) const { return terms_.count(t) > 0; }
 
     // ---- the workspace (SessionFiles.h): reads in the session's folder,
     // or in `window`'s when the host serves no one folder. Sent at once,
@@ -271,6 +288,7 @@ private:
         Selection lastAfter;
         bool moved = true, broken = true;
         bool fresh = true;   // the step being recorded starts anew
+        bool detaching = false;   // detach(): forgotten once its DocDetach is sent
         UndoInfo undo;
         std::unique_ptr<Model::Text> copy;
         std::vector<std::pair<const void*, Watcher>> watchers;

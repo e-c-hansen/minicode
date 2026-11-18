@@ -57,6 +57,12 @@ void Client::pump() {
             m.base = version(m.doc);
             if (Doc* d = doc(m.doc)) d->told = m.base;
         }
+        // A detached document is forgotten once its last message is out
+        // (an open() since replaced the entry, which stays).
+        if (m.kind == Kind::DocDetach) {
+            auto it = docs_.find(m.doc);
+            if (it != docs_.end() && it->second.detaching) docs_.erase(it);
+        }
         const bool needsAck = (m.kind == Kind::DocEdit && !m.ops.empty()) || m.kind == Kind::DocReset;
         if (needsAck) {
             m.seq = ++seq_;
@@ -82,6 +88,32 @@ void Client::open(DocId id, const std::string& path, std::string text8, Listener
 }
 
 void Client::view(DocId id, Listener* listener) { open(id, std::string(), std::string(), listener); }
+
+void Client::setPath(DocId id, const std::string& path) {
+    Doc* d = doc(id);
+    if (!d || d->detaching) return;
+    Message m;
+    m.kind = Kind::DocPath;
+    m.doc = id;
+    m.name = path;
+    queue(std::move(m));
+    pump();
+}
+
+void Client::detach(DocId id) {
+    Doc* d = doc(id);
+    if (!d || d->detaching) return;
+    // Its edits waiting in the outbox still go, before the DocDetach; the
+    // entry stays (for their bases and acknowledgements) until that is sent.
+    d->listener = nullptr;
+    d->watchers.clear();
+    d->detaching = true;
+    Message m;
+    m.kind = Kind::DocDetach;
+    m.doc = id;
+    queue(std::move(m));
+    pump();
+}
 
 void Client::reset(DocId id, std::string text8) {
     Doc* d = doc(id);
@@ -410,6 +442,14 @@ void Client::closeTerminal(TermId t) {
     if (!terms_.erase(t)) return;
     Message m;
     m.kind = Kind::TermClose;
+    m.term = t;
+    sendNow(std::move(m));
+}
+
+void Client::detachTerminal(TermId t) {
+    if (!terms_.erase(t)) return;
+    Message m;
+    m.kind = Kind::TermDetach;
     m.term = t;
     sendNow(std::move(m));
 }
