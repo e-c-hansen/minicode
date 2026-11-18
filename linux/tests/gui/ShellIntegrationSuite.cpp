@@ -532,4 +532,14 @@ MC_GUI_SUITE(shell_integration) {
         else EnvLock::envUnset("SHELL");
         g_remove((gHome + "/.bashrc").c_str());
     });
+    // The terminal as the suites after it expect: the usual shell, idle at
+    // its prompt. Left as it was, a program held its foreground (a LEAK),
+    // and agents' Open in Terminal waited on it in a shuffled order.
+    MCGuiStep("the usual shell started again", [] {
+        gOldPid = term()->shellPid();
+        typeLine("exit");
+    });
+    MCGuiWait("it is at its prompt, nothing running", 30, [] {
+        return shellAtPrompt() && !term()->busy();
+    });
 }

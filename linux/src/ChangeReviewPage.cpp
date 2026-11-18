@@ -128,9 +128,13 @@ void ChangeReviewPage::build() {
     gtk_widget_set_margin_end(bar, 12);
     gtk_widget_set_margin_top(bar, 8);
     gtk_widget_set_margin_bottom(bar, 6);
+    // Both shorten with "…" before Apply to Main… is pushed past the
+    // window's edge (a worktree's long name, a narrow editor).
     title_ = gtk_label_new(title().c_str());
+    gtk_label_set_ellipsize(GTK_LABEL(title_), PANGO_ELLIPSIZE_END);
     gtk_widget_add_css_class(title_, "title-4");
     summary_ = gtk_label_new("");
+    gtk_label_set_ellipsize(GTK_LABEL(summary_), PANGO_ELLIPSIZE_END);
     gtk_widget_add_css_class(summary_, "dim-label");
     messageLabel_ = gtk_label_new("");
     gtk_label_set_ellipsize(GTK_LABEL(messageLabel_), PANGO_ELLIPSIZE_END);

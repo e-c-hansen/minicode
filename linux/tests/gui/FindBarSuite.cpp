@@ -701,6 +701,10 @@ MC_GUI_SUITE(find_bar) {
     MCGuiWait("the shell is up", 20, [] {
         return terminalText().find_first_not_of(" \n") != std::string::npos;
     });
+    // A line an earlier suite typed there and left (install_hints' "uv tool
+    // install ...") would take this one in: "stty raw" never ran, and head
+    // read a cooked line that never ended.
+    MCGuiClearTerminalLine("");
     MCGuiStep("none of the options' keys is an accelerator there", [] {
         for (const char* a : {"win.findcase", "win.findword", "win.findregex", "win.findpreservecase",
                               "win.findinselection", "win.replace"})

@@ -212,7 +212,11 @@ int gListener = -1;
 }  // namespace
 
 MC_GUI_SUITE(control) {
-    MCGuiStep("makes the files", [] {
+    MCGuiStep("makes the files; the keyboard in the tree", [] {
+        // An open lands beside a user typing in the editor (in the
+        // background, said on stderr), so the first ones start with the
+        // keyboard out of it, wherever the suite before left it.
+        gtk_widget_grab_focus(MCGuiApp().tree->widget());
         g_mkdir_with_parents(F("").c_str(), 0755);
         g_file_set_contents(F("a.txt").c_str(),
                             "one\ntwo\nthree four\nfive\nsix\nseven\n", -1, nullptr);
@@ -231,6 +235,9 @@ MC_GUI_SUITE(control) {
     });
 
     // ---- open, with a line and column
+    MCGuiWait("the editor does not have the keyboard", 5, [] {
+        return !gtk_widget_has_focus(ed()->textView());
+    });
     MCGuiStep("minicode open a.txt:3:6", [] { gRun = runClient({"open", F("a.txt") + ":3:6"}); });
     MCGuiWait("the client returns", 20, [] { return gRun->done; });
     MCGuiStep("it exited 0 and printed no error", [] {

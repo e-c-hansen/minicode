@@ -315,6 +315,9 @@ MC_GUI_SUITE(palette) {
     });
     MCGuiStep("the find bar shut", [] { MCGuiKey("escape"); });
     MCGuiWait("shut", 10, [] { return !searchBarOpen(); });
+    // Other suites' files share the project, and the tree may have scrolled
+    // README.md's row out of sight: brought back before the click needs it.
+    MCGuiBringTreeRow(F("README.md"));
     MCGuiStep("the keyboard in the editor", [] { MCGuiClick(ed()->textView()); });
     MCGuiWait("it is", 10, editorHasKeyboard);
 
@@ -322,7 +325,7 @@ MC_GUI_SUITE(palette) {
     // The sheet under the box covers the tree while the palette is open, so
     // the row is found before it opens and the click aimed at its place.
     MCGuiStep("a click outside the box, on a file in the tree", [] {
-        GtkWidget* row = MCGuiFindLabel(MCGuiApp().tree->widget(), "README.md");
+        GtkWidget* row = MCGuiTreeRow(F("README.md"));
         GCHECK(row != nullptr);
         graphene_point_t c = GRAPHENE_POINT_INIT(row ? gtk_widget_get_width(row) / 2.0f : 0,
                                                  row ? gtk_widget_get_height(row) / 2.0f : 0);

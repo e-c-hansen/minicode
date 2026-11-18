@@ -107,7 +107,9 @@ double browserBarX() {
 }
 double terminalBarY() { return box(pane(kTerminal)).origin.y - WindowLayout::kBar / 2.0; }
 
-GtkWidget* treeRow(const std::string& name) { return MCGuiFindLabel(MCGuiApp().tree->widget(), name); }
+// A file's row by its path: other suites' files share the project, and a
+// row the tree has scrolled past is none (MCGuiBringTreeRow first).
+GtkWidget* treeRow(const std::string& name) { return MCGuiTreeRow(F(name)); }
 
 // Each pane in `shown` brought on screen by its key, one at a time.
 void showOnly(int shown) {
@@ -145,9 +147,9 @@ MC_GUI_SUITE(layout) {
         MCGuiOpenFileKept(F("layout-a.txt"));
     });
     MCGuiWait("it shows; the browser and the terminal start hidden", 10, [] {
-        return MCGuiApp().editor->currentPath() == F("layout-a.txt") && showing(1 << kEditor) &&
-               treeRow("layout-b.txt") != nullptr;
+        return MCGuiApp().editor->currentPath() == F("layout-a.txt") && showing(1 << kEditor);
     });
+    MCGuiBringTreeRow(F("layout-b.txt"));
 
     // ------------------------------------------------ the browser beside
     MCGuiStep("Toggle Browser, by its key", [] { MCGuiKey("ctrl+shift+b"); });
@@ -329,12 +331,14 @@ MC_GUI_SUITE(layout) {
         MCGuiKey("ctrl+shift+e");
     });
     MCGuiWait("it hides", 10, [] { return showing((1 << kBrowser) | (1 << kTerminal)); });
+    MCGuiBringTreeRow(F("layout-b.txt"));
     MCGuiStep("a file clicked in the tree", [] { MCGuiClick(treeRow("layout-b.txt")); });
     MCGuiWait("it shows in the editor, beside the browser", 10, [] {
         return MCGuiApp().editor->currentPath() == F("layout-b.txt") && showing(7);
     });
     showOnly(0);
     MCGuiWait("with all three hidden, the tree has the window", 10, [] { return L()->rightCollapsed(); });
+    MCGuiBringTreeRow(F("layout-a.txt"));
     MCGuiStep("a file clicked in the tree", [] { MCGuiClick(treeRow("layout-a.txt")); });
     MCGuiWait("the right side opens with the editor, and the file in it", 10, [] {
         return MCGuiApp().editor->currentPath() == F("layout-a.txt") && showing(1 << kEditor) &&
