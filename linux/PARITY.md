@@ -1408,7 +1408,9 @@ its server comes first here (2.0).
   44): Show Terminal for a session waiting in a terminal, session roots
   first for a clicked path, the node appearing when `.claude/worktrees` is
   created. Open Worktree in New Window and Reveal Scratchpad in a
-  session's menu done (HANDOFF item 44).
+  session's menu done (HANDOFF item 44). The plan usage forecast under the
+  heading (the Mac's A13), with the status line log's two-press install
+  and undo, done (HANDOFF item 102, the `plan_usage` suite).
 - [x] **3.6 Waiting for you.** `ClaudeHooks`, `AttentionBoard`. Done
   (November 2026, HANDOFF item 42): the terminal's id and the two
   variables, `notify --from-hook`, `hooks --print|--install`, a dot and

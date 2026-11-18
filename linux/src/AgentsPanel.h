@@ -6,7 +6,8 @@
 // wrote or edited in three groups (In the folder, In its worktree, Outside
 // the folder), a file that is gone struck through. A click on a session or
 // group opens or closes it, a click on a file opens it. Read-only toward
-// Claude Code's data.
+// Claude Code's data. Under the heading, the plan usage forecast and the
+// status line log's action (UsageView.h, A13), as the Mac's.
 #pragma once
 
 #include <gtk/gtk.h>
@@ -17,6 +18,8 @@
 #include <vector>
 
 #include "AgentModel.h"
+
+class UsageView;
 
 class AgentsPanel {
 public:
@@ -61,11 +64,14 @@ public:
     // action by name leaves the popover open over the rows).
     void closeMenu() { dropMenu(); }
     GActionGroup* actionGroup() const { return G_ACTION_GROUP(actions_); }
+    // The plan usage section under the heading (UsageView.h).
+    UsageView* usageView() const { return usage_; }
 
 private:
     AgentModel model_;
     GtkWidget* root_ = nullptr;
     GtkWidget* summary_ = nullptr;
+    UsageView* usage_ = nullptr;
     GtkWidget* notice_ = nullptr;
     GtkWidget* scroll_ = nullptr;
     GtkWidget* list_ = nullptr;

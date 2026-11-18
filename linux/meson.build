@@ -370,6 +370,10 @@ gui_sources = [
   'src/ProcessesPanel.cpp',
   'src/AgentModel.cpp',
   'src/AgentsPanel.cpp',
+  # The panel's plan usage forecast and the status line log's two-press
+  # install and undo (A13; the core's ClaudeUsage and ClaudeStatusLine).
+  'src/UsageView.cpp',
+  'src/StatusLineOffer.cpp',
   'src/EvidencePage.cpp',
   'src/AgentWorktrees.cpp',
   'src/ChangeReviewPage.cpp',
