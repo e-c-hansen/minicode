@@ -348,6 +348,9 @@ gui_sources = [
   # actions in a copy of the desktop file (HANDOFF.md item 69).
   'src/RecentList.cpp',
   'src/DockMenu.cpp',
+  # As the whole desktop (MUTIBLE_DESKTOP=1, linux/desktop/): Suspend,
+  # Restart, Power Off and Log Out, and a window kept open (DesktopMode.h).
+  'src/DesktopMode.cpp',
   # The first launch as mutible copies what minicode kept (src/Rename.h).
   'src/MigrationLinux.cpp',
   # The palette over the window: commands, Quick Open, Go to Line, symbols.

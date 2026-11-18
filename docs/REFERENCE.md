@@ -444,6 +444,8 @@ alias mutible="$PWD/build/mutible"
 As on the Mac, `mutible` typed in a terminal gives the terminal back as soon as the window is up, and closing the terminal leaves mutible open, with no warning about a running process. A mutible that is already running opens the path itself. `mutible --foreground` keeps it in the terminal, with its output there, until it quits, and `mutible -h` lists the options.
 
 
+mutible can also be the whole desktop: a minimal Ubuntu 26.04 that boots straight into it, full screen under the cage compositor, with no desktop environment, for cheap or old hardware. One script sets it up and undoes it; [linux/desktop/README.md](../linux/desktop/README.md) has the steps, the keys, Wi-Fi, sound, power, and what it saves.
+
 [BUILD-LINUX.md](../BUILD-LINUX.md) covers installing it as a desktop app, what has been checked on it, and what still needs a person at the desktop.
 
 ## Android
