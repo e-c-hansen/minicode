@@ -468,17 +468,19 @@ MC_GUI_SUITE(processes) {
     MCGuiWait(@"the server first, the exited job folded below it", 15, ^BOOL {
         [s.panel expandAll];
         NSString *want = [NSString stringWithFormat:@" %d sleep ", s.earlyPid];
+        // RowsIn takes every terminal group's rows ("G terminal" is both
+        // terminals' prefix); the first terminal's come first, so its fold
+        // row is the first one.
         NSArray<NSString *> *rows = RowsIn(s.panel, @"G terminal");
         NSUInteger early = NSNotFound, server = NSNotFound, fold = NSNotFound;
         NSString *serverWant = [NSString stringWithFormat:@"P 0 %d ", s.serverPid];
         for (NSUInteger i = 0; i < rows.count; i++) {
             if ([rows[i] containsString:want] && [rows[i] hasSuffix:@" exited"]) early = i;
             if ([rows[i] hasPrefix:serverWant] && ![rows[i] hasSuffix:@" exited"]) server = i;
-            if ([rows[i] hasPrefix:@"X 0 "] && [rows[i] hasSuffix:@" exited"]) fold = i;
+            if (fold == NSNotFound && [rows[i] hasPrefix:@"X 0 "] && [rows[i] hasSuffix:@" exited"])
+                fold = i;
         }
-        const BOOL ok = server == 0 && fold != NSNotFound && early != NSNotFound && early > fold;
-        if (!ok) MCGuiNote(@"rows: %@", [rows componentsJoinedByString:@" / "]);
-        return ok;
+        return server == 0 && fold != NSNotFound && early == fold + 1;
     });
     MCGuiStep(@"disown, in the first terminal", ^{ [s.termA runCommand:@"disown"]; });
     MCGuiWait(@"done", 10, ^BOOL { return s.termA.atPrompt && !s.termA.busy; });
