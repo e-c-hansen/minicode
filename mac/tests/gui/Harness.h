@@ -65,7 +65,16 @@
 // `make guitest` runs every suite; `make guitest SUITES="control"` some.
 // MC_GUI_SKIP_SUITES="a b" leaves suites out (CI runs the list as two
 // processes at once, one naming its half, the other skipping it); a name
-// in either list that no suite has fails the run.
+// in either list that no suite has fails the run. MC_GUI_SHUFFLE=<seed>
+// plays the chosen suites in an order drawn from the seed, the same on
+// every machine (the soak workflow's rounds; tests/GuiRetry.h).
+// MC_GUI_RETRIES=<n> (CI sets 3): the first stage, which now waits for the
+// run rather than replacing itself with it, reads what failed and runs
+// each failed suite once more, alone, as a fresh `guitest <suite>` in a new
+// scratch world (MC_GUI_RETRY_OF names it there), its output marked
+// "    retry| "; passing then, it is a "FLAKY [suite]" line and the run
+// passes. More than n failed suites, a crash, the run's limit, or a
+// failure outside any suite retries nothing (docs/ci.md, "Retries").
 // A suite whose name starts with "_" runs only when named: it is a part
 // another suite runs in a second process (MCGuiRunChild), as BackupsSuite
 // does to SIGKILL an app and start another on what it left.

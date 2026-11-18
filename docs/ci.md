@@ -68,7 +68,8 @@ A check that fails only when the halves run together is a sharing bug,
 or a check that reads a place before it has settled (on a loaded runner it
 settles later): fix the sharing or the wait, or, only when the product's
 own timing is the cause, move the suite so it runs alone, and say so here.
-Never retry it. Found so far: markdown_side_sync failed on two of the
+The retry (below) may let such a run pass with a FLAKY line; the fix is
+still owed. Found so far: markdown_side_sync failed on two of the
 PR's four runs with the source steady at line 9,356 rather than about
 10,000. The control suite had left the project's window with the browser
 pane and its agent page showing (`browse`), which narrowed the source until
@@ -108,6 +109,9 @@ Three more kinds of line warn before anything fails:
   given (below). A bound that shows here repeatedly is being outgrown.
 - `NEAR [suite]`, under "Timing checks closest to their bounds": the ten
   timing checks with the least margin in that run.
+- `FLAKY [suite] <first failure>`: a GUI suite failed, then passed when
+  run again alone in a fresh process (see "Retries" below). The run
+  passed; the failure is still a bug to fix.
 - `LEAK [suite]` (a failure) and `LEFT [suite]` (a warning): state a GUI
   suite left for the next. LEAK is what a later suite would trip over (a
   window, a sheet or question, a zoom, a key window pinned, alert answers
@@ -149,11 +153,72 @@ what now guards against each:
   real bugs in the checks; `docs/notes/verification.md` lists them under "CI's macOS runner
   differs".
 
-There are no blanket retries, and none should be added: a check that fails
-once in ten runs is telling the truth about a race in the product or in the
-check. A retry for one named check, if ever needed, must print `FLAKY` with
-the check's name in the job summary and be listed under "Known flaky
-checks" below with its cause.
+## Retries (since 2026-11-17)
+
+Until 2026-11-17 nothing was retried. The owner then approved exactly one
+kind of retry, with a soak (below) to keep it honest:
+
+- **One retry of a failed GUI suite, in either harness.** With
+  `MC_GUI_RETRIES=3` (set in ci.yml's three GUI steps) the process that
+  starts a harness run (the Mac's first stage in `mac/tests/gui/Harness.mm`,
+  the GTK port's wrapper in `linux/tests/gui/Wrapper.cpp`) reads what
+  failed (`MC_GUI_RESULTS`, written as the run ends) and runs each failed
+  suite once more, alone, as a fresh run of the whole program: a new
+  scratch world, home, defaults and pasteboard, and on GTK a new Xvfb and
+  session bus, as the `_x` child suites run. Its output is in the log
+  marked `    retry| `. A suite that passes then prints
+  `FLAKY [suite] <its first failure>`, which `scripts/ci-summary.sh` puts at
+  the top of the run's page (and as a warning on the pull request) in
+  place of that suite's FAIL and LEAK lines, and the run goes on. One that
+  fails again prints `RETRY [suite] failed again`, its FAIL lines stand,
+  and the run fails as it would have. `tests/GuiRetry.h` is the shared
+  code, tested by the core's `gui-retry:*` groups.
+- **Nothing else is retried.** The core tests (and the sanitizer jobs)
+  never are. Neither is a run that crashed (`FATAL`), hit its own time
+  limit, or failed a check outside any suite (a suite name no suite has,
+  the end's checks): the harness says "No suite retried" and why.
+- **Timing checks too.** A CPU-time bound already has CI's 1.5 times room
+  (`MC_TIMING_SCALE`, a SLOW line); a time past even that fails its suite,
+  and that suite goes through the retry like any other. A timing check
+  that shows up FLAKY is a bound the runner outgrows or a real regression
+  that varies, and is treated like any other FLAKY line.
+- **At most three a run.** A harness process with more than three failed
+  suites retries none, and a job whose processes together needed more
+  than three retries fails (`ci-summary.sh` adds a `FAIL [retries]` line):
+  that many flakes means something is wrong with the runner or the
+  product, not one check.
+- **Every FLAKY line must lead to a fix.** A check that fails once in ten
+  runs is telling the truth about a race in the product or in the check;
+  the retry only keeps one such race from stopping every merge while it
+  is found. Note the FLAKY line's suite and run in "Known flaky checks"
+  below (or in the soak's issue) and fix it like a failure: the cause in
+  the product or the check, never a longer wait. Five green runs of the
+  GUI jobs on one commit with no FLAKY line for it is the bar for calling
+  it fixed.
+
+## The soak (`.github/workflows/soak.yml`, since 2026-11-17)
+
+Every night (03:17 UTC), and by hand from the Actions tab (`gh workflow
+run Soak -f rounds=2 [-f suites="tree git_panel"]`), the GUI suites of
+both apps run several rounds (3 by default, 10 at most), never on a
+pull request and never gating a merge. `scripts/soak.sh` runs each round
+as CI does (the Mac's two halves at once then `GUI_ALONE`, GTK's two
+halves, the lists read from ci.yml; with `suites`, those names in one
+process), with no retries, each round in its own order: a seed drawn per
+round and printed (`MC_GUI_SHUFFLE=<seed>`, which both harnesses take:
+the suites they selected in an order drawn from the seed, the same on
+every machine). `MC_GUI_SHUFFLE=<seed>` with the same suites plays a
+round's order again. The GTK rounds alternate `MALLOC_PERTURB_` between
+165 and 90 (glibc fills new and freed blocks with them; Meson's own
+random value once exposed a read of memory never written).
+
+The report job (the workflow's only write permission, `issues: write`)
+makes one table, each suite that failed in any round with in how many of
+its app's rounds, those rounds' seeds, and its first failure, puts it on
+the run's page, and replaces the body of the open issue "Soak: flaky
+checks" with it (opening one when none is open). The logs and failure
+pictures are the run's `soak-mac` and `soak-linux` artifacts. A suite in
+that table is owed a fix, as a FLAKY line is.
 
 The runner images are named (`macos-26`, `ubuntu-26.04`), not `latest`, so a
 new image arrives as a change to ci.yml on a branch, where its failures are
@@ -161,9 +226,19 @@ seen before main's.
 
 ## Known flaky checks
 
-None retried. Checks seen failing on CI and passing on a rerun, with no
-fix yet, are listed here with the run that showed them, and removed when
-fixed.
+Checks seen failing on CI and passing on a rerun or a retry (a FLAKY
+line), with no fix yet, are listed here with the run that showed them,
+and removed when fixed. The soak's issue lists what the nightly rounds
+find.
+
+The first soak (2026-11-17, two rounds each, run 44116695149, issue #127)
+found mostly suites that pass only in their usual place in the order:
+on GTK `save`, `tabs` and `keys` failed in both shuffled rounds (waits on
+the editor or its keyboard that time out), and `processes`, `mermaid`,
+`latex_forward`, `agent_panel`, `attention`, `palette`, `harness` and
+`tree_stall` in one; on the Mac `control` in both (`controlTerminals`
+not empty where it expects none). Each is a suite that depends on what
+an earlier one did or left, to be made to stand alone.
 
 - GTK `agents`, "the same key closes the panel": in one local full run
   on the ThinkPad (2026-11-17, main at b0ce717 plus a test-only change),
