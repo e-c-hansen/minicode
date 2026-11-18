@@ -89,6 +89,8 @@ core_sources = [
   core_dir / 'PageCheck.cpp',
   # Waiting for you: the hooks' JSON and the settings merge, and the board.
   core_dir / 'ClaudeHooks.cpp',
+  core_dir / 'ClaudeUsage.cpp',
+  core_dir / 'ClaudeStatusLine.cpp',
   core_dir / 'AttentionBoard.cpp',
   core_dir / 'AgentIndex.cpp',
   core_dir / 'AgentTranscript.cpp',

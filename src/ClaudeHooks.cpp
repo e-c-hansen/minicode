@@ -392,6 +392,22 @@ bool readSettingsFile(const std::string &path, std::string &text, bool &exists,
     return true;
 }
 
+bool backupSettings(const std::string &path, const std::string &text, unsigned mode, long now,
+                    std::string &backup, std::string &error) {
+    // Named for the time, never over an earlier one.
+    char stamp[32];
+    const time_t t = (time_t)now;
+    struct tm tm;
+    localtime_r(&t, &tm);
+    strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+    backup = path + ".mutible-backup-" + stamp;
+    for (int n = 2; access(backup.c_str(), F_OK) == 0; n++)
+        backup = path + ".mutible-backup-" + stamp + "-" + std::to_string(n);
+    if (writeSettingsFile(backup, text, mode, error)) return true;
+    backup.clear();
+    return false;
+}
+
 InstallResult install(const std::string &path, const std::string &command, long now) {
     InstallResult out;
     std::string text, error;
@@ -415,21 +431,10 @@ InstallResult install(const std::string &path, const std::string &command, long 
     if (exists) {
         struct stat st;
         if (stat(path.c_str(), &st) == 0) mode = st.st_mode & 07777;
-        // A backup of the file as it was, named for the time, never over
-        // an earlier one.
-        char stamp[32];
-        const time_t t = (time_t)now;
-        struct tm tm;
-        localtime_r(&t, &tm);
-        strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
-        std::string backup = path + ".mutible-backup-" + stamp;
-        for (int n = 2; access(backup.c_str(), F_OK) == 0; n++)
-            backup = path + ".mutible-backup-" + stamp + "-" + std::to_string(n);
-        if (!writeSettingsFile(backup, text, mode, error)) {
+        if (!backupSettings(path, text, mode, now, out.backup, error)) {
             out.error = "could not back up " + path + ", so it was left alone: " + error;
             return out;
         }
-        out.backup = backup;
     } else {
         const size_t slash = path.rfind('/');
         if (slash != std::string::npos && slash > 0) mkdir(path.substr(0, slash).c_str(), 0700);

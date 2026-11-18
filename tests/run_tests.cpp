@@ -11189,6 +11189,7 @@ static void testMultiCaretOccurrences() {
 #include "procs_tests.inc"
 #include "procfs_tests.inc"
 #include "attention_tests.inc"
+#include "usage_tests.inc"
 #include "ignore_tests.inc"
 #include "page_check_tests.inc"
 #include "terminal_links_tests.inc"
@@ -11401,6 +11402,8 @@ int main() {
     testLinuxKeymapFile();
     testLinuxCommandsReadme();
     testClaudeHooks();
+    testClaudeUsage();
+    testClaudeStatusLine();
     testNotifyCommandLine();
     testAttentionBoard();
     testIdeLink();
