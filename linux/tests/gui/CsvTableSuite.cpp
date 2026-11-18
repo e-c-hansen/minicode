@@ -127,7 +127,9 @@ MC_GUI_SUITE(csv_table) {
     });
     MCGuiStep("one cell of it changes one line", [] {
         GCHECK(ed()->csvTable()->setCell(3, 1, "w"));
-        GCHECK_EQ_STR(bufferText(), std::string(kOdd).substr(0, std::string(kOdd).size() - 1) + "w");
+        // The BOM is kept apart, as on the Mac (Document::FileEncoding), and
+        // written back in front.
+        GCHECK_EQ_STR(bufferText(), std::string(kOdd).substr(3, std::string(kOdd).size() - 4) + "w");
         std::string err;
         GCHECK(ed()->save(&err));
         GCHECK_EQ_STR(MCGuiReadFile(F("odd.csv")),

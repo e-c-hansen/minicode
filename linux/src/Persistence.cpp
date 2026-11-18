@@ -469,6 +469,9 @@ void Persistence::writeBackup(Document* d) {
     e.diskExisted = disk.exists;
     e.diskMtime = disk.mtime;
     e.diskInode = disk.inode;
+    // How the file is written, so a buffer whose file has gone by the
+    // restore is saved back the same way (Windows-1252, UTF-16).
+    e.fileEncoding = FolderSearch::encodingName(d->fileEncoding().encoding, d->fileEncoding().bom);
     store.write(e, d->text());
     b.written = true;
     b.writtenEdits = d->edits();
@@ -490,7 +493,8 @@ bool Persistence::takeBackup(Document* d, const std::string& id, const Backups::
                              const std::string& text) {
     const std::string path = d->path();
     std::string disk;
-    const bool read = Document::readText(path, disk) == Document::Read::Ok;
+    Document::FileEncoding encoding;
+    const bool read = Document::readText(path, disk, &encoding) == Document::Read::Ok;
     const Backups::Disk was = Backups::compare(e, Backups::posixFs().stat(path));
     const bool gone = was == Backups::Disk::Gone;
     const bool changed = was == Backups::Disk::Changed || was == Backups::Disk::Appeared;
@@ -505,6 +509,10 @@ bool Persistence::takeBackup(Document* d, const std::string& id, const Backups::
     b.writtenEdits = 0;
     b.writtenPath.clear();
     d->restoreText(path, text, read ? &disk : nullptr, base, changed);
+    // How it is written: as the file is now, else as the backup recorded it
+    // (a file gone by now), as the Mac's takeBackup.
+    if (!read) FolderSearch::parseEncodingName(e.fileEncoding, &encoding.encoding, &encoding.bom);
+    d->setFileEncoding(encoding);
     if (!d->dirty()) return false;
     b.note = "Restored unsaved changes to " + baseName(path);
     if (gone) b.note += "; the file is no longer on disk";
@@ -559,8 +567,11 @@ void Persistence::autoSaveNow() {
             continue;
         }
         std::string err;
-        if (!editor_->saveDocument(d, &err) && host_.note)
-            host_.note("Could not auto-save " + baseName(d->path()) + ": " + err);
+        if (!editor_->saveDocument(d, &err)) {
+            if (host_.note) host_.note("Could not auto-save " + baseName(d->path()) + ": " + err);
+        } else if (std::string n = d->takeSaveNote(); !n.empty() && host_.note) {
+            host_.note(n);   // written as UTF-8 (Document::save)
+        }
     }
     if (!changed.empty() && host_.note) {
         std::string names;

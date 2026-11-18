@@ -116,3 +116,4 @@ TestGutterSuite.cpp
 DesktopModeSuite.cpp
 HostLinkSuite.cpp
 HostReattachSuite.cpp
+Latin1FilesSuite.cpp
