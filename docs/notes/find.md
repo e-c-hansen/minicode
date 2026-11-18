@@ -75,9 +75,18 @@ found through that list.
 - Find in Folder uses `FolderSearch::search` (two characters, one for an
   untrimmed regex; `.git`, `node_modules`, `build`, the venvs and caches and
   what the folder's `.gitignore`/`.ignore` files ignore (from the window's
-  folder down, `search.use-ignore-files`) skipped, dotfiles searched; UTF-8
-  only, the files left out counted and named (`skipped`, shown under the
-  results, one by name) unless a NUL in their first 8 KB marks them binary;
+  folder down, `search.use-ignore-files`) skipped, dotfiles searched; a
+  NUL in the first 8 KB marks a file binary, left out unnamed; text that
+  is not UTF-8 is read as Windows-1252 (`decodeWindows1252`, 2026-11-18,
+  C3: a Latin-1 log had been left out and named; a NUL anywhere in such a
+  file still makes it binary; a large file switches at its first piece
+  that is not UTF-8, keeping the matches before), and Replace in Folder,
+  which writes UTF-8 and UTF-16 only, leaves such a file alone and names
+  it when it holds a match (`FolderReplacePlan::otherEncoding`; Replace
+  Match on one of its rows says why); clicking its row opens it as the
+  editor opens any file not UTF-8, in Quick Look (the editor has no
+  Windows-1252 yet); the files left out counted and named (`skipped`,
+  shown under the results, one by name);
   a file over 1 MB (`maxFileSize`) read and matched in 4 MB pieces cut at
   line breaks (`Matcher::stream`, 2026-11-16, C3: an 82 MB log had been
   skipped), the same rows as a whole read (`search:stream` compares them at

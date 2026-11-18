@@ -40,7 +40,9 @@ static NSString *MCGrouped(unsigned long n) {
 
 // The line under the results naming the files a search left out, the
 // files themselves in its tooltip; nil when none were. One file is named
-// in the line itself ("app.log was not searched: it is not UTF-8"), more
+// in the line itself ("app.log was not searched: it is not UTF-8"; since
+// 2026-11-18 text that is not UTF-8 is read as Windows-1252, so only
+// UTF-16 Replace in Folder could not take back says so), more
 // are counted ("12 files not searched: 3 with a line over 64 MB, 9 not
 // UTF-8"). A large text file is searched (FolderSearch reads it in
 // pieces), so only a line past the limit leaves one out for its size.
@@ -69,6 +71,18 @@ static NSString *MCSkippedNote(const FolderSearchResult &r, NSString **tooltip) 
     if (other) [parts addObject:[NSString stringWithFormat:@"%@ not UTF-8", MCGrouped(other)]];
     return [NSString stringWithFormat:@"%@ files not searched: %@", MCGrouped(large + other),
                                       [parts componentsJoinedByString:@", "]];
+}
+
+// Text that is not UTF-8 and holds no NUL: what the search reads as
+// Windows-1252 (FolderSearch::decodeWindows1252) and Replace in Folder,
+// which writes UTF-8 or UTF-16 only, leaves alone.
+static BOOL MCReadsAsWindows1252(const std::string &path) {
+    std::string bytes;
+    FolderSearch::FileStamp st;
+    if (FolderSearch::readFileStable(path, FolderSearchOptions().maxFileSize, &bytes, &st) !=
+        FolderSearch::ReadStatus::Ok)
+        return NO;
+    return !memchr(bytes.data(), 0, bytes.size()) && !FolderSearch::isValidUtf8(bytes);
 }
 
 // Replace in Folder rewrites a file whole in memory, so it leaves a file
@@ -1278,6 +1292,13 @@ static NSString *MCReplaceSizeLimit(void) {
         if (plan.tooLargeCount > plan.tooLarge.size())
             [large addObject:[NSString stringWithFormat:@"and %@ more",
                                        MCGrouped(plan.tooLargeCount - plan.tooLarge.size())]];
+        // Files read as Windows-1252: searched, but written as UTF-8 or
+        // UTF-16 only, so left alone and named.
+        NSMutableArray<NSString *> *legacy = [NSMutableArray array];
+        for (const std::string &rel : plan.otherEncoding) [legacy addObject:SNS(rel)];
+        if (plan.otherEncodingCount > plan.otherEncoding.size())
+            [legacy addObject:[NSString stringWithFormat:@"and %@ more",
+                                        MCGrouped(plan.otherEncodingCount - plan.otherEncoding.size())]];
         for (const FolderReplaceFile &f : plan.files) {
             [paths addObject:SNS(f.path)];
             [counts addObject:@(f.matches)];
@@ -1315,6 +1336,11 @@ static NSString *MCReplaceSizeLimit(void) {
                                                   "leaves alone (%@)",
                                                  MCReplaceSizeLimit(),
                                                  [large componentsJoinedByString:@", "]]
+                    : legacy.count
+                    ? [NSString stringWithFormat:@"Nothing replaced: the matches are in files "
+                                                  "that are not UTF-8 (read as Windows-1252), "
+                                                  "which Replace in Folder leaves alone (%@)",
+                                                 [legacy componentsJoinedByString:@", "]]
                     : @"Nothing to replace";
                 [s setStatus:why error:error != nil];
                 return;
@@ -1337,6 +1363,10 @@ static NSString *MCReplaceSizeLimit(void) {
             if (large.count)
                 [info appendFormat:@" Left alone, since they are larger than %@: %@.",
                                    MCReplaceSizeLimit(), [large componentsJoinedByString:@", "]];
+            if (legacy.count)
+                [info appendFormat:@" Left alone, since they are not UTF-8 (read as "
+                                    "Windows-1252): %@.",
+                                   [legacy componentsJoinedByString:@", "]];
             alert.informativeText = info;
             [alert addButtonWithTitle:@"Replace"];
             [alert addButtonWithTitle:@"Cancel"];
@@ -1453,6 +1483,10 @@ static NSString *MCReplaceSizeLimit(void) {
                     [failed addObject:[NSString stringWithFormat:
                                 @"%@ is larger than %@, which Replace in Folder leaves alone",
                                 path.lastPathComponent, MCReplaceSizeLimit()]];
+                else if (MCReadsAsWindows1252(p))
+                    [failed addObject:[NSString stringWithFormat:
+                                @"%@ is not UTF-8 (read as Windows-1252), which Replace in "
+                                 "Folder leaves alone", path.lastPathComponent]];
                 else
                     [failed addObject:[NSString stringWithFormat:@"%@ could not be read as text",
                                                                  path.lastPathComponent]];

@@ -1,8 +1,10 @@
 // SearchSuite.mm — `make guitest SUITES=search`: Find in Folder's limits
 // and what it says about them. A file over 1 MB is searched (read in
 // pieces), and Replace in Folder says plainly that it leaves one alone; a
-// file not in UTF-8 is named in a line under the results (a binary is
-// not); the results stop at 20,000 lines and the status says so; a
+// file not in UTF-8 (Latin-1) is searched as Windows-1252, and Replace in
+// Folder names it and leaves it alone (a binary is left out unnamed); the
+// line under the results naming files left out takes its room under
+// them; the results stop at 20,000 lines and the status says so; a
 // pattern left to std::regex that runs past its time stops the search
 // with a reason.
 #import "Harness.h"
@@ -50,7 +52,7 @@ MC_GUI_SUITE(search) {
         p.field.stringValue = @"needle";
         [p runSearch:nil];
     });
-    MCGuiWait(@"the results", 10, ^BOOL { return !Panel(c).busy && Hits(c).count >= 2; });
+    MCGuiWait(@"the results", 10, ^BOOL { return !Panel(c).busy && Hits(c).count >= 3; });
     MCGuiStep(@"Shift+Cmd+G and Cmd+G step through the results, not Source Control", ^{
         // Find Previous's key in this window (Search.mm), Toggle Source
         // Control's menu key everywhere else (Commands.cpp).
@@ -77,26 +79,30 @@ MC_GUI_SUITE(search) {
         GCHECK([[c valueForKey:@"gitPanelVisible"] boolValue] == git);
         p.previewHandler = was;
     });
-    MCGuiStep(@"the 2 MB file searched; the Latin-1 one named under the results", ^{
+    MCGuiStep(@"the 2 MB file and the Latin-1 one searched; nothing named under the results", ^{
         SearchPanel *p = Panel(c);
         MCGuiNote(@"status: %@; note: %@ (%@)", p.status.stringValue, p.skippedNote.stringValue,
                   p.skippedNote.toolTip);
-        GCHECK(Hits(c).count == 2);
-        GCHECK_EQ_STR(p.status.stringValue, @"2 matches in 2 files");
-        // Until 2026-11-16 a file over 1 MB was skipped ("1 larger than 1 MB").
-        BOOL bigFound = NO;
-        for (id h in Hits(c))
-            if ([[h valueForKey:@"path"] hasSuffix:@"/big/log.txt"])
-                bigFound = [[h valueForKey:@"line"] integerValue] == 2;
+        GCHECK(Hits(c).count == 3);
+        GCHECK_EQ_STR(p.status.stringValue, @"3 matches in 3 files");
+        // Until 2026-11-16 a file over 1 MB was skipped ("1 larger than 1 MB"),
+        // and until 2026-11-18 the Latin-1 file was named here, not searched.
+        BOOL bigFound = NO, latinFound = NO;
+        for (id h in Hits(c)) {
+            NSString *path = [h valueForKey:@"path"];
+            if ([path hasSuffix:@"/big/log.txt"]) bigFound = [[h valueForKey:@"line"] integerValue] == 2;
+            if ([path hasSuffix:@"/latin1.txt"])
+                latinFound = [[h valueForKey:@"text"] isEqualToString:@"caf\u00e9 needle"];
+            GCHECK(![path hasSuffix:@"pic.bin"]);
+        }
         GCHECK(bigFound);
+        GCHECK(latinFound);
+        GCHECK(p.skippedNote.hidden);
+        // The line naming files left out (a line over 64 MB, too large to
+        // write here) is laid out under the results, which make room for it.
+        [p setSkippedNote:@"huge.log was not searched: it has a line longer than 64 MB"
+                  tooltip:@"huge.log (a line longer than 64 MB)"];
         GCHECK(!p.skippedNote.hidden);
-        // The path is from the folder searched: "searchsuite/latin1.txt"
-        // when the scope is the window's folder.
-        GCHECK([p.skippedNote.stringValue hasSuffix:@"latin1.txt was not searched: it is not UTF-8"]);
-        GCHECK([p.skippedNote.toolTip containsString:@"latin1.txt (not UTF-8)"]);
-        GCHECK(![p.skippedNote.toolTip containsString:@"big/log.txt"]);
-        GCHECK(![p.skippedNote.toolTip containsString:@"pic.bin"]);
-        // Laid out under the results, which make room for it.
         NSView *content = p.window.contentView;
         [content layoutSubtreeIfNeeded];
         NSScrollView *scroll = p.table.enclosingScrollView;
@@ -158,6 +164,46 @@ MC_GUI_SUITE(search) {
         GCHECK(MCGuiAlertsShown().count == alertsBefore);
         NSData *log = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"big/log.txt"]];
         GCHECK(log.length == 2 * 1024 * 1024 + 8);
+        // Only the Latin-1 file: Replace in Folder writes UTF-8 or UTF-16
+        // only, so it names the file and leaves it alone.
+        p.includeField.stringValue = [scopeInclude.length ? [scopeInclude stringByAppendingString:@"/"] : @""
+                                         stringByAppendingString:@"latin1.txt"];
+        [p runSearch:nil];
+    });
+    MCGuiWait(@"the Latin-1 file's match", 10, ^BOOL {
+        return !Panel(c).busy && Hits(c).count == 1 &&
+               [[Hits(c).firstObject valueForKey:@"path"] hasSuffix:@"/latin1.txt"];
+    });
+    MCGuiStep(@"Replace on the Latin-1 file's row", ^{
+        SearchPanel *p = Panel(c);
+        p.replaceField.stringValue = @"pin";
+        [p replaceMatchAtRow:0];
+    });
+    MCGuiWait(@"it says it left the Latin-1 file alone", 10, ^BOOL {
+        return !Panel(c).busy && [Panel(c).status.stringValue containsString:@"leaves alone"];
+    });
+    MCGuiStep(@"named as not UTF-8; Replace All says the same", ^{
+        SearchPanel *p = Panel(c);
+        MCGuiNote(@"status: %@", p.status.stringValue);
+        GCHECK([p.status.stringValue
+            containsString:@"latin1.txt is not UTF-8 (read as Windows-1252), which Replace in "
+                            "Folder leaves alone"]);
+        alertsBefore = MCGuiAlertsShown().count;
+        [p replaceAll:nil];
+    });
+    MCGuiWait(@"Replace All's answer on the Latin-1 file", 10, ^BOOL {
+        return !Panel(c).busy && [Panel(c).status.stringValue hasPrefix:@"Nothing replaced"];
+    });
+    MCGuiStep(@"no question asked; the Latin-1 file as it was", ^{
+        SearchPanel *p = Panel(c);
+        MCGuiNote(@"status: %@", p.status.stringValue);
+        GCHECK([p.status.stringValue
+            hasPrefix:@"Nothing replaced: the matches are in files that are not UTF-8 (read as "
+                       "Windows-1252), which Replace in Folder leaves alone ("]);
+        GCHECK([p.status.stringValue hasSuffix:@"latin1.txt)"]);
+        GCHECK(MCGuiAlertsShown().count == alertsBefore);
+        NSData *latin = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"latin1.txt"]];
+        GCHECK([latin isEqualToData:[NSData dataWithBytes:"caf\xE9 needle\n" length:12]]);
         p.replaceField.stringValue = @"";
         p.includeField.stringValue = scopeInclude ?: @"";
     });

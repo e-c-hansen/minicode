@@ -27,18 +27,23 @@
 //   is searched as a small file is: the same lines, line numbers and
 //   matches, in memory of a piece or so (until 2026-11-16 every file over
 //   1 MB was skipped). Only a line longer than maxStreamedLine (64 MB)
-//   leaves such a file out. A byte that is not UTF-8 late in one still
-//   leaves it out, unless the search's limit was reached before it. Replace in Folder's count (planReplace) still
+//   leaves such a file out. Replace in Folder's count (planReplace) still
 //   leaves files over 1 MB out, and names those holding a match
 //   (FolderReplacePlan::tooLarge), since a replacement rewrites the file
 //   whole in memory.
-// - A file that is not valid UTF-8 is skipped, which is how binaries fall
-//   out (the Mac drops them the same way, when NSString refuses to decode
-//   them). The result names the ones a reader would have expected
-//   searched: those too large (above) and those not UTF-8, unless a NUL
-//   byte in their first 8 KB marks them binary (FileSniff's rule), since
-//   every picture and object file would be named. A large file is read
-//   for its first 8 KB first, so a large binary costs no more than that.
+// - A file with a NUL byte in its first 8 KB is binary (FileSniff's rule)
+//   and left out without a word, since every picture and object file would
+//   be named; so is one that is not UTF-8 with a NUL anywhere. A large file
+//   is read for its first 8 KB first, so a large binary costs no more than
+//   that. Text that is not valid UTF-8 is read as Windows-1252
+//   (decodeWindows1252: Latin-1 and its Windows superset, the single-byte
+//   encodings old files use), as VS Code and Zed find "café" in a Latin-1
+//   file (until 2026-11-18 it was left out and named, C3); a large file
+//   switches at the first piece that is not UTF-8. Replace in Folder,
+//   which writes UTF-8 or UTF-16 only, leaves such a file alone and names
+//   it when it holds a match (FolderReplacePlan::otherEncoding). The
+//   result names the files a reader would have expected searched: those
+//   too large (above), and UTF-16 Replace in Folder could not take back.
 //   UTF-16 with a byte order mark is decoded and searched as ripgrep does
 //   (decodeUtf16; every such file has NULs, so until 2026-11-08 it fell
 //   out without a word): its matches' lines, columns and bytes are of the
@@ -137,7 +142,8 @@ struct FolderSearchOptions {
 struct FolderSearchSkip {
     std::string relativePath;
     // A line over maxStreamedLine (or, for Replace in Folder, over
-    // maxFileSize); else text that is not UTF-8.
+    // maxFileSize); else UTF-16 that Replace in Folder's count could not
+    // take back exactly (a search reads any text: see decodeWindows1252).
     bool tooLarge = false;
 };
 
@@ -181,6 +187,11 @@ struct FolderReplacePlan {
     // is made in memory, the file whole.
     std::vector<std::string> tooLarge;
     std::size_t tooLargeCount = 0;
+    // Text files read as Windows-1252 (not UTF-8) holding a match, left
+    // alone the same way and named (the first kMaxSkipsListed; all
+    // counted): a replacement is written as UTF-8 or UTF-16 only.
+    std::vector<std::string> otherEncoding;
+    std::size_t otherEncodingCount = 0;
     bool cancelled = false;
     std::string error;                      // the regex did not compile: why
 };
@@ -351,6 +362,15 @@ enum class TextEncoding { Utf8, Utf16LE, Utf16BE };
 // not start with a UTF-16 byte order mark.
 bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* encoding,
                  bool strict);
+
+// Text in a single-byte encoding, as the search reads a file that is not
+// UTF-8 (and holds no NUL, which marks it binary): Windows-1252, which is
+// Latin-1 (ISO 8859-1) but for 0x80..0x9F, where it has the euro sign,
+// curly quotes, dashes and a few letters (the five bytes it leaves
+// undefined become their C1 controls, as browsers read them). Every byte
+// is a character, so this never fails; matches' lines, columns and bytes
+// are of the text decoded to UTF-8, as for UTF-16.
+std::string decodeWindows1252(std::string_view bytes);
 
 // UTF-8 text written in `encoding`: as it is for Utf8, else as UTF-16 with
 // its byte order mark first (an invalid byte becomes U+FFFD).
