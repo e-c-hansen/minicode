@@ -18,6 +18,7 @@ void Client::connect(Send send) {
     h.name = name_;
     if (readOnly_) h.flag = 1;
     else if (guest_) h.flag = 2;
+    else if (keepsBackups_) h.flag = 4;
     send_(std::move(h));
 }
 
@@ -804,6 +805,109 @@ Json Client::sessionState() {
     Message reply;
     if (!ask(std::move(q), &reply)) return Json();
     return reply.json;
+}
+
+// ---------------------------------------------------------------- reattaching
+
+namespace {
+
+void namedIn(const Json& tabs, std::vector<std::uint64_t>* docs, std::vector<std::uint64_t>* terms) {
+    for (const Json& g : tabs["groups"].elements())
+        for (const Json& t : g["tabs"].elements())
+            if (std::uint64_t d = (std::uint64_t)t["doc"].asInt()) docs->push_back(d);
+    for (const Json& t : tabs["terms"].elements())
+        if (std::uint64_t id = (std::uint64_t)t.asInt()) terms->push_back(id);
+}
+
+}  // namespace
+
+Reattach reattachFrom(const Json& state, ClientId me, const std::set<std::uint64_t>& live,
+                      const std::function<bool(DocId)>& openHere,
+                      const std::function<bool(TermId)>& showsHere, bool all) {
+    Reattach out;
+    if (!state.isObject()) return out;
+    // Held documents a window can show, and terminals, by id.
+    std::map<DocId, Reattach::Doc> docs;
+    for (const Json& d : state["documents"].elements()) {
+        Reattach::Doc h;
+        h.id = (DocId)d["doc"].asInt();
+        h.path = d["path"].asString();
+        h.dirty = d["dirty"].asBool();
+        const bool holds = !h.path.empty() || h.dirty || d["length"].asInt() > 0;
+        if (h.id && holds && !(openHere && openHere(h.id))) docs[h.id] = h;
+    }
+    std::map<TermId, Reattach::Term> terms;
+    for (const Json& t : state["terminals"].elements()) {
+        Reattach::Term h;
+        h.id = (TermId)t["term"].asInt();
+        h.pid = (int)t["pid"].asInt();
+        h.shell = termShellFrom(t["shell"]);
+        if (h.id && h.pid > 0 && !(showsHere && showsHere(h.id))) terms[h.id] = h;
+    }
+    // Every record's names; the free records; the latest of them.
+    std::set<DocId> named;
+    std::set<TermId> namedTerms;
+    const Json* best = nullptr;
+    std::vector<const Json*> freeRecords;
+    for (const Json& win : state["windows"].elements()) {
+        const std::uint64_t id = (std::uint64_t)win["window"].asInt();
+        const bool connected = win["connected"].isBool() ? win["connected"].asBool() : true;
+        const bool mine = (ClientId)win["renderer"].asInt() == me;
+        const bool isFree = !live.count(id) && (!connected || mine);
+        std::vector<std::uint64_t> d, t;
+        namedIn(win["tabs"], &d, &t);
+        named.insert(d.begin(), d.end());
+        namedTerms.insert(t.begin(), t.end());
+        if (!isFree) {
+            // A window still open (here or in another renderer) keeps them.
+            for (std::uint64_t x : d) docs.erase(x);
+            for (std::uint64_t x : t) terms.erase(x);
+            continue;
+        }
+        freeRecords.push_back(&win);
+        // One that names nothing (a window's report before it had tabs)
+        // brings nothing back, and never hides one that does.
+        if (d.empty() && t.empty()) continue;
+        if (!best || win["seen"].asInt() > (*best)["seen"].asInt()) best = &win;
+    }
+    // One document of a path in a window (not for `all`).
+    std::set<std::string> paths;
+    auto takeDoc = [&](const Reattach::Doc& d) {
+        if (!all && !d.path.empty() && !paths.insert(d.path).second) return false;
+        out.docs.push_back(d);
+        return true;
+    };
+    auto take = [&](const Json& win) {
+        std::vector<std::uint64_t> d, t;
+        namedIn(win["tabs"], &d, &t);
+        for (std::uint64_t x : d) {
+            auto it = docs.find(x);
+            if (it == docs.end()) continue;
+            if (takeDoc(it->second)) docs.erase(it);
+        }
+        for (std::uint64_t x : t) {
+            auto it = terms.find(x);
+            if (it == terms.end()) continue;
+            out.terms.push_back(it->second);
+            terms.erase(it);
+        }
+    };
+    if (all) {
+        for (const Json* w : freeRecords) take(*w);
+    } else if (best) {
+        out.window = (std::uint64_t)(*best)["window"].asInt();
+        out.tabs = (*best)["tabs"];
+        take(*best);
+    }
+    // What no record names at all (a record lost, or opened by a renderer
+    // that kept none), oldest first.
+    for (const auto& [id, d] : docs)
+        if (!named.count(id)) takeDoc(d);
+    for (const auto& [id, t] : terms)
+        if (!namedTerms.count(id)) out.terms.push_back(t);
+    if (all)
+        for (const Json* w : freeRecords) out.records.push_back((std::uint64_t)(*w)["window"].asInt());
+    return out;
 }
 
 }  // namespace Shared

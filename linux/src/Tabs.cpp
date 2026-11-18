@@ -323,10 +323,10 @@ Document* Editor::addTab(const std::string& path) {
     return d;
 }
 
-Document* Editor::attachTab(uint64_t heldId, const std::string& path) {
+Document* Editor::attachTab(uint64_t heldId, const std::string& path, bool hostNamed) {
     if (!heldId || documentById(heldId)) return nullptr;
     Document* d = newDocument(heldId);
-    d->attachHeld(path);
+    d->attachHeld(path, hostNamed);
     win_->append(d->id(), path);
     refreshStrip();
     return d;

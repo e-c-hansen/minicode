@@ -178,8 +178,13 @@ public:
     // A held document's text, the host's (made with its id): its file's
     // text now counts as saved, so it is unsaved when the two differ; its
     // undo history is the host's, kept. A file gone or no longer text
-    // leaves it unsaved.
-    void attachHeld(const std::string& path);
+    // leaves it unsaved. `hostNamed` false: the host holds it with no path
+    // (an untitled buffer), and `path` is a name given here for a file not
+    // on disk yet; the host is told it once the tab is saved there.
+    void attachHeld(const std::string& path, bool hostNamed = true);
+    // The host told the document's path when it does not have it yet (an
+    // untitled buffer it held, saved now); nothing when it has.
+    void tellHostPath();
     // The window closes and detaches: the host keeps the document, its text
     // and history (Client::detach); the destructor then closes nothing.
     void detachFromHost();
@@ -542,7 +547,6 @@ private:
     uint64_t      id_;
     std::string   hostPath_;          // the path the host was told (DocPath)
     bool          detached_ = false;  // detachFromHost: the host keeps it
-    void tellHostPath();
     void hostSavedFromDisk(const std::string& now);
     Kind          kind_ = Kind::Text;
     std::string   path_, ext_;

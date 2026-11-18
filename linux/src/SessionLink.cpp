@@ -163,6 +163,9 @@ int Link::dispatchOnMain(void* p) {
 
 void Link::makeClient() {
     client_ = std::make_unique<Shared::Client>(Model::Unit::CodePoint, "gtk");
+    // The windows back up their unsaved files themselves (Persistence.h), so
+    // a headless host keeps no backup of a document while one has it open.
+    client_->setKeepsBackups(true);
     // The host's messages arrive on its thread (or the socket's reader);
     // the main loop dispatches them, once per batch.
     std::shared_ptr<Wake> w = wake_;
@@ -331,104 +334,24 @@ void Link::windowDetached(std::uint64_t window, const Model::Window& w) {
     windowClosed(window);
 }
 
-namespace {
-
-// The documents and terminals a record names (its groups' tabs; "terms").
-void namedIn(const Json& tabs, std::vector<std::uint64_t>* docs, std::vector<std::uint64_t>* terms) {
-    for (const Json& g : tabs["groups"].elements())
-        for (const Json& t : g["tabs"].elements())
-            if (std::uint64_t d = (std::uint64_t)t["doc"].asInt()) docs->push_back(d);
-    for (const Json& t : tabs["terms"].elements())
-        if (std::uint64_t id = (std::uint64_t)t.asInt()) terms->push_back(id);
-}
-
-}  // namespace
-
 Link::Held Link::free(bool all) {
-    Held out;
-    if (client_->lost()) return out;
-    const Json st = client_->sessionState();
-    if (!st.isObject()) return out;
-    const Shared::ClientId me = client_->clientId();
+    if (client_->lost()) return Held();
     std::set<std::uint64_t> live;
     for (const auto& [w, h] : hostWindow_) live.insert(h);
-    // Held documents (with a path: one with none cannot be shown as a file's
-    // tab) and terminals, by id.
-    std::map<std::uint64_t, HeldDoc> docs;
-    for (const Json& d : st["documents"].elements()) {
-        HeldDoc h;
-        h.id = (std::uint64_t)d["doc"].asInt();
-        h.path = d["path"].asString();
-        h.dirty = d["dirty"].asBool();
-        if (h.id && !client_->isOpen(h.id)) docs[h.id] = h;
-    }
-    std::map<std::uint64_t, HeldTerm> terms;
-    for (const Json& t : st["terminals"].elements()) {
-        HeldTerm h;
-        h.id = (std::uint64_t)t["term"].asInt();
-        h.pid = (int)t["pid"].asInt();
-        h.shell = Shared::termShellFrom(t["shell"]);
-        if (h.id && h.pid > 0 && !client_->showsTerminal(h.id)) terms[h.id] = h;
-    }
-    // Every record's names; the free records; the latest of them.
-    std::set<std::uint64_t> named, namedTerms;
-    const Json* best = nullptr;
-    std::vector<const Json*> freeRecords;
-    for (const Json& win : st["windows"].elements()) {
-        const std::uint64_t id = (std::uint64_t)win["window"].asInt();
-        const bool connected = win["connected"].isBool() ? win["connected"].asBool() : true;
-        const bool mine = (Shared::ClientId)win["renderer"].asInt() == me;
-        const bool isFree = !live.count(id) && (!connected || mine);
-        std::vector<std::uint64_t> d, t;
-        namedIn(win["tabs"], &d, &t);
-        named.insert(d.begin(), d.end());
-        namedTerms.insert(t.begin(), t.end());
-        if (!isFree) {
-            // A window still open (here or in another renderer) keeps them.
-            for (std::uint64_t x : d) docs.erase(x);
-            for (std::uint64_t x : t) terms.erase(x);
-            continue;
-        }
-        freeRecords.push_back(&win);
-        if (!best || win["seen"].asInt() > (*best)["seen"].asInt()) best = &win;
-    }
-    auto take = [&](const Json& win) {
-        std::vector<std::uint64_t> d, t;
-        namedIn(win["tabs"], &d, &t);
-        for (std::uint64_t x : d) {
-            auto it = docs.find(x);
-            if (it == docs.end() || it->second.path.empty()) continue;
-            out.docs.push_back(it->second);
-            docs.erase(it);
-        }
-        for (std::uint64_t x : t) {
-            auto it = terms.find(x);
-            if (it == terms.end()) continue;
-            out.terms.push_back(it->second);
-            terms.erase(it);
-        }
-    };
-    if (all) {
-        for (const Json* w : freeRecords) take(*w);
-    } else if (best) {
-        out.window = (std::uint64_t)(*best)["window"].asInt();
-        out.tabs = (*best)["tabs"];
-        take(*best);
-    }
-    // What no record names at all (a record lost, or opened by a renderer
-    // that kept none).
-    for (const auto& [id, d] : docs)
-        if (!named.count(id) && !d.path.empty()) out.docs.push_back(d);
-    for (const auto& [id, t] : terms)
-        if (!namedTerms.count(id)) out.terms.push_back(t);
-    if (all)
-        for (const Json* w : freeRecords) out.records.push_back((std::uint64_t)(*w)["window"].asInt());
-    return out;
+    Shared::Client& c = *client_;
+    return Shared::reattachFrom(
+        c.sessionState(), c.clientId(), live, [&c](Shared::DocId d) { return c.isOpen(d); },
+        [&c](Shared::TermId t) { return c.showsTerminal(t); }, all);
 }
 
 Link::Held Link::takeForWindow(std::uint64_t window) {
     Held h = free(false);
     if (h.window) {
+        // What the window reported before it took the record (its tabs as
+        // it was made) goes, or a later window could take that empty record
+        // for the latest one.
+        auto had = hostWindow_.find(window);
+        if (had != hostWindow_.end() && had->second != h.window) client_->windowClosed(had->second);
         hostWindow_[window] = h.window;
         sentTabs_.erase(window);
     }

@@ -465,9 +465,10 @@ document, terminal (dying ones included) or window is held
   grid ("Terminals on the host", **Size**) and the page (`tsize`, and the
   view following `TermShell`; 2026-11-18). GTK's VTE sends its answers
   as answers and follows the pty's size since step 2 ("GTK reattaches",
-  below), minimally: clipped when larger, no panning yet.
-- Saving, dirty, backups and the disk are still the app's (stage 7): a
-  headless host's unsaved document is only as safe as the host process.
+  below): clipped when larger, panned to the cursor since step 3.
+- Saving, dirty and the disk are still the app's (stage 7). Backups are
+  the app's while one of its windows has the document open, and the
+  headless host's once none has (step 3, below).
 
 ### GTK attaches (stage 6, step 1)
 
@@ -646,8 +647,8 @@ it after the app quits; an in-process one while the app runs.
   clipped by the scroller (its horizontal policy is EXTERNAL), with the
   view's own size, from the scroller, still sent as this renderer's
   (`viewCells`); a smaller one is drawn at the top left of VTE's own
-  grid. No panning to the cursor yet, and plain lines wrap at VTE's width
-  rather than the pty's. A size this view sent itself, or a VTE not
+  grid. Plain lines wrap at VTE's width rather than the pty's. The part
+  on show follows the cursor since step 3 (below). A size this view sent itself, or a VTE not
   mapped, is never followed. **Trap:** measuring a VTE that is not on
   screen (its cell size, from every TermShell) left a second window's
   hidden terminal showing nothing it was typed (`processes`, its second
@@ -656,15 +657,88 @@ it after the app quits; an in-process one while the app runs.
   HostReattachSuite.cpp; its header says what it checks), with
   `_host_reattach_child`, a second app process, for quit and relaunch.
 
+### The host's own backups, untitled buffers, one path twice, panning (stage 6, step 3)
+
+The host-side items left before the default can flip (2026-11-18).
+
+- **Backups of what no window shows** (`Host::keepBackups`,
+  SessionHost.h's "Backups"; `HostOptions::backupDir`). `mutible host`
+  keeps them in the apps' own store and format (`Backups::defaultDir`:
+  `$MUTIBLE_BACKUP_DIR`, else `~/.local/share/mutible/Backups`, the Mac's
+  `~/Library/Application Support/Mutible/Backups`), owned by the host's
+  pid and start (`Backups::processStart`, each system's form, so the
+  apps' `isLive` reads them), so no app takes one while the host lives.
+  A document needs one when it is unsaved (dirty, or with no path and
+  some text) and no app's window has it open: an app is a renderer whose
+  Hello says it keeps backups (flag 4, `Client::setKeepsBackups`; GTK
+  sets it on every link; a browser's view, a guest or `mutible attach`
+  does not). Written at once when the last app seat goes (DocDetach, a
+  connection lost), then after edits from other renderers as the apps
+  time theirs (`SavePlan::Planner` on the host's thread, its due time
+  folded into `tick()`'s wait: a second after typing stops, at most five
+  after the first change not yet written); removed when the document is
+  saved, closed, or opened again by an app (whose own backup takes over:
+  GTK writes its own at once after reattaching, `backUpHeldDocuments`).
+  What a stop by signal leaves unwritten is written as the host's thread
+  ends (`writeBackupsNow`). The entry's base is the file as the host finds
+  it when writing: its stamp when it reads as the host's saved text, a
+  stamp that cannot match when it holds something else (a restore then
+  asks Keep Mine or Reload), never there when it is missing and nothing
+  was saved. Writes are synchronous on the host's thread (an fsync each;
+  only for documents no window shows). After a crash, a kill or a reboot
+  the folder's next window restores them as its own (`planForRoot`), and
+  a launch opens a window for the folder (`foldersToReopen`).
+- **An untitled buffer** (a held document with no path, which only
+  another renderer makes): unsaved whatever its history says while it
+  holds text (`busyReason` keeps the host for it), and backed up under a
+  name in the folder that no file and no other buffer has
+  (`Backups::untitledPath`: Untitled-1, -2, ...); nothing is written
+  there. A window reattaching takes it (`Shared::reattachFrom`, below)
+  and shows it as the tab of that name, a file not on disk yet, unsaved
+  (`Editor::attachTab(id, name, false)`); the host keeps it pathless until
+  Ctrl+S writes the file, which tells the host the path
+  (`Document::tellHostPath` from `Editor::saveDocument`). A pathless
+  document with no text and nothing unsaved (a renderer's document before
+  it had a file) is never taken. GTK's `hostSavedFromDisk` now counts a
+  buffer whose file is not on disk as all unsaved (saved text ""), so a
+  restored backup of such a file keeps the host alive and backed up.
+- **What a window takes** moved to the core (`Shared::reattachFrom`,
+  SessionClient.h; GTK's `Link::free` calls it, and the Mac's reattach
+  should): the latest free record and what it names, then what no record
+  names, oldest id first. **Never two documents of one path** in one
+  window: the record's own first, then those no record names; the others
+  stay on the host for the folder's next window, so two windows on one
+  file, both closed unsaved, come back as the latest one's text in the
+  next window and the other's in the window after it. `all` (the checks'
+  `endDetached`) takes everything free.
+- **VTE pans** (`Terminal::panToCursor`, on `cursor-moved` only while
+  clipped, and when the clipping starts): the first row and column on
+  show (`panRow`, `panCol`) move only as far as keeps the cursor's cell
+  in the scroller. **Step 2's clipping had never grown VTE**: the
+  scrolled window gives a scrollable child its own size whatever it asks
+  for, so VTE stayed at the view's grid (104x10 against a 300x120 pty in
+  `host_pan`). VTE now grows by negative margins (GTK adds a margin to
+  the allocation's origin and size alike): the grid's extra rows and
+  columns, counted from VTE's own grid (the scroller's size in cells
+  left out a scroll bar's room, one column short), split between the far
+  sides and the near ones by the pan (`applyPan`). GTK warns once per
+  change that the adjusted size went below the measured one (a
+  Gtk-WARNING on stderr, harmless). The cursor's row counts from the top
+  of the program's screen (VTE's last rows). Unclipped, the margins go
+  back to 0.
+- **Checks**: `make test`'s `hostbackup:helpers`, `hostbackup:detach-
+  unsaved`, `hostbackup:untitled`, `hostbackup:restore` (over the socket,
+  stopped as a signal stops it), `reattach:two-of-one-path`,
+  `reattach:untitled` (tests/session_backups_tests.inc); `make guitest`'s
+  `host_backups` (the host's backup at Keep Unsaved, reattached while it
+  lives, an untitled buffer a client left, the host SIGKILLed and a new
+  window restoring both, two windows on one file) and `host_pan`.
+
 **Left before the default flips:** the Mac's half (closing detaching,
-reattaching); the browser's view lists a closed window's record among the
-windows; panning a larger pty to the cursor in VTE, and VTE's own wrap of
-plain output at a smaller pty's width; a held document with no path (none
-GTK makes) is left on the host; two held documents of one path (two
-windows on one file) come back as one tab, the other left on the host;
-terminal splits come back as tabs; a headless host's unsaved file is only
-as safe as the host process (no backup is kept for it once its window
-closes).
+reattaching through `reattachFrom`, `setKeepsBackups`, untitled buffers);
+the browser's view lists a closed window's record among the windows;
+VTE's own wrap of plain output at a smaller pty's width; terminal splits
+come back as tabs.
 
 ## The browser's view (stage 6b)
 

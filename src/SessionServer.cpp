@@ -214,6 +214,15 @@ HostServer::Start HostServer::start(const HostOptions& o, std::string* error) {
         },
         o.delayUs);
     host_->setFolder(o.folder);
+    if (!o.backupDir.empty()) {
+        Host::BackupKeeping k;
+        k.store.dir = o.backupDir;
+        k.store.fs = Backups::posixFs();
+        k.root = o.folder;
+        k.ownerPid = (std::int64_t)getpid();
+        k.ownerStart = Backups::processStart(k.ownerPid);
+        host_->keepBackups(std::move(k));
+    }
     return Start::Ok;
 }
 

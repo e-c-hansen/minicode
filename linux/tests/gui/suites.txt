@@ -116,3 +116,5 @@ TestGutterSuite.cpp
 DesktopModeSuite.cpp
 HostLinkSuite.cpp
 HostReattachSuite.cpp
+HostBackupsSuite.cpp
+HostPanSuite.cpp

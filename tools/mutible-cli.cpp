@@ -518,6 +518,14 @@ int runHost(const Json &args) {
     o.folder = folder;
     o.socketDir = socketDirs()[0];
     if (args.has("idle_minutes")) o.idleMs = (long long)(args["idle_minutes"].asNumber() * 60000.0);
+    // The apps' backup store: what no window shows, unsaved, is kept there
+    // under this process's name (SessionServer.h, "Backups").
+#ifdef __APPLE__
+    const bool mac = true;
+#else
+    const bool mac = false;
+#endif
+    o.backupDir = Backups::defaultDir(getenv("MUTIBLE_BACKUP_DIR"), getenv("HOME"), getenv("XDG_DATA_HOME"), mac);
     takeStopSignals();
     Shared::HostServer server;
     std::string error;

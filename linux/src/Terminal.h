@@ -267,6 +267,21 @@ private:
     std::vector<std::pair<int, int>> sentSizes_;
     void followPtySize(int cols, int rows);
     bool viewCells(int* cols, int* rows) const;   // the scroller's size in cells
+    // While clipped, the part of the larger grid on show follows the
+    // cursor, as tmux pans: the first row and column shown (VTE moved up
+    // and left by negative margins, which the scroller clips), changed only
+    // when the cursor leaves the part on show.
+    int panRow_ = 0, panCol_ = 0;
+    int extraCols_ = 0, extraRows_ = 0;   // the grid's beyond the view's
+    void panToCursor();
+    void setPan(int row, int col);
+    void applyPan();   // the four margins, from the above
+public:
+    // For checks: the first row and column of the pty's grid on show.
+    int panRow() const { return panRow_; }
+    int panCol() const { return panCol_; }
+    bool clipped() const { return ptyCols_ || ptyRows_; }
+private:
     ShellIntegration::ShellState shell_;
     std::string finished_;   // finishedCommand()
     std::string nonce_;   // this shell's, "" when it runs without the integration

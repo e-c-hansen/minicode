@@ -14,6 +14,12 @@
 // one (it holds the lock, so nothing listens there). Peers of another user
 // are refused, both ways.
 //
+// Backups (HostOptions::backupDir, stage 6's last step before the default
+// flips): an unsaved document no app's window has open is backed up by the
+// host into the apps' store, under the host's pid and start, so it outlives
+// a crash, a kill or a reboot of the host: the folder's next window
+// restores it as it restores its own (SessionHost.h, "Backups").
+//
 // Lifetime (the owner's answer, 2026-11-16): the host ends once it has had
 // no renderer for `idleMs` (10 minutes) and nothing is unsaved or running
 // (Host::busyReason); until then it lives on, however long that is.
@@ -55,6 +61,10 @@ struct HostOptions {
     std::string socketDir;              // where the socket goes
     long long idleMs = 10 * 60 * 1000;  // with no renderer and nothing to lose
     unsigned delayUs = 0;               // SessionHost's, for checks
+    // The apps' backup store (Backups::defaultDir), where the host keeps
+    // backups of the unsaved documents no app's window has open
+    // (Host::keepBackups), owned by this process; "" keeps none.
+    std::string backupDir;
 };
 
 class HostServer {

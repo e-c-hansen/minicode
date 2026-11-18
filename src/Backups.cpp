@@ -7,12 +7,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <random>
 #include <set>
 
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 
 namespace Backups {
 
@@ -408,6 +412,77 @@ std::vector<std::string> expired(const std::vector<Entry> &all, double now, doub
     for (const Entry &e : all)
         if (now - e.saved > maxAge && !live(e)) out.push_back(e.id);
     return out;
+}
+
+// ------------------------------------------------- shared by every writer
+std::string defaultDir(const char *override, const char *home, const char *xdgDataHome, bool mac) {
+    std::string dir;
+    if (override && *override) {
+        dir = override;
+    } else if (mac) {
+        if (!home || !*home) return "";
+        dir = std::string(home) + "/Library/Application Support/Mutible/Backups";
+    } else if (xdgDataHome && *xdgDataHome && xdgDataHome[0] == '/') {
+        dir = std::string(xdgDataHome) + "/mutible/Backups";
+    } else {
+        if (!home || !*home) return "";
+        dir = std::string(home) + "/.local/share/mutible/Backups";
+    }
+    while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+    return dir;
+}
+
+double processStart(int64_t pid) {
+    if (pid <= 0) return 0;
+#ifdef __APPLE__
+    struct kinfo_proc info;
+    size_t size = sizeof info;
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, (int)pid};
+    if (sysctl(mib, 4, &info, &size, nullptr, 0) != 0 || size == 0) return 0;
+    if (info.kp_proc.p_stat == SZOMB) return 0;
+    const struct timeval tv = info.kp_proc.p_starttime;
+    return (double)tv.tv_sec + tv.tv_usec / 1e6;
+#else
+    // "pid (comm) state ppid ... starttime ...": the start is field 22, in
+    // clock ticks since boot; comm may hold spaces and parentheses, so the
+    // fields are counted from the last ')'.
+    std::string text;
+    if (!posixFs().read("/proc/" + std::to_string((long long)pid) + "/stat", &text, 4096)) return 0;
+    const size_t close = text.rfind(')');
+    if (close == std::string::npos || close + 2 >= text.size()) return 0;
+    const char state = text[close + 2];
+    if (state == 'Z' || state == 'X') return 0;
+    size_t p = close + 2;
+    for (int field = 3; field < 22; field++) {
+        p = text.find(' ', p);
+        if (p == std::string::npos) return 0;
+        p++;
+    }
+    const long ticks = sysconf(_SC_CLK_TCK);
+    if (ticks <= 0) return 0;
+    return (double)std::strtoull(text.c_str() + p, nullptr, 10) / (double)ticks;
+#endif
+}
+
+std::string newId() {
+    std::random_device rd;
+    std::string id;
+    static const char *const kHex = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+        if (i == 8 || i == 12 || i == 16 || i == 20) id += '-';
+        id += kHex[rd() & 15];
+    }
+    return id;
+}
+
+std::string untitledPath(const std::string &folder,
+                         const std::function<bool(const std::string &)> &taken) {
+    std::string base = folder;
+    while (base.size() > 1 && base.back() == '/') base.pop_back();
+    for (int n = 1;; n++) {
+        const std::string p = base + "/Untitled-" + std::to_string(n);
+        if (!taken || !taken(p)) return p;
+    }
 }
 
 }  // namespace Backups
