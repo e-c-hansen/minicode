@@ -6469,3 +6469,35 @@ untitled buffers, one path twice, panning (stage 6, step 3)").
   The top-level Makefile's CLI links Backups.cpp and SavePlan.cpp.
 - **Checks**: `host_backups`, `host_pan`, and the `hostbackup:*` and
   `reattach:*` groups of `make test`.
+
+### 106. Terminal splits come back as splits (stage 6; November 2026)
+
+The last terminal item of "Left before the default flips"
+(`../docs/notes/session-host.md`, "Terminal splits in the record").
+
+- **What a user meets.** A window closed with split terminals (Split
+  Terminal, Split Terminal Down) and the folder's next window, in this app
+  or after a relaunch, has the same terminal tabs with the same panes in
+  the same columns and rows, the boundaries where they were, each tab's
+  pane with the keyboard and the tab on show as they were. A shell that
+  ended while no window showed it leaves its pane out, its neighbours
+  where they were. A record an older app left (or a terminal no record
+  names) still comes back as a tab each.
+- **Code.** Core: `src/TermDockRecord.{h,cpp}` (`Shared::TermDock`,
+  `termLayoutJson`, `termDockFrom`, `prune`): the record's `termLayout`
+  beside `terms`, written and read by both apps; built into the top-level
+  Makefile's app and tests, linux/Makefile and meson.build (not the Mac's
+  CLI: nothing of the host reads it). GTK: `reportTerminals` (main.cpp)
+  writes it from the dock's groups; `Link::windowTerminals` takes it;
+  `takeHeldTerminals` orders the held terminals as the dock makes them
+  back, `buildHeldTerminals` makes the tabs (`TerminalDock::restoreTab`,
+  `TerminalGroup::append` and `setShares`, no size rule); the dock tells a
+  moved boundary (`TerminalGroup::onSharesChanged`, the dock's
+  `onSharesChanged` 300 ms after the last move); `focusPane(t, false)`
+  shows a tab's pane without the keyboard and reports a pane made active.
+  **Fixed on the way:** with the keyboard in the dock, a tab switch gave
+  it to the tab's first pane (GtkStack's `gtk_widget_child_focus`), whose
+  focus-in made it the tab's active pane; `TerminalDock::activate` now
+  gives it to the tab's active pane and ignores focus-ins meanwhile.
+- **Checks**: `host_splits` (HostSplitsSuite.cpp; its header says what it
+  checks) and the `termdock:*` groups of `make test`.

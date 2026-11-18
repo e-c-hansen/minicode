@@ -353,6 +353,8 @@ private:
 //     id first; the others stay on the host for the folder's next window.
 //   - `all` (a check's cleanup): every free record and what each names,
 //     and every document no record names, seconds of a path too.
+// The terminals' tabs and split panes: Shared::termDockFrom(tabs, the
+// terms' ids), TermDockRecord.h.
 struct Reattach {
     struct Doc {
         DocId id = 0;

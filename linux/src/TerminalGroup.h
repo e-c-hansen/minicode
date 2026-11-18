@@ -35,6 +35,8 @@ public:
     GtkWidget* widget() const { return area_; }
     // Every pane, column by column, each column top to bottom.
     std::vector<Terminal*> panes() const;
+    // The same as columns, left to right, each top to bottom.
+    const std::vector<std::vector<Terminal*>>& columns() const { return cols_; }
     int count() const;
     bool contains(const Terminal* t) const { return find(t, nullptr, nullptr); }
     bool find(const Terminal* t, int* col, int* row) const;
@@ -58,6 +60,16 @@ public:
     // `of` is the only pane of its column (Up and Down then have no pane to
     // move a boundary against: the Mac resizes the dock instead).
     bool aloneInColumn(const Terminal* of) const;
+
+    // Reattaching (stage 6, TermDockRecord.h): `fresh` after the last pane,
+    // as a new column or at the foot of the last one, with no size rule
+    // (the record's panes fit where they were); the shares even until
+    // setShares gives the recorded ones, which must match the panes.
+    void append(Terminal* fresh, bool newColumn);
+    bool setShares(const TerminalLayout::Layout& l);
+    // A bar dragged or a boundary moved from the keyboard (not splits or
+    // closes, which the dock reports itself).
+    std::function<void()> onSharesChanged;
 
     // The pane's size in points as laid out, and the bar boxes (for the checks).
     bool frameOf(const Terminal* t, TerminalLayout::Rect* out) const;

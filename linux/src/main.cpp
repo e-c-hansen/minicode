@@ -61,6 +61,7 @@
 #include "DocumentView.h"
 #include "Editor.h"
 #include "SessionLink.h"
+#include "TermDockRecord.h"
 #include "FileTree.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
 #include "FolderPicker.h"  // inScope (Add Folder to Focus…)
@@ -114,6 +115,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <deque>
+#include <map>
 #include <set>
 #include <cstring>
 #include <functional>
@@ -215,6 +217,9 @@ struct App {
     // and the status bar's Reconnect, shown while the host is gone.
     SessionLink::Link::Held held;
     std::deque<SessionLink::Link::HeldTerm> heldTerms;
+    // The record's tabs and panes over those terminals (TermDockRecord.h),
+    // heldTerms in the order the dock makes them back.
+    Shared::TermDock heldDock;
     std::set<uint64_t> dropOnClose;
     GtkWidget* reconnectButton = nullptr;
 
@@ -477,6 +482,8 @@ static void flashStatus(App* app, const std::string& message) {
 // editor.session-host and MUTIBLE_HOST say, with its going in the status bar.
 static void rehostWindows(const std::shared_ptr<SessionLink::Link>& link);
 static void attachHeldDocuments(App* app);
+static void takeHeldTerminals(App* app);
+static void buildHeldTerminals(App* app, bool firstMade);
 static void backUpHeldDocuments(App* app);
 static void showHeldActive(App* app);
 
@@ -1010,16 +1017,10 @@ static void openFolder(App* app, const std::string& dir) {
     // What the new folder's host holds for a window (stage 6, step 2).
     if (app->link && !app->link->lost()) {
         app->held = app->link->takeForWindow(app->editor->sessionWindowId());
-        for (const SessionLink::Link::HeldTerm& t : app->held.terms) app->heldTerms.push_back(t);
+        takeHeldTerminals(app);
         attachHeldDocuments(app);
-#ifdef MUTIBLE_ENABLE_TERMINAL
-        if (app->termDock && !app->heldTerms.empty()) {
-            const int first = app->termDock->count();
-            while (!app->heldTerms.empty()) app->termDock->newTerminal();
-            app->termDock->select(first, false);
-        }
-#endif
-        app->heldTerms.clear();
+        // After the dock's own tabs, as the record had them.
+        buildHeldTerminals(app, false);
     }
     app->nav->clear();   // Go Back's places were the old folder's
     // After the tabs close, so no old file is reopened under the new root.
@@ -4325,16 +4326,40 @@ static void disconnectOwners(GtkWidget* w, const std::vector<gpointer>& owners) 
 // window opening on the folder takes what a closed one left.
 
 // The host terminals the window's dock shows on its link, for its record
-// ("terms"), so the next window on the folder knows them for its own.
+// ("terms"), so the next window on the folder knows them for its own, and
+// how they sit ("termLayout", TermDockRecord.h: each tab's columns and
+// panes, their shares, the active pane, the tab on show), so it puts
+// splits back as splits. A pane on another host (a terminal from before
+// Open Folder) or with no shell yet is left out of both.
 static void reportTerminals(App* app) {
     if (app->dead || !app->link || !app->editor) return;
     std::vector<uint64_t> ids;
+    Json layout;
 #ifdef MUTIBLE_ENABLE_TERMINAL
-    if (app->termDock)
-        for (Terminal* t : app->termDock->all())
-            if (t->sessionLink() == app->link.get() && t->hostTerminal()) ids.push_back(t->hostTerminal());
+    if (app->termDock) {
+        Shared::TermDock dock;
+        dock.activeTab = app->termDock->activeIndex();
+        for (int i = 0; i < app->termDock->count(); i++) {
+            const TerminalGroup* g = app->termDock->group(i);
+            Shared::TermDock::Tab tab;
+            for (const std::vector<Terminal*>& column : g->columns()) {
+                std::vector<uint64_t> c;
+                for (Terminal* t : column) {
+                    const uint64_t id = t->sessionLink() == app->link.get() ? t->hostTerminal() : 0;
+                    c.push_back(id);
+                    if (id) ids.push_back(id);
+                }
+                tab.columns.push_back(std::move(c));
+            }
+            tab.layout = g->layout();
+            g->find(g->active(), &tab.activeColumn, &tab.activeRow);
+            dock.tabs.push_back(std::move(tab));
+        }
+        layout = Shared::termLayoutJson(std::move(dock));
+    }
 #endif
-    app->link->windowTerminals(app->editor->sessionWindowId(), app->editor->window(), std::move(ids));
+    app->link->windowTerminals(app->editor->sessionWindowId(), app->editor->window(), std::move(ids),
+                               std::move(layout));
 }
 
 // The window is going (onWindowRemoved): its record, documents and
@@ -4449,17 +4474,53 @@ static void showHeldActive(App* app) {
     if (show) app->editor->activate(show);
 }
 
-// The terminals the host held beyond the dock's first (which took one as it
-// was made): a tab each, the first on show.
-static void attachHeldTerminals(App* app) {
-#ifdef MUTIBLE_ENABLE_TERMINAL
-    if (!app->termDock) return;
-    const bool any = !app->heldTerms.empty();
-    while (!app->heldTerms.empty()) app->termDock->newTerminal();
-    if (any) app->termDock->select(0, false);
-#else
+// The terminals the folder's host held for this window, in the order the
+// dock makes them back: its record's tabs and panes (Shared::termDockFrom:
+// tab by tab, column by column, top to bottom; a terminal that ended while
+// no window showed it left out, its neighbours keeping their places), then
+// any the record does not place, a tab each. makeTerminal takes them one by
+// one from the front.
+static void takeHeldTerminals(App* app) {
+    std::vector<uint64_t> ids;
+    std::map<uint64_t, SessionLink::Link::HeldTerm> byId;
+    for (const SessionLink::Link::HeldTerm& t : app->held.terms) {
+        ids.push_back(t.id);
+        byId[t.id] = t;
+    }
+    app->heldDock = Shared::termDockFrom(app->held.tabs, ids);
     app->heldTerms.clear();
+    for (uint64_t id : app->heldDock.order()) app->heldTerms.push_back(byId[id]);
+}
+
+// The held terminals as the record's tabs, each with its panes, shares and
+// active pane, after the dock's own tabs (`firstMade`: the dock's first
+// tab, made as the window was, holds the first of them), and the record's
+// tab on show; the keyboard stays where it is.
+static void buildHeldTerminals(App* app, bool firstMade) {
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (app->termDock && !app->heldDock.tabs.empty()) {
+        std::vector<int> made;
+        for (size_t k = 0; k < app->heldDock.tabs.size(); k++) {
+            const Shared::TermDock::Tab& t = app->heldDock.tabs[k];
+            std::vector<size_t> rows;
+            for (const auto& column : t.columns) rows.push_back(column.size());
+            made.push_back(app->termDock->restoreTab(k == 0 && firstMade ? 0 : -1, rows, t.layout,
+                                                     t.activeColumn, t.activeRow));
+        }
+        const int show = made[(size_t)std::max(0, std::min(app->heldDock.activeTab, (int)made.size() - 1))];
+        if (TerminalGroup* g = app->termDock->group(show)) app->termDock->focusPane(g->active(), false);
+    }
+#else
+    (void)firstMade;
 #endif
+    app->heldTerms.clear();
+    app->heldDock = Shared::TermDock();
+}
+
+// The terminals the host held beyond the dock's first (which took one as it
+// was made): the record's tabs and panes.
+static void attachHeldTerminals(App* app) {
+    buildHeldTerminals(app, true);
     reportTerminals(app);
 }
 
@@ -4684,7 +4745,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     // them as it makes its terminals).
     if (app->link && !app->link->lost()) {
         app->held = app->link->takeForWindow(app->editor->sessionWindowId());
-        for (const SessionLink::Link::HeldTerm& t : app->held.terms) app->heldTerms.push_back(t);
+        takeHeldTerminals(app);
     }
     StartupLog::mark("window: editor");
     app->editor->setTitleCallback(updateTitle, app);
@@ -4859,6 +4920,8 @@ static App* newWindow(const std::string& root, const std::string& file,
         if (!app->dead && app->testGutter) app->testGutter->terminalsChanged();
         reportTerminals(app);
     };
+    // A boundary between panes moved: the record's shares.
+    app->termDock->onSharesChanged = [app] { reportTerminals(app); };
     app->termDock->confirmClose = [app](Terminal* t, std::function<void()> proceed) {
         askCloseBusyTerminal(app, t, std::move(proceed));
     };
