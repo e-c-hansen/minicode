@@ -204,8 +204,10 @@ goes here first, with tests; the GUI only displays it.
   in the editor), `TreeDetails`, `TreeFocusBar` (the focused tree's
   breadcrumb row, or its label row for several folders),
   `FormatRunner`, `BackupStore`, `SessionStore` (sessions.json),
-  `SessionLink` (the session's host and each tab's document on it,
-  editor.session-host; `docs/notes/session-host.md`),
+  `SessionLink` (the session's hosts, the process's and each folder's
+  headless one, and each tab's document on them, editor.session-host;
+  `docs/notes/session-host.md`), `SessionWindow` (a window's link, record
+  and what it took from a closed window's, stage 6),
   `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box).
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),

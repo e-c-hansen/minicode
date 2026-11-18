@@ -282,11 +282,13 @@
     [self ensureGitPanel];             // autofetch, before the panel is shown
     [self ensureTestGutter];           // the ▶ beside each test
     [self ensureLineHistory];          // who last changed each line
+    [self attachSessionHeld];          // what the session's host kept of a closed window
     [self restoreWindowLayout];        // a window brought back: its panels and sizes first,
                                        // so its text is laid out at its width
     [self restoreSession];             // the files open here last time
     [self restoreBrowserFromSession];  // and the browser, where it was
     [self finishRestoringWindow];      // a window brought back: its tree and keyboard
+    [self finishSessionAttach];        // the host's tab on show, and its terminals
     [[NSNotificationCenter defaultCenter] addObserver:self
         selector:@selector(backupsAppWillTerminate:)
             name:NSApplicationWillTerminateNotification object:nil];

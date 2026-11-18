@@ -28,26 +28,185 @@
 //     that dispatched it there) waits for the next run-loop turn, and an
 //     edit made meanwhile is moved past it (Ot::transform).
 //
-// One client for the process, in UTF-16 units (what NSString counts), its
-// messages dispatched on the main queue as they arrive. MUTIBLE_HOST=
-// loopback sends every message through the protocol's encoding and back;
-// MUTIBLE_HOST_DELAY_US delays each one on the host's thread;
-// MUTIBLE_SESSION_HOST=on turns the setting on for every tab (the GUI
-// checks' second pass).
+// Links (stage 6, docs/notes/session-host.md, "The Mac reattaches"). A
+// link is one client of one host, in UTF-16 units (what NSString counts),
+// its messages dispatched on the main queue as they arrive:
+//   - the process's link: a SessionHost on a thread of this process, one for
+//     every window (editor.session-host = on, and the fallback);
+//   - a folder's link (editor.session-host = headless, or MUTIBLE_HOST=
+//     socket): the folder's `mutible host`, found by its socket or started
+//     from Contents/MacOS/mutible-cli, detached, and attached to over the
+//     socket; one per folder, shared by the windows on it.
+// Each document and terminal keeps the link it was opened on. A window
+// closing detaches: its documents, terminals and its record (its tabs)
+// stay on the host, and a window opening on the folder takes the latest
+// record a closed one left (takeForWindow). A headless host that goes is
+// told to the link's lost listeners once; Reconnect (or the folder's next
+// window) finds or starts it again, and every window on the old link moves
+// to the new one, its buffers opened there anew.
+//
+// MUTIBLE_HOST=loopback sends every message of the process's link through
+// the protocol's encoding and back; MUTIBLE_HOST_DELAY_US delays each one on
+// the host's thread; MUTIBLE_SESSION_HOST=on turns the setting on for every
+// tab (the GUI checks' second pass); MUTIBLE_HOST_IDLE_MINUTES is passed to
+// a host started here as --idle-minutes (checks).
 #pragma once
 #import <Cocoa/Cocoa.h>
 
-#include <functional>
-#include <string>
+#include <sys/types.h>
 
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "Json.h"
 #include "SessionClient.h"
 
 @class MCTab, CodeTextView;
+namespace Shared {
+class HostLink;
+}
 
-// editor.session-host, or MUTIBLE_SESSION_HOST=on.
+// editor.session-host (on or headless), or MUTIBLE_SESSION_HOST=on.
 BOOL MCSessionHostEnabled(void);
-// The process's client, the host started with it.
+// The process's client, the host started with it (the process's link's).
 Shared::Client &MCSessionClient(void);
+
+namespace MCSession {
+
+// What a host holds that a window opening on its folder takes
+// (Link::takeForWindow), as GTK's SessionLink has it.
+struct HeldDoc {
+    std::uint64_t id = 0;
+    std::string path;
+    bool dirty = false;
+};
+struct HeldTerm {
+    std::uint64_t id = 0;
+    int pid = 0;
+    int cols = 0, rows = 0;
+    Shared::TermShell shell;
+};
+struct Held {
+    std::uint64_t window = 0;   // the record taken, 0 for none
+    Json tabs;                  // its tabs, null for none
+    std::vector<HeldDoc> docs;
+    std::vector<HeldTerm> terms;
+    std::vector<std::uint64_t> records;   // allFree: every free record
+};
+
+class Link {
+public:
+    enum class Kind { InProcess, Socket };
+    ~Link();
+    Link(const Link&) = delete;
+    Link& operator=(const Link&) = delete;
+
+    Shared::Client& client() { return *client_; }
+    Kind kind() const { return kind_; }
+    // The folder, resolved; "" for the process's link, which serves every
+    // window.
+    const std::string& folder() const { return folder_; }
+    const std::string& socketPath() const { return socketPath_; }
+    // The pid of the host this link started (0 when it found one running,
+    // or in process).
+    pid_t startedHost() const { return startedHost_; }
+    bool lost() const { return client_->lost(); }
+    // A headless host, there: what a closing window leaves unsaved stays
+    // after the app is gone (Keep Unsaved).
+    bool keepsUnsaved() const { return kind_ == Kind::Socket && !lost(); }
+
+    // Told once, on the main queue, when the host goes; the number takes it
+    // off again.
+    int addLostListener(std::function<void()> f);
+    void removeLostListener(int token);
+
+    // ---- windows (Client::windowTabs): an open window's id on the host,
+    // its record sent when it differs from what was sent last, and on
+    // closing either kept (marked "detached", the latest for the folder's
+    // next window) or closed.
+    std::uint64_t newWindow();
+    void windowTabs(std::uint64_t window, Json tabs);
+    void windowDetached(std::uint64_t window, Json tabs, bool keep);
+    void windowClosed(std::uint64_t window);
+    // What a window opening on `root` takes: the latest free record (one no
+    // open window has, whose renderer is gone or is this app's) with its
+    // documents and terminals, then held documents (with a path, under
+    // `root` for the process's link) and, on a folder's host, terminals that
+    // no record names. `window` becomes the record's id when one is taken.
+    Held takeForWindow(std::uint64_t* window, const std::string& root);
+    // Everything free (the checks' endDetached).
+    Held allFree();
+
+    // Lets go of a headless host: it forgets this renderer and keeps the
+    // rest (quitting). Nothing is sent after it.
+    void detach();
+    void dispatch();
+
+private:
+    friend std::shared_ptr<Link> forFolder(const std::string& root);
+    friend std::shared_ptr<Link> processLink();
+    Link() = default;
+    Held free(bool all, const std::string& root);
+    bool startSocket(std::string* why);
+
+    Kind kind_ = Kind::InProcess;
+    std::string folder_, socketPath_;
+    pid_t startedHost_ = 0;
+    Shared::Client* client_ = nullptr;            // the process's, or owned_'s
+    std::unique_ptr<Shared::Client> owned_;
+    std::unique_ptr<Shared::HostLink> socket_;
+    std::shared_ptr<std::atomic<bool>> queued_;
+    bool detached_ = false, lostTold_ = false;
+    std::map<int, std::function<void()>> lostListeners_;
+    int nextListener_ = 0;
+    std::set<std::uint64_t> live_;                 // open windows' ids
+    std::map<std::uint64_t, std::string> sent_;   // each one's record as sent
+};
+
+// The link for a window on `root`: the folder's headless host (found or
+// started) with editor.session-host = headless or MUTIBLE_HOST=socket, else
+// the process's. A folder's link whose host went is passed over: a new one
+// is made (the windows on the old one move to it).
+std::shared_ptr<Link> forFolder(const std::string& root);
+std::shared_ptr<Link> processLink();
+// The live folder link whose folder holds `path`, else the process's: for a
+// document or terminal made outside a window's own calls.
+std::shared_ptr<Link> linkForPath(const std::string& path);
+// Whether `root`'s folder link lost its host.
+bool folderLost(const std::string& root);
+// Every link there is (the process's first, when made).
+std::vector<std::shared_ptr<Link>> all();
+// Quitting: every headless host let go of; each runs on until its own
+// lifetime ends.
+void detachAll();
+// For the GUI checks between suites: everything the links hold that no
+// open window shows is closed on its host, so one suite's detached
+// documents and terminals never come back in the next suite's window.
+void endDetached();
+
+}  // namespace MCSession
+
+// A link carried by Objective-C objects (a tab's document, a terminal, a
+// window).
+@interface MCSessionLinkRef : NSObject
+- (instancetype)initWithLink:(std::shared_ptr<MCSession::Link>)link;
+@property(nonatomic, readonly) std::shared_ptr<MCSession::Link> link;
+@end
+
+// A terminal's place on a host: its link, and the held terminal it takes
+// over when it opens (0: it starts a shell).
+@interface MCSessionTermPlace : NSObject
+@property(nonatomic, strong) MCSessionLinkRef *link;
+@property(nonatomic, assign) uint64_t heldTerm;
+@property(nonatomic, assign) int heldPid, heldCols, heldRows;
+@property(nonatomic, assign) Shared::TermShell heldShell;
+@end
 BOOL MCSessionLoopback(void);
 // Another renderer of the process's host (a browser's view, SessionBrowser.h,
 // on a thread of its own): `client` says Hello through it, and the host's
@@ -57,10 +216,30 @@ BOOL MCSessionLoopback(void);
 std::function<void()> MCSessionConnectViewer(Shared::Client &client);
 
 // One tab's document on the host (made by MCTab when its text is first set
-// with the setting on, closed with the tab).
+// with the setting on, closed with the tab). Its link is its window's
+// (the tab's owner's sessionLinkForTab:), else the one for its path.
 @interface MCSessionDoc : NSObject
 - (instancetype)initWithTab:(MCTab *)tab text:(NSString *)text;
+// A document the host holds already (a window opening takes what a closed
+// one left), under its id: the host's text is heldText once this returns
+// (nil when the host did not answer).
+- (instancetype)initWithTab:(MCTab *)tab held:(Shared::DocId)docId link:(MCSessionLinkRef *)link;
+@property(nonatomic, readonly) NSString *heldText;
 @property(nonatomic, readonly) Shared::DocId docId;
+@property(nonatomic, readonly) MCSessionLinkRef *link;
+// Whether it is open on its host now (not detached, closed or lost).
+@property(nonatomic, readonly) BOOL open;
+// The window closes and detaches: the host keeps the document, its text and
+// history (Client::detach); closing the tab then closes nothing there.
+- (void)detach;
+// The tab's file is now at its path (Save As, a rename): the host is told.
+- (void)pathChanged;
+// Its link's host went and `link` is the one found or started since: the
+// document is opened on it anew under a new id from the tab's text, with
+// `saved` (the file's text as last read or saved, nil when unknown) as the
+// host's saved text and the difference an edit outside the history, so the
+// host counts it unsaved (stage 6, step 2, as GTK's Document::rehost).
+- (void)rehostOn:(MCSessionLinkRef *)link saved:(NSString *)saved;
 @property(nonatomic, weak, readonly) MCTab *tab;
 // The host's edit is going into the mirror: nothing is recorded.
 @property(nonatomic, readonly) BOOL applying;

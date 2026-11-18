@@ -1,6 +1,7 @@
 // main.mm — application bootstrap and menu bar. Objective-C++.
 #import <Cocoa/Cocoa.h>
 #import "EditorController.h"
+#import "SessionLink.h"
 #import "SessionStore.h"
 #import "Lsp.h"
 #import "Demo.h"
@@ -234,7 +235,7 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
         if (!c.hasUnsavedChanges) continue;
         if (restarting && [c keepUnsavedTabsForRestart]) continue;   // they come back
         [c.window makeKeyAndOrderFront:nil];
-        if (![c confirmCloseAllTabs]) return NSTerminateCancel;
+        if (![c confirmCloseAllTabsClosing:YES]) return NSTerminateCancel;
     }
     return NSTerminateNow;
 }
@@ -244,6 +245,11 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     // Every window's session as it is now: the browser's page moves without
     // anything else saving it.
     for (EditorController *c in self.controllers) [c saveSession];
+    // A folder's headless session host keeps each window's documents and
+    // terminals for the next launch (but what Don't Save dropped), and is
+    // let go of; it runs on until its own lifetime ends.
+    for (EditorController *c in self.controllers) [c detachFromSessionHost];
+    MCSession::detachAll();
     // And every window as it is, for the next launch to bring back.
     [EditorController saveOpenWindows];
     MCSessionsFlush();   // sessions.json written before the process goes
