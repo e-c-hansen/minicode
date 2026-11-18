@@ -212,6 +212,13 @@ NSString *MCEncodingStatusLabel(MCTextEncoding encoding, BOOL bom);
 // first shown (loadActiveTab reads the file then, keeping this text).
 - (BOOL)attachHeld:(uint64_t)docId link:(MCSessionLinkRef *)link;
 @property(nonatomic, assign) BOOL heldFromHost;
+// A buffer with no file yet: the session's host held it without a path
+// (another renderer's untitled document), and the tab shows it under a name
+// of its own in the folder (Backups::untitledPath: Untitled-1, ...), a file
+// not on disk, unsaved but not "(deleted)", and left alone by auto-save.
+// The host is told the path (DocPath) once Cmd+S has written the file
+// there, which clears this.
+@property(nonatomic, assign) BOOL untitled;
 // When it last came on show in its window (Model::Window::lastUsed), larger
 // for later: the tab shown after a close, the files Quick Open lists first.
 @property(nonatomic, readonly) uint64_t lastActive;

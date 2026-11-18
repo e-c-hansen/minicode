@@ -49,7 +49,9 @@
 // the protocol's encoding and back; MUTIBLE_HOST_DELAY_US delays each one on
 // the host's thread; MUTIBLE_SESSION_HOST=on turns the setting on for every
 // tab (the GUI checks' second pass); MUTIBLE_HOST_IDLE_MINUTES is passed to
-// a host started here as --idle-minutes (checks).
+// a host started here as --idle-minutes (checks). A host started here gets
+// MUTIBLE_BACKUP_DIR (MCSessionHostEnvironment), and every client of the
+// app's says in its Hello that its windows keep backups (stage 6, step 3).
 #pragma once
 #import <Cocoa/Cocoa.h>
 
@@ -208,6 +210,10 @@ void endDetached();
 @property(nonatomic, assign) Shared::TermShell heldShell;
 @end
 BOOL MCSessionLoopback(void);
+// The environment a `mutible host` started here gets: this process's, with
+// MUTIBLE_BACKUP_DIR set to the app's backup store (MCBackupStore), so the
+// host's backups of what no window shows are the ones the app restores.
+NSDictionary<NSString *, NSString *> *MCSessionHostEnvironment(void);
 // Another renderer of the process's host (a browser's view, SessionBrowser.h,
 // on a thread of its own): `client` says Hello through it, and the host's
 // messages for it go to Client::deliver from then on. What it returns lets
@@ -240,6 +246,15 @@ std::function<void()> MCSessionConnectViewer(Shared::Client &client);
 // host's saved text and the difference an edit outside the history, so the
 // host counts it unsaved (stage 6, step 2, as GTK's Document::rehost).
 - (void)rehostOn:(MCSessionLinkRef *)link saved:(NSString *)saved;
+// The host's saved text made `saved` when the tab's text differs from it:
+// the host's copy is reset to it (its history gone) and the difference goes
+// as an edit outside the history, so the host counts the buffer unsaved and
+// a headless host's lifetime and backups keep it (GTK's
+// Document::hostSavedFromDisk). `saved` is the file's text as last read or
+// saved, "" for a file not on disk (all of the buffer unsaved); nil does
+// nothing. For a backup restored, a held buffer whose file is gone, and
+// rehostOn:saved:.
+- (void)hostSaved:(NSString *)saved;
 @property(nonatomic, weak, readonly) MCTab *tab;
 // The host's edit is going into the mirror: nothing is recorded.
 @property(nonatomic, readonly) BOOL applying;

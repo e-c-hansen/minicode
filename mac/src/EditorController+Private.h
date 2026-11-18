@@ -704,6 +704,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 @interface EditorController (Session)
 - (void)installSessionHooks;
 - (void)sessionForgetHistoryOf:(MCTab *)t;
+// A backup restored into `t` (loadActiveTab): the host counts its text
+// unsaved against the file's, `saved` ("" for a file not on disk).
+- (void)sessionRestoredBackupOf:(MCTab *)t saved:(NSString *)saved;
 - (CodeTextView *)textViewShowingSourceOf:(MCTab *)t;
 - (void)tabTextChangedByHost:(MCTab *)t;
 // Stage 6: the window on its host (SessionWindow.h), nil with the setting

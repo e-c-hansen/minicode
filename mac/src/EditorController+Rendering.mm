@@ -578,7 +578,10 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
                         MCViewerKindRendersMarkdown(viewer)) && !blank;
     self.savedText = content;
     self.dirty = held && (!disk.text || ![held isEqualToString:content]);
-    if (held && !disk.text && ![[NSFileManager defaultManager] fileExistsAtPath:path]) _activeTab.gone = YES;
+    // A held file gone from disk says so; an untitled buffer (MCTab
+    // untitled) never had one.
+    if (held && !disk.text && !_activeTab.untitled && ![[NSFileManager defaultManager] fileExistsAtPath:path])
+        _activeTab.gone = YES;
     // How the file is written, as read; a restored buffer whose file is
     // gone keeps what its backup said (takeBackup:intoTab:).
     if (disk.text) {
@@ -586,7 +589,13 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         _activeTab.encoding = disk.encoding;
     }
     [self recordStamp:disk.stamp ofTab:_activeTab];
-    if (restored) [self showRestoredText:restored base:restoredBase inode:restoredInode];
+    if (restored) {
+        [self showRestoredText:restored base:restoredBase inode:restoredInode];
+        // The session's host counts the backup's text unsaved too (against
+        // the file's, "" for a file not on disk), so a headless host keeps
+        // it and backs it up if the window leaves it there.
+        if (self.dirty) [self sessionRestoredBackupOf:_activeTab saved:self.savedText ?: @""];
+    }
     [self noteLargeFileText:self.sourceText];   // large-file mode, before it shows
     [self refreshDisplay];
     // Previews show rendered text, which no language server should see, nor
