@@ -757,6 +757,11 @@ void SearchPanel::planned(PlanJob* job) {
     std::vector<std::string> todo, held, away, large = job->plan.tooLarge;
     if (job->plan.tooLargeCount > large.size())
         large.push_back("and " + grouped(job->plan.tooLargeCount - large.size()) + " more");
+    // Files read as Windows-1252: searched, but written as UTF-8 or UTF-16
+    // only, so left alone and named.
+    std::vector<std::string> legacy = job->plan.otherEncoding;
+    if (job->plan.otherEncodingCount > legacy.size())
+        legacy.push_back("and " + grouped(job->plan.otherEncodingCount - legacy.size()) + " more");
     std::size_t matches = 0;
     for (const FolderReplaceFile& f : job->plan.files) {
         if (holdOf(f.path, nullptr) == Hold::Conflict) {
@@ -775,6 +780,9 @@ void SearchPanel::planned(PlanJob* job) {
                   : !large.empty() ? "Nothing replaced: the matches are in files larger than " +
                                          replaceSizeLimit() + ", which Replace in Folder leaves "
                                          "alone (" + joined(large) + ")"
+                  : !legacy.empty() ? "Nothing replaced: the matches are in files that are not "
+                                      "UTF-8 (read as Windows-1252), which Replace in Folder "
+                                      "leaves alone (" + joined(legacy) + ")"
                                   : "Nothing to replace");
         return;
     }
@@ -792,6 +800,9 @@ void SearchPanel::planned(PlanJob* job) {
     if (!large.empty())
         detail += " Left alone, since they are larger than " + replaceSizeLimit() + ": " +
                   joined(large) + ".";
+    if (!legacy.empty())
+        detail += " Left alone, since they are not UTF-8 (read as Windows-1252): " +
+                  joined(legacy) + ".";
     GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", question.c_str());
     gtk_alert_dialog_set_detail(dlg, detail.c_str());
     const char* buttons[] = {"Replace", "Cancel", nullptr};
