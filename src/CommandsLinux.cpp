@@ -325,6 +325,9 @@ const std::vector<LinuxRow>& linuxRows() {
         // Run File: the Mac's Shift+Cmd+Return. Global, so it also works
         // with the keyboard in the terminal.
         {"minicode.runFile", "ctrl+shift+enter", Global, nullptr, nullptr},
+        // No key, as on the Mac (VS Code's is a chord): the Terminal menu
+        // and the palette. The ▶ beside each test runs that one.
+        {"testing.runAtCursor", "", 0, nullptr, nullptr},
 
         // ---- Navigate
         // The palette's other ways in, VS Code's Linux keys. Ctrl+P, Ctrl+G

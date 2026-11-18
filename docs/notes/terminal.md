@@ -404,7 +404,10 @@ for full-screen programs. Both can be open at once.
   (`MCTerminalExitStatusKey`, `MCTerminalCommandKey`, read before the prompt
   mark clears it): 0 is a check, anything else a cross. Results are kept
   per file and test until an edit that is not a whole new text (a tab
-  switch). GTK and Android have none yet.
+  switch). The GTK port has it too (2026-11-18, `linux/HANDOFF.md`
+  item 96: `linux/src/TestGutter.{h,cpp}`, the marks in each buffer's
+  `BufferLines`, a run matched to its terminal, shell and the
+  integration's count of commands started); Android has none yet.
 - **Links** (Cmd+click; `TermLinks`): resolved against the shell's cwd (OSC 7),
   the window folder, its worktrees and the sessions' scratchpads
   (`AgentIndex::resolveTarget`): one match opens, several get a picker, none
