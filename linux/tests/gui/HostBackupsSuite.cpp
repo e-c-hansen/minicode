@@ -201,7 +201,7 @@ MC_GUI_SUITE(host_backups) {
         const char* host = getenv("MUTIBLE_HOST");
         gHadHostEnv = host != nullptr;
         gHostEnv = host ? host : "";
-        GCHECK(!store().dir.empty() && store().dir.rfind("/tmp/", 0) == 0);   // the scratch world's
+        GCHECK(!store().dir.empty() && store().dir.find(MCGuiScratch()) == 0);   // the scratch world's, never the user's
         EnvLock::envSet("MUTIBLE_HOST", "socket");
         EnvLock::envSet("MUTIBLE_HOST_IDLE_MINUTES", "2");
         MCGuiOpenWindow(gDir);
