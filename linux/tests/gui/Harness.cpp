@@ -636,6 +636,7 @@ void noteState() {
 struct World {
     size_t windows = 0;
     int terminals = 0;
+    bool closeAsks = true;   // every window asks before closing a busy terminal
     bool otherOnTop = false;
     std::string settings, keys;
 };
@@ -647,7 +648,10 @@ World lookAtWorld() {
     w.windows = all.size();
 #ifdef MINICODE_ENABLE_TERMINAL
     for (const MCGuiAppWindow& a : all)
-        if (a.termDock) w.terminals += a.termDock->count();
+        if (a.termDock) {
+            w.terminals += a.termDock->count();
+            if (!a.termDock->confirmClose) w.closeAsks = false;
+        }
 #endif
     w.otherOnTop = MCGuiTopWindow() != MCGuiApp().window;
     w.settings = MCGuiReadFile(envOr("MINICODE_SETTINGS"));
@@ -724,6 +728,11 @@ void checkWhatSuiteLeft() {
         const char* title = gtk_window_get_title(MCGuiTopWindow());
         leak(std::string("left another window on top of the app's: \"") + (title ? title : "") + "\"");
     }
+    // A suite may turn the question off while it closes terminals, but must
+    // put it back: terminal_ids did not, and a busy terminal closed unasked in
+    // processes, after it in the soak's shuffled order.
+    if (was.closeAsks && !now.closeAsks)
+        leak("left a window's question before closing a busy terminal off (TerminalDock::confirmClose)");
     if (now.terminals > was.terminals)
         leak("left " + std::to_string(now.terminals) + " terminal tab(s) where it found " +
                  std::to_string(was.terminals),
