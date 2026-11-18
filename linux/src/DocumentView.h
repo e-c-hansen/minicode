@@ -46,6 +46,7 @@
 
 #include "EditBatch.h"
 #include "EditorTabs.h"
+#include "FolderSearch.h"
 #include "Markdown.h"
 #include "Settings.h"
 #include "CompareDecision.h"
@@ -110,6 +111,15 @@ public:
     virtual uint64_t documentLastUsed(const Document*) const { return 0; }
 };
 
+// How a file's bytes are written (FolderSearch::decodeFileText, the Mac's
+// MCTab encoding and bom): UTF-8, with or without its byte order mark;
+// UTF-16 with its mark; or Windows-1252, for bytes that are not UTF-8 and
+// hold no NUL (FolderSearch::readsAsWindows1252). Document::FileEncoding.
+struct DocumentFileEncoding {
+    FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;
+};
+
 class Document : public Shared::Client::Listener {
 public:
     enum class Kind {
@@ -137,14 +147,19 @@ public:
     Document(const Document&) = delete;
     Document& operator=(const Document&) = delete;
 
-    // A regular file of at most 16 MB, as UTF-8 text. The type and size are
+    using FileEncoding = DocumentFileEncoding;
+    // A regular file of at most 16 MB, as UTF-8 text, decoded by the core's
+    // rules (decodeFileText: UTF-16 with its mark, Windows-1252, a UTF-8
+    // mark taken off) and its encoding in *encoding. The type and size are
     // checked before it is opened, so a named pipe is never opened (that
     // blocks until a writer comes) and a disk image is never read.
-    static Read readText(const std::string& path, std::string& out);
+    static Read readText(const std::string& path, std::string& out,
+                         FileEncoding* encoding = nullptr);
     static std::string extensionOf(const std::string& path);   // lowercase, no dot
 
     // What it holds. Each sets the kind; loadText watches the file.
-    void loadText(const std::string& path, const std::string& content);
+    void loadText(const std::string& path, const std::string& content,
+                  const FileEncoding& encoding = FileEncoding());
     void setMessage(const std::string& path, const std::string& message);
     void setMedia(const std::string& path);
     void setDatabase(const std::string& path);
@@ -324,7 +339,22 @@ public:
     // Write the source to the file: through a symlink to what it names, in
     // place for a file with other hard links or another owner, else as an
     // atomic rename. False, with the reason, when it failed; it stays dirty.
+    // The bytes are the text in its file's encoding (encodeFileText); a
+    // Windows-1252 file whose text now holds a character Windows-1252 cannot
+    // store (FolderSearch::canEncode) is written as UTF-8 instead, and
+    // takeSaveNote says so, as the Mac's writeText:toTab:interactive:.
     bool save(std::string* error);
+    // What the last save has to say ("Saved x as UTF-8: ..."), once; "" if
+    // nothing.
+    std::string takeSaveNote();
+
+    // The file's encoding, kept when it is saved. setFileEncoding: a backup's
+    // record, for a file gone by the restore (Persistence::takeBackup).
+    const FileEncoding& fileEncoding() const { return encoding_; }
+    void setFileEncoding(const FileEncoding& e) { encoding_ = e; }
+    // The status bar's name for it (FolderSearch::encodingLabel), or "" for
+    // plain UTF-8 and for what holds no file's text.
+    std::string encodingLabel() const;
 
     // The file now lives at `path` (a rename): the buffer, its undo and the
     // watch stay; the grammar changes with the extension, and a file that is
@@ -530,7 +560,7 @@ private:
     void watch();
     void stopWatching();
     void rememberDisk(const std::string& content);
-    void applyDiskText(const std::string& content);
+    void applyDiskText(const std::string& content, const FileEncoding& encoding);
     static void onFileChanged(GFileMonitor* m, GFile* f, GFile* other, GFileMonitorEvent ev,
                               gpointer self);
     void scheduleTaskCount();
@@ -568,6 +598,9 @@ private:
     std::shared_ptr<CompareDecision> decision_;
     bool        diffCommit_ = false;
 
+    // How its file is written (FileEncoding), and save's note.
+    FileEncoding encoding_;
+    std::string  saveNote_;
     // The file as last read or saved, and whether the buffer differs.
     bool        diskKnown_ = false;
     std::string saved_;

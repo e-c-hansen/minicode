@@ -6348,7 +6348,40 @@ The second step of stage 6's GTK half; `../docs/notes/session-host.md`,
   `host:window-records`, `host:term-answers`. The harness ends what closed
   windows left on their hosts between suites (`SessionLink::endDetached`).
 
-### 102. The plan usage forecast in the Agents panel (done, November 2026)
+
+### 102. Latin-1, Windows-1252 and UTF-16 files open as text (C3b; November 2026)
+
+The Mac's #176 on GTK; `../docs/notes/sessions.md` has the rules.
+
+- **What a user meets.** A file that is not UTF-8 and holds no zero byte,
+  such as an old Latin-1 or Windows-1252 file, opens as text, read as
+  Windows-1252 by the core's rule (`FolderSearch::readsAsWindows1252`, the
+  one Find in Folder searches by), where it had said "Cannot display";
+  UTF-16 with its byte order mark opens as text too, and a UTF-8 file's
+  mark is kept apart instead of sitting in the buffer as U+FEFF. Each is
+  saved in its own encoding, byte for byte when nothing changed. The
+  status bar names any encoding but plain UTF-8 ("Windows-1252", "UTF-16
+  LE", "UTF-16 BE", "UTF-8 with BOM"), left of the problem counts. A
+  character Windows-1252 cannot store (an arrow, an emoji) has the file
+  saved as UTF-8, and the status bar says so ("Saved notes.txt as UTF-8:
+  Windows-1252 cannot store “→”"); auto-save says it through its note. A
+  search hit in such a file opens it at its line; Replace in Folder still
+  leaves it alone, and now says why when a row's Replace reaches one.
+- **Code.** `Document::readText` decodes through `decodeFileText` and
+  gives the encoding (`Document::FileEncoding`); the document keeps it
+  from `loadText`, a reload, the background load (LargeFileView.cpp),
+  `attachHeld` and a restored backup (Persistence, from the disk, else the
+  backup's `file-encoding`, which `writeBackup` now records). `save`
+  writes `encodeFileText`, or UTF-8 when `canEncode` says no, with
+  `takeSaveNote`; `encodingLabel` feeds main.cpp's label. The git gutter
+  reads the index's blob in the file's encoding (`readOriginal`).
+- **Checks**: `latin1_files` (and its `_latin1_restore` child, which
+  restores a backup of a file gone since and saves it in Windows-1252).
+- **Left**: the GTK port has no Save As or encoding picker (neither has
+  the Mac); a file changed on disk to the same text in another encoding
+  is followed only while its buffer is clean.
+
+### 103. The plan usage forecast in the Agents panel (done, November 2026)
 
 The Mac's A13 of 2026-11-18 (PR 178; `../docs/notes/agents.md`, "The plan
 usage forecast"; `mac/src/UsageView.mm` and `StatusLineOffer.mm`), over

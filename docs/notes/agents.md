@@ -379,7 +379,7 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   file byte for byte). Not yet run against a real Claude Code session's
   status line; the look of the section in a narrow sidebar needs the
   owner's eyes.
-- **Linux** (2026-11-18, `linux/HANDOFF.md` item 102): the same section
+- **Linux** (2026-11-18, `linux/HANDOFF.md` item 103): the same section
   in the GTK Agents panel, over the same core and wording
   (`linux/src/UsageView.{h,cpp}`: `UsageModel`, one per app, on a
   GThreadPool of one thread; `StatusLineOffer.{h,cpp}`: the two presses

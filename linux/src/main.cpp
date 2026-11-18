@@ -133,6 +133,7 @@ struct App {
     int             controlId = 0;             // what the control channel calls this window
     GtkWidget*      window = nullptr;
     GtkWidget*      statusLabel = nullptr;
+    GtkWidget*      encodingLabel = nullptr;   // the file's encoding, when not plain UTF-8
     GtkWidget*      settingsLabel = nullptr;   // first problem in the settings file
     GtkWidget*      statusBar = nullptr;       // the bar holding both
 
@@ -372,6 +373,21 @@ static void updateTitle(void* userp) {
                        app->editor->isDiff() ? app->editor->diffTitle().c_str()
                        : p.empty()           ? "Ready"
                                              : p.c_str());
+    // The file's encoding, when it is not plain UTF-8 (the Mac's
+    // updateEncodingLabel): a Windows-1252 file opened as text, UTF-16, or
+    // UTF-8 with its mark.
+    if (app->encodingLabel) {
+        const std::string enc = app->editor->encodingLabel();
+        gtk_label_set_text(GTK_LABEL(app->encodingLabel), enc.c_str());
+        gtk_widget_set_tooltip_text(
+            app->encodingLabel,
+            enc.empty() ? nullptr
+            : enc == "Windows-1252"
+                ? "The file's encoding, kept when it is saved; a character Windows-1252 cannot "
+                  "store has it saved as UTF-8"
+                : "The file's encoding, kept when it is saved");
+        gtk_widget_set_visible(app->encodingLabel, !enc.empty());
+    }
 }
 
 static std::string baseName(const std::string& p) {
@@ -417,6 +433,8 @@ static bool saveDocument(App* app, Document* d) {
         sortProblem = app->editor->sortBlocksBeforeSave();
     std::string err;
     const bool ok = app->editor->saveDocument(d, &err);
+    // Written as UTF-8, since its encoding cannot store what it now holds.
+    const std::string encodingNote = ok ? d->takeSaveNote() : std::string();
     updateTitle(app);
     if (ok && app->git) app->git->refresh();   // (refresh() does nothing unless the panel or the review shows)
     // The tree watches only the folders it listed (TreeGitColors.h).
@@ -424,6 +442,8 @@ static bool saveDocument(App* app, Document* d) {
     if (!ok)
         showError(app, "Could not save “" + baseName(d->path()) + "”",
                   err + "\n\nYour changes are still here, unsaved.");
+    else if (!encodingNote.empty())
+        flashStatus(app, sortProblem.empty() ? encodingNote : sortProblem + "; " + encodingNote);
     else if (!sortProblem.empty())
         flashStatus(app, sortProblem);
     return ok;
@@ -4882,6 +4902,10 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->lspLabel = gtk_label_new("");
     gtk_label_set_ellipsize(GTK_LABEL(app->lspLabel), PANGO_ELLIPSIZE_START);
     gtk_box_append(GTK_BOX(statusBar), app->editor->largeFileNote());   // LargeFileView.h
+    // Right of the large-file note, left of the problem counts, as the Mac.
+    app->encodingLabel = gtk_label_new("");
+    gtk_widget_set_visible(app->encodingLabel, FALSE);
+    gtk_box_append(GTK_BOX(statusBar), app->encodingLabel);
     gtk_box_append(GTK_BOX(statusBar), app->lspLabel);
     gtk_box_append(GTK_BOX(statusBar), app->settingsLabel);
     gtk_box_append(GTK_BOX(statusBar), app->hintsHint);
@@ -4950,7 +4974,7 @@ static App* newWindow(const std::string& root, const std::string& file,
         }});
     app->layout->setProblemsPane(app->problems->widget());
     gtk_box_insert_child_after(GTK_BOX(statusBar), app->problems->statusLabel(),
-                               app->editor->largeFileNote());
+                               app->encodingLabel);
     app->lsp->onProblemsChanged = [app] {
         if (!app->dead && app->problems) app->problems->update();
     };

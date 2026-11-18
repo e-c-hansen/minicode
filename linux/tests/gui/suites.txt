@@ -117,3 +117,4 @@ DesktopModeSuite.cpp
 HostLinkSuite.cpp
 HostReattachSuite.cpp
 PlanUsageSuite.cpp
+Latin1FilesSuite.cpp
