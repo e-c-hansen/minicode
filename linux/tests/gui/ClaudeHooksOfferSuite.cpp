@@ -20,6 +20,7 @@
 #include "ClaudeHooks.h"
 #include "ClaudeHooksOffer.h"
 #include "ConsentBar.h"
+#include "Question.h"
 #include "Terminal.h"
 #include "TerminalDock.h"
 #include "WindowLayout.h"
@@ -77,6 +78,45 @@ bool questionWith(const char* text) {
 
 void answer(const char* text) { MCGuiClick(button(GTK_WIDGET(MCGuiTopWindow()), text)); }
 
+// The question on top fits the monitor it is on, and its buttons are inside
+// it. GtkAlertDialog wrapped only at word breaks: the hooks question, which
+// names the program four times, was 1,083 px wide on the 1,024 px display
+// with the build in a long worktree path, and the click on Cancel missed.
+bool fitsScreen(const char* buttonText) {
+    GtkWindow* top = MCGuiTopWindow();
+    if (!top || top == MCGuiApp().window) return false;
+    GdkSurface* s = gtk_native_get_surface(GTK_NATIVE(top));
+    GdkMonitor* m = s ? gdk_display_get_monitor_at_surface(gtk_widget_get_display(GTK_WIDGET(top)), s)
+                      : nullptr;
+    GCHECK(m != nullptr);
+    if (!m) return false;
+    GdkRectangle r;
+    gdk_monitor_get_geometry(m, &r);
+    const int w = gtk_widget_get_width(GTK_WIDGET(top)), h = gtk_widget_get_height(GTK_WIDGET(top));
+    printf("    the question is %dx%d on a %dx%d monitor\n", w, h, r.width, r.height);
+    GCHECK(w > 0 && w <= r.width);
+    GCHECK(h > 0 && h <= r.height);
+    GtkWidget* b = button(GTK_WIDGET(top), buttonText);
+    GCHECK(b != nullptr);
+    if (!b) return false;
+    graphene_rect_t box;
+    GCHECK(gtk_widget_compute_bounds(b, GTK_WIDGET(top), &box));
+    GCHECK(box.origin.x >= 0 && box.origin.x + box.size.width <= w);
+    GCHECK(box.origin.y >= 0 && box.origin.y + box.size.height <= h);
+    return w <= r.width && h <= r.height;
+}
+
+// A path at least `n` characters long whose folder names are letters alone,
+// 230 of them: no line may break inside one at a word break, and each is
+// wider than the screen in the dialog's font (GtkAlertDialog's window was).
+std::string longPath(size_t n) {
+    std::string p = MCGuiScratch();
+    while (p.size() < n) p += "/" + std::string(230, 'w');
+    return p + "/mutible";
+}
+
+int gAnswer = -2;
+
 }  // namespace
 
 MC_GUI_SUITE(claude_hooks_offer) {
@@ -132,6 +172,7 @@ MC_GUI_SUITE(claude_hooks_offer) {
     });
     MCGuiClickWhenReady("the bar's Turn On…", [] { return bar() ? button(dock()->notice(), "Turn On…") : nullptr; });
     MCGuiWait("it asks first", 10, [] { return questionWith("Add the Hooks") && questionWith("Cancel"); });
+    MCGuiStep("the question keeps within the screen, Cancel on it", [] { fitsScreen("Cancel"); });
     MCGuiStep("Cancel writes nothing and keeps the bar", [] { answer("Cancel"); });
     MCGuiWait("the question is gone", 10, [] { return MCGuiTopWindow() == MCGuiApp().window; });
     MCGuiStep("no file, and Turn On… again", [] {
@@ -194,6 +235,48 @@ MC_GUI_SUITE(claude_hooks_offer) {
     MCGuiClickWhenReady("the bar's ×", [] { return bar() ? button(dock()->notice(), "×") : nullptr; });
     MCGuiWait("gone", 10, [] { return !bar(); });
     MCGuiWait("the program is done", 15, [] { return atPrompt() && gT->shellState().prompts > gPrompts; });
+    // Whatever the build's path: a question naming a path of 400 characters
+    // three times, with a preview naming it four times, as the hooks
+    // question does. (GtkAlertDialog made this one 4,006 px wide on the
+    // harness's 1,280 px display.)
+    MCGuiStep("a question naming a path longer than the screen is wide", [] {
+        const std::string p = longPath(400);
+        Question::Spec q;
+        q.message = "Run " + p + "?";
+        q.detail = "This runs " + p + ", which is " + p + ".";
+        for (int i = 0; i < 4; i++) q.preview += "{\n  \"command\": \"" + p + " notify --from-hook\"\n}\n";
+        q.buttons = {"Run", "Cancel"};
+        q.cancelButton = 1;
+        gAnswer = -2;
+        Question::ask(MCGuiApp().window, q, [](int a) { gAnswer = a; });
+    });
+    MCGuiWait("it is up", 10, [] { return questionWith("Run") && questionWith("Cancel"); });
+    MCGuiStep("it keeps within the screen, its buttons on it; Cancel", [] {
+        fitsScreen("Run");
+        fitsScreen("Cancel");
+        answer("Cancel");
+    });
+    MCGuiWait("Cancel answers, and the question is gone", 10, [] {
+        return gAnswer == 1 && MCGuiTopWindow() == MCGuiApp().window;
+    });
+    MCGuiStep("Esc answers the cancel button too", [] {
+        Question::Spec q;
+        q.message = "Esc?";
+        q.detail = longPath(300);
+        q.buttons = {"Go", "Stay", "Cancel"};
+        q.cancelButton = 2;
+        gAnswer = -2;
+        Question::ask(MCGuiApp().window, q, [](int a) { gAnswer = a; });
+    });
+    MCGuiWait("it is up", 10, [] { return questionWith("Stay"); });
+    MCGuiStep("Esc", [] {
+        MCGuiSetKeyWindow(MCGuiTopWindow());
+        MCGuiKey("escape");
+    });
+    MCGuiWait("Esc answers Cancel, and the question is gone", 10, [] {
+        return gAnswer == 2 && MCGuiTopWindow() == MCGuiApp().window;
+    });
+    MCGuiStep("the key window is the app's again", [] { MCGuiSetKeyWindow(nullptr); });
     MCGuiStep("the tab closes and the settings are put back", [] {
         ConsentBar::setInstallMuted(ClaudeHooksOffer::kKey, false);
         ClaudeHooksOffer::forgetOffer();

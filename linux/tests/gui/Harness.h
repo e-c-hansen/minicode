@@ -78,8 +78,9 @@
 // (app windows, another window such as a question left on top, terminal
 // tabs, terminals marked waiting, settings.conf, keys.conf, a key window
 // left pinned): a difference is a "LEAK [suite]" line and a failed check of
-// the suite that left it, and the pin and the marks are put back, so one suite's leftovers never fail the suites after
-// it. The two files are the harness's to put back between suites, and a
+// the suite that left it, and the pin and the marks are put back and a
+// window left on top is closed (a modal question held the app's keys), so
+// one suite's leftovers never fail the suites after it. The two files are the harness's to put back between suites, and a
 // terminal tab left open is only noted: "LEFT [suite]" lines, which warn.
 // MC_GUI_LEAKS=note prints the lines and neither fails nor puts anything
 // back. A "_" suite (a second process) is not looked at. (The

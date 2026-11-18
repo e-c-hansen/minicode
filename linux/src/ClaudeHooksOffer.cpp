@@ -10,6 +10,7 @@
 #include "ClaudeHooks.h"
 #include "ConsentBar.h"
 #include "ControlProtocol.h"
+#include "Question.h"
 
 namespace ClaudeHooksOffer {
 
@@ -35,33 +36,25 @@ bool readSettings(std::string& text, std::string* error) {
     return false;
 }
 
-// One alert, answered in one callback with the button's number.
+// One question, answered in one callback with the button's number. Its text
+// names the program by its path, which can be longer than a line: Question
+// wraps inside it and keeps the window on the screen.
 void alert(GtkWindow* parent, const std::string& message, const std::string& detail,
-           std::vector<std::string> buttons, std::function<void(int)> answered) {
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", message.c_str());
-    gtk_alert_dialog_set_detail(dlg, detail.c_str());
-    std::vector<const char*> names;
-    for (const std::string& b : buttons) names.push_back(b.c_str());
-    names.push_back(nullptr);
-    gtk_alert_dialog_set_buttons(dlg, names.data());
-    gtk_alert_dialog_set_default_button(dlg, 0);
-    gtk_alert_dialog_set_cancel_button(dlg, (int)buttons.size() - 1);
-    auto* cb = new std::function<void(int)>(std::move(answered));
-    gtk_alert_dialog_choose(dlg, parent, nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer up) {
-            auto* f = static_cast<std::function<void(int)>*>(up);
-            GError* err = nullptr;
-            const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, &err);
-            if (err) { g_error_free(err); (*f)(-1); }
-            else (*f)(choice);
-            delete f;
-        }, cb);
-    g_object_unref(dlg);
+           std::vector<std::string> buttons, std::function<void(int)> answered,
+           const std::string& preview = "") {
+    Question::Spec spec;
+    spec.message = message;
+    spec.detail = detail;
+    spec.preview = preview;
+    spec.buttons = std::move(buttons);
+    spec.defaultButton = 0;
+    spec.cancelButton = (int)spec.buttons.size() - 1;
+    Question::ask(parent, spec, std::move(answered));
 }
 
 void notice(GtkWindow* parent, const std::string& message, const std::string& detail,
             std::function<void()> then) {
-    alert(parent, message, detail, {"OK"}, [then](int) { if (then) then(); });
+    Question::tell(parent, message, detail, std::move(then));
 }
 
 }  // namespace
@@ -117,8 +110,10 @@ void ask(GtkWindow* parent, std::function<void(bool)> done) {
         "This adds the lines below to " + tilde(path) + ": Claude Code's " +
         ClaudeHooks::eventList(plan.added) + " hooks then run `" + cmd +
         "`, which marks the mutible terminal a session runs in when it waits for you or has "
-        "finished. Your own settings and hooks stay as they are, and the file is backed up first.\n\n" +
-        ControlChannel::prettyJson(ClaudeHooks::configuration(cmd, plan.added));
+        "finished. Your own settings and hooks stay as they are, and the file is backed up first.";
+    // The lines themselves go in a box of their own that scrolls, as the
+    // Mac's accessory view: they name the program once a hook.
+    const std::string lines = ControlChannel::prettyJson(ClaudeHooks::configuration(cmd, plan.added));
     alert(parent, "Add mutible's hooks to Claude Code's settings?", detail, {"Add the Hooks", "Cancel"},
           [parent, path, cmd, done](int answer) {
               if (answer != 0) {
@@ -144,7 +139,8 @@ void ask(GtkWindow* parent, std::function<void(bool)> done) {
                              "their tabs: orange while one waits for you, green when it has finished.",
                          [done] { if (done) done(true); });
               }
-          });
+          },
+          lines);
 }
 
 GtkWidget* takeBar(GtkWindow* parent, bool shown, std::function<void()> gone) {

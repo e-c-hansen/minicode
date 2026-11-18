@@ -6,6 +6,7 @@
 #include "Editor.h"
 #include "AgentNotes.h"
 #include "InlineAgentBar.h"
+#include "Question.h"
 #include "AutoCloseInput.h"
 #include "BracketColors.h"
 #include "SemanticColors.h"
@@ -1493,14 +1494,9 @@ bool Editor::exportHtmlTo(const std::string& path, std::string* error) {
 bool Editor::exportHtml(GtkWindow* parent) {
     Document* d = active_;
     if (!d || !d->isMarkdown() || d->isNotebook()) return false;
+    // Why names the file by its path: Question wraps inside it.
     auto fail = [parent](const std::string& why) {
-        GtkAlertDialog* alert = gtk_alert_dialog_new("The page was not exported");
-        gtk_alert_dialog_set_detail(alert, why.c_str());
-        const char* ok[] = {"OK", nullptr};
-        gtk_alert_dialog_set_buttons(alert, ok);
-        gtk_alert_dialog_set_modal(alert, TRUE);
-        gtk_alert_dialog_choose(alert, parent, nullptr, nullptr, nullptr);
-        g_object_unref(alert);
+        Question::tell(parent, "The page was not exported", why);
     };
     if (const char* fixed = g_getenv("MUTIBLE_HTML_EXPORT_PATH"); fixed && *fixed) {
         std::string why;

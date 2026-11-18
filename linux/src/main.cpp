@@ -56,6 +56,7 @@
 #include "ConsentBar.h"
 #include "FormatOffer.h"
 #include "Detach.h"
+#include "DesktopMode.h"
 #include "DocumentView.h"
 #include "Editor.h"
 #include "SessionLink.h"
@@ -99,6 +100,7 @@
 #include "Persistence.h"
 #include "PalettePanel.h"
 #include "ProblemsPanel.h"
+#include "Question.h"
 #include "NavHistoryUi.h"
 #include "Zoom.h"
 #include "ControlCommands.h"
@@ -391,19 +393,10 @@ static bool isInside(const std::string& path, const std::string& dir) {
 // asynchronous, so here the question takes the rest of the operation as a
 // continuation instead of returning an answer.
 
+// The detail is often a path or the system's error about one: Question wraps
+// inside a path longer than a line and keeps the window on the screen.
 static void showError(App* app, const std::string& message, const std::string& detail) {
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", message.c_str());
-    if (!detail.empty()) gtk_alert_dialog_set_detail(dlg, detail.c_str());
-    // An explicit button rather than gtk_alert_dialog_show's default one: that
-    // builds a different kind of window, which did not close when its button
-    // was activated in testing. With a button of our own it is the same window
-    // as the "Save changes?" alert.
-    const char* buttons[] = {"OK", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
-    gtk_alert_dialog_set_default_button(dlg, 0);
-    gtk_alert_dialog_set_cancel_button(dlg, 0);
-    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr, nullptr, nullptr);
-    g_object_unref(dlg);
+    Question::tell(GTK_WINDOW(app->window), message, detail);
 }
 
 // Save, and tell the user if that failed. The editor leaves the buffer marked
@@ -1034,7 +1027,10 @@ static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
     confirmAllUnsaved(app, [app] {
         app->closing = true;
         gtk_window_close(GTK_WINDOW(app->window));
-    }, [] { g.quitting = false; }, true);   // a quit stops at a window kept open
+    }, [] {
+        g.quitting = false;   // a quit stops at a window kept open,
+        DesktopMode::quitCancelled();   // and a Restart or Power Off with it
+    }, true);
     return TRUE;
 }
 
@@ -2604,32 +2600,24 @@ static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {
     const std::string path = app->tree->selectedPath();
     if (path.empty()) { gtk_widget_error_bell(app->window); return; }
 
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("Move “%s” to the Trash?",
-                                               baseName(path).c_str());
+    // A name with no spaces can be longer than a line: Question wraps it.
+    Question::Spec q;
+    q.message = "Move “" + baseName(path) + "” to the Trash?";
     // The Mac asks the same question. A tab of it with unsaved changes stays
     // open with them, so say so.
     for (Document* d : app->editor->dirtyDocuments())
         if (isInside(d->path(), path)) {
-            const std::string detail = "“" + baseName(d->path()) +
+            q.detail = "“" + baseName(d->path()) +
                 "” has unsaved changes. Its tab stays open with them, and saving it "
                 "writes the file again.";
-            gtk_alert_dialog_set_detail(dlg, detail.c_str());
             break;
         }
-    const char* buttons[] = {"Move to Trash", "Cancel", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
-    gtk_alert_dialog_set_cancel_button(dlg, 1);
-    gtk_alert_dialog_set_default_button(dlg, 0);
-    auto* target = new std::pair<App*, std::string>(app, path);
-    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer data) {
-            auto* t = static_cast<std::pair<App*, std::string>*>(data);
-            if (gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr) == 0 &&
-                !t->first->dead)
-                trashNow(t->first, t->second);
-            delete t;
-        }, target);
-    g_object_unref(dlg);
+    q.buttons = {"Move to Trash", "Cancel"};
+    q.defaultButton = 0;
+    q.cancelButton = 1;
+    Question::ask(GTK_WINDOW(app->window), q, [app, path](int answer) {
+        if (answer == 0 && !app->dead) trashNow(app, path);
+    });
 }
 
 // "Reveal in Finder" becomes opening the containing folder in the file
@@ -4127,6 +4115,16 @@ static void initShared() {
     g_signal_connect(quit, "activate", G_CALLBACK(act_quit), nullptr);
     g_action_map_add_action(G_ACTION_MAP(g.gapp), G_ACTION(quit));
     g_object_unref(quit);
+    // As the whole desktop (MUTIBLE_DESKTOP=1): Suspend, Restart, Power Off
+    // and Log Out at the end of the File menu (DesktopMode.h).
+    DesktopMode::install(g.gapp, DesktopMode::Host{
+        [] { return gtk_application_get_active_window(g.gapp); },
+        [] { act_quit(nullptr, nullptr, nullptr); },
+        [](const std::string& note) {
+            App* a = appForWindow(gtk_application_get_active_window(g.gapp));
+            if ((!a || a->dead) && !g.windows.empty()) a = g.windows.back();
+            if (a && !a->dead) flashStatus(a, note);
+        }});
     GSimpleAction* openRecent = g_simple_action_new("openrecentfolder", G_VARIANT_TYPE_STRING);
     g_signal_connect(openRecent, "activate",
                      G_CALLBACK(+[](GSimpleAction*, GVariant* v, gpointer) {
@@ -4221,7 +4219,10 @@ static void initShared() {
     fillRecentMenu();
     GMenuModel* bar = Keys::menuBar([](const std::string& top, GMenu* menu) {
         Appearance::extendMenu(top, menu);
-        if (top == "File") insertRecentSubmenu(menu);
+        if (top == "File") {
+            insertRecentSubmenu(menu);
+            DesktopMode::extendFileMenu(menu);
+        }
     });
     // Bookmarks, after Navigate: the folder as a menu, refilled from it
     // (refreshBookmarkUi), so it is current whenever the bar is used.
@@ -4428,6 +4429,16 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     g.windows.erase(std::find(g.windows.begin(), g.windows.end(), app));
     app->dead = true;
     detachWindow(app);
+    // As the whole desktop the app outlives its last window: a fresh one on
+    // the home folder takes its place, once this one is gone (DesktopMode.h).
+    if (g.windows.empty() && DesktopMode::keepsLastWindow(g.quitting)) {
+        g_application_hold(G_APPLICATION(g.gapp));
+        g_idle_add(+[](gpointer) -> gboolean {
+            if (g.windows.empty() && !g.quitting) showFolderWindow(g_get_home_dir());
+            g_application_release(G_APPLICATION(g.gapp));
+            return G_SOURCE_REMOVE;
+        }, nullptr);
+    }
     // Its tabs for the folder's next window, unless a quit saved every
     // window's already. Then nothing more is written for it.
     if (!g.quitting) {
@@ -4564,6 +4575,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     gtk_window_set_title(GTK_WINDOW(app->window), "mutible");
     gtk_application_window_set_show_menubar(
         GTK_APPLICATION_WINDOW(app->window), TRUE);
+    DesktopMode::adjustWindow(GTK_WINDOW(app->window));   // no title bar as the desktop
     // The keyboard back where it was after a choice from the menu bar.
     MenuBarFocus::attach(GTK_WINDOW(app->window));
     // The Bookmarks menu is read from the folder when the window comes to
@@ -5714,6 +5726,7 @@ int main(int argc, char** argv) {
         SessionLink::detachAll();
         BackupStore::shared().flush();   // what the last windows let go is gone from disk
         if (gControl) gControl->stop();   // the socket goes with the app
+        DesktopMode::atShutdown();   // a Restart or Power Off asked for, last
     }), nullptr);
     int status = g_application_run(G_APPLICATION(gapp), argc, argv);
     g_object_unref(gapp);

@@ -123,6 +123,13 @@ std::string settingsPath(const char *configDir, const char *home);
 bool readSettingsFile(const std::string &path, std::string &text, bool &exists,
                       std::string &error);
 
+// A copy of the settings file's `text` beside it, as
+// `<path>.mutible-backup-<YYYYmmdd-HHMMSS>` (local time of `now`, never over
+// an earlier backup), with `mode`. False, `error` saying why, when it could
+// not be written; `backup` is where it went.
+bool backupSettings(const std::string &path, const std::string &text, unsigned mode, long now,
+                    std::string &backup, std::string &error);
+
 struct InstallResult {
     bool ok = false;                 // false: nothing was written, `error` says why
     std::string error;

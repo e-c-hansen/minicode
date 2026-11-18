@@ -30,7 +30,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/SessionWeb.cpp ../src/SessionWebPage.cpp ../src/SessionFiles.cpp \
         ../src/HostPty.cpp ../src/TerminalStream.cpp ../src/TerminalScreen.cpp \
         ../src/LatexDoc.cpp ../src/LatexLog.cpp ../src/LatexScratch.cpp ../src/SyncTex.cpp \
-        ../src/Csv.cpp ../src/JsonOutline.cpp ../src/Notebook.cpp ../src/FileSniff.cpp ../src/HtmlPage.cpp ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp ../src/ControlProtocol.cpp ../src/IdeLink.cpp ../src/PageCheck.cpp ../src/ClaudeHooks.cpp ../src/AttentionBoard.cpp ../src/AgentIndex.cpp ../src/AgentTranscript.cpp ../src/ProcessTable.cpp ../src/RunFile.cpp ../src/Runnables.cpp ../src/ProcFs.cpp ../src/AgentEvidence.cpp ../src/AgentView.cpp ../src/InlineAgent.cpp \
+        ../src/Csv.cpp ../src/JsonOutline.cpp ../src/Notebook.cpp ../src/FileSniff.cpp ../src/HtmlPage.cpp ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp ../src/ControlProtocol.cpp ../src/IdeLink.cpp ../src/PageCheck.cpp ../src/ClaudeHooks.cpp ../src/ClaudeUsage.cpp ../src/ClaudeStatusLine.cpp ../src/AttentionBoard.cpp ../src/AgentIndex.cpp ../src/AgentTranscript.cpp ../src/ProcessTable.cpp ../src/RunFile.cpp ../src/Runnables.cpp ../src/ProcFs.cpp ../src/AgentEvidence.cpp ../src/AgentView.cpp ../src/InlineAgent.cpp \
         ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \
         ../src/LspDiagnostics.cpp ../src/LspCompletion.cpp ../src/LspSync.cpp \
         ../src/LspFeatures.cpp ../src/LspEdits.cpp \
@@ -63,7 +63,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/LspSessionDiagnostics.cpp src/LspSessionCompletion.cpp src/LspSessionSignature.cpp \
        src/LspSessionNavigation.cpp \
        src/LspSessionActions.cpp src/LspSessionEdits.cpp src/LspPicker.cpp \
-       src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp src/FormatOffer.cpp src/ClaudeHooksOffer.cpp src/InstallView.cpp \
+       src/LspSessionFolderTools.cpp src/FolderConsent.cpp src/ConsentBar.cpp src/FormatOffer.cpp src/ClaudeHooksOffer.cpp src/Question.cpp src/InstallView.cpp \
        src/Formatting.cpp src/FormatRunner.cpp src/LspSessionFormatting.cpp \
        src/LspSessionProblems.cpp src/ProblemsPanel.cpp src/LspSessionAlso.cpp \
        src/LspSessionWatch.cpp src/LspWatcher.cpp src/LspSessionImports.cpp \
@@ -72,7 +72,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp src/EnvLock.cpp \
        src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/TestGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
        src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp \
-       src/BackupStore.cpp src/Persistence.cpp src/RecentList.cpp src/DockMenu.cpp src/MigrationLinux.cpp src/WindowLayout.cpp \
+       src/BackupStore.cpp src/Persistence.cpp src/RecentList.cpp src/DockMenu.cpp src/DesktopMode.cpp src/MigrationLinux.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
        src/Bench.cpp src/StartupLog.cpp src/WhenDrawn.cpp \

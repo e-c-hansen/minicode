@@ -22,6 +22,7 @@
 #import <Cocoa/Cocoa.h>
 
 @class MCAgentModel;
+@class MCUsageView;
 
 @interface MCAgentsPanel : NSView
 - (instancetype)initWithModel:(MCAgentModel *)model;
@@ -45,6 +46,10 @@
 // While Claude Code's hooks for the waiting dots are missing, a line under
 // the heading offers them (ClaudeHooksOffer.h); hidden once they are in.
 @property(nonatomic, readonly) NSButton *hooksButton;
+
+// Under it, the plan usage forecast and the status line log's action
+// (UsageView.h, A13).
+@property(nonatomic, readonly) MCUsageView *usageView;
 
 // For the GUI checks.
 @property(nonatomic, readonly) NSOutlineView *outline;

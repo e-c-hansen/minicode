@@ -9,6 +9,7 @@
 #include "Editor.h"
 #include "Keys.h"
 #include "MultiEdit.h"
+#include "Question.h"
 #include "TextFind.h"
 #include "Utf8Offsets.h"
 
@@ -803,30 +804,29 @@ void SearchPanel::planned(PlanJob* job) {
     if (!legacy.empty())
         detail += " Left alone, since they are not UTF-8 (read as Windows-1252): " +
                   joined(legacy) + ".";
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", question.c_str());
-    gtk_alert_dialog_set_detail(dlg, detail.c_str());
-    const char* buttons[] = {"Replace", "Cancel", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
-    gtk_alert_dialog_set_cancel_button(dlg, 1);
-    gtk_alert_dialog_set_default_button(dlg, 0);
+    // The detail can list files by their paths: Question wraps inside them
+    // and scrolls a long list.
+    Question::Spec spec;
+    spec.message = question;
+    spec.detail = detail;
+    spec.buttons = {"Replace", "Cancel"};
+    spec.defaultButton = 0;
+    spec.cancelButton = 1;
     struct Ask {
         SearchPanel* self;
         std::weak_ptr<int> alive;
         std::vector<std::string> todo, held;
     };
-    gtk_alert_dialog_choose(dlg, GTK_WINDOW(window_), nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer data) {
-            std::unique_ptr<Ask> ask(static_cast<Ask*>(data));
-            const int answer = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr);
-            if (ask->alive.expired()) return;
-            if (answer != 0) {
-                ask->self->replacing_ = false;
-                ask->self->setStatus("Nothing replaced");
-                return;
-            }
-            ask->self->replaceInPaths(ask->todo, nullptr, ask->held);
-        }, new Ask{this, life_, std::move(todo), std::move(held)});
-    g_object_unref(dlg);
+    auto ask = std::make_shared<Ask>(Ask{this, life_, std::move(todo), std::move(held)});
+    Question::ask(GTK_WINDOW(window_), spec, [ask](int answer) {
+        if (ask->alive.expired()) return;
+        if (answer != 0) {
+            ask->self->replacing_ = false;
+            ask->self->setStatus("Nothing replaced");
+            return;
+        }
+        ask->self->replaceInPaths(ask->todo, nullptr, ask->held);
+    });
 }
 
 void SearchPanel::replaceMatchAt(guint row) {

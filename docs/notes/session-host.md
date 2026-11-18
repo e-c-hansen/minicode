@@ -550,7 +550,7 @@ client's base, so ids of two hosts never meet in one client).
 
 Closing a window detaches from its folder's host instead of ending what
 it shows, and a window opening on the folder takes what a closed one
-left (linux/HANDOFF.md item 100). Both host modes: a headless host keeps
+left (linux/HANDOFF.md item 101). Both host modes: a headless host keeps
 it after the app quits; an in-process one while the app runs.
 
 - **The protocol, additive.** Three renderer-to-host kinds, new rather
