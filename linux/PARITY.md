@@ -1257,8 +1257,10 @@ its server comes first here (2.0).
   (a button beside the branch, View > Source Control, the palette) opens one
   tab of every uncommitted change, each block with Stage and Discard
   (Unstage), whole files with Stage File, Unstage File, Discard File, Side by
-  Side and Open, Undo Discard at its top; `git_review` presses them. Left to
-  do: F7, the right click on selected lines, conflicts' Keep buttons, the
+  Side and Open, Undo Discard at its top; `git_review` presses them. A
+  conflict's Keep Current, Keep Incoming and Keep Both, in the editor and
+  on the review page, with Mark Resolved, are done (`HANDOFF.md` item 95,
+  `git_conflicts`). Left to do: F7, the right click on selected lines, the
   commit page. A worktree's page with Apply to Main is done (`HANDOFF.md`
   item 85): the tree's Compare with Main opens the review page in its
   worktree mode.
@@ -1575,7 +1577,7 @@ These may run in parallel.
   file and runs that test as Run File does; the 133;D exit status makes
   the mark a check or a cross until the file is edited; Run Test at
   Cursor (`testing.runAtCursor`, no key on either system); test.<language>
-  in the settings. *Done* (`HANDOFF.md` item 95), checked by the
+  in the settings. *Done* (`HANDOFF.md` item 96), checked by the
   `test_gutter` suite.
 
 ## Reported by the owner

@@ -52,6 +52,7 @@ GitActionsSuite.cpp
 GitHunksSuite.cpp
 GitVerbsSuite.cpp
 GitReviewSuite.cpp
+GitConflictsSuite.cpp
 AdjustSettingsSuite.cpp
 ThemesSuite.cpp
 SwatchesSuite.cpp
