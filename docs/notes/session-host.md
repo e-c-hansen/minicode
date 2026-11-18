@@ -189,6 +189,19 @@ top of a turn, never inside a text system callback.
 - The host keeps a UTF-16 copy and its saved text, and the language server
   sync a third copy: about 150 MB more for a 25 MB file. Large-file mode
   has no server, so two.
+- **`Client::dispatch()` takes only what was queued when it was called.**
+  A listener that acknowledges terminal output as it takes it (the
+  `term:*` rig, `SessionWeb`'s server thread) lets the host send more at
+  once; when dispatch() ran until the queue was empty, it never returned
+  while `yes` printed no slower than it was taken, and the caller's
+  deadline was never read (core tests under TSan hung in `term:credit`,
+  2026-11-18; a probe saw one call run 20 s). What arrives meanwhile gets
+  its wake, so a renderer that dispatches from its wake loses nothing; a
+  caller that wants what its own processing set off (a synchronous test
+  net) calls it again, or `settle()`. `waitFor` reads its deadline after
+  every message, and `SessionHost::inspect` waits at most its timeout, so
+  a hang on the host's thread fails a check instead of hanging it
+  (`term:dispatch`).
 
 ## Terminals on the host (stage 5, the Mac)
 
