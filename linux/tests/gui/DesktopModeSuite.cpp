@@ -188,7 +188,10 @@ MC_GUI_SUITE(desktop_mode) {
         DesktopMode::refresh();
         DesktopMode::setLogindCall(nullptr);
         GCHECK(!enabled("desktop-suspend"));
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiFocusKeyWindow();   // the questions took the X focus with them
     });
+    MCGuiWait("the window is active again", 10, [] { return gtk_window_is_active(MCGuiApp().window); });
 }
 
 // The second app: MUTIBLE_DESKTOP=1 came from the parent's environment.
