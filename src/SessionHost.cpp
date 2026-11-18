@@ -20,7 +20,9 @@ void Host::disconnect(ClientId c) {
     renderers_.erase(c);
     // Its terminals stay for the next renderer; one nobody shows keeps
     // running, its output going only into the host's screen, unthrottled.
-    for (auto& [id, t] : terms_) t.viewers.erase(c);
+    // One whose size was this renderer's takes the next one's.
+    for (auto& [id, t] : terms_)
+        if (t.viewers.erase(c)) fit(id, t);
     for (auto& [id, d] : docs_) {
         if (d.stepOpen && d.stepBy == c) closeStep(d);
         d.seats.erase(c);
@@ -111,24 +113,36 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::TermAttach: onTermAttach(from, m); break;
     case Kind::TermInput: {
         auto it = terms_.find(m.term);
-        if (it != terms_.end() && it->second.pty) it->second.pty->write(m.bytes);
+        if (it == terms_.end() || !it->second.pty) break;
+        Term& t = it->second;
+        // Whoever types sets the size, before what it typed is read; an
+        // emulator's answer to a query is not typing.
+        auto v = t.viewers.find(from);
+        if (v != t.viewers.end() && !(m.flag & 1)) {
+            v->second.typed = ++order_;
+            fit(it->first, t);
+        }
+        t.pty->write(m.bytes);
         break;
     }
     case Kind::TermResize: {
+        // The renderer's view: kept as its size, the pty's only while it
+        // is the sizer.
         auto it = terms_.find(m.term);
         if (it == terms_.end() || m.cols < 2 || m.rows < 1) break;
-        Term& t = it->second;
-        if (m.cols == t.screen.cols() && m.rows == t.screen.rows()) break;
-        t.screen.resize(m.cols, m.rows);
-        if (t.pty) t.pty->resize(m.cols, m.rows);
-        if (t.screen.takeDirty().marks) sendMarks(it->first, t);
+        auto v = it->second.viewers.find(from);
+        if (v == it->second.viewers.end()) break;
+        v->second.cols = m.cols;
+        v->second.rows = m.rows;
+        fit(it->first, it->second);
         break;
     }
     case Kind::TermAck: {
         auto it = terms_.find(m.term);
         if (it == terms_.end()) break;
         auto v = it->second.viewers.find(from);
-        if (v != it->second.viewers.end()) v->second = std::max(0LL, v->second - (long long)m.v);
+        if (v != it->second.viewers.end())
+            v->second.unacked = std::max(0LL, v->second.unacked - (long long)m.v);
         break;
     }
     case Kind::TermClose:
@@ -697,9 +711,17 @@ bool Host::openPty(ClientId c, TermId id, const TermSpec& spec, std::string* err
     std::unique_ptr<Pty> pty = Pty::spawn(p, error);
     if (!pty) return false;
     Term& t = terms_[id];
-    if (c) t.viewers[c] = 0;
+    if (c) {
+        Term::Viewer& v = t.viewers[c];
+        v.cols = p.cols;
+        v.rows = p.rows;
+        v.joined = ++order_;
+        t.opener = c;
+    }
     t.pty = std::move(pty);
     t.screen = TerminalScreen(p.cols, p.rows);
+    t.shell.cols = p.cols;
+    t.shell.rows = p.rows;
     t.screen.setScrollbackLimit(std::max(0, spec.scrollback));
     t.nonce = spec.nonce;
     t.screen.setMarkNonce(spec.nonce);
@@ -742,7 +764,11 @@ void Host::onTermAttach(ClientId c, Message& m) {
         return;
     }
     Term& t = it->second;
-    t.viewers[c] = 0;   // a renderer attaching again starts afresh
+    // A renderer attaching again starts afresh, keeping its size and when
+    // it typed and joined.
+    Term::Viewer& v = t.viewers[c];
+    v.unacked = 0;
+    if (!v.joined) v.joined = ++order_;
     Message r;
     r.kind = Kind::TermReplay;
     r.term = m.term;
@@ -766,9 +792,33 @@ void Host::sendShell(TermId id, Term& t, bool always) {
     sendToViewers(t, r);
 }
 
+const Host::Term::Viewer* Host::sizer(const Term& t) const {
+    const Term::Viewer* best = nullptr;
+    for (const auto& [c, v] : t.viewers)
+        if (v.cols && v.typed && (!best || v.typed > best->typed)) best = &v;
+    if (best) return best;
+    auto o = t.viewers.find(t.opener);
+    if (t.opener && o != t.viewers.end() && o->second.cols) return &o->second;
+    for (const auto& [c, v] : t.viewers)
+        if (v.cols && (!best || v.joined < best->joined)) best = &v;
+    return best;
+}
+
+void Host::fit(TermId id, Term& t) {
+    const Term::Viewer* v = sizer(t);
+    if (!v || (v->cols == t.screen.cols() && v->rows == t.screen.rows())) return;
+    const int cols = v->cols, rows = v->rows;
+    t.screen.resize(cols, rows);
+    if (t.pty) t.pty->resize(cols, rows);
+    t.shell.cols = cols;
+    t.shell.rows = rows;
+    if (t.screen.takeDirty().marks) sendMarks(id, t);
+    sendShell(id, t);
+}
+
 void Host::sendToViewers(const Term& t, const Message& m) {
-    for (const auto& [c, unacked] : t.viewers) {
-        (void)unacked;
+    for (const auto& [c, v] : t.viewers) {
+        (void)v;
         Message copy = m;
         send(c, std::move(copy));
     }
@@ -821,7 +871,7 @@ void Host::output(TermId id, Term& t, std::string&& bytes) {
         r.term = id;
         r.v = (std::uint64_t)(t.screen.historyBase() + t.screen.cursorRow());
         r.flag = t.screen.altScreen() ? 1 : 0;
-        for (auto& [c, unacked] : t.viewers) unacked += (long long)bytes.size();
+        for (auto& [c, v] : t.viewers) v.unacked += (long long)bytes.size();
         r.bytes = std::move(bytes);
         sendToViewers(t, r);
     }
@@ -837,7 +887,7 @@ void Host::pollSet(std::vector<PollFd>* out) const {
         p.fd = t.pty->fd();
         p.term = id;
         p.read = true;
-        for (const auto& [c, unacked] : t.viewers) p.read = p.read && unacked < kTermCredit;
+        for (const auto& [c, v] : t.viewers) p.read = p.read && v.unacked < kTermCredit;
         p.write = t.pty->wantsWrite();
         if (p.read || p.write) out->push_back(p);
     }
@@ -876,7 +926,7 @@ void Host::endTerminal(TermId id, bool drain, ClientId closer) {
         t.pty->hangUp();
         Dying d;
         d.term = id;
-        for (const auto& [c, unacked] : t.viewers)
+        for (const auto& [c, v] : t.viewers)
             if (c != closer) d.tell.push_back(c);
         d.pty = std::move(t.pty);
         dying_.push_back(std::move(d));

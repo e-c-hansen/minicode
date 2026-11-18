@@ -360,11 +360,12 @@ void Client::attachTerminal(TermId t, TermListener* l) {
     sendNow(std::move(m));
 }
 
-void Client::terminalInput(TermId t, std::string bytes) {
+void Client::terminalInput(TermId t, std::string bytes, bool answer) {
     if (bytes.empty() || !terms_.count(t)) return;
     Message m;
     m.kind = Kind::TermInput;
     m.term = t;
+    m.flag = answer ? 1 : 0;
     m.bytes = std::move(bytes);
     sendNow(std::move(m));
 }
