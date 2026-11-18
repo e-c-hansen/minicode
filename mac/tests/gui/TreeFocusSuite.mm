@@ -534,10 +534,14 @@ MC_GUI_SUITE(tree_focus) {
         GCHECK_EQ_STR(TopLabels(c), @"mac/src linux/src");
         GCHECK(Expanded(c, file(@"mac/src")));
     });
-    MCGuiStep(@"three roots; docs deleted on disk", ^{
-        GCHECK([c addTreeFocus:@"docs"]);
-        GCHECK_EQ_STR(c.treeFocus, @"mac/src, linux/src, docs");
-        [[NSFileManager defaultManager] removeItemAtPath:file(@"docs") error:nil];
+    // (Not docs: a tab shows docs/d.md, and a tab whose file went asks
+    // before its window closes.)
+    MCGuiStep(@"three roots; the third, extra, deleted on disk", ^{
+        MCGuiWriteFile(file(@"extra/e.txt"), @"e\n");
+        [c refreshTree:nil];
+        GCHECK([c addTreeFocus:@"extra"]);
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src, linux/src, extra");
+        [[NSFileManager defaultManager] removeItemAtPath:file(@"extra") error:nil];
     });
     MCGuiWait(@"the other two stay", 10, ^BOOL {
         return [c.treeFocus isEqualToString:@"mac/src, linux/src"];
@@ -549,7 +553,7 @@ MC_GUI_SUITE(tree_focus) {
     });
 
     MCGuiStep(@"close the window", ^{
-        [c.window performClose:nil];
+        CloseChecked(c);
         MCGuiSetKeyWindow(nil);
     });
 }
