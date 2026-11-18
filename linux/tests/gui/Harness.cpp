@@ -6,6 +6,7 @@
 #include "Editor.h"
 #include "FileTree.h"
 #include "SessionLink.h"
+#include "TerminalAttention.h"
 #include "TerminalDock.h"
 #include "WindowLayout.h"
 #include "../../../tests/GuiRetry.h"
@@ -638,6 +639,7 @@ struct World {
     int terminals = 0;
     bool closeAsks = true;   // every window asks before closing a busy terminal
     bool otherOnTop = false;
+    int waiting = 0;   // terminals marked waiting for the user (TerminalAttention)
     std::string settings, keys;
 };
 World gWorldAtStart;
@@ -654,6 +656,7 @@ World lookAtWorld() {
         }
 #endif
     w.otherOnTop = MCGuiTopWindow() != MCGuiApp().window;
+    w.waiting = TerminalAttention::waitingCount();
     w.settings = MCGuiReadFile(envOr("MINICODE_SETTINGS"));
     w.keys = MCGuiReadFile(envOr("MINICODE_KEYS"));
     return w;
@@ -733,6 +736,22 @@ void checkWhatSuiteLeft() {
     // processes, after it in the soak's shuffled order.
     if (was.closeAsks && !now.closeAsks)
         leak("left a window's question before closing a busy terminal off (TerminalDock::confirmClose)");
+    // A terminal marked waiting puts "(1 waiting)" before every window's
+    // title: agents marked one and never cleared it, and tabs, after it in
+    // the soak's shuffled order, read the title.
+    if (now.waiting > was.waiting) {
+        leak("left " + std::to_string(now.waiting) + " terminal(s) marked waiting where it found " +
+             std::to_string(was.waiting) + " (a notify's mark; TerminalAttention::typed clears it)");
+#ifdef MINICODE_ENABLE_TERMINAL
+        if (putBack)
+            for (const MCGuiAppWindow& a : MCGuiAppWindows())
+                for (int i = 0; a.termDock && i < a.termDock->count(); i++)
+                    if (TerminalGroup* g = a.termDock->group(i))
+                        for (Terminal* t : g->panes())
+                            if (TerminalAttention::markName(t->controlId()) == std::string("waiting"))
+                                TerminalAttention::typed(t->controlId());
+#endif
+    }
     if (now.terminals > was.terminals)
         leak("left " + std::to_string(now.terminals) + " terminal tab(s) where it found " +
                  std::to_string(was.terminals),

@@ -351,6 +351,13 @@ MC_GUI_SUITE(agents) {
         panel()->closeMenu();
     });
     MCGuiWait("the terminal is shown", 5, [] { return MCGuiApp().layout->terminalShown(); });
+    // The mark would stay for the rest of the run: "(1 waiting)" before every
+    // window's title, which tabs reads (the soak's shuffled order). The
+    // session stays named, as after a key typed there.
+    MCGuiStep("the waiting mark cleared, as a key typed in the terminal clears it", [] {
+        TerminalAttention::typed(MCGuiApp().terminal->controlId());
+        GCHECK_EQ_STR(TerminalAttention::markName(MCGuiApp().terminal->controlId()), "");
+    });
     // ---- Part two: the Evidence page
     MCGuiStep("a test run and a final message are appended to the new session", [] {
         std::string out;
