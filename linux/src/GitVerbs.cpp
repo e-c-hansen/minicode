@@ -11,6 +11,7 @@
 // button, and in the status bar while the panel is hidden.
 #include "GitPanel.h"
 #include "GitTrash.h"
+#include "Question.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -83,26 +84,19 @@ void GitPanel::ask(const GitUi::ActionPlan& plan, std::function<void()> go) {
         GtkRoot* r = gtk_widget_get_root(root_);
         if (r && GTK_IS_WINDOW(r)) parent = GTK_WINDOW(r);
     }
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", plan.question.c_str());
-    if (!plan.detail.empty()) gtk_alert_dialog_set_detail(dlg, plan.detail.c_str());
-    const char* buttons[] = {plan.button.c_str(), "Cancel", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
-    gtk_alert_dialog_set_cancel_button(dlg, 1);
-    gtk_alert_dialog_set_default_button(dlg, 0);
-    gtk_alert_dialog_set_modal(dlg, TRUE);
+    // The question and detail name files by their paths: Question wraps
+    // inside them.
+    Question::Spec spec;
+    spec.message = plan.question;
+    spec.detail = plan.detail;
+    spec.buttons = {plan.button, "Cancel"};
+    spec.defaultButton = 0;
+    spec.cancelButton = 1;
     g_log(GIT_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, "question: %s", plan.question.c_str());
-    struct Pending {
-        std::shared_ptr<bool> alive;
-        std::function<void()> go;
-    };
-    gtk_alert_dialog_choose(dlg, parent, nullptr,
-        [](GObject* src, GAsyncResult* res, gpointer data) {
-            auto* p = static_cast<Pending*>(data);
-            const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr);
-            if (choice == 0 && *p->alive) p->go();
-            delete p;
-        }, new Pending{alive_, std::move(go)});
-    g_object_unref(dlg);
+    std::shared_ptr<bool> alive = alive_;
+    Question::ask(parent, spec, [alive, go](int choice) {
+        if (choice == 0 && *alive) go();
+    });
 }
 
 // ---------------------------------------------------- staging and commits

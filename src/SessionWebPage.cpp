@@ -3,9 +3,13 @@
 // only what the server describes (tabs, lines with the highlighter's spans,
 // a Markdown page, terminal rows of styled runs, the folder's tree in a
 // sidebar, listed by the host one folder at a time, and the window's
-// browser tabs, the one picked shown in a frame). Read-only, it sends
-// only which document and terminal it shows, which folders to list, and
-// which file to open in the window. Editable, it may also ask the window's
+// browser tabs in a pane of their own, the one picked shown in a frame),
+// laid out as the window is: the editor, the browser to its right, the
+// terminal below both, each pane shown while the window shows it unless
+// this page hid or showed it itself. Read-only, it sends only which
+// document and terminal it shows, which folders to list, and which file to
+// read for a tab of its own (closed here, the window untouched). Editable,
+// it opens files as the window's tabs and closes them, may ask the window's
 // browser pane to open an address, and it is a small editor of
 // its own: a caret and selection drawn over the lines, a hidden field at the
 // caret for keys, input methods and the clipboard, edits made on its lines
@@ -13,9 +17,10 @@
 // with the same rules as src/Ot.cpp), undo and save asked of the server,
 // and keys for the terminal on show. A Markdown page goes into a sandboxed
 // frame with no scripts. A picture, PDF, audio, video or HTML file clicked
-// in the tree shows here from the server's /file/ address (an HTML page in
-// a frame sandboxed with no scripts), and a CSV or TSV file as a table of
-// the rows the server parsed (R3). "{{NONCE}}" is the response's script nonce. Every
+// in the tree shows in a tab of this page's own from the server's /file/
+// address (an HTML page in a frame sandboxed with no scripts), and a CSV
+// or TSV file as a table of the rows the server parsed (R3); an editable
+// page opens it in the window too. "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
 #include "SessionWeb.h"
@@ -64,13 +69,21 @@ header { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px;
 #tabrow { display: flex; align-items: center; flex: none; background: var(--hbg);
           border-bottom: 1px solid var(--line); }
 #tabrow .strip { flex: 1; min-width: 0; border-bottom: 0; align-self: stretch; }
-.strip .group { color: var(--muted); padding: 0 8px 0 14px; font-size: 11px; align-self: center;
-                text-transform: uppercase; letter-spacing: .04em; white-space: nowrap;
-                border-left: 1px solid var(--line); }
-#browse { flex: none; width: 17em; margin: 3px 6px; padding: 2px 6px; font: inherit;
+.strip button .x { margin-left: 8px; padding: 0 3px; border-radius: 3px; opacity: .55; }
+.strip button .x:hover { opacity: 1; background: rgba(127, 127, 127, .25); }
+.strip button.local { font-style: italic; }
+#browse { flex: 0 1 17em; min-width: 6em; margin: 3px 6px; padding: 2px 6px; font: inherit;
           font-size: 12px; background: var(--bg); color: var(--fg);
           border: 1px solid var(--line); border-radius: 3px; }
-#websec { flex: 3; display: flex; flex-direction: column; min-height: 0; }
+.panebtn { background: none; border: 1px solid var(--line); color: var(--muted); font: inherit;
+           font-size: 12px; padding: 0 8px; border-radius: 3px; cursor: pointer; align-self: center; }
+.panebtn[aria-pressed="true"] { color: var(--hfg); border-color: var(--accent); }
+.panerow { display: flex; align-items: center; flex: none; background: var(--hbg);
+           border-bottom: 1px solid var(--line); }
+.panerow .strip { flex: 1; min-width: 0; border-bottom: 0; align-self: stretch; }
+#top { flex: 3; display: flex; min-height: 0; }
+#websec { flex: 0 0 var(--webshare, 50%); display: flex; flex-direction: column; min-width: 0;
+          min-height: 0; border-left: 1px solid var(--line); }
 #webbar { display: flex; gap: 10px; align-items: baseline; flex: none; padding: 3px 10px;
           font-size: 12px; }
 #webtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -78,28 +91,6 @@ header { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px;
 #webopen { color: var(--accent); flex: none; }
 #websec p { margin: 0; padding: 0 10px 4px; color: var(--muted); font-size: 12px; flex: none; }
 #web { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
-#filesec { flex: 3; display: flex; flex-direction: column; min-height: 0; }
-#filebar { display: flex; gap: 10px; align-items: baseline; flex: none; padding: 3px 10px;
-           font-size: 12px; }
-#filepath { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
-            white-space: nowrap; }
-#fileopen { color: var(--accent); flex: none; }
-#fileview { flex: 1; min-height: 0; overflow: auto; display: flex; }
-#fileview.center { align-items: center; justify-content: center; padding: 12px; }
-#fileview img { max-width: 100%; max-height: 100%; object-fit: contain;
-                background: repeating-conic-gradient(rgba(127, 127, 127, .18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
-#fileview video { max-width: 100%; max-height: 100%; }
-#fileview audio { width: min(600px, 90%); }
-#fileview iframe { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
-#fileview table { border-collapse: collapse; align-self: flex-start; font-size: var(--efs); }
-#fileview td, #fileview th { border: 1px solid var(--line); padding: 2px 8px; text-align: left;
-                             vertical-align: top; white-space: pre; max-width: 40ch; overflow: hidden;
-                             text-overflow: ellipsis; }
-#fileview th.rn { color: var(--ln); background: var(--gutter); text-align: right; font-weight: normal;
-                  user-select: none; position: sticky; left: 0; }
-#fileview tr.head td { font-weight: 600; position: sticky; top: 0; background: var(--hbg); }
-#filenote { padding: 2em 1em; color: var(--muted); }
-#filemore { padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none; }
 #wrap { flex: 1; display: flex; min-height: 0; position: relative; }
 #side { flex: none; width: clamp(180px, 22vw, 320px); display: flex; flex-direction: column;
         background: var(--sbg); color: var(--sfg); border-right: 1px solid var(--line);
@@ -129,7 +120,7 @@ body.sideclosed #side { display: none; }
             border-top: 1px solid var(--line); }
 #work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-#docsec { flex: 3; display: flex; flex-direction: column; min-height: 0; }
+#docsec { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 #termsec { flex: 2; display: flex; flex-direction: column; min-height: 0;
            border-top: 1px solid var(--line); background: var(--tbg); color: var(--tfg); }
 #termsec.none { display: none; }
@@ -141,7 +132,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #code, #term { flex: 1; overflow: auto; min-height: 0;
                font: var(--efs)/var(--lh) ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
 #term { font-size: var(--tfs); }
-#termsec .strip { background: var(--tbg); }
+#termsec .panerow, #termsec .strip { background: var(--tbg); }
 #termsec .strip button.shown { background: var(--tbg); color: var(--tfg); }
 #code { counter-reset: line; padding-bottom: 2em; position: relative; cursor: text; }
 #lines { position: relative; z-index: 1; }
@@ -172,6 +163,23 @@ body:not(.editable) #caret { display: none; }
 #code.wrap .l::before { text-indent: 0; }
 #md { flex: 1; border: 0; width: 100%; background: var(--bg); min-height: 0; }
 #note { padding: 2em 1em; color: var(--muted); }
+#fileopen { color: var(--accent); flex: none; font-size: 12px; }
+#fileview { flex: 1; min-height: 0; overflow: auto; display: flex; }
+#fileview.center { align-items: center; justify-content: center; padding: 12px; }
+#fileview img { max-width: 100%; max-height: 100%; object-fit: contain;
+                background: repeating-conic-gradient(rgba(127, 127, 127, .18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+#fileview video { max-width: 100%; max-height: 100%; }
+#fileview audio { width: min(600px, 90%); }
+#fileview iframe { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
+#fileview table { border-collapse: collapse; align-self: flex-start; font-size: var(--efs); }
+#fileview td, #fileview th { border: 1px solid var(--line); padding: 2px 8px; text-align: left;
+                             vertical-align: top; white-space: pre; max-width: 40ch; overflow: hidden;
+                             text-overflow: ellipsis; }
+#fileview th.rn { color: var(--ln); background: var(--gutter); text-align: right; font-weight: normal;
+                  user-select: none; position: sticky; left: 0; }
+#fileview tr.head td { font-weight: 600; position: sticky; top: 0; background: var(--hbg); }
+#filenote { padding: 2em 1em; color: var(--muted); }
+#filemore { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none; }
 #termnote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px;
             border-top: 1px solid #333333; }
 .hidden { display: none !important; }
@@ -187,8 +195,10 @@ body:not(.editable) #caret { display: none; }
   #code .l { white-space: pre-wrap; word-break: break-all; padding-left: 3.4em;
              text-indent: -3.4em; }
   #code .l::before { width: 3.4em; padding-right: .6em; text-indent: 0; }
-  #docsec, #websec { flex: 1.3; }
-  #browse { width: 9em; }
+  /* No room beside the editor: the browser goes below it. */
+  #top { flex: 1.3; flex-direction: column; }
+  #websec { flex: 1 1 0; border-left: 0; border-top: 1px solid var(--line); }
+  #browse { flex-basis: 9em; }
   #termsec { flex: 1; }
   /* The tree is behind the header's button, over the page while open. */
   #side { display: none; position: absolute; left: 0; top: 0; bottom: 0; z-index: 20;
@@ -199,7 +209,7 @@ body:not(.editable) #caret { display: none; }
 </style>
 </head>
 <body>
-<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">mutible</span><span id="folder"></span><span id="status">connecting</span></header>
+<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">mutible</span><span id="folder"></span><button id="webbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the browser on this page">Browser</button><button id="termbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the terminal on this page">Terminal</button><span id="status">connecting</span></header>
 <div id="banner" class="hidden"></div>
 <div id="wrap">
 <aside id="side" aria-label="Files">
@@ -208,28 +218,28 @@ body:not(.editable) #caret { display: none; }
   <p id="treenote" class="hidden"></p>
 </aside>
 <div id="work">
-<div id="tabrow"><nav id="tabs" class="strip"></nav><input id="browse" class="hidden" type="text" inputmode="url" placeholder="Open an address in the window" title="Opens in the mutible window's browser pane" aria-label="Open an address in the mutible window's browser pane" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></div>
 <main>
+ <div id="top">
   <section id="docsec">
-    <div id="docbar"><span id="docpath"></span><button id="modebtn" class="hidden" type="button"></button></div>
+    <div id="tabrow"><nav id="tabs" class="strip"></nav></div>
+    <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
     <div id="note" class="hidden"></div>
-  </section>
-  <section id="filesec" class="hidden">
-    <div id="filebar"><span id="filepath"></span><a id="fileopen" target="_blank" rel="noopener noreferrer">Open in a new tab</a></div>
-    <div id="fileview"></div>
+    <div id="fileview" class="hidden"></div>
     <p id="filemore" class="hidden"></p>
   </section>
-  <section id="websec" class="hidden">
+  <section id="websec" class="hidden" aria-label="Browser">
+    <div id="webrow" class="panerow"><nav id="webtabs" class="strip"></nav><input id="browse" class="hidden" type="text" inputmode="url" placeholder="Open an address in the window" title="Opens in the mutible window's browser pane" aria-label="Open an address in the mutible window's browser pane" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button id="webclose" class="iconbtn" type="button" title="Hide the browser on this page (the window keeps it)" aria-label="Hide the browser on this page">&#215;</button></div>
     <div id="webbar"><span id="webtitle"></span><a id="webopen" target="_blank" rel="noopener noreferrer">Open in a new tab</a></div>
     <p id="webhint">Some sites refuse to be shown inside another page and stay blank here: open those in a new tab.</p>
     <p id="webloop" class="hidden">This address is on the machine running mutible: it shows here only when this browser runs on that machine too, not through a tunnel from elsewhere.</p>
     <p id="webnote" class="hidden"></p>
     <iframe id="web" title="Browser tab" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
   </section>
-  <section id="termsec" class="none">
-    <nav id="termtabs" class="strip"></nav>
+ </div>
+  <section id="termsec" class="none" aria-label="Terminal">
+    <div id="termrow" class="panerow"><nav id="termtabs" class="strip"></nav><button id="termclose" class="iconbtn" type="button" title="Hide the terminal on this page (the window keeps it)" aria-label="Hide the terminal on this page">&#215;</button></div>
     <div id="term" tabindex="0"><div id="hist"></div><div id="screen"><div id="cursor" class="hidden"></div></div></div>
   </section>
 </main>
@@ -244,7 +254,7 @@ body:not(.editable) #caret { display: none; }
   const token = new URLSearchParams(location.search).get("t") || "";
   const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
   let ws = null, palette = null, state = null, ended = false, folder = "", termNote = "";
-  let editable = false, canSave = false, canBrowse = false;
+  let editable = false, canSave = false, canBrowse = false, canOpen = false, canClose = false;
   const want = { doc: 0, term: 0 };
   let followDoc = true, followTerm = true, termInfo = null;
   const kHist = 5000;
@@ -342,9 +352,19 @@ body:not(.editable) #caret { display: none; }
     }
     return state.docs.length ? state.docs[0].id : 0;
   }
-  function tabButton(label, title, cls, onclick) {
+  function tabButton(label, title, cls, onclick, onclose, closeTitle) {
     const b = document.createElement("button");
     b.textContent = label; b.title = title; b.className = cls; b.onclick = onclick;
+    if (onclose) {
+      // A close button in the tab, as the window's tabs have.
+      const x = document.createElement("span");
+      x.className = "x"; x.textContent = "\u00d7";
+      x.setAttribute("role", "button");
+      x.setAttribute("aria-label", closeTitle);
+      x.title = closeTitle;
+      x.onclick = (e) => { e.stopPropagation(); onclose(); };
+      b.appendChild(x);
+    }
     return b;
   }
   function drawTabs() {
@@ -357,42 +377,80 @@ body:not(.editable) #caret { display: none; }
     const add = (id, path) => {
       if (seen.has(id)) return;
       seen.add(id);
-      let cls = id === want.doc && !W.on && !F.on ? "shown" : "";
+      let cls = id === want.doc && !L.on ? "shown" : "";
       if (id === onShow) cls += " onshow";
       if (dirty.get(id)) cls += " dirty";
-      strip.appendChild(tabButton(base(path) || "untitled", path, cls, () => {
+      const name = base(path) || "untitled";
+      // An editable page closes the window's tab as the window does; a
+      // page that only reads leaves the window's tabs to the window.
+      strip.appendChild(tabButton(name, path, cls, () => {
         followDoc = id === sessionDoc();
         showDoc(id);
-      }));
+      }, canClose ? () => post({ t: "close", doc: id }) : null, "Close " + name + " in the mutible window"));
     };
     for (const w of state.windows)
       for (const g of w.groups || []) for (const t of g.tabs || []) add(t.doc, t.path);
     for (const d of state.docs) add(d.id, d.path);
-    if (!seen.size) {
+    // The files this page opened itself, which only it shows and closes.
+    for (const f of L.tabs) {
+      const name = base(f.path);
+      strip.appendChild(tabButton(name, f.abs + " (on this page only)", "local" + (L.on === f.path ? " shown" : ""),
+                                  () => showLocal(f.path), () => closeLocal(f.path), "Close " + name + " on this page"));
+    }
+    if (!seen.size && !L.tabs.length) {
       const e = document.createElement("span");
       e.className = "empty"; e.textContent = "No documents are open in this session.";
       strip.appendChild(e);
     }
-    // The window's browser pane (a headless host has none: no group).
-    const web = browserTabs();
-    if (web.length) {
-      const g = document.createElement("span");
-      g.className = "group"; g.textContent = "Browser";
-      strip.appendChild(g);
-      for (const { tab, onShow: shownThere } of web) {
-        let cls = "web";
-        if (W.on && tab.url === W.url) cls += " shown";
-        if (shownThere) cls += " onshow";
-        strip.appendChild(tabButton(tab.title || hostOf(tab.url), tab.url, cls, () => showWeb(tab)));
-      }
-    }
   }
 
-  // ---- the window's browser tabs: the one picked in a frame, with a link
-  // to open it in a tab of this browser (a site that refuses frames stays
-  // blank, which the page cannot always tell), and a line when the address
-  // is on the machine running mutible. Only http and https are framed.
-  const W = { on: false, url: "", pending: "", pendingAt: 0 };
+  // ---- the panes: the editor; the browser, to its right at the share the
+  // window gives it; the terminal, below both. Each shows while the window
+  // shows it, unless this page hid or showed it itself (a choice kept until
+  // the window shows or hides that pane again). Hiding a pane here never
+  // hides the window's: this screen's room is its own.
+  const P = { browser: { mine: null, window: null }, terminal: { mine: null, window: null } };
+  function windowPanes() {
+    if (!state) return null;
+    for (const w of state.windows) if (w.panes) return w.panes;
+    return null;
+  }
+  // Whether the page shows `name` ("browser", "terminal"), given that it
+  // has something to show in it.
+  function paneOn(name, has) {
+    if (!has) return false;
+    const p = P[name], panes = windowPanes();
+    const win = panes ? !!panes[name] : true;   // a host that says nothing: shown
+    return p.mine !== null ? p.mine : win;
+  }
+  // The window's own choice, as last seen: a change of it ends the page's.
+  function takeWindowPanes() {
+    const panes = windowPanes();
+    for (const name of ["browser", "terminal"]) {
+      const win = panes ? !!panes[name] : null;
+      if (win !== P[name].window) P[name].mine = null;
+      P[name].window = win;
+    }
+    $("top").style.setProperty("--webshare", Math.round(((panes && panes.browserShare) || 0.5) * 1000) / 10 + "%");
+  }
+  function setPane(name, on) {
+    P[name].mine = on;
+    if (name === "browser") drawWeb(); else drawTermTabs();
+    drawSelection();
+  }
+  function paneButton(id, has, on) {
+    const b = $(id);
+    b.classList.toggle("hidden", !has);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  // ---- the window's browser tabs, in their own pane: the one picked in a
+  // frame, with a link to open it in a tab of this browser (a site that
+  // refuses frames stays blank, which the page cannot always tell), and a
+  // line when the address is on the machine running mutible. Only http and
+  // https are framed. The pane follows the window's tab on show until a
+  // tab is picked here.
+  const W = { url: "", follow: true, pending: "", pendingAt: 0 };
   function hostOf(url) { try { return new URL(url).host || url; } catch (e) { return url; } }
   function browserTabs() {
     const out = [];
@@ -403,17 +461,49 @@ body:not(.editable) #caret { display: none; }
     }
     return out;
   }
+  // The tab the pane shows: the one picked here while the window has it,
+  // else the window's own.
+  function webTab(tabs) {
+    if (!W.follow) for (const t of tabs) if (t.tab.url === W.url) return t.tab;
+    W.follow = true;
+    for (const t of tabs) if (t.onShow) return t.tab;
+    return tabs.length ? tabs[0].tab : null;
+  }
   function showWeb(tab) {
-    hideFile();
-    W.on = true; W.url = tab.url;
-    $("docsec").classList.add("hidden");
-    $("websec").classList.remove("hidden");
+    W.url = tab.url;
+    W.follow = false;
+    for (const t of browserTabs()) if (t.onShow && t.tab.url === tab.url) W.follow = true;
+    drawWeb();
+  }
+  // The browser pane as the window and this page say: its tabs, and the
+  // tab on show framed; hidden, the frame lets its page go (no sound or
+  // work left running behind it).
+  function drawWeb() {
+    const tabs = browserTabs(), on = paneOn("browser", tabs.length > 0);
+    paneButton("webbtn", tabs.length > 0, on);
+    const sec = $("websec"), f = $("web");
+    sec.classList.toggle("hidden", !on);
+    const strip = $("webtabs");
+    strip.textContent = "";
+    if (!on) {
+      if (f.getAttribute("src") && f.getAttribute("src") !== "about:blank") f.src = "about:blank";
+      return;
+    }
+    const tab = webTab(tabs);
+    W.url = tab ? tab.url : "";
+    for (const { tab: t, onShow: shownThere } of tabs) {
+      let cls = "web";
+      if (t.url === W.url) cls += " shown";
+      if (shownThere) cls += " onshow";
+      strip.appendChild(tabButton(t.title || hostOf(t.url), t.url, cls, () => showWeb(t)));
+    }
+    if (!tab) return;
     const title = $("webtitle");
     title.textContent = tab.title || hostOf(tab.url);
     const u = document.createElement("span");
     u.id = "weburl"; u.textContent = tab.url;
     title.appendChild(u);
-    const f = $("web"), open = $("webopen");
+    const open = $("webopen");
     if (tab.web) {
       if (f.getAttribute("src") !== tab.url) f.src = tab.url;
       open.href = tab.url;
@@ -427,17 +517,6 @@ body:not(.editable) #caret { display: none; }
     $("webnote").textContent = tab.web ? "" : "This tab is not an http or https page; it shows only in the mutible window.";
     $("webnote").classList.toggle("hidden", !!tab.web);
     $("webloop").classList.toggle("hidden", !tab.loopback);
-    drawTabs();
-  }
-  // Back to the documents; the frame lets its page go (no sound or work
-  // left running behind them).
-  function hideWeb() {
-    if (!W.on) return;
-    W.on = false;
-    $("web").src = "about:blank";
-    $("websec").classList.add("hidden");
-    $("docsec").classList.remove("hidden");
-    drawSelection();
   }
   // Addresses a person types: a scheme kept as typed (the server refuses
   // all but http and https), else http for this machine and https for the
@@ -462,13 +541,22 @@ body:not(.editable) #caret { display: none; }
     if (!W.pending) return;
     if (Date.now() - W.pendingAt > 15000) { W.pending = ""; return; }
     for (const { tab } of browserTabs())
-      if (sameAddress(tab.url, W.pending)) { W.pending = ""; showWeb(tab); return; }
+      if (sameAddress(tab.url, W.pending)) {
+        W.pending = "";
+        if (!paneOn("browser", true)) P.browser.mine = true;   // asked for here: shown here
+        showWeb(tab);
+        return;
+      }
   }
   function drawTermTabs() {
     const strip = $("termtabs");
     strip.textContent = "";
     if (!state) return;
-    $("termsec").classList.toggle("none", !state.terms.length);
+    // Only the terminals the session has now: one its window closed, or
+    // that ended, is gone from the state and from here.
+    const on = paneOn("terminal", state.terms.length > 0);
+    paneButton("termbtn", state.terms.length > 0, on);
+    $("termsec").classList.toggle("none", !on);
     $("termnote").textContent = termNote;
     $("termnote").classList.toggle("hidden", !termNote || state.terms.length > 0);
     state.terms.forEach((t, i) => {
@@ -484,8 +572,11 @@ body:not(.editable) #caret { display: none; }
   // A document with typing not yet confirmed waits for it before another
   // shows, so nothing typed is left behind.
   function showDoc(id) {
-    hideWeb();
-    hideFile();
+    hideViewer();
+    if (L.on) {
+      L.on = "";
+      if (id === want.doc) { want.doc = 0; D.id = 0; }   // asked for again: the server sends it whole
+    }
     if (id !== want.doc) {
       if (!synced()) { D.switchTo = id; return; }
       want.doc = id;
@@ -496,10 +587,63 @@ body:not(.editable) #caret { display: none; }
   }
   function showTerm(id) { if (id !== want.term) { want.term = id; sendShow(); } drawTermTabs(); }
 
-  // ---- a file the browser shows itself (R3): served by the session's
-  // server at /file/TOKEN/PATH, read from the host's folder, in the
-  // browser's own viewers; a CSV or TSV as rows the server parsed.
-  const F = { on: false, rel: "", view: "" };
+  // ---- files this page opened itself: read from the session's folder as
+  // they are on disk (readfile), shown here only, read-only, and closed
+  // here; the window's tabs stay as they are. A page that only reads opens
+  // every file this way; an editable one when the session has no window to
+  // open it in.
+  const L = { tabs: [], on: "" };   // tabs: the filetext messages, by path
+  function showLocal(rel) {
+    const f = L.tabs.find((x) => x.path === rel);
+    if (!f) return;
+    if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
+    if (f.viewer) { showViewer(f); return; }
+    hideViewer();
+    L.on = rel;
+    if (want.doc) { want.doc = 0; sendShow(); }   // the session's document stops coming
+    followDoc = false;
+    D.id = -1; D.kind = f.kind; D.path = f.abs; D.version = f.version || 0;
+    D.editable = false;
+    D.indent = f.indent || D.indent;
+    D.flight = null; D.queue = []; D.undo = 0; D.save = false;
+    D.html = f.html || "";
+    D.a = D.h = 0; D.goal = null; D.moved = true;
+    D.mode = f.kind === "markdown" ? "page" : "code";
+    $("code").scrollTop = 0;
+    $("docpath").textContent = inFolder(f.abs) + " (on this page only)";
+    if (f.kind === "large") {
+      D.shadow = []; D.lines = []; reindex(); render();
+      $("code").classList.add("hidden"); $("md").classList.add("hidden"); $("modebtn").classList.add("hidden");
+      const n = $("note"); n.textContent = f.note; n.classList.remove("hidden");
+      drawSelection();
+    } else {
+      D.shadow = (f.lines || []).map(lineOf);
+      rebuild();
+      showMode();
+    }
+    drawTabs();
+    markCurrent();
+  }
+  function closeLocal(rel) {
+    L.tabs = L.tabs.filter((x) => x.path !== rel);
+    if (L.on === rel) {
+      hideViewer();
+      // Back to the window's tab on show.
+      L.on = "";
+      D.id = 0;
+      followDoc = true;
+      want.doc = sessionDoc();
+      sendShow();
+      if (!want.doc) showNote("No document is on show.");
+    }
+    drawTabs();
+    markCurrent();
+  }
+  // ---- a file the browser shows itself (R3), in a tab of this page's own:
+  // served by the session's server at /file/TOKEN/PATH, read from the
+  // host's folder, in the browser's own viewers; a CSV or TSV as rows the
+  // server parsed (`file`, answered `table`).
+  const V = { on: "" };   // the viewer tab on show, by path
   function fileUrl(rel) {
     return "/file/" + encodeURIComponent(token) + "/" + rel.split("/").map(encodeURIComponent).join("/");
   }
@@ -510,57 +654,74 @@ body:not(.editable) #caret { display: none; }
     n.id = "filenote"; n.textContent = text;
     box.appendChild(n);
   }
-  function showFile(rel, view) {
-    hideWeb();
-    F.on = true; F.rel = rel; F.view = view;
-    $("docsec").classList.add("hidden");
-    $("filesec").classList.remove("hidden");
-    $("filepath").textContent = rel;
-    $("filemore").classList.add("hidden");
+  function openViewer(rel, view) {
+    if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
+    if (!L.tabs.find((x) => x.path === rel))
+      L.tabs.push({ path: rel, abs: T.root ? T.root + "/" + rel : rel, view: view, viewer: true });
+    showLocal(rel);
+  }
+  function showViewer(f) {
+    const rel = f.path, view = f.view;
+    L.on = rel;
+    if (want.doc) { want.doc = 0; sendShow(); }   // the session's document stops coming
+    followDoc = false;
+    D.id = 0; D.kind = ""; D.editable = false; D.flight = null; D.queue = [];
+    $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
+    $("modebtn").classList.add("hidden"); $("note").classList.add("hidden");
+    $("docpath").textContent = rel + " (on this page only)";
+    drawSelection();
     const box = $("fileview"), url = fileUrl(rel), open = $("fileopen");
-    box.textContent = ""; box.className = "";
+    box.classList.remove("hidden");
+    $("filemore").classList.add("hidden");
     open.href = url;
     open.classList.toggle("hidden", view === "table");
-    let el = null;
-    if (view === "image") {
-      el = document.createElement("img"); el.alt = base(rel); box.className = "center";
-    } else if (view === "audio" || view === "video") {
-      el = document.createElement(view); el.controls = true; el.preload = "metadata"; box.className = "center";
-    } else if (view === "pdf") {
-      el = document.createElement("iframe"); el.title = base(rel);
-    } else if (view === "html") {
-      // Sandboxed with no scripts and an origin of its own, as the server's
-      // CSP serves it too: the page is drawn, nothing in it runs.
-      el = document.createElement("iframe"); el.setAttribute("sandbox", "");
-      el.referrerPolicy = "no-referrer"; el.title = base(rel);
-    } else if (view === "table") {
-      fileNote("Reading " + base(rel) + "…");
-      post({ t: "file", path: rel });
-    }
-    if (el) {
-      el.addEventListener("error", () => { if (F.on && F.rel === rel) fileNote(base(rel) + " could not be shown here."); });
-      el.src = url;
-      box.appendChild(el);
+    if (V.on !== rel) {
+      V.on = rel;
+      box.textContent = ""; box.className = "";
+      let el = null;
+      if (view === "image") {
+        el = document.createElement("img"); el.alt = base(rel); box.className = "center";
+      } else if (view === "audio" || view === "video") {
+        el = document.createElement(view); el.controls = true; el.preload = "metadata"; box.className = "center";
+      } else if (view === "pdf") {
+        el = document.createElement("iframe"); el.title = base(rel);
+      } else if (view === "html") {
+        // Sandboxed with no scripts and an origin of its own, as the
+        // server's CSP serves it too: the page is drawn, nothing in it runs.
+        el = document.createElement("iframe"); el.setAttribute("sandbox", "");
+        el.referrerPolicy = "no-referrer"; el.title = base(rel);
+      } else if (view === "table") {
+        if (f.table) drawTable(f.table);
+        else { fileNote("Reading " + base(rel) + "…"); post({ t: "file", path: rel }); }
+      }
+      if (el) {
+        el.addEventListener("error", () => { if (V.on === rel) fileNote(base(rel) + " could not be shown here."); });
+        el.src = url;
+        box.appendChild(el);
+      }
+    } else if (view === "table" && f.table) {
+      drawTable(f.table);
     }
     drawTabs();
     markCurrent();
   }
-  // Back to the documents; the file's view goes (no sound left playing).
-  function hideFile() {
-    if (!F.on) return;
-    F.on = false;
+  // The file's view goes (no sound left playing), and the editor's area is
+  // the editor's again.
+  function hideViewer() {
+    if (!V.on) return;
+    V.on = "";
     $("fileview").textContent = "";
-    $("filesec").classList.add("hidden");
-    $("docsec").classList.remove("hidden");
-    drawSelection();
+    $("fileview").classList.add("hidden");
+    $("filemore").classList.add("hidden");
+    $("fileopen").classList.add("hidden");
   }
-  function onTable(m) {
-    if (!F.on || F.view !== "table" || F.rel !== m.path) return;
-    if (m.error !== undefined) { fileNote(m.error); return; }
+  function drawTable(m) {
     const box = $("fileview");
     box.textContent = ""; box.className = "";
+    if (m.error !== undefined) { fileNote(m.error); return; }
+    if (!(m.rows || []).length) { fileNote(base(m.path) + " is empty."); return; }
     const table = document.createElement("table"), body = document.createElement("tbody");
-    (m.rows || []).forEach((row, i) => {
+    m.rows.forEach((row, i) => {
       const tr = document.createElement("tr");
       if (i === 0) tr.className = "head";   // the first row is usually the header, as the window shows it
       const n = document.createElement("th");
@@ -575,20 +736,34 @@ body:not(.editable) #caret { display: none; }
     });
     table.appendChild(body);
     box.appendChild(table);
-    if (!(m.rows || []).length) fileNote(base(m.path) + " is empty.");
     const more = $("filemore");
-    more.textContent = m.truncated ? "The first " + (m.rows || []).length + " rows; the rest shows in the mutible window." : "";
+    more.textContent = m.truncated ? "The first " + m.rows.length + " rows; the rest shows in the mutible window." : "";
     more.classList.toggle("hidden", !m.truncated);
+  }
+  function onTable(m) {
+    const f = L.tabs.find((x) => x.viewer && x.path === m.path);
+    if (!f) return;
+    f.table = m;
+    if (V.on === m.path) drawTable(m);
+  }
+  function onFileText(m) {
+    const p = T.pending;
+    if (p && p.rel === m.path) { T.pending = null; clearTimeout(T.timer); }
+    if (m.error !== undefined) { treeNote(m.error); return; }
+    const at = L.tabs.findIndex((x) => x.path === m.path);
+    if (at >= 0) L.tabs[at] = m; else L.tabs.push(m);
+    showLocal(m.path);
   }
 
 
   // ---- the tree: one folder's rows at a time, read by the host each time
   // a folder opens (list), folders first as the apps list them, dotfiles as
   // the window shows them, what the ignore files ignore in tree.git-ignored's
-  // color. A click on a file opens it as a tab in the mutible window (open),
-  // as a click in the window's own tree would (a double-click keeps it), and
-  // this page shows that tab once the session's state has it. Read-only
-  // pages may open files too: a tab opened or shown changes no text.
+  // color. On an editable page a click on a file opens it as a tab in the
+  // mutible window (open), as a click in the window's own tree would (a
+  // double-click keeps it), and this page shows that tab once the session's
+  // state has it. A page that only reads changes nothing in the window: it
+  // reads the file for a tab of its own (readfile).
   const T = { root: "", open: new Set([""]), kids: new Map(), more: new Map(), err: new Map(),
               pending: null, timer: 0 };
   const kViewerKinds = new Set(["image", "video", "audio", "pdf", "database", "archive", "bookmark"]);
@@ -602,7 +777,7 @@ body:not(.editable) #caret { display: none; }
   }
   function joinRel(dir, name) { return dir ? dir + "/" + name : name; }
   function currentRel() {
-    if (F.on) return F.rel;
+    if (L.on) return L.on;
     if (!state || !T.root || !want.doc) return null;
     const d = state.docs.find((x) => x.id === want.doc);
     return d && d.path.startsWith(T.root + "/") ? d.path.slice(T.root.length + 1) : null;
@@ -684,12 +859,34 @@ body:not(.editable) #caret { display: none; }
   }
   function openFile(rel, e, keep) {
     treeNote("");
-    // A file the browser shows itself shows here at once; the window
-    // opens it too, as for any file, but this page stays on it.
-    if (e.view) showFile(rel, e.view);
-    T.pending = { rel: rel, kind: e.kind || "text", abs: "", shown: !!e.view };
-    if (!post({ t: "open", path: rel, keep: !!keep })) { T.pending = null; return; }
     if (narrow.matches) setSide(false);
+    if (e.view) {
+      // A file the browser shows itself: in a tab of this page's own; an
+      // editable page opens it in the window too, as for any file, and
+      // stays on it here.
+      openViewer(rel, e.view);
+      if (canOpen) {
+        T.pending = { rel: rel, kind: e.kind || "text", abs: "", shown: true };
+        if (!post({ t: "open", path: rel, keep: !!keep })) T.pending = null;
+      }
+      return;
+    }
+    if (!canOpen) {
+      // This page's own tab: the window's tabs stay as they are. A file
+      // the window has open already is shown from its tab, live.
+      const abs = T.root ? T.root + "/" + rel : "";
+      const d = state && abs ? state.docs.find((x) => x.path === abs) : null;
+      if (d) { followDoc = d.id === sessionDoc(); showDoc(d.id); return; }
+      if (kViewerKinds.has(e.kind || "text")) {
+        treeNote(base(rel) + " is not a file this page can show; it opens in the mutible window.");
+        return;
+      }
+      T.pending = { rel: rel, kind: e.kind || "text", abs: "" };
+      if (!post({ t: "readfile", path: rel })) T.pending = null;
+      return;
+    }
+    T.pending = { rel: rel, kind: e.kind || "text", abs: "" };
+    if (!post({ t: "open", path: rel, keep: !!keep })) { T.pending = null; return; }
   }
   function onOpening(m) {
     const p = T.pending;
@@ -737,15 +934,17 @@ body:not(.editable) #caret { display: none; }
   function onState(m) {
     state = m;
     const docs = new Set(m.docs.map((d) => d.id));
-    if ((followDoc || !docs.has(want.doc)) && (synced() || !docs.has(want.doc))) {
+    // A file of this page's own stays on show until it is closed here.
+    if (!L.on && (followDoc || !docs.has(want.doc)) && (synced() || !docs.has(want.doc))) {
       followDoc = true; want.doc = sessionDoc();
     }
     const terms = m.terms.map((t) => t.id);
     if (followTerm && terms.length && !terms.includes(want.term)) want.term = terms[0];
     if (!terms.includes(want.term)) { followTerm = true; want.term = terms.length ? terms[0] : 0; }
     sendShow();
-    drawTabs(); drawTermTabs();
-    if (!want.doc) showNote("No document is on show.");
+    takeWindowPanes();
+    drawTabs(); drawTermTabs(); drawWeb();
+    if (!want.doc && !L.on) showNote("No document is on show.");
     takePending();
     takeWebPending();
     markCurrent();
@@ -1415,6 +1614,7 @@ body:not(.editable) #caret { display: none; }
 
   // ---- documents on show
   function showNote(text) {
+    hideViewer();
     $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
     $("modebtn").classList.add("hidden");
     const n = $("note"); n.textContent = text; n.classList.remove("hidden");
@@ -1629,6 +1829,8 @@ body:not(.editable) #caret { display: none; }
           editable = !!m.editable;
           canSave = !!m.canSave;
           canBrowse = !!m.canBrowse;
+          canOpen = !!m.canOpen;
+          canClose = !!m.canClose;
           $("browse").classList.toggle("hidden", !canBrowse);
           setStatus(editable ? "live, editing" : "live, read-only", true);
           document.body.classList.toggle("editable", editable);
@@ -1660,7 +1862,9 @@ body:not(.editable) #caret { display: none; }
         case "tree": onTree(m); break;
         case "opening": onOpening(m); break;
         case "browsing": onBrowsing(m); break;
+        case "filetext": onFileText(m); break;
         case "table": onTable(m); break;
+        case "closing": if (!m.ok) toast(m.why || "That tab was not closed."); break;
       }
     };
     ws.onclose = () => {
@@ -1758,6 +1962,10 @@ body:not(.editable) #caret { display: none; }
     if (url && !post({ t: "browse", url: url })) toast("Not connected to the session.");
   });
   $("sidebtn").addEventListener("click", () => setSide(!sideOpen()));
+  $("webclose").addEventListener("click", () => setPane("browser", false));
+  $("termclose").addEventListener("click", () => setPane("terminal", false));
+  $("webbtn").addEventListener("click", () => setPane("browser", $("websec").classList.contains("hidden")));
+  $("termbtn").addEventListener("click", () => setPane("terminal", $("termsec").classList.contains("none")));
   // At phone width a tap beside the open tree closes it.
   $("work").addEventListener("pointerdown", () => { if (narrow.matches && sideOpen()) setSide(false); });
   // Back to the page after a while: the folders may have changed meanwhile.
@@ -1776,18 +1984,29 @@ body:not(.editable) #caret { display: none; }
     focus: focusEditor,
     tree: () => [...$("tree").querySelectorAll(".row")].map((r) => r.dataset.path),
     treeNote: () => $("treenote").textContent,
-    browser: () => [...$("tabs").querySelectorAll("button.web")].map((b) => b.title),
+    browser: () => [...$("webtabs").querySelectorAll("button.web")].map((b) => b.title),
+    web: () => ($("websec").classList.contains("hidden") ? null
+                : { src: $("web").getAttribute("src") || "", open: $("webopen").getAttribute("href") || "",
+                    loopback: !$("webloop").classList.contains("hidden") }),
+    // Which panes show, and where the browser is: beside the editor
+    // (its left edge past the editor's) or below it.
+    panes: () => ({ browser: !$("websec").classList.contains("hidden"),
+                    terminal: !$("termsec").classList.contains("none"),
+                    beside: $("websec").getBoundingClientRect().left > $("docsec").getBoundingClientRect().left + 10 }),
+    tabs: () => [...$("tabs").querySelectorAll("button")].map((b) => (b.classList.contains("local") ? "+" : "") +
+                                                                      b.firstChild.textContent),
+    local: () => L.on,
     file: () => {
-      if (!F.on) return null;
+      if (!V.on) return null;
+      const f = L.tabs.find((x) => x.path === V.on) || {};
       const box = $("fileview"), el = box.firstElementChild, rows = [...box.querySelectorAll("tbody tr")];
-      return { view: F.view, path: F.rel, src: (el && el.getAttribute("src")) || "",
+      return { view: f.view, path: V.on, src: (el && el.getAttribute("src")) || "",
                width: el && el.tagName === "IMG" ? el.naturalWidth : 0,
                sandbox: el && el.hasAttribute("sandbox") ? el.getAttribute("sandbox") : null,
                rows: rows.map((r) => [...r.querySelectorAll("td")].map((c) => c.textContent).join(",")),
                note: ($("filenote") || {}).textContent || "" };
     },
-    web: () => (W.on ? { src: $("web").getAttribute("src") || "", open: $("webopen").getAttribute("href") || "",
-                         loopback: !$("webloop").classList.contains("hidden") } : null),
+    windowPanes: () => windowPanes(),
   };
   connect();
 })();

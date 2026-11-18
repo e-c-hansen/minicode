@@ -4424,6 +4424,19 @@ void testSettings() {
         CHECK(!parseSettings("").sessionHost());
         CHECK(parseSettings("editor.session-host = on\n").sessionHost());
         CHECK(!parseSettings("editor.session-host = off\n").sessionHost());
+        // headless (stage 6): the host as a process of its own on Linux,
+        // `on` to the Mac for now.
+        {
+            const Settings h = parseSettings("editor.session-host = Headless\n");
+            CHECK(h.sessionHost() && h.sessionHostHeadless() &&
+                  h.sessionHostMode() == Settings::SessionHostMode::Headless);
+            CHECK(!parseSettings("editor.session-host = on\n").sessionHostHeadless());
+            CHECK(parseSettings("").sessionHostMode() == Settings::SessionHostMode::Off);
+            std::vector<SettingsError> he;
+            const Settings bad = parseSettings("editor.session-host = remote\n", &he);
+            CHECK(he.size() == 1 && !bad.sessionHost() &&
+                  he[0].message.find("headless") != std::string::npos);
+        }
         CHECK(!parseSettings("editor.auto-close = off\n").autoClose());
         CHECK(!parseSettings("editor.auto-close = false\n").autoClose());
         CHECK(parseSettings("editor.auto-close = On\n").autoClose());
@@ -11189,6 +11202,7 @@ static void testMultiCaretOccurrences() {
 #include "procs_tests.inc"
 #include "procfs_tests.inc"
 #include "attention_tests.inc"
+#include "usage_tests.inc"
 #include "ignore_tests.inc"
 #include "page_check_tests.inc"
 #include "terminal_links_tests.inc"
@@ -11401,6 +11415,8 @@ int main() {
     testLinuxKeymapFile();
     testLinuxCommandsReadme();
     testClaudeHooks();
+    testClaudeUsage();
+    testClaudeStatusLine();
     testNotifyCommandLine();
     testAttentionBoard();
     testIdeLink();

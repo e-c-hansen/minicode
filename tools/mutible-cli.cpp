@@ -23,6 +23,7 @@
 #include "Rename.h"
 #include "ControlProtocol.h"
 #include "ClaudeHooks.h"
+#include "ClaudeStatusLine.h"
 #include "SessionServer.h"
 #include "SessionWeb.h"
 #ifdef __APPLE__
@@ -353,6 +354,88 @@ int runHooks(const std::string &action) {
     return kExitOK;
 }
 
+// `mutible statusline [--then COMMAND]`: Claude Code's status line, as
+// mutible's Agents panel installs it (ClaudeStatusLine.h). Notes the plan
+// usage on stdin in mutible's own log, then runs COMMAND (the user's own
+// status line before) with the same stdin and lets it print, or prints a
+// short line of its own. Whatever happens it exits 0 and says nothing on
+// stderr: a status line must never break.
+pid_t gStatusChild = 0;
+
+void forwardSignal(int sig) {
+    if (gStatusChild > 0) kill(gStatusChild, sig);
+    _exit(0);
+}
+
+int runStatusLine(const std::vector<std::string> &args) {
+    std::string previous;
+    for (size_t i = 1; i + 1 < args.size(); i++)
+        if (args[i] == "--then") previous = args[i + 1];
+    const std::string input = readStdin(1 << 20);
+    ClaudeUsage::Sample sample;
+    if (ClaudeUsage::sampleFromStatusJson(input, (double)time(nullptr), &sample)) {
+#ifdef __APPLE__
+        const bool mac = true;
+#else
+        const bool mac = false;
+#endif
+        const std::string dir = ClaudeStatusLine::usageDir(getenv("MUTIBLE_USAGE_DIR"), getenv("HOME"),
+                                                           getenv("XDG_STATE_HOME"), mac);
+        ClaudeStatusLine::appendSample(ClaudeStatusLine::logPath(dir), sample);
+    }
+    if (previous.empty()) {
+        std::printf("%s\n", ClaudeStatusLine::defaultLine(input).c_str());
+        std::fflush(stdout);
+        return kExitOK;
+    }
+    // The user's command, through sh as Claude Code runs it, stdin fed from
+    // a pipe on a thread of its own (a command that never reads it must not
+    // hold us), stdout and stderr ours.
+    signal(SIGPIPE, SIG_IGN);
+    int fds[2];
+    if (pipe(fds) != 0) return kExitOK;
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_adddup2(&fa, fds[0], STDIN_FILENO);
+    posix_spawn_file_actions_addclose(&fa, fds[0]);
+    posix_spawn_file_actions_addclose(&fa, fds[1]);
+    const char *argv[] = {"/bin/sh", "-c", previous.c_str(), nullptr};
+    pid_t pid = 0;
+    const int err = posix_spawn(&pid, "/bin/sh", &fa, nullptr, (char *const *)argv, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    close(fds[0]);
+    if (err != 0) {
+        close(fds[1]);
+        return kExitOK;
+    }
+    gStatusChild = pid;
+    signal(SIGTERM, forwardSignal);
+    signal(SIGINT, forwardSignal);
+    signal(SIGHUP, forwardSignal);
+    const int writeFd = fds[1];
+    std::thread feeder([writeFd, input] {
+        size_t off = 0;
+        while (off < input.size()) {
+            const ssize_t n = write(writeFd, input.data() + off, input.size() - off);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) break;
+            off += (size_t)n;
+        }
+        close(writeFd);
+    });
+    feeder.detach();
+    // Ten seconds at most: Claude Code has moved on by then anyway.
+    for (int waited = 0; waited < 1000; waited++) {
+        int status = 0;
+        const pid_t r = waitpid(pid, &status, WNOHANG);
+        if (r == pid || (r < 0 && errno != EINTR)) return kExitOK;
+        struct timespec ts = {0, 10 * 1000 * 1000};
+        nanosleep(&ts, nullptr);
+    }
+    kill(pid, SIGTERM);
+    return kExitOK;
+}
+
 // open-url's way out: the address goes to the default browser through
 // /usr/bin/open, or xdg-open on Linux ($MUTIBLE_OPEN_FALLBACK in the GUI
 // checks, which record instead of opening anything).
@@ -653,6 +736,11 @@ int mutibleCliMain(int argc, char **argv) {
         struct stat st;
         return stat(p.c_str(), &st) == 0;
     };
+    // The status line before anything else: it runs every few seconds.
+    if (!args.empty() && args[0] == "statusline" &&
+        std::find(args.begin(), args.end(), "--help") == args.end() &&
+        std::find(args.begin(), args.end(), "-h") == args.end())
+        return runStatusLine(args);
     CliCommand c = parseCommandLine(args, cwd, home ? home : "/", exists);
     if (c.help) {
         std::string text = usageText(c.helpTopic);

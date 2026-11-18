@@ -5,6 +5,7 @@
 #include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
+#include "ControlProtocol.h"
 #include "SessionLink.h"
 #include "TerminalAttention.h"
 #include "TerminalDock.h"
@@ -28,6 +29,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -749,17 +751,21 @@ void leak(const std::string& what, bool fails = true) {
 void checkSessionMirrors() {
     for (const MCGuiAppWindow& a : MCGuiAppWindows()) {
         if (!a.editor) continue;
-        std::vector<std::pair<uint64_t, std::string>> docs;
+        // Each document against the host it was opened on (its window's
+        // folder's, SessionLink.h), and the window's tabs against its own.
+        std::map<SessionLink::Link*, std::vector<std::pair<uint64_t, std::string>>> docs;
         for (Document* d : a.editor->documents()) {
             if (d->kind() != Document::Kind::Text || d->loading() || d->unread()) continue;
             GtkTextIter s, e;
             gtk_text_buffer_get_bounds(d->buffer(), &s, &e);
             char* t = gtk_text_buffer_get_text(d->buffer(), &s, &e, TRUE);
-            docs.emplace_back(d->id(), t ? t : "");
+            docs[d->sessionLink()].emplace_back(d->id(), t ? t : "");
             g_free(t);
         }
-        const std::string why =
-            SessionLink::check(a.editor->sessionWindowId(), a.editor->window(), docs);
+        std::string why;
+        for (const auto& [link, list] : docs) why += link->checkDocuments(list);
+        if (SessionLink::Link* link = a.editor->sessionLink())
+            why += link->checkWindow(a.editor->sessionWindowId(), a.editor->window());
         if (!why.empty())
             MCGuiCheck(false, ("the session's host and the window it renders differ: " + why).c_str(),
                        __FILE__, __LINE__);
@@ -780,8 +786,16 @@ void checkWhatSuiteLeft() {
         leak("left " + std::to_string(now.windows) + " app window(s) where it found " +
              std::to_string(was.windows));
     if (now.otherOnTop && !was.otherOnTop) {
-        const char* title = gtk_window_get_title(MCGuiTopWindow());
+        GtkWindow* top = MCGuiTopWindow();
+        const char* title = gtk_window_get_title(top);
         leak(std::string("left another window on top of the app's: \"") + (title ? title : "") + "\"");
+        // Closed, as Esc would: a modal question left up holds the app's
+        // keys, so every suite after it failed (claude_hooks_offer's, before
+        // idelink, browser_pages and agents, 2026-11-18).
+        if (putBack && top && top != MCGuiApp().window) {
+            gtk_window_close(top);
+            MCGuiFocusKeyWindow();
+        }
     }
     // A suite may turn the question off while it closes terminals, but must
     // put it back: terminal_ids did not, and a busy terminal closed unasked in
@@ -1172,6 +1186,11 @@ bool ourDisplay(std::string* why) {
 // ------------------------------------------------------------------ main
 int main(int argc, char** argv) {
     if (MCGuiIsDbusDaemonShim(argc, argv)) return MCGuiDbusDaemonShim(argv);
+    // The app's command line subcommands, as the real binary takes them:
+    // the headless session host a window starts as this program
+    // (`/proc/self/exe host --folder ...`, SessionLink.cpp), never a run of
+    // the checks, nor one that dies with the app (PR_SET_PDEATHSIG below).
+    if (argc > 1 && ControlChannel::isSubcommand(argv[1])) return mutible_main(argc, argv);
     if (!getenv("MC_GUI_CHILD")) return MCGuiWrapperMain(argc, argv);
 
     prctl(PR_SET_PDEATHSIG, SIGKILL);   // never outlive the run around it

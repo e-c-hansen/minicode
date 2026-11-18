@@ -307,6 +307,79 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   Globe-key form beside hidden twins with the same key; a menu key clash
   check must skip them (ControlSuite does).
 
+## The plan usage forecast (Mac, A13, 2026-11-18)
+
+- **Where**: under the Agents panel's heading (`MCUsageView`,
+  `UsageView.{h,mm}`), between the hooks line and the sessions: the
+  5-hour window, the week, the burn rate, unseen usage (the fit's line is
+  the text's tooltip), then "Log plan usage from Claude Code's status
+  line…" or "Stop logging plan usage…". `MCUsageModel` is one per app (the
+  plan is the user's, not a folder's), refreshed by the panel's reload
+  (its model's changes and the 30 s timer; at most once in 5 s), on its
+  own serial queue.
+- **Core** `ClaudeUsage.{h,cpp}` (`usage:*`): `parseUsageLine` skims an
+  assistant line (type, timestamp, requestId, sessionId, isSidechain,
+  message.id, message.model, message.usage) without decoding the reply;
+  only the usage object goes through `Json::parse`. A line with all-zero
+  tokens (`<synthetic>`) is no usage. Cache writes: the total is
+  `cache_creation_input_tokens`, the hour's share
+  `cache_creation.ephemeral_1h_input_tokens` (an advisor turn's split
+  covers only its first iteration; the rest is priced as 5 minutes).
+  `Tally` dedupes by message id plus request id (ccusage's rule: without
+  a request id, plus the session, plus the time unless the id is `msg_`),
+  keeping the main thread's copy over a subagent's, then the larger.
+  `priceFor` is a table of API list prices (USD per million; 5 m writes
+  1.25 times input, 1 h writes 2 times; Haiku 5.5 above 100K and Sonnet
+  4/4.5 above 200K context at their long prices for the whole request;
+  fast mode 2 times, Opus 4.6's 6), longest name first, an unknown model
+  its family's newest price. `Scanner` reads files changed in the last
+  8 days (`kHorizon`) from where it stopped, whole lines, 4 MB windows
+  growing to 64 MB for one line; a replaced or shorter file is read again
+  and the tally drops the copies. `blocks` and `blockCostPerHour` are
+  ccusage's. Samples: `v1 <time> <5h %> <5h reset> <week %> <week reset>`
+  ("-" for a missing window). `fitScale`: per window (one resets_at),
+  readings from the window's start (reset minus 5 h or 7 d, when the
+  transcripts reach back that far) to the first sample, then sample to
+  sample once $0.25 or 2 points moved; the scale is the readings'
+  percent-per-dollar median weighted by dollars, so a minority of
+  readings with unseen usage does not move it; each reading's excess over
+  scale times cost is unseen usage. `forecast`: the last sample plus the
+  scale times the cost since; the rate over 15 min, 1 h and the window
+  (the week: 1 h, 5 h and the window), the middle one central, the
+  others the range; a window that reset since the last sample is worked
+  out (5 h from the first request after the reset). `describe` gives the
+  lines every port shows. Credit to ccusage (MIT) in the header and in
+  `docs/REFERENCE.md`; nothing of it is linked.
+- **The wrapper** `ClaudeStatusLine.{h,cpp}` (`statusline:*`) and
+  `mutible statusline [--then COMMAND]` (mutible-cli, intercepted before
+  the command line parse: it runs every few seconds; about 20 ms with a
+  chain): the sample goes to `usageDir` (Mac: ~/Library/Application
+  Support/Mutible/usage; XDG state elsewhere; `$MUTIBLE_USAGE_DIR`),
+  skipped when the last line says the same and is under a minute old, the
+  log moved to `.1` past 1 MB. Then `/bin/sh -c COMMAND` with the same
+  stdin (fed on a thread), its stdout and stderr ours, 10 s at most,
+  signals passed on; exit 0 always. The launcher, with no mutible-cli,
+  still runs the chained command. Trap: the status line runs every few
+  seconds, so `mutible statusline` is handled before the command line's
+  parse and reads no more than the last 512 bytes of its log.
+- **Install and undo**: the waiting dots' consent pattern exactly
+  (`StatusLineOffer.{h,mm}`: a question with the JSON that goes in, the
+  write only on the second yes, a backup first, then where it went). The
+  old command travels in the new one (`mutible statusline --then
+  '<old>'`), every other key of statusLine (padding, refreshInterval) and
+  of the file kept. Install keeps a record (`statusline-install.json` in
+  the usage folder: the file before and as written); undo writes the old
+  file back byte for byte while the file is still what install wrote (or
+  removes it, when install made it), else puts back only statusLine (its
+  old command, or none) after a backup.
+- Checked by `make guitest SUITES=agents` (the plan usage steps at its
+  end: a fixture transcript and log, the forecast's lines, install over
+  an existing statusLine in a scratch CLAUDE_CONFIG_DIR with Cancel
+  first, the built mutible-cli logging and chaining, undo restoring the
+  file byte for byte). Not yet run against a real Claude Code session's
+  status line; the look of the section in a narrow sidebar needs the
+  owner's eyes. Not in the Linux app yet (its CLI has the wrapper).
+
 ## Traps
 
 Each trap's first sentence, in the order it appears above; the whole
@@ -314,3 +387,4 @@ text is in place in its section.
 
 - The inline agent, Request a Change and restarting (Mac): Traps: `NSTextView string` is the live storage, so "the text before" must be a copy; the bar's place uses line fragments up to the caret only (the first Cmd+I once laid out the whole file: 1.7 s);
 - The agent workspace (Mac): Trap: once a Control+Command key reaches the main menu, AppKit redraws its own Emoji & Symbols and Start Dictation items in their Globe-key form beside hidden twins with the same key; a menu key clash check must skip them (ControlSuite does).
+- The plan usage forecast (Mac, A13, 2026-11-18): Trap: the status line runs every few seconds, so `mutible statusline` is handled before the command line's parse and reads no more than the last 512 bytes of its log.

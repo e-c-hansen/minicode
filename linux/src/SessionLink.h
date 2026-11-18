@@ -1,22 +1,52 @@
-// SessionLink.h — the GTK app's session host and its one client
-// (SESSION-DESIGN.md, stage 4a; the core's SessionHost.h and
-// SessionClient.h). The host runs on a thread of its own and owns every
-// open document's text and undo history; the editor's documents are its
+// SessionLink.h — the GTK app's links to the session's hosts (SESSION-DESIGN.md,
+// stages 4a and 6; the core's SessionHost.h, SessionClient.h and
+// SessionServer.h). A host owns every open document's text and undo
+// history and every terminal's shell; the editor's documents are its
 // mirrors (Document.h records each buffer edit into the client, applies
-// what the host sends back, and asks the host for undo), and the language
-// server sync reads the host's text through the client's copy of it
-// (LspSessionSync.cpp). The windows' tabs are reported as they change.
+// what the host sends back, and asks the host for undo), the terminals feed
+// VTE what the host forwards, and the language server sync reads the host's
+// text through the client's copy of it (LspSessionSync.cpp). The windows'
+// tabs are reported as they change.
 //
-// One client for the whole process, in code points (what GtkTextIter
-// counts), its messages dispatched on the main loop as they arrive.
+// A host serves one folder, so there is one Link per folder the windows
+// show (resolved), shared by every window on it: a window takes its
+// folder's link when it is made and again when it opens another folder
+// (Editor::setSessionLink), and each document and terminal keeps the link
+// it was opened on for its life (so a terminal started before Open Folder
+// stays on the old folder's host). The link goes when the last of them lets
+// it go. Each link has its own client, in code points (what GtkTextIter
+// counts), its messages dispatched on the main loop as they arrive, and its
+// ids from that client (Client::newId), so ids of two hosts never meet in
+// one client.
 //
-// MUTIBLE_HOST=loopback puts every message through the protocol's
-// encoding and back, both ways, so the GUI checks exercise the wire format
-// before any network carries it; MUTIBLE_HOST_DELAY_US delays each
-// message on the host's thread, as a slow link would.
+// Where the host is, read when a link is made (MUTIBLE_HOST wins over the
+// setting, for the checks and for forcing one):
+//   - MUTIBLE_HOST=inprocess, or unset with editor.session-host off or on:
+//     a SessionHost on a thread of this process, one per folder. The
+//     default until closing a window detaches (stage 6, step 2).
+//   - MUTIBLE_HOST=loopback: the same, every message through the
+//     protocol's encoding and back, both ways (MUTIBLE_HOST_DELAY_US delays
+//     each on the host's thread, as a slow link would).
+//   - MUTIBLE_HOST=socket, or unset with editor.session-host = headless: the
+//     folder's headless host (`mutible host --folder`, SessionServer.h),
+//     found by its socket or started as this program, detached, and
+//     attached to over the socket. MUTIBLE_HOST_IDLE_MINUTES is passed on
+//     as --idle-minutes (checks). When it cannot be had, the in-process host
+//     for that folder, with one line on stderr saying why.
+//
+// A headless host that goes (killed, or its socket closed) is reported once
+// on stderr and to the link's lost listeners (the windows' status bars, the
+// terminals); its client then sends nothing and waits for nothing
+// (Client::hostLost). Nothing reconnects yet. Quitting detaches from every
+// headless host (detachAll), which keeps running until its lifetime ends.
 #pragma once
 
+#include <sys/types.h>
+
 #include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,22 +56,93 @@
 namespace Model {
 class Window;
 }
+namespace Shared {
+class SessionHost;
+class HostLink;
+}
 
 namespace SessionLink {
 
-// The client, with the host started on first use.
-Shared::Client& client();
-bool loopback();
+class Link {
+public:
+    enum class Kind { InProcess, Loopback, Socket };
+    ~Link();
+    Link(const Link&) = delete;
+    Link& operator=(const Link&) = delete;
 
-// A window's tabs, sent when they differ from what was sent last.
-void windowTabs(std::uint64_t window, const Model::Window& w);
-void windowClosed(std::uint64_t window);
+    Shared::Client& client() { return *client_; }
+    Kind kind() const { return kind_; }
+    // The folder, resolved (as given when it is not one).
+    const std::string& folder() const { return folder_; }
+    // A headless host's socket, and the pid of the host this link started
+    // (0 when it found one running, or for an in-process host).
+    const std::string& socketPath() const { return socketPath_; }
+    pid_t startedHost() const { return startedHost_; }
+    // The headless host went away.
+    bool lost() const { return client_->lost(); }
 
-// For the GUI checks: whether the host's text of each of `docs` (a
-// document's id and its buffer's text) is the buffer's, the window's tabs
-// as the host has them are the window's own, and the host reported nothing
-// wrong. Empty when so, else what differs.
-std::string check(std::uint64_t window, const Model::Window& w,
-                  const std::vector<std::pair<std::uint64_t, std::string>>& docs);
+    // Told once, on the main loop, when the host goes, with a sentence
+    // saying so; the number takes it off again.
+    int addLostListener(std::function<void(const std::string& message)> f);
+    void removeLostListener(int token);
+
+    // A window's tabs, sent when they differ from what was sent last.
+    void windowTabs(std::uint64_t window, const Model::Window& w);
+    void windowClosed(std::uint64_t window);
+
+    // For the GUI checks: whether the host's text of each of `docs` (a
+    // document's id and its buffer's text) is the buffer's, and the host
+    // reported nothing wrong; and whether the window's tabs as the host has
+    // them are the window's own. Empty when so, else what differs.
+    std::string checkDocuments(const std::vector<std::pair<std::uint64_t, std::string>>& docs);
+    std::string checkWindow(std::uint64_t window, const Model::Window& w);
+
+    // Lets go of a headless host: the host forgets this renderer and keeps
+    // the rest (quitting). Nothing is sent after it.
+    void detach();
+
+private:
+    friend std::shared_ptr<Link> forFolder(const std::string& root, bool headless);
+    Link() = default;
+    struct Wake;
+    void startInProcess(bool loopback, unsigned delayUs);
+    bool startSocket(std::string* why);
+    void makeClient();
+    void dispatch();
+    static int dispatchOnMain(void* wake);   // a GSourceFunc
+    std::uint64_t hostWindow(std::uint64_t window);
+
+    Kind kind_ = Kind::InProcess;
+    std::string folder_, socketPath_;
+    pid_t startedHost_ = 0;
+    std::shared_ptr<Wake> wake_;
+    // Destroyed in this order (~Link): the transport first, whose thread
+    // delivers to the client.
+    std::unique_ptr<Shared::Client> client_;
+    std::unique_ptr<Shared::SessionHost> host_;   // in process
+    std::unique_ptr<Shared::HostLink> socket_;    // headless
+    Shared::ClientId hostId_ = 0;
+    bool detached_ = false, lostTold_ = false;
+    std::map<int, std::function<void(const std::string&)>> lostListeners_;
+    int nextListener_ = 0;
+    // What each window's tabs were last sent as, and each window's id on
+    // the host by its id in the app's Model::Session (which numbers windows
+    // from 1 for itself): the client's (newId), so a second renderer's
+    // windows never take it.
+    std::map<std::uint64_t, std::string> sentTabs_;
+    std::map<std::uint64_t, std::uint64_t> hostWindow_;
+};
+
+// The link to the host of `root`'s folder: the one already made for it,
+// else a new one, its host found or started as the environment and
+// `headless` (editor.session-host = headless) say.
+std::shared_ptr<Link> forFolder(const std::string& root, bool headless);
+
+// Every link there is now (checks).
+std::vector<std::shared_ptr<Link>> all();
+
+// Quitting: every headless host let go of; each keeps running until its
+// own lifetime ends.
+void detachAll();
 
 }  // namespace SessionLink

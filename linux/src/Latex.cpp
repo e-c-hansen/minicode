@@ -6,6 +6,7 @@
 
 #include "LatexClick.h"
 #include "PageWords.h"
+#include "Question.h"
 #include "PdfView.h"
 
 #include <fcntl.h>
@@ -1095,15 +1096,8 @@ void LatexPreview::exportPdf(GtkWindow* parent) {
                     }
                 }
                 if (problem.empty()) return;
-                // An OK button of our own and choose(), as main.cpp's error
-                // alerts do: a buttonless show() alert would not close.
-                GtkAlertDialog* alert = gtk_alert_dialog_new("The PDF was not exported");
-                gtk_alert_dialog_set_detail(alert, problem.c_str());
-                const char* ok[] = {"OK", nullptr};
-                gtk_alert_dialog_set_buttons(alert, ok);
-                gtk_alert_dialog_set_modal(alert, TRUE);
-                gtk_alert_dialog_choose(alert, parent, nullptr, nullptr, nullptr);
-                g_object_unref(alert);
+                // The problem can name a path: Question wraps inside it.
+                Question::tell(parent, "The PDF was not exported", problem);
             });
         }, ask);
     g_object_unref(dlg);

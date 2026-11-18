@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include "ProcessMonitor.h"
+#include "Question.h"
 
 namespace {
 
@@ -376,24 +377,14 @@ void ProcessesPanel::stopPid(int pid) {
     }
     std::string where = r.outside ? "was not started in mutible"
                                   : "was started in terminal " + std::to_string(r.terminal);
-    GtkAlertDialog* dlg = gtk_alert_dialog_new("Stop %s?", name.c_str());
-    std::string detail = "“" + r.detail + "” (process " + std::to_string(r.pid) + ") " +
-                         where + ". It is sent SIGTERM, and SIGKILL 3 seconds later if it is "
-                         "still running; what it started stops with it.";
-    gtk_alert_dialog_set_detail(dlg, detail.c_str());
-    const char* buttons[] = {"Stop", "Cancel", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
-    gtk_alert_dialog_set_cancel_button(dlg, 1);
-    gtk_alert_dialog_set_default_button(dlg, 1);
-    auto* ctx = new std::function<void()>(go);
-    gtk_alert_dialog_choose(dlg, hostWindow, nullptr,
-        +[](GObject* src, GAsyncResult* res, gpointer d) {
-            auto* f = static_cast<std::function<void()>*>(d);
-            GError* err = nullptr;
-            int b = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, &err);
-            if (err) g_error_free(err);
-            else if (b == 0) (*f)();
-            delete f;
-        }, ctx);
-    g_object_unref(dlg);
+    // The command line can be a long path: Question wraps inside it.
+    Question::Spec q;
+    q.message = "Stop " + name + "?";
+    q.detail = "“" + r.detail + "” (process " + std::to_string(r.pid) + ") " + where +
+               ". It is sent SIGTERM, and SIGKILL 3 seconds later if it is still running; what "
+               "it started stops with it.";
+    q.buttons = {"Stop", "Cancel"};
+    q.defaultButton = 1;
+    q.cancelButton = 1;
+    Question::ask(hostWindow, q, [go](int b) { if (b == 0) go(); });
 }

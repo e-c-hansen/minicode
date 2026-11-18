@@ -108,7 +108,7 @@ std::string ExtOf(const std::string &path) {
 }
 
 // The encoding a blob is in, from its own first bytes: UTF-16 with its
-// mark, UTF-8 with or without one.
+// mark, UTF-8 with or without one, or Windows-1252 (not UTF-8, no NUL).
 void EncodingOfBlob(const std::string &b, FolderSearch::TextEncoding *enc, bool *bom) {
     *enc = FolderSearch::TextEncoding::Utf8;
     *bom = false;
@@ -120,6 +120,8 @@ void EncodingOfBlob(const std::string &b, FolderSearch::TextEncoding *enc, bool 
         *bom = true;
     } else if (b.size() >= 3 && b.compare(0, 3, "\xEF\xBB\xBF") == 0) {
         *bom = true;
+    } else if (FolderSearch::readsAsWindows1252(b)) {
+        *enc = FolderSearch::TextEncoding::Windows1252;
     }
 }
 

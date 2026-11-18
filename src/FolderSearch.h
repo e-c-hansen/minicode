@@ -368,9 +368,10 @@ void dropRepeatedContext(std::vector<FolderSearchMatch>& rows);
 // ending as search() ends them. False past the last line.
 bool lineAt(const std::string& content, int line, std::string* out);
 
-// How a text file's bytes are written: UTF-8, or UTF-16 with its byte
-// order mark (FF FE little-endian, FE FF big-endian).
-enum class TextEncoding { Utf8, Utf16LE, Utf16BE };
+// How a text file's bytes are written: UTF-8, UTF-16 with its byte order
+// mark (FF FE little-endian, FE FF big-endian), or Windows-1252 (a file
+// that is not UTF-8: readsAsWindows1252).
+enum class TextEncoding { Utf8, Utf16LE, Utf16BE, Windows1252 };
 
 // UTF-16 text that starts with its byte order mark, as ripgrep (and so VS
 // Code's search) reads it: into *utf8 without the mark, *encoding saying
@@ -390,22 +391,50 @@ bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* enco
 // are of the text decoded to UTF-8, as for UTF-16.
 std::string decodeWindows1252(std::string_view bytes);
 
-// UTF-8 text written in `encoding`: as it is for Utf8, else as UTF-16 with
-// its byte order mark first (an invalid byte becomes U+FFFD).
+// The one rule for text in a single-byte encoding, which Find in Folder
+// searches and the editor opens and saves as Windows-1252: bytes that are
+// not valid UTF-8 (valid UTF-8 stays UTF-8) and hold no NUL anywhere (a
+// NUL marks a file binary, left to the viewers). UTF-16 with its byte
+// order mark is the caller's to take first.
+bool readsAsWindows1252(std::string_view bytes);
+
+// UTF-8 text as Windows-1252 bytes, into *out when given. A character
+// Windows-1252 has no byte for (an arrow, an emoji, CJK) is written as
+// '?', and makes it false, with *unheld that first character (UTF-8).
+// decodeWindows1252's output comes back byte for byte.
+bool encodeWindows1252(std::string_view utf8, std::string* out, std::string* unheld = nullptr);
+
+// Whether `encoding` holds every character of the text: UTF-8 and UTF-16
+// always; Windows-1252 only its 256 (encodeWindows1252, *unheld as there).
+// A save checks it first: the Mac's writes UTF-8 when it is false.
+bool canEncode(const std::string& utf8, TextEncoding encoding, std::string* unheld = nullptr);
+
+// The status bar's name for an encoding, VS Code's: "UTF-8", "UTF-8 with
+// BOM", "UTF-16 LE", "UTF-16 BE", "Windows-1252".
+const char* encodingLabel(TextEncoding encoding, bool bom);
+
+// UTF-8 text written in `encoding`: as it is for Utf8; UTF-16 with its
+// byte order mark first (an invalid byte becomes U+FFFD); Windows-1252 by
+// encodeWindows1252 (a character it lacks becomes '?': check canEncode).
 std::string encodeText(const std::string& utf8, TextEncoding encoding);
 
 // A file's bytes as the editor's text, and back (the Mac's tabs: MCTab
 // encoding and bom). UTF-16 with its byte order mark is decoded exactly
 // (decodeUtf16, strict); a lone surrogate or an odd byte makes it false,
-// and such a file is not opened as text. Anything else is taken as UTF-8,
-// a UTF-8 byte order mark taken off; the UTF-8 itself is not checked here
-// (the caller's decoder does). *bom says a mark was there. In place, so a
-// large UTF-8 file is not copied. encodeFileText with the encoding and
-// bom found gives back the same bytes, for every file decodeFileText took.
+// and such a file is not opened as text. Bytes that readsAsWindows1252
+// (not UTF-8, no NUL) are decoded from Windows-1252 (since 2026-11-18;
+// they had been left to Quick Look). Anything else is taken as UTF-8, a
+// UTF-8 byte order mark taken off; invalid UTF-8 with a NUL comes back as
+// it is, for the caller's decoder to refuse. *bom says a mark was there.
+// In place, so a large UTF-8 file is not copied. encodeFileText with the
+// encoding and bom found gives back the same bytes, for every file
+// decodeFileText took, as long as the text is not changed to hold what
+// the encoding cannot (canEncode).
 bool decodeFileText(std::string* bytes, TextEncoding* encoding, bool* bom);
 std::string encodeFileText(const std::string& utf8, TextEncoding encoding, bool bom);
-// VS Code's names for them ("utf8", "utf8bom", "utf16le", "utf16be"), as
-// a backup records them; parseEncodingName is false for any other name.
+// VS Code's names for them ("utf8", "utf8bom", "utf16le", "utf16be",
+// "windows1252"), as a backup records them; parseEncodingName is false
+// for any other name.
 const char* encodingName(TextEncoding encoding, bool bom);
 bool parseEncodingName(const std::string& name, TextEncoding* encoding, bool* bom);
 

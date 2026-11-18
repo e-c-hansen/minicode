@@ -20,13 +20,16 @@
 // says so in one muted line. The server stops, and
 // the window's tabs leave the host's state, when the window closes. The
 // page's tree lists the window's folder through the host (FsRead, confined
-// to the folder the window reports), and a click on a file in it opens the
-// file in the window, as a click in the window's tree does, read-only pages
-// included: opening a tab changes no text. The window's browser pane's tabs
-// (address, title, the one on show) go with its tabs (`browserTabs`), so the
-// page lists them and frames the one picked; an editable page may ask the
-// pane to open an http or https address (`browse`, held by the core's
-// Web::webAddress).
+// to the folder the window reports). On an editable page a click on a file
+// in it opens the file in the window, as a click in the window's tree does,
+// and a tab's close button closes the window's tab (`close`, never one with
+// unsaved changes); a read-only page changes nothing in the window: it
+// reads the file for a tab of its own, which it closes itself. The window's
+// browser pane's tabs (address, title, the one on show) go with its tabs
+// (`browserTabs`), and which panes it shows (`panes`), so the page lays out
+// its editor, browser and terminal as the window does and frames the
+// browser tab picked; an editable page may ask the pane to open an http or
+// https address (`browse`, held by the core's Web::webAddress).
 #pragma once
 #import <Cocoa/Cocoa.h>
 
@@ -50,6 +53,14 @@
 // click in the page's tree. The page asks only for files the core held
 // inside the folder (Shared::confinedPath).
 @property(nonatomic, copy) void (^open)(NSString *path, BOOL keep);
+// Closes the window's tab for a document on the host as the window's own
+// close does; run on the main thread for an editable page's close button.
+// The core has refused a tab with unsaved changes; the window checks again.
+@property(nonatomic, copy) void (^close)(uint64_t docId);
+// Which panes the window shows: @{@"browser": @(open), @"terminal":
+// @(open), @"browserShare": @(its share of the width beside the editor)}.
+// Read with the tabs; unset, the page decides from what it has.
+@property(nonatomic, copy) NSDictionary * (^panes)(void);
 // The window's terminals on the host (TerminalView sessionTerminal, 0s
 // left out), reported with the tabs; unset, the page shows none.
 @property(nonatomic, copy) NSArray<NSNumber *> * (^terminals)(void);

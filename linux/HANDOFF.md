@@ -6232,3 +6232,88 @@ folders were looked at (`MC_GUI_SNAPSHOTS`). Needs a person at the
 ThinkPad: the label row's look under GNOME, real clicks on the chips'
 × at the sidebar's narrowest, and the portal's folder chooser opening in
 the window's folder.
+
+### 99. Windows attach to the folder's headless session host (stage 6, step 1; November 2026)
+
+The first step of stage 6's GTK half (`../docs/notes/session-host.md`, "GTK
+attaches (stage 6, step 1)", which has the details and step 2's list).
+`SessionLink` is one `SessionLink::Link` per folder now, each with its own
+client, instead of one process-wide client and in-process host.
+
+- **One link per folder** (`SessionLink::forFolder`, by resolved path),
+  shared by the windows on it. The window holds it (`App::link`, set in
+  `newWindow` before the editor and again in `openFolder`), the editor
+  opens new documents on it (`Editor(link)`, `setSessionLink`), and each
+  `Document` and `Terminal` keeps the link it was made with; the LSP sync
+  follows each document's host text through its own link. The
+  process-wide `SessionLink::client()` is gone.
+- **Where the host is**: `MUTIBLE_HOST=socket|inprocess|loopback`, else
+  `editor.session-host = headless` (a third value of the key; off and on
+  both mean in-process here) for the headless host, which is found by its
+  socket or started as `/proc/self/exe host --folder DIR`, detached
+  (setsid, a second fork, `/dev/null` and a log in the state folder), and
+  waited for up to 5 s. Anything failing: the in-process host for that
+  folder, with one line on stderr. The default stays in-process until
+  step 2.
+- **The host going** is said once on stderr, in the status bar and in each
+  of its terminals; the client then waits for nothing
+  (`Client::hostLost`), so undo and the like neither hang nor time out.
+  Files stay open and save; their undo is gone; terminals end. No
+  reconnect yet.
+- **Quitting** detaches (`SessionLink::detachAll`); closing a window is as
+  before (documents closed on the host, terminals asked about and ended).
+- **Checks**: the harness pins `MUTIBLE_HOST=inprocess` (Wrapper.cpp) and
+  takes the CLI subcommands in its own `main`, since the host a window
+  starts is `mutible-guitest host`. `host_link` (the notes say what it
+  checks); `hostserver:host-gone` and the settings checks in `make test`.
+### 100. The mutible desktop: mutible as the whole desktop under cage (done, November 2026)
+
+`desktop/README.md` is the guide; `desktop/mutible-desktop-setup.sh` turns
+a minimal Ubuntu 26.04 into it and undoes it; `src/DesktopMode.{h,cpp}` is
+the app's side (`MUTIBLE_DESKTOP=1`), with hooks in `main.cpp`'s
+initShared, newWindow, onCloseRequest, onWindowRemoved and the shutdown
+handler; the `desktop_mode` GUI suite checks it with logind replaced.
+
+How it runs: a system service, not getty autologin plus `~/.profile`.
+`mutible-desktop.service` has `User=`, `PAMName=mutible-desktop` and
+`TTYPath=/dev/tty1`, which make pam_systemd register a logind session on
+seat0, vt 1, type wayland: the same active local session a console login
+makes, so devices come through logind (cage uses libseat's logind backend)
+and polkit's allow_active applies. It conflicts with getty@tty1, which the
+setup disables. Checked in a VM (QEMU with KVM, std VGA, `-display none`,
+screendumps over QMP): the window full screen with no title bar; Ctrl+Alt+F2
+to a login prompt and Ctrl+Alt+F1 back (cage's `-s`); GTK's own file chooser
+(no portal installed; `GDK_DEBUG=no-portals` keeps it so); Suspend, Restart,
+Power Off and Log Out from the menu (the actions activated over D-Bus with
+`busctl --user call ai.ible.Mutible ... org.gtk.Actions Activate`, the
+questions answered with QMP sendkey), `systemctl suspend` typed in
+mutible's terminal with no sudo (polkit allowed it with the same user also
+logged in over SSH), PipeWire listing the emulated sound card, and `--undo`
+leaving tty1's login after a reboot.
+
+Traps:
+- `OnFailure=getty@tty1.service` fired on every exit of a restarting unit
+  (systemd 259), and the getty it started, which conflicts with the unit,
+  reset the start limit: seven kills in 30 s and it kept restarting. The
+  session script counts exits within 30 s of starting itself (in
+  `$RUNTIME_DIRECTORY`, kept over restarts) and after three gives tty1 a
+  text shell; the start limit is only a backstop, with no OnFailure.
+- `mutible` must run with `--foreground` under cage: the service gives it
+  tty1 as its controlling terminal, so it would detach (Detach.h), its
+  first process would exit, and cage would end the session.
+- `apt-cache policy mutible | grep -q` under `set -o pipefail` failed when
+  grep stopped reading early: read the output whole first.
+- Ubuntu's brightnessctl has neither logind support nor a udev rule; the
+  setup adds brightnessctl's upstream rule and the video group.
+- QEMU's `-vga virtio` with `-display none` gave screendumps of the boot
+  console while GNOME was up; `-vga std` showed the screen.
+
+Measured in VMs (the table in the guide): about 500 MB used against 1,010
+with GNOME, and mutible's first frame 9 s after power on against 19.
+
+Left: volume, brightness and media keys (cage binds none), a battery,
+Wi-Fi and clock line in the status bar, screen locking and blanking, a way
+to switch between several windows (cage shows the newest), and everything
+on real hardware: Wi-Fi with nmtui, the lid, the power key, the backlight
+rule, suspend and resume with a real GPU, and how long a cheap laptop takes.
+

@@ -73,7 +73,8 @@ public:
     void markSaved(const FolderSearch::FileStamp& written);
 
     // The bytes a save writes: the text in its encoding, with its mark.
-    // False, with *why, when the text holds a lone surrogate.
+    // False, with *why, when the text holds a lone surrogate, or a
+    // character its encoding cannot store (Windows-1252's 256: canEncode).
     bool bytesToWrite(std::string* bytes, std::string* why) const;
     FolderSearch::TextEncoding encoding() const { return encoding_; }
     bool bom() const { return bom_; }

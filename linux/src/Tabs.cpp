@@ -56,9 +56,16 @@ Model::Session& Editor::session() {
 }
 
 Document* Editor::newDocument() {
-    Document* d = new Document(this, &tags_);
+    Document* d = new Document(this, &tags_, link_);
     docs_[d->id()] = d;
     return d;
+}
+
+void Editor::setSessionLink(std::shared_ptr<SessionLink::Link> link) {
+    if (link == link_) return;
+    if (link_) link_->windowClosed(winId_);
+    link_ = std::move(link);
+    if (link_) link_->windowTabs(winId_, *win_);
 }
 
 std::vector<Document*> Editor::documentsOf(const std::vector<Model::DocId>& ids) const {
@@ -692,7 +699,7 @@ void Editor::refreshStrip() {
     gtk_widget_set_visible(strip_->widget(), !tabs.empty());
     refreshMirror();   // the other group's strip and view (Groups.cpp)
     // The session's host keeps the window's tabs as drawn (SessionLink.h).
-    SessionLink::windowTabs(winId_, *win_);
+    if (link_) link_->windowTabs(winId_, *win_);
     if (onDocumentsChanged) onDocumentsChanged(nullptr);
     if (observer_) observer_->tabsChanged();   // every tab's file on its server
 }

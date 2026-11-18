@@ -10,13 +10,15 @@
 // scrollback as rows of styled runs from a headless TerminalScreen. Nothing
 // is drawn from pixels. Read-only (the default), the browser can change
 // nothing: it says which document and terminal it is looking at, lists
-// folders, and asks the window to open a file of the folder (a tab opened
-// changes no text). Editable
+// folders, and reads a file of the folder to show on the page alone
+// (`readfile`): the window's tabs are the window's. Editable
 // (Options::editable), it also types into the document on show and its
-// terminal, undoes through the host's history, asks for a save, and asks
-// the window's browser pane to open an http or https address. Either way
-// the page lists the window's browser tabs and shows the one picked in a
-// frame.
+// terminal, undoes through the host's history, asks for a save, opens a
+// file as a tab in the window and closes the window's tabs as the window
+// does, and asks the window's browser pane to open an http or https
+// address. Either way the page lists the window's browser tabs in a pane
+// of their own, beside the editor as the window has it, and shows the one
+// picked in a frame.
 //
 // Files for the page's viewers (R3): a picture, a PDF, audio, video or an
 // HTML page of the folder is served over HTTP at /file/TOKEN/PATH (PATH the
@@ -70,13 +72,15 @@
 //
 // What goes to the browser, one JSON object per text frame ("t" names it):
 //   hello   {machine, folder, palette, termNote, editable, canSave,
-//           canBrowse}: once, first
+//           canBrowse, canOpen, canClose}: once, first
 //   palette {palette}: the host's settings file changed (paletteJson)
 //   state   {windows, docs, terms}: whenever the session's state changes
 //           (looked at every half second, or at once on lookNow()); with
 //           Options::window, that window's tabs, documents and terminals;
 //           a window with a browser pane
-//           has `browser` {tabs: [{url, title, web, loopback}], active}
+//           has `browser` {tabs: [{url, title, web, loopback}], active},
+//           and a window that says which panes it shows has `panes`
+//           {browser, terminal, browserShare} (panesViewJson)
 //   doc     {id, path, kind, version, editable, indent, lines, html | note}:
 //           the document the browser shows, whole: kind "code" (lines, each
 //           [text, spans] or [text, spans, break], spans [[start, length,
@@ -111,17 +115,27 @@
 //           window (`abs` its path as the tabs spell it), or why it is not
 //   browsing {url, ok, why}: an address a page asked the window's browser
 //           pane to open (`browse`), opening or refused
+//   filetext {path, abs, kind, lines, html | note, indent} or {path,
+//           error}: a file of the folder as it is on disk, for a tab of
+//           the page's own (`readfile`; localFileJson)
+//   closing {doc, ok, why}: a tab a page asked the window to close
 //   table   {path, columns, rows, truncated, size | error}: a CSV or TSV
 //           file as rows of cells (tableJson), for a `file`
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
 //   list    {path}: one folder of the tree ("" the session's folder), read
 //           by the host (FsRead), each time a folder is opened or refreshed
-//   open    {path, keep}: a file the tree's row names, opened as a tab in
-//           the window (Options::open), read-only pages included
+//   readfile {path}: a file of the folder for a tab of this page alone,
+//           which changes nothing in the window (any page)
 //   file    {path}: a CSV or TSV file of the folder as a table, read by the
-//           host, read-only pages included
+//           host (any page)
 // and, only when editable:
+//   open    {path, keep}: a file the tree's row names, opened as a tab in
+//           the window (Options::open); a page that only reads is refused
+//           (it reads the file itself instead)
+//   close   {doc}: the window's tab for that document closed as the
+//           window closes it (Options::close); one with unsaved changes is
+//           refused, to be saved or closed in the window
 //   edit    {doc, base, seq, ops, step {name, coalesce, fresh}, before, after,
 //           cmd, at}: an edit of the document on show; cmd "newline", "tab",
 //           "backtab" or "backspace" with `at` the selection it acted on
@@ -277,6 +291,26 @@ Json browserReportJson(const std::vector<BrowserTab>& tabs, int active);
 // renderer), `web` when webAddress takes it (only those are framed),
 // `loopback` when it names this machine. Null when there is no report.
 Json browserViewJson(const Json& report);
+// Which of the window's panes it shows, as a window adds it to its tabs
+// ("panes"): its browser pane and its terminal panel open or not, and the
+// share of the width the browser takes beside the editor. The page lays
+// itself out the same way (the editor, the browser to its right, the
+// terminal below both); hiding a pane on the page is the page's own.
+Json panesReportJson(bool browser, bool terminal, double browserShare);
+// The same, checked again for the page (the report is a renderer's):
+// booleans, the share held between 0.1 and 0.9 (0.5 when unsaid). Null
+// when there is no report.
+Json panesViewJson(const Json& report);
+
+// A file of `folder` read for a tab of the page's own: {t: "filetext",
+// path, abs, kind, version, lines, html | note, indent} as a document's
+// "doc" is, or {t: "filetext", path, error}. Held inside the folder as the
+// tree's reads are (confinedPath), a regular file of at most
+// kMaxLocalFileBytes, no dotfile unless `hidden`, and text (no NUL in its
+// first 8 KB).
+constexpr std::size_t kMaxLocalFileBytes = 8u << 20;
+Json localFileJson(const std::string& folder, const std::string& rel, bool hidden);
+
 // An address a page may frame, or ask the window to open: http or https
 // (any case), a host, no user name or password before it, no space or
 // control character anywhere, at most kMaxAddress bytes. javascript:,
@@ -449,11 +483,17 @@ struct Options {
     std::function<bool(DocId)> save;
     // Opens a file of the folder (the path held inside it, spelled under
     // `folder`) as a click in the window's own tree does: `keep` for a kept
-    // tab rather than the preview tab. Called on the server's thread; false
-    // when it cannot. Pages that only read may open files too: a tab opened
-    // or shown changes no text. Unset (a headless host, which decides no
-    // tabs): a page's click on a file says so.
+    // tab rather than the preview tab. Called on the server's thread, only
+    // for a page that may edit (one that only reads changes nothing in the
+    // window: it reads the file for a tab of its own); false when it
+    // cannot. Unset (a headless host, which decides no tabs): a page's
+    // `open` says so, and the hello's canOpen is false.
     std::function<bool(const std::string& path, bool keep)> open;
+    // Closes the window's tab for a document as the window's own close
+    // does. Called on the server's thread, only for a page that may edit
+    // and a document of the window's with no unsaved changes; false when
+    // it cannot. Unset: the hello's canClose is false.
+    std::function<bool(DocId)> close;
     // Opens an http or https address (webAddress has held it) in the
     // window's browser pane, a tab already at it shown again, else a new
     // tab. Called on the server's thread, only for a page that may edit;
@@ -536,6 +576,8 @@ private:
     static constexpr int kMaxTermCells = 1000;
     void onList(Conn& c, const Json& j);
     void onOpen(Conn& c, const Json& j);
+    void onReadFile(Conn& c, const Json& j);
+    void onClose(Conn& c, const Json& j);
     void onBrowse(Conn& c, const Json& j);
     void onFile(Conn& c, const Json& j);
     void takeReads();

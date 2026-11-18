@@ -59,6 +59,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Folding.cpp \
             src/FileSniff.cpp src/HtmlPage.cpp src/Csv.cpp src/JsonOutline.cpp src/Notebook.cpp \
             src/Commands.cpp src/CommandsLinux.cpp src/ProcessTable.cpp src/ProcFs.cpp src/ClaudeHooks.cpp src/AttentionBoard.cpp \
+            src/ClaudeUsage.cpp src/ClaudeStatusLine.cpp \
             src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp src/LatexScratch.cpp \
             src/LatexLog.cpp \
             src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/RightAreaLayout.cpp \
@@ -131,6 +132,7 @@ $(BIN): $(APP_OBJ) $(OBJDIR)/variant.txt
 CLI     := build/mutible-cli
 CLI_OBJ := $(OBJDIR)/tools/mutible-cli.cpp.o $(OBJDIR)/ControlProtocol.cpp.o $(OBJDIR)/Json.cpp.o \
            $(OBJDIR)/ProcessTable.cpp.o $(OBJDIR)/ClaudeHooks.cpp.o \
+           $(OBJDIR)/ClaudeUsage.cpp.o $(OBJDIR)/ClaudeStatusLine.cpp.o $(OBJDIR)/AgentTranscript.cpp.o \
            $(OBJDIR)/PageCheck.cpp.o $(OBJDIR)/TermLinks.cpp.o \
            $(patsubst src/%,$(OBJDIR)/%.o,$(SESSION_HOST_SRC))
 

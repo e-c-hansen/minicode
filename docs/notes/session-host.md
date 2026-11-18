@@ -321,8 +321,9 @@ window, and `mutible attach --folder DIR --dump` is the first renderer that
 reaches it over a socket. Both are in `mutible-cli` (the Mac's
 `Contents/MacOS/mutible-cli`, and the GTK binary, which hands the control
 channel's subcommands to the same `mutibleCliMain`), built from the core
-alone: `src/SessionServer.{h,cpp}` over `SessionHost`. Neither app attaches
-yet; GTK is next, after the Linux session's GTK terminals (#128).
+alone: `src/SessionServer.{h,cpp}` over `SessionHost`. GTK attaches with
+`editor.session-host = headless` (below, "GTK attaches"); the Mac does not
+yet.
 
 - **The socket.** `host-<FNV-1a of the resolved folder, 16 hex>.sock` in the
   first of `ControlChannel::socketFolders()` (ControlPaths.h, now shared by
@@ -468,6 +469,97 @@ document, terminal (dying ones included) or window is held
   terminals.
 - Saving, dirty, backups and the disk are still the app's (stage 7): a
   headless host's unsaved document is only as safe as the host process.
+
+### GTK attaches (stage 6, step 1)
+
+The GTK app reaches its hosts through `linux/src/SessionLink.{h,cpp}`
+(linux/HANDOFF.md item 99): one `SessionLink::Link` per folder its windows
+show (resolved; `forFolder`), shared by every window on the folder, each
+with its own `Client` in code points and its own ids (`newId` from that
+client's base, so ids of two hosts never meet in one client).
+
+- **Who holds a link.** The window (`App::link`, made in `newWindow`
+  before the editor, and anew in `openFolder` after the old tabs closed:
+  `Editor::setSessionLink` tells the old link the window closed and the new
+  one its tabs). The editor opens each new `Document` on its link, and the
+  document keeps it for its life (`Document::sessionLink`); each
+  `Terminal` gets its window's link when made and keeps it, so a terminal
+  started before Open Folder stays on the old folder's host. The language
+  server sync follows a document's host text through that document's link
+  (`watched` maps each id to its link). The harness's mirror check groups
+  documents by link (`checkDocuments`) and checks the window's tabs on the
+  window's (`checkWindow`). A link goes when the last holder lets it go:
+  an in-process host's thread ends, a headless one is detached from.
+- **Where the host is**, read when a link is made, so a GUI suite switches
+  between windows with `EnvLock::envSet`. `MUTIBLE_HOST` wins: `socket`,
+  `inprocess`, `loopback`. Unset, `editor.session-host = headless`
+  (`Settings::sessionHostMode`, a third value; `sessionHost()` stays true
+  for it, so the Mac takes it as `on`) means socket; `off` and `on` both
+  mean in-process on Linux. **The default stays in-process until step 2**
+  (reattaching, and closing a window detaching), or every folder a user
+  opened would leave a host with nothing to reattach to it; the default
+  flips on both apps together later.
+- **Socket.** `findHostSocket(resolveFolder(root), socketFolders())` and
+  `HostLink::open`; a socket nothing listens on, or none, gets a host
+  started as this program (`/proc/self/exe host --folder DIR`, with
+  `--idle-minutes` from `MUTIBLE_HOST_IDLE_MINUTES`): forked twice with
+  `setsid` between, so init (or the nearest subreaper) is its parent and
+  reaps it; stdin `/dev/null`, stdout and stderr
+  `$XDG_STATE_HOME/mutible/host-<hash>.log`, nothing else of the app's
+  open files (`close_range`), signals at their defaults, the environment
+  copied under `EnvLock::EnvRead` before the fork. The window waits up to
+  5 s for the socket (the main thread, 20 ms polls; a host starts in a few
+  milliseconds), connects, settles and checks `idBase()`. A host that
+  answers and refuses (another user's), a host that does not come, or no
+  Welcome: the in-process host for that folder, and one stderr line saying
+  why. The GUI harness's binary takes the subcommands too (Harness.cpp's
+  `main`, before anything of the checks), since the host it starts is
+  `mutible-guitest host`.
+- **Delivery** is as before: the link's reader thread (or the in-process
+  host's) calls `Client::deliver`, whose wake queues one main-loop dispatch
+  of the link; the idle source holds the link weakly (`Link::Wake`), so no
+  other thread ever holds the link itself.
+- **The host going** (killed, its socket closed): `HostLink`'s `closed`
+  calls `Client::hostLost` (new in the core, additive; `HostLink::connect`
+  does it too), after which the client sends nothing, every wait (settle,
+  undo, `undoInfo`, the queries, a first `newId`) returns at once, and
+  `undoInfo` says nothing can be undone (`hostserver:host-gone`). The link
+  says so once on stderr and to its listeners: the window's status bar
+  (`flashStatus`) and each terminal on it, which writes a line, drops its
+  shell (it ended with the host's pty) and starts none again. Documents
+  stay open and editable and save as before (saving is the app's); undo
+  and redo do nothing in them. Nothing reconnects.
+- **Quitting** calls `SessionLink::detachAll` (the shutdown handler):
+  every headless host is detached from and runs on until its lifetime
+  ends. Closing a window behaves as today: its documents close on the host
+  and its terminals ask, then end; then the window's link goes (detached).
+- **Checks.** The harness sets `MUTIBLE_HOST=inprocess` for every suite
+  (Wrapper.cpp, kept when a run asks for loopback), and its socket folder
+  is the scratch world's (`XDG_RUNTIME_DIR` under `/tmp/mcgui-*`). The
+  `host_link` suite: a window on a scratch folder under
+  `MUTIBLE_HOST=socket` starts a host (its socket in the scratch folder,
+  not the app's child), typing reaches it (`mutible attach --dump`, the
+  real binary, prints the text unsaved), undo is the host's, a terminal's
+  shell is the host's child and its output is in the dump, a second window
+  shares the link, closing both leaves the host running and a new window
+  finds it, the host killed by its pid is reported in the status bar and
+  the terminal with nothing waiting; then `editor.session-host = headless`
+  with `MUTIBLE_HOST` unset starts one, and `on` keeps it in the app. Each
+  host it starts it ends by its pid (SIGKILL, or SIGTERM to see it stop);
+  the wrapper's subreaper reaps them and would end any left.
+
+**Step 2 (TODO).** Closing a window detaches instead of closing its
+documents and terminals; a window opened on the folder (or the app
+started again) reattaches to what the host holds: the documents by path
+(the GTK document opens on the host with an empty path today, so the host
+has to be told each document's path first) and the terminals by id (a VTE
+fed the host's `replay()`, `TermAttach` instead of `TermOpen`), with the
+window's tabs rebuilt from `StateQuery`'s `windows`. A host that goes
+should be found or started again and reattached to, the documents
+reopened with their buffers' text (`Client::open` anew under new ids, or
+reset), rather than left without undo. The terminals' size and answers
+need the "For the GTK and Mac attach steps" work above before a second
+renderer shares them. Then the default can flip, on both apps together.
 
 ## The browser's view (stage 6b)
 
@@ -814,14 +906,17 @@ viewers, Quick Open's list) as new ops, not new messages.
   widen:NO`, so the window gets the tab its own tree's click would give,
   the row selected in its tree), answered `opening {path, abs, ok, why}`.
   A headless host has no `open`: the answer says it cannot open files yet.
-  **Read-only pages may list and open** (the decision for R6): a tab opened
-  or switched changes no text, so both come before the editable gate in
-  `handleMessage`.
+  **Read-only pages list but do not open** (R7, reversing R6's decision):
+  opening a tab changes the Mac's window, which a reader must leave as it
+  is, so `open` is after the editable gate in `handleMessage` and a reader
+  reads the file for a tab of its own instead (`readfile`, below, "The
+  page's own tabs").
 - **The page** keeps the open folders (`T.open`), each folder's last
   listing and errors, lists a folder each time it is opened (so it is
   current when opened), lists every open folder again on ↻, on `hello`
   (every reconnect) and when the page becomes visible again. There is no
-  watching: the host watches nothing yet (stage 7). A click on a file
+  watching: the host watches nothing yet (stage 7). On a page with
+  `canOpen` (editable, with `Options::open`) a click on a file
   sends `open` (the second click of a double-click, or Command/Control,
   keeps the tab) and, once `opening` says ok, waits for a document with
   that `abs` in the state, then shows it (`takePending`); a file the page
@@ -912,18 +1007,23 @@ the browser shows them with its own viewers.
   bytes on a character). At most 16 tables outstanding.
 - **The tree's entries** carry `view` (`fileType`'s) when the page shows
   that file itself; `takeReads` adds it, so the rule is the core's.
-- **The page.** `#filesec` beside `#docsec` and `#websec`: the path, an
-  "Open in a new tab" link (not for a table), and `#fileview` with an
-  `<img>` (on a checkerboard), `<audio>`/`<video controls
+- **The page.** A file with a `view` opens in a tab of the page's own
+  (R7's `L.tabs`, the entry `{path, abs, view, viewer: true}`), on any
+  page; an editable page also sends `open`, so the window opens it as
+  before, and ignores its `opening` answer (`T.pending.shown`) so the page
+  stays on its own tab even when the window's tab is a document (a CSV).
+  `showViewer` hides `#code`, `#md` and `#note` and fills `#fileview` in
+  `#docsec`: an `<img>` (on a checkerboard), `<audio>`/`<video controls
   preload=metadata>`, an `<iframe>` for a PDF, a sandboxed one for HTML,
   or the table (row numbers, the first row bold and sticky, as the Mac's
-  CsvTable shows it). A tree click on a file with a `view` shows it at
-  once and still sends `open`, so the window opens it as before; its
-  `opening` answer is then ignored (`T.pending.shown`), so the page stays
-  on the file even when the window's tab is a document (a CSV). A doc
-  tab, a browser tab, or a text file from the tree hides it (`hideFile`
-  empties `#fileview`, so media stops). `currentRel` marks the file's row.
-  `mcSessionView.file()` says what shows, for the GUI check.
+  CsvTable shows it; the `table` answer kept on the tab, so showing it
+  again asks nothing). `#fileopen` in the doc bar is "Open in a new tab"
+  (not for a table). A window tab, a text tab of the page's own, closing
+  the viewer's tab, or a note hides it (`hideViewer` empties `#fileview`,
+  so media stops). The tree marks the viewer's row through `L.on`.
+  `mcSessionView.file()` says what shows, for the GUI check. A kind the
+  browser cannot show (database, archive, bookmark) says it opens in the
+  window, as before.
 - **Not done in this slice**: SQLite, notebooks, the LaTeX preview, and
   git and review pages; the window's viewer tabs (a picture's tab) are
   still not reported to the page (the Mac reports only tabs with a
@@ -947,10 +1047,12 @@ nothing of the outside file sent, text not served, SVG and HTML
 sandboxed, PDF not, a 5 MB video whole (three pieces) and in four
 ranges with a 416, the tree's views, a CSV's rows over the socket and
 two refusals, and 503 again once the page has gone; the page's CSP.
-GUI: `session_browser` clicks a PNG in the page's tree (the page shows
-it at the token's /file/ address, decoded at its real width, and the
-window opens it) and a CSV (the page's table has the core's rows, and
-the window opens it). Checked by hand in headless Chrome over CDP
+GUI: `session_browser` clicks a PNG in the editable page's tree (the
+page shows it in a tab of its own at the token's /file/ address, decoded
+at its real width, and the window opens it) and a CSV (the page's table
+has the core's rows, and the window opens it); then a PNG in the
+read-only page's tree (its own tab, the window opening nothing, its ×
+going back to the window's tab). Checked by hand in headless Chrome over CDP
 against `mutible host --web` (not committed): a PNG at its width, an SVG
 whose script did not run, an HTML page with its relative style sheet and
 picture and its script not run, Chrome's PDF viewer in the frame, the
@@ -988,13 +1090,15 @@ frames the one picked.
   `openSessionAddress:` on the main queue: `agentBrowserPane` (made and
   shown, no home page), then `openAddresses:` (a tab at the address shown
   again, else a new tab), the keyboard kept where it was.
-- **The page.** A browser tab's button hides `#docsec` and shows
-  `#websec`: the title and address, an "Open in a new tab" link
+- **The page.** The pane is `#websec`, beside `#docsec` (R7: it was a
+  "Browser" group in the editor's strip, shown in the editor's place, the
+  owner's bug a), with its tabs in `#webtabs`: the title and address, an
+  "Open in a new tab" link
   (`rel="noopener noreferrer"`), always shown with the frame because a page
   cannot tell a site that refused framing (X-Frame-Options, CSP
   frame-ancestors) from a blank one, a muted line for a loopback address,
-  and the frame. A doc tab, or a file opened from the tree, goes back
-  (`showDoc` calls `hideWeb`), and the frame is set to about:blank so the
+  and the frame. The pane follows the window's tab on show until one is
+  picked (`W.follow`); hidden, its frame is set to about:blank so the
   framed page stops. An address the page asked for is shown once the
   window's state lists it (`takeWebPending`, trailing slashes ignored, 15 s).
   Typed addresses with no scheme get http:// for localhost, 127.x and [::1],
@@ -1024,6 +1128,85 @@ in the window's browser pane, and the page lists it under Browser and
 frames it with its link and loopback line. The look (the strip's group,
 the frame, the narrow layout) needs the owner's eyes.
 
+### The page's panes, its own tabs, closing, and terminals that end (R7)
+
+The owner's four bugs on 1.6.1's read-only page (2026-11-18): the browser
+pane drawn in the editor's place rather than as a panel, no way to close
+a tab opened from the tree, no way to close the browser, and a terminal
+closed on the Mac staying on the page.
+
+- **Panes as the window has them.** The window's `WindowTabs` json gains
+  `panes` {browser, terminal, browserShare} (`Web::panesReportJson`;
+  `MCSessionBrowser panes`, from `sessionBrowserPanes`: `browserVisible`
+  with a pane, `terminalVisible` with a panel, `browserFraction`;
+  Maximize Pane is not followed). `lookAtState` passes it on checked again
+  (`panesViewJson`: booleans, the share held to 0.1..0.9). The page lays
+  out `#top` (`#docsec`, then `#websec` at `--webshare` of the width; a
+  column at 700 px and under) above `#termsec`. Each pane shows while the
+  window shows it and has something in it (a host that sends no `panes`,
+  a headless one: shown); the page's own choice (`P[name].mine`, the ×
+  in the pane's row and the Browser and Terminal buttons in the header)
+  wins until the window shows or hides that pane again. **Hiding is the
+  page's own, read-only and editable alike** (the owner left the editable
+  case to us): a page is another screen with its own room, a phone's
+  especially, and hiding the Mac's pane from it would change the window
+  under the person at the Mac; the page asks nothing of the window for
+  it. An address an editable page opens shows the pane on the page.
+- **Terminals that end leave at once** (bug d). The bug the owner met was
+  Toggle Terminal: the panel hid but its shells ran, the window kept
+  reporting them, and the page kept its pane; now `panes.terminal` hides
+  it. Terminals that really go were already dropped through the window's
+  `terms`; besides that, the view's `Session` now overrides `termExited`
+  (the host tells every attached renderer when a shell is reaped) and
+  looks at the state at once, and `lookAtState` lets go of every
+  `TermView` and page `term` not in the state it sends, for a headless
+  view (`window` 0) too, which kept dead views before.
+- **The page's own tabs** (bug b). `readfile {path}` (any page) is
+  answered `filetext` by `Web::localFileJson(folder, rel, showHidden)`:
+  `confinedPath`, no dotfile name unless the tree shows them, opened
+  `O_NONBLOCK` and `fstat`ed as a regular file of at most 8 MB, refused
+  with a NUL in its first 8 KB, then made into a `DocView`'s snapshot (the
+  same lines, spans, Markdown page and indent a `doc` has). It is read
+  from the disk by the server, not through the host: the file need not be
+  open anywhere, and the server runs where the folder is (in the app, or
+  `host`/`attach --web` on that machine). The page keeps them in `L.tabs`,
+  drawn after the window's tabs in italics with a ×; showing one sends
+  `show {doc: 0}` and fills `D` with id -1 (not editable), and closing it
+  goes back to the window's tab on show. A file the window has open is
+  shown from its tab instead (live). Readers and pages with no `canOpen`
+  (a headless host's) use this; viewer kinds get a note.
+- **Closing the window's tabs** (editable pages). `close {doc}` is answered
+  `closing {doc, ok, why}`; refused for a reader, a document not this
+  window's, and a dirty one (the host's flag in the state: the Mac would
+  ask on its own screen, so the page says to save or close it there);
+  else `Options::close` (the Mac's `closeSessionDocument:`: the tab's
+  `dirty` checked again, then `closeTabEverywhere:prompt:YES`, both
+  groups, so the page's tab, which stands for the document, goes). The
+  hello's `canOpen` and `canClose` say which a page has; a reader's
+  `Options::open` is no longer set on the Mac.
+
+#### Checks
+
+`sessionweb:tree` (a reader's `open` refused and nothing opened, its
+`readfile` of a C file and a Markdown file as lines with spans and the
+page, eight refused reads: a folder, two ways out, a dotfile, a binary
+file, a missing one, an absolute path; an editable page's opens reaching
+`Options::open`; a headless page reading); `sessionweb:close-and-panes`
+(the panes report and its check, through the protocol; an in-process
+host: window 5's panes in the state, a hidden terminal panel reaching the
+page, closing a clean tab, refusing a dirty one, another window's, an
+unknown and a malformed id, a reader refused, `canClose`);
+`sessionweb:terminal-ends` (a headless view with a minute's poll: a
+terminal its renderer closes and one whose shell exits leave the page
+within seconds, and the closed one shows nothing when asked for by id).
+GUI: `session_browser` sees the browser pane beside the editor, the
+page's × hide it there only, the window hiding and showing its pane
+followed, an editable page's × close a window tab, Toggle Terminal hide
+and show the page's terminal pane, and the closed terminal's pane go;
+then a read-only page whose tree click opens a tab of its own (the
+window's tabs unchanged, no × on them) that its × closes. The look of the
+panes and the ×s needs the owner's eyes.
+
 ### Still to do
 
 - Lines are re-sent whole per edit; a long line typed into from a browser
@@ -1032,8 +1215,9 @@ the frame, the narrow layout) needs the owner's eyes.
   every half second for tabs and documents (terminal sizes come with
   `TermShell`).
 - Several carets, folding, find, completion and the rest of the editor
-  are the Mac's and GTK's, not the page's; so are closing and reordering
-  tabs, which wait for the host to decide tabs (stage 6's note).
+  are the Mac's and GTK's, not the page's; so is reordering tabs, which
+  waits for the host to decide tabs (stage 6's note). Closing goes to the
+  window (R7), not the host.
 - Saving from a headless host waits for stage 7; Mac terminals are the
   app's own until they move into the host.
 - Typing the session had not confirmed when the connection drops is lost

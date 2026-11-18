@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "SessionClient.h"
+#include "SessionLink.h"
 #include "Settings.h"
 #include "ShellIntegration.h"
 
@@ -37,7 +38,10 @@ public:
     // The panel's widget at once; the terminal in it and its shell when the
     // panel is first shown (or focused), as the Mac makes its terminal dock
     // when first needed (PARITY.md R3).
-    explicit Terminal(const std::string& cwd);
+    // `link`: the session's host its shells run on (its window's folder's,
+    // SessionLink.h), kept for its life: a terminal stays on the host it
+    // started on when its window opens another folder.
+    Terminal(const std::string& cwd, std::shared_ptr<SessionLink::Link> link);
     // Called while the window's widgets still exist (main.cpp tears a window
     // down from GtkApplication's window-removed). The session's host hangs
     // the shell up and reaps it; nothing restarts it.
@@ -223,6 +227,7 @@ public:
     bool onAlternateScreen() const { return altScreen_; }
     // The host's terminal now (0 between shells), and what it last said.
     Shared::TermId hostTerminal() const { return hostTerm_; }
+    SessionLink::Link* sessionLink() const { return link_.get(); }
     const Shared::TermShell& hostShell() const { return host_; }
 
 private:
@@ -260,6 +265,9 @@ private:
         void termExited(Shared::TermId id, int status, const std::string& error) override;
     };
     HostListener listener_;
+    std::shared_ptr<SessionLink::Link> link_;
+    int lostListener_ = 0;
+    bool hostGone_ = false;   // the host went away: no shell is started again
     Shared::TermId hostTerm_ = 0;
     Shared::TermShell host_;
     std::vector<Shared::TermMark> marks_;

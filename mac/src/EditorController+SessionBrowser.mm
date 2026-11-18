@@ -4,10 +4,13 @@
 // ivars, and it stops itself when the window closes. Show asks whether the
 // page may edit, the last answer first (editable until one is given), and
 // remembers it; Copy uses the remembered one. A page's save is the tab's
-// own Cmd+S, its questions about the disk included. A click on a file in
-// the page's tree opens it here as a click in the window's tree would. The
-// browser pane's tabs go with the window's tabs, and an editable page's
-// address opens in the pane as a bookmark does.
+// own Cmd+S, its questions about the disk included. On an editable page a
+// click on a file in the page's tree opens it here as a click in the
+// window's tree would, and a tab's close button closes it here (never one
+// with unsaved changes); a read-only page changes nothing here. The
+// browser pane's tabs and which panes the window shows go with the
+// window's tabs, and an editable page's address opens in the pane as a
+// bookmark does.
 #import "EditorController+Private.h"
 #import "AppSettings.h"
 #import "Browser.h"
@@ -93,6 +96,32 @@ static BOOL MCSessionBrowserEditableChoice(void) {
                widen:NO];
 }
 
+// An editable page's close button on one of this window's tabs: closed in
+// both groups, as the tab's own close leaves the page nothing of it. One
+// with unsaved changes stays (the core refused it already; typing since
+// may have made it so), said in the status bar.
+- (void)closeSessionDocument:(uint64_t)docId {
+    MCSessionClient().dispatch();
+    for (MCTab *t in [self tabs]) {
+        if (!t.session || t.session.docId != docId) continue;
+        if (t.dirty) {
+            [self flashStatus:@"A tab with unsaved changes was not closed from the browser's page"];
+            return;
+        }
+        [self closeTabEverywhere:t prompt:YES];
+        return;
+    }
+}
+
+// Which panes the window shows, for the page's layout: the browser pane and
+// the terminal panel open or not (Maximize Pane aside), and the browser's
+// share of the width beside the editor.
+- (NSDictionary *)sessionBrowserPanes {
+    return @{@"browser": @(self.browserVisible && self.browser != nil),
+             @"terminal": @(self.terminalVisible && self.terminalPanel != nil),
+             @"browserShare": @(self.browserFraction)};
+}
+
 // The browser pane's tabs for the page, nil while the window has no pane.
 - (NSDictionary *)sessionBrowserTabs {
     BrowserView *b = self.browser;
@@ -145,6 +174,8 @@ static BOOL MCSessionBrowserEditableChoice(void) {
                 if (t.sessionTerminal) [ids addObject:@(t.sessionTerminal)];
             return ids;
         };
+        b.close = ^(uint64_t docId) { [weakSelf closeSessionDocument:docId]; };
+        b.panes = ^NSDictionary * { return [weakSelf sessionBrowserPanes]; };
         b.browserTabs = ^NSDictionary * { return [weakSelf sessionBrowserTabs]; };
         b.browse = ^(NSString *url) { [weakSelf openSessionAddress:url]; };
         objc_setAssociatedObject(self, &kSessionBrowserKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);

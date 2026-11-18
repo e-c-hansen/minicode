@@ -89,6 +89,8 @@ core_sources = [
   core_dir / 'PageCheck.cpp',
   # Waiting for you: the hooks' JSON and the settings merge, and the board.
   core_dir / 'ClaudeHooks.cpp',
+  core_dir / 'ClaudeUsage.cpp',
+  core_dir / 'ClaudeStatusLine.cpp',
   core_dir / 'AttentionBoard.cpp',
   core_dir / 'AgentIndex.cpp',
   core_dir / 'AgentTranscript.cpp',
@@ -262,6 +264,8 @@ gui_sources = [
   'src/ConsentBar.cpp',
   'src/FormatOffer.cpp',
   'src/ClaudeHooksOffer.cpp',
+  # Questions whose text holds a path or a command (wrapped inside it).
+  'src/Question.cpp',
   'src/InstallView.cpp',
   # Format Document (PARITY.md 2.4): the window's side (Formatting.cpp),
   # the formatter's process (FormatRunner.cpp), and a server's formatting
@@ -344,6 +348,9 @@ gui_sources = [
   # actions in a copy of the desktop file (HANDOFF.md item 69).
   'src/RecentList.cpp',
   'src/DockMenu.cpp',
+  # As the whole desktop (MUTIBLE_DESKTOP=1, linux/desktop/): Suspend,
+  # Restart, Power Off and Log Out, and a window kept open (DesktopMode.h).
+  'src/DesktopMode.cpp',
   # The first launch as mutible copies what minicode kept (src/Rename.h).
   'src/MigrationLinux.cpp',
   # The palette over the window: commands, Quick Open, Go to Line, symbols.

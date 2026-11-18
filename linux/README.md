@@ -32,6 +32,10 @@ variables are still read where the `MUTIBLE_*` name is not set
 - `src/main.cpp` — the GtkApplication: its windows (each an `App`), the
   actions the menu bar and the keys name, the status bar, and the shortcut
   hints.
+- `src/DesktopMode.{h,cpp}` — mutible as the whole desktop
+  (`MUTIBLE_DESKTOP=1`, set by the session `desktop/mutible-desktop-setup.sh`
+  installs): Suspend, Restart, Power Off and Log Out through logind, and a
+  fresh window when the last one closes. `desktop/README.md` is the guide.
 - `src/WindowLayout.{h,cpp}` — a window's panes, as the Mac lays them out:
   the sidebar beside the right side, and there the editor with the browser
   to its right and the terminal below both, each hidden or shown by its own

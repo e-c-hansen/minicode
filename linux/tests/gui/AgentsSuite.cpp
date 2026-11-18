@@ -118,6 +118,26 @@ std::string listingOf(const std::string& dir) {
 
 AgentsPanel* panel() { return MCGuiApp().agents; }
 
+// The panel, with at least `rows` rows, or a failed check. A step after a
+// wait that timed out stops here: with a question an earlier suite left up
+// holding the keys, Ctrl+Shift+A never made the panel, and the next step
+// read its rows through a null pointer (SIGSEGV in
+// std::vector<AgentsPanel::RowInfo>'s copy, 2026-11-18), ending every
+// suite after it.
+bool havePanel(size_t rows = 0) {
+    GCHECK(panel() != nullptr);
+    if (!panel()) return false;
+    const size_t have = panel()->rows().size();
+    GCHECK(have >= rows);
+    return have >= rows;
+}
+
+// Row `i`, or an empty row where there is none.
+AgentsPanel::RowInfo rowAt(int i) {
+    if (!panel() || i < 0 || i >= (int)panel()->rows().size()) return {};
+    return panel()->rows()[i];
+}
+
 int rowWhere(const std::string& text, AgentsPanel::RowInfo::Kind kind) {
     if (!panel()) return -1;
     auto rows = panel()->rows();
@@ -141,6 +161,11 @@ void clickRow(int i) {
 
 std::string gFixturesBefore, gWt;
 EvidencePage* evidence() { return dynamic_cast<EvidencePage*>(MCGuiApp().editor->currentPage()); }
+// The Evidence page on show, or a failed check (as havePanel).
+bool haveEvidence() {
+    GCHECK(evidence() != nullptr && MCGuiApp().editor->active() != nullptr);
+    return evidence() && MCGuiApp().editor->active();
+}
 // Compare with Main's page: the review page in its worktree mode.
 ChangeReviewPage* changesPage() {
     ChangeReviewPage* p = dynamic_cast<ChangeReviewPage*>(MCGuiApp().editor->currentPage());
@@ -252,6 +277,7 @@ MC_GUI_SUITE(agents) {
         return panel() && MCGuiApp().agentsShown && panel()->rows().size() >= 2;
     });
     MCGuiStep("newest first, the running one says so, subagents wait inside their session", [] {
+        if (!havePanel(2)) return;
         auto rows = panel()->rows();
         GCHECK_EQ_STR(rows[0].text, "Add the new file");
         GCHECK(rows[0].running && rows[0].detail.find("running") == 0);
@@ -268,6 +294,7 @@ MC_GUI_SUITE(agents) {
         return rowWhere("LSP rename", AgentsPanel::RowInfo::Session) >= 0;
     });
     MCGuiStep("the subagent is nested one level down, the files in groups", [] {
+        if (!havePanel(3)) return;
         int sub = rowWhere("LSP rename", AgentsPanel::RowInfo::Session);
         auto rows = panel()->rows();
         GCHECK(sub >= 0 && rows[sub].depth == 1);
@@ -285,9 +312,10 @@ MC_GUI_SUITE(agents) {
     MCGuiWait("the new session opens to its folder group", 10, [] {
         // (Under a checkout in .claude/worktrees the core calls the project a
         // worktree, so the group is named by position, not by title.)
-        return panel()->rows().size() > 3 && panel()->rows()[1].kind == AgentsPanel::RowInfo::Group;
+        return panel() && panel()->rows().size() > 3 && rowAt(1).kind == AgentsPanel::RowInfo::Group;
     });
     MCGuiStep("click the group for its files", [] {
+        if (!havePanel()) return;
         auto rows = panel()->rows();
         int g = -1;
         for (size_t i = 0; i < rows.size(); i++)
@@ -302,6 +330,7 @@ MC_GUI_SUITE(agents) {
     MCGuiStep("the missing file is marked, the existing one is not; nothing was written", [] {
         int a = rowWhere("new.txt", AgentsPanel::RowInfo::File);
         int b = rowWhere("gone.txt", AgentsPanel::RowInfo::File);
+        if (!havePanel()) return;
         auto rows = panel()->rows();
         GCHECK(a >= 0 && b >= 0 && rows[a].exists && !rows[b].exists);
         GCHECK_EQ_STR(listingOf(gClaude), gBefore);
@@ -324,17 +353,21 @@ MC_GUI_SUITE(agents) {
     });
     MCGuiWait("its row says it is gone", 15, [] {
         int r = rowWhere("third.txt", AgentsPanel::RowInfo::File);
-        return r >= 0 && !panel()->rows()[r].exists;
+        return r >= 0 && !rowAt(r).exists;
     });
     // ---- Show Terminal (item 3.6's board): only for a session a terminal named
     MCGuiStep("a session no terminal named has no Show Terminal in its menu", [] {
-        GCHECK(panel() != nullptr && newRow() >= 0);
+        if (!havePanel()) return;
+        GCHECK(newRow() >= 0);
         panel()->openMenuFor(newRow());
         GCHECK(panel()->menuLabels().find("Show Terminal") == std::string::npos);
     });
     MCGuiStep("a notify names the first session in the terminal; the terminal is hidden", [] {
+        if (!havePanel()) return;
+        GCHECK(newRow() >= 0);
+        if (newRow() < 0) return;
         Json args;
-        GCHECK(Json::parse("{\"state\":\"waiting\",\"session_id\":\"" + panel()->rows()[newRow()].sessionId + "\"}",
+        GCHECK(Json::parse("{\"state\":\"waiting\",\"session_id\":\"" + rowAt(newRow()).sessionId + "\"}",
                            args));
         std::string error;
         GCHECK(TerminalAttention::apply(MCGuiApp().terminal->controlId(), args, &error));
@@ -344,6 +377,7 @@ MC_GUI_SUITE(agents) {
     });
     MCGuiStep("Show Terminal shows the terminal", [] {
         GCHECK(!MCGuiApp().layout->terminalShown());
+        if (!havePanel()) return;
         g_action_group_activate_action(panel()->actionGroup(), "terminal", nullptr);
         // Choosing the item closes its menu; running the action by name does not,
         // and the open popover sat over row 0 and took the click below (it
@@ -375,7 +409,7 @@ MC_GUI_SUITE(agents) {
         (void)id;
     });
     MCGuiWait("the panel lists the session again (row 0 is the new one)", 15, [] {
-        return panel()->rows().size() > 0 && panel()->rows()[0].text == "Add the new file" && rowShown(0);
+        return rowAt(0).text == "Add the new file" && rowShown(0);
     });
     MCGuiStep("a click on the session shows its Evidence in a tab", [] { clickRow(0); });
     MCGuiWait("the page has read the transcript and its outputs", 15, [] {
@@ -383,6 +417,7 @@ MC_GUI_SUITE(agents) {
                evidence()->commandCount() == 1 && has(evidence()->finalMessageText(), "green");
     });
     MCGuiStep("the final message beside the last test's own summary; the ends of the output", [] {
+        if (!haveEvidence()) return;
         GCHECK_EQ_STR(MCGuiApp().editor->active()->diffTitle(), "Evidence: Add the new file");
         GCHECK(has(evidence()->finalMessageText(), "Everything is green, I promise."));
         const std::string t = evidence()->lastTestText();
@@ -398,17 +433,20 @@ MC_GUI_SUITE(agents) {
     });
     MCGuiWait("Show all reads the whole output", 15, [] { return evidence() && evidence()->isExpanded(0); });
     MCGuiStep("all of it shows, and Show less puts the ends back", [] {
+        if (!haveEvidence()) return;
         GCHECK(has(evidence()->commandsText(), "line 30 of the output"));
         GCHECK(!has(evidence()->commandsText(), "Show all"));
         evidence()->collapse(0);
         GCHECK(!has(evidence()->commandsText(), "line 30 of the output"));
     });
     MCGuiStep("a second click on the session shows the same tab", [] {
+        if (!havePanel()) return;
         const int tabs = MCGuiApp().editor->tabCount();
         MCGuiApp().agents->showEvidenceFor(0);
         GCHECK((MCGuiApp().editor->tabCount()) == (tabs));
     });
     MCGuiStep("Open in Terminal types the command and does not run it", [] {
+        if (!haveEvidence()) return;
         GCHECK(!MCGuiApp().terminal->busy());
         evidence()->openInTerminal(0);
     });
@@ -424,9 +462,10 @@ MC_GUI_SUITE(agents) {
         GCHECK(system(("rm -rf '" + gProjects + "'").c_str()) == 0);
     });
     MCGuiWait("the panel is empty and says why", 15, [] {
-        return panel()->rows().empty() && panel()->notice().find("not") != std::string::npos;
+        return panel() && panel()->rows().empty() && panel()->notice().find("not") != std::string::npos;
     });
     MCGuiStep("the message names the folder", [] {
+        if (!havePanel()) return;
         GCHECK(panel()->notice().find("claude-agents/projects") != std::string::npos);
         GCHECK_EQ_STR(panel()->summary(), "");
         MCGuiKey("ctrl+shift+a");
@@ -642,6 +681,7 @@ MC_GUI_SUITE(agents) {
         return rowWhere("Work in the worktree", AgentsPanel::RowInfo::Session) >= 0;
     });
     MCGuiStep("its menu offers both, a session without them neither", [] {
+        if (!havePanel()) return;
         const int wt = rowWhere("Work in the worktree", AgentsPanel::RowInfo::Session);
         panel()->openMenuFor(wt);
         GCHECK(has(panel()->menuLabels(), "Open Worktree in New Window"));
@@ -654,6 +694,7 @@ MC_GUI_SUITE(agents) {
         panel()->closeMenu();
     });
     MCGuiStep("Open Worktree in New Window hands the worktree's folder over", [] {
+        if (!havePanel()) return;
         auto keep = panel()->onOpenFolderInNewWindow;
         std::string got;
         panel()->onOpenFolderInNewWindow = [&got](const std::string& d) { got = d; };
@@ -669,6 +710,7 @@ MC_GUI_SUITE(agents) {
         MCGuiWriteFile(fm, "#!/bin/sh\necho \"$1\" >> '" + gRevealLog + "'\n");
         chmod(fm.c_str(), 0755);
         EnvLock::envSet("MUTIBLE_FILE_MANAGER", fm.c_str(), TRUE);
+        if (!havePanel()) return;
         panel()->openMenuFor(rowWhere("Work in the worktree", AgentsPanel::RowInfo::Session));
         g_action_group_activate_action(panel()->actionGroup(), "scratchpad", nullptr);
         panel()->closeMenu();

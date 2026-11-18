@@ -116,7 +116,8 @@ public:
     // `closed` once when the host goes or sends what is not a message.
     void start(std::function<void(Message&&)> deliver, std::function<void()> closed = {});
     // `client` speaks through this link: its sends written here, the host's
-    // messages delivered to it, then its Hello.
+    // messages delivered to it, then its Hello; when the link closes, the
+    // client hears the host is gone (Client::hostLost), so it waits no more.
     void connect(Client& client);
     // One message, written whole (any thread). False once the host is gone.
     bool send(const Message& m);

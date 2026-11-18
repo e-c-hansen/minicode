@@ -2,7 +2,11 @@
 // (Shift+Cmd+A), the Evidence view, the Worktrees node in the file tree with
 // Compare with Main and Open in New Window, what a session changed in one
 // of its files (and the edits in its Evidence), and terminal paths resolved
-// through the folder's worktrees and scratchpads.
+// through the folder's worktrees and scratchpads. Last, the plan usage
+// forecast under the panel's heading (A13): from a fixture transcript and
+// status line log, then the status line log turned on over an existing
+// status line and undone, in a scratch CLAUDE_CONFIG_DIR, and the
+// `mutible statusline` wrapper itself logging and chaining.
 //
 // The world is scratch: a git repository with a worktree where Claude Code
 // would make one, and a transcripts folder and a temp root built from
@@ -24,6 +28,8 @@
 #import "LspPicker.h"
 #import "Terminal.h"
 #import "TerminalPanel.h"
+#import "StatusLineOffer.h"
+#import "UsageView.h"
 #include <string>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -1063,6 +1069,159 @@ MC_GUI_SUITE(agents) {
     });
     MCGuiWait(@"the sessions are back", 10, ^BOOL {
         return RowWith(Panel(c), @"Placeholder request") >= 0;
+    });
+    // ------------------------------------------- plan usage (A13)
+    __block NSString *usageDir = nil, *usageCfg = nil, *usageSettings = nil, *savedCfg = nil;
+    __block NSString *usageOriginal = nil;
+    __block NSUInteger alertsBefore = 0;
+    __block BOOL usageRead = NO;
+    MCGuiStep(@"a transcript at $10 an hour and two status line readings", ^{
+        usageDir = [gBase stringByAppendingPathComponent:@"usage"];
+        usageCfg = [gBase stringByAppendingPathComponent:@"claude-usage"];
+        usageSettings = [usageCfg stringByAppendingPathComponent:@"settings.json"];
+        [NSFileManager.defaultManager createDirectoryAtPath:usageCfg withIntermediateDirectories:YES
+                                                 attributes:nil error:nil];
+        // The user's own file, in their own spacing, with a status line.
+        usageOriginal = @"{\n  \"model\": \"sonnet\",\n  \"statusLine\": {\"type\": \"command\", "
+                         "\"command\": \"~/bin/status.sh --short\", \"padding\": 1}\n}\n";
+        [usageOriginal writeToFile:usageSettings atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        const char *cfg = getenv("CLAUDE_CONFIG_DIR");
+        savedCfg = cfg ? @(cfg) : nil;
+        MCSetEnv("CLAUDE_CONFIG_DIR", usageCfg.fileSystemRepresentation);
+        MCSetEnv("MUTIBLE_USAGE_DIR", usageDir.fileSystemRepresentation);
+        // $1 every 6 minutes for 3 hours (250,000 input tokens of Opus 5.5),
+        // in a folder no window shows.
+        NSString *dir = [gProjects stringByAppendingPathComponent:@"-elsewhere-usage"];
+        [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES
+                                                 attributes:nil error:nil];
+        NSMutableString *lines = [NSMutableString string];
+        for (int i = 0; i < 30; i++) {
+            NSDictionary *d = @{@"type": @"assistant", @"isSidechain": @NO, @"cwd": @"/elsewhere/usage",
+                                @"sessionId": @"usage-session", @"timestamp": Stamp(3 * 3600 - 360 * i - 30),
+                                @"requestId": [NSString stringWithFormat:@"req_u%d", i],
+                                @"message": @{@"id": [NSString stringWithFormat:@"msg_u%d", i],
+                                              @"model": @"claude-opus-5-5", @"role": @"assistant",
+                                              @"content": @[@{@"type": @"text", @"text": @"ok"}],
+                                              @"usage": @{@"input_tokens": @250000, @"output_tokens": @0}}};
+            [lines appendFormat:@"%@\n", Json(d)];
+        }
+        [lines writeToFile:[dir stringByAppendingPathComponent:@"usage-session.jsonl"] atomically:YES
+                  encoding:NSUTF8StringEncoding error:nil];
+        // 20% an hour ago and 30% now; the week at 2% and 3%.
+        const long now = (long)time(nullptr);
+        [NSFileManager.defaultManager createDirectoryAtPath:usageDir withIntermediateDirectories:YES
+                                                 attributes:nil error:nil];
+        NSString *log = [NSString stringWithFormat:@"v1 %ld 20 %ld 2 %ld\nv1 %ld 30 %ld 3 %ld\n",
+                                                   now - 3600, now + 7200, now + 72 * 3600,
+                                                   now, now + 7200, now + 72 * 3600];
+        [log writeToFile:[usageDir stringByAppendingPathComponent:@"statusline.log"] atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+        [[MCUsageModel shared] refreshThen:^{ usageRead = YES; }];
+    });
+    MCGuiWait(@"the forecast is read", 20, ^BOOL { return usageRead; });
+    MCGuiStep(@"the panel shows both windows, the burn rate and the fit", ^{
+        [Panel(c) reload];
+        MCUsageView *u = Panel(c).usageView;
+        NSString *text = u.forecastText;
+        MCGuiNote(@"forecast: %@", text);
+        GCHECK(u.superview == Panel(c) && u.frame.size.height > 60);
+        GCHECK([text containsString:@"5-hour window: 30% used. At this rate it is about "]);
+        GCHECK([text containsString:@"when it resets in "]);
+        GCHECK([text containsString:@"Week: 3.0% used."]);
+        GCHECK([text containsString:@"Burn rate: $"] && [text containsString:@" an hour at API prices; 1 session active"]);
+        GCHECK(![text containsString:@"Unseen usage"]);
+        GCHECK([u.fitText hasPrefix:@"Fit: 1% of the 5-hour window is about $1.00 at API prices (2 readings)"]);
+        // The list starts below it.
+        GCHECK(NSMinY([Panel(c).outline enclosingScrollView].frame) >= NSMaxY(u.frame));
+        GCHECK_EQ_STR(u.actionButton.title, @"Log plan usage from Claude Code's status line…");
+        MCGuiSnapshot(Panel(c), @"agents-usage");
+        alertsBefore = MCGuiAlertsShown().count;
+        // Cancel first: nothing written.
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
+        [u.actionButton performClick:nil];
+    });
+    MCGuiWait(@"the question was asked", 5, ^BOOL { return MCGuiAlertsShown().count > alertsBefore; });
+    MCGuiStep(@"Cancel wrote nothing; then Log Plan Usage", ^{
+        GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore], @"Log Claude Code's plan usage for mutible's forecast?");
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:usageSettings encoding:NSUTF8StringEncoding error:nil],
+                      usageOriginal);
+        GCHECK(!MCClaudeStatusLineInstalled());
+        alertsBefore = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn), @(NSAlertFirstButtonReturn)]);
+        [Panel(c).usageView.actionButton performClick:nil];
+    });
+    MCGuiWait(@"the question, then where it went", 5, ^BOOL {
+        return MCGuiAlertsShown().count >= alertsBefore + 2 &&
+               [Panel(c).usageView.actionButton.title hasPrefix:@"Stop"];
+    });
+    MCGuiStep(@"the wrapper chains the old status line; the rest of the file kept, one backup", ^{
+        GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore + 1], @"Plan usage is logged");
+        NSData *d = [NSData dataWithContentsOfFile:usageSettings];
+        NSDictionary *j = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+        GCHECK([j[@"model"] isEqual:@"sonnet"]);
+        GCHECK([j[@"statusLine"][@"padding"] isEqual:@1] && [j[@"statusLine"][@"type"] isEqual:@"command"]);
+        GCHECK_EQ_STR(j[@"statusLine"][@"command"],
+                      [MCClaudeStatusLineCommand() stringByAppendingString:@" --then '~/bin/status.sh --short'"]);
+        GCHECK(MCClaudeStatusLineInstalled());
+        NSArray *backups = [[NSFileManager.defaultManager contentsOfDirectoryAtPath:usageCfg error:nil]
+            filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:
+                @"SELF BEGINSWITH 'settings.json.mutible-backup-'"]];
+        GCHECK(backups.count == 1);
+        if (backups.count == 1)
+            GCHECK_EQ_STR([NSString stringWithContentsOfFile:[usageCfg stringByAppendingPathComponent:backups[0]]
+                                                    encoding:NSUTF8StringEncoding error:nil], usageOriginal);
+        // The record for undo is in mutible's folder, not Claude Code's.
+        GCHECK([NSFileManager.defaultManager fileExistsAtPath:
+                   [usageDir stringByAppendingPathComponent:@"statusline-install.json"]]);
+    });
+    MCGuiAsync(@"the wrapper logs a reading and runs the old command with the same input", 20, ^(MCGuiDone done) {
+        NSString *in = [usageDir stringByAppendingPathComponent:@"in.json"];
+        NSString *seen = [usageDir stringByAppendingPathComponent:@"seen.json"];
+        const long now = (long)time(nullptr);
+        [[NSString stringWithFormat:@"{\"model\":{\"display_name\":\"Opus 5.5\"},\"rate_limits\":"
+                                     "{\"five_hour\":{\"used_percentage\":31,\"resets_at\":%ld}}}",
+                                    now + 7200]
+            writeToFile:in atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        NSString *cli = [MCGuiBuildDir() stringByAppendingPathComponent:@"mutible-cli"];
+        NSString *script = [NSString stringWithFormat:@"'%@' statusline --then 'cat > \"$SEEN\"; echo mine' < '%@'",
+                                                      cli, in];
+        MCGuiRunProcess(@[@"/bin/sh", @"-c", script],
+                        @{@"SEEN": seen, @"MUTIBLE_USAGE_DIR": usageDir},
+                        ^(int status, NSString *out, NSString *err) {
+            GCHECK(status == 0);
+            GCHECK_EQ_STR(out, @"mine\n");
+            GCHECK_EQ_STR(err, @"");
+            GCHECK_EQ_STR([NSString stringWithContentsOfFile:seen encoding:NSUTF8StringEncoding error:nil],
+                          [NSString stringWithContentsOfFile:in encoding:NSUTF8StringEncoding error:nil]);
+            NSString *log = [NSString stringWithContentsOfFile:[usageDir stringByAppendingPathComponent:@"statusline.log"]
+                                                      encoding:NSUTF8StringEncoding error:nil];
+            NSString *want = [NSString stringWithFormat:@" 31 %ld - -\n", now + 7200];
+            GCHECK([log containsString:want]);
+            done();
+        });
+    });
+    MCGuiStep(@"Stop Logging, and the file is back byte for byte", ^{
+        alertsBefore = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn), @(NSAlertFirstButtonReturn)]);
+        [Panel(c).usageView.actionButton performClick:nil];
+    });
+    MCGuiWait(@"the question, then what it did", 5, ^BOOL {
+        return MCGuiAlertsShown().count >= alertsBefore + 2 &&
+               [Panel(c).usageView.actionButton.title hasPrefix:@"Log"];
+    });
+    MCGuiStep(@"undo restored the user's status line exactly", ^{
+        GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore], @"Stop logging plan usage?");
+        GCHECK_EQ_STR(MCGuiAlertsShown()[alertsBefore + 1], @"The status line is back as it was");
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:usageSettings encoding:NSUTF8StringEncoding error:nil],
+                      usageOriginal);
+        GCHECK(!MCClaudeStatusLineInstalled());
+        GCHECK(![NSFileManager.defaultManager fileExistsAtPath:
+                   [usageDir stringByAppendingPathComponent:@"statusline-install.json"]]);
+        if (savedCfg) MCSetEnv("CLAUDE_CONFIG_DIR", savedCfg.fileSystemRepresentation);
+        else MCSetEnv("CLAUDE_CONFIG_DIR", nullptr);
+        MCSetEnv("MUTIBLE_USAGE_DIR", nullptr);
+        [NSFileManager.defaultManager removeItemAtPath:[gProjects stringByAppendingPathComponent:@"-elsewhere-usage"]
+                                                 error:nil];
     });
     MCGuiStep(@"the tree again", ^{
         [c toggleAgents:nil];

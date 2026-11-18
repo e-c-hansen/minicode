@@ -39,11 +39,13 @@ typedef NS_ENUM(NSInteger, MCTextEncoding) {
     MCTextEncodingUtf8,
     MCTextEncodingUtf16LE,
     MCTextEncodingUtf16BE,
+    MCTextEncodingWindows1252,   // not UTF-8, no NUL: FolderSearch::readsAsWindows1252
 };
 
 @interface MCDiskText : NSObject
-// nil: missing, unreadable, too large, not UTF-8, or UTF-16 that does not
-// decode exactly (a lone surrogate, an odd byte)
+// nil: missing, unreadable, too large, binary (not UTF-8 and a NUL in
+// it), or UTF-16 that does not decode exactly (a lone surrogate, an odd
+// byte). Text not in UTF-8 is read as Windows-1252.
 @property(nonatomic, copy)   NSString *text;
 // The file starts with a byte order mark: UTF-8's, or UTF-16's (every
 // UTF-16 file read as text has one; without it, it is not text here).
@@ -55,8 +57,8 @@ typedef NS_ENUM(NSInteger, MCTextEncoding) {
 // the text read.
 @property(nonatomic, strong) MCDiskStamp *stamp;
 @end
-// Read a file as text, UTF-8 or UTF-16 with its byte order mark
-// (FolderSearch::decodeFileText), the mark kept apart, stat'ed before
+// Read a file as text, UTF-8, UTF-16 with its byte order mark, or
+// Windows-1252 (FolderSearch::decodeFileText), the mark kept apart, stat'ed before
 // reading (FolderSearch::readFileStable). Safe off the main thread.
 MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes);
 #ifdef __cplusplus
@@ -67,6 +69,15 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes);
 BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::string *bytes,
                       std::string *why);
 #endif
+// The encoding a save writes `text` in: `encoding`, unless it is
+// Windows-1252 and the text holds a character Windows-1252 cannot store
+// (FolderSearch::canEncode); then UTF-8, and *unheld that character. The
+// save says so (writeText:toTab:interactive:) rather than asking.
+MCTextEncoding MCEncodingToWrite(NSString *text, MCTextEncoding encoding, NSString **unheld);
+// What the status bar names it: "Windows-1252", "UTF-16 LE", "UTF-8 with
+// BOM" (FolderSearch::encodingLabel); nil for plain UTF-8, which it leaves
+// unnamed.
+NSString *MCEncodingStatusLabel(MCTextEncoding encoding, BOOL bom);
 
 // ---------------------------------------------------------------------------
 // MCTab: one open document of a window, and everything that belongs to it

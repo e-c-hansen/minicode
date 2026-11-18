@@ -14,6 +14,7 @@
 #include "LspPicker.h"
 #include "LspProcess.h"
 #include "LspWatcher.h"
+#include "SessionLink.h"
 #include "Utf8Offsets.h"
 
 #include <climits>
@@ -114,8 +115,9 @@ struct LspSession::SyncState {
     };
     std::map<std::pair<uint64_t, std::string>, Entry> entries;
     // The documents whose host text is followed (Client::watch), once each
-    // whichever servers have them.
-    std::set<uint64_t> watched;
+    // whichever servers have them, with the link each is followed through
+    // (its document's: SessionLink.h).
+    std::map<uint64_t, std::shared_ptr<SessionLink::Link>> watched;
     // Each document's edits counted, so what was placed in its text (the
     // Problems list's rows) knows when the text moved on.
     std::map<uint64_t, uint64_t> edits;
