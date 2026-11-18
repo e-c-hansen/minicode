@@ -16,6 +16,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -197,6 +198,20 @@ public:
     // A tab for `path` at the end of the row, not put on show, its file not
     // read until it first is (a session coming back, Persistence.h).
     Document* addTab(const std::string& path);
+    // A tab at the end of the row viewing a document the host holds (a
+    // window opening takes what a closed one left; SessionLink's
+    // takeForWindow), its text the host's: unsaved when it differs from
+    // the file. Not put on show.
+    Document* attachTab(uint64_t heldId, const std::string& path);
+    // The window closes and detaches (stage 6, step 2): every document stays
+    // on the host but those in `drop` (the question's Don't Save), which
+    // close there with their tabs; the window's record stays for the
+    // folder's next window. Before the editor is deleted.
+    void detachFromHost(const std::set<uint64_t>& drop);
+    // The window's link's host went and `link` was found or started for
+    // its folder: every document on the old one is opened on it anew, and
+    // the window's tabs are reported to it.
+    void rehost(std::shared_ptr<SessionLink::Link> link);
     // A file for the agent (`mutible open --note`, AgentNotes.h): in the
     // agent's preview tab when `preview` (each such open replaces the last
     // one, in its place; an edit keeps it), else a kept tab, just right of
@@ -539,7 +554,8 @@ private:
     bool opensInPreview(EditorTabs::OpenFrom from) const;
     EditorTabs::PreviewSettings previewSettings() const;
     // A new document, known by its id until destroy() lets it go.
-    Document* newDocument();
+    Document* newDocument(uint64_t heldId = 0);
+    bool windowDetached_ = false;   // detachFromHost: the record stays on the host
     // The window's documents in the order it gives.
     std::vector<Document*> documentsOf(const std::vector<Model::DocId>& ids) const;
     // What the window keeps as a tab's file: "" for a diff, a comparison or

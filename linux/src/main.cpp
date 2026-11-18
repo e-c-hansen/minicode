@@ -110,6 +110,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <deque>
+#include <set>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -202,6 +204,15 @@ struct App {
     // listener puts the host's going in the status bar.
     std::shared_ptr<SessionLink::Link> link;
     int linkLostListener = 0;
+    // Stage 6, step 2: what the folder's host held for this window as it
+    // opened (SessionLink's takeForWindow), its terminals taken by the dock
+    // as it makes them (makeTerminal); the documents the close question's
+    // Don't Save drops on the host as the window closes (the rest detach);
+    // and the status bar's Reconnect, shown while the host is gone.
+    SessionLink::Link::Held held;
+    std::deque<SessionLink::Link::HeldTerm> heldTerms;
+    std::set<uint64_t> dropOnClose;
+    GtkWidget* reconnectButton = nullptr;
 
     bool prompting = false;   // a "Save changes?" alert is up
     bool closing = false;     // the user answered it for a window close
@@ -450,31 +461,57 @@ static void flashStatus(App* app, const std::string& message) {
 
 // The window's folder's session host (SessionLink.h), found or made as
 // editor.session-host and MUTIBLE_HOST say, with its going in the status bar.
+static void rehostWindows(const std::shared_ptr<SessionLink::Link>& link);
+static void attachHeldDocuments(App* app);
+static void showHeldActive(App* app);
+
+static void listenForLoss(App* app) {
+    app->linkLostListener = app->link->addLostListener([app](const std::string& message) {
+        if (app->dead) return;
+        flashStatus(app, message);
+        if (app->reconnectButton) gtk_widget_set_visible(app->reconnectButton, TRUE);
+    });
+}
+
 static void useSessionLink(App* app, const std::string& folder) {
+    // A folder whose host went: the new link found or started for it takes
+    // the windows still on the old one too (stage 6, step 2).
+    const bool wasLost = SessionLink::folderLost(folder);
     std::shared_ptr<SessionLink::Link> link =
         SessionLink::forFolder(folder, g.settings && g.settings->settings().sessionHostHeadless());
     if (link == app->link) return;
     if (app->link) app->link->removeLostListener(app->linkLostListener);
     app->link = std::move(link);
-    app->linkLostListener = app->link->addLostListener([app](const std::string& message) {
-        if (!app->dead) flashStatus(app, message);
-    });
+    listenForLoss(app);
+    if (wasLost) rehostWindows(app->link);
 }
 
 // The question about unsaved changes, the Mac's: `answer` gets 0 for Save
 // (or Save All), 1 for Don't Save, 2 for Cancel or Escape. One question at
 // a time: with another up, the answer is Cancel at once. A change on disk
 // that arrived while it was up is looked at afterwards.
+// With `keep` (a window closing on a headless host, which keeps what it
+// holds after the window and the app are gone), a fourth answer, 3: Keep
+// Unsaved, the changes left unsaved on the host for the folder's next
+// window.
 static void askUnsaved(App* app, const std::string& message, const std::string& detail,
-                       bool several, std::function<void(int)> answer) {
+                       bool several, std::function<void(int)> answer, bool keep = false) {
     if (app->prompting) { answer(2); return; }
     app->prompting = true;
     GtkAlertDialog* dlg = gtk_alert_dialog_new("%s", message.c_str());
     gtk_alert_dialog_set_detail(dlg, detail.c_str());
-    const char* buttons[] = {several ? "Save All" : "Save", "Don't Save", "Cancel", nullptr};
-    gtk_alert_dialog_set_buttons(dlg, buttons);
+    const char* save = several ? "Save All" : "Save";
+    const char* three[] = {save, "Don't Save", "Cancel", nullptr};
+    const char* four[] = {save, "Keep Unsaved", "Don't Save", "Cancel", nullptr};
+    gtk_alert_dialog_set_buttons(dlg, keep ? four : three);
     gtk_alert_dialog_set_default_button(dlg, 0);
-    gtk_alert_dialog_set_cancel_button(dlg, 2);
+    gtk_alert_dialog_set_cancel_button(dlg, keep ? 3 : 2);
+    // The buttons' order to the answers' numbers; -1 (Escape, or the
+    // dialog gone) is Cancel.
+    if (keep)
+        answer = [answer](int c) { answer(c == 0 ? 0 : c == 1 ? 3 : c == 2 ? 1 : 2); };
+    else
+        answer = [answer](int c) { answer(c < 0 ? 2 : c); };
     gtk_alert_dialog_set_modal(dlg, TRUE);
     struct Pending {
         App* app;
@@ -486,7 +523,7 @@ static void askUnsaved(App* app, const std::string& message, const std::string& 
             App* a = pd->app;
             a->prompting = false;
             int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, nullptr);
-            if (choice < 0 || choice > 2) choice = 2;
+            if (choice < 0 || choice > 3) choice = -1;   // Escape: Cancel, mapped below
             if (!a->dead) pd->answer(choice);
             delete pd;
             if (!a->dead) a->editor->checkExternalChange();
@@ -551,38 +588,61 @@ static std::vector<uint64_t> idsOf(const std::vector<Document*>& docs) {
 // confirmCloseAllTabs). With one, it is put on show and asked about as a
 // tab is; with several, Save All, Don't Save or Cancel for them all. Runs
 // `proceed` once nothing unsaved is left to lose, else `cancelled`.
+// Whether the window's unsaved files can stay unsaved on its folder's host
+// as the window closes: a headless host keeps them after the window and the
+// app are gone (stage 6, step 2). An in-process host ends with the app, so
+// there the question stays Save, Don't Save or Cancel.
+static bool hostKeepsUnsaved(App* app) {
+    return app->link && !app->link->lost() && app->link->kind() == SessionLink::Link::Kind::Socket;
+}
+
+static const char* kKeepDetail = "Keep Unsaved leaves your changes unsaved with the folder's session "
+                                 "for its next window. Don't Save discards them.";
+
+// `closing`: the window is about to close and detach. Don't Save then names
+// the files to drop on the host (App::dropOnClose), and on a headless host
+// Keep Unsaved leaves them there unsaved.
 static void confirmAllUnsaved(App* app, std::function<void()> proceed,
-                              std::function<void()> cancelled = nullptr) {
+                              std::function<void()> cancelled = nullptr, bool closing = false) {
     app->persist->autoSaveNow();   // auto-save's writes first: only what it skips is asked about
     const std::vector<Document*> dirty = app->editor->dirtyDocuments();
     auto cancel = [cancelled] { if (cancelled) cancelled(); };
+    if (closing) app->dropOnClose.clear();
     if (dirty.empty()) { proceed(); return; }
     if (app->prompting) { cancel(); return; }
+    const bool keep = closing && hostKeepsUnsaved(app);
+    const char* detail = keep ? kKeepDetail : kLostDetail;
+    auto drop = [app, closing] {
+        if (closing)
+            for (Document* d : app->editor->dirtyDocuments()) app->dropOnClose.insert(d->id());
+    };
     if (dirty.size() == 1) {
         Document* d = dirty[0];
         app->editor->activate(d);   // so the file asked about is the one on show
         const std::string name = baseName(d->path());
-        askUnsaved(app, "Save changes to “" + name + "”?", kLostDetail, false,
-                   [app, d, proceed, cancel](int choice) {
+        askUnsaved(app, "Save changes to “" + name + "”?", detail, false,
+                   [app, d, proceed, cancel, drop](int choice) {
             if (choice == 2) { cancel(); return; }
             if (choice == 0 && app->editor->isOpen(d) && !saveDocument(app, d)) {
                 cancel();
                 return;
             }
+            if (choice == 1) drop();
             proceed();
-        });
+        }, keep);
         return;
     }
     std::string names;
     for (Document* d : dirty) names += baseName(d->path()) + "\n";
     askUnsaved(app, "Save changes to " + std::to_string(dirty.size()) + " files?",
-               names + "\n" + kLostDetail, true, [app, proceed, cancel](int choice) {
+               names + "\n" + detail, true, [app, proceed, cancel, drop](int choice) {
         if (choice == 2) { cancel(); return; }
         if (choice == 0)
             for (Document* d : app->editor->dirtyDocuments())
                 if (!saveDocument(app, d)) { cancel(); return; }
+        if (choice == 1) drop();
         proceed();
-    });
+    }, keep);
 }
 
 // The file tree's selection follows the tab on show, as on the Mac
@@ -932,6 +992,20 @@ static void openFolder(App* app, const std::string& dir) {
     // stay on the one their shells run on.
     useSessionLink(app, dir);
     app->editor->setSessionLink(app->link);
+    // What the new folder's host holds for a window (stage 6, step 2).
+    if (app->link && !app->link->lost()) {
+        app->held = app->link->takeForWindow(app->editor->sessionWindowId());
+        for (const SessionLink::Link::HeldTerm& t : app->held.terms) app->heldTerms.push_back(t);
+        attachHeldDocuments(app);
+#ifdef MUTIBLE_ENABLE_TERMINAL
+        if (app->termDock && !app->heldTerms.empty()) {
+            const int first = app->termDock->count();
+            while (!app->heldTerms.empty()) app->termDock->newTerminal();
+            app->termDock->select(first, false);
+        }
+#endif
+        app->heldTerms.clear();
+    }
     app->nav->clear();   // Go Back's places were the old folder's
     // After the tabs close, so no old file is reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
@@ -941,6 +1015,7 @@ static void openFolder(App* app, const std::string& dir) {
 #endif
     app->persist->setRoot(dir);
     app->persist->restoreSession();   // the new folder's tabs from last time
+    showHeldActive(app);
     updateTitle(app);
     refreshHints(app);
 }
@@ -959,7 +1034,7 @@ static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
     confirmAllUnsaved(app, [app] {
         app->closing = true;
         gtk_window_close(GTK_WINDOW(app->window));
-    }, [] { g.quitting = false; });   // a quit stops at a window kept open
+    }, [] { g.quitting = false; }, true);   // a quit stops at a window kept open
     return TRUE;
 }
 
@@ -1205,6 +1280,13 @@ static void onShowHiddenChanged(GSimpleAction* action, GVariant* value, gpointer
 // zoom as they are now.
 static Terminal* makeTerminal(App* app) {
     Terminal* t = new Terminal(app->rootDir, app->link);
+    // A terminal the folder's host held for this window: attached when it is
+    // first shown, its shell running on (stage 6, step 2).
+    if (!app->heldTerms.empty()) {
+        const SessionLink::Link::HeldTerm h = app->heldTerms.front();
+        app->heldTerms.pop_front();
+        t->attachHeld(h.id, h.pid, h.shell);
+    }
     t->setProjectRoot(app->rootDir);
     t->onCommandFinished = [app, t] {
         if (app->dead) return;
@@ -4212,6 +4294,128 @@ static void disconnectOwners(GtkWidget* w, const std::vector<gpointer>& owners) 
         disconnectOwners(c, owners);
 }
 
+// ---------------------------------------------------------------- detaching and reattaching
+//
+// Stage 6, step 2 (docs/notes/session-host.md, "GTK reattaches"): a window
+// closing leaves its documents and terminals on its folder's host, and a
+// window opening on the folder takes what a closed one left.
+
+// The host terminals the window's dock shows on its link, for its record
+// ("terms"), so the next window on the folder knows them for its own.
+static void reportTerminals(App* app) {
+    if (app->dead || !app->link || !app->editor) return;
+    std::vector<uint64_t> ids;
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (app->termDock)
+        for (Terminal* t : app->termDock->all())
+            if (t->sessionLink() == app->link.get() && t->hostTerminal()) ids.push_back(t->hostTerminal());
+#endif
+    app->link->windowTerminals(app->editor->sessionWindowId(), app->editor->window(), std::move(ids));
+}
+
+// The window is going (onWindowRemoved): its record, documents and
+// terminals stay on their hosts, but the documents the close question's
+// Don't Save dropped, which close there with their tabs. What was typed
+// and not yet sent goes first (the settle), since a headless link may be
+// let go of next. An in-process host holding anything is kept while the
+// app runs (SessionLink::keepWhileHolding).
+static void detachWindow(App* app) {
+    if (!app->link || !app->editor) return;
+    std::set<SessionLink::Link*> links = {app->link.get()};
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    reportTerminals(app);
+    if (app->termDock)
+        for (Terminal* t : app->termDock->all()) {
+            if (t->sessionLink()) links.insert(t->sessionLink());
+            t->detachFromHost();
+        }
+#endif
+    for (Document* d : app->editor->documents())
+        if (d->sessionLink()) links.insert(d->sessionLink());
+    app->editor->detachFromHost(app->dropOnClose);
+    app->dropOnClose.clear();
+    for (SessionLink::Link* l : links)
+        if (!l->lost()) l->client().settle(5000);
+    SessionLink::keepWhileHolding(app->link);
+}
+
+// The folder's host went and `link` is the one found or started for it
+// since: every window still on the old one moves to it, its buffers opened
+// there anew from their text (nothing typed is lost; their undo went with
+// the old host) and its terminals' shells started again.
+static void rehostApp(App* a, const std::shared_ptr<SessionLink::Link>& link) {
+    if (a->dead || !link || !a->editor) return;   // a window still being made has nothing to move
+    if (a->link != link) {
+        if (a->link) a->link->removeLostListener(a->linkLostListener);
+        a->link = link;
+        listenForLoss(a);
+    }
+    a->editor->rehost(link);
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (a->termDock)
+        for (Terminal* t : a->termDock->all())
+            if (t->sessionLink() && t->sessionLink()->lost() && t->sessionLink()->folder() == link->folder())
+                t->rehost(link);
+#endif
+    if (a->reconnectButton) gtk_widget_set_visible(a->reconnectButton, FALSE);
+    reportTerminals(a);
+    flashStatus(a, "The session's host for " + link->folder() + " is back: your files are open on it again");
+}
+
+static void rehostWindows(const std::shared_ptr<SessionLink::Link>& link) {
+    for (App* a : g.windows)
+        if (!a->dead && a->link && (a->link == link || a->link->lost()) && a->link->folder() == link->folder())
+            rehostApp(a, link);
+}
+
+// The status bar's Reconnect: the folder's host found or started again.
+static void reconnectHost(App* app) {
+    if (app->dead || !app->link || !app->link->lost()) return;
+    useSessionLink(app, app->link->folder());   // moves every window on the old link
+    // Another window found the host first: this one moves too.
+    if (app->link && !app->link->lost() && app->reconnectButton &&
+        gtk_widget_get_visible(app->reconnectButton))
+        rehostApp(app, app->link);
+}
+
+// What the folder's host held for this window (taken as the window was
+// made, App::held): each document as a tab with the host's text, before the
+// session restores the rest from sessions.json and backups (Persistence),
+// which passes over a path open already.
+static void attachHeldDocuments(App* app) {
+    for (const SessionLink::Link::HeldDoc& d : app->held.docs)
+        if (!app->editor->documentFor(d.path)) app->editor->attachTab(d.id, d.path);
+}
+
+// After the session: the record's tab on show, if it is back.
+static void showHeldActive(App* app) {
+    const Json& tabs = app->held.tabs;
+    Document* show = nullptr;
+    if (tabs.isObject()) {
+        const Json& groups = tabs["groups"];
+        const int64_t focused = tabs["focused"].isNumber() ? tabs["focused"].asInt() : 0;
+        if (focused >= 0 && (size_t)focused < groups.size())
+            show = app->editor->documentById((uint64_t)groups[(size_t)focused]["active"].asInt());
+    }
+    if (!show && !app->held.docs.empty() && !app->editor->active())
+        show = app->editor->documentById(app->held.docs.front().id);
+    if (show) app->editor->activate(show);
+}
+
+// The terminals the host held beyond the dock's first (which took one as it
+// was made): a tab each, the first on show.
+static void attachHeldTerminals(App* app) {
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (!app->termDock) return;
+    const bool any = !app->heldTerms.empty();
+    while (!app->heldTerms.empty()) app->termDock->newTerminal();
+    if (any) app->termDock->select(0, false);
+#else
+    app->heldTerms.clear();
+#endif
+    reportTerminals(app);
+}
+
 // GtkApplication lets go of a closing window before it disposes a single
 // widget, so this is where the window is taken apart: its language servers
 // are already stopping (onCloseRequest), tectonic and the file monitors stop
@@ -4223,6 +4427,7 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     if (!app) return;   // the Find in Folder window, an alert
     g.windows.erase(std::find(g.windows.begin(), g.windows.end(), app));
     app->dead = true;
+    detachWindow(app);
     // Its tabs for the folder's next window, unless a quit saved every
     // window's already. Then nothing more is written for it.
     if (!g.quitting) {
@@ -4415,6 +4620,14 @@ static App* newWindow(const std::string& root, const std::string& file,
     useSessionLink(app, app->rootDir);
     StartupLog::mark("window: the session's host");
     app->editor = new Editor(app->link);
+    // What the folder's host holds for a window opening (stage 6, step 2):
+    // the latest record a closed window left, its documents (attached
+    // before the session restores the rest) and terminals (the dock takes
+    // them as it makes its terminals).
+    if (app->link && !app->link->lost()) {
+        app->held = app->link->takeForWindow(app->editor->sessionWindowId());
+        for (const SessionLink::Link::HeldTerm& t : app->held.terms) app->heldTerms.push_back(t);
+    }
     StartupLog::mark("window: editor");
     app->editor->setTitleCallback(updateTitle, app);
     app->editor->setLinkHandler([app](const Editor::Link& link) {
@@ -4586,10 +4799,12 @@ static App* newWindow(const std::string& root, const std::string& file,
     // A terminal closed with a test run in it: nothing more will be said.
     app->termDock->onChanged = [app] {
         if (!app->dead && app->testGutter) app->testGutter->terminalsChanged();
+        reportTerminals(app);
     };
     app->termDock->confirmClose = [app](Terminal* t, std::function<void()> proceed) {
         askCloseBusyTerminal(app, t, std::move(proceed));
     };
+    attachHeldTerminals(app);
     terminalPane = app->termDock->widget();
     StartupLog::mark("window: terminal");
 #endif
@@ -4641,6 +4856,17 @@ static App* newWindow(const std::string& root, const std::string& file,
     GtkWidget* statusBar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_add_css_class(statusBar, "minicode-status");
     gtk_box_append(GTK_BOX(statusBar), app->statusLabel);
+    // Reconnect: shown while the folder's headless host is gone (stage 6,
+    // step 2), it finds or starts the host again.
+    app->reconnectButton = gtk_button_new_with_label("Reconnect");
+    gtk_widget_add_css_class(app->reconnectButton, "flat");
+    gtk_widget_set_tooltip_text(app->reconnectButton,
+                                "Find or start the folder's session host again and reopen your files on it");
+    gtk_widget_set_visible(app->reconnectButton, app->link && app->link->lost());
+    g_signal_connect(app->reconnectButton, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
+        reconnectHost(static_cast<App*>(p));
+    }), app);
+    gtk_box_append(GTK_BOX(statusBar), app->reconnectButton);
     app->lspLabel = gtk_label_new("");
     gtk_label_set_ellipsize(GTK_LABEL(app->lspLabel), PANGO_ELLIPSIZE_START);
     gtk_box_append(GTK_BOX(statusBar), app->editor->largeFileNote());   // LargeFileView.h
@@ -4997,7 +5223,9 @@ static App* newWindow(const std::string& root, const std::string& file,
     StartupLog::mark("window: actions and settings applied");
     // The files open here last time: the window's own when it is brought
     // back, else the folder's.
+    attachHeldDocuments(app);
     app->persist->restoreSession(record ? &record->tabs : nullptr);
+    showHeldActive(app);
 #ifdef MUTIBLE_ENABLE_BROWSER
     if (app->browser) {   // the browser's tabs, suspended; the one on show loads when the pane is
         const TabSessions::Session saved = record ? record->tabs : app->persist->savedSession();

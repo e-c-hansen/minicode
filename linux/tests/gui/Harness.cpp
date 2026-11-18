@@ -777,6 +777,11 @@ void checkWhatSuiteLeft() {
     if (gSuite.empty() || gSuite[0] == '_') return;
     checkSessionMirrors();
     const bool putBack = leaksFail();
+    // What windows that closed left on their folders' hosts (stage 6, step
+    // 2: closing a window detaches) is the harness's to end between suites,
+    // as the two files are, so a suite's detached terminals and documents
+    // never come back in a later suite's window on the same folder.
+    if (putBack) SessionLink::endDetached();
     if (MCGuiPinnedKeyWindow() && MCGuiPinnedKeyWindow() != MCGuiApp().window) {
         leak("left the key window pinned to a window still open (MCGuiSetKeyWindow(nullptr) at its end)");
         if (putBack) MCGuiSetKeyWindow(nullptr);

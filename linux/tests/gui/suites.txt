@@ -114,3 +114,4 @@ TerminalMarksSuite.cpp
 TreeFocusSuite.cpp
 TestGutterSuite.cpp
 HostLinkSuite.cpp
+HostReattachSuite.cpp

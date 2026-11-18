@@ -125,6 +125,10 @@ public:
     // `link`: the session's host its text and history belong to (its
     // window's folder's, SessionLink.h), kept for its life.
     Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<SessionLink::Link> link);
+    // A document the host holds already (stage 6, step 2: a window opening
+    // takes what a closed one left), under its id; attachHeld fills it.
+    Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<SessionLink::Link> link,
+             uint64_t heldId);
     // Takes every handler off its buffers and its file's watch, and removes
     // its backup: a document goes when its tab closes (asked about first) or
     // its window does. The editor takes its LaTeX preview's widget off the
@@ -171,6 +175,19 @@ public:
     // next check while it is on show asks Keep Mine or Reload, even though
     // its saved text is the disk's.
     void askAboutDiskChange();
+    // A held document's text, the host's (made with its id): its file's
+    // text now counts as saved, so it is unsaved when the two differ; its
+    // undo history is the host's, kept. A file gone or no longer text
+    // leaves it unsaved.
+    void attachHeld(const std::string& path);
+    // The window closes and detaches: the host keeps the document, its text
+    // and history (Client::detach); the destructor then closes nothing.
+    void detachFromHost();
+    // Its link's host went and a new one was found or started (Reconnect,
+    // or another window on the folder): opened on it anew under a new id,
+    // the buffer's text the host's to start from (its history gone with
+    // the old host, as Reload forgets it).
+    void rehost(std::shared_ptr<SessionLink::Link> link);
     // For auto-save: the file is gone since it was read, or it is not what
     // was last read or saved (by its date, inode and size first, then by its
     // text, so a file rewritten unchanged is no change).
@@ -523,6 +540,9 @@ private:
     std::shared_ptr<SessionLink::Link> link_;
     Shared::Client& client() const { return link_->client(); }
     uint64_t      id_;
+    std::string   hostPath_;          // the path the host was told (DocPath)
+    bool          detached_ = false;  // detachFromHost: the host keeps it
+    void tellHostPath();
     Kind          kind_ = Kind::Text;
     std::string   path_, ext_;
     bool          markdown_ = false, latex_ = false;

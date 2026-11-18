@@ -303,7 +303,15 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
     std::vector<Document*> changedSince;
     for (size_t i = 0; i < r.files.size(); i++) {
         const std::string& f = r.files[i];
-        if (editor_->documentFor(f)) continue;   // open here already
+        if (editor_->documentFor(f)) {
+            // Open here already: from the session's host when the window
+            // took what it held (stage 6, step 2), whose live text wins over
+            // a backup a process that went left of it.
+            const auto b = backupFor.find(f);
+            if (b != backupFor.end() && editor_->documentFor(f)->kind() == Document::Kind::Text)
+                store.remove(b->second);
+            continue;
+        }
         const auto b = backupFor.find(f);
         Backups::Entry e;
         std::string text;

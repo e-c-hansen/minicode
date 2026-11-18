@@ -226,9 +226,22 @@ public:
     long long outlinedCommand() const { return navLine_; }
     bool onAlternateScreen() const { return altScreen_; }
     // The host's terminal now (0 between shells), and what it last said.
-    Shared::TermId hostTerminal() const { return hostTerm_; }
+    Shared::TermId hostTerminal() const { return hostTerm_ ? hostTerm_ : heldTerm_; }
     SessionLink::Link* sessionLink() const { return link_.get(); }
     const Shared::TermShell& hostShell() const { return host_; }
+
+    // ---- detaching and attaching (stage 6, step 2)
+    // A terminal the host holds (a window opening takes what a closed one
+    // left): before it is first shown. Its shell runs on; when VTE is made
+    // it attaches (TermAttach) instead of starting one, the host's replay
+    // fed to VTE, then live output. Its pid, title and marks are the host's.
+    void attachHeld(Shared::TermId id, int pid, const Shared::TermShell& shell);
+    // The window closes and detaches: the shell runs on for the folder's
+    // next window (Client::detachTerminal); the destructor closes nothing.
+    void detachFromHost();
+    // Its link's host went and `link` was found or started for its folder:
+    // a new shell there (the old one ended with the old host).
+    void rehost(std::shared_ptr<SessionLink::Link> link);
 
 private:
     // One row's share of the hovered link: cells [col0, col1) of `row`, a
@@ -241,6 +254,19 @@ private:
     static void drawHover(GtkDrawingArea* area, cairo_t* cr, int w, int h, gpointer self);
 
     void makeTerminal();   // the terminal and its shell, once
+    void attachShell();    // makeTerminal's for a held one: TermAttach
+    Shared::TermId heldTerm_ = 0;   // attachHeld's, until attached
+    int heldPid_ = 0;
+    // The pty's size when another renderer's is larger than this view
+    // (TermShell's cols and rows): VTE drawn at it, clipped by the scroller;
+    // a smaller one is drawn at the top left of VTE's own grid.
+    int ptyCols_ = 0, ptyRows_ = 0;
+    // The last sizes this view sent: a TermShell still carrying one of them
+    // is this view's own size on its way (a window made smaller), never
+    // another renderer's to draw at.
+    std::vector<std::pair<int, int>> sentSizes_;
+    void followPtySize(int cols, int rows);
+    bool viewCells(int* cols, int* rows) const;   // the scroller's size in cells
     ShellIntegration::ShellState shell_;
     std::string finished_;   // finishedCommand()
     std::string nonce_;   // this shell's, "" when it runs without the integration
