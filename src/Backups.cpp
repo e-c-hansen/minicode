@@ -104,9 +104,18 @@ std::string encode(const Entry &e, const std::string &text) {
     return h;
 }
 
+// rename-mutible: keep-begin
+// The magic before 1.6.0 (src/Rename.h): the first launch copies minicode's
+// Backups folder, and the unsaved tabs in it come back as they would have.
+static const char *const kOldMagic = "minicode-backup 1";
+// rename-mutible: keep-end
+
 bool decodeHeader(const std::string &data, Entry *e, size_t *textStart) {
-    const std::string magic = std::string(kMagic) + "\n";
-    if (data.compare(0, magic.size(), magic) != 0) return false;
+    std::string magic = std::string(kMagic) + "\n";
+    if (data.compare(0, magic.size(), magic) != 0) {
+        magic = std::string(kOldMagic) + "\n";
+        if (data.compare(0, magic.size(), magic) != 0) return false;
+    }
     const size_t end = data.find("\n\n", magic.size() - 1);
     if (end == std::string::npos) return false;
     Entry out;

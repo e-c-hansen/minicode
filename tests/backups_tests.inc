@@ -70,6 +70,11 @@ static void testBackups() {
         CHECK(!decode(data.substr(0, data.size() - 1), &back, &t));
         CHECK(!decode(data + "x", &back, &t));
         CHECK(!decode("not a backup\n\nhello", &back, &t));
+        // A backup from before 1.6.0, with the old magic, as the first launch copies it.
+        const std::string old = "minicode-backup 1\n" + data.substr(std::string("mutible-backup 1\n").size());  // rename-mutible: keep
+        CHECK(decode(old, &back, &t) && t == text && back.path == e.path);
+        CHECK(decodeHeader(old.substr(0, old.size() - text.size()), &head, &start));
+        CHECK(start == old.size() - text.size());
         CHECK(!decodeHeader("mutible-backup 1\nid: x\n", &head));   // no blank line
         CHECK(!decodeHeader("mutible-backup 1\nid: ../x\npath: /a\nbytes: 0\n\n", &head));
         CHECK(!decodeHeader("mutible-backup 1\nid: x\nbytes: 0\n\n", &head));   // no path
