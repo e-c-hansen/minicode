@@ -16,7 +16,18 @@ found through that list.
   here", dropped when the cwd leaves). The command line is read again when
   the short name changes (a fork seen before its exec). Exited ones stay a
   minute. `buildView` groups per window: its terminals, orphans (terminal
-  gone; shown by window or by cwd), not started here. `planStop` signals the
+  gone; shown by window or by cwd), not started here. In each level the
+  rows that are running, or have a running process under them, come
+  first, then the exited ones, each in start order (2026-11-18, A4: a
+  stopped server and two exited `sleep` helpers sat above the server
+  still running). `foldExited` (the Mac panel only; `minicode procs` and
+  Linux list everything, in that order) moves exited processes that
+  never listened on a port (`Proc::listened`, kept after the ports are
+  cleared at exit) and have nothing left under them into the level's
+  `exited`, which the panel shows as one dim "N exited" row
+  (`MCProcFoldItem`, "X <depth> N exited" in `rowDescriptions`) that
+  opens to list them; a stopped server keeps its own row, below the
+  running ones, until it is forgotten a minute later. `planStop` signals the
   process group only when every member is the process or below it, so a
   server Claude started never takes Claude's group down; never minicode, its
   group, a shell, pid 1.
