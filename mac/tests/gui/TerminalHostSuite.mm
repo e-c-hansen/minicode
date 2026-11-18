@@ -14,12 +14,12 @@
 //   - A command the second client types (TermInput) runs in the Mac's
 //     terminal: its output on the Mac's screen, the marks seeing it end.
 //   - The size follows whoever typed last (the core's Host::sizer): the
-//     second client says a smaller size and nothing moves; it types and
-//     the pty, the host's screen and the Mac's grid take its size, the
-//     grid drawn at the top left of the larger view; the Mac types and its
-//     own size is back; the second's answer to a query (TermInput flag 1)
-//     moves nothing; a larger size the second types at is drawn clipped,
-//     the cursor in sight.
+//     Mac types, the second client says a smaller size and nothing moves;
+//     it types and the pty, the host's screen and the Mac's grid take its
+//     size, the grid drawn at the top left of the larger view; the Mac
+//     types and its own size is back; the second's answer to a query
+//     (TermInput flag 1) moves nothing; a larger size the second types at
+//     is drawn clipped, the cursor in sight.
 //   - The second client leaving keeps the terminal going.
 #import "Harness.h"
 #import "EditorController.h"
@@ -153,6 +153,14 @@ MC_GUI_SUITE(terminal_host) {
     });
 
     // ---- the size follows the typist
+    // The second typed last (above), with no size said: the Mac types now,
+    // so its size is the one a later size from the second must not move.
+    MCGuiStep(@"the Mac types again", ^{
+        [s.term runCommand:@"echo mac-typed"];
+    });
+    MCGuiWait(@"it ran", 10, ^BOOL {
+        return [[s.term recentText:20] containsString:@"\nmac-typed"] && s.term.atPrompt && !s.term.busy;
+    });
     MCGuiStep(@"the second says a smaller size: nothing moves until it types", ^{
         TerminalScreen *g = MCGridScreen(s.term);
         s->macCols = g->cols();
