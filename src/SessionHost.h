@@ -251,6 +251,11 @@ private:
     bool slotFree(std::uint64_t slot) const;
     std::map<DocId, Doc> docs_;
     std::map<std::uint64_t, std::pair<ClientId, Json>> windows_;
+    // When each window's tabs were last reported, in the order they came
+    // (state()'s "seen"): a renderer reattaching takes the latest record a
+    // closing window left.
+    std::map<std::uint64_t, std::uint64_t> windowSeen_;
+    std::uint64_t windowOrder_ = 0;
     std::uint64_t order_ = 0;   // counts terminals' typing and joining (Term::Viewer)
 
     void send(ClientId to, Message&& m);
@@ -281,6 +286,8 @@ private:
     void onOpen(ClientId c, Message& m);
     void onReset(ClientId c, Message& m);
     void onClose(ClientId c, Message& m);
+    void onPath(ClientId c, Message& m);
+    void onDetach(ClientId c, Message& m);
     void onEdit(ClientId c, Message& m);
     void onUndo(ClientId c, Message& m);
     void onSaved(ClientId c, Message& m);

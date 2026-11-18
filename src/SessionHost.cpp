@@ -62,6 +62,8 @@ bool Host::refusedFromViewer(ClientId c, const Message& m) const {
     case Kind::TermAttach:
     case Kind::TermAck:
     case Kind::FsRead:       // reads the folder, changes nothing
+    case Kind::DocDetach:    // its own seat
+    case Kind::TermDetach:   // its own place among the viewers
         return false;
     case Kind::DocEdit:
         // A guest's edits, in the undo history; from a reader, only the
@@ -96,8 +98,16 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::DocForget: onForget(from, m); break;
     case Kind::DocWatch: onWatch(from, m); break;
     case Kind::DocQuery: onQuery(from, m); break;
-    case Kind::WindowTabs: windows_[m.window] = {from, std::move(m.json)}; break;
-    case Kind::WindowClose: windows_.erase(m.window); break;
+    case Kind::DocPath: onPath(from, m); break;
+    case Kind::DocDetach: onDetach(from, m); break;
+    case Kind::WindowTabs:
+        windows_[m.window] = {from, std::move(m.json)};
+        windowSeen_[m.window] = ++windowOrder_;
+        break;
+    case Kind::WindowClose:
+        windows_.erase(m.window);
+        windowSeen_.erase(m.window);
+        break;
     case Kind::StateQuery: {
         Message r;
         r.kind = Kind::State;
@@ -152,6 +162,13 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::TermClose:
         if (terms_.count(m.term)) endTerminal(m.term, false, from);
         break;
+    case Kind::TermDetach: {
+        // As a renderer going (disconnect): the shell runs on, its size the
+        // next viewer's by the rule.
+        auto it = terms_.find(m.term);
+        if (it != terms_.end() && it->second.viewers.erase(from)) fit(it->first, it->second);
+        break;
+    }
     case Kind::FsRead: onRead(from, m); break;
     default: error(from, m.doc, std::string("the host takes no ") + kindName(m.kind)); break;
     }
@@ -325,6 +342,28 @@ void Host::onClose(ClientId c, Message& m) {
         send(id, std::move(g));
     }
     docs_.erase(it);
+}
+
+void Host::onPath(ClientId c, Message& m) {
+    auto it = docs_.find(m.doc);
+    if (it == docs_.end()) return;
+    auto seat = it->second.seats.find(c);
+    if (seat == it->second.seats.end() || seat->second.viewer) {
+        error(c, m.doc, "doc.path of a document not open");
+        return;
+    }
+    it->second.path = m.name;
+}
+
+void Host::onDetach(ClientId c, Message& m) {
+    // The seat goes as it would with the renderer's connection; the
+    // document stays, whoever else has it, for a renderer to open again.
+    auto it = docs_.find(m.doc);
+    if (it == docs_.end()) return;
+    Doc& d = it->second;
+    if (d.stepOpen && d.stepBy == c) closeStep(d);
+    d.seats.erase(c);
+    trimLog(d);
 }
 
 bool Host::concurrent(const Doc& d, std::uint64_t base, Model::Unit u, Ot::Ops* out) const {
@@ -642,6 +681,11 @@ Json Host::state() const {
         Json j = Json::object();
         j.set("window", Json((int64_t)id));
         j.set("renderer", Json((int64_t)w.first));
+        // Whether the renderer that reported it is still here (one that
+        // went left it for the next to take), and when it last reported.
+        j.set("connected", Json(renderers_.count(w.first) > 0));
+        auto seen = windowSeen_.find(id);
+        j.set("seen", Json((int64_t)(seen == windowSeen_.end() ? 0 : seen->second)));
         j.set("tabs", w.second);
         wins.push(std::move(j));
     }
