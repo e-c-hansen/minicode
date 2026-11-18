@@ -148,6 +148,58 @@ static void testFolderPicker() {
         CHECK(emptyText(parse("~/zz", home, base), l, home) == "No matching folders");
     }
 
+    GROUP("folderpick:scope");
+    {
+        // Add Folder to Focus…: the picker scoped to the window's folder.
+        const std::string scope = base;
+        CHECK(inScope(base + "/src", scope));
+        CHECK(inScope(base + "/src/../lib/x", scope));
+        CHECK(!inScope(base, scope));
+        CHECK(!inScope(base + "/..", scope));
+        CHECK(!inScope("/Users/me/Code/apple", "/Users/me/Code/app"));
+        CHECK(!inScope("/Users/me/Code/app2/x", scope));
+        CHECK(inScope("/anything", ""));
+        CHECK(inScope("/a", "/") && !inScope("/", "/"));
+        const Listing l = fpListing({".git", "docs", "linux", "src"});
+        // Recent folders inside it first (labelled from it), those outside
+        // dropped; then its subfolders; no Choose in Finder.
+        const std::vector<std::string> recent = {"/Users/me/Code/minicode", base + "/linux/src",
+                                                 base, "/Users/me/Code/app2/x"};
+        auto rs = rows(parse("", home, base, scope), recent, l, home);
+        CHECK(fpLabels(rs) == (std::vector<std::string>{"linux/src", "docs", "linux", "src"}));
+        CHECK(rs[0].recent && rs[0].path == base + "/linux/src" && rs[0].nameAt == 6);
+        for (const Row &r : rs) CHECK(r.kind != RowKind::ChooseInFinder);
+        // A name narrows them; a subfolder named exactly is offered as typed.
+        auto s = rows(parse("src", home, base, scope), recent, l, home);
+        CHECK(fpLabels(s) == (std::vector<std::string>{"src", "linux/src", "open src"}));
+        // A relative path lists its folder's subfolders, labelled from the scope.
+        const Listing linux = fpListing({"gtk", "src"});
+        auto p = rows(parse("linux/sr", home, base, scope), {}, linux, home);
+        CHECK(fpLabels(p) == (std::vector<std::string>{"linux/src"}));
+        CHECK(p[0].path == base + "/linux/src" && p[0].nameAt == 6);
+        CHECK(p[0].positions == (std::vector<size_t>{6, 7}));
+        auto pt = rows(parse("linux/src", home, base, scope), {}, linux, home);
+        CHECK(fpLabels(pt) == (std::vector<std::string>{"linux/src", "open linux/src"}));
+        auto ps = rows(parse("linux/", home, base, scope), {}, linux, home);
+        CHECK(fpLabels(ps) == (std::vector<std::string>{"open linux", "linux/gtk", "linux/src"}));
+        // Nothing outside it: its parent, an absolute path elsewhere, home,
+        // nor the scope itself typed out.
+        const Listing up = fpListing({"app", "app2", "minicode"});
+        auto u = rows(parse("../", home, base, scope), {}, up, home);
+        CHECK(u.empty());
+        CHECK(emptyText(parse("../", home, base, scope), up, home) ==
+              "Only folders inside ~/Code/app");
+        CHECK(rows(parse("~/", home, base, scope), {}, fpListing({"Code"}), home).empty());
+        CHECK(rows(parse("/Users/me/Code/ap", home, base, scope), {}, up, home).empty());
+        CHECK(rows(parse("../app/", home, base, scope), {}, l, home).size() == 3);   // inside, spelled so
+        CHECK(rows(parse("linux/../..", home, base, scope), {}, up, home).empty());
+        CHECK(emptyText(parse("zz", home, base, scope), l, home) == "No matching folders");
+        // Tab after a name completes the path from the scope.
+        CHECK(complete("sr", base + "/linux/src", home, scope) == "linux/src/");
+        CHECK(complete("linux/s", base + "/linux/src", home, scope) == "linux/src/");
+        CHECK(complete("sr", base + "/src", home) == "~/Code/app/src/");
+    }
+
     GROUP("folderpick:list");
     {
         char tmpl[] = "/tmp/mc-folderpick-XXXXXX";

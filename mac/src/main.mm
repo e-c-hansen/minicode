@@ -590,7 +590,8 @@ static BOOL MCWindowTabAction(SEL a) {
            a == @selector(sortTreeBy:) || a == @selector(setTreeSortDirection:) ||
            a == @selector(saveFileAs:) || a == @selector(saveAllFiles:) ||
            a == @selector(toggleFoldersFirst:) || a == @selector(focusOnFolder:) ||
-           a == @selector(addFolderToFocus:) || a == @selector(showWholeFolderInTree:);
+           a == @selector(addFolderToFocus:) || a == @selector(chooseFolderToAddToFocus:) ||
+           a == @selector(showWholeFolderInTree:);
 }
 - (BOOL)keyWindowIsEditor {
     NSWindow *key = NSApp.keyWindow;
@@ -923,6 +924,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)refreshTree:(id)sender     { [[self current] refreshTree:sender]; }
 - (void)focusOnFolder:(id)sender   { [[self current] focusOnFolder:sender]; }
 - (void)addFolderToFocus:(id)sender { [[self current] addFolderToFocus:sender]; }
+- (void)chooseFolderToAddToFocus:(id)sender { [[self current] chooseFolderToAddToFocus:sender]; }
 - (void)showWholeFolderInTree:(id)sender { [[self current] showWholeFolderInTree:sender]; }
 - (void)openSettings:(id)sender    { [[self current] openSettings:sender]; }
 - (void)openKeyboardShortcuts:(id)sender { [[self current] openKeyboardShortcuts:sender]; }
@@ -1133,6 +1135,8 @@ static void BuildMenu(void) {
                         action:@selector(focusOnFolder:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Add to Focus"
                         action:@selector(addFolderToFocus:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Add Folder to Focus…"
+                        action:@selector(chooseFolderToAddToFocus:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Show Whole Folder in Tree"
                         action:@selector(showWholeFolderInTree:) keyEquivalent:@""];
     [fileMenu addItem:[NSMenuItem separatorItem]];

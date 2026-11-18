@@ -5,7 +5,9 @@
 // folder again. On several (Add to Focus) it is one small label per folder
 // ("mac/src ×  linux/src ×"), then a ×: a click on a label shows that
 // folder's root row, its × takes the folder out of the focus, and the last
-// × shows the whole folder. The parts, which of them fit, and the labels'
+// × shows the whole folder. Either way a + before the last × adds a folder
+// to the focus (onAdd: Add Folder to Focus…'s picker). The parts, which of
+// them fit, and the labels'
 // short forms and widths are the core's (FileDetails.h, TreeFocus::
 // breadcrumb, fit, shortLabels and shared); this only draws them and
 // reports clicks.
@@ -24,6 +26,8 @@ static const CGFloat kMCTreeFocusBarHeight = 24;
 // itself (to show the folder's root row).
 @property(nonatomic, copy) void (^onRemove)(NSString *folder);
 @property(nonatomic, copy) void (^onShowFolder)(NSString *folder);
+// The + was clicked.
+@property(nonatomic, copy) void (^onAdd)(void);
 // The window's folder's name and the focus ("mac/src"): the breadcrumb.
 - (void)setRootName:(NSString *)name focus:(NSString *)focus;
 // The focused folders, in their order: the label row.
@@ -38,4 +42,5 @@ static const CGFloat kMCTreeFocusBarHeight = 24;
 - (NSRect)rectOfPart:(NSInteger)index;
 - (NSRect)removeRectOfPart:(NSInteger)index;
 - (NSRect)closeRect;
+- (NSRect)addRect;
 @end

@@ -43,13 +43,22 @@ std::string expand(const std::string& t, const std::string& home, const std::str
     return join(base, t);
 }
 
-Row folderRow(const std::string& path, const std::string& home, bool recent) {
+// A row's label: the path from the scope inside one, else abbreviated.
+std::string labelOf(const std::string& path, const std::string& home, const std::string& scope) {
+    if (inScope(path, scope) && !scope.empty())
+        return path.substr(scope == "/" ? 1 : scope.size() + 1);
+    return abbreviate(path, home);
+}
+
+Row folderRow(const std::string& path, const std::string& home, bool recent,
+              const std::string& scope) {
     Row r;
     r.kind = RowKind::Folder;
     r.path = path;
     r.recent = recent;
-    const std::u16string label = Lsp::toUtf16(abbreviate(path, home));
-    const std::u16string name = Lsp::toUtf16(lastComponent(abbreviate(path, home)));
+    const std::string spelled = labelOf(path, home, scope);
+    const std::u16string label = Lsp::toUtf16(spelled);
+    const std::u16string name = Lsp::toUtf16(lastComponent(spelled));
     r.label = label;
     r.nameAt = label.size() >= name.size() ? label.size() - name.size() : 0;
     return r;
@@ -112,8 +121,17 @@ std::string lastComponent(const std::string& path) {
     return slash == std::string::npos ? p : p.substr(slash + 1);
 }
 
-Input parse(const std::string& text, const std::string& home, const std::string& base) {
+bool inScope(const std::string& path, const std::string& scope) {
+    if (scope.empty()) return true;
+    const std::string p = normalize(path), s = normalize(scope);
+    if (p == s) return false;
+    return s == "/" ? p.size() > 1 && p[0] == '/' : startsWith(p, s + "/");
+}
+
+Input parse(const std::string& text, const std::string& home, const std::string& base,
+            const std::string& scope) {
     Input in;
+    if (!scope.empty()) in.scope = normalize(scope);
     // Leading blanks never belong to a path; trailing ones may (rarely), so
     // a path keeps them.
     size_t lead = 0;
@@ -138,7 +156,8 @@ Input parse(const std::string& text, const std::string& home, const std::string&
     return in;
 }
 
-std::string complete(const std::string& text, const std::string& path, const std::string& home) {
+std::string complete(const std::string& text, const std::string& path, const std::string& home,
+                     const std::string& scope) {
     size_t lead = 0;
     while (lead < text.size() && (text[lead] == ' ' || text[lead] == '\t')) lead++;
     const std::string t = text.substr(lead);
@@ -146,7 +165,7 @@ std::string complete(const std::string& text, const std::string& path, const std
         const std::string spelled = t == "~" ? "~/" : t;
         return spelled.substr(0, spelled.rfind('/') + 1) + lastComponent(path) + "/";
     }
-    const std::string a = abbreviate(path, home);
+    const std::string a = labelOf(normalize(path), home, scope.empty() ? "" : normalize(scope));
     return a == "/" ? a : a + "/";
 }
 
@@ -195,14 +214,17 @@ std::vector<Row> rows(const Input& in, const std::vector<std::string>& recent,
         // for every row and would only add matches of its own letters.
         std::vector<std::string> names;
         std::vector<std::u16string> keys;
-        if (listing.done && listing.ok)
+        // A folder outside the scope lists nothing (each of its subfolders
+        // is outside it too).
+        if (listing.done && listing.ok && (in.scope.empty() || in.dir == in.scope ||
+                                           inScope(in.dir, in.scope)))
             for (const std::string& n : listing.names) {
                 if (n[0] == '.' && !in.showHidden) continue;
                 names.push_back(n);
                 keys.push_back(Lsp::toUtf16(n));
             }
         for (const CommandPalette::Match& m : CommandPalette::rankFiles(keys, query, {}, limit)) {
-            Row r = folderRow(join(in.dir, names[m.index]), home, false);
+            Row r = folderRow(join(in.dir, names[m.index]), home, false, in.scope);
             for (size_t p : m.positions) r.positions.push_back(r.nameAt + p);
             folders.push_back(std::move(r));
         }
@@ -214,6 +236,7 @@ std::vector<Row> rows(const Input& in, const std::vector<std::string>& recent,
         std::set<std::string> seen;
         for (const std::string& p : recent) {
             const std::string n = normalize(p);
+            if (!inScope(n, in.scope)) continue;
             if (!seen.insert(n).second) continue;
             paths.push_back(p);
             isRecent.push_back(true);
@@ -222,30 +245,33 @@ std::vector<Row> rows(const Input& in, const std::vector<std::string>& recent,
             for (const std::string& n : listing.names) {
                 if (n[0] == '.' && !in.showHidden) continue;
                 const std::string p = join(in.dir, n);
+                if (!inScope(p, in.scope)) continue;
                 if (!seen.insert(normalize(p)).second) continue;
                 paths.push_back(p);
                 isRecent.push_back(false);
             }
         std::vector<std::u16string> keys;
-        for (const std::string& p : paths) keys.push_back(Lsp::toUtf16(abbreviate(p, home)));
+        for (const std::string& p : paths) keys.push_back(Lsp::toUtf16(labelOf(normalize(p), home, in.scope)));
         for (const CommandPalette::Match& m : CommandPalette::rankFiles(keys, query, {}, limit)) {
-            Row r = folderRow(paths[m.index], home, isRecent[m.index]);
+            Row r = folderRow(paths[m.index], home, isRecent[m.index], in.scope);
             r.positions = m.positions;
             folders.push_back(std::move(r));
         }
         typedExists = !in.typed.empty() && listing.done && listing.ok &&
                       contains(listing.names, in.partial);
     }
+    typedExists = typedExists && inScope(in.typed, in.scope);
     std::vector<Row> out;
     Row open;
     if (typedExists) {
-        open = folderRow(in.typed, home, false);
+        open = folderRow(in.typed, home, false, in.scope);
         open.kind = RowKind::OpenTyped;
     }
     const bool openFirst = typedExists && in.isPath && in.partial.empty();
     if (openFirst) out.push_back(open);
     for (Row& r : folders) out.push_back(std::move(r));
     if (typedExists && !openFirst) out.push_back(open);
+    if (!in.scope.empty()) return out;
     Row finder;
     finder.kind = RowKind::ChooseInFinder;
     finder.label = u"Choose in Finder…";
@@ -254,6 +280,8 @@ std::vector<Row> rows(const Input& in, const std::vector<std::string>& recent,
 }
 
 std::string emptyText(const Input& in, const Listing& listing, const std::string& home) {
+    if (!in.scope.empty() && in.dir != in.scope && !inScope(in.dir, in.scope))
+        return "Only folders inside " + abbreviate(in.scope, home);
     if (!listing.done) return "Listing " + abbreviate(in.dir, home) + "…";
     if (!listing.ok) return "Cannot read " + abbreviate(in.dir, home);
     return in.isPath && in.partial.empty() ? "No folders in " + abbreviate(in.dir, home)

@@ -10,6 +10,7 @@
 namespace {
 const CGFloat kPad = 8;          // before the first part
 const CGFloat kCloseWidth = 22;  // the ×'s square, at the right
+const CGFloat kAddWidth = 18;    // the +'s, before it
 const CGFloat kSepPad = 4;       // either side of a ›
 // A folder's label on the label row: padding, the label, a gap, its ×,
 // padding; and the space between two labels.
@@ -30,7 +31,7 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
     BOOL _several;
     std::vector<NSRect> _chips;
     std::vector<NSRect> _removes;
-    NSInteger _hover;             // the part under the mouse, -2 the ×, -1 none
+    NSInteger _hover;             // the part under the mouse, -2 the ×, -3 the +, -1 none
     NSTrackingArea *_tracking;
 }
 
@@ -66,7 +67,8 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
     _labels = labels;
     _foci = foci;
     self.toolTip = [NSString stringWithFormat:@"The tree shows %@ only\n"
-                    @"Click a folder above to show it instead; × shows the whole folder",
+                    @"Click a folder above to show it instead; + adds a folder; "
+                    @"× shows the whole folder",
                     [labels componentsJoinedByString:@"/"]];
     self.accessibilityLabel = [@"Focused folder: " stringByAppendingString:
                                [labels componentsJoinedByString:@" › "]];
@@ -81,7 +83,7 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
     _labels = _foci;
     self.toolTip = [NSString stringWithFormat:@"The tree shows %@ only\n"
                     @"Click a folder above to show it; its × takes it out of the focus; "
-                    @"the last × shows the whole folder",
+                    @"+ adds a folder; the last × shows the whole folder",
                     [_foci componentsJoinedByString:@", "]];
     self.accessibilityLabel = [@"Focused folders: " stringByAppendingString:
                                [_foci componentsJoinedByString:@", "]];
@@ -107,6 +109,11 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
     return NSMakeRect(NSMaxX(b) - kCloseWidth - 2, NSMinY(b), kCloseWidth, b.size.height);
 }
 
+- (NSRect)addRect {
+    const NSRect c = [self closeRect];
+    return NSMakeRect(NSMinX(c) - kAddWidth, NSMinY(c), kAddWidth, c.size.height);
+}
+
 // The label row: each folder's full path when they all fit, else the
 // shortest labels that tell them apart, cut to share the room when even
 // those do not (the core's shortLabels and shared).
@@ -119,7 +126,7 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
     if (!n) return;
     NSFont *font = [self fontForPart:0];
     const CGFloat fixed = kChipPadLeft + kChipGap + kChipCloseWidth + kChipPadRight;
-    const CGFloat right = NSMinX([self closeRect]) - 2;
+    const CGFloat right = NSMinX([self addRect]) - 2;
     const CGFloat room = MAX(0, right - kPad - n * fixed - (n - 1) * kChipSpace);
     auto widthsOf = [&](NSArray<NSString *> *labels) {
         std::vector<double> w;
@@ -169,7 +176,7 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
     std::vector<double> widths;
     for (NSUInteger i = 0; i < _labels.count; i++)
         widths.push_back([self widthOf:_labels[i] font:[self fontForPart:(NSInteger)i]]);
-    const CGFloat right = NSMinX([self closeRect]) - 2;
+    const CGFloat right = NSMinX([self addRect]) - 2;
     const CGFloat available = MAX(0, right - kPad);
     const NSRect b = self.bounds;
     CGFloat x = kPad;
@@ -217,6 +224,8 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
         drawText(@"×", _removes[i], [NSFont systemFontOfSize:12],
                  _hover == kRemoveHover + (NSInteger)i ? text : dim, NO);
     }
+    drawText(@"+", NSInsetRect([self addRect], 4, 0), [NSFont systemFontOfSize:14],
+             _hover == -3 ? text : dim, NO);
     drawText(@"×", NSInsetRect([self closeRect], 6, 0), [NSFont systemFontOfSize:14],
              _hover == -2 ? text : dim, NO);
     [[text colorWithAlphaComponent:0.12] setFill];
@@ -262,6 +271,8 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
         prev = r;
     }
     // The ×, and a hairline under the bar.
+    drawText(@"+", NSInsetRect([self addRect], 4, 0), [NSFont systemFontOfSize:14],
+             _hover == -3 ? text : dim, NO);
     drawText(@"×", NSInsetRect([self closeRect], 6, 0), [NSFont systemFontOfSize:14],
              _hover == -2 ? text : dim, NO);
     [[text colorWithAlphaComponent:0.12] setFill];
@@ -273,6 +284,7 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
 // already the tree's root, does nothing).
 - (NSInteger)partAt:(NSPoint)p {
     if (NSPointInRect(p, [self closeRect])) return -2;
+    if (NSPointInRect(p, [self addRect])) return -3;
     if (_several) {
         // A label's × (the label row): kRemoveHover plus its index.
         for (size_t i = 0; i < _removes.size(); i++)
@@ -289,6 +301,10 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
 - (void)mouseDown:(NSEvent *)event {
     const NSInteger part = [self partAt:[self convertPoint:event.locationInWindow fromView:nil]];
     if (part == -1) return;
+    if (part == -3) {
+        if (self.onAdd) self.onAdd();
+        return;
+    }
     if (_several && part >= kRemoveHover) {
         if (self.onRemove) self.onRemove(_foci[(NSUInteger)(part - kRemoveHover)]);
         return;
@@ -346,10 +362,12 @@ const NSInteger kRemoveHover = 1000;   // _hover for a label's ×: this plus its
             if (i < _removes.size()) [self addCursorRect:_removes[i] cursor:NSCursor.pointingHandCursor];
         }
         [self addCursorRect:[self closeRect] cursor:NSCursor.pointingHandCursor];
+        [self addCursorRect:[self addRect] cursor:NSCursor.pointingHandCursor];
         return;
     }
     for (size_t i = 0; i + 1 < _rects.size(); i++)
         if (!NSIsEmptyRect(_rects[i])) [self addCursorRect:_rects[i] cursor:NSCursor.pointingHandCursor];
     [self addCursorRect:[self closeRect] cursor:NSCursor.pointingHandCursor];
+    [self addCursorRect:[self addRect] cursor:NSCursor.pointingHandCursor];
 }
 @end
