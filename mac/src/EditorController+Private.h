@@ -314,6 +314,9 @@ static const NSInteger kRemoveFocusMenuTag = 7707;
 @property(nonatomic, strong) MCProblemsPanel *problemsPanel;
 @property(nonatomic, assign) BOOL problemsVisible;
 @property(nonatomic, strong) MCLspStatusField *problemsLabel;
+// The file on show's encoding when it is not plain UTF-8 ("Windows-1252",
+// "UTF-16 LE", "UTF-8 with BOM"); hidden otherwise (StatusBar).
+@property(nonatomic, strong) NSTextField *encodingLabel;
 @property(nonatomic, strong) MCInstallBar *installBar;     // "No Python language server..."
 @property(nonatomic, strong) MCGitPanel *gitPanel;    // Source Control, in the sidebar's place
 @property(nonatomic, assign) BOOL gitPanelVisible;

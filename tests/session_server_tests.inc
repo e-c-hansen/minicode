@@ -327,6 +327,39 @@ static void testSessionServer() {
         }
     }
 
+    GROUP("hostserver:host-gone");
+    {
+        // The host ending under a renderer (killed, or its lifetime): the
+        // link closes and the client hears it (HostLink::connect), so its
+        // waits return at once instead of each waiting out its timeout,
+        // nothing more is sent, and ids already given keep coming.
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        SocketRenderer a;
+        CHECK(a.attach(rig.path(), "a"));
+        if (a.client) {
+            CHECK(a.client->settle());
+            const Shared::DocId d = a.client->newId();
+            a.openDoc(d, u"kept\n");
+            a.mirror.caret = 4;
+            a.mirror.type(u"!");
+            CHECK(a.client->settle() && a.client->hostDocument(d).text == u"kept!\n");
+            CHECK(!a.client->lost());
+            rig.stop();   // the host ends: its connections close
+            CHECK(waitUntil([&] { return a.client->lost(); }, 5000));
+            const double t0 = nowMs();
+            CHECK(!a.client->settle(10000));
+            CHECK(a.client->undo(d, false) == Shared::Outcome::Nothing);
+            CHECK(!a.client->undoInfo(d).canUndo);
+            CHECK(a.client->sessionState().isNull());
+            a.mirror.type(u"?");   // recorded, and dropped
+            CHECK(!a.client->settle(10000));
+            CHECK(nowMs() - t0 < 2000);
+            CHECK(a.client->newId() == d + 1);
+            a.client->dispatch();   // what the wake queued: nothing to do
+        }
+    }
+
     GROUP("hostserver:terminals-across-detach");
     {
         ServerRig rig;

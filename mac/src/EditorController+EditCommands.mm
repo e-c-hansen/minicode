@@ -253,9 +253,12 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
     if (there && there != old && ![self closeTabEverywhere:there prompt:YES]) return NO;
     if (_activeTab != old) [self activateTab:old];
     NSString *text = self.textView.editable ? [self.textView.string copy] : (self.sourceText ?: @"");
-    // In the old file's encoding, as VS Code's Save As keeps it.
+    // In the old file's encoding, as VS Code's Save As keeps it (UTF-8
+    // for a Windows-1252 file that now holds what that cannot store).
     std::string bytes, error;
-    if (!MCEncodeFileText(text, old.encoding, old.bom, &bytes, &error) ||
+    NSString *unheld = nil;
+    const MCTextEncoding encoding = MCEncodingToWrite(text, old.encoding, &unheld);
+    if (!MCEncodeFileText(text, encoding, encoding == old.encoding && old.bom, &bytes, &error) ||
         !FolderSearch::writeFileAtomically(path.fileSystemRepresentation, bytes, &error)) {
         NSAlert *a = [NSAlert new];
         a.messageText = [NSString stringWithFormat:@"“%@” could not be saved.", path.lastPathComponent];
@@ -268,7 +271,10 @@ NSString *NSOf(const std::string &s) { return [NSString stringWithUTF8String:s.c
         old.dirty = NO;   // what it held is in the new file
         [self closeTab:old prompt:NO];
     }
-    [self showStatusNote:[NSString stringWithFormat:@"Saved as %@", path.lastPathComponent]];
+    [self showStatusNote:encoding == old.encoding
+        ? [NSString stringWithFormat:@"Saved as %@", path.lastPathComponent]
+        : [NSString stringWithFormat:@"Saved as %@ in UTF-8: Windows-1252 cannot store “%@”",
+                                     path.lastPathComponent, unheld]];
     return YES;
 }
 

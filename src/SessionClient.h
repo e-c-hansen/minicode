@@ -27,6 +27,7 @@
 // microseconds. Pure C++17, no I/O.
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -81,9 +82,10 @@ public:
     // session. Before connect().
     void setReadOnly(bool on) { readOnly_ = on; }
     // A guest (a browser's view that may edit, SessionWeb.h): its documents
-    // are views (view()), as a reader's, but it may edit and undo them and
-    // type into the terminals it attached to. Said in its Hello. Before
-    // connect().
+    // are views (view()), as a reader's, but it may edit and undo them,
+    // type into the terminals it attached to and say its view's size for
+    // them (resizeTerminal: the pty takes it only while the guest is the
+    // one that typed last). Said in its Hello. Before connect().
     void setGuest(bool on) { guest_ = on; }
     Model::Unit unit() const { return unit_; }
 
@@ -115,6 +117,13 @@ public:
     // (dispatch()ed). False when the host did not answer in time, even
     // while other messages keep coming.
     bool settle(int timeoutMs = 10000);
+    // The host is gone (its socket closed, HostLink's `closed`): nothing is
+    // sent from now on, and every wait (settle, undo, the queries, newId)
+    // returns at once once what had arrived is taken, so a renderer whose
+    // host went neither hangs nor waits out a timeout per call. Any thread;
+    // `wake` is called, so the renderer dispatches and can see it (lost()).
+    void hostLost();
+    bool lost() const { return lost_.load(); }
 
     // ---- documents
     // `text8` is the mirror's text as it starts; the host's copy starts as
@@ -282,6 +291,7 @@ private:
     // Requests whose wait timed out: their answers are dropped on arrival.
     std::set<std::uint64_t> abandoned_;
     std::vector<std::string> errors_;
+    std::atomic<bool> lost_{false};
 
     std::mutex mu_;
     std::condition_variable cv_;

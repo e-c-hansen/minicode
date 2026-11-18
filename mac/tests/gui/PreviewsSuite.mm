@@ -323,10 +323,15 @@ MC_GUI_SUITE(previews) {
         [c saveCurrentFile:nil];
         GCHECK([[NSData dataWithContentsOfFile:Fixture(@"program.c")] isEqualToData:before]);
     });
-    MCGuiStep(@"text in another encoding goes to Quick Look too", ^{
+    // Until 2026-11-18 (C3b) text not in UTF-8 went to Quick Look; now it
+    // is read as Windows-1252 (FolderSearch::readsAsWindows1252).
+    MCGuiStep(@"text in another encoding opens as text, read as Windows-1252", ^{
         EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"latin1.txt")]);
-        GCHECK_EQ_STR(ActiveKind(c), @"quicklook");
+        GCHECK_EQ_STR(ActiveKind(c), @"text");
+        GCHECK(EditorText(c).editable);
+        GCHECK_EQ_STR(EditorText(c).string, @"caf\u00E9 cr\u00E8me br\u00FBl\u00E9e\n");
+        GCHECK_EQ_STR([[c valueForKey:@"encodingLabel"] stringValue], @"Windows-1252");
     });
     MCGuiStep(@"a text file still opens as text, and the slot is given back", ^{
         EditorController *c = MCGuiController();

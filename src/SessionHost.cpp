@@ -70,6 +70,10 @@ bool Host::refusedFromViewer(ClientId c, const Message& m) const {
         return !m.ops.empty() || m.step.id || m.flag;
     case Kind::DocUndo:
     case Kind::TermInput:
+    // A guest's view size: the pty takes it only while the guest is the
+    // one that typed last (Host::sizer), so a narrow page shrinks nothing
+    // until someone types there.
+    case Kind::TermResize:
         return !guest;
     default: return true;
     }

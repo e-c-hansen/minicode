@@ -74,6 +74,7 @@
 #include <libproc.h>
 #include <algorithm>
 #include <atomic>
+#include <deque>
 #include <map>
 #include <memory>
 #include <signal.h>
@@ -614,6 +615,14 @@ struct MCHostTermListener : Shared::Client::TermListener {
     std::unique_ptr<struct MCHostTermListener> _hostListener;
     std::string _hostInput;      // this run-loop turn's input, sent as one write
     BOOL _hostInputQueued;
+    // The pty's size is the host's (it follows whoever typed last: the
+    // core's Host::sizer). The screen takes each size TermShell says where
+    // it came in the output: `at` is the backlog's length then, and the
+    // drain resizes on reaching it, as the host's screen reflowed there.
+    struct MCPtySize { NSUInteger at; int cols, rows; };
+    std::deque<MCPtySize> _ptySizes;
+    int _ptyCols, _ptyRows;      // the last size the host said, 0 none
+    NSPoint _gridPan;            // the part of a grid larger than the view shown
     pid_t _shellPid;             // 0 when no shell
     int _generation;             // bumps per shell, so stale output is ignored
     NSDate *_shellStarted;
@@ -784,7 +793,10 @@ struct MCHostTermListener : Shared::Client::TermListener {
     self.secureInput.placeholderString = @"Hidden input (the program turned echo off)";
     self.secureInput.hidden = YES;
 
-    // The cell grid for full-screen programs, over everything else.
+    // The cell grid for full-screen programs, over everything else. On the
+    // host it can be larger than this view (placeGrid), and is clipped
+    // here: views clip by default before macOS 14, and not since.
+    if (@available(macOS 14, *)) self.clipsToBounds = YES;
     self.grid = [[TerminalGridView alloc] initWithFrame:self.bounds];
     self.grid.screen = &_screen;
     self.grid.hidden = YES;
@@ -917,7 +929,7 @@ struct MCHostTermListener : Shared::Client::TermListener {
     self.prompt.frame = NSMakeRect(6, field.origin.y, promptW, field.size.height);
     self.input.frame = field;
     self.secureInput.frame = field;
-    self.grid.frame = self.bounds;
+    [self placeGrid];
     if (self.findBar) {
         NSSize size = [MCTerminalFindBar preferredSize];
         CGFloat w = MIN(size.width, MAX(0, W - 16));
@@ -2163,6 +2175,8 @@ static BOOL MCIsOtherShell(pid_t pid) {
     }
     _shellPid = 0;
     _master = -1;
+    _ptySizes.clear();   // the backlog they were placed in is gone
+    _ptyCols = _ptyRows = 0;
     [self updateGridHiddenInput];   // no shell, nothing hidden
 }
 
@@ -2191,14 +2205,60 @@ static BOOL MCIsOtherShell(pid_t pid) {
     ws.ws_ypixel = (unsigned short)(ws.ws_row * cell.height);
     if (ws.ws_col == _winsize.ws_col && ws.ws_row == _winsize.ws_row) return;
     _winsize = ws;
-    if (self.grid.screen) [self.grid resizeScreenToCols:ws.ws_col rows:ws.ws_row];
-    else _screen.resize(ws.ws_col, ws.ws_row);
-    [self.grid screenChanged];
-    if (_onHost) {
-        if (_hostTerm) MCSessionClient().resizeTerminal(_hostTerm, ws.ws_col, ws.ws_row);
-    } else if (_master >= 0) {
-        ioctl(_master, TIOCSWINSZ, &_winsize);
+    if (_onHost && _hostTerm) {
+        // The view's size, said to the host: the pty takes it while this
+        // window is the one that typed last (or opened it, before anyone
+        // typed), and the screen follows the pty's size from TermShell
+        // (hostShell:), never this view's, so another screen's program is
+        // not reflowed to fit here.
+        MCSessionClient().resizeTerminal(_hostTerm, ws.ws_col, ws.ws_row);
+        [self placeGrid];
+        return;
     }
+    [self resizeScreenToCols:ws.ws_col rows:ws.ws_row];
+    if (_master >= 0) ioctl(_master, TIOCSWINSZ, &_winsize);
+}
+
+- (void)resizeScreenToCols:(int)cols rows:(int)rows {
+    if (cols != _screen.cols() || rows != _screen.rows()) {
+        if (self.grid.screen) [self.grid resizeScreenToCols:cols rows:rows];
+        else _screen.resize(cols, rows);
+    }
+    [self.grid screenChanged];
+    [self placeGrid];
+}
+
+// The grid at the screen's size inside this view: as large as the view, or
+// larger when the pty is (another screen sized it), then clipped here with
+// the cursor kept in sight, as tmux pans; a smaller pty is drawn at the top
+// left with the rest empty. Off the host the screen is the view's size.
+- (void)placeGrid {
+    TerminalGridView *grid = self.grid;
+    if (!grid) return;
+    const NSRect b = self.bounds;
+    if (!_onHost) {
+        if (!NSEqualRects(grid.frame, b)) grid.frame = b;
+        return;
+    }
+    const NSSize cs = [TerminalGridView cellSize];
+    const CGFloat pad = [TerminalGridView padding];
+    const CGFloat W = MAX(NSWidth(b), 2 * pad + _screen.cols() * cs.width);
+    const CGFloat H = MAX(NSHeight(b), 2 * pad + _screen.rows() * cs.height);
+    NSPoint pan = _gridPan;
+    if (grid.scrollOffset == 0) {   // scrolled back, the view stays where it is
+        const CGFloat y0 = pad + _screen.cursorRow() * cs.height, y1 = y0 + cs.height;
+        const CGFloat x0 = pad + _screen.cursorCol() * cs.width, x1 = x0 + cs.width;
+        if (y1 + pad > pan.y + NSHeight(b)) pan.y = y1 + pad - NSHeight(b);
+        if (y0 - pad < pan.y) pan.y = y0 - pad;
+        if (x1 + pad > pan.x + NSWidth(b)) pan.x = x1 + pad - NSWidth(b);
+        if (x0 - pad < pan.x) pan.x = x0 - pad;
+    }
+    pan.x = MAX(0, MIN(pan.x, W - NSWidth(b)));
+    pan.y = MAX(0, MIN(pan.y, H - NSHeight(b)));
+    _gridPan = pan;
+    // This view is not flipped: the grid's top edge sits pan.y above ours.
+    const NSRect f = NSMakeRect(-pan.x, NSHeight(b) + pan.y - H, W, H);
+    if (!NSEqualRects(grid.frame, f)) grid.frame = f;
 }
 
 // What BROWSER names in every terminal (resources/mutible-browser.js, run
@@ -2516,6 +2576,20 @@ static NSString *MCBrowserHelperPath(void) {
     [_pty send:[NSData dataWithBytes:bytes length:length]];
 }
 
+// The screen's answers to a program's queries (DA, DSR, OSC colors): on the
+// host they go apart from the keys, marked as answers (TermInput flag 1),
+// which the host writes but does not count as typing, so they never move
+// the pty's size to this window. Keys sent before them go first.
+- (void)sendReplies:(const std::string &)replies {
+    if (_onHost) {
+        if (!_hostTerm) return;
+        [self flushHostInput];
+        MCSessionClient().terminalInput(_hostTerm, replies, true);
+        return;
+    }
+    [self sendBytes:replies.data() length:replies.size()];
+}
+
 - (void)flushHostInput {
     _hostInputQueued = NO;
     if (_hostTerm && !_hostInput.empty()) MCSessionClient().terminalInput(_hostTerm, std::move(_hostInput));
@@ -2579,6 +2653,13 @@ static NSString *MCBrowserHelperPath(void) {
 - (void)hostShell:(Shared::TermId)term state:(const Shared::TermShell &)shell {
     if (term != _hostTerm) return;
     _hostShell = shell;
+    if (shell.cols > 0 && shell.rows > 0 && (shell.cols != _ptyCols || shell.rows != _ptyRows)) {
+        // Where the host's screen reflowed: after what came before it.
+        _ptyCols = shell.cols;
+        _ptyRows = shell.rows;
+        _ptySizes.push_back({_backlog ? _backlog.length : 0, shell.cols, shell.rows});
+        [self scheduleDrain];
+    }
     [self updateGridHiddenInput];
     if (_pendingCommands.count || _pendingTyped) [self flushPendingInput];
 }
@@ -2607,6 +2688,7 @@ static NSString *MCBrowserHelperPath(void) {
 // handle events before the next slice. A whole slice is drawn once.
 - (void)drainBacklog {
     _drainScheduled = NO;
+    [self takePtySizes];
     NSUInteger total = _backlog.length;
     if (total <= _backlogStart) return;
     CFTimeInterval start = CACurrentMediaTime();
@@ -2620,11 +2702,14 @@ static NSString *MCBrowserHelperPath(void) {
     if ([self ptyOpen]) _screen.setRawTty([self ptySignalsOff]);
     while (_backlogStart < total) {
         NSUInteger n = MIN((NSUInteger)kSliceBytes, total - _backlogStart);
+        if (!_ptySizes.empty() && _ptySizes.front().at > _backlogStart)
+            n = MIN(n, _ptySizes.front().at - _backlogStart);   // up to the next size
         [self receive:[NSData dataWithBytesNoCopy:(void *)(bytes + _backlogStart) length:n
                                      freeWhenDone:NO]
            generation:generation];
         if (_backlog == nil || generation != _generation) return;   // the shell went
         _backlogStart += n;
+        [self takePtySizes];
         // A turn ends between frames where it can: in the middle of a
         // synchronized frame (mode 2026) parsing goes on a while longer,
         // since the view will not show the screen until the frame ends.
@@ -2646,6 +2731,7 @@ static NSString *MCBrowserHelperPath(void) {
     } else {
         if (_backlogStart > (256u << 10)) {   // drop what is parsed, now and then
             [_backlog replaceBytesInRange:NSMakeRange(0, _backlogStart) withBytes:NULL length:0];
+            for (MCPtySize &z : _ptySizes) z.at -= MIN(z.at, _backlogStart);
             _backlogStart = 0;
         }
         if (!_drainScheduled) {
@@ -2656,11 +2742,29 @@ static NSString *MCBrowserHelperPath(void) {
     }
 }
 
+// The pty's sizes the parsed output has reached: the screen reflows to each.
+- (void)takePtySizes {
+    BOOL resized = NO;
+    while (!_ptySizes.empty() && _ptySizes.front().at <= _backlogStart) {
+        const MCPtySize z = _ptySizes.front();
+        _ptySizes.pop_front();
+        if (z.cols != _screen.cols() || z.rows != _screen.rows()) {
+            if (self.grid.screen) [self.grid resizeScreenToCols:z.cols rows:z.rows];
+            else _screen.resize(z.cols, z.rows);
+            resized = YES;
+        }
+    }
+    if (resized) {
+        [self.grid screenChanged];
+        [self placeGrid];
+    }
+}
+
 - (void)receive:(NSData *)data generation:(int)generation {
     if (generation != _generation) return;
     _screen.feed((const char *)data.bytes, data.length);
     std::string replies = _screen.takeReplies();   // e.g. cursor position
-    if (!replies.empty()) [self sendBytes:replies.data() length:replies.size()];
+    if (!replies.empty()) [self sendReplies:replies];
     auto events = _stream.feed((const char *)data.bytes, data.length);
     if (!_lineMode) {
         [self receiveGridEvents:events];
@@ -2784,6 +2888,7 @@ static NSString *MCBrowserHelperPath(void) {
         }
     }
     [self.grid screenChanged];
+    if (_onHost) [self placeGrid];   // a pty larger than the view follows the cursor
     [self updateGridHiddenInput];
     // What waited for the prompt goes in once ZLE reads input, unless a
     // program has the screen or the terminal.

@@ -82,7 +82,7 @@ static BOOL MCReadsAsWindows1252(const std::string &path) {
     if (FolderSearch::readFileStable(path, FolderSearchOptions().maxFileSize, &bytes, &st) !=
         FolderSearch::ReadStatus::Ok)
         return NO;
-    return !memchr(bytes.data(), 0, bytes.size()) && !FolderSearch::isValidUtf8(bytes);
+    return FolderSearch::readsAsWindows1252(bytes);
 }
 
 // Replace in Folder rewrites a file whole in memory, so it leaves a file

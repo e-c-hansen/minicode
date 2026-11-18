@@ -69,10 +69,13 @@ struct PageTerm {
     std::vector<Json> hist, screen;
     Json cursor;
     int snapshots = 0;
+    int ptyCols = 0, ptyRows = 0;   // as the last whole terminal said
     void take(const Json& m) {
         const std::string t = m["t"].asString();
         if (t == "term") {
             id = (Shared::TermId)m["id"].asInt();
+            ptyCols = (int)m["cols"].asInt();
+            ptyRows = (int)m["rows"].asInt();
             hist = m["hist"].elements();
             screen = m["screen"].elements();
             cursor = m["cursor"];
@@ -669,7 +672,8 @@ static void testSessionWeb() {
     GROUP("sessionweb:guest");
     {
         // A browser's view that may edit: its seats are views, as a
-        // reader's, and it may edit, undo and type, nothing more.
+        // reader's, and it may edit, undo, type and say its terminal
+        // pane's size, nothing more.
         std::map<Shared::ClientId, std::vector<Message>> got;
         Shared::Host host([&](Shared::ClientId to, Message&& m) { got[to].push_back(std::move(m)); });
         auto say = [&](Shared::ClientId c, Message m) { host.handle(c, std::move(m)); };
@@ -720,7 +724,7 @@ static void testSessionWeb() {
         const int errors = kinds(g, Shared::Kind::Error);
         for (Shared::Kind k : {Shared::Kind::DocReset, Shared::Kind::DocSaved, Shared::Kind::DocForget,
                                Shared::Kind::WindowTabs, Shared::Kind::WindowClose,
-                               Shared::Kind::TermOpen, Shared::Kind::TermResize, Shared::Kind::TermClose}) {
+                               Shared::Kind::TermOpen, Shared::Kind::TermClose}) {
             Message x;
             x.kind = k;
             x.doc = 1;
@@ -738,7 +742,17 @@ static void testSessionWeb() {
         outside.flag = 1;
         outside.ops = {Ot::Op{0, 0, u"Y"}};
         say(g, outside);
-        CHECK(kinds(g, Shared::Kind::Error) == errors + 9);
+        CHECK(kinds(g, Shared::Kind::Error) == errors + 8);
+        // Its view's size for a terminal is let through: the pty takes it
+        // only while the guest is the one that typed there last
+        // (sessionweb:term-size, term:size).
+        Message size;
+        size.kind = Shared::Kind::TermResize;
+        size.term = 1;
+        size.cols = 30;
+        size.rows = 10;
+        say(g, size);
+        CHECK(kinds(g, Shared::Kind::Error) == errors + 8);
         CHECK(host.text(1) == u"abc" && host.state()["windows"].size() == 0 && host.terminalCount() == 0);
         // Its seat going keeps the document.
         Message c;
@@ -1397,6 +1411,129 @@ static void testSessionWeb() {
         webThread.join();
         ro.stop();
         roThread.join();
+    }
+
+    // A terminal's size follows the page that types (tmux's `window-size
+    // latest`, Host::sizer): the server is one renderer for every page, so
+    // it tells the host the size of the page that typed last. A narrow page
+    // that only looks shrinks nothing; the page that types takes the pty to
+    // its size, the editor's renderer typing takes it back, and an answer
+    // to a query (TermInput flag 1) is not typing. The pages follow the
+    // pty's size from TermShell, with the state looked at only once.
+    GROUP("sessionweb:term-size");
+    {
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        SocketRenderer a;
+        CHECK(a.attach(rig.path(), "editor"));
+        const std::string home = scratchFolder();
+        auto ptySize = [&] {
+            std::pair<int, int> z{0, 0};
+            rig.server->host().inspect([&](const Shared::Host& h) {
+                if (const TerminalScreen* sc = h.screen(7)) z = {sc->cols(), sc->rows()};
+            });
+            return z;
+        };
+        auto sized = [&](int cols, int rows) {
+            const bool ok = waitUntil([&] { return ptySize() == std::make_pair(cols, rows); });
+            if (!ok) std::printf("  term-size: the pty is %dx%d, not %dx%d\n", ptySize().first,
+                                 ptySize().second, cols, rows);
+            return ok;
+        };
+        if (a.client) {
+            Shared::TermSpec spec = shellSpec(home, {"sh"});
+            spec.cols = 80;
+            spec.rows = 24;
+            a.client->openTerminal(7, spec, &a);
+            CHECK(a.wait([&] { return a.pid > 0 && a.out.find("$ ") != std::string::npos; }));
+        }
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = rig.path();
+        o.folder = rig.proj;
+        o.pollMs = 600000;   // the state once: sizes come by TermShell alone
+        o.editable = true;
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        if (a.client && web.port() > 0) {
+            // Two pages on the one view: a phone's and a desktop's.
+            PageClient p1, p2;
+            PageTerm t1, t2;
+            Json s1, s2;
+            auto take1 = [&](const Json& m) {
+                if (m["t"].asString() == "state") s1 = m;
+                t1.take(m);
+            };
+            auto take2 = [&](const Json& m) {
+                if (m["t"].asString() == "state") s2 = m;
+                t2.take(m);
+            };
+            CHECK(p1.upgrade(web.port(), "/ws?t=" + web.token()));
+            CHECK(p2.upgrade(web.port(), "/ws?t=" + web.token()));
+            CHECK(p1.pump(take1, [&] { return s1.isObject(); }));
+            CHECK(p2.pump(take2, [&] { return s2.isObject(); }));
+            p1.sendText("{\"t\":\"show\",\"doc\":0,\"term\":7}");
+            p2.sendText("{\"t\":\"show\",\"doc\":0,\"term\":7}");
+            CHECK(p1.pump(take1, [&] { return t1.snapshots >= 1; }));
+            CHECK(p2.pump(take2, [&] { return t2.snapshots >= 1; }));
+            CHECK(t1.ptyCols == 80 && t1.ptyRows == 24);
+            p1.sendText("{\"t\":\"tsize\",\"term\":7,\"cols\":30,\"rows\":12}");
+            p2.sendText("{\"t\":\"tsize\",\"term\":7,\"cols\":100,\"rows\":30}");
+            // Negative: nobody typed in a page, so the opener's size holds
+            // (time is the condition: the sizes had this long to arrive).
+            p1.pump(take1, [] { return false; }, 300);
+            CHECK(ptySize() == std::make_pair(80, 24));
+
+            // The phone's page types: the pty takes its size before the
+            // keys, and both pages get the terminal whole at that size.
+            p1.sendText("{\"t\":\"ttext\",\"term\":7,\"text\":\"stty size\",\"mods\":0}");
+            p1.sendText("{\"t\":\"tkey\",\"term\":7,\"key\":\"Enter\",\"mods\":0}");
+            CHECK(sized(30, 12));
+            CHECK(a.wait([&] { return a.out.find("12 30\r\n") != std::string::npos; }));
+            CHECK(p1.pump(take1, [&] { return t1.ptyCols == 30 && t1.ptyRows == 12; }));
+            CHECK(p2.pump(take2, [&] { return t2.ptyCols == 30 && t2.ptyRows == 12; }));
+            CHECK(p1.pump(take1, [&] { return t1.all().find("12 30") != std::string::npos; }));
+            CHECK(t1.screen.size() == 12);
+
+            // The desktop's page resizing while the phone's typed last:
+            // kept, not taken (time is the condition again).
+            p2.sendText("{\"t\":\"tsize\",\"term\":7,\"cols\":101,\"rows\":31}");
+            p2.pump(take2, [] { return false; }, 300);
+            CHECK(ptySize() == std::make_pair(30, 12));
+            // The phone's page resizing while it is the typist: taken.
+            p1.sendText("{\"t\":\"tsize\",\"term\":7,\"cols\":32,\"rows\":12}");
+            CHECK(sized(32, 12));
+
+            // The desktop's page types: its size.
+            p2.sendText("{\"t\":\"ttext\",\"term\":7,\"text\":\"stty size\",\"mods\":0}");
+            p2.sendText("{\"t\":\"tkey\",\"term\":7,\"key\":\"Enter\",\"mods\":0}");
+            CHECK(sized(101, 31));
+            CHECK(a.wait([&] { return a.out.find("31 101\r\n") != std::string::npos; }));
+            CHECK(p1.pump(take1, [&] { return t1.ptyCols == 101 && t1.ptyRows == 31; }));
+
+            // The editor's renderer types: the opener's size again.
+            a.client->terminalInput(7, "stty size\n");
+            CHECK(sized(80, 24));
+            CHECK(a.wait([&] { return a.out.find("24 80\r\n") != std::string::npos; }));
+            CHECK(p2.pump(take2, [&] { return t2.ptyCols == 80 && t2.ptyRows == 24; }));
+            CHECK(p2.pump(take2, [&] { return t2.all().find("24 80") != std::string::npos; }));
+
+            // The phone's page types again: its size, said again.
+            p1.sendText("{\"t\":\"ttext\",\"term\":7,\"text\":\" \",\"mods\":0}");
+            CHECK(sized(32, 12));
+            // An answer to a query from the editor's emulator is not
+            // typing: the phone's size stays.
+            a.client->terminalInput(7, "\x15", true);   // Control U: the line goes, harmless
+            CHECK(a.client->settle());
+            CHECK(ptySize() == std::make_pair(32, 12));
+            p1.close();
+            p2.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0; }));
+            a.client->closeTerminal(7);
+        }
+        web.stop();
+        webThread.join();
     }
 
     // One window's view sees one window's terminals (R5): the Mac's window

@@ -6233,7 +6233,40 @@ ThinkPad: the label row's look under GNOME, real clicks on the chips'
 × at the sidebar's narrowest, and the portal's folder chooser opening in
 the window's folder.
 
-### 99. The mutible desktop: mutible as the whole desktop under cage (done, November 2026)
+### 99. Windows attach to the folder's headless session host (stage 6, step 1; November 2026)
+
+The first step of stage 6's GTK half (`../docs/notes/session-host.md`, "GTK
+attaches (stage 6, step 1)", which has the details and step 2's list).
+`SessionLink` is one `SessionLink::Link` per folder now, each with its own
+client, instead of one process-wide client and in-process host.
+
+- **One link per folder** (`SessionLink::forFolder`, by resolved path),
+  shared by the windows on it. The window holds it (`App::link`, set in
+  `newWindow` before the editor and again in `openFolder`), the editor
+  opens new documents on it (`Editor(link)`, `setSessionLink`), and each
+  `Document` and `Terminal` keeps the link it was made with; the LSP sync
+  follows each document's host text through its own link. The
+  process-wide `SessionLink::client()` is gone.
+- **Where the host is**: `MUTIBLE_HOST=socket|inprocess|loopback`, else
+  `editor.session-host = headless` (a third value of the key; off and on
+  both mean in-process here) for the headless host, which is found by its
+  socket or started as `/proc/self/exe host --folder DIR`, detached
+  (setsid, a second fork, `/dev/null` and a log in the state folder), and
+  waited for up to 5 s. Anything failing: the in-process host for that
+  folder, with one line on stderr. The default stays in-process until
+  step 2.
+- **The host going** is said once on stderr, in the status bar and in each
+  of its terminals; the client then waits for nothing
+  (`Client::hostLost`), so undo and the like neither hang nor time out.
+  Files stay open and save; their undo is gone; terminals end. No
+  reconnect yet.
+- **Quitting** detaches (`SessionLink::detachAll`); closing a window is as
+  before (documents closed on the host, terminals asked about and ended).
+- **Checks**: the harness pins `MUTIBLE_HOST=inprocess` (Wrapper.cpp) and
+  takes the CLI subcommands in its own `main`, since the host a window
+  starts is `mutible-guitest host`. `host_link` (the notes say what it
+  checks); `hostserver:host-gone` and the settings checks in `make test`.
+### 100. The mutible desktop: mutible as the whole desktop under cage (done, November 2026)
 
 `desktop/README.md` is the guide; `desktop/mutible-desktop-setup.sh` turns
 a minimal Ubuntu 26.04 into it and undoes it; `src/DesktopMode.{h,cpp}` is

@@ -1041,13 +1041,17 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
         MC_KEY("editor.session-host", Word, false,
                const std::string w = lower(v);
                bool on = false;
+               if (w == "headless") {
+                   s.sessionHostMode_ = SessionHostMode::Headless;
+                   return true;
+               }
                if (w == "on") on = true;
                else if (w == "off") on = false;
                else if (!parseBool(w, on)) {
-                   e = "'" + v + "' is not on or off";
+                   e = "'" + v + "' is not on, off or headless";
                    return false;
                }
-               s.sessionHost_ = on;
+               s.sessionHostMode_ = on ? SessionHostMode::On : SessionHostMode::Off;
                return true;),
         MC_KEY("editor.large-file-optimizations", Word, false,
                const std::string w = lower(v);
@@ -1733,6 +1737,11 @@ const char* Settings::defaultFileText() {
 # lets a second screen see and use one session (macOS; on Linux they always
 # are). Off, the editor and the terminals keep them themselves, as before.
 # Files and terminals opened after a change follow it.
+# Headless (Linux): the host is a separate `mutible host` process for each
+# folder, which the app finds, or starts, and attaches to. It ends by itself
+# once no window has used it for 10 minutes and nothing in it is unsaved or
+# running. On Linux, off and on both keep the host inside the app; macOS
+# takes headless as on for now. Windows opened after a change follow it.
 # editor.session-host = off
 # A file over 20 MB or 300,000 lines opens in large-file mode, as in VS Code:
 # no syntax colors, folding, bracket boxes or language server. The status
