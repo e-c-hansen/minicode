@@ -23,7 +23,9 @@
 #import "TerminalAttention.h"
 #import "ClaudeHooksOffer.h"
 #import "RecentFolders.h"
+#import "Migration.h"
 #include "ProcessEnv.h"
+#include "Rename.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, MCRestarting, MCControlAppHost>
 @property(nonatomic, strong) NSMutableArray<EditorController *> *controllers;
@@ -2116,11 +2118,15 @@ static void BuildMenu(void) {
 
 int main(int argc, const char *argv[]) {
     (void)argc; (void)argv;   // args are read via NSProcessInfo
+    // The old names of the environment's variables, still read (src/Rename.h).
+    Rename::adoptOldEnvironment();
     // The environment's one read of environ before threads start programs
     // (src/ProcessEnv.h): every later reader takes this snapshot.
     ProcessEnv::refresh();
     @autoreleasepool {
         if (MCDemoListScenes()) return 0;   // MINICODE_DEMO=list
+        // The first launch since the rename copies what the old name kept.
+        MCMigrateFromOldName();
         // A path on the command line (the minicode launcher, make run) is read
         // in applicationDidFinishLaunching. Left to AppKit, it would also be
         // taken as a file to open and handed on a second time.

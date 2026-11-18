@@ -227,7 +227,7 @@
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.minicode.editor</string>
+	<string>ai.ible.mutible</string>
 	<key>CFBundleName</key>
 	<string>MiniCode</string>
 	<key>CFBundlePackageType</key>
