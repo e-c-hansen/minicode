@@ -11,6 +11,7 @@
 // the close question's Keep Unsaved on a headless host, and Reconnect when
 // that host goes.
 #import "EditorController+Private.h"
+#import "SessionBrowser.h"
 #import "SessionLink.h"
 #import "SessionWindow.h"
 #import "SourceStorage.h"
@@ -201,8 +202,12 @@ static char kSessionWindowKey;
         return;
     }
     const std::string folder = _root.path.fileSystemRepresentation ?: "";
+    const uint64_t was = w.windowId;
     [w moveTo:[[MCSessionLinkRef alloc] initWithLink:MCSession::forFolder(folder)] folder:_root.path];
     [self attachSessionHeld];
+    // The browser's page serves one window id on one host: a new one starts
+    // with the next Show.
+    if (w.windowId != was) [self.sessionBrowser stop];
 }
 
 // ---------------------------------------------------- a window closing
@@ -323,6 +328,7 @@ static char kSessionWindowKey;
     if (!w || _closing || w.link.link == link.link) return;
     if (!w.link.link->lost() || w.link.link->folder() != folder) return;
     [w moveTo:link folder:w.folder];
+    [self.sessionBrowser stop];   // its host went: the next Show serves the new one
     for (MCTab *t in [self tabs]) {
         MCSessionDoc *d = t.session;
         if (!d || !d.link.link->lost() || d.link.link->folder() != folder) continue;

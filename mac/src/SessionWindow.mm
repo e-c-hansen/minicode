@@ -48,6 +48,12 @@
 }
 
 - (void)moveTo:(MCSessionLinkRef *)link folder:(NSString *)folder {
+    _heldTerms.clear();
+    if (link.link == _l && !_l->lost()) {   // the same host (the process's): the same window
+        _folder = [folder copy] ?: @"";
+        _detached = NO;
+        return;
+    }
     _l->windowClosed(_windowId);
     _heldTerms.clear();
     [self useLink:link folder:folder];
