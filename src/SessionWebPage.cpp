@@ -1425,6 +1425,41 @@ body:not(.editable) #caret { display: none; }
     s.style.minWidth = m.cols + "ch";
     placeCursor(m.cursor);
     if (stick) $("term").scrollTop = $("term").scrollHeight;
+    sendTermSize();
+  }
+  // The cells this page's terminal pane holds, said to the server: the pty
+  // takes them only while this page is the one typing there (the server
+  // sends the size of the page that typed last), so a narrow page that
+  // only looks shrinks nothing. The terminal is drawn at the pty's size
+  // from "term", scrolled sideways when wider than the pane.
+  let sentSize = "";
+  function sendTermSize() {
+    if (!editable || !want.term || !ws || ws.readyState !== 1) return;
+    const t = $("term");
+    if (!t.clientWidth || !t.clientHeight) return;   // hidden
+    let probe = $("probe");
+    if (!probe) {
+      // A hundred cells in the terminal's font, in a box of no size, so
+      // it adds nothing to what the pane scrolls.
+      const hold = document.createElement("div");
+      hold.style.cssText = "position: absolute; width: 0; height: 0; overflow: hidden; visibility: hidden";
+      probe = document.createElement("span");
+      probe.id = "probe";
+      probe.style.cssText = "display: inline-block; white-space: pre; line-height: var(--lh)";
+      probe.textContent = "0".repeat(100);
+      hold.appendChild(probe);
+      t.appendChild(hold);
+    }
+    const box = probe.getBoundingClientRect(), cs = getComputedStyle(t);
+    if (!box.width || !box.height) return;
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const cols = Math.max(2, Math.floor((t.clientWidth - padX) / (box.width / 100)));
+    const rows = Math.max(1, Math.floor((t.clientHeight - padY) / box.height));
+    const text = JSON.stringify({ t: "tsize", term: want.term, cols: cols, rows: rows });
+    if (text === sentSize) return;
+    sentSize = text;
+    ws.send(text);
   }
   function onTermDelta(m) {
     if (m.id !== want.term || !termInfo) return;
@@ -1461,7 +1496,7 @@ body:not(.editable) #caret { display: none; }
   function connect() {
     const scheme = location.protocol === "https:" ? "wss://" : "ws://";
     ws = new WebSocket(scheme + location.host + "/ws?t=" + encodeURIComponent(token));
-    ws.onopen = () => { said = ""; banner(""); };
+    ws.onopen = () => { said = ""; sentSize = ""; banner(""); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       switch (m.t) {
@@ -1569,7 +1604,8 @@ body:not(.editable) #caret { display: none; }
     drawQueued = true;
     requestAnimationFrame(() => { drawQueued = false; drawSelection(); });
   });
-  window.addEventListener("resize", () => drawSelection());
+  window.addEventListener("resize", () => { drawSelection(); sendTermSize(); });
+  if (window.ResizeObserver) new ResizeObserver(() => sendTermSize()).observe($("term"));
   $("modebtn").addEventListener("click", () => {
     D.mode = D.mode === "page" ? "code" : "page";
     showMode();

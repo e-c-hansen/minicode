@@ -82,9 +82,10 @@ public:
     // session. Before connect().
     void setReadOnly(bool on) { readOnly_ = on; }
     // A guest (a browser's view that may edit, SessionWeb.h): its documents
-    // are views (view()), as a reader's, but it may edit and undo them and
-    // type into the terminals it attached to. Said in its Hello. Before
-    // connect().
+    // are views (view()), as a reader's, but it may edit and undo them,
+    // type into the terminals it attached to and say its view's size for
+    // them (resizeTerminal: the pty takes it only while the guest is the
+    // one that typed last). Said in its Hello. Before connect().
     void setGuest(bool on) { guest_ = on; }
     Model::Unit unit() const { return unit_; }
 

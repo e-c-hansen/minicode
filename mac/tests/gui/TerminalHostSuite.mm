@@ -13,11 +13,19 @@
 //     own.
 //   - A command the second client types (TermInput) runs in the Mac's
 //     terminal: its output on the Mac's screen, the marks seeing it end.
+//   - The size follows whoever typed last (the core's Host::sizer): the
+//     Mac types, the second client says a smaller size and nothing moves;
+//     it types and the pty, the host's screen and the Mac's grid take its
+//     size, the grid drawn at the top left of the larger view; the Mac
+//     types and its own size is back; the second's answer to a query
+//     (TermInput flag 1) moves nothing; a larger size the second types at
+//     is drawn clipped, the cursor in sight.
 //   - The second client leaving keeps the terminal going.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Terminal.h"
 #import "TerminalPanel.h"
+#import "TerminalGridView.h"
 #import "SessionLink.h"
 
 #include <memory>
@@ -62,8 +70,22 @@ struct SecondScreen : Shared::Client::TermListener {
     std::unique_ptr<Shared::Client> client;
     std::function<void()> letGo;
     SecondScreen second;
+    int macCols, macRows;   // the Mac's view, in cells
+    int smallCols, smallRows;   // the second's smaller view
 }
 @end
+
+// The pty's size as the host's state says it.
+static std::pair<int, int> MCHostTermSize(Shared::Client &client, unsigned long long term) {
+    const Json st = client.sessionState();
+    for (const Json &t : st["terminals"].elements())
+        if ((unsigned long long)t["term"].asInt() == term) return {(int)t["cols"].asInt(), (int)t["rows"].asInt()};
+    return {0, 0};
+}
+
+static TerminalScreen *MCGridScreen(TerminalView *term) {
+    return ((TerminalGridView *)[term valueForKey:@"grid"]).screen;
+}
 
 MC_GUI_SUITE(terminal_host) {
     MCTermHostState *s = [MCTermHostState new];
@@ -128,6 +150,93 @@ MC_GUI_SUITE(terminal_host) {
         GCHECK([s.term.lastCommandOutput hasPrefix:@"from-second-48"]);
         if (![s.term.lastCommandOutput hasPrefix:@"from-second-48"])
             MCGuiNote(@"last command output: %@", s.term.lastCommandOutput);
+    });
+
+    // ---- the size follows the typist
+    // The second typed last (above), with no size said: the Mac types now,
+    // so its size is the one a later size from the second must not move.
+    MCGuiStep(@"the Mac types again", ^{
+        [s.term runCommand:@"echo mac-typed"];
+    });
+    MCGuiWait(@"it ran", 10, ^BOOL {
+        return [[s.term recentText:20] containsString:@"\nmac-typed"] && s.term.atPrompt && !s.term.busy;
+    });
+    MCGuiStep(@"the second says a smaller size: nothing moves until it types", ^{
+        TerminalScreen *g = MCGridScreen(s.term);
+        s->macCols = g->cols();
+        s->macRows = g->rows();
+        s->smallCols = MAX(20, s->macCols / 2);
+        s->smallRows = MAX(4, s->macRows / 2);
+        GCHECK(s->smallCols < s->macCols && s->smallRows < s->macRows);
+        GCHECK(MCHostTermSize(*s->client, s.term.sessionTerminal) == std::make_pair(s->macCols, s->macRows));
+        s->client->resizeTerminal(s.term.sessionTerminal, s->smallCols, s->smallRows);
+        GCHECK(s->client->settle());
+        const auto z = MCHostTermSize(*s->client, s.term.sessionTerminal);
+        GCHECK(z == std::make_pair(s->macCols, s->macRows));
+        if (z != std::make_pair(s->macCols, s->macRows)) MCGuiNote(@"pty %dx%d", z.first, z.second);
+        s->client->terminalInput(s.term.sessionTerminal, "stty size\r");
+    });
+    MCGuiWait(@"the pty, the host and the Mac's grid take the second's size", 10, ^BOOL {
+        s->client->dispatch();
+        TerminalScreen *g = MCGridScreen(s.term);
+        NSString *line = [NSString stringWithFormat:@"\n%d %d", s->smallRows, s->smallCols];
+        return g->cols() == s->smallCols && g->rows() == s->smallRows &&
+               [[s.term recentText:20] containsString:line] && s.term.atPrompt && !s.term.busy;
+    });
+    MCGuiStep(@"the smaller grid is drawn at the top left of the Mac's view", ^{
+        TerminalGridView *grid = [s.term valueForKey:@"grid"];
+        GCHECK(NSEqualRects(grid.frame, s.term.bounds));
+        GCHECK(MCHostTermSize(*s->client, s.term.sessionTerminal) == std::make_pair(s->smallCols, s->smallRows));
+        [s.term runCommand:@"stty size"];   // the Mac types
+    });
+    MCGuiWait(@"the Mac's size is back", 10, ^BOOL {
+        TerminalScreen *g = MCGridScreen(s.term);
+        NSString *line = [NSString stringWithFormat:@"\n%d %d", s->macRows, s->macCols];
+        return g->cols() == s->macCols && g->rows() == s->macRows &&
+               [[s.term recentText:20] containsString:line] && s.term.atPrompt && !s.term.busy;
+    });
+    MCGuiStep(@"an answer to a query is not typing", ^{
+        // Control U at zsh's empty prompt: the line goes, nothing else.
+        s->client->terminalInput(s.term.sessionTerminal, "\x15", true);
+        GCHECK(s->client->settle());
+        GCHECK(MCHostTermSize(*s->client, s.term.sessionTerminal) == std::make_pair(s->macCols, s->macRows));
+        // A size larger than the Mac's view, and the second types there.
+        s->client->resizeTerminal(s.term.sessionTerminal, s->macCols + 40, s->macRows + 20);
+        s->client->terminalInput(s.term.sessionTerminal, "stty size\r");
+    });
+    MCGuiWait(@"the Mac's grid takes the larger size", 10, ^BOOL {
+        s->client->dispatch();
+        TerminalScreen *g = MCGridScreen(s.term);
+        NSString *line = [NSString stringWithFormat:@"\n%d %d", s->macRows + 20, s->macCols + 40];
+        return g->cols() == s->macCols + 40 && g->rows() == s->macRows + 20 &&
+               [[s.term recentText:20] containsString:line] && s.term.atPrompt && !s.term.busy;
+    });
+    MCGuiStep(@"it is clipped to the view, the cursor in sight", ^{
+        TerminalGridView *grid = [s.term valueForKey:@"grid"];
+        TerminalScreen *g = grid.screen;
+        const NSRect b = s.term.bounds, f = grid.frame;
+        GCHECK(NSWidth(f) > NSWidth(b) && NSHeight(f) > NSHeight(b));
+        // The cursor's cell, in the terminal view's coordinates.
+        const NSSize cs = [TerminalGridView cellSize];
+        const CGFloat pad = [TerminalGridView padding];
+        const NSRect cell = [s.term convertRect:NSMakeRect(pad + g->cursorCol() * cs.width,
+                                                           pad + g->cursorRow() * cs.height,
+                                                           cs.width, cs.height)
+                                       fromView:grid];
+        GCHECK(NSContainsRect(b, cell));
+        if (!NSContainsRect(b, cell))
+            MCGuiNote(@"cursor %@ outside %@ (grid %@)", NSStringFromRect(cell), NSStringFromRect(b),
+                      NSStringFromRect(f));
+        [s.term runCommand:@"echo mac-again"];   // the Mac types: its size
+    });
+    MCGuiWait(@"the Mac's size again", 10, ^BOOL {
+        TerminalScreen *g = MCGridScreen(s.term);
+        return g->cols() == s->macCols && g->rows() == s->macRows &&
+               [[s.term recentText:20] containsString:@"\nmac-again"] && s.term.atPrompt && !s.term.busy;
+    });
+    MCGuiStep(@"the grid fills the view again", ^{
+        TerminalGridView *grid = [s.term valueForKey:@"grid"];
+        GCHECK(NSEqualRects(grid.frame, s.term.bounds));
     });
 
     MCGuiStep(@"the second renderer leaves; the terminal goes on", ^{

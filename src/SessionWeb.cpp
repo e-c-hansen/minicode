@@ -765,7 +765,37 @@ TermView::TermView(TermId id, int cols, int rows)
     screen_.setScrollbackLimit(kHistoryLines * 2);
 }
 
-void TermView::feed(const std::string& bytes) { screen_.feed(bytes); }
+void TermView::feed(const std::string& bytes) {
+    replayPending_ = false;
+    replay_.clear();
+    screen_.feed(bytes);
+}
+
+void TermView::replay(const std::string& bytes) {
+    resize(screen_.cols(), screen_.rows());
+    screen_.feed(bytes);
+    replay_ = bytes;
+    replayPending_ = true;
+}
+
+void TermView::follow(int cols, int rows) {
+    cols = std::max(2, cols);
+    rows = std::max(1, rows);
+    if (replayPending_) {
+        // The replay was written for a screen of the host's size: a view
+        // made at a size the state guessed starts over at the true one.
+        replayPending_ = false;
+        if (cols != screen_.cols() || rows != screen_.rows()) {
+            resize(cols, rows);
+            screen_.feed(replay_);
+        }
+        replay_.clear();
+        return;
+    }
+    if (cols == screen_.cols() && rows == screen_.rows()) return;
+    screen_.resize(cols, rows);
+    fresh_ = true;
+}
 
 void TermView::resize(int cols, int rows) {
     screen_ = TerminalScreen(std::max(2, cols), std::max(1, rows));
@@ -863,6 +893,7 @@ struct Server::Conn {
     IdeLink::FrameReader frames{1 << 20};
     DocId doc = 0;
     TermId term = 0;
+    int termCols = 0, termRows = 0;   // its terminal pane's cells (tsize), 0 unsaid
     bool welcomed = false;
 };
 
@@ -890,6 +921,11 @@ struct Server::Session : Client::Listener, Client::TermListener {
     std::map<DocId, int> undoFor;
     // The tree's reads asked of the host: the request's page.
     std::map<std::uint64_t, int> reads;
+    // Per terminal, the page that typed into it last, and the size this
+    // renderer last told the host (TermResize): the pages share one
+    // renderer, so the host hears the typing page's size.
+    std::map<TermId, int> typist;
+    std::map<TermId, std::pair<int, int>> sized;
 
     void hostEdited(DocId d, const Ot::Ops& ops, int flag, const Selection* select) override {
         auto it = docs.find(d);
@@ -913,20 +949,23 @@ struct Server::Session : Client::Listener, Client::TermListener {
     void termOutput(TermId t, const std::string& bytes, long long, bool, bool replay) override {
         auto it = terms.find(t);
         if (it != terms.end()) {
-            if (replay) {
-                // A fresh copy of the host's screen: start over at its size.
-                const TerminalScreen& s = it->second->screen();
-                it->second->resize(s.cols(), s.rows());
-            }
-            it->second->feed(bytes);
+            // A replay is a fresh copy of the host's screen: started over.
+            if (replay) it->second->replay(bytes);
+            else it->second->feed(bytes);
         }
         if (!replay) client->ackTerminal(t, bytes.size());
         pending = true;
     }
+    // The pty's size follows whoever typed last (Host::sizer); TermShell
+    // says it where the host's screen reflowed, so the view reflows there
+    // too, and the pages get the terminal whole at the new size.
     void termShell(TermId t, const TermShell& s) override {
         shells[t] = s;
         auto it = terms.find(t);
-        if (it != terms.end()) it->second->setTitle(s.title);
+        if (it != terms.end()) {
+            it->second->setTitle(s.title);
+            if (s.cols > 0 && s.rows > 0) it->second->follow(s.cols, s.rows);
+        }
         pending = true;
     }
 };
@@ -1150,7 +1189,9 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     const std::string t = j["t"].asString();
     if (t == "show") {
         c.doc = (DocId)std::max<int64_t>(0, j["doc"].asInt());
-        c.term = (TermId)std::max<int64_t>(0, j["term"].asInt());
+        const TermId term = (TermId)std::max<int64_t>(0, j["term"].asInt());
+        if (term != c.term) c.termCols = c.termRows = 0;   // said again for the new one
+        c.term = term;
         showTo(c);
         return;
     }
@@ -1163,6 +1204,7 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     else if (t == "undo") onUndo(c, j);
     else if (t == "save") onSave(c, j);
     else if (t == "tkey" || t == "ttext" || t == "tpaste") onTermInput(c, t, j);
+    else if (t == "tsize") onTermSize(c, j);
     else if (t == "browse") onBrowse(c, j);
 }
 
@@ -1414,7 +1456,32 @@ void Server::onTermInput(Conn& c, const std::string& type, const Json& j) {
     } else {
         bytes = TerminalScreen::encodePaste(j["text"].asString(), sc.bracketedPaste());
     }
+    // The page that types sizes the pty: its size goes first, so the host
+    // resizes before it writes the keys (Host::sizer).
+    session_->typist[t] = c.id;
+    if (c.termCols > 0) sizeTerminal(t, c.termCols, c.termRows);
     session_->client->terminalInput(t, std::move(bytes));
+}
+
+// A page's terminal pane holds this many cells. Only a page that may type
+// says it, and the host hears it only from the page that typed there last:
+// a narrow page that only looks never shrinks the window's terminal.
+void Server::onTermSize(Conn& c, const Json& j) {
+    const TermId t = (TermId)std::max<int64_t>(0, j["term"].asInt());
+    if (!opt_.editable || !session_ || !t || t != c.term) return;
+    if (opt_.window && !session_->allowedTerms.count(t)) return;
+    if (!j["cols"].isNumber() || !j["rows"].isNumber()) return;
+    c.termCols = (int)std::clamp<int64_t>(j["cols"].asInt(), 2, kMaxTermCells);
+    c.termRows = (int)std::clamp<int64_t>(j["rows"].asInt(), 1, kMaxTermCells);
+    auto ty = session_->typist.find(t);
+    if (ty != session_->typist.end() && ty->second == c.id) sizeTerminal(t, c.termCols, c.termRows);
+}
+
+void Server::sizeTerminal(TermId t, int cols, int rows) {
+    auto& said = session_->sized[t];
+    if (said.first == cols && said.second == rows) return;
+    said = {cols, rows};
+    session_->client->resizeTerminal(t, cols, rows);
 }
 
 void Server::onList(Conn& c, const Json& j) {
@@ -1606,13 +1673,8 @@ void Server::lookAtState() {
         o.set("busy", Json(sh.busy));
         o.set("command", Json(sh.command));
         terms.push(std::move(o));
-        // Resized by a renderer that edits: a fresh replay at the new size.
-        auto it = s.terms.find(id);
-        if (it != s.terms.end() &&
-            (it->second->screen().cols() != cols || it->second->screen().rows() != rows)) {
-            it->second->resize(cols, rows);
-            s.client->attachTerminal(id, &s);
-        }
+        // A size change is not looked for here: TermShell says it, in the
+        // output where it happened (Session::termShell).
     }
     out.set("terms", std::move(terms));
     if (opt_.window) {
