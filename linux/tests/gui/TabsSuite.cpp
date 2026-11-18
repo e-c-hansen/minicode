@@ -94,9 +94,9 @@ bool tabsOnScreen() {
     return strip()->count() > 0;
 }
 
-GtkWidget* treeRow(const std::string& name) {
-    return MCGuiFindLabel(MCGuiApp().tree->widget(), name);
-}
+// A file's row in the tree, by its path (MCGuiBringTreeRow brings it into
+// view first: after other suites the folder has a hundred entries).
+GtkWidget* treeRow(const std::string& name) { return MCGuiTreeRow(F(name)); }
 
 bool editorHasKeyboard() { return gtk_widget_has_focus(ed()->textView()); }
 
@@ -197,9 +197,8 @@ MC_GUI_SUITE(tabs) {
         MCGuiWriteFile(F("one/README.md"), "# one\n");
         MCGuiWriteFile(F("two/README.md"), "# two\n");
     });
-    MCGuiWait("no tab, no strip, and the tree lists the files", 10, [] {
-        return ed()->tabCount() == 0 && !gtk_widget_get_visible(strip()->widget()) &&
-               treeRow("tab-a.txt") && treeRow("tab-b.py") && treeRow("tab-c.txt");
+    MCGuiWait("no tab and no strip", 10, [] {
+        return ed()->tabCount() == 0 && !gtk_widget_get_visible(strip()->widget());
     });
     MCGuiStep("with no tab, an empty editor, and nothing to save", [] {
         GCHECK(!ed()->canSave() && ed()->currentPath().empty());
@@ -208,6 +207,7 @@ MC_GUI_SUITE(tabs) {
     });
 
     // ---- opening from the tree
+    MCGuiBringTreeRow(F("tab-a.txt"));
     MCGuiStep("a double-click on a file in the tree opens it in a tab of its own", [] {
         MCGuiDoubleClick(treeRow("tab-a.txt"));
     });
@@ -216,9 +216,11 @@ MC_GUI_SUITE(tabs) {
     // the last double-click would otherwise count this one's second click
     // as a first (it is not stopped by a click elsewhere).
     MCGuiPause(0.5);
+    MCGuiBringTreeRow(F("tab-b.py"));
     MCGuiStep("and b", [] { MCGuiDoubleClick(treeRow("tab-b.py")); });
     MCGuiWait("b right of a, on show", 10, [] { return row() == "tab-a.txt >tab-b.py"; });
     MCGuiPause(0.5);   // the double-click interval again
+    MCGuiBringTreeRow(F("tab-c.txt"));
     MCGuiStep("and c", [] { MCGuiDoubleClick(treeRow("tab-c.txt")); });
     MCGuiWait("three tabs, the newest on show, the strip drawn", 10, [] {
         return row() == "tab-a.txt tab-b.py >tab-c.txt" && tabsOnScreen();
@@ -227,6 +229,9 @@ MC_GUI_SUITE(tabs) {
         GCHECK(stripAgrees());
         GCHECK(gtk_widget_get_visible(strip()->widget()));
         GCHECK_EQ_STR(MCGuiEditorText(), kC);
+        // Without its three tabs the rest would read documents that are not
+        // there (a crash ends every suite after this one).
+        if (!GCHECK(ed()->tabCount() == 3)) return;
         GCHECK_EQ_STR(ed()->document(0)->text(), kA);
         GCHECK_EQ_STR(ed()->document(1)->text(), kB);
         GCHECK(ed()->document(0)->buffer() != ed()->document(1)->buffer());
@@ -357,6 +362,7 @@ MC_GUI_SUITE(tabs) {
         GCHECK(stripAgrees());
         GCHECK(!ed()->dirty());
         GCHECK(title().find(" *") == std::string::npos);
+        if (!GCHECK(ed()->tabCount() == 3)) return;   // as above: a crash ends the run
         GCHECK_EQ_STR(ed()->document(0)->text(), kA + "A typed");
         GCHECK_EQ_STR(ed()->document(1)->text(), "B typed " + kB);
     });

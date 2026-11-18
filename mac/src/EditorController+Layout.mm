@@ -61,6 +61,11 @@
     self.outline.outlineTableColumn = col;
     self.outline.columnAutoresizingStyle =
         NSTableViewLastColumnOnlyAutoresizingStyle;
+    // The column never widens past the sidebar for a deeper row (the
+    // default): the size and date columns would go off its right edge, as
+    // there is no horizontal scroller. fitTreeColumn keeps it the sidebar's
+    // width.
+    self.outline.autoresizesOutlineColumn = NO;
     self.outline.headerView = nil;
     self.outline.dataSource = self;
     self.outline.delegate = self;
@@ -268,7 +273,10 @@
     [self layoutContainer];
     [split adjustSubviews];
     [split setPosition:260 ofDividerAtIndex:0];
-    [self.outline sizeLastColumnToFit];
+    [self fitTreeColumn];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(sidebarFrameChanged:)
+                                                 name:NSViewFrameDidChangeNotification
+                                               object:treeScroll];
 
     [self startWatching:_root.path];   // live tree updates
     [self ensureGitPanel];             // autofetch, before the panel is shown
@@ -407,6 +415,7 @@
     [self.problemsPanel applySettings];
     [self applyInstallBarColors];
     [self applyChangeBarColors];
+    [self applyAgentTaskBarColors];
     [_agent applyColors];
     [self showSettingsErrors];
 
@@ -482,6 +491,8 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     NSRect b = self.rightArea.bounds;
     // Request a Change's bar runs across the top, over editor and browser.
     b = [self layoutChangeBarIn:b];
+    // New Agent Task's bar, under it.
+    b = [self layoutAgentTaskBarIn:b];
     CGFloat W = b.size.width, H = b.size.height;
     BOOL showTerm = self.terminalVisible && self.terminalPanel != nil;
     BOOL showBrowser = self.browserVisible && self.browser != nil;

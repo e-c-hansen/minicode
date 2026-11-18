@@ -5,9 +5,12 @@
 // page may edit, the last answer first (editable until one is given), and
 // remembers it; Copy uses the remembered one. A page's save is the tab's
 // own Cmd+S, its questions about the disk included. A click on a file in
-// the page's tree opens it here as a click in the window's tree would.
+// the page's tree opens it here as a click in the window's tree would. The
+// browser pane's tabs go with the window's tabs, and an editable page's
+// address opens in the pane as a bookmark does.
 #import "EditorController+Private.h"
 #import "AppSettings.h"
+#import "Browser.h"
 #import "SessionBrowser.h"
 #import "SessionLink.h"
 #import "TreeDetails.h"
@@ -90,6 +93,25 @@ static BOOL MCSessionBrowserEditableChoice(void) {
                widen:NO];
 }
 
+// The browser pane's tabs for the page, nil while the window has no pane.
+- (NSDictionary *)sessionBrowserTabs {
+    BrowserView *b = self.browser;
+    if (!b) return nil;
+    NSArray<NSString *> *urls = [b tabAddresses], *titles = [b tabPageTitles];
+    NSMutableArray *tabs = [NSMutableArray array];
+    for (NSUInteger i = 0; i < urls.count; i++)
+        [tabs addObject:@{@"url": urls[i] ?: @"", @"title": i < titles.count ? titles[i] : @""}];
+    return @{@"tabs": tabs, @"active": @((int)b.selectedTab)};
+}
+
+// An editable page's address (http or https, the core has checked): the
+// pane made and shown if need be, a tab already at the address shown again,
+// else a new one, the keyboard left where it was.
+- (void)openSessionAddress:(NSString *)url {
+    [self agentBrowserPane];
+    [self keepKeyboardDuring:^{ [self.browser openAddresses:@[ url ]]; }];
+}
+
 // The window's server, started now (editable or not) if it is not yet; nil,
 // said in the status bar, when it cannot be.
 - (MCSessionBrowser *)startedSessionBrowser:(BOOL)editable {
@@ -114,6 +136,17 @@ static BOOL MCSessionBrowserEditableChoice(void) {
             }];
         b.save = ^(uint64_t docId) { [weakSelf saveSessionDocument:docId]; };
         b.open = ^(NSString *path, BOOL keep) { [weakSelf openSessionPath:path keep:keep]; };
+        // This window's terminals on the host, and no other window's.
+        b.terminals = ^NSArray<NSNumber *> * {
+            EditorController *s = weakSelf;
+            if (!s) return @[];
+            NSMutableArray<NSNumber *> *ids = [NSMutableArray array];
+            for (TerminalView *t in [s controlTerminals])
+                if (t.sessionTerminal) [ids addObject:@(t.sessionTerminal)];
+            return ids;
+        };
+        b.browserTabs = ^NSDictionary * { return [weakSelf sessionBrowserTabs]; };
+        b.browse = ^(NSString *url) { [weakSelf openSessionAddress:url]; };
         objc_setAssociatedObject(self, &kSessionBrowserKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     b.editable = editable;

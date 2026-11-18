@@ -6,12 +6,14 @@
 // (R2.10, R2.11).
 #import <Cocoa/Cocoa.h>
 #import "EditorPage.h"
+#import "AgentTaskBar.h"
 
-@class MCAgentModel, MCAgentsPanel, MCAgentWorktree, MCComparison, MCPickerPopup, MCTermLink,
+@class MCAgentModel, MCAgentsPanel, MCAgentTaskSession, MCAgentWorktree, MCComparison, MCPickerPopup, MCTermLink,
     TerminalView;
 
-// What the window does for it (EditorController).
-@protocol MCAgentWorkHost <NSObject>
+// What the window does for it (EditorController); New Agent Task's bar
+// needs the MCAgentTaskHost part.
+@protocol MCAgentWorkHost <MCAgentTaskHost>
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
 - (void)openTerminalLink:(MCTermLink *)link;          // a file, at its line
@@ -39,6 +41,10 @@
 @property(nonatomic, readonly, strong) MCAgentModel *model;
 @property(nonatomic, readonly, strong) MCAgentsPanel *panel;
 @property(nonatomic, readonly) BOOL started;   // the model exists
+// New Agent Task's bar and what it starts (AgentTaskBar.h), made on first
+// use; nil until then from `tasksIfMade`.
+@property(nonatomic, readonly, strong) MCAgentTaskSession *tasks;
+@property(nonatomic, readonly, strong) MCAgentTaskSession *tasksIfMade;
 - (void)setRoot:(NSString *)root;
 - (void)windowBecameKey;
 // FSEvents in the window's folder: a change under .claude/worktrees or .git

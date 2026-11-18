@@ -54,7 +54,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/DocumentView.cpp src/Tabs.cpp src/SessionLink.cpp src/Groups.cpp \
        src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/HtmlView.cpp src/SqliteView.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
-       src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp \
+       src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp src/EditorConflicts.cpp \
        src/Terminal.cpp src/TerminalDock.cpp src/TerminalGroup.cpp src/Browser.cpp src/Bookmarks.cpp src/BrowserPages.cpp src/AppSettings.cpp src/Appearance.cpp src/MenuBarFocus.cpp \
        src/ThemeCss.cpp \
        src/Search.cpp src/FindBar.cpp src/MultiEdit.cpp src/MediaView.cpp src/PdfView.cpp src/PageWords.cpp \
@@ -70,7 +70,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/Opaci
        src/LspSessionSemantic.cpp src/SemanticColors.cpp \
        src/LspSessionSymbols.cpp src/LspSessionFolding.cpp \
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp src/EnvLock.cpp \
-       src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
+       src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/TestGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
        src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/RecentList.cpp src/DockMenu.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \

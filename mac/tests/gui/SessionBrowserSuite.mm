@@ -17,8 +17,16 @@
 // one text. The page's tree lists the window's folder through the host: a
 // click on a folder opens it, a click on a file in it opens that file in
 // the window's tab, which the page then shows, and a picture says it opens
-// in the window. Closing the window stops the server. No browser window
-// opens.
+// in the window. The page's address field asks the window's browser pane
+// to open an address: javascript: is refused, an http address on this Mac
+// opens in the pane, and the page lists the window's browser tab under
+// "Browser" and frames it, with its new-tab link and the line that a
+// loopback address is this machine's. Two windows, each with a terminal on
+// the host and each with its page: each page lists only its own window's
+// terminal, a crafted show or keys for the other window's terminal id
+// reach nothing, keys for its own run there, and a terminal the window
+// closes leaves its page. Closing the window stops the server. No browser
+// window opens.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 #import "EditorController.h"
@@ -26,6 +34,8 @@
 #import "EditorTab.h"
 #import "SessionBrowser.h"
 #import "SessionLink.h"
+#import "Terminal.h"
+#import "TerminalPanel.h"
 
 #include <arpa/inet.h>
 #include <atomic>
@@ -108,9 +118,18 @@ struct Browser {
         fd = Connect(port);
         thread = std::thread([this] { run(); });
     }
-    void show(long long doc) {
-        const std::string text = "{\"t\":\"show\",\"doc\":" + std::to_string(doc) + ",\"term\":0}";
+    void show(long long doc, long long term = 0) {
+        send("{\"t\":\"show\",\"doc\":" + std::to_string(doc) + ",\"term\":" + std::to_string(term) + "}");
+    }
+    void send(const std::string &text) {
         WriteAll(fd, IdeLink::encodeClientFrame(IdeLink::Opcode::Text, text, 0x5a17c0de));
+    }
+    // The terminals the newest state lists, "id id ".
+    std::string terms() {
+        std::lock_guard<std::mutex> lk(mu);
+        std::string out;
+        for (const Json &t : state["terms"].elements()) out += std::to_string(t["id"].asInt()) + " ";
+        return out;
     }
     void finish() {
         stop = true;
@@ -202,8 +221,9 @@ struct Browser {
     }
 };
 
-EditorController *gC = nil;
-Browser *gBrowser = nil;
+EditorController *gC = nil, *gC2 = nil;
+TerminalView *gTermA = nil, *gTermB = nil;
+Browser *gBrowser = nil, *gBrowser2 = nil;
 NSURL *gOpened = nil;
 NSString *gUrl = nil;
 int gPort = 0;
@@ -224,7 +244,25 @@ NSString *const kRead =
     @" dirty: !!document.querySelector('#tabs button.shown.dirty'),"
     @" shown: !!document.querySelector('#tabs button.shown'),"
     @" tree: window.mcSessionView ? window.mcSessionView.tree().join('|') : '',"
-    @" note: window.mcSessionView ? window.mcSessionView.treeNote() : ''})";
+    @" note: window.mcSessionView ? window.mcSessionView.treeNote() : '',"
+    @" browseField: !document.getElementById('browse').classList.contains('hidden'),"
+    @" toast: document.getElementById('toast').textContent,"
+    @" browser: window.mcSessionView ? window.mcSessionView.browser().join('|') : '',"
+    @" web: window.mcSessionView ? window.mcSessionView.web() : null})";
+
+// An address typed into the page's address field, then Return.
+void Browse(NSString *url) {
+    NSData *quoted = [NSJSONSerialization dataWithJSONObject:@[ url ] options:0 error:nil];
+    NSString *js = [NSString stringWithFormat:
+        @"(() => { const f = document.getElementById('browse'); f.value = %@[0];"
+        @" f.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));"
+        @" return 1; })()",
+        [[NSString alloc] initWithData:quoted encoding:NSUTF8StringEncoding]];
+    [gPage evaluateJavaScript:js inFrame:nil inContentWorld:WKContentWorld.pageWorld
+            completionHandler:^(id, NSError *error) {
+                if (error) MCGuiNote(@"browse: %@", error.localizedDescription);
+            }];
+}
 
 // A click on the page's tree row for `rel`.
 void ClickRow(NSString *rel) {
@@ -516,6 +554,126 @@ MC_GUI_SUITE(session_browser) {
         Read();
         return [gSeen[@"note"] isEqualToString:@"logo.png opens in the minicode window."];
     });
+    MCGuiStep(@"the editable page has an address field; javascript: typed into it", ^{
+        GCHECK([gSeen[@"browseField"] boolValue]);
+        GCHECK_EQ_STR(gSeen[@"browser"], @"");   // no browser pane yet: no group
+        Browse(@"javascript:alert(1)");
+    });
+    MCGuiWait(@"is refused, and the window opens nothing", 20, ^BOOL {
+        Read();
+        return [gSeen[@"toast"] hasPrefix:@"Not opened"];
+    });
+    __block NSString *address = nil;
+    MCGuiStep(@"an address on this Mac typed into it", ^{
+        GCHECK([gC browserPane] == nil || ![[gC browserPane].tabAddresses containsObject:@"javascript:alert(1)"]);
+        address = [NSString stringWithFormat:@"http://127.0.0.1:%d/browser-tab", gPort];
+        Browse(address);
+    });
+    MCGuiWait(@"opens in the window's browser pane", 20, ^BOOL {
+        return [[gC browserPane].tabAddresses containsObject:address];
+    });
+    MCGuiWait(@"and the page lists the window's browser tab and frames it", 20, ^BOOL {
+        Read();
+        NSDictionary *web = [gSeen[@"web"] isKindOfClass:NSDictionary.class] ? gSeen[@"web"] : nil;
+        return [[gSeen[@"browser"] componentsSeparatedByString:@"|"] containsObject:address] &&
+               [web[@"src"] isEqualToString:address];
+    });
+    MCGuiStep(@"with its link to a new tab and the loopback line", ^{
+        MCGuiNote(@"browser tabs: %@", gSeen[@"browser"]);
+        NSDictionary *web = gSeen[@"web"];
+        GCHECK_EQ_STR(web[@"open"], address);
+        GCHECK([web[@"loopback"] boolValue]);
+    });
+    MCGuiStep(@"a terminal in this window, and a second window with a terminal of its own", ^{
+        GCHECK(MCSessionHostEnabled());
+        [gC newTerminal:nil];
+        gTermA = [gC valueForKey:@"terminal"];
+        GCHECK(gTermA.onSessionHost && gTermA.sessionTerminal != 0);
+        NSString *dir2 = [MCGuiScratch() stringByAppendingPathComponent:@"session-browser-2"];
+        [NSFileManager.defaultManager createDirectoryAtPath:dir2 withIntermediateDirectories:YES
+                                                 attributes:nil error:nil];
+        NSUInteger before = MCGuiControllers().count;
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:dir2]]];
+        GCHECK(MCGuiControllers().count == before + 1);
+        for (EditorController *c in MCGuiControllers())
+            if (c != gC && [c.rootPath.lastPathComponent isEqualToString:@"session-browser-2"]) gC2 = c;
+        GCHECK(gC2 != nil);
+        [gC2 newTerminal:nil];
+        gTermB = [gC2 valueForKey:@"terminal"];
+        GCHECK(gTermB.onSessionHost && gTermB.sessionTerminal != 0);
+        GCHECK(gTermB.sessionTerminal != gTermA.sessionTerminal);
+        // The second window's page too (Copy starts it, editable as last chosen).
+        [gC2 copySessionBrowserLink:nil];
+        GCHECK(gC2.sessionBrowser != nil && gC2.sessionBrowser.port != gPort);
+        MCGuiSetKeyWindow(gC.window);
+    });
+    MCGuiWait(@"both shells at their prompts", 20, ^BOOL {
+        return gTermA.atPrompt && !gTermA.busy && gTermB.atPrompt && !gTermB.busy;
+    });
+    MCGuiStep(@"a scripted browser on each window's page", ^{
+        gBrowser = new Browser();
+        gBrowser->port = gPort;
+        gBrowser->token = gToken;
+        gBrowser->start();
+        NSString *url2 = gC2.sessionBrowser.url;
+        gBrowser2 = new Browser();
+        gBrowser2->port = gC2.sessionBrowser.port;
+        gBrowser2->token = [url2 componentsSeparatedByString:@"?t="].lastObject.UTF8String ?: "";
+        gBrowser2->start();
+    });
+    MCGuiWait(@"each page lists its own window's terminal and not the other's", 20, ^BOOL {
+        return gBrowser->terms() == std::to_string(gTermA.sessionTerminal) + " " &&
+               gBrowser2->terms() == std::to_string(gTermB.sessionTerminal) + " ";
+    });
+    MCGuiStep(@"keys for the other window's terminal, asked for by id, then for its own", ^{
+        MCGuiNote(@"this page: %s, the other: %s", gBrowser->terms().c_str(), gBrowser2->terms().c_str());
+        const std::string b = std::to_string(gTermB.sessionTerminal);
+        const std::string a = std::to_string(gTermA.sessionTerminal);
+        gBrowser->show(0, (long long)gTermB.sessionTerminal);
+        gBrowser->send("{\"t\":\"ttext\",\"term\":" + b + ",\"text\":\"echo pwned-$((1+1))\",\"mods\":0}");
+        gBrowser->send("{\"t\":\"tkey\",\"term\":" + b + ",\"key\":\"Enter\",\"mods\":0}");
+        gBrowser->send("{\"t\":\"tpaste\",\"term\":" + b + ",\"text\":\"echo pasted-$((2+2))\\n\"}");
+        // The server takes a page's messages in order: these come after.
+        gBrowser->show(0, (long long)gTermA.sessionTerminal);
+        gBrowser->send("{\"t\":\"ttext\",\"term\":" + a + ",\"text\":\"echo page-$((6*7))\",\"mods\":0}");
+        gBrowser->send("{\"t\":\"tkey\",\"term\":" + a + ",\"key\":\"Enter\",\"mods\":0}");
+    });
+    MCGuiWait(@"its own terminal runs what the page typed", 20, ^BOOL {
+        return [[gTermA recentText:20] containsString:@"\npage-42"] && gTermA.atPrompt && !gTermA.busy;
+    });
+    MCGuiStep(@"and a command typed in the other window's terminal", ^{
+        [gTermB runCommand:@"echo b-side-$((5*5))"];
+    });
+    MCGuiWait(@"runs there", 20, ^BOOL {
+        return [[gTermB recentText:20] containsString:@"\nb-side-25"] && gTermB.atPrompt && !gTermB.busy;
+    });
+    MCGuiStep(@"nothing the first page sent reached the other window's terminal", ^{
+        NSString *seen = [gTermB recentText:40];
+        const std::string host = MCSessionInspectTerminal(gTermB.sessionTerminal).screen;
+        if ([seen containsString:@"pwned"] || [seen containsString:@"pasted"]) MCGuiNote(@"B: %@", seen);
+        GCHECK(![seen containsString:@"pwned"] && ![seen containsString:@"pasted"]);
+        GCHECK(host.find("pwned") == std::string::npos && host.find("pasted") == std::string::npos);
+        GCHECK(gBrowser2->terms() == std::to_string(gTermB.sessionTerminal) + " ");
+        GCHECK([(MCTerminalPanel *)[gC valueForKey:@"terminalPanel"] closeTerminal:gTermA]);
+        gTermA = nil;
+    });
+    MCGuiWait(@"the terminal this window closed leaves its page", 20, ^BOOL {
+        return gBrowser->terms().empty();
+    });
+    MCGuiStep(@"the second window closes its terminal and itself", ^{
+        GCHECK(gBrowser2->terms() == std::to_string(gTermB.sessionTerminal) + " ");
+        gBrowser->finish();
+        delete gBrowser;
+        gBrowser = nullptr;
+        gBrowser2->finish();
+        delete gBrowser2;
+        gBrowser2 = nullptr;
+        GCHECK([(MCTerminalPanel *)[gC2 valueForKey:@"terminalPanel"] closeTerminal:gTermB]);
+        gTermB = nil;
+        [gC2.window performClose:nil];
+    });
+    MCGuiWait(@"the second window is gone", 10, ^BOOL { return ![MCGuiControllers() containsObject:gC2]; });
     MCGuiStep(@"the window closes, and the server with it", ^{
         [gPage stopLoading];
         gPage = nil;
@@ -530,6 +688,7 @@ MC_GUI_SUITE(session_browser) {
         if (fd >= 0) close(fd);
         MCSessionBrowserOpener = nil;
         gC = nil;
+        gC2 = nil;
         gOpened = nil;
         MCGuiSetKeyWindow(nil);
     });

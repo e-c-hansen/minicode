@@ -351,7 +351,12 @@ inline void CloseRepoWindow() {
         if (GtkWindow* w = RepoWindow().window) gtk_window_close(w);
     });
     MCGuiWait("gone", 10, [] { return RepoWindow().window == nullptr; });
-    MCGuiStep("the first window has the keyboard again", [] { MCGuiSetKeyWindow(nullptr); });
+    // The X focus too: with no window manager it stayed on the closed
+    // window, and the next suite's clicks reached an inactive window (tabs).
+    MCGuiStep("the first window has the keyboard again", [] {
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiFocusKeyWindow();
+    });
 }
 
 }  // namespace gitchecks

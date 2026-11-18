@@ -32,6 +32,13 @@
 // Output past kTermCredit bytes not yet acknowledged stops the host reading
 // the pty until the renderer catches up (the program blocks), as the Mac's
 // reader stops past 1 MB.
+// Size (tmux's window-size latest): a renderer's TermResize is its view's
+// size, kept as that renderer's; the pty takes the size of the renderer that
+// last typed into it (TermInput; flag 1 marks an emulator's answer to a
+// query, which is not typing), else the opener's, else the first attached
+// renderer's that sent one. TermShell's cols and rows are the pty's size:
+// a renderer's emulator takes them where that TermShell comes in the
+// stream, whatever its view's size.
 //
 // Offsets are in the receiving renderer's unit, named in its Hello (code
 // points for GTK, UTF-16 for the Mac); `ops16` is the same edit in UTF-16
@@ -87,13 +94,16 @@ enum class Kind {
     StateQuery,  // req: the whole session, answered by State
     Ping,        // req: answered by Pong once everything sent before it is done
     TermOpen,    // term, json (TermSpec's fields)
-    TermInput,   // term, bytes
-    TermResize,  // term, cols, rows
+    TermInput,   // term, bytes; flag 1: an answer to the program (an emulator's reply
+                 // to a query), not typing: it does not give the sender the pty's size
+    TermResize,  // term, cols, rows: the renderer's view; the pty's size only while it
+                 // is the one that last typed (or, before anyone has, the opener)
     TermAck,     // term, v: bytes of output taken
     TermClose,   // term
     TermAttach,  // term: answered by TermReplay, TermShell and TermMarks
     // host → renderer
-    Welcome,     // client: the renderer's id
+    Welcome,     // client: the renderer's id; v: the base of the ids it makes (kIdRange);
+                 // name: the folder
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
     DocEdited,   // doc, v, by, seq, ops, ops16, flag (1 undo, 2 redo), select
     DocUndone,   // doc, req, outcome
@@ -146,6 +156,19 @@ struct UndoInfo {
 enum class Outcome { Done = 0, Nothing = 1, Refused = 2 };
 
 using TermId = std::uint64_t;
+
+// The ids a renderer makes for what it opens on the host (documents,
+// terminals, windows): its Welcome's `v` is a base, a multiple of
+// kIdRange, and it takes base + 1, base + 2, ... (Client::newId), so two
+// renderers on one host never make the same id. The host gives each
+// connection a base no live renderer has and in whose range it holds no
+// id (SessionHost.cpp, chooseIdBase); ids below kIdRange are never in a
+// base's range (a renderer from before bases, or a check, may use them).
+// Every id stays under 2^53, which a JSON number carries exactly (the
+// browser page's, SessionWebPage.cpp; Json keeps numbers as doubles).
+constexpr std::uint64_t kIdRange = std::uint64_t(1) << 32;
+constexpr std::uint64_t kIdSlots = std::uint64_t(1) << 21;   // bases 1 ... kIdSlots - 1 times kIdRange
+constexpr std::uint64_t kMaxId = kIdSlots * kIdRange - 1;    // 2^53 - 1
 // Unacknowledged output at which the host stops reading a pty, and below
 // which it reads again.
 constexpr long long kTermCredit = 1 << 20;
@@ -180,6 +203,7 @@ struct TermShell {
     bool raw = false;         // the pty is out of canonical mode
     bool echoOff = false;     // echo off in canonical mode: a password
     bool signalsOff = false;  // ISIG off: a raw program, not zsh's line editor
+    int cols = 0, rows = 0;   // the pty's size (the host's screen's), 0 unknown
     bool operator==(const TermShell& o) const;
     bool operator!=(const TermShell& o) const { return !(*this == o); }
 };
@@ -234,6 +258,9 @@ Message roundTrip(const Message& m);
 // (document, file, preview kind) with the one on show. When each tab was
 // last used and the groups' share are left out: they move without the tabs
 // changing (stage 6, which gives them to a second screen, adds them).
+// The Mac's window adds "terms", the ids of the host terminals in its
+// panel: a browser's view of one window (SessionWeb.h, Options::window)
+// shows and types into those and no others.
 Json windowJson(const Model::Window& w);
 
 }  // namespace Shared

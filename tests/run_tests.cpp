@@ -57,6 +57,7 @@
 #include "AgentIndex.h"
 #include "AgentEvidence.h"
 #include "AgentView.h"
+#include "AgentTask.h"
 #include "Folding.h"
 #include "FileSniff.h"
 #include "HtmlPage.h"
@@ -7739,7 +7740,7 @@ void testFolderSearch() {
                           "DerivedData"})
         writeFile(root / d / "x.txt", "hello skipped\n");
     writeFile(root / "binary.dat", std::string("hello\xFF\xFE\x00\x01", 9));
-    writeFile(root / "latin1.txt", "hello caf\xE9\n");            // not UTF-8
+    writeFile(root / "latin1.txt", "hello caf\xE9\n");            // not UTF-8: Windows-1252
     writeFile(root / "big.txt", "hello\n" + std::string(1024 * 1024, 'x'));
     writeFile(root / "exactly1mb.txt",
               "hello\n" + std::string(1024 * 1024 - 6, 'y'));     // at the limit: searched
@@ -7781,7 +7782,7 @@ void testFolderSearch() {
     CHECK(!anyHitIn(r, "venv"));
     CHECK(!anyHitIn(r, "DerivedData"));
     CHECK(!anyHitIn(r, "binary.dat"));
-    CHECK(!anyHitIn(r, "latin1.txt"));
+    CHECK(hasHit(r, "latin1.txt:1:1"));                  // read as Windows-1252
     CHECK(hasHit(r, "big.txt:1:1"));                     // over 1 MB: read in pieces
     CHECK(!anyHitIn(r, "sub/loop"));                     // the loop back to root is not re-walked
     CHECK(!anyHitIn(r, "broken"));
@@ -7789,7 +7790,7 @@ void testFolderSearch() {
     CHECK(loopMade);
     CHECK(fifoMade);
     if (linkMade) CHECK(hasHit(r, "zlink/linked.txt:1:1"));   // symlinked folders are followed
-    CHECK(r.matches.size() == (linkMade ? 13u : 12u));
+    CHECK(r.matches.size() == (linkMade ? 14u : 13u));
     CHECK(r.filesMatched == r.matches.size() - 2);       // a.txt and b.cpp have two
     CHECK(r.filesSearched >= r.filesMatched);
 
@@ -11179,6 +11180,7 @@ static void testMultiCaretOccurrences() {
 #include "agent_edits_tests.inc"
 #include "line_history_tests.inc"
 #include "agent_view_tests.inc"
+#include "agent_task_tests.inc"
 #include "fold_tests.inc"
 #include "previews_tests.inc"
 #include "folder_picker_tests.inc"
@@ -11379,6 +11381,7 @@ int main() {
     testAgentEdits();
     testLineHistory();
     testAgentView();
+    testAgentTask();
     testFolding();
     testFileSniff();
     testHtmlPage();

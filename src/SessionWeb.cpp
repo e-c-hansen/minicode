@@ -296,6 +296,127 @@ bool sameOrigin(const std::string& origin, const std::string& host) {
     return loopbackOrigin(o) && loopbackHost(host) && bare(o.substr(7)) == bare(host);
 }
 
+// ---- the window's browser pane
+
+namespace {
+
+// The address's host (lower case, brackets kept for IPv6, no port), or ""
+// when it is not http or https with a host.
+std::string webHost(const std::string& url, std::string* why) {
+    auto fail = [&](const char* w) {
+        if (why) *why = w;
+        return std::string();
+    };
+    if (url.empty()) return fail("no address");
+    if (url.size() > kMaxAddress) return fail("the address is too long");
+    for (unsigned char c : url)
+        if (c <= 0x20 || c == 0x7f) return fail("the address holds a space or a control character");
+    const std::size_t colon = url.find(':');
+    if (colon == std::string::npos) return fail("the address has no scheme: it must start with http:// or https://");
+    const std::string scheme = lower(url.substr(0, colon));
+    if (scheme != "http" && scheme != "https")
+        return fail("only http and https addresses open from the page");
+    if (url.compare(colon + 1, 2, "//") != 0) return fail("the address has no host");
+    const std::size_t start = colon + 3;
+    std::size_t end = url.find_first_of("/?#\\", start);
+    if (end == std::string::npos) end = url.size();
+    const std::string authority = url.substr(start, end - start);
+    if (authority.find('@') != std::string::npos)
+        return fail("an address with a user name or password before its host is not opened");
+    std::string host;
+    if (!authority.empty() && authority[0] == '[') {
+        const std::size_t close = authority.find(']');
+        if (close == std::string::npos) return fail("the address's host is not one");
+        host = authority.substr(0, close + 1);
+        const std::string rest = authority.substr(close + 1);
+        if (!rest.empty() && rest[0] != ':') return fail("the address's host is not one");
+    } else {
+        host = authority.substr(0, authority.find(':'));
+    }
+    if (host.empty() || host == "[]") return fail("the address has no host");
+    return lower(host);
+}
+
+// `s` cut to at most `n` bytes, at a character's start.
+std::string cutUtf8(const std::string& s, std::size_t n) {
+    if (s.size() <= n) return s;
+    std::size_t at = n;
+    while (at > 0 && ((unsigned char)s[at] & 0xC0) == 0x80) at--;
+    return s.substr(0, at);
+}
+
+}  // namespace
+
+bool webAddress(const std::string& url, std::string* why) { return !webHost(url, why).empty(); }
+
+bool loopbackAddress(const std::string& url) {
+    const std::string host = webHost(url, nullptr);
+    if (host.empty()) return false;
+    if (host == "localhost" || host == "[::1]" || host == "0.0.0.0" || host == "[::]") return true;
+    const std::string suffix = ".localhost";
+    if (host.size() > suffix.size() && host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0)
+        return true;
+    // 127.0.0.0/8, written as four decimal numbers.
+    if (host.compare(0, 4, "127.") != 0) return false;
+    int parts = 2, digits = 0;   // "127." is the first part and its dot
+    for (std::size_t i = 4; i < host.size(); i++) {
+        const char c = host[i];
+        if (c == '.') {
+            if (!digits) return false;
+            parts++;
+            digits = 0;
+        } else if (c >= '0' && c <= '9') {
+            if (++digits > 3) return false;
+        } else {
+            return false;
+        }
+    }
+    return parts == 4 && digits > 0;
+}
+
+Json browserReportJson(const std::vector<BrowserTab>& tabs, int active) {
+    Json list = Json::array();
+    int on = -1;
+    for (std::size_t i = 0; i < tabs.size() && list.size() < kMaxBrowserTabs; i++) {
+        const BrowserTab& t = tabs[i];
+        if (t.url.empty() || t.url.size() > kMaxAddress) continue;
+        if ((int)i == active) on = (int)list.size();
+        Json tab = Json::object();
+        tab.set("url", Json(t.url));
+        tab.set("title", Json(cutUtf8(t.title, kMaxPageTitle)));
+        list.push(std::move(tab));
+    }
+    Json report = Json::object();
+    report.set("tabs", std::move(list));
+    report.set("active", Json(on));
+    return report;
+}
+
+Json browserViewJson(const Json& report) {
+    if (!report.isObject()) return Json();
+    Json list = Json::array();
+    const int active = report["active"].isNumber() ? (int)report["active"].asInt() : -1;
+    int on = -1, i = 0;
+    for (const Json& t : report["tabs"].elements()) {
+        const int index = i++;
+        if (list.size() >= kMaxBrowserTabs) break;
+        if (!t.isObject() || !t["url"].isString()) continue;
+        const std::string& url = t["url"].asString();
+        if (url.empty() || url.size() > kMaxAddress) continue;
+        if (index == active) on = (int)list.size();
+        Json tab = Json::object();
+        tab.set("url", Json(url));
+        tab.set("title", Json(cutUtf8(t["title"].asString(), kMaxPageTitle)));
+        tab.set("web", Json(webAddress(url)));
+        tab.set("loopback", Json(loopbackAddress(url)));
+        list.push(std::move(tab));
+    }
+    Json view = Json::object();
+    view.set("tabs", std::move(list));
+    view.set("active", Json(on));
+    return view;
+}
+
 Answer answer(const Request& r, const std::string& token, const std::string& page) {
     if (r.state != Request::Complete) return refuse(400, "Bad Request", "the request was not HTTP");
     if (r.method != "GET") return refuse(405, "Method Not Allowed", "only GET is served");
@@ -331,7 +452,7 @@ Answer answer(const Request& r, const std::string& token, const std::string& pag
             200, "OK", "text/html; charset=utf-8", body,
             "Content-Security-Policy: default-src 'none'; script-src 'nonce-" + nonce +
                 "'; style-src 'unsafe-inline'; img-src data:; connect-src 'self' "
-                "ws://127.0.0.1:* ws://localhost:*; frame-src 'self'; "
+                "ws://127.0.0.1:* ws://localhost:*; frame-src 'self' http: https:; "
                 "frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n"
                 "X-Frame-Options: DENY\r\n");
         return a;
@@ -747,8 +868,11 @@ struct Server::Conn {
 struct Server::Session : Client::Listener, Client::TermListener {
     std::unique_ptr<HostLink> link;
     std::function<void()> letGo;    // an in-process host's (Options::connect)
-    // With Options::window: the documents that window's tabs hold.
+    // With Options::window: the documents that window's tabs hold, and
+    // the terminals it reports ("terms" beside its groups). A page sees,
+    // attaches to and types into no other.
     std::set<DocId> allowed;
+    std::set<TermId> allowedTerms;
     std::unique_ptr<Client> client;
     std::map<DocId, std::unique_ptr<DocView>> docs;
     std::map<TermId, std::unique_ptr<TermView>> terms;
@@ -903,11 +1027,17 @@ std::string Server::helloText() const {
     hello.set("termNote", Json(opt_.termNote));
     hello.set("editable", Json(opt_.editable));
     hello.set("canSave", Json(opt_.editable && (bool)opt_.save));
+    hello.set("canBrowse", Json(opt_.editable && (bool)opt_.browse));
     return hello.dump();
 }
 
 void Server::reloadSettings() {
     reload_ = true;
+    wake();
+}
+
+void Server::lookNow() {
+    look_ = true;
     wake();
 }
 
@@ -1032,6 +1162,7 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     else if (t == "undo") onUndo(c, j);
     else if (t == "save") onSave(c, j);
     else if (t == "tkey" || t == "ttext" || t == "tpaste") onTermInput(c, t, j);
+    else if (t == "browse") onBrowse(c, j);
 }
 
 void Server::note(Conn& c, const std::string& text) {
@@ -1260,6 +1391,8 @@ void Server::onTermInput(Conn& c, const std::string& type, const Json& j) {
     const TermId t = (TermId)std::max<int64_t>(0, j["term"].asInt());
     if (!opt_.editable) return note(c, "This page only reads: it cannot type into terminals.");
     if (!session_ || !t || t != c.term) return;
+    // Another window's terminal is not this view's to type into.
+    if (opt_.window && !session_->allowedTerms.count(t)) return;
     auto it = session_->terms.find(t);
     if (it == session_->terms.end()) return;
     const TerminalScreen& sc = it->second->screen();
@@ -1347,6 +1480,31 @@ void Server::onOpen(Conn& c, const Json& j) {
     sendJson(c, m);
 }
 
+// A page asks the window's browser pane to open an address: only a page
+// that may edit (it changes what the window shows, and loads a page on
+// this Mac), only http and https.
+void Server::onBrowse(Conn& c, const Json& j) {
+    if (!opt_.editable) return note(c, "This page only reads: it cannot open addresses in the window.");
+    const std::string url = j["url"].asString();
+    Json m = Json::object();
+    m.set("t", Json("browsing"));
+    m.set("url", Json(cutUtf8(url, kMaxAddress)));
+    std::string why;
+    if (!webAddress(url, &why)) {
+        why = "Not opened: " + why + ".";
+    } else if (!opt_.browse) {
+        why = "This session has no browser pane to open addresses in.";
+    } else if (!opt_.browse(url)) {
+        why = "The minicode window could not open that address.";
+    } else {
+        m.set("ok", Json(true));
+        return sendJson(c, m);
+    }
+    m.set("ok", Json(false));
+    m.set("why", Json(why));
+    sendJson(c, m);
+}
+
 bool Server::attach() {
     auto s = std::make_unique<Session>();
     s->client = std::make_unique<Client>(Model::Unit::Utf16, "browser");
@@ -1407,11 +1565,17 @@ void Server::lookAtState() {
     out.set("t", Json("state"));
     Json windows = Json::array();
     s.allowed.clear();
+    s.allowedTerms.clear();
     for (const Json& w : st["windows"].elements()) {
         if (opt_.window && (std::uint64_t)w["window"].asInt() != opt_.window) continue;
-        windows.push(w["tabs"]);
+        Json tabs = w["tabs"];
+        // The window's browser pane, checked again here: the report is a
+        // renderer's. A window without one (GTK's, the checks') has none.
+        if (tabs.isObject() && tabs.has("browser")) tabs.set("browser", browserViewJson(tabs["browser"]));
+        windows.push(std::move(tabs));
         for (const Json& g : w["tabs"]["groups"].elements())
             for (const Json& t : g["tabs"].elements()) s.allowed.insert((DocId)t["doc"].asInt());
+        for (const Json& t : w["tabs"]["terms"].elements()) s.allowedTerms.insert((TermId)t.asInt());
     }
     out.set("windows", std::move(windows));
     Json docs = Json::array();
@@ -1427,6 +1591,9 @@ void Server::lookAtState() {
     Json terms = Json::array();
     for (const Json& t : st["terminals"].elements()) {
         const TermId id = (TermId)t["term"].asInt();
+        // One window's view: only the terminals that window reports. A
+        // headless host has no windows, and its view sees every terminal.
+        if (opt_.window && !s.allowedTerms.count(id)) continue;
         const TermShell sh = termShellFrom(t["shell"]);
         const int cols = (int)t["cols"].asInt(80), rows = (int)t["rows"].asInt(24);
         Json o = Json::object();
@@ -1447,6 +1614,16 @@ void Server::lookAtState() {
         }
     }
     out.set("terms", std::move(terms));
+    if (opt_.window) {
+        // A terminal the window no longer reports: nobody here shows it, and
+        // the view keeps no copy of its screen.
+        for (auto& c : conns_)
+            if (c->term && !s.allowedTerms.count(c->term)) c->term = 0;
+        for (auto it = s.terms.begin(); it != s.terms.end();) {
+            if (s.allowedTerms.count(it->first)) ++it;
+            else it = s.terms.erase(it);
+        }
+    }
     std::string text = out.dump();
     if (text == s.sentState) return;
     s.sentState = std::move(text);
@@ -1579,6 +1756,8 @@ void Server::showTo(Conn& c) {
             sendJson(c, snap);
         }
     }
+    // Nor is another window's terminal: never attached to, never shown.
+    if (c.term && opt_.window && !s.allowedTerms.count(c.term)) c.term = 0;
     if (c.term) {
         auto it = s.terms.find(c.term);
         if (it == s.terms.end()) {
@@ -1676,7 +1855,7 @@ bool Server::run() {
                 detach();
                 return true;
             }
-            if (msSince(session_->lastLook) >= opt_.pollMs) lookAtState();
+            if (look_.exchange(false) || msSince(session_->lastLook) >= opt_.pollMs) lookAtState();
             if (session_->pending && msSince(session_->lastTermFlush) >= 30) flush();
         } else if (!opt_.connect && msSince(lastSocketLook) >= 1000) {
             // Nobody looking: the host's socket going means it ended.

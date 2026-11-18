@@ -136,8 +136,9 @@ std::string Document::extensionOf(const std::string& path) {
 // ---------------------------------------------------------------- life
 
 Document::Document(DocumentHost* host, DocumentTags* tags) : host_(host), tags_(tags) {
-    static uint64_t next = 0;
-    id_ = ++next;
+    // Its id on the session's host, from the client's range (a second
+    // renderer on the host never makes the same one).
+    id_ = SessionLink::client().newId();
     buffer_ = gtk_text_buffer_new(tags_->table);
     // GTK's undo stays off: every edit goes to the session's host (undo()).
     gtk_text_buffer_set_enable_undo(buffer_, FALSE);

@@ -21,6 +21,12 @@ void Client::connect(Send send) {
     send_(std::move(h));
 }
 
+std::uint64_t Client::newId(int timeoutMs) {
+    if (!idBase_ && send_) settle(timeoutMs);
+    if (!idBase_ || idsUsed_ + 1 >= kIdRange) return 0;
+    return idBase_ + ++idsUsed_;
+}
+
 Client::Doc* Client::doc(DocId id) {
     auto it = docs_.find(id);
     return it == docs_.end() ? nullptr : &it->second;
@@ -294,7 +300,13 @@ void Client::dispatch() {
 
 void Client::process(Message&& m) {
     switch (m.kind) {
-    case Kind::Welcome: id_ = m.client; break;
+    case Kind::Welcome:
+        id_ = m.client;
+        if (m.v != idBase_) {
+            idBase_ = m.v;
+            idsUsed_ = 0;
+        }
+        break;
     case Kind::DocOpened:
         if (Doc* d = doc(m.doc)) {
             d->known = m.v;
@@ -360,11 +372,12 @@ void Client::attachTerminal(TermId t, TermListener* l) {
     sendNow(std::move(m));
 }
 
-void Client::terminalInput(TermId t, std::string bytes) {
+void Client::terminalInput(TermId t, std::string bytes, bool answer) {
     if (bytes.empty() || !terms_.count(t)) return;
     Message m;
     m.kind = Kind::TermInput;
     m.term = t;
+    m.flag = answer ? 1 : 0;
     m.bytes = std::move(bytes);
     sendNow(std::move(m));
 }

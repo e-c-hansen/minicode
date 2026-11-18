@@ -87,6 +87,19 @@ public:
     void setGuest(bool on) { guest_ = on; }
     Model::Unit unit() const { return unit_; }
 
+    // ---- ids: what this renderer opens on the host (documents, terminals,
+    // windows) takes an id from here, never one it numbered itself, so a
+    // second renderer on the host never makes the same id (SessionProtocol.h,
+    // kIdRange). One counter for all three. The base comes in the Welcome,
+    // the answer to connect()'s Hello: an app settles after connect(), and
+    // newId() before the Welcome was taken settles first (at most
+    // `timeoutMs`). 0, which is never an id, when there is no base (no host
+    // answered, or it had none left) or this connection used up its range.
+    std::uint64_t newId(int timeoutMs = 10000);
+    std::uint64_t idBase() const { return idBase_; }
+    // Documents and terminals the host holds already (StateQuery) keep their
+    // ids: a renderer attaching opens them under those.
+
     // ---- the host's messages
     // Any thread: queued, and `wake` called when the queue was empty.
     void deliver(Message&& m);
@@ -204,7 +217,13 @@ public:
     };
     void openTerminal(TermId t, const TermSpec& spec, TermListener* l);
     void attachTerminal(TermId t, TermListener* l);
-    void terminalInput(TermId t, std::string bytes);
+    // `answer`: the emulator's reply to a program's query (DA, DSR, OSC
+    // colors), not the user's typing, so it does not give this renderer the
+    // pty's size.
+    void terminalInput(TermId t, std::string bytes, bool answer = false);
+    // The view's size: the pty takes it while this renderer is the one that
+    // last typed (or opened it, before anyone has typed); TermShell's cols
+    // and rows say the pty's size.
     void resizeTerminal(TermId t, int cols, int rows);
     void ackTerminal(TermId t, std::size_t bytes);
     // Hangs the shell up; the listener hears nothing more.
@@ -250,6 +269,7 @@ private:
     bool readOnly_ = false, guest_ = false;
     Send send_;
     ClientId id_ = 0;
+    std::uint64_t idBase_ = 0, idsUsed_ = 0;
     std::map<DocId, Doc> docs_;
     std::deque<Message> outbox_;
     bool inFlight_ = false;

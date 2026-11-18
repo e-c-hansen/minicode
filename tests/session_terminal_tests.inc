@@ -6,13 +6,16 @@
 // ignoring SIGHUP killed, a megabyte into a program that does not read,
 // closing during `yes`); and the host's terminals through a client: output,
 // the integration's marks and state, replay to a renderer attaching, exit
-// statuses, resizing and the output credit. Real processes (/bin/sh),
+// statuses, resizing (whose size the pty takes when several renderers show
+// it) and the output credit. Real processes (/bin/sh),
 // under TSan in CI: the host's thread does the pty I/O. Included in
 // run_tests.cpp after session_host_tests.inc.
 
 #include <csignal>
 #include <fcntl.h>
 #include <limits.h>
+#include <mutex>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -296,6 +299,86 @@ struct Refill : Shared::Client::TermListener {
     }
 };
 
+// One host and several renderers' clients on this thread, each a listener
+// of the terminals it shows (term:size): whose size the pty takes.
+struct SizeRig {
+    struct Seat : Shared::Client::TermListener {
+        std::unique_ptr<Shared::Client> client;
+        Shared::ClientId id = 0;
+        std::string out;
+        int pid = 0, replays = 0;
+        Shared::TermShell shell;
+        void termOpened(Shared::TermId, int p) override { pid = p; }
+        void termOutput(Shared::TermId t, const std::string& b, long long, bool, bool replay) override {
+            out += b;
+            if (replay) replays++;
+            else client->ackTerminal(t, b.size());
+        }
+        void termShell(Shared::TermId, const Shared::TermShell& s) override { shell = s; }
+        bool has(const std::string& s) const { return out.find(s) != std::string::npos; }
+    };
+    std::unique_ptr<Shared::SessionHost> host;
+    std::mutex mu;   // byId, which the host's thread reads
+    std::map<Shared::ClientId, Seat*> byId;
+    std::vector<std::unique_ptr<Seat>> seats;
+
+    SizeRig() {
+        host = std::make_unique<Shared::SessionHost>([this](Shared::ClientId to, Message&& m) {
+            std::lock_guard<std::mutex> lock(mu);
+            auto it = byId.find(to);
+            if (it != byId.end()) it->second->client->deliver(Shared::roundTrip(m));
+        });
+    }
+    ~SizeRig() { host.reset(); }   // its thread first: it delivers to the clients
+    Seat& add() {
+        auto seat = std::make_unique<Seat>();
+        seat->client = std::make_unique<Shared::Client>(Model::Unit::CodePoint, "test");
+        seat->id = host->connect();
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            byId[seat->id] = seat.get();
+        }
+        Seat* p = seat.get();
+        p->client->connect([this, p](Message&& m) { host->post(p->id, Shared::roundTrip(m)); });
+        seats.push_back(std::move(seat));
+        return *p;
+    }
+    // The renderer goes (its connection closed): it hears nothing more.
+    void drop(Seat& s) {
+        host->disconnect(s.id);
+        std::lock_guard<std::mutex> lock(mu);
+        byId.erase(s.id);
+    }
+    // Every seat's messages dispatched until `done`, at most `ms`.
+    bool wait(const std::function<bool()>& done, int ms = 8000) {
+        const double end = nowMs() + ms;
+        for (;;) {
+            for (auto& seat : seats) seat->client->dispatch();
+            if (done()) return true;
+            if (nowMs() > end) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    // The pty's own size (TIOCGWINSZ on its master) once the host has done
+    // everything `from` sent; "" when there is no such pty.
+    std::string winsize(Seat& from, Shared::TermId t) {
+        from.client->settle();
+        std::string s;
+        host->inspect([&](const Shared::Host& h) {
+            struct winsize ws {};
+            const int fd = h.ptyFd(t);
+            if (fd >= 0 && ioctl(fd, TIOCGWINSZ, &ws) == 0)
+                s = std::to_string(ws.ws_col) + "x" + std::to_string(ws.ws_row);
+        });
+        return s;
+    }
+    std::pair<size_t, size_t> counts() {
+        std::pair<size_t, size_t> c{SIZE_MAX, SIZE_MAX};
+        host->inspect([&](const Shared::Host& h) { c = {h.terminalCount(), h.dyingCount()}; }, 2000);
+        return c;
+    }
+};
+
 }  // namespace
 
 static void testSessionTerminals() {
@@ -411,13 +494,15 @@ static void testSessionTerminals() {
             return same;
         }));
         // Resizing: the shell's programs see the new size, and so does the
-        // host's screen.
+        // host's screen, and the shell's state says the pty's size.
+        CHECK(r.shell.cols == 80 && r.shell.rows == 24);
         r.client->resizeTerminal(1, 101, 31);
         r.type(1, "stty size\n");
         CHECK(r.wait([&] { return r.has("31 101"); }));
         int cols = 0;
         r.host->inspect([&](const Shared::Host& h) { cols = h.screen(1) ? h.screen(1)->cols() : 0; });
         CHECK(cols == 101);
+        CHECK(r.wait([&] { return r.shell.cols == 101 && r.shell.rows == 31; }));
         // exit: the shell's status comes back, after its last output.
         r.type(1, "echo last; exit 5\n");
         CHECK(r.wait([&] { return r.exited; }));
@@ -454,6 +539,103 @@ static void testSessionTerminals() {
         CHECK(r3.wait([&] { return r3.has("modes-4") && !r3.shell.raw && !r3.shell.signalsOff; }));
         r3.type(4, "\n");
         CHECK(r3.wait([&] { return r3.exited; }));
+    }
+
+    GROUP("term:size");
+    {
+        // Several renderers on one terminal (tmux's window-size latest):
+        // the opener's size holds until another types; then the pty takes
+        // the typist's, and a resize from any other is kept as that one's
+        // size without changing the pty; an emulator's answer is not
+        // typing; when the typist goes, the size falls to the latest typist
+        // still there, else the opener's, else the first attached one's.
+        SizeRig rig;
+        SizeRig::Seat& a = rig.add();
+        SizeRig::Seat& b = rig.add();
+        TermRig specs;   // for its spec() only
+        a.client->openTerminal(1, specs.spec("/bin/sh", {"sh"}), &a);
+        CHECK(rig.wait([&] { return a.pid > 0 && a.has("$ "); }));
+        b.client->attachTerminal(1, &b);
+        // The shell state that follows the replay says the pty's size.
+        CHECK(rig.wait([&] { return b.replays == 1 && b.shell.cols == 80 && b.shell.rows == 24; }));
+        b.client->resizeTerminal(1, 50, 20);
+        CHECK(rig.winsize(b, 1) == "80x24");
+        a.client->resizeTerminal(1, 90, 30);   // the opener, before anyone typed
+        CHECK(rig.winsize(a, 1) == "90x30");
+        CHECK(rig.wait([&] { return a.shell.cols == 90 && b.shell.cols == 90 && b.shell.rows == 30; }));
+        // b types: its size, before the shell reads what it typed.
+        b.client->terminalInput(1, "stty size\n");
+        CHECK(rig.wait([&] { return b.has("20 50"); }));
+        CHECK(rig.winsize(b, 1) == "50x20");
+        CHECK(rig.wait([&] { return a.shell.cols == 50 && a.shell.rows == 20 && b.shell.cols == 50; }));
+        // The opener resizes but is not the typist: kept, not taken.
+        a.client->resizeTerminal(1, 100, 40);
+        CHECK(rig.winsize(a, 1) == "50x20");
+        int hostCols = 0;
+        rig.host->inspect([&](const Shared::Host& h) { hostCols = h.screen(1) ? h.screen(1)->cols() : 0; });
+        CHECK(hostCols == 50);
+        // An answer to a query from a is not typing (a space, which the
+        // shell takes as the start of the next line).
+        a.client->terminalInput(1, " ", true);
+        CHECK(rig.winsize(a, 1) == "50x20");
+        // a types: the size it said while it was not the typist.
+        a.client->terminalInput(1, "stty size\n");
+        CHECK(rig.wait([&] { return a.has("40 100"); }));
+        CHECK(rig.winsize(a, 1) == "100x40");
+        b.client->terminalInput(1, ":\n");
+        CHECK(rig.winsize(b, 1) == "50x20");
+        // The typist goes: the latest typist still there.
+        rig.drop(b);
+        CHECK(rig.winsize(a, 1) == "100x40");
+        CHECK(rig.wait([&] { return a.shell.cols == 100 && a.shell.rows == 40; }));
+        // c attaches and says its size: a typed, so a's holds.
+        SizeRig::Seat& c = rig.add();
+        c.client->attachTerminal(1, &c);
+        CHECK(rig.wait([&] { return c.replays == 1 && c.shell.cols == 100; }));
+        c.client->resizeTerminal(1, 60, 15);
+        CHECK(rig.winsize(c, 1) == "100x40");
+        // a goes too: nobody there has typed and the opener is gone, so
+        // the first that attached with a size, c.
+        rig.drop(a);
+        CHECK(rig.winsize(c, 1) == "60x15");
+        // Alone, c is followed as one renderer always was.
+        c.client->resizeTerminal(1, 70, 18);
+        CHECK(rig.winsize(c, 1) == "70x18");
+        c.client->terminalInput(1, "stty size\n");
+        CHECK(rig.wait([&] { return c.has("18 70"); }));
+        c.client->resizeTerminal(1, 72, 19);
+        CHECK(rig.winsize(c, 1) == "72x19");
+        CHECK(rig.wait([&] { return c.shell.cols == 72 && c.shell.rows == 19; }));
+
+        // Before anyone types, the opener gone: the first renderer that
+        // attached with a size, not a later one, nor one that said none.
+        SizeRig::Seat& d = rig.add();
+        SizeRig::Seat& e = rig.add();
+        SizeRig::Seat& f = rig.add();
+        SizeRig::Seat& g = rig.add();
+        Shared::TermSpec sp = specs.spec("/bin/sh", {"sh"});
+        sp.cols = 81;
+        sp.rows = 25;
+        d.client->openTerminal(2, sp, &d);
+        CHECK(rig.wait([&] { return d.pid > 0; }));
+        for (SizeRig::Seat* s : {&e, &f, &g}) s->client->attachTerminal(2, s);
+        CHECK(rig.wait([&] { return e.replays == 1 && f.replays == 1 && g.replays == 1; }));
+        f.client->resizeTerminal(2, 61, 16);   // e says no size (as a dump)
+        g.client->resizeTerminal(2, 62, 17);
+        CHECK(rig.winsize(g, 2) == "81x25");
+        // e types with no size to give: nothing moves.
+        e.client->terminalInput(2, ":\n");
+        CHECK(rig.winsize(e, 2) == "81x25");
+        rig.drop(d);
+        CHECK(rig.winsize(g, 2) == "61x16");
+        CHECK(rig.wait([&] { return g.shell.cols == 61 && e.shell.cols == 61; }));
+        // e says a size now: it typed last, so the pty takes it.
+        e.client->resizeTerminal(2, 63, 18);
+        CHECK(rig.winsize(e, 2) == "63x18");
+        c.client->closeTerminal(1);
+        e.client->closeTerminal(2);
+        CHECK(rig.wait([&] { return rig.counts() == std::pair<size_t, size_t>(0, 0); }));
+        CHECK(rig.wait([&] { return f.client->sessionState()["terminals"].size() == 0; }));
     }
 
     GROUP("term:marks");
@@ -671,7 +853,17 @@ static void testSessionTerminals() {
         s.cwd = "/tmp/a b";
         s.foreground = 4321;
         s.signalsOff = true;
+        s.cols = 132;
+        s.rows = 43;
         CHECK(Shared::termShellFrom(Shared::termShellJson(s)) == s);
+        // An answer to a query (TermInput's flag 1) through the encoding.
+        Message ans;
+        ans.kind = Shared::Kind::TermInput;
+        ans.term = 3;
+        ans.flag = 1;
+        ans.bytes = "\x1b[?62;22c";
+        const Message ab = Shared::roundTrip(ans);
+        CHECK(ab.flag == 1 && ab.bytes == ans.bytes);
         CHECK(Shared::termShellFrom(Json()).status == -1);
         std::vector<Shared::TermMark> marks(2);
         marks[0].prompt = 5;

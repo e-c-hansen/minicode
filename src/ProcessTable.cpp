@@ -257,6 +257,7 @@ SampleStats Tracker::sample(Source& source, double now, const std::vector<Termin
         st.detailed++;
         p.memory = d.memory;
         p.ports = d.ports;
+        if (!d.ports.empty()) p.listened = true;
         if (!p.cpuKnown) {
             p.cpuKnown = true;
             p.cpuNanos = d.cpuNanos;
@@ -321,15 +322,49 @@ std::vector<Node> buildTree(std::vector<Proc> ps) {
         if (parent[i] >= 0) children[(size_t)parent[i]].push_back(i);
         else top.push_back(i);
     }
+    // Running first: a process that is alive, or has one alive under it,
+    // comes before the exited ones of its level, each kept in start order,
+    // so a server still running is never below one that stopped.
+    std::vector<char> liveBelow(n, 0);
+    std::function<bool(size_t)> live = [&](size_t i) {
+        bool any = ps[i].alive;
+        for (size_t c : children[i]) any = live(c) || any;
+        liveBelow[i] = any;
+        return any;
+    };
+    for (size_t i : top) live(i);
+    auto runningFirst = [&](std::vector<size_t>& level) {
+        std::stable_sort(level.begin(), level.end(),
+                         [&](size_t a, size_t b) { return liveBelow[a] > liveBelow[b]; });
+    };
     std::function<Node(size_t)> make = [&](size_t i) {
         Node node;
         node.proc = ps[i];
+        runningFirst(children[i]);
         for (size_t c : children[i]) node.children.push_back(make(c));
         return node;
     };
+    runningFirst(top);
     std::vector<Node> roots;
     for (size_t i : top) roots.push_back(make(i));
     return roots;
+}
+
+// Moves a level's exited helpers into `into`, deepest first, so a parent
+// whose children all fold can fold too (taking them back as its children).
+void foldLevel(std::vector<Node>& level, std::vector<Node>& into) {
+    std::vector<Node> keep;
+    for (Node& n : level) {
+        foldLevel(n.children, n.exited);
+        if (!n.proc.alive && !n.proc.listened && n.children.empty()) {
+            n.children = std::move(n.exited);
+            n.exited.clear();
+            into.push_back(std::move(n));
+        } else {
+            keep.push_back(std::move(n));
+        }
+    }
+    level = std::move(keep);
 }
 
 void finishGroup(Group& g, std::vector<Proc> members) {
@@ -410,6 +445,16 @@ std::string formatBytes(uint64_t bytes) {
     else if (b < gb) std::snprintf(buf, sizeof buf, "%.0f MB", b / mb);
     else std::snprintf(buf, sizeof buf, "%.1f GB", b / gb);
     return buf;
+}
+
+void foldExited(View& view) {
+    for (Group& g : view.groups) foldLevel(g.roots, g.exited);
+}
+
+int countProcs(const std::vector<Node>& nodes) {
+    int n = 0;
+    for (const Node& node : nodes) n += 1 + countProcs(node.children) + countProcs(node.exited);
+    return n;
 }
 
 std::string summary(uint64_t memory, int count) {

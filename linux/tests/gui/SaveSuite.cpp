@@ -14,12 +14,11 @@ static GSimpleAction* saveAction() {
 
 MC_GUI_SUITE(save) {
     MCGuiStep("a file in the project", [] { MCGuiWriteFile(notesPath(), "first line\n"); });
-    MCGuiWait("the tree lists it", 10, [] {
-        return MCGuiFindLabel(GTK_WIDGET(MCGuiApp().window), "notes.txt") != nullptr;
-    });
-    MCGuiStep("a click on its row opens it", [] {
-        MCGuiClick(MCGuiFindLabel(GTK_WIDGET(MCGuiApp().window), "notes.txt"));
-    });
+    // After other suites the tree may be scrolled anywhere, with folders
+    // open that hold a notes.txt of their own (watch/notes.txt): the row is
+    // brought into view and known by its path.
+    MCGuiBringTreeRow(notesPath());
+    MCGuiStep("a click on its row opens it", [] { MCGuiClick(MCGuiTreeRow(notesPath())); });
     MCGuiWait("the editor shows the file", 10, [] {
         return MCGuiApp().editor->currentPath() == notesPath() &&
                MCGuiEditorText() == "first line\n";

@@ -2,9 +2,11 @@
 // (SessionWeb.h): its CSS and script, no third-party code. The script draws
 // only what the server describes (tabs, lines with the highlighter's spans,
 // a Markdown page, terminal rows of styled runs, the folder's tree in a
-// sidebar, listed by the host one folder at a time). Read-only, it sends
+// sidebar, listed by the host one folder at a time, and the window's
+// browser tabs, the one picked shown in a frame). Read-only, it sends
 // only which document and terminal it shows, which folders to list, and
-// which file to open in the window. Editable, it is a small editor of
+// which file to open in the window. Editable, it may also ask the window's
+// browser pane to open an address, and it is a small editor of
 // its own: a caret and selection drawn over the lines, a hidden field at the
 // caret for keys, input methods and the clipboard, edits made on its lines
 // at once and sent with the version they were made on (moved past others'
@@ -56,6 +58,23 @@ header { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px;
 .strip button.dirty::before { content: "\25CF "; font-size: 9px; vertical-align: middle; }
 .strip button.busy::after { content: " \2026"; }
 .strip .empty { color: var(--muted); padding: 6px 12px; }
+#tabrow { display: flex; align-items: center; flex: none; background: var(--hbg);
+          border-bottom: 1px solid var(--line); }
+#tabrow .strip { flex: 1; min-width: 0; border-bottom: 0; align-self: stretch; }
+.strip .group { color: var(--muted); padding: 0 8px 0 14px; font-size: 11px; align-self: center;
+                text-transform: uppercase; letter-spacing: .04em; white-space: nowrap;
+                border-left: 1px solid var(--line); }
+#browse { flex: none; width: 17em; margin: 3px 6px; padding: 2px 6px; font: inherit;
+          font-size: 12px; background: var(--bg); color: var(--fg);
+          border: 1px solid var(--line); border-radius: 3px; }
+#websec { flex: 3; display: flex; flex-direction: column; min-height: 0; }
+#webbar { display: flex; gap: 10px; align-items: baseline; flex: none; padding: 3px 10px;
+          font-size: 12px; }
+#webtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#weburl { color: var(--muted); margin-left: 8px; }
+#webopen { color: var(--accent); flex: none; }
+#websec p { margin: 0; padding: 0 10px 4px; color: var(--muted); font-size: 12px; flex: none; }
+#web { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
 #wrap { flex: 1; display: flex; min-height: 0; position: relative; }
 #side { flex: none; width: clamp(180px, 22vw, 320px); display: flex; flex-direction: column;
         background: var(--sbg); color: var(--sfg); border-right: 1px solid var(--line);
@@ -143,7 +162,8 @@ body:not(.editable) #caret { display: none; }
   #code .l { white-space: pre-wrap; word-break: break-all; padding-left: 3.4em;
              text-indent: -3.4em; }
   #code .l::before { width: 3.4em; padding-right: .6em; text-indent: 0; }
-  #docsec { flex: 1.3; }
+  #docsec, #websec { flex: 1.3; }
+  #browse { width: 9em; }
   #termsec { flex: 1; }
   /* The tree is behind the header's button, over the page while open. */
   #side { display: none; position: absolute; left: 0; top: 0; bottom: 0; z-index: 20;
@@ -163,13 +183,20 @@ body:not(.editable) #caret { display: none; }
   <p id="treenote" class="hidden"></p>
 </aside>
 <div id="work">
-<nav id="tabs" class="strip"></nav>
+<div id="tabrow"><nav id="tabs" class="strip"></nav><input id="browse" class="hidden" type="text" inputmode="url" placeholder="Open an address in the window" title="Opens in the minicode window's browser pane" aria-label="Open an address in the minicode window's browser pane" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></div>
 <main>
   <section id="docsec">
     <div id="docbar"><span id="docpath"></span><button id="modebtn" class="hidden" type="button"></button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
     <div id="note" class="hidden"></div>
+  </section>
+  <section id="websec" class="hidden">
+    <div id="webbar"><span id="webtitle"></span><a id="webopen" target="_blank" rel="noopener noreferrer">Open in a new tab</a></div>
+    <p id="webhint">Some sites refuse to be shown inside another page and stay blank here: open those in a new tab.</p>
+    <p id="webloop" class="hidden">This address is on the machine running minicode: it shows here only when this browser runs on that machine too, not through a tunnel from elsewhere.</p>
+    <p id="webnote" class="hidden"></p>
+    <iframe id="web" title="Browser tab" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
   </section>
   <section id="termsec" class="none">
     <nav id="termtabs" class="strip"></nav>
@@ -187,7 +214,7 @@ body:not(.editable) #caret { display: none; }
   const token = new URLSearchParams(location.search).get("t") || "";
   const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
   let ws = null, palette = null, state = null, ended = false, folder = "", termNote = "";
-  let editable = false, canSave = false;
+  let editable = false, canSave = false, canBrowse = false;
   const want = { doc: 0, term: 0 };
   let followDoc = true, followTerm = true, termInfo = null;
   const kHist = 5000;
@@ -300,7 +327,7 @@ body:not(.editable) #caret { display: none; }
     const add = (id, path) => {
       if (seen.has(id)) return;
       seen.add(id);
-      let cls = id === want.doc ? "shown" : "";
+      let cls = id === want.doc && !W.on ? "shown" : "";
       if (id === onShow) cls += " onshow";
       if (dirty.get(id)) cls += " dirty";
       strip.appendChild(tabButton(base(path) || "untitled", path, cls, () => {
@@ -316,6 +343,95 @@ body:not(.editable) #caret { display: none; }
       e.className = "empty"; e.textContent = "No documents are open in this session.";
       strip.appendChild(e);
     }
+    // The window's browser pane (a headless host has none: no group).
+    const web = browserTabs();
+    if (web.length) {
+      const g = document.createElement("span");
+      g.className = "group"; g.textContent = "Browser";
+      strip.appendChild(g);
+      for (const { tab, onShow: shownThere } of web) {
+        let cls = "web";
+        if (W.on && tab.url === W.url) cls += " shown";
+        if (shownThere) cls += " onshow";
+        strip.appendChild(tabButton(tab.title || hostOf(tab.url), tab.url, cls, () => showWeb(tab)));
+      }
+    }
+  }
+
+  // ---- the window's browser tabs: the one picked in a frame, with a link
+  // to open it in a tab of this browser (a site that refuses frames stays
+  // blank, which the page cannot always tell), and a line when the address
+  // is on the machine running minicode. Only http and https are framed.
+  const W = { on: false, url: "", pending: "", pendingAt: 0 };
+  function hostOf(url) { try { return new URL(url).host || url; } catch (e) { return url; } }
+  function browserTabs() {
+    const out = [];
+    if (!state) return out;
+    for (const w of state.windows) {
+      const b = w.browser;
+      if (b && b.tabs) b.tabs.forEach((tab, i) => out.push({ tab: tab, onShow: i === b.active }));
+    }
+    return out;
+  }
+  function showWeb(tab) {
+    W.on = true; W.url = tab.url;
+    $("docsec").classList.add("hidden");
+    $("websec").classList.remove("hidden");
+    const title = $("webtitle");
+    title.textContent = tab.title || hostOf(tab.url);
+    const u = document.createElement("span");
+    u.id = "weburl"; u.textContent = tab.url;
+    title.appendChild(u);
+    const f = $("web"), open = $("webopen");
+    if (tab.web) {
+      if (f.getAttribute("src") !== tab.url) f.src = tab.url;
+      open.href = tab.url;
+    } else {
+      f.src = "about:blank";
+      open.removeAttribute("href");
+    }
+    f.classList.toggle("hidden", !tab.web);
+    open.classList.toggle("hidden", !tab.web);
+    $("webhint").classList.toggle("hidden", !tab.web);
+    $("webnote").textContent = tab.web ? "" : "This tab is not an http or https page; it shows only in the minicode window.";
+    $("webnote").classList.toggle("hidden", !!tab.web);
+    $("webloop").classList.toggle("hidden", !tab.loopback);
+    drawTabs();
+  }
+  // Back to the documents; the frame lets its page go (no sound or work
+  // left running behind them).
+  function hideWeb() {
+    if (!W.on) return;
+    W.on = false;
+    $("web").src = "about:blank";
+    $("websec").classList.add("hidden");
+    $("docsec").classList.remove("hidden");
+    drawSelection();
+  }
+  // Addresses a person types: a scheme kept as typed (the server refuses
+  // all but http and https), else http for this machine and https for the
+  // rest.
+  function typedAddress(s) {
+    s = s.trim();
+    if (!s || /^[a-z][a-z0-9+.-]*:[/][/]/i.test(s) ||
+        /^(javascript|data|file|about|blob|vbscript|mailto|view-source):/i.test(s)) return s;
+    const local = /^(localhost|127[.]|\[::1\]|0[.]0[.]0[.]0)/i.test(s);
+    return (local ? "http:" : "https:") + "//" + s;
+  }
+  function sameAddress(a, b) { return a.replace(/[/]+$/, "") === b.replace(/[/]+$/, ""); }
+  function onBrowsing(m) {
+    if (!m.ok) { toast(m.why || "That address was not opened."); return; }
+    $("browse").value = "";
+    toast("Opening in the minicode window's browser pane.");
+    W.pending = m.url; W.pendingAt = Date.now();
+    takeWebPending();
+  }
+  // The address asked for shows here once the window's tabs have it.
+  function takeWebPending() {
+    if (!W.pending) return;
+    if (Date.now() - W.pendingAt > 15000) { W.pending = ""; return; }
+    for (const { tab } of browserTabs())
+      if (sameAddress(tab.url, W.pending)) { W.pending = ""; showWeb(tab); return; }
   }
   function drawTermTabs() {
     const strip = $("termtabs");
@@ -337,6 +453,7 @@ body:not(.editable) #caret { display: none; }
   // A document with typing not yet confirmed waits for it before another
   // shows, so nothing typed is left behind.
   function showDoc(id) {
+    hideWeb();
     if (id !== want.doc) {
       if (!synced()) { D.switchTo = id; return; }
       want.doc = id;
@@ -508,6 +625,7 @@ body:not(.editable) #caret { display: none; }
     drawTabs(); drawTermTabs();
     if (!want.doc) showNote("No document is on show.");
     takePending();
+    takeWebPending();
     markCurrent();
   }
 
@@ -1353,6 +1471,8 @@ body:not(.editable) #caret { display: none; }
           termNote = m.termNote || "";
           editable = !!m.editable;
           canSave = !!m.canSave;
+          canBrowse = !!m.canBrowse;
+          $("browse").classList.toggle("hidden", !canBrowse);
           setStatus(editable ? "live, editing" : "live, read-only", true);
           document.body.classList.toggle("editable", editable);
           // Marks keep the path's slashes where they belong in a field
@@ -1382,6 +1502,7 @@ body:not(.editable) #caret { display: none; }
         case "ended": ended = true; banner(m.why); setStatus("ended"); break;
         case "tree": onTree(m); break;
         case "opening": onOpening(m); break;
+        case "browsing": onBrowsing(m); break;
       }
     };
     ws.onclose = () => {
@@ -1470,6 +1591,13 @@ body:not(.editable) #caret { display: none; }
     openFile(rel, e, ev.detail >= 2 || ev.metaKey || ev.ctrlKey);
   });
   $("refresh").addEventListener("click", refreshTree);
+  $("browse").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.target.value = ""; e.target.blur(); return; }
+    if (e.key !== "Enter" || e.isComposing) return;
+    e.preventDefault();
+    const url = typedAddress(e.target.value);
+    if (url && !post({ t: "browse", url: url })) toast("Not connected to the session.");
+  });
   $("sidebtn").addEventListener("click", () => setSide(!sideOpen()));
   // At phone width a tap beside the open tree closes it.
   $("work").addEventListener("pointerdown", () => { if (narrow.matches && sideOpen()) setSide(false); });
@@ -1489,6 +1617,9 @@ body:not(.editable) #caret { display: none; }
     focus: focusEditor,
     tree: () => [...$("tree").querySelectorAll(".row")].map((r) => r.dataset.path),
     treeNote: () => $("treenote").textContent,
+    browser: () => [...$("tabs").querySelectorAll("button.web")].map((b) => b.title),
+    web: () => (W.on ? { src: $("web").getAttribute("src") || "", open: $("webopen").getAttribute("href") || "",
+                         loopback: !$("webloop").classList.contains("hidden") } : null),
   };
   connect();
 })();

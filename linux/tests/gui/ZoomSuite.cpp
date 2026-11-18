@@ -256,6 +256,8 @@ MC_GUI_SUITE(zoom) {
 
 #ifdef MINICODE_ENABLE_BROWSER
     // ---- a page: the browser with the keyboard
+    // Shown by an earlier suite, the key would hide it.
+    MCGuiHideBrowserPane();
     MCGuiStep("the browser, by its key", [] { MCGuiKey("ctrl+shift+b"); });
     MCGuiWait("it has the keyboard", 10, [] {
         return Keys::within(focusWidget(), MCGuiApp().browser->widget());

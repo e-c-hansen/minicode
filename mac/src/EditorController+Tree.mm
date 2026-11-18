@@ -535,6 +535,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
                 [self reExpand:_worktreesItem usingSet:expanded];
             }
         }
+        [self fitTreeColumn];
         const NSInteger row = selected ? [self.outline rowForItem:selected] : -1;
         if (row >= 0 && row != self.outline.selectedRow)
             [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
@@ -611,6 +612,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     if (more) [expanded unionSet:more];
     [self.outline reloadData];
     [self reExpandTreeTop:expanded];
+    [self fitTreeColumn];
 
     if (selPath) {
         for (NSInteger r = 0; r < self.outline.numberOfRows; r++) {

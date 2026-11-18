@@ -269,10 +269,12 @@ release. With the setting off nothing changes, MCPty included.
   that could not start says why on the screen.
 - **What other screens see.** Every renderer of the host sees every
   terminal on it (the state's `terminals`); the browser's view of one
-  window (`SessionBrowser`) shows all of the app's host terminals, since
-  the Mac does not report which window holds one. Notes the panel writes
+  window (`SessionBrowser`) shows only that window's, which the window
+  reports with its tabs (below, "One window's terminals"). Notes the panel writes
   on the screen itself ("[shell exited — restarting]") are only on the
-  Mac's screen. Terminal size follows the Mac (any `TermResize` wins).
+  Mac's screen. Terminal size follows the renderer that last typed
+  (stage 6's **Size**); the browser's view sends no size, so the Mac's
+  holds.
 
 Checks: `make guitest SUITES=terminal_host` (the setting turned on by the
 suite: the shell is the host's; a command typed on the Mac is on the
@@ -336,6 +338,24 @@ yet; GTK is next, after the Linux session's GTK terminals (#128).
   terminal nobody shows keeps running, its output going only into the
   host's screen. Detaching (the connection closing) is `Host::disconnect`:
   documents, windows and terminals stay.
+- **Size** (tmux's `window-size latest`, 2026-11-18). A renderer's
+  `TermResize` is its view's size, kept as that renderer's
+  (`Term::Viewer`). The pty and the host's screen take the size of the
+  renderer showing the terminal that typed into it last and has said a
+  size; before that, the opener's (its `TermSpec`) while it shows it;
+  else the first renderer that attached with a size; with none, the pty
+  keeps its own. The size moves before the typed bytes are written, and a
+  renderer going hands it on by the same rule. Typing is `TermInput`
+  without flag 1: flag 1 (`terminalInput(t, bytes, true)`) marks an
+  emulator's answer to a program's query (DA, DSR, OSC colors), which
+  every renderer's emulator sends and which would otherwise hand the size
+  to whichever answered last. `TermShell` carries the pty's `cols` and
+  `rows`, so every renderer hears a change where the host's screen
+  reflowed in the stream. A renderer draws its emulator at that size,
+  never reflowing a program's screen to its view: a larger pty clipped
+  around the cursor (tmux pans), a smaller one at the top left with the
+  rest empty. It keeps sending its view's size, so its next key gives the
+  pty that size with no other message. With one renderer nothing changed.
 - **Lifetime** (the owner's answer): `run()` returns once there has been no
   connection for `idleMs` (10 minutes; `--idle-minutes`, fractions allowed,
   for checks) and `Host::busyReason()` is empty: no document dirty, no
@@ -371,19 +391,60 @@ replay, two renderers hear the same output, and closing it ends the shell;
 the lifetime with a 150 ms timer (no renderer, an unsaved document kept and
 then saved, a running command by the marks, a foreground `sleep` in `sh -i`);
 the command line's parsing. Real sockets and shells, under TSan in CI.
+`term:size` (`tests/session_terminal_tests.inc`) holds the size rule to the
+pty's own winsize and `stty size`: up to four renderers on one terminal,
+the opener's size until another types, a resize from one that is not the
+typist kept but not taken, an answer that is not typing, the typist going
+(to the latest typist left, then the first attached), and one alone.
+
+### Ids (done, 2026-11-18)
+
+Each connection's Welcome carries an id base in `v`, a multiple of
+`kIdRange` (2^32, SessionProtocol.h), and the renderer takes the ids of
+everything it opens on the host from it: `Client::newId()` gives base + 1,
+base + 2, ..., one counter for documents, terminals and windows. Bases are
+slots 1 to 2^21 - 1, so every id is under 2^53 and the browser page's JSON
+numbers (and Json's doubles) carry it exactly; Json writes every integer
+under 2^53 as its digits. The host gives each slot once, passing over any
+in whose range it holds an id all the same, then (after two million
+connections) the first slot no live renderer has and in whose range no
+document, terminal (dying ones included) or window is held
+(`Host::chooseIdBase`). Ids below 2^32 are in no base's range.
+
+- **What the host holds keeps its id.** A renderer attaching opens a held
+  document or terminal under the id `StateQuery` names; only new things
+  take new ids. A renderer that connects again gets a new base.
+- **Settle after `connect()`**: the base comes in the answer to its Hello.
+  Both apps do (`SessionLink` on GTK and the Mac); `newId()` before the
+  Welcome was taken settles first, and gives 0, never an id, when no host
+  answered (or none had a slot left, or 2^32 ids were used).
+- GTK's documents (`Document`), terminals and windows take `newId()`; the
+  window's host id is mapped from its `Model::Session` id in
+  `SessionLink.cpp`. The Mac's `MCSessionDoc`, host terminals and the
+  session browser's window do too.
+- Nothing persisted holds a host id: sessions keep tabs by path, backups
+  have their own UUIDs, and the save planner's ids last one run.
+- Checks: `host:id-bases` (three renderers through the encoding, slots
+  coming round, the largest base), `host:new-id-before-welcome`,
+  `hostserver:id-bases` (documents and shells of two renderers over the
+  socket) and `sessionweb:big-ids` (the page's JSON).
 
 ### For the GTK and Mac attach steps
 
-- A renderer needs ids that do not clash with the host's: today each app
-  numbers its documents, windows and terminals from 1, which is fine for
-  one renderer in process but not for two on one host. Either the host
-  hands out ids (`doc.open` without one), or each renderer takes a range
-  from its Welcome.
 - Tabs are still reported, not decided (4a's note): a second renderer reads
   `windows` from the state but cannot change them through the host until
   `Model::Window`'s callbacks are data.
-- The renderer that last typed into a terminal should set its size (the
-  design's tmux `window-size latest`); today any `TermResize` wins.
+- Size: done in the host (stage 6's **Size**). Each renderer still has
+  to follow it. The Mac's grid on the host should resize its screen only
+  to `TermShell`'s size (today it resizes on layout, which is right only
+  while it is the one sizing), send its screen's replies (`takeReplies`)
+  with `answer`, apart from the keys, and draw at the pty's size. GTK's
+  VTE sizes itself from its widget and commits its answers with the
+  user's keys (`onCommit`); it needs both before a second renderer shares
+  its terminals. The page sends no size, and the host refuses a guest's
+  `TermResize`: so its typing moves nothing today; to send one, let a
+  guest's `TermResize` through `refusedFromViewer`, and follow
+  `TermShell`'s size rather than polling the state.
 - Saving, dirty, backups and the disk are still the app's (stage 7): a
   headless host's unsaved document is only as safe as the host process.
 
@@ -516,21 +577,43 @@ Cancel.
   host, each group's tab on show) every half second when it changed, and
   `windowClosed` when it stops. `Web::Options::window` keeps the state the
   browsers get to that window and its documents, and a `show` of any other
-  document answers `gone`. Window ids start at 1000.
-- **Terminals** opened while the setting is on are the host's (above,
-  "Terminals on the host"), every window's; `Options::termNote` (in the
-  hello) puts "Terminals opened while the session host is on appear here"
-  in a muted line while the state has none.
+  document answers `gone`. The window's id is the client's (`newId()`,
+  below).
+- **One window's terminals** (R5, 2026-11-18). Terminals opened while
+  the setting is on are the host's (above, "Terminals on the host"), and
+  the host does not know which window holds one. The window says, as it
+  says its tabs: `reportTabs` adds `"terms"` (each panel terminal's
+  `sessionTerminal`, from `controlTerminals`) to its `WindowTabs` json,
+  and `lookNow()`s the server after a change, so the page follows an
+  opened or closed terminal within the half-second report. With
+  `Options::window` the server (not the page's script) keeps
+  `allowedTerms` from that array at each look: the state's `terms` lists
+  only those, `show` of another id shows nothing and attaches to nothing,
+  `tkey`, `ttext` and `tpaste` for one are dropped, and a terminal the
+  window stops reporting is taken off every page and its `TermView`
+  dropped. There is no resize message from a page, and the host refuses
+  a guest's `TermResize`. A window that reports no `terms` has none on
+  its page; a headless host's view (`window` 0) sees every terminal, as
+  before. `Options::termNote` (in the hello) puts "Terminals opened while
+  the session host is on appear here" in a muted line while the state
+  has none.
 - A tab opened before the setting was on has no document on the host and
   is left out of the page until it is opened again.
 
 Checks: `sessionweb:in-process` (an in-process `SessionHost` with a routing
 Sink, two windows' tabs, the view filtered to one, typing followed, the
-host let go when the browser leaves); `make guitest
+host let go when the browser leaves); `sessionweb:window-terminals` (two
+windows' terminals on one host: window 5's editable view lists only its
+own, a show, keys, text, paste and resize for window 6's id reach nothing
+and attach nothing, its own is shown and typed into, a view with no
+window lists both, an opened terminal appears once reported and a closed
+one leaves, one no longer reported is let go); `make guitest
 SUITES=session_browser` (the alert's Cancel and Turn On, the address
 caught rather than opened, Copy, plain requests with and without the
 token and with another Host, a WebSocket that gets the window's document
-and an edit typed in the window, the port closed once the window is).
+and an edit typed in the window, two windows each with a terminal and a
+page listing only its own, the other's id refused and its own typed into,
+a closed terminal leaving its page, the port closed once the window is).
 
 ### Editing in the browser (stage 8b)
 
@@ -716,6 +799,73 @@ open). GUI: `session_browser` reads the page's tree in WKWebView, clicks
 a folder open and a file in it, sees the window open that file in its tab
 and the page show it, and a picture's line. Checked by hand in headless
 Chromium over CDP at 1100 and 390 px wide (not committed).
+
+### The window's browser tabs in the page (R4)
+
+The owner's ask (2026-11-18): the page lists the window's browser pane, the
+web pages beside the editor, as a "Browser" group in the tab strip, and
+frames the one picked.
+
+- **The report.** No new message: the window's `WindowTabs` json gains
+  `browser` {tabs: [{url, title}], active} (`Web::browserReportJson`:
+  empty and over-8 KB addresses left out, the tab on show counted among the
+  rest, titles cut at 300 bytes on a character, at most 100). The Mac's
+  `MCSessionBrowser reportTabs` adds it when `browserTabs` gives one
+  (EditorController+SessionBrowser's `sessionBrowserTabs`: the pane's
+  `tabAddresses`, `tabPageTitles` and `selectedTab`; nil while the window
+  has no pane), so it rides the half-second report and the host keeps it
+  in `windows_` with the rest. A headless host has no window and GTK
+  reports none: no `browser`, no group.
+- **Only that window's.** `lookAtState` already drops other windows
+  (`Options::window`); it replaces each kept window's `browser` with
+  `browserViewJson`, which checks the renderer's report again and marks
+  each tab `web` (`webAddress`: only these are framed) and `loopback`.
+- **Opening an address** (`browse {url}`, answered `browsing {url, ok,
+  why}`): only from an editable page (a read-only one gets a note, before
+  anything else) and only when `Options::browse` is set (the hello's
+  `canBrowse`; the page shows its field only then). `webAddress` takes
+  http and https with a host, no user name or password before it (a
+  `http://good@evil` trick), no space or control character, at most 8 KB;
+  javascript:, file:, data:, about:, blob:, view-source: and the rest are
+  refused in the core, never left to the Mac. The Mac's `browse` runs
+  `openSessionAddress:` on the main queue: `agentBrowserPane` (made and
+  shown, no home page), then `openAddresses:` (a tab at the address shown
+  again, else a new tab), the keyboard kept where it was.
+- **The page.** A browser tab's button hides `#docsec` and shows
+  `#websec`: the title and address, an "Open in a new tab" link
+  (`rel="noopener noreferrer"`), always shown with the frame because a page
+  cannot tell a site that refused framing (X-Frame-Options, CSP
+  frame-ancestors) from a blank one, a muted line for a loopback address,
+  and the frame. A doc tab, or a file opened from the tree, goes back
+  (`showDoc` calls `hideWeb`), and the frame is set to about:blank so the
+  framed page stops. An address the page asked for is shown once the
+  window's state lists it (`takeWebPending`, trailing slashes ignored, 15 s).
+  Typed addresses with no scheme get http:// for localhost, 127.x and [::1],
+  else https://.
+- **The CSP** gained `frame-src 'self' http: https:` (was `'self'`): every
+  other directive is as before (default-src 'none', the script nonce,
+  connect-src to 'self' and ws:// loopback, frame-ancestors 'none',
+  base-uri and form-action 'none'). The frame is sandboxed without
+  allow-top-navigation (a framed page cannot take this page away), with
+  `referrerpolicy="no-referrer"` (the page's address holds the token, and
+  the page's own Referrer-Policy is no-referrer too). The page itself
+  cannot be framed back (X-Frame-Options DENY, frame-ancestors 'none'), so
+  framing this server's own address shows nothing of the session.
+
+#### Checks
+
+`sessionweb:browser` (webAddress over 6 good and 23 refused addresses,
+loopbackAddress, the report's cuts and active index, through the
+protocol's encoding unchanged, browserViewJson on a hostile report; then
+an in-process host with two windows: only window 5's tab in the page's
+state, a change reaching it, http and https opened and four other
+addresses refused before `Options::browse`, a read-only page refused with
+a note and no `canBrowse`, a server with no pane saying so; the CSP's
+directives). GUI: `session_browser` types javascript: into the page's
+field (refused, nothing opened), then an address on this Mac, which opens
+in the window's browser pane, and the page lists it under Browser and
+frames it with its link and loopback line. The look (the strip's group,
+the frame, the narrow layout) needs the owner's eyes.
 
 ### Still to do
 

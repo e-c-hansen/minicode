@@ -389,6 +389,43 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     return [self changeTerminal] ? _change.source : nil;
 }
 
+// ------------------------------------------- New Agent Task (Opt+Shift+Cmd+A)
+// See AgentTaskBar.h: a prompt, a worktree from HEAD, Claude Code in a
+// terminal there, and a row in the Agents panel. MCAgentWindow owns it.
+- (void)newAgentTask:(id)sender {
+    (void)sender;
+    [self showRightArea];
+    [_agents.tasks begin];
+}
+
+- (void)agentTaskBarDidChange {
+    MCAgentTaskBar *bar = _agents.tasksIfMade.bar;
+    if (bar && !bar.superview) {
+        [self.rightArea addSubview:bar];
+        [self applyAgentTaskBarColors];
+    }
+    [self relayoutRightArea];
+}
+
+- (NSRect)layoutAgentTaskBarIn:(NSRect)area {
+    MCAgentTaskSession *tasks = _agents.tasksIfMade;
+    if (!tasks.bar.superview) return area;
+    NSRect rest = [tasks layoutIn:area];
+    // Above the panes, which are added later and would cover it.
+    if (tasks.barShown && self.rightArea.subviews.lastObject != tasks.bar)
+        [self.rightArea addSubview:tasks.bar positioned:NSWindowAbove relativeTo:nil];
+    return rest;
+}
+
+- (void)applyAgentTaskBarColors {
+    MCAgentTaskSession *tasks = _agents.tasksIfMade;
+    if (!tasks) return;
+    AppSettings *cfg = [AppSettings shared];
+    [tasks.bar setBackground:[cfg background:Surface::Sidebar]
+                        text:[cfg text:Surface::Sidebar]
+                       field:[cfg background:Surface::Editor]];
+}
+
 // MCChangeHost
 - (TerminalView *)changeTerminalRunning:(NSString *)command focus:(BOOL)focus {
     NSResponder *keep = self.window.firstResponder;

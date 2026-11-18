@@ -574,10 +574,14 @@ void Browser::load(const std::string& raw) {
     const std::string s = raw.substr(first, raw.find_last_not_of(kWs) - first + 1);
 
     auto startsWith = [&s](const char* p) { return s.rfind(p, 0) == 0; };
+    // about:blank is an address, as the Mac's PageCheck::typedAddress has
+    // it: taken for a search, it went to DuckDuckGo (the browser_find
+    // suite's last step put the soak's window online that way).
+    const bool blank = g_ascii_strcasecmp(s.c_str(), "about:blank") == 0;
     const bool hasScheme = startsWith("http://") || startsWith("https://") ||
-                           startsWith("file://");
+                           startsWith("file://") || blank;
 
-    std::string url = s;
+    std::string url = blank ? std::string("about:blank") : s;
     if (!hasScheme) {
         const bool looksLikeDomain = s.find('.') != std::string::npos &&
                                      s.find(' ') == std::string::npos;

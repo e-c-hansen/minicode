@@ -589,6 +589,7 @@ MC_GUI_SUITE(folding) {
     MCGuiWait("the shell is up", 20, [] {
         return terminalText().find_first_not_of(" \n") != std::string::npos;
     });
+    MCGuiClearTerminalLine("");   // a line another suite left there would take this one in
     MCGuiStep("no folding key is an accelerator there; a program reads what comes", [] {
         for (const char* a : {"win.fold", "win.unfold", "win.foldrecursively", "win.unfoldrecursively",
                               "win.foldall", "win.unfoldall", "win.foldcomments", "win.foldlevel1",

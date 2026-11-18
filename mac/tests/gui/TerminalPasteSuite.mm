@@ -5,7 +5,9 @@
 //     command in the line editor instead of running it.
 //   - Several lines into a program that did not turn bracketed paste on
 //     (cat) ask first, as VS Code does: Cancel sends nothing, Paste as One
-//     Line takes the breaks out, Paste sends them; a command with one
+//     Line takes the breaks out, Paste sends them; three lines ending in a
+//     break are asked about as 3 lines, the preview showing all three with
+//     no "…"; a command with one
 //     trailing break goes in without it; terminal.multiline-paste-warning
 //     = never and always. One line holding a control character (Ctrl+O,
 //     ESC) asks too, with Paste and Cancel only; a Tab does not. The
@@ -143,6 +145,23 @@ MC_GUI_SUITE(terminal_paste) {
         Paste(s.term);
     });
     MCGuiWait(@"the lines go as they are", 5, ^BOOL { return [Str(s.sent) isEqualToString:@"alpha\rbeta"]; });
+    // Three copied lines that end in a line break are three lines, not four,
+    // and the preview shows them, with no "…" as if more were hidden.
+    MCGuiStep(@"three lines and a final break: 3 lines, the preview whole, Cancel", ^{
+        [s.sent setLength:0];
+        s.sheets = MCGuiSheetsShown().count;
+        Clip(@"one\ntwo\nthree\n");
+        MCGuiAnswerAlerts(@[@(NSAlertThirdButtonReturn)]);
+        Paste(s.term);
+        GCHECK(AskedOnSheet(s.sheets, s.c.window));
+        GCHECK_EQ_STR(MCGuiSheetsShown().lastObject, @"Paste 3 lines into the terminal?");
+        NSString *info = MCGuiLastAlertInformative();
+        GCHECK([info hasSuffix:@"Preview:\none\ntwo\nthree"]);
+        GCHECK([info rangeOfString:@"\u2026"].location == NSNotFound);
+        if (![info hasSuffix:@"Preview:\none\ntwo\nthree"]) NSLog(@"informative: %@", info);
+    });
+    MCGuiWait(@"answered", 5, ^BOOL { return !Grid(s.term).askingPaste; });
+    MCGuiStep(@"nothing sent", ^{ GCHECK(s.sent.length == 0); });
     // One line with a control character asks too (Ctrl+O at zsh's prompt
     // runs the line): Paste or Cancel, no Paste as One Line.
     MCGuiStep(@"one line with Ctrl+O, Cancel (the second of two buttons): nothing sent", ^{

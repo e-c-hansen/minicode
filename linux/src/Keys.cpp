@@ -163,6 +163,7 @@ const std::vector<Action>& actions() {
         {"workbench.action.terminal.fontZoomOut", "win.terminalzoomout", false},
         {"workbench.action.terminal.fontZoomReset", "win.terminalzoomreset", false},
         {"minicode.runFile", "win.runfile", false},
+        {"testing.runAtCursor", "win.runtestatcursor", false},
         {"workbench.action.quickOpen", "win.quickopen", false},
         {"workbench.action.gotoLine", "win.gotoline", false},
         {"workbench.action.gotoSymbol", "win.gotosymbol", false},

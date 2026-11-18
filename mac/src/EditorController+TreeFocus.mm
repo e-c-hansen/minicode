@@ -208,6 +208,7 @@ BOOL MCPathAtOrBelow(NSString *path, FileItem *folder) {
 
     [self.outline reloadData];
     [self reExpandTreeTop:memory];
+    [self fitTreeColumn];
     // The selection where it still shows; widening, else the old root's row.
     NSInteger row = -1;
     for (NSInteger r = 0; selPath && r < self.outline.numberOfRows; r++)

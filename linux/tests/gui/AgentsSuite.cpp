@@ -351,6 +351,13 @@ MC_GUI_SUITE(agents) {
         panel()->closeMenu();
     });
     MCGuiWait("the terminal is shown", 5, [] { return MCGuiApp().layout->terminalShown(); });
+    // The mark would stay for the rest of the run: "(1 waiting)" before every
+    // window's title, which tabs reads (the soak's shuffled order). The
+    // session stays named, as after a key typed there.
+    MCGuiStep("the waiting mark cleared, as a key typed in the terminal clears it", [] {
+        TerminalAttention::typed(MCGuiApp().terminal->controlId());
+        GCHECK_EQ_STR(TerminalAttention::markName(MCGuiApp().terminal->controlId()), "");
+    });
     // ---- Part two: the Evidence page
     MCGuiStep("a test run and a final message are appended to the new session", [] {
         std::string out;
@@ -412,6 +419,7 @@ MC_GUI_SUITE(agents) {
                !has(terminalText(), "not found"));
         GCHECK_EQ_STR(listingOf(fixturesDir()), gFixturesBefore);
     });
+    MCGuiClearTerminalLine("pytest -q");
     MCGuiStep("the transcripts folder removed", [] {
         GCHECK(system(("rm -rf '" + gProjects + "'").c_str()) == 0);
     });
@@ -468,7 +476,7 @@ MC_GUI_SUITE(agents) {
     MCGuiWait("the worktree row says how it stands", 15, [] { GtkWidget* l = treeLabel("agent-wt"); return l && MCGuiOnScreen(l); });
     MCGuiStep("named for its folder with the badge; select it", [] {
         GtkWidget* l = treeLabel("agent-wt");
-        GCHECK(l != nullptr);
+        if (!GCHECK(l != nullptr)) return;   // a null label's text throws
         GCHECK(has(gtk_label_get_text(GTK_LABEL(l)), "1 ahead · modified"));
         GCHECK(!gtk_widget_has_css_class(l, "minicode-git-modified") &&
                !gtk_widget_has_css_class(l, "minicode-git-untracked"));

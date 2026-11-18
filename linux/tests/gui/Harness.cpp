@@ -4,8 +4,11 @@
 
 #include "DocumentView.h"
 #include "Editor.h"
+#include "FileTree.h"
 #include "SessionLink.h"
+#include "TerminalAttention.h"
 #include "TerminalDock.h"
+#include "WindowLayout.h"
 #include "../../../tests/GuiRetry.h"
 
 #include <execinfo.h>
@@ -409,6 +412,112 @@ GtkWidget* MCGuiFindButton(GtkWidget* root, const std::string& text) {
     return nullptr;
 }
 
+namespace {
+GtkWidget* treeLabelOf(GtkWidget* root, const std::string& path) {
+    if (!root || !gtk_widget_get_mapped(root)) return nullptr;
+    if (GTK_IS_LABEL(root)) {
+        const char* p = static_cast<const char*>(g_object_get_data(G_OBJECT(root), "minicode-path"));
+        return p && path == p && MCGuiOnScreen(root) ? root : nullptr;
+    }
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = treeLabelOf(c, path)) return hit;
+    return nullptr;
+}
+}  // namespace
+
+GtkWidget* MCGuiTreeRow(const std::string& path) {
+    FileTree* tree = MCGuiApp().tree;
+    return tree ? treeLabelOf(tree->widget(), path) : nullptr;
+}
+
+void MCGuiBringTreeRow(const std::string& path, double timeout) {
+    const std::string name = path.substr(path.find_last_of('/') + 1);
+    MCGuiStep(name + "'s row brought into view in the tree", [path] {
+        MCGuiApp().tree->revealPath(path);
+    });
+    // When it was last asked again, where the row was, and since when.
+    auto asked = std::make_shared<double>(MCGuiNowMs());
+    auto lastY = std::make_shared<double>(-1);
+    auto since = std::make_shared<double>(0);
+    MCGuiWait(name + "'s row on screen, standing still", timeout, [path, asked, lastY, since] {
+        GtkWidget* row = MCGuiTreeRow(path);
+        graphene_point_t in = GRAPHENE_POINT_INIT(0, 0), at;
+        if (!row || !gtk_widget_compute_point(row, MCGuiApp().tree->widget(), &in, &at)) {
+            // revealPath gives up after a couple of seconds; a file written
+            // in the step before may still be on its way from the monitor.
+            if (MCGuiNowMs() - *asked > 1000) {
+                *asked = MCGuiNowMs();
+                MCGuiApp().tree->revealPath(path);
+            }
+            *since = 0;
+            return false;
+        }
+        if (*since == 0 || at.y != *lastY) {
+            *lastY = at.y;
+            *since = MCGuiNowMs();
+            return false;
+        }
+        return MCGuiNowMs() - *since >= 300;
+    });
+}
+
+void MCGuiHideBrowserPane() {
+    MCGuiStep("the browser pane hidden, if an earlier suite left it shown", [] {
+        // The window action, as View > Toggle Browser: a key could go to the
+        // page or the terminal, wherever the keyboard was left.
+        if (MCGuiApp().layout && MCGuiApp().layout->browserShown())
+            g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
+    });
+    MCGuiWait("the browser pane hidden", 10, [] {
+        return !MCGuiApp().layout || !MCGuiApp().layout->browserShown();
+    });
+}
+
+#ifdef MINICODE_ENABLE_TERMINAL
+namespace {
+// Ctrl+U to a terminal's shell, as a key typed there.
+void sendCtrlU(Terminal* t) {
+    std::vector<GtkWidget*> todo;
+    if (t) todo.push_back(t->widget());
+    while (!todo.empty()) {
+        GtkWidget* w = todo.back();
+        todo.pop_back();
+        if (VTE_IS_TERMINAL(w)) {
+            vte_terminal_feed_child(VTE_TERMINAL(w), "\x15", 1);
+            return;
+        }
+        for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+            todo.push_back(c);
+    }
+}
+
+// Every terminal of every app window.
+std::vector<Terminal*> allTerminals() {
+    std::vector<Terminal*> out;
+    for (const MCGuiAppWindow& a : MCGuiAppWindows())
+        for (int i = 0; a.termDock && i < a.termDock->count(); i++)
+            if (TerminalGroup* g = a.termDock->group(i))
+                for (Terminal* t : g->panes()) out.push_back(t);
+    return out;
+}
+}  // namespace
+#endif
+
+void MCGuiClearTerminalLine(const std::string& typed) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    MCGuiStep("the line typed at the shell's prompt taken back (Ctrl+U)", [] {
+        sendCtrlU(MCGuiApp().terminal);
+    });
+    if (typed.empty()) return;
+    MCGuiWait("\"" + typed + "\" gone from the shell's prompt", 10, [typed] {
+        Terminal* t = MCGuiApp().terminal;
+        return !t || t->recentText(1).find(typed) == std::string::npos;
+    });
+#else
+    (void)typed;
+#endif
+}
+
 bool MCGuiTextLaidOut(GtkWidget* textView) {
     if (!textView || !GTK_IS_TEXT_VIEW(textView)) return false;
     GtkTextIter end;
@@ -573,7 +682,11 @@ void noteState() {
 struct World {
     size_t windows = 0;
     int terminals = 0;
+    bool closeAsks = true;   // every window asks before closing a busy terminal
     bool otherOnTop = false;
+    bool active = true;   // the app's window has the X focus
+    int waiting = 0;   // terminals marked waiting for the user (TerminalAttention)
+    int busy = 0;      // terminals where a program other than the shell has the foreground
     std::string settings, keys;
 };
 World gWorldAtStart;
@@ -584,9 +697,18 @@ World lookAtWorld() {
     w.windows = all.size();
 #ifdef MINICODE_ENABLE_TERMINAL
     for (const MCGuiAppWindow& a : all)
-        if (a.termDock) w.terminals += a.termDock->count();
+        if (a.termDock) {
+            w.terminals += a.termDock->count();
+            if (!a.termDock->confirmClose) w.closeAsks = false;
+        }
 #endif
     w.otherOnTop = MCGuiTopWindow() != MCGuiApp().window;
+    w.active = MCGuiApp().window && gtk_window_is_active(MCGuiApp().window);
+    w.waiting = TerminalAttention::waitingCount();
+#ifdef MINICODE_ENABLE_TERMINAL
+    for (Terminal* t : allTerminals())
+        if (t->busy()) w.busy++;
+#endif
     w.settings = MCGuiReadFile(envOr("MINICODE_SETTINGS"));
     w.keys = MCGuiReadFile(envOr("MINICODE_KEYS"));
     return w;
@@ -660,6 +782,49 @@ void checkWhatSuiteLeft() {
     if (now.otherOnTop && !was.otherOnTop) {
         const char* title = gtk_window_get_title(MCGuiTopWindow());
         leak(std::string("left another window on top of the app's: \"") + (title ? title : "") + "\"");
+    }
+    // A suite may turn the question off while it closes terminals, but must
+    // put it back: terminal_ids did not, and a busy terminal closed unasked in
+    // processes, after it in the soak's shuffled order.
+    if (was.closeAsks && !now.closeAsks)
+        leak("left a window's question before closing a busy terminal off (TerminalDock::confirmClose)");
+    // With no window manager the X focus stays on a window that closed (a
+    // question, a second window) and no app window is active, so a click
+    // gives the keyboard nothing: tabs' first click in the text, after such
+    // a suite in a shuffled order. A desktop gives the focus to the window
+    // left, and the harness does too; said, not failed.
+    if (!now.active && !now.otherOnTop) {
+        if (was.active)
+            leak("left the app's window inactive (the X focus on a window it closed), given back",
+                 false);
+        if (putBack) MCGuiFocusKeyWindow();
+    }
+    // A terminal marked waiting puts "(1 waiting)" before every window's
+    // title: agents marked one and never cleared it, and tabs, after it in
+    // the soak's shuffled order, read the title.
+#ifdef MINICODE_ENABLE_TERMINAL
+    // A program left running in a terminal takes what later suites type
+    // there, and Run in Terminal waits for it (agents' Open in Terminal).
+    if (now.busy > was.busy)
+        leak("left a program running in " + std::to_string(now.busy - was.busy) +
+             " terminal(s) (stop it before the suite ends)");
+    // A line typed at a shell's prompt and left there joins the next suite's
+    // typing: find_bar's and folding's "stty raw ..." after install_hints'
+    // "uv tool install ...", never run. Nothing tells a typed line from the
+    // prompt, so every idle shell gets Ctrl+U, which an empty prompt ignores.
+    if (putBack)
+        for (Terminal* t : allTerminals())
+            if (t->runBlocker(nullptr).empty()) sendCtrlU(t);
+#endif
+    if (now.waiting > was.waiting) {
+        leak("left " + std::to_string(now.waiting) + " terminal(s) marked waiting where it found " +
+             std::to_string(was.waiting) + " (a notify's mark; TerminalAttention::typed clears it)");
+#ifdef MINICODE_ENABLE_TERMINAL
+        if (putBack)
+            for (Terminal* t : allTerminals())
+                if (TerminalAttention::markName(t->controlId()) == std::string("waiting"))
+                    TerminalAttention::typed(t->controlId());
+#endif
     }
     if (now.terminals > was.terminals)
         leak("left " + std::to_string(now.terminals) + " terminal tab(s) where it found " +
@@ -789,6 +954,19 @@ void selectSuites() {
         if (wanted.empty() ? s.name[0] == '_' : !wanted.count(s.name)) continue;
         if (skipped.count(s.name)) continue;
         chosen.push_back(&s);
+    }
+    // MC_GUI_IN_ORDER=1: the suites in the order MC_GUI_SUITES names them,
+    // to replay part of a shuffled run (a soak round's log names its order)
+    // up to the suite that failed.
+    if (!envOr("MC_GUI_IN_ORDER").empty() && !wanted.empty()) {
+        std::vector<std::string> named;
+        std::istringstream in(envOr("MC_GUI_SUITES"));
+        for (std::string w; in >> w;) named.push_back(w);
+        auto place = [&named](const Suite* s) {
+            return std::find(named.begin(), named.end(), s->name) - named.begin();
+        };
+        std::stable_sort(chosen.begin(), chosen.end(),
+                         [&place](const Suite* a, const Suite* b) { return place(a) < place(b); });
     }
     // MC_GUI_SHUFFLE=<seed>: the chosen suites in the order the seed gives
     // (tests/GuiRetry.h), the same on every machine, so the soak

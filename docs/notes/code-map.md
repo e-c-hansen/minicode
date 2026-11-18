@@ -142,6 +142,7 @@ goes here first, with tests; the GUI only displays it.
   explicit envp, so threads that start programs never read `environ`;
   docs/notes/build.md).
 - Agent work: `AgentTranscript`, `AgentIndex`, `AgentEvidence`, `AgentView`,
+  `AgentTask` (New Agent Task's names, worktree place and command line),
   `LineHistory` (blame porcelain, the lines a session's edits wrote, each
   line's answer);
   `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
@@ -199,7 +200,8 @@ goes here first, with tests; the GUI only displays it.
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
   `ClaudeHooksOffer` (the waiting dots' hooks, offered in the app),
   `AgentNotes`, `AgentModel`, `EditorLineHistory` (Show Line History),
-  `AgentsPanel`, `AgentPages`, `AgentWindow`, `ProcessMonitor` (libproc,
+  `AgentsPanel`, `AgentPages`, `AgentWindow`, `AgentTaskBar` (New Agent
+  Task), `ProcessMonitor` (libproc,
   `minicode procs`), `ProcessesPanel`.
 - `Demo` (`make demos`, inert unless `MINICODE_DEMO`), `Bench`
   (`MINICODE_BENCH`; the Linux port's is `linux/src/Bench.cpp`).

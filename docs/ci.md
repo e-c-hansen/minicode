@@ -120,8 +120,8 @@ Three more kinds of line warn before anything fails:
 - `LEAK [suite]` (a failure) and `LEFT [suite]` (a warning): state a GUI
   suite left for the next. LEAK is what a later suite would trip over (a
   window, a sheet or question, a zoom, a key window pinned, alert answers
-  unused); LEFT is a settings or keys file, which the harness puts back
-  between suites anyway, or a terminal left open. Either names the suite
+  unused); LEFT is a settings or keys file, or a terminal left open,
+  which the harness puts back (closes) between suites anyway. Either names the suite
   that left it, not the one that would fail because of it.
 
 ## Why a check passes here and fails on CI
@@ -243,7 +243,40 @@ the editor or its keyboard that time out), and `processes`, `mermaid`,
 `latex_forward`, `agent_panel`, `attention`, `palette`, `harness` and
 `tree_stall` in one; on the Mac `control` in both (`controlTerminals`
 not empty where it expects none). Each is a suite that depends on what
-an earlier one did or left, to be made to stand alone.
+an earlier one did or left, to be made to stand alone. The GTK ones were
+(2026-11-18): rows off screen in a tree a full run leaves with a hundred
+entries, and a watch/notes.txt taken for save's notes.txt
+(`MCGuiBringTreeRow` and `MCGuiTreeRow` reveal a row and know it by
+path; tree_stall scrolls to the top); the browser pane left shown
+(`MCGuiHideBrowserPane`: the harness suite, and latex_forward, whose
+page 2 could not reach the top of a narrower preview); keys reading
+accelerators with the keyboard left in a page; palette's "big" matching
+find_bar's find/big.py first; terminal_ids leaving the close question
+off, so processes closed its busy terminal unasked (now a LEAK); and
+browser_find's about:blank, which the GTK address bar took for a web
+search (the app fixed). `MC_GUI_IN_ORDER=1` replays a round's order,
+from its log, up to the suite that failed. agent_panel's and
+attention's shell waits did not fail again in that round's replay.
+A second pass (2026-11-18, seed 2076540248's order and 275908225's)
+found: agents marking the terminal waiting and never clearing it, so
+every later title began "(1 waiting)" and tabs read it (a mark left is
+now a LEAK, and cleared); install_hints and agents typing a command at
+the shell's prompt without Return and leaving it there, so find_bar's
+"stty raw ..." joined "uv tool install ..." and never ran
+(`MCGuiClearTerminalLine`; the harness now also sends every idle shell
+Ctrl+U as a suite ends, and a program left running in a terminal is a
+LEAK); the X focus left on a window a git suite closed, so tabs' click
+reached an inactive window (the git suites give it back, and so does the
+harness, with a LEFT line); control expecting the keyboard out of the
+editor, where an open lands in the background; zoom's and browser_find's
+browser pane as an earlier suite left it (shown, or with tabs before
+theirs); layout's and palette's tree rows off screen; and, in the app,
+the Evidence page's folder line, which did not shorten: with a long
+project folder it made every page in the editor's slot wider than the
+window, so Compare with Main's Apply to Main… and the format offer's ×
+were out of reach (agents failed even alone in a checkout under
+`.claude/worktrees`, whose path also gave a session in the project's
+own worktree the outer one: AgentIndex now takes the innermost).
 
 - GTK `agents`, "the same key closes the panel": in one local full run
   on the ThinkPad (2026-11-17, main at b0ce717 plus a test-only change),
@@ -251,7 +284,13 @@ an earlier one did or left, to be made to stand alone.
   in a GtkScrolledWindow of the editor's tab strip; the rest of the
   suite's Worktrees steps then timed out. Not seen on CI. The suite
   passed alone, after `browser_pages`, after `terminal_ids`, `idelink`
-  and `browser_pages` (three times), and in a full rerun.
+  and `browser_pages` (three times), and in a full rerun. Seen once more
+  alone on 2026-11-18 (the same place, the keyboard in the tab strip),
+  then not in thirteen runs. Not the tab strip: a throwaway suite gave it
+  the keyboard and Ctrl+Shift+A closed the panel every time, as it did
+  with no focus widget at all. The keyboard lands there because the
+  panel's list is emptied (the transcripts folder removed) and GTK moves
+  it on. Cause still unknown.
 
 Found while checking this: `search` failed twice on PR #8 once the leak
 check closed a window `previews` had left open. The suite had searched

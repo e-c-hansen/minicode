@@ -1,6 +1,7 @@
 // BufferLines.cpp — see BufferLines.h.
 #include "BufferLines.h"
 
+#include <algorithm>
 #include <cstring>
 #include <ctime>
 
@@ -69,11 +70,20 @@ void BufferLines::onInsert(GtkTextBuffer*, GtkTextIter* at, char* text, int len,
         before = gtk_text_iter_get_char(&prev);
     }
     const gunichar after = gtk_text_iter_get_char(at);   // 0 at the end
-    const size_t linesBefore = self->bars_.empty() ? 0 : self->index_.lineOf(pos);
+    const bool follow = !self->bars_.empty() || !self->tests_.empty();
+    const size_t linesBefore = follow ? self->index_.lineOf(pos) : 0;
+    const bool atLineStart = !self->tests_.empty() && self->index_.lineStart(linesBefore) == pos;
     const size_t had = self->index_.length();
     self->index_.editUtf8(pos, 0, text, len < 0 ? strlen(text) : (size_t)len, before, after);
     if (!self->bars_.empty())
         self->shiftBars(pos, self->index_.length() - had, linesBefore);
+    if (!self->tests_.empty()) {
+        const size_t added = self->index_.lineOf(pos + (self->index_.length() - had)) - linesBefore;
+        if (added) {
+            self->shiftTests(linesBefore, atLineStart, 0, added);
+            self->changed();
+        }
+    }
 }
 
 void BufferLines::onDelete(GtkTextBuffer*, GtkTextIter* from, GtkTextIter* to, gpointer p) {
@@ -93,14 +103,18 @@ void BufferLines::onDelete(GtkTextBuffer*, GtkTextIter* from, GtkTextIter* to, g
     const gunichar after = gtk_text_iter_get_char(&b);
     // Everything going: a whole new text (set_text) has no bars until its
     // own diff, as on the Mac.
-    if (pos == 0 && end >= self->index_.length()) self->bars_.clear();
-    const size_t linesBefore = self->bars_.empty() ? 0 : self->index_.lineOf(pos);
-    const size_t removedLines = self->bars_.empty() ? 0 : self->index_.lineOf(end) - linesBefore;
-    self->index_.editUtf8(pos, end - pos, nullptr, 0, before, after);
-    if (!self->bars_.empty()) {
-        QuickDiff::shift(self->bars_, linesBefore, removedLines, 0);
-        self->changed();
+    if (pos == 0 && end >= self->index_.length()) {
+        self->bars_.clear();
+        self->tests_.clear();
     }
+    const bool follow = !self->bars_.empty() || !self->tests_.empty();
+    const size_t linesBefore = follow ? self->index_.lineOf(pos) : 0;
+    const size_t removedLines = follow ? self->index_.lineOf(end) - linesBefore : 0;
+    const bool atLineStart = !self->tests_.empty() && self->index_.lineStart(linesBefore) == pos;
+    self->index_.editUtf8(pos, end - pos, nullptr, 0, before, after);
+    if (!self->bars_.empty()) QuickDiff::shift(self->bars_, linesBefore, removedLines, 0);
+    if (!self->tests_.empty() && removedLines) self->shiftTests(linesBefore, atLineStart, removedLines, 0);
+    if (!self->bars_.empty() || (!self->tests_.empty() && removedLines)) self->changed();
 }
 
 void BufferLines::shiftBars(size_t pos, size_t newLen, size_t linesBefore) {
@@ -113,6 +127,27 @@ void BufferLines::shiftBars(size_t pos, size_t newLen, size_t linesBefore) {
 void BufferLines::setChangeBars(std::vector<QuickDiff::Bar> bars) {
     if (bars == bars_) return;
     bars_ = std::move(bars);
+    changed();
+}
+
+void BufferLines::shiftTests(size_t first, bool atLineStart, size_t removed, size_t added) {
+    // A test below the edit moves with its line (its own line too when the
+    // edit begins at that line's start); one in lines the edit took stays
+    // on its first line until the next look.
+    const size_t pivot = first + removed + (atLineStart ? 0 : 1);
+    for (GutterTest& t : tests_) {
+        if (t.line >= pivot) t.line = t.line + added - removed;
+        else if (t.line > first) t.line = first;
+    }
+}
+
+void BufferLines::setTests(bool lane, std::vector<GutterTest> tests) {
+    std::stable_sort(tests.begin(), tests.end(),
+                     [](const GutterTest& a, const GutterTest& b) { return a.line < b.line; });
+    if (!lane) tests.clear();
+    if (lane == testLane_ && tests == tests_) return;
+    testLane_ = lane;
+    tests_ = std::move(tests);
     changed();
 }
 

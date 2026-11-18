@@ -353,6 +353,9 @@ Terminal *gT1 = nullptr, *gT2 = nullptr, *gT3 = nullptr;   // tab 1; tab 2; tab 
 int gId2 = 0, gId3 = 0;
 std::string gOldShellEnv;
 bool gHadShellEnv = false;
+// The window's close question, put back at the end: left null, a busy
+// terminal closed unasked in every suite after (processes asks it).
+std::function<void(Terminal*, std::function<void()>)> gOldConfirm;
 bool gIdsReady(Terminal* t) { return t && t->shellPid() > 0 && t->shellState().known && t->shellState().atPrompt; }
 std::string idFile(int n) { return MCGuiProjectFile("tid" + std::to_string(n) + ".txt"); }
 std::string trimmed(std::string v) {
@@ -387,6 +390,7 @@ MC_GUI_SUITE(terminal_ids) {
         GCHECK(std::string(g_get_home_dir()).find(MCGuiScratch()) == 0);   // never the user's own
         EnvLock::envSet("SHELL", "/bin/bash", TRUE);
         MCGuiWriteFile(std::string(g_get_home_dir()) + "/.bashrc", "\n");
+        gOldConfirm = d->confirmClose;
         d->confirmClose = nullptr;
         d->newTerminal();
         while (d->count() > 1) d->close(0, false);
@@ -523,5 +527,6 @@ MC_GUI_SUITE(terminal_ids) {
         GCHECK(gRun->exitCode != 0);
         if (gHadShellEnv) EnvLock::envSet("SHELL", gOldShellEnv.c_str(), TRUE);
         else EnvLock::envUnset("SHELL");
+        if (MCGuiApp().termDock) MCGuiApp().termDock->confirmClose = gOldConfirm;
     });
 }

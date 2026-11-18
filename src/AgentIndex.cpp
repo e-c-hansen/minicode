@@ -67,10 +67,13 @@ static std::string baseName(const std::string &p) {
     return p.substr(s == std::string::npos ? 0 : s + 1, e - (s == std::string::npos ? 0 : s + 1));
 }
 
-// The worktree a path is in, when it is under a ".claude/worktrees/<name>".
+// The worktree a path is in, when it is under a ".claude/worktrees/<name>":
+// the innermost, for a project that is itself in an agent's worktree (the
+// first mark named that outer worktree, outside the folder, so a session in
+// the project's own worktree read as working in main).
 static std::string worktreeOf(const std::string &path) {
     static const std::string kMark = "/.claude/worktrees/";
-    size_t m = path.find(kMark);
+    size_t m = path.rfind(kMark);
     if (m == std::string::npos) return "";
     size_t s = m + kMark.size();
     size_t e = path.find('/', s);

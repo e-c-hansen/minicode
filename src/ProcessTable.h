@@ -21,7 +21,10 @@
 //
 // buildView groups one window's processes as its panel shows them: a group
 // per terminal of that window (in the order given), then orphans (their
-// terminal closed), then "not started here", each a tree by parent.
+// terminal closed), then "not started here", each a tree by parent, where
+// running processes come first and exited ones sink below them. foldExited
+// then gathers exited helpers (no port ever seen, nothing running under
+// them) into one "N exited" row per level, so the row that matters leads.
 // planStop says what Stop signals. Nothing here stops anything by itself.
 #pragma once
 #include "Json.h"
@@ -92,6 +95,7 @@ struct Proc {
     uint64_t memory = 0;
     double cpu = 0;           // percent of one core
     std::vector<Listen> ports;
+    bool listened = false;    // it was seen listening on a port (kept after it exits)
     Origin origin = Origin::Terminal;
     int terminal = 0;         // the terminal it came from (Origin::Terminal)
     std::string terminalTitle;
@@ -154,7 +158,10 @@ private:
 // ------------------------------------------------------------ the panel
 struct Node {
     Proc proc;
-    std::vector<Node> children;
+    std::vector<Node> children;   // running ones first, then by start
+    // After foldExited: the exited helpers among the children, shown as one
+    // "N exited" row after them (each keeps its own folded tree).
+    std::vector<Node> exited;
 };
 
 enum class GroupKind { Terminal, Orphans, Outside };
@@ -165,7 +172,8 @@ struct Group {
     std::string title;         // "zsh", "Orphans", "Not started here"
     uint64_t memory = 0;       // of the live processes
     int count = 0;             // live processes
-    std::vector<Node> roots;   // by start time, children likewise
+    std::vector<Node> roots;   // running first, then by start time; children likewise
+    std::vector<Node> exited;  // after foldExited: the roots folded into "N exited"
 };
 
 struct View {
@@ -178,6 +186,15 @@ struct View {
 // is every live terminal of every window, the window's in tab order.
 View buildView(const std::vector<Proc>& procs, const std::vector<Terminal>& terminals,
                int window, const std::string& folder);
+
+// The panel's view: in every group and under every process, the exited
+// processes that never listened on a port and have nothing running under
+// them move from the rows into `exited` (one "N exited" row); one that
+// listened (a stopped server) keeps its own row, below the running ones.
+// `minicode procs` lists everything unfolded.
+void foldExited(View& view);
+// How many processes nodes hold, their trees included ("N exited").
+int countProcs(const std::vector<Node>& nodes);
 
 // "1.8 GB in 14 processes", "34.2 MB in 1 process", "No processes".
 std::string summary(uint64_t memory, int count);

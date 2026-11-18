@@ -15,6 +15,7 @@
 #include "SnippetSession.h"
 #include "CodeView.h"
 #include "Folds.h"
+#include "EditorConflicts.h"
 #include "Palette.h"
 #include "Markdown.h"
 #include "MarkdownEdit.h"
@@ -301,6 +302,7 @@ Editor::Editor() {
     snippets_ = new SnippetSession(this);    // PARITY.md 2.5
     large_ = new LargeFileUi(this);   // big files and long lines (LargeFileView.h)
     folds_ = new FoldUi(this);        // PARITY.md 1.10
+    conflicts_ = new EditorConflicts(this);   // merge conflicts (EditorConflicts.h)
     notes_ = new AgentNotes(this);    // PARITY.md 3.4
     inline_ = new InlineAgentBar(this);   // PARITY.md 3.3
     buildGroups();   // the second group's widgets, hidden until a split (Groups.cpp)
@@ -321,6 +323,8 @@ Editor::~Editor() {
     inline_ = nullptr;
     delete notes_;
     notes_ = nullptr;
+    delete conflicts_;
+    conflicts_ = nullptr;
     delete folds_;
     folds_ = nullptr;
     delete snippets_;
@@ -1660,6 +1664,7 @@ void Editor::applySettings(const Settings& s) {
     // Bracket boxes, and the bracket colors' tags (every tab's) and whether
     // each tab has them.
     brackets_->applySettings(s);
+    conflicts_->applySettings(s);   // editor.merge-current and editor.merge-incoming
     BracketColors::applySettings(tags_.table, s);
     for (Document* d : documents()) d->bracketSettingChanged();
     // Semantic tokens' tags (every tab's), and off with their setting.
