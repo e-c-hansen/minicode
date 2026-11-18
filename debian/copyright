@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: MiniCode
+Upstream-Name: mutible
 Upstream-Contact: Eric Hansen <eric.calvin.hansen@gmail.com>
-Source: https://github.com/e-c-hansen/minicode
+Source: https://github.com/ible-ai/mutible
 
 Files: *
 Copyright: 2026 Eric Hansen

@@ -1,19 +1,21 @@
-.TH MINICODE 1 "November 2026" "minicode" "User Commands"
+.TH MUTIBLE 1 "November 2026" "mutible" "User Commands"
 .SH NAME
-minicode \- small editor for text, code, and LaTeX, with a browser and terminal
+mutible, mbl \- small editor for text, code, and LaTeX, with a browser and terminal
 .SH SYNOPSIS
-.B minicode
+.B mutible
 .RB [ \-\-foreground ]
 .RI [ path ]
 .br
-.B minicode
+.B mutible
 .BR \-v " | " \-\-version
 .br
-.B minicode
+.B mutible
 .BR \-h " | " \-\-help
 .SH DESCRIPTION
-.B minicode
+.B mutible
 opens a window with a file tree on the left and an editor on the right.
+.B mbl
+is a shorter name for the same command.
 .PP
 If
 .I path
@@ -21,26 +23,26 @@ is a folder, it becomes the root of the file tree. If it is a file, the
 file is opened and the tree is rooted at the folder that holds it. With no
 argument the current directory is opened.
 .PP
-minicode runs as a single instance. Running it again while it is open
+mutible runs as a single instance. Running it again while it is open
 passes the path to the running instance, which opens a new window on that
 folder, or brings forward the window that already has it and shows the file
 there, and the command returns at once.
 .PP
 Started from a terminal, the command returns as soon as the window is up,
-and minicode runs apart from the terminal, as VS Code's
+and mutible runs apart from the terminal, as VS Code's
 .B code
-does: closing the terminal leaves minicode open, and the terminal gives no
-warning about a running process. What minicode prints after that goes
+does: closing the terminal leaves mutible open, and the terminal gives no
+warning about a running process. What mutible prints after that goes
 nowhere, unless it was sent to a file. A problem before the window, such as
 no display to open it on, is printed in the terminal, and the command exits
-with minicode's status.
+with mutible's status.
 .PP
 Ctrl+Shift+H shows every keyboard shortcut in the window.
 .SH OPTIONS
 .TP
 .B \-\-foreground
-Stay in the terminal until minicode quits, as any program run there does,
-with its output in the terminal. Closing the terminal then closes minicode.
+Stay in the terminal until mutible quits, as any program run there does,
+with its output in the terminal. Closing the terminal then closes mutible.
 .TP
 .BR \-v ", " \-\-version
 Print the version and exit.
@@ -52,33 +54,59 @@ Print a summary of the usage and exit.
 End the options; what follows is a path, even when it starts with a dash.
 .SH FILES
 .TP
-.I ~/.config/minicode/settings.conf
+.I ~/.config/mutible/settings.conf
 Colors, opacity, and language server commands. Ctrl+, creates it with every
 setting commented out and opens it. It follows
 .BR $XDG_CONFIG_HOME .
 .TP
-.I ~/.local/share/minicode/bin/tectonic
-Where the LaTeX preview puts tectonic when it is asked to download it.
+.I ~/.local/state/mutible
+Sessions, recent folders, zoom, and the other state kept between runs. It
+follows
+.BR $XDG_STATE_HOME .
+.TP
+.I ~/.local/share/mutible/bin/tectonic
+Where the LaTeX preview puts tectonic when it is asked to download it. It
+follows
+.BR $XDG_DATA_HOME .
 .SH ENVIRONMENT
 .TP
-.B MINICODE_FOREGROUND
+.B MUTIBLE_FOREGROUND
 Set to anything but an empty value or 0, the same as
 .BR \-\-foreground ,
 for scripts and debugging.
 .TP
-.B MINICODE_SETTINGS
+.B MUTIBLE_SETTINGS
 A settings file to read in place of the one above.
 .TP
-.B MINICODE_TECTONIC
+.B MUTIBLE_TECTONIC
 The tectonic binary the LaTeX preview uses, ahead of any other.
 .TP
-.B MINICODE_LSP_LOG
+.B MUTIBLE_LSP_LOG
 A file to append every language server message to, for debugging.
 .TP
 .B SHELL
 The shell the terminal panel runs.
+.PP
+Each
+.B MUTIBLE_
+variable is also read under its name from before 1.6.0,
+.BR MINICODE_FOREGROUND ,
+.B MINICODE_SETTINGS
+and so on, when the new name is not set.
+.SH HISTORY
+mutible was called minicode until 1.6.0. The
+.B minicode
+command still starts it, and says it is now mutible. On its first launch
+mutible copies what minicode kept in
+.IR ~/.config/minicode ,
+.I ~/.local/state/minicode
+and
+.I ~/.local/share/minicode
+to the folders above, when they do not exist yet, and leaves the old
+folders as they were. A launcher pinned to the dock under the old name is
+pinned again from the new one.
 .SH SEE ALSO
 .BR git (1),
 .BR clangd (1)
 .PP
-https://github.com/e-c-hansen/minicode
+https://mut.ible.ai

@@ -1,7 +1,14 @@
 #!/usr/bin/make -f
-# MiniCode's GTK 4 port lives in linux/. Its Meson build also compiles the
+# mutible's GTK 4 port lives in linux/. Its Meson build also compiles the
 # shared C++ core from ../src and reads the version from ../Info.plist, which
 # is why the source package is the whole repository.
+#
+# Two binary packages (debian/control): mutible, the app, and minicode, the
+# transitional package for the name before 1.6.0, which holds only its docs.
+# With two packages dh_auto_install installs into debian/tmp, and
+# debian/mutible.install takes every file from there; dh_missing fails the
+# build on any installed file it does not name, so a file the Meson build
+# starts installing is never left out of the package unseen.
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
@@ -13,7 +20,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 # browser, PDF viewer or web pictures. dh passes --buildtype=plain and the
 # compiler flags come from dpkg-buildflags (-O2 -g plus hardening), the same
 # optimization as the project's own debugoptimized default; dh_strip then
-# moves the symbols into the minicode-dbgsym package.
+# moves the symbols into the mutible-dbgsym package.
 override_dh_auto_configure:
 	dh_auto_configure -- \
 		-Dterminal=enabled \
@@ -31,3 +38,6 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	dh_auto_test
 	MC_SKIP_TIMING=1 $(MAKE) test
 endif
+
+override_dh_missing:
+	dh_missing --fail-missing

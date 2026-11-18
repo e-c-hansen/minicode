@@ -1,4 +1,4 @@
-Source: minicode
+Source: mutible
 Section: editors
 Maintainer: Eric Hansen <eric.calvin.hansen@gmail.com>
 Build-Depends:
@@ -12,15 +12,19 @@ Build-Depends:
  meson,
  pkgconf,
 Standards-Version: 4.7.3
-Homepage: https://github.com/e-c-hansen/minicode
-Vcs-Browser: https://github.com/e-c-hansen/minicode
-Vcs-Git: https://github.com/e-c-hansen/minicode.git
+Homepage: https://mut.ible.ai
+Vcs-Browser: https://github.com/ible-ai/mutible
+Vcs-Git: https://github.com/ible-ai/mutible.git
 
-Package: minicode
+Package: mutible
 Architecture: any
 Depends:
  ${misc:Depends},
  ${shlibs:Depends},
+Breaks:
+ minicode (<< 1.6.0~),
+Replaces:
+ minicode (<< 1.6.0~),
 Recommends:
  curl | wget,
  git,
@@ -33,7 +37,7 @@ Suggests:
  python3-pylsp,
  rust-analyzer,
 Description: small editor for text, code, and LaTeX, with a browser and terminal
- minicode is a light, keyboard-first editor for text, code, and LaTeX. One
+ mutible is a light, keyboard-first editor for text, code, and LaTeX. One
  window holds a file tree, an editor with syntax highlighting for about 200
  languages and file types, a terminal panel, a web browser panel, and a
  Source Control panel for staging, committing, and browsing the commit
@@ -42,10 +46,23 @@ Description: small editor for text, code, and LaTeX, with a browser and terminal
  Markdown files open rendered, with tables, pictures, and links, and any
  block can be edited from the preview. Images, PDFs, video, and audio open
  in the editor's place. LaTeX files are typeset as you type and can be
- edited by double-clicking the page, using tectonic, which minicode
+ edited by double-clicking the page, using tectonic, which mutible
  offers to download when it is not installed. Completion, diagnostics, and
  go to definition come from language servers such as clangd, pylsp,
  gopls, and rust-analyzer when they are installed.
  .
  This is the GTK 4 build of the macOS app of the same name, sharing its
- C++ core.
+ C++ core. It was called minicode until 1.6.0; the mutible command is also
+ installed as mbl, and as minicode, which says it is now mutible.
+
+Package: minicode
+Architecture: all
+Section: oldlibs
+Priority: optional
+Depends:
+ mutible (>= ${binary:Version}),
+ ${misc:Depends},
+Description: transitional package for mutible
+ minicode is now called mutible. This package only brings in mutible, the
+ same editor under its new name, and can be removed once mutible is
+ installed.
