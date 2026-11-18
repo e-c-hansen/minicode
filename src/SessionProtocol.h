@@ -273,7 +273,8 @@ Message roundTrip(const Message& m);
 // changing (stage 6, which gives them to a second screen, adds them).
 // The Mac's window adds "terms", the ids of the host terminals in its
 // panel: a browser's view of one window (SessionWeb.h, Options::window)
-// shows and types into those and no others.
+// shows and types into those and no others. Beside it "termLayout" says
+// how they sit in the dock's tabs and split panes (TermDockRecord.h).
 Json windowJson(const Model::Window& w);
 // Whether `bytes` read as an emulator's answers to a program's queries and
 // nothing else (TermInput's flag 1): one or more of a CSI ending in c, n,
