@@ -356,7 +356,7 @@ session has a display. Check first.
   editing: keystroke, multiedit, editor_keys, auto_close, bracket_pairs,
   folding, foldperf, multicaretclick, multicaret_rows, find_bar,
   large_file, save, paste, zoomfit, spell_check;
-  files and windows: tree, tree_hidden, folder_picker, preview_tabs, split_editor, search,
+  files and windows: tree, tree_hidden, tree_focus, folder_picker, preview_tabs, split_editor, search,
   replace_in_folder, backups, window_restore, palette, symbols, keymap, config_writes,
   daily_work, structure, utf16, hints_panel, swatch_escape;
   language servers and formatting: language, lsp_fixes, lsp_sync,

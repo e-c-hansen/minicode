@@ -94,8 +94,34 @@
     }
     return self;
 }
+- (void)setTopBar:(NSView *)bar {
+    if (bar == _topBar) return;
+    [_topBar removeFromSuperview];
+    _topBar = bar;
+    if (bar) [self addSubview:bar positioned:NSWindowAbove relativeTo:nil];
+    [self tile];
+}
 - (void)tile {
     [super tile];
+    // The top bar's strip comes off the clip view and the scroller.
+    if (_topBar && !_topBar.hidden) {
+        const NSRect b = self.bounds;
+        const CGFloat h = MIN(_topBar.frame.size.height, b.size.height);
+        const NSRect strip = NSMakeRect(NSMinX(b), self.isFlipped ? NSMinY(b) : NSMaxY(b) - h,
+                                        b.size.width, h);
+        _topBar.frame = strip;
+        for (NSView *v in @[self.contentView, self.verticalScroller ?: self.contentView]) {
+            NSRect f = v.frame;
+            if (self.isFlipped) {
+                const CGFloat cut = MAX(0, NSMaxY(strip) - NSMinY(f));
+                f.origin.y += cut;
+                f.size.height = MAX(0, f.size.height - cut);
+            } else {
+                f.size.height = MAX(0, MIN(NSMaxY(f), NSMinY(strip)) - NSMinY(f));
+            }
+            v.frame = f;
+        }
+    }
     // Not behind a ruler (the editor's line numbers), which paints its own
     // background: a translucent color painted twice would come out darker.
     NSRect back = self.bounds;

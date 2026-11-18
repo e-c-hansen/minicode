@@ -362,6 +362,7 @@
 
     self.sidebarScroll.panelColor = [cfg background:Surface::Sidebar];
     [self refreshTreeCells];   // names, and their sizes and dates
+    [self updateTreeFocusBar];   // the focused tree's breadcrumb, in the sidebar's text color
 
     self.editorScroll.panelColor = [cfg background:Surface::Editor];
     // A selection keeps the syntax colors under it, in every theme (AppKit's

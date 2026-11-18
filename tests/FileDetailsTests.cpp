@@ -358,4 +358,67 @@ static void testFileDetails() {
         CHECK(stampOf(R, &rs) && !fresh3.lookup(R, rs, &sub));
     }
     fsys::remove_all(root, ec);
+
+    GROUP("tree:focus");
+    {
+        using namespace TreeFocus;
+        CHECK(normalize("mac/src") == "mac/src");
+        CHECK(normalize("/mac//src/") == "mac/src");
+        CHECK(normalize("./mac/./src") == "mac/src");
+        CHECK(normalize("") == "" && normalize(".") == "" && normalize("/") == "");
+        CHECK(normalize("mac/../etc") == "" && normalize("..") == "");
+        CHECK(normalize("a..b/.c") == "a..b/.c");   // dots inside a name are a name
+
+        std::string rel = "x";
+        CHECK(relative("/r/proj", "/r/proj/mac/src", &rel) && rel == "mac/src");
+        CHECK(relative("/r/proj/", "/r/proj/mac", &rel) && rel == "mac");
+        CHECK(relative("/r/proj", "/r/proj", &rel) && rel.empty());
+        CHECK(!relative("/r/proj", "/r/project/mac", &rel));
+        CHECK(!relative("/r/proj", "/r", &rel) && !relative("", "/r", &rel));
+        CHECK(relative("/", "/etc/x", &rel) && rel == "etc/x");
+
+        CHECK(contains("", "anything/at/all") && contains("", ""));
+        CHECK(contains("mac", "mac") && contains("mac", "mac/src/a.mm"));
+        CHECK(!contains("mac", "macos/a") && !contains("mac/src", "mac") && !contains("mac", ""));
+
+        CHECK(parent("mac/src/a.mm") == "mac/src" && parent("a.txt") == "" && parent("") == "");
+
+        std::vector<Part> parts = breadcrumb("minicode", "mac/src");
+        CHECK(parts.size() == 3);
+        CHECK(parts[0].label == "minicode" && parts[0].focus.empty());
+        CHECK(parts[1].label == "mac" && parts[1].focus == "mac");
+        CHECK(parts[2].label == "src" && parts[2].focus == "mac/src");
+        CHECK(breadcrumb("minicode", "").size() == 1);
+        CHECK(breadcrumb("m", "/a//b/").size() == 3 && breadcrumb("m", "/a//b/")[2].focus == "a/b");
+
+        // Inside the focus: no change. Outside: the nearest folder above both.
+        CHECK(widened("mac/src", "mac/src/deep/a.mm") == "mac/src");
+        CHECK(widened("mac/src", "mac/tests/gui/X.mm") == "mac");
+        CHECK(widened("mac/src", "src/Json.cpp") == "");
+        CHECK(widened("mac/src", "README.md") == "");
+        CHECK(widened("mac/src", "mac") == "");            // a row of the whole folder
+        CHECK(widened("mac/src", "mac/src") == "mac");     // the focus itself is no row
+        CHECK(widened("mac/src", "mac/srcx/a") == "mac");  // a name, not a prefix
+        CHECK(widened("", "a/b/c") == "");
+
+        auto folders = [](const std::string &f) { return f == "mac" || f == "mac/src"; };
+        CHECK(restored("mac/src", folders) == "mac/src");
+        CHECK(restored("/mac/src/", folders) == "mac/src");
+        CHECK(restored("mac/gone", folders).empty());    // gone: the whole folder
+        CHECK(restored("../mac", folders).empty() && restored("", folders).empty());
+        CHECK(restored("mac", nullptr).empty());
+
+        // 3 parts of 40, separators of 10, an ellipsis of 12.
+        const std::vector<double> w{40, 40, 40};
+        CHECK((fit(w, 10, 12, 140) == std::vector<int>{0, 1, 2}));
+        CHECK((fit(w, 10, 12, 139) == std::vector<int>{0, -1, 2}));   // 40+10+12+10+40 = 112
+        CHECK((fit(w, 10, 12, 100) == std::vector<int>{0, -1, 2}));   // the last is cut short
+        const std::vector<double> five{60, 20, 20, 20, 30};
+        CHECK((fit(five, 5, 10, 200) == std::vector<int>{0, 1, 2, 3, 4}));   // 170
+        CHECK((fit(five, 5, 10, 160) == std::vector<int>{0, -1, 2, 3, 4}));  // 60+5+10+15+70 = 160
+        CHECK((fit(five, 5, 10, 135) == std::vector<int>{0, -1, 3, 4}));     // 75+25+35 = 135
+        CHECK((fit(five, 5, 10, 130) == std::vector<int>{0, -1, 4}));        // 75+35 = 110
+        CHECK((fit({50, 50}, 10, 12, 60) == std::vector<int>{0, 1}));
+        CHECK(fit({}, 10, 12, 60).empty());
+    }
 }

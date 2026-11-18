@@ -92,6 +92,44 @@ found through that list.
   moves), and pops it with `popUpContextMenu:withEvent:forView:` on the next
   run-loop turn.
 
+- **Focus on Folder** (2026-11-17, `EditorController+TreeFocus.mm`, its
+  state in `EditorController+TreeFocusIvars.h`, `TreeFocusBar.{h,mm}`,
+  the core's `TreeFocus` in FileDetails, `tree:focus`, `make guitest
+  SUITES=tree_focus`): the tree's root is one folder inside the window's
+  (`treeTop`: `_treeFocusItem ?: _root`), and the data source, reveals,
+  drops, New File's folder and the context menu's defaults start there.
+  The window's folder (`_root`, `rootPath`) never changes. The focused
+  folder is a node of `_root`'s tree, reached by listing each folder down
+  to it (`treeItemForFocus:`), so `loadedTreeFolders`, FSEvents and
+  Refresh keep it current with no code of their own; `applyTreeListings:`
+  reloads only folders at or below the top (`treeShowsFolder:`: reloading
+  an item the outline does not hold is never asked), and after a listing
+  or a rescan `dropLostTreeFocus` checks each folder on the way down
+  still holds the next (by identity) and falls back to the whole folder
+  with a status note when not (deleted, renamed, or a dotfolder with
+  hidden files turned off). Changing the focus keeps the open folders:
+  those on show are read, those outside are remembered
+  (`_treeFocusExpanded`), and widening opens the old root and the folders
+  down to it and selects its row. **Reveals widen, opens do not**:
+  `revealPath:open:from:widen:` widens to `TreeFocus::widened` (the
+  nearest common ancestor of the focus and the path's folder) when
+  `widen`, which `revealPath:andOpen:` and `revealPath:open:from:` set
+  exactly when they do not open; `showFile:` and a terminal's file link
+  pass NO, so Quick Open, a definition or a file from Finder never
+  unfocus the tree. The breadcrumb is a `PanelScrollView topBar` (the
+  clip view and scroller start below it in `tile`, so scroll positions
+  mean what they did), drawn in the sidebar's text color, the parts that
+  fit chosen by `TreeFocus::fit`; a click on a part refocuses, the first
+  part and the × show the whole folder, its right click has Show Whole
+  Folder in Tree. Kept as `treeFocus` (a path from the folder) in the
+  folder's session (`TabSessions::Session`, which a focus alone now keeps)
+  and in the window record's tabs; `restoreSession` sets it first, through
+  `TreeFocus::restored`, so a gone folder comes back whole, and
+  `finishRestoringWindow` re-expands from the top and remembers the
+  record's folders outside it (`windowRecordNow` lists those too). Not on
+  the Worktrees node or a worktree row. Pinning several folders is a
+  possible follow-up. The GTK port follows (its tree has no focus yet).
+
 ## Traps
 
 Each trap's first sentence, in the order it appears above; the whole

@@ -345,6 +345,13 @@ const std::vector<Command>& all() {
          nullptr},
         {"workbench.files.action.refreshFilesExplorer", "Refresh File Tree", "File", "cmd+r", A,
          "refreshTree:", 0, 0, nullptr},
+        // Focus on Folder: the tree rooted at one folder, with a breadcrumb
+        // back up (EditorController+TreeFocus.mm). No key: none of the
+        // free ones says "focus" plainly.
+        {"minicode.tree.focusFolder", "Focus on Folder", "File", "", A, "focusOnFolder:", 0, 0,
+         nullptr},
+        {"minicode.tree.showWholeFolder", "Show Whole Folder in Tree", "File", "", A,
+         "showWholeFolderInTree:", 0, 0, nullptr},
         {"workbench.action.files.copyPathOfActiveFile", "Copy Path of Active File", "File", "", A,
          "copyActiveFilePath:", 0, 0, nullptr},
         {"workbench.action.files.copyRelativePathOfActiveFile",

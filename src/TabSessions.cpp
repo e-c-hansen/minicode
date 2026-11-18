@@ -105,6 +105,7 @@ Json encodeSession(const Session &s) {
         g.set("fraction", s.groups.fraction);
         e.set("groups", g);
     }
+    if (!s.treeFocus.empty()) e.set("treeFocus", s.treeFocus);
     return e;
 }
 
@@ -151,6 +152,7 @@ bool decodeSession(const Json &e, Session *out) {
     s.active = active >= 0 ? keptAt[(size_t)active] : -1;
     s.preview = preview >= 0 ? keptAt[(size_t)preview] : -1;
     s.used = e["used"].asNumber(0);
+    if (e["treeFocus"].isString()) s.treeFocus = e["treeFocus"].asString();
     const Json &g = e["groups"];
     if (g.isObject() && g["left"].isArray() && g["right"].isArray()) {
         for (int k = 0; k < 2; k++)
@@ -184,7 +186,7 @@ Sessions decode(const std::string &text) {
     for (const auto &kv : root.items()) {
         Session s;
         if (kv.first.empty() || kv.first == kWindowsKey || !decodeSession(kv.second, &s)) continue;
-        if (s.tabs.empty() && s.browser.empty()) continue;
+        if (s.tabs.empty() && s.browser.empty() && s.treeFocus.empty()) continue;
         out[kv.first] = s;
     }
     return out;
@@ -202,7 +204,7 @@ Session merged(const Session &mine, const std::vector<Session> &others) {
 
 void put(Sessions &all, const std::string &key, Session s, double now, size_t max) {
     if (key.empty() || key == kWindowsKey) return;
-    if (s.tabs.empty() && s.browser.empty()) {
+    if (s.tabs.empty() && s.browser.empty() && s.treeFocus.empty()) {
         all.erase(key);
         return;
     }

@@ -86,6 +86,10 @@ struct Session {
     // comes back as one group.
     bool split = false;
     EditorTabs::GroupsSession groups;
+    // The tree's focused folder (Focus on Folder, FileDetails.h's
+    // TreeFocus), as a path from the folder, "" for the whole folder. The
+    // port checks it still names a folder before it uses it.
+    std::string treeFocus;
 };
 
 // Every folder's, by its resolved path.
@@ -106,7 +110,7 @@ Sessions decode(const std::string &text);
 Session merged(const Session &mine, const std::vector<Session> &others);
 
 // `s` as the folder's session, written at `now`; a session with no tab
-// removes the folder. Past `max` folders, those written longest ago go.
+// (and no browser tab or tree focus) removes the folder. Past `max` folders, those written longest ago go.
 void put(Sessions &all, const std::string &key, Session s, double now,
          size_t max = kMaxFolders);
 

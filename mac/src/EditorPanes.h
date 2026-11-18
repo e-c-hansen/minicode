@@ -29,4 +29,8 @@ static const CGFloat kDragBarHeight = 12;
 // backdrop is sized in tile.
 @interface PanelScrollView : NSScrollView
 @property(nonatomic, strong) NSColor *panelColor;
+// A bar kept across the top (the file tree's focus breadcrumb), its height
+// its own: while it shows, the clip view and the scroller start below it,
+// so the rows scroll under nothing. Hidden or nil, the content has it all.
+@property(nonatomic, strong) NSView *topBar;
 @end
