@@ -201,7 +201,7 @@ void Host::onRead(ClientId c, Message& m) {
         e.set("error", Json(std::string("no folder to read in")));
         r.json = std::move(e);
     } else {
-        r.json = readWorkspace(root, m.json);
+        r.json = readWorkspace(root, m.json, &r.bytes);
     }
     send(c, std::move(r));
 }

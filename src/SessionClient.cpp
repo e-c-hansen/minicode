@@ -702,12 +702,17 @@ std::uint64_t Client::requestRead(std::uint64_t window, Json request) {
     return req;
 }
 
-bool Client::readAnswer(std::uint64_t req, Json* out) {
+bool Client::readAnswer(std::uint64_t req, Json* out, std::string* bytes) {
     auto it = replies_.find(req);
     if (it == replies_.end() || it->second.kind != Kind::FsData) return false;
     if (out) *out = std::move(it->second.json);
+    if (bytes) *bytes = std::move(it->second.bytes);
     replies_.erase(it);
     return true;
+}
+
+void Client::forgetRead(std::uint64_t req) {
+    if (!replies_.erase(req)) abandoned_.insert(req);
 }
 
 Json Client::read(std::uint64_t window, Json request, int timeoutMs) {

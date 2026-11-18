@@ -12,7 +12,10 @@
 // at once and sent with the version they were made on (moved past others'
 // with the same rules as src/Ot.cpp), undo and save asked of the server,
 // and keys for the terminal on show. A Markdown page goes into a sandboxed
-// frame with no scripts. "{{NONCE}}" is the response's script nonce. Every
+// frame with no scripts. A picture, PDF, audio, video or HTML file clicked
+// in the tree shows here from the server's /file/ address (an HTML page in
+// a frame sandboxed with no scripts), and a CSV or TSV file as a table of
+// the rows the server parsed (R3). "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
 #include "SessionWeb.h"
@@ -75,6 +78,28 @@ header { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px;
 #webopen { color: var(--accent); flex: none; }
 #websec p { margin: 0; padding: 0 10px 4px; color: var(--muted); font-size: 12px; flex: none; }
 #web { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
+#filesec { flex: 3; display: flex; flex-direction: column; min-height: 0; }
+#filebar { display: flex; gap: 10px; align-items: baseline; flex: none; padding: 3px 10px;
+           font-size: 12px; }
+#filepath { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; }
+#fileopen { color: var(--accent); flex: none; }
+#fileview { flex: 1; min-height: 0; overflow: auto; display: flex; }
+#fileview.center { align-items: center; justify-content: center; padding: 12px; }
+#fileview img { max-width: 100%; max-height: 100%; object-fit: contain;
+                background: repeating-conic-gradient(rgba(127, 127, 127, .18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+#fileview video { max-width: 100%; max-height: 100%; }
+#fileview audio { width: min(600px, 90%); }
+#fileview iframe { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
+#fileview table { border-collapse: collapse; align-self: flex-start; font-size: var(--efs); }
+#fileview td, #fileview th { border: 1px solid var(--line); padding: 2px 8px; text-align: left;
+                             vertical-align: top; white-space: pre; max-width: 40ch; overflow: hidden;
+                             text-overflow: ellipsis; }
+#fileview th.rn { color: var(--ln); background: var(--gutter); text-align: right; font-weight: normal;
+                  user-select: none; position: sticky; left: 0; }
+#fileview tr.head td { font-weight: 600; position: sticky; top: 0; background: var(--hbg); }
+#filenote { padding: 2em 1em; color: var(--muted); }
+#filemore { padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none; }
 #wrap { flex: 1; display: flex; min-height: 0; position: relative; }
 #side { flex: none; width: clamp(180px, 22vw, 320px); display: flex; flex-direction: column;
         background: var(--sbg); color: var(--sfg); border-right: 1px solid var(--line);
@@ -190,6 +215,11 @@ body:not(.editable) #caret { display: none; }
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
     <div id="note" class="hidden"></div>
+  </section>
+  <section id="filesec" class="hidden">
+    <div id="filebar"><span id="filepath"></span><a id="fileopen" target="_blank" rel="noopener noreferrer">Open in a new tab</a></div>
+    <div id="fileview"></div>
+    <p id="filemore" class="hidden"></p>
   </section>
   <section id="websec" class="hidden">
     <div id="webbar"><span id="webtitle"></span><a id="webopen" target="_blank" rel="noopener noreferrer">Open in a new tab</a></div>
@@ -327,7 +357,7 @@ body:not(.editable) #caret { display: none; }
     const add = (id, path) => {
       if (seen.has(id)) return;
       seen.add(id);
-      let cls = id === want.doc && !W.on ? "shown" : "";
+      let cls = id === want.doc && !W.on && !F.on ? "shown" : "";
       if (id === onShow) cls += " onshow";
       if (dirty.get(id)) cls += " dirty";
       strip.appendChild(tabButton(base(path) || "untitled", path, cls, () => {
@@ -374,6 +404,7 @@ body:not(.editable) #caret { display: none; }
     return out;
   }
   function showWeb(tab) {
+    hideFile();
     W.on = true; W.url = tab.url;
     $("docsec").classList.add("hidden");
     $("websec").classList.remove("hidden");
@@ -454,6 +485,7 @@ body:not(.editable) #caret { display: none; }
   // shows, so nothing typed is left behind.
   function showDoc(id) {
     hideWeb();
+    hideFile();
     if (id !== want.doc) {
       if (!synced()) { D.switchTo = id; return; }
       want.doc = id;
@@ -463,6 +495,91 @@ body:not(.editable) #caret { display: none; }
     markCurrent();
   }
   function showTerm(id) { if (id !== want.term) { want.term = id; sendShow(); } drawTermTabs(); }
+
+  // ---- a file the browser shows itself (R3): served by the session's
+  // server at /file/TOKEN/PATH, read from the host's folder, in the
+  // browser's own viewers; a CSV or TSV as rows the server parsed.
+  const F = { on: false, rel: "", view: "" };
+  function fileUrl(rel) {
+    return "/file/" + encodeURIComponent(token) + "/" + rel.split("/").map(encodeURIComponent).join("/");
+  }
+  function fileNote(text) {
+    const box = $("fileview");
+    box.textContent = ""; box.className = "";
+    const n = document.createElement("div");
+    n.id = "filenote"; n.textContent = text;
+    box.appendChild(n);
+  }
+  function showFile(rel, view) {
+    hideWeb();
+    F.on = true; F.rel = rel; F.view = view;
+    $("docsec").classList.add("hidden");
+    $("filesec").classList.remove("hidden");
+    $("filepath").textContent = rel;
+    $("filemore").classList.add("hidden");
+    const box = $("fileview"), url = fileUrl(rel), open = $("fileopen");
+    box.textContent = ""; box.className = "";
+    open.href = url;
+    open.classList.toggle("hidden", view === "table");
+    let el = null;
+    if (view === "image") {
+      el = document.createElement("img"); el.alt = base(rel); box.className = "center";
+    } else if (view === "audio" || view === "video") {
+      el = document.createElement(view); el.controls = true; el.preload = "metadata"; box.className = "center";
+    } else if (view === "pdf") {
+      el = document.createElement("iframe"); el.title = base(rel);
+    } else if (view === "html") {
+      // Sandboxed with no scripts and an origin of its own, as the server's
+      // CSP serves it too: the page is drawn, nothing in it runs.
+      el = document.createElement("iframe"); el.setAttribute("sandbox", "");
+      el.referrerPolicy = "no-referrer"; el.title = base(rel);
+    } else if (view === "table") {
+      fileNote("Reading " + base(rel) + "…");
+      post({ t: "file", path: rel });
+    }
+    if (el) {
+      el.addEventListener("error", () => { if (F.on && F.rel === rel) fileNote(base(rel) + " could not be shown here."); });
+      el.src = url;
+      box.appendChild(el);
+    }
+    drawTabs();
+    markCurrent();
+  }
+  // Back to the documents; the file's view goes (no sound left playing).
+  function hideFile() {
+    if (!F.on) return;
+    F.on = false;
+    $("fileview").textContent = "";
+    $("filesec").classList.add("hidden");
+    $("docsec").classList.remove("hidden");
+    drawSelection();
+  }
+  function onTable(m) {
+    if (!F.on || F.view !== "table" || F.rel !== m.path) return;
+    if (m.error !== undefined) { fileNote(m.error); return; }
+    const box = $("fileview");
+    box.textContent = ""; box.className = "";
+    const table = document.createElement("table"), body = document.createElement("tbody");
+    (m.rows || []).forEach((row, i) => {
+      const tr = document.createElement("tr");
+      if (i === 0) tr.className = "head";   // the first row is usually the header, as the window shows it
+      const n = document.createElement("th");
+      n.className = "rn"; n.textContent = String(i + 1);
+      tr.appendChild(n);
+      for (let c = 0; c < (m.columns || 0); c++) {
+        const td = document.createElement("td");
+        td.textContent = c < row.length ? row[c] : "";
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    box.appendChild(table);
+    if (!(m.rows || []).length) fileNote(base(m.path) + " is empty.");
+    const more = $("filemore");
+    more.textContent = m.truncated ? "The first " + (m.rows || []).length + " rows; the rest shows in the mutible window." : "";
+    more.classList.toggle("hidden", !m.truncated);
+  }
 
 
   // ---- the tree: one folder's rows at a time, read by the host each time
@@ -485,6 +602,7 @@ body:not(.editable) #caret { display: none; }
   }
   function joinRel(dir, name) { return dir ? dir + "/" + name : name; }
   function currentRel() {
+    if (F.on) return F.rel;
     if (!state || !T.root || !want.doc) return null;
     const d = state.docs.find((x) => x.id === want.doc);
     return d && d.path.startsWith(T.root + "/") ? d.path.slice(T.root.length + 1) : null;
@@ -566,13 +684,17 @@ body:not(.editable) #caret { display: none; }
   }
   function openFile(rel, e, keep) {
     treeNote("");
-    T.pending = { rel: rel, kind: e.kind || "text", abs: "" };
+    // A file the browser shows itself shows here at once; the window
+    // opens it too, as for any file, but this page stays on it.
+    if (e.view) showFile(rel, e.view);
+    T.pending = { rel: rel, kind: e.kind || "text", abs: "", shown: !!e.view };
     if (!post({ t: "open", path: rel, keep: !!keep })) { T.pending = null; return; }
     if (narrow.matches) setSide(false);
   }
   function onOpening(m) {
     const p = T.pending;
     if (!p || p.rel !== m.path) return;
+    if (p.shown) { T.pending = null; return; }
     if (!m.ok) { T.pending = null; treeNote(m.why); return; }
     if (kViewerKinds.has(p.kind)) {
       T.pending = null;
@@ -1538,6 +1660,7 @@ body:not(.editable) #caret { display: none; }
         case "tree": onTree(m); break;
         case "opening": onOpening(m); break;
         case "browsing": onBrowsing(m); break;
+        case "table": onTable(m); break;
       }
     };
     ws.onclose = () => {
@@ -1654,6 +1777,15 @@ body:not(.editable) #caret { display: none; }
     tree: () => [...$("tree").querySelectorAll(".row")].map((r) => r.dataset.path),
     treeNote: () => $("treenote").textContent,
     browser: () => [...$("tabs").querySelectorAll("button.web")].map((b) => b.title),
+    file: () => {
+      if (!F.on) return null;
+      const box = $("fileview"), el = box.firstElementChild, rows = [...box.querySelectorAll("tbody tr")];
+      return { view: F.view, path: F.rel, src: (el && el.getAttribute("src")) || "",
+               width: el && el.tagName === "IMG" ? el.naturalWidth : 0,
+               sandbox: el && el.hasAttribute("sandbox") ? el.getAttribute("sandbox") : null,
+               rows: rows.map((r) => [...r.querySelectorAll("td")].map((c) => c.textContent).join(",")),
+               note: ($("filenote") || {}).textContent || "" };
+    },
     web: () => (W.on ? { src: $("web").getAttribute("src") || "", open: $("webopen").getAttribute("href") || "",
                          loopback: !$("webloop").classList.contains("hidden") } : null),
   };

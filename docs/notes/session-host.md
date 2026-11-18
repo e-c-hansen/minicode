@@ -824,9 +824,10 @@ viewers, Quick Open's list) as new ops, not new messages.
   watching: the host watches nothing yet (stage 7). A click on a file
   sends `open` (the second click of a double-click, or Command/Control,
   keeps the tab) and, once `opening` says ok, waits for a document with
-  that `abs` in the state, then shows it (`takePending`); a viewer kind
-  (image, video, audio, pdf, database, archive, bookmark) says "NAME opens
-  in the mutible window." in `#treenote` instead, and a text file with no
+  that `abs` in the state, then shows it (`takePending`); a file the page
+  shows itself (R3, below) shows at once instead, and another viewer kind
+  (database, archive, bookmark, a video format the browser lacks) says
+  "NAME opens in the mutible window." in `#treenote`, and a text file with no
   document after 4 s says it opened in the window. The document on show's
   row is marked `current`. At 700 px and under the sidebar is hidden and
   the header's ☰ shows it over the page (a tap beside it closes it);
@@ -847,6 +848,114 @@ open). GUI: `session_browser` reads the page's tree in WKWebView, clicks
 a folder open and a file in it, sees the window open that file in its tab
 and the page show it, and a picture's line. Checked by hand in headless
 Chromium over CDP at 1100 and 390 px wide (not committed).
+
+### Files for the page's viewers (R3, first slice)
+
+The owner's ask (2026-11-17, trying 1.5.34): a PNG, PDF, video and the
+like clicked in the page showed nothing. Now the host serves the bytes and
+the browser shows them with its own viewers.
+
+- **The host's read.** `FsRead`'s second op, `{"op": "read", "path",
+  "offset", "length", "hidden"}`, answered `{"op", "path", "size",
+  "offset", "length"}` with the bytes in `FsData.bytes` (base64 on the
+  wire, as terminal bytes are; `Client::readAnswer(req, &json, &bytes)`,
+  `forgetRead` for an answer nobody will take). Confined as the listing
+  is (`confinedPath`), plus: no name starting with '.' anywhere in the
+  path unless `hidden` (the tree's rule), only a regular file (`fstat`
+  after opening with `O_NONBLOCK`, so a FIFO neither blocks the host's
+  thread nor is read), opened at its `realpath` with `O_NOFOLLOW` (what
+  was checked is what is read), at most `kMaxReadBytes` (4 MB) a read, on
+  the host's thread. `length` 0 gives the size alone.
+- **HTTP, not the socket.** `<img>`, `<video>` and the PDF viewer need an
+  address, and video needs Range. `/file/TOKEN/PATH`: the token is the
+  path's first name, not the query, so an HTML page's relative pictures
+  and style sheets resolve to addresses that carry it (`answer()` gives
+  `Answer::File` with the path decoded by `pathDecode`: '+' kept, a NUL
+  refused; the Host and Origin checks come first, as for the page). The
+  server needs a page's socket open (the session is attached only then):
+  without one, 503. `beginFile` reads the size (a read of 0 bytes), then
+  `fileHead` answers 200, 206 (`byteRange`: one range, a suffix range,
+  clipped; several ranges, another unit or a malformed header get the
+  whole file, as HTTP allows) or 416, and `pumpFile` reads 2 MB pieces
+  (`kFilePiece`) only while the connection holds under one piece unsent,
+  so a 2 GB video costs 4 MB at most; at most 32 files at once. The
+  connection ends after the file (Connection: close); a file that shrank
+  mid-send cuts the connection, which the browser sees as too few bytes.
+  `detach` (the last page gone) ends every file being sent; a dead
+  connection's read in flight is `forgetRead`.
+- **Only kinds `fileType` names** (by extension): image (png, jpg, jpeg,
+  gif, webp, bmp, ico, avif, svg), pdf, audio (mp3, m4a, aac, wav, ogg,
+  oga, opus, flac), video (mp4, m4v, mov, webm, ogv), html (html, htm,
+  xhtml), and css with no view (an HTML page's own style sheets; fonts
+  are left out: a font load is CORS and the sandboxed frame's origin is
+  null). Anything else is 404: text opens as a tab, and nothing else is
+  served at all. Caps on the whole file: 64 MB for pictures, HTML and
+  CSS, 512 MB for PDF (413 past them), none for audio and video.
+- **Script runs nowhere.** Every file response has its Content-Type and
+  `X-Content-Type-Options: nosniff` (a .png holding HTML is never HTML),
+  no-store, no referrer, and, except a PDF, `Content-Security-Policy:
+  sandbox; script-src 'none'; object-src 'none'; base-uri 'none';
+  form-action 'none'`: an SVG or HTML file opened even by its address in
+  a tab of its own has an opaque origin and runs no script. The page
+  frames HTML with `sandbox=""` too (no allow-scripts, no same-origin),
+  matching the Mac's html.scripts default of ask by never running them;
+  a later slice could offer Run Scripts. A PDF has no sandbox because
+  Chrome's viewer refuses to run in a sandboxed frame or document; it
+  runs in the viewer's own origin.
+- **The page's CSP** gained `img-src data: 'self'` and `media-src 'self'`;
+  `frame-src 'self'` was there. The rest is as before.
+- **Tables over the socket.** `file {path}` (read-only pages too: it
+  changes nothing) reads the first `kMaxTableBytes` (one read, 4 MB) and
+  answers `table {path, columns, rows, truncated, size | error}` from
+  `tableJson` (the core's `Csv`, tab for .tsv else `detectDelimiter`; a
+  cut file's last row dropped; at most 200,000 cells, a cell cut at 2,000
+  bytes on a character). At most 16 tables outstanding.
+- **The tree's entries** carry `view` (`fileType`'s) when the page shows
+  that file itself; `takeReads` adds it, so the rule is the core's.
+- **The page.** `#filesec` beside `#docsec` and `#websec`: the path, an
+  "Open in a new tab" link (not for a table), and `#fileview` with an
+  `<img>` (on a checkerboard), `<audio>`/`<video controls
+  preload=metadata>`, an `<iframe>` for a PDF, a sandboxed one for HTML,
+  or the table (row numbers, the first row bold and sticky, as the Mac's
+  CsvTable shows it). A tree click on a file with a `view` shows it at
+  once and still sends `open`, so the window opens it as before; its
+  `opening` answer is then ignored (`T.pending.shown`), so the page stays
+  on the file even when the window's tab is a document (a CSV). A doc
+  tab, a browser tab, or a text file from the tree hides it (`hideFile`
+  empties `#fileview`, so media stops). `currentRel` marks the file's row.
+  `mcSessionView.file()` says what shows, for the GUI check.
+- **Not done in this slice**: SQLite, notebooks, the LaTeX preview, and
+  git and review pages; the window's viewer tabs (a picture's tab) are
+  still not reported to the page (the Mac reports only tabs with a
+  document on the host), so the page shows a picture only from its tree,
+  and does not follow the window to one.
+
+#### Checks
+
+`sessionweb:files`: `fileType` over 30 names, `fileTarget`'s encoding,
+`byteRange` over 15 headers, the heads (200, 206 with Content-Range, 416,
+nosniff, the sandbox CSP on six kinds and not on PDF), `answer()` for
+/file/ (token in the path, missing, wrong, in the query instead, a NUL,
+another Host or Origin, POST), `tableJson` (quotes, TSV, a cut start, the
+cell and size caps); the host's read directly (a piece, the size alone,
+the 4 MB cap, the end, past it, a link inside, a dotfile with hidden, and
+13 refusals: escapes, a link out, a dotfile, a folder, a FIFO, a missing
+file, an empty name); FsData's bytes through encode and decode; then over
+the wire with a headless host: 503 before a page, a PNG's bytes and
+head, four refusals of access, nine escapes and kinds refused with
+nothing of the outside file sent, text not served, SVG and HTML
+sandboxed, PDF not, a 5 MB video whole (three pieces) and in four
+ranges with a 416, the tree's views, a CSV's rows over the socket and
+two refusals, and 503 again once the page has gone; the page's CSP.
+GUI: `session_browser` clicks a PNG in the page's tree (the page shows
+it at the token's /file/ address, decoded at its real width, and the
+window opens it) and a CSV (the page's table has the core's rows, and
+the window opens it). Checked by hand in headless Chrome over CDP
+against `mutible host --web` (not committed): a PNG at its width, an SVG
+whose script did not run, an HTML page with its relative style sheet and
+picture and its script not run, Chrome's PDF viewer in the frame, the
+table, a WAV's duration read and a page fetch of a range answered 206.
+The look in Safari, video seeking, and a phone need the owner's eyes.
 
 ### The window's browser tabs in the page (R4)
 
@@ -931,5 +1040,7 @@ the frame, the narrow layout) needs the owner's eyes.
   (the page says so); it is not resent on reconnecting.
 - The tree does not follow the disk by itself: the host watches nothing
   yet. Stage 7's watching should send the page a folder's listing when it
-  changes. A headless host's page cannot open files (no window decides
-  tabs); viewers in the page are R3.
+  changes. A headless host's page cannot open text files (no window
+  decides tabs); it shows pictures, PDFs, media, HTML and tables (R3).
+  SQLite, notebooks, LaTeX and git pages in the page are R3's later
+  slices.

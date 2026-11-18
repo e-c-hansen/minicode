@@ -47,8 +47,9 @@
 //
 // The workspace (stage 7's first read, SessionFiles.h): FsRead {req,
 // window, json: {"op", ...}} asks the host to read in the session's folder,
-// and FsData {req, json} answers; "list" lists one folder for a tree. A new
-// read is a new "op", not a new message. Pure C++17, no I/O.
+// and FsData {req, json, bytes} answers; "list" lists one folder for a
+// tree, "read" gives a piece of a file's bytes (in `bytes`, base64 on the
+// wire) for a viewer. A new read is a new "op", not a new message. Pure C++17, no I/O.
 #pragma once
 
 #include <cstdint>
@@ -122,9 +123,10 @@ enum class Kind {
     DocGone,     // doc: to a renderer that only reads: the document is closed, or never was
     // the workspace (stage 7, SessionFiles.h): a read, answered by FsData
     FsRead,      // renderer → host: req, window (whose folder; a headless host's own
-                 // folder first), json: the request ({"op": "list", "path", "hidden"});
+                 // folder first), json: the request ({"op": "list", "path", "hidden"} or
+                 // {"op": "read", "path", "offset", "length", "hidden"});
                  // changes nothing, so a renderer that only reads may send it
-    FsData,      // host → renderer: req, json: the answer (or {"error"})
+    FsData,      // host → renderer: req, json: the answer (or {"error"}), bytes: a read's
 };
 
 const char* kindName(Kind k);

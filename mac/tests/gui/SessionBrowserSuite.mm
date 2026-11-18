@@ -16,8 +16,10 @@
 // page's tab shows the file's dirty dot until then; page and window end on
 // one text. The page's tree lists the window's folder through the host: a
 // click on a folder opens it, a click on a file in it opens that file in
-// the window's tab, which the page then shows, and a picture says it opens
-// in the window. The page's address field asks the window's browser pane
+// the window's tab, which the page then shows; a picture shows in the page
+// itself, its bytes read through the host and served at the page's /file/
+// address, and a CSV as the table the core parsed, while the window opens
+// each too. The page's address field asks the window's browser pane
 // to open an address: javascript: is refused, an http address on this Mac
 // opens in the pane, and the page lists the window's browser tab under
 // "Browser" and frames it, with its new-tab link and the line that a
@@ -248,7 +250,8 @@ NSString *const kRead =
     @" browseField: !document.getElementById('browse').classList.contains('hidden'),"
     @" toast: document.getElementById('toast').textContent,"
     @" browser: window.mcSessionView ? window.mcSessionView.browser().join('|') : '',"
-    @" web: window.mcSessionView ? window.mcSessionView.web() : null})";
+    @" web: window.mcSessionView ? window.mcSessionView.web() : null,"
+    @" file: window.mcSessionView ? window.mcSessionView.file() : null})";
 
 // An address typed into the page's address field, then Return.
 void Browse(NSString *url) {
@@ -334,6 +337,7 @@ MC_GUI_SUITE(session_browser) {
             @"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
                                                          options:0];
         [png writeToFile:[dir stringByAppendingPathComponent:@"logo.png"] atomically:YES];
+        MCGuiWriteFile([dir stringByAppendingPathComponent:@"data.csv"], @"name,qty\napple,3\n");
         MCSessionBrowserOpener = ^(NSURL *url) { gOpened = url; };
         NSUInteger before = MCGuiControllers().count;
         [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
@@ -531,12 +535,12 @@ MC_GUI_SUITE(session_browser) {
     });
     MCGuiWait(@"the page's tree lists the window's folder, folders first", 20, ^BOOL {
         Read();
-        return [gSeen[@"tree"] isEqualToString:@"pkg|calc.py|logo.png"];
+        return [gSeen[@"tree"] isEqualToString:@"pkg|calc.py|data.csv|logo.png"];
     });
     MCGuiStep(@"a click on the folder in the page's tree", ^{ ClickRow(@"pkg"); });
     MCGuiWait(@"opens it, read by the host", 20, ^BOOL {
         Read();
-        return [gSeen[@"tree"] isEqualToString:@"pkg|pkg/util.py|calc.py|logo.png"];
+        return [gSeen[@"tree"] isEqualToString:@"pkg|pkg/util.py|calc.py|data.csv|logo.png"];
     });
     MCGuiStep(@"a click on a file in it", ^{ ClickRow(@"pkg/util.py"); });
     MCGuiWait(@"opens the file in the window's tab", 20, ^BOOL {
@@ -550,9 +554,30 @@ MC_GUI_SUITE(session_browser) {
         GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
         ClickRow(@"logo.png");
     });
-    MCGuiWait(@"says it opens in the window", 20, ^BOOL {
+    MCGuiWait(@"shows in the page, its bytes read through the host", 20, ^BOOL {
         Read();
-        return [gSeen[@"note"] isEqualToString:@"logo.png opens in the mutible window."];
+        NSDictionary *f = [gSeen[@"file"] isKindOfClass:NSDictionary.class] ? gSeen[@"file"] : nil;
+        return [f[@"view"] isEqualToString:@"image"] && [f[@"width"] intValue] == 1;
+    });
+    MCGuiStep(@"at the token's /file/ address, and no tab of the page marked shown", ^{
+        NSDictionary *f = gSeen[@"file"];
+        MCGuiNote(@"file view: %@", f);
+        GCHECK_EQ_STR(f[@"src"], ([NSString stringWithFormat:@"/file/%s/logo.png", gToken.c_str()]));
+        GCHECK(![gSeen[@"shown"] boolValue]);
+        GCHECK_EQ_STR(gSeen[@"note"], @"");
+    });
+    MCGuiWait(@"and the window opens it too", 20, ^BOOL {
+        return [Active(gC).currentPath hasSuffix:@"/logo.png"];
+    });
+    MCGuiStep(@"a CSV in the page's tree", ^{ ClickRow(@"data.csv"); });
+    MCGuiWait(@"shows as the table the core parsed", 20, ^BOOL {
+        Read();
+        NSDictionary *f = [gSeen[@"file"] isKindOfClass:NSDictionary.class] ? gSeen[@"file"] : nil;
+        return [f[@"view"] isEqualToString:@"table"] &&
+               [[f[@"rows"] componentsJoinedByString:@"|"] isEqualToString:@"name,qty|apple,3"];
+    });
+    MCGuiWait(@"and the window opens it", 20, ^BOOL {
+        return [Active(gC).currentPath hasSuffix:@"/data.csv"];
     });
     MCGuiStep(@"the editable page has an address field; javascript: typed into it", ^{
         GCHECK([gSeen[@"browseField"] boolValue]);

@@ -18,6 +18,23 @@
 // the page lists the window's browser tabs and shows the one picked in a
 // frame.
 //
+// Files for the page's viewers (R3): a picture, a PDF, audio, video or an
+// HTML page of the folder is served over HTTP at /file/TOKEN/PATH (PATH the
+// file's path from the folder, each name percent-encoded), which the page
+// puts in an <img>, a frame, <audio> or <video>. The token is in the path,
+// not the query, so an HTML page's own relative pictures and style sheets
+// resolve to addresses that carry it. The server reads the bytes from the
+// host a piece at a time (FsRead's "read", SessionFiles.h), as the tree's
+// listings are read: confined to the window's folder (no "..", no symlink
+// out, no dotfile unless the tree shows them), only kinds fileType() names,
+// each with its Content-Type, nosniff, and a sandbox CSP on everything but a
+// PDF (whose viewer will not run sandboxed), so an SVG or HTML file runs no
+// script in the page's origin; HTML is framed sandboxed as well, scripts
+// off. A Range request is answered with that part (206), as audio and
+// video seek and PDF viewers read.
+// A CSV or TSV comes over the socket instead, as rows parsed by the core's
+// Csv (`file` -> `table`).
+//
 // Access: a random token of 48 hex digits, made at start and printed once
 // with the address to open (http://127.0.0.1:PORT/?t=TOKEN), must come in
 // the query of the page's address and of the socket's. The Host header must
@@ -94,12 +111,16 @@
 //           window (`abs` its path as the tabs spell it), or why it is not
 //   browsing {url, ok, why}: an address a page asked the window's browser
 //           pane to open (`browse`), opening or refused
+//   table   {path, columns, rows, truncated, size | error}: a CSV or TSV
+//           file as rows of cells (tableJson), for a `file`
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
 //   list    {path}: one folder of the tree ("" the session's folder), read
 //           by the host (FsRead), each time a folder is opened or refreshed
 //   open    {path, keep}: a file the tree's row names, opened as a tab in
 //           the window (Options::open), read-only pages included
+//   file    {path}: a CSV or TSV file of the folder as a table, read by the
+//           host, read-only pages included
 // and, only when editable:
 //   edit    {doc, base, seq, ops, step {name, coalesce, fresh}, before, after,
 //           cmd, at}: an edit of the document on show; cmd "newline", "tab",
@@ -180,14 +201,63 @@ bool sameOrigin(const std::string& origin, const std::string& host);
 // `response` is the 101 answer), or refuse (then `response` is the refusal,
 // and `why` says what was wrong, for logs and checks).
 struct Answer {
-    enum Kind { Page, Socket, Refused };
+    enum Kind { Page, Socket, File, Refused };
     Kind kind = Refused;
     int status = 403;
     std::string response, why;
+    std::string file;   // File: the path from the folder, decoded, not yet checked
 };
 // `page` is the HTML to serve; "{{NONCE}}" in it becomes the response's
 // script nonce.
 Answer answer(const Request& r, const std::string& token, const std::string& page);
+
+// ---- files for the page's viewers
+// How the page shows a file, by its name's extension (any case): `view`
+// "image" (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, SVG), "pdf", "audio" (MP3,
+// M4A, AAC, WAV, Ogg, Opus, FLAC), "video" (MP4, M4V, MOV, WebM, OGV),
+// "html" (.html, .htm, .xhtml) or "table" (.csv, .tsv), "" for anything
+// else (text opens as a tab). `mime` is the Content-Type it is served
+// with over HTTP ("" for a table, which comes over the socket, and for
+// anything not served); a style sheet is served (for an HTML page's own)
+// with no view. `maxBytes`: the most a whole response may be (0 for none:
+// audio and video are served a range at a time as the browser seeks).
+// `sandbox`: served with a sandbox CSP (all but PDF).
+struct FileType {
+    std::string view, mime;
+    std::uint64_t maxBytes = 0;
+    bool sandbox = true;
+};
+FileType fileType(const std::string& path);
+// The address a file of the folder is served at: /file/TOKEN/ and `rel`'s
+// names percent-encoded.
+std::string fileTarget(const std::string& token, const std::string& rel);
+// A Range header for a file of `size` bytes: Whole (no header, or one this
+// server does not take: several ranges, another unit, a malformed one, all
+// of which HTTP lets a server answer whole), Part (one range, `start` to
+// `end` inclusive, the end clipped to the file), or Unsatisfiable (a start
+// past the end, or an empty file asked for a part).
+struct ByteRange {
+    enum Kind { Whole, Part, Unsatisfiable };
+    Kind kind = Whole;
+    std::uint64_t start = 0, end = 0;   // inclusive; Whole: 0 .. size - 1
+    std::uint64_t length() const { return kind == Unsatisfiable ? 0 : end + 1 - start; }
+};
+ByteRange byteRange(const std::string* header, std::uint64_t size);
+// The response's head for `type` and `range` (from byteRange): 200, 206
+// with Content-Range, or 416; Content-Length, Accept-Ranges, nosniff,
+// no-store, no referrer, and the sandbox CSP when type.sandbox.
+std::string fileHead(const FileType& type, std::uint64_t size, const ByteRange& range);
+// A refusal for a file request (the same shape as answer()'s).
+std::string fileRefusal(int status, const std::string& why);
+// A CSV or TSV file's bytes as the page's table: {delimiter, columns, rows:
+// [[cell, ...], ...], truncated}. Rows stop at kMaxTableCells cells in all,
+// a cell is cut at kMaxCellBytes (on a character); `complete` false: the
+// bytes are only the file's start (kMaxTableBytes of it), so the last row
+// may be cut and is dropped.
+constexpr std::size_t kMaxTableBytes = std::size_t(4) << 20;   // one read
+constexpr std::size_t kMaxTableCells = 200000;
+constexpr std::size_t kMaxCellBytes = 2000;
+Json tableJson(const std::string& path, const std::string& bytes, bool complete);
 
 // ---- the window's browser pane
 // One of its tabs, as the window reports it.
@@ -467,7 +537,18 @@ private:
     void onList(Conn& c, const Json& j);
     void onOpen(Conn& c, const Json& j);
     void onBrowse(Conn& c, const Json& j);
+    void onFile(Conn& c, const Json& j);
     void takeReads();
+    // A file for a viewer over HTTP: begun on its request, then read from
+    // the host a piece at a time while the connection keeps up.
+    struct FileSend;
+    void beginFile(Conn& c, const std::string& rel, const std::string* range);
+    void pumpFiles();
+    void pumpFile(Conn& c);
+    // At most this many files served at once; each holds at most two
+    // pieces (kFilePiece) unsent.
+    static constexpr int kMaxFileSends = 32;
+    static constexpr std::size_t kFilePiece = std::size_t(2) << 20;
     void note(Conn& c, const std::string& text);
     void refuseEdit(Conn& c, DocId doc, std::uint64_t seq, const std::string& why, bool resync);
     void takeOutcomes();

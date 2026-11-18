@@ -43,10 +43,12 @@
 // host's screen. busyReason() says whether anything would be lost if the
 // host went now.
 //
-// Stage 7's first read (SessionFiles.h): FsRead lists one folder of the
+// Stage 7's first reads (SessionFiles.h): FsRead lists one folder of the
 // session's (the headless host's own folder, else the folder its window's
-// renderer reported), confined to it, for a browser's tree. It runs on the
-// host's thread, so a listing is capped (kMaxListed).
+// renderer reported), confined to it, for a browser's tree, or reads a
+// piece of one file in it for the browser's viewers. They run on the host's
+// thread, so a listing is capped (kMaxListed) and a read too
+// (kMaxReadBytes).
 //
 // Pure C++17 and POSIX: SessionHost's thread polls the ptys (poll(2)) and a
 // pipe that wakes it for messages; Host does the I/O only when the loop

@@ -235,7 +235,10 @@ public:
     // never behind an edit in flight.
     // The answer as readAnswer(req) once the host's answers are dispatched.
     std::uint64_t requestRead(std::uint64_t window, Json request);
-    bool readAnswer(std::uint64_t req, Json* out);
+    // `bytes`: a "read"'s bytes (FsData's).
+    bool readAnswer(std::uint64_t req, Json* out, std::string* bytes = nullptr);
+    // A read whose answer nobody will take: dropped now, or when it comes.
+    void forgetRead(std::uint64_t req);
     // The same, waiting: null when the host did not answer in time.
     Json read(std::uint64_t window, Json request, int timeoutMs = 10000);
 

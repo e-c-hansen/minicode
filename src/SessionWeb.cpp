@@ -3,6 +3,7 @@
 #include "Rename.h"
 
 #include "AutoIndent.h"
+#include "Csv.h"
 #include "IdeLink.h"
 #include "MarkdownHtml.h"
 #include "SessionFiles.h"
@@ -67,6 +68,22 @@ std::string percentDecode(const std::string& s) {
         }
     }
     return out;
+}
+
+// A path's percent-encoding undone ('+' is a plus in a path); false for a
+// NUL, which no file's name holds.
+bool pathDecode(const std::string& s, std::string* out) {
+    out->clear();
+    for (std::size_t i = 0; i < s.size(); i++) {
+        char c = s[i];
+        if (c == '%' && i + 2 < s.size() && hexValue(s[i + 1]) >= 0 && hexValue(s[i + 2]) >= 0) {
+            c = (char)(hexValue(s[i + 1]) * 16 + hexValue(s[i + 2]));
+            i += 2;
+        }
+        if (c == '\0') return false;
+        *out += c;
+    }
+    return true;
 }
 
 std::string httpResponse(int status, const char* reason, const std::string& type,
@@ -435,6 +452,24 @@ Answer answer(const Request& r, const std::string& token, const std::string& pag
         return refuse(403, "Forbidden", "pages from " + *origin + " are not served");
     if (!origin && r.path == "/ws")
         return refuse(403, "Forbidden", "the socket opens only from mutible's own page");
+    // A file for a viewer: the token is the path's first name.
+    if (r.path.compare(0, 6, "/file/") == 0) {
+        const std::string rest = r.path.substr(6);
+        const std::size_t slash = rest.find('/');
+        const std::string given = rest.substr(0, slash);
+        if (given.empty() || slash == std::string::npos)
+            return refuse(403, "Forbidden", "no token: open the address mutible printed");
+        if (token.empty() || !IdeLink::sameSecret(given, token))
+            return refuse(403, "Forbidden", "wrong token: open the address mutible printed");
+        std::string rel;
+        if (!pathDecode(rest.substr(slash + 1), &rel))
+            return refuse(400, "Bad Request", "a file's address that does not decode");
+        Answer a;
+        a.kind = Answer::File;
+        a.status = 200;
+        a.file = std::move(rel);
+        return a;
+    }
     auto t = r.query.find("t");
     if (t == r.query.end() || t->second.empty())
         return refuse(403, "Forbidden", "no token: open the address mutible printed");
@@ -452,8 +487,8 @@ Answer answer(const Request& r, const std::string& token, const std::string& pag
         a.response = httpResponse(
             200, "OK", "text/html; charset=utf-8", body,
             "Content-Security-Policy: default-src 'none'; script-src 'nonce-" + nonce +
-                "'; style-src 'unsafe-inline'; img-src data:; connect-src 'self' "
-                "ws://127.0.0.1:* ws://localhost:*; frame-src 'self' http: https:; "
+                "'; style-src 'unsafe-inline'; img-src data: 'self'; media-src 'self'; "
+                "connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-src 'self' http: https:; "
                 "frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n"
                 "X-Frame-Options: DENY\r\n");
         return a;
@@ -477,6 +512,158 @@ Answer answer(const Request& r, const std::string& token, const std::string& pag
         return a;
     }
     return refuse(404, "Not Found", "nothing is served at " + r.path);
+}
+
+// ---------------------------------------------------------------- files
+
+FileType fileType(const std::string& path) {
+    static const std::map<std::string, std::pair<const char*, const char*>> kTypes = {
+        {"png", {"image", "image/png"}},       {"jpg", {"image", "image/jpeg"}},
+        {"jpeg", {"image", "image/jpeg"}},     {"gif", {"image", "image/gif"}},
+        {"webp", {"image", "image/webp"}},     {"bmp", {"image", "image/bmp"}},
+        {"ico", {"image", "image/x-icon"}},    {"avif", {"image", "image/avif"}},
+        {"svg", {"image", "image/svg+xml"}},   {"pdf", {"pdf", "application/pdf"}},
+        {"mp3", {"audio", "audio/mpeg"}},      {"m4a", {"audio", "audio/mp4"}},
+        {"aac", {"audio", "audio/aac"}},       {"wav", {"audio", "audio/wav"}},
+        {"ogg", {"audio", "audio/ogg"}},       {"oga", {"audio", "audio/ogg"}},
+        {"opus", {"audio", "audio/ogg"}},      {"flac", {"audio", "audio/flac"}},
+        {"mp4", {"video", "video/mp4"}},       {"m4v", {"video", "video/mp4"}},
+        {"mov", {"video", "video/quicktime"}}, {"webm", {"video", "video/webm"}},
+        {"ogv", {"video", "video/ogg"}},
+        {"html", {"html", "text/html; charset=utf-8"}},
+        {"htm", {"html", "text/html; charset=utf-8"}},
+        {"xhtml", {"html", "application/xhtml+xml"}},
+        {"csv", {"table", ""}},                {"tsv", {"table", ""}},
+        // An HTML page's own style sheets; never shown alone.
+        {"css", {"", "text/css; charset=utf-8"}},
+    };
+    FileType t;
+    auto it = kTypes.find(extensionOfPath(path));
+    if (it == kTypes.end()) return t;
+    t.view = it->second.first;
+    t.mime = it->second.second;
+    const std::uint64_t mb = std::uint64_t(1) << 20;
+    if (t.view == "image" || t.view == "html" || t.view.empty()) t.maxBytes = 64 * mb;
+    else if (t.view == "pdf") t.maxBytes = 512 * mb;
+    else t.maxBytes = 0;   // audio, video: a range at a time
+    t.sandbox = t.view != "pdf";
+    return t;
+}
+
+std::string fileTarget(const std::string& token, const std::string& rel) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out = "/file/" + token + "/";
+    for (unsigned char c : rel) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+            out += (char)c;
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
+}
+
+ByteRange byteRange(const std::string* header, std::uint64_t size) {
+    ByteRange r;
+    r.end = size ? size - 1 : 0;
+    if (!header) return r;
+    std::string h = lower(trim(*header));
+    if (h.compare(0, 6, "bytes=") != 0) return r;
+    h = trim(h.substr(6));
+    if (h.find(',') != std::string::npos) return r;   // several: the whole file
+    const std::size_t dash = h.find('-');
+    if (dash == std::string::npos) return r;
+    const std::string a = trim(h.substr(0, dash)), b = trim(h.substr(dash + 1));
+    auto number = [](const std::string& s, std::uint64_t* out) {
+        if (s.empty() || s.size() > 19 || s.find_first_not_of("0123456789") != std::string::npos)
+            return false;
+        *out = std::strtoull(s.c_str(), nullptr, 10);
+        return true;
+    };
+    std::uint64_t x = 0, y = 0;
+    if (a.empty()) {
+        // The last y bytes.
+        if (!number(b, &y)) return r;
+        if (y == 0 || size == 0) {
+            r.kind = ByteRange::Unsatisfiable;
+            return r;
+        }
+        r.kind = ByteRange::Part;
+        r.start = size - std::min(y, size);
+        r.end = size - 1;
+        return r;
+    }
+    if (!number(a, &x)) return r;
+    if (!b.empty() && (!number(b, &y) || y < x)) return r;
+    if (x >= size) {
+        r.kind = ByteRange::Unsatisfiable;
+        return r;
+    }
+    r.kind = ByteRange::Part;
+    r.start = x;
+    r.end = b.empty() ? size - 1 : std::min(y, size - 1);
+    return r;
+}
+
+std::string fileHead(const FileType& type, std::uint64_t size, const ByteRange& range) {
+    std::string h;
+    const std::string common =
+        "Accept-Ranges: bytes\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\n"
+        "X-Content-Type-Options: nosniff\r\nConnection: close\r\n";
+    if (range.kind == ByteRange::Unsatisfiable)
+        return "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" +
+               std::to_string(size) + "\r\nContent-Length: 0\r\n" + common + "\r\n";
+    if (range.kind == ByteRange::Part)
+        h = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + std::to_string(range.start) +
+            "-" + std::to_string(range.end) + "/" + std::to_string(size) + "\r\n";
+    else
+        h = "HTTP/1.1 200 OK\r\n";
+    h += "Content-Type: " + type.mime + "\r\nContent-Length: " +
+         std::to_string(size ? range.length() : 0) + "\r\n" + common;
+    // No script of the file's runs in the page's origin: a sandbox makes
+    // its origin opaque and, without allow-scripts, runs none at all (an
+    // SVG or HTML file opened by its address in a tab of its own too).
+    if (type.sandbox)
+        h += "Content-Security-Policy: sandbox; script-src 'none'; object-src 'none'; "
+             "base-uri 'none'; form-action 'none'\r\n";
+    return h + "\r\n";
+}
+
+std::string fileRefusal(int status, const std::string& why) {
+    const char* reason = status == 404   ? "Not Found"
+                         : status == 413 ? "Payload Too Large"
+                         : status == 503 ? "Service Unavailable"
+                         : status == 400 ? "Bad Request"
+                                         : "Forbidden";
+    return httpResponse(status, reason, "text/plain; charset=utf-8", "mutible: " + why + "\n");
+}
+
+Json tableJson(const std::string& path, const std::string& bytes, bool complete) {
+    const char delim = extensionOfPath(path) == "tsv" ? '\t' : Csv::detectDelimiter(bytes);
+    const Csv::Document d = Csv::Document::parse(bytes, delim, SIZE_MAX, complete);
+    Json rows = Json::array();
+    std::size_t cells = 0, columns = 0;
+    bool truncated = d.truncated();
+    for (std::size_t r = 0; r < d.rows(); r++) {
+        const std::size_t n = d.fieldsInRow(r);
+        if (cells + n > kMaxTableCells && r > 0) {
+            truncated = true;
+            break;
+        }
+        Json row = Json::array();
+        for (std::size_t c = 0; c < n; c++) row.push(Json(cutUtf8(d.cell(r, c), kMaxCellBytes)));
+        cells += n;
+        columns = std::max(columns, n);
+        rows.push(std::move(row));
+    }
+    Json j = Json::object();
+    j.set("delimiter", Json(std::string(1, delim)));
+    j.set("columns", Json((int64_t)columns));
+    j.set("rows", std::move(rows));
+    j.set("truncated", Json(truncated));
+    return j;
 }
 
 // ---------------------------------------------------------------- data
@@ -883,6 +1070,17 @@ Json TermView::takeUpdate() {
 
 // ---------------------------------------------------------------- the server
 
+struct Server::FileSend {
+    std::string rel;
+    FileType type;
+    bool hasRange = false;
+    std::string range;            // the request's Range header
+    std::uint64_t req = 0;        // the host's read in flight, 0 for none
+    bool sized = false;           // the head is out
+    std::uint64_t next = 0;       // the next byte to read
+    std::uint64_t left = 0;       // bytes still to send
+};
+
 struct Server::Conn {
     int id = 0;                   // the page's number in its edits' log entries
     int fd = -1;
@@ -895,6 +1093,7 @@ struct Server::Conn {
     TermId term = 0;
     int termCols = 0, termRows = 0;   // its terminal pane's cells (tsize), 0 unsaid
     bool welcomed = false;
+    std::unique_ptr<FileSend> file;   // a file for a viewer, being sent
 };
 
 struct Server::Session : Client::Listener, Client::TermListener {
@@ -921,6 +1120,8 @@ struct Server::Session : Client::Listener, Client::TermListener {
     std::map<DocId, int> undoFor;
     // The tree's reads asked of the host: the request's page.
     std::map<std::uint64_t, int> reads;
+    // Tables (`file`) being read: the request's page and path.
+    std::map<std::uint64_t, std::pair<int, std::string>> tables;
     // Per terminal, the page that typed into it last, and the size this
     // renderer last told the host (TermResize): the pages share one
     // renderer, so the host hears the typing page's size.
@@ -1156,9 +1357,20 @@ void Server::readFrom(Conn& c) {
 }
 
 void Server::handleHttp(Conn& c) {
+    // One request a connection: anything after it is not read.
+    if (c.closeAfterWrite || c.file) {
+        c.in.clear();
+        return;
+    }
     const Request r = readRequest(c.in);
     if (r.state == Request::Incomplete) return;
     const Answer a = answer(r, opt_.token, pageHtml());
+    if (a.kind == Answer::File) {
+        c.in.clear();
+        auto range = r.headers.find("range");
+        beginFile(c, a.file, range == r.headers.end() ? nullptr : &range->second);
+        return;
+    }
     c.out += a.response;
     if (a.kind != Answer::Socket) {
         c.closeAfterWrite = true;
@@ -1199,6 +1411,7 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     // page that only reads may.
     if (t == "list") return onList(c, j);
     if (t == "open") return onOpen(c, j);
+    if (t == "file") return onFile(c, j);
     // The rest changes the session: only from a page that may.
     if (t == "edit") onEdit(c, j);
     else if (t == "undo") onUndo(c, j);
@@ -1513,13 +1726,173 @@ void Server::takeReads() {
             m.set("error", a["error"]);
         } else {
             m.set("root", a["root"]);
-            m.set("entries", a["entries"]);
+            // Each file the page shows itself says how (fileType's view).
+            Json entries = Json::array();
+            for (const Json& e : a["entries"].elements()) {
+                Json f = e;
+                if (!e["dir"].asBool()) {
+                    const std::string view = fileType(e["name"].asString()).view;
+                    if (!view.empty()) f.set("view", Json(view));
+                }
+                entries.push(std::move(f));
+            }
+            m.set("entries", std::move(entries));
             if (a.has("more")) m.set("more", a["more"]);
         }
         for (auto& c : conns_)
             if (c->id == it->second && c->welcomed) sendJson(*c, m);
         it = s.reads.erase(it);
     }
+    for (auto it = s.tables.begin(); it != s.tables.end();) {
+        Json a;
+        std::string bytes;
+        if (!s.client->readAnswer(it->first, &a, &bytes)) {
+            ++it;
+            continue;
+        }
+        Json m = Json::object();
+        m.set("t", Json("table"));
+        m.set("path", Json(it->second.second));
+        if (a.has("error")) {
+            m.set("error", a["error"]);
+        } else {
+            const double size = a["size"].asNumber(0);
+            Json table = tableJson(it->second.second, bytes,
+                                   (double)bytes.size() + a["offset"].asNumber(0) >= size);
+            m.set("columns", table["columns"]);
+            m.set("rows", table["rows"]);
+            m.set("truncated", table["truncated"]);
+            m.set("size", Json(size));
+        }
+        for (auto& c : conns_)
+            if (c->id == it->second.first && c->welcomed) sendJson(*c, m);
+        it = s.tables.erase(it);
+    }
+}
+
+// A CSV or TSV file as rows for the page's table: its start, read by the
+// host as the tree's listings are.
+void Server::onFile(Conn& c, const Json& j) {
+    if (!session_ || !j["path"].isString()) return;
+    Session& s = *session_;
+    const std::string rel = j["path"].asString();
+    if (fileType(rel).view != "table") {
+        Json m = Json::object();
+        m.set("t", Json("table"));
+        m.set("path", Json(rel));
+        m.set("error", Json("not a CSV or TSV file"));
+        return sendJson(c, m);
+    }
+    if (s.tables.size() >= 16) return;
+    Json req = Json::object();
+    req.set("op", Json("read"));
+    req.set("path", Json(rel));
+    req.set("offset", Json((int64_t)0));
+    req.set("length", Json((int64_t)kMaxTableBytes));
+    req.set("hidden", Json(opt_.showHidden));
+    s.tables[s.client->requestRead(opt_.window, std::move(req))] = {c.id, rel};
+}
+
+// ---- a file for a viewer over HTTP
+
+void Server::beginFile(Conn& c, const std::string& rel, const std::string* range) {
+    auto refuse = [&](int status, const std::string& why) {
+        c.out += fileRefusal(status, why);
+        c.closeAfterWrite = true;
+    };
+    const FileType type = fileType(rel);
+    if (type.mime.empty()) return refuse(404, "this page does not show that kind of file");
+    if (!session_) return refuse(503, "the session's page is not open");
+    int sending = 0;
+    for (auto& o : conns_)
+        if (o->file) sending++;
+    if (sending >= kMaxFileSends) return refuse(503, "too many files at once");
+    auto f = std::make_unique<FileSend>();
+    f->rel = rel;
+    f->type = type;
+    f->hasRange = range != nullptr;
+    if (range) f->range = *range;
+    // Its size first (a read of nothing), for the head and the range.
+    Json req = Json::object();
+    req.set("op", Json("read"));
+    req.set("path", Json(rel));
+    req.set("offset", Json((int64_t)0));
+    req.set("length", Json((int64_t)0));
+    req.set("hidden", Json(opt_.showHidden));
+    f->req = session_->client->requestRead(opt_.window, std::move(req));
+    c.file = std::move(f);
+}
+
+void Server::pumpFile(Conn& c) {
+    FileSend& f = *c.file;
+    Client& client = *session_->client;
+    if (f.req) {
+        Json a;
+        std::string bytes;
+        if (!client.readAnswer(f.req, &a, &bytes)) return;
+        f.req = 0;
+        if (a.has("error")) {
+            if (f.sized) {
+                c.dead = true;   // cut short: the browser sees too few bytes
+            } else {
+                c.out += fileRefusal(404, a["error"].asString());
+                c.closeAfterWrite = true;
+            }
+            c.file.reset();
+            return;
+        }
+        if (!f.sized) {
+            const std::uint64_t size = (std::uint64_t)a["size"].asNumber(0);
+            if (f.type.maxBytes && size > f.type.maxBytes) {
+                c.out += fileRefusal(413, "too large to show here (over " +
+                                              std::to_string(f.type.maxBytes >> 20) + " MB)");
+                c.closeAfterWrite = true;
+                c.file.reset();
+                return;
+            }
+            const ByteRange r = byteRange(f.hasRange ? &f.range : nullptr, size);
+            c.out += fileHead(f.type, size, r);
+            f.sized = true;
+            if (r.kind == ByteRange::Unsatisfiable || size == 0) {
+                c.closeAfterWrite = true;
+                c.file.reset();
+                return;
+            }
+            f.next = r.start;
+            f.left = r.length();
+        } else {
+            if (bytes.empty()) {
+                c.dead = true;   // the file shrank meanwhile
+                c.file.reset();
+                return;
+            }
+            if (bytes.size() > f.left) bytes.resize((std::size_t)f.left);
+            c.out += bytes;
+            f.next += bytes.size();
+            f.left -= bytes.size();
+            if (!f.left) {
+                c.closeAfterWrite = true;
+                c.file.reset();
+                return;
+            }
+        }
+    }
+    // The next piece once the connection has taken most of the last.
+    if (!f.req && f.left && c.out.size() < kFilePiece) {
+        Json req = Json::object();
+        req.set("op", Json("read"));
+        req.set("path", Json(f.rel));
+        req.set("offset", Json((int64_t)f.next));
+        req.set("length", Json((int64_t)std::min<std::uint64_t>(f.left, kFilePiece)));
+        req.set("hidden", Json(opt_.showHidden));
+        f.req = client.requestRead(opt_.window, std::move(req));
+    }
+}
+
+void Server::pumpFiles() {
+    if (!session_) return;
+    for (auto& c : conns_)
+        if (c->file && !c->dead) pumpFile(*c);
 }
 
 void Server::onOpen(Conn& c, const Json& j) {
@@ -1617,6 +1990,12 @@ bool Server::attach() {
 
 void Server::detach() {
     if (!session_) return;
+    // Files being sent read through the session: they end with it.
+    for (auto& c : conns_)
+        if (c->file) {
+            c->file.reset();
+            c->dead = true;
+        }
     if (session_->link) session_->link->close();   // the reader first: it delivers to the client
     if (session_->letGo) session_->letGo();        // no more deliveries after this
     session_->client.reset();
@@ -1906,6 +2285,7 @@ bool Server::run() {
             session_->client->dispatch();
             takeOutcomes();
             takeReads();
+            pumpFiles();
             if (session_->closed) {
                 Json e = Json::object();
                 e.set("t", Json("ended"));
@@ -1927,10 +2307,14 @@ bool Server::run() {
         }
         for (auto& c : conns_)
             if (!c->out.empty() && !c->dead) writeTo(*c);
+        // A file's connection that took what it had asks for the next piece.
+        pumpFiles();
         // Connections gone; the session goes with the last browser.
         bool lostBrowser = false;
         for (auto it = conns_.begin(); it != conns_.end();) {
             if ((*it)->dead) {
+                if ((*it)->file && (*it)->file->req && session_)
+                    session_->client->forgetRead((*it)->file->req);
                 if ((*it)->socket) {
                     browsers_--;
                     lostBrowser = true;
