@@ -207,6 +207,7 @@ gui_sources = [
   # Folding: each document's regions, folds and their invisible tag, and the
   # editor's placeholders, keys and commands (PARITY.md 1.10).
   'src/Folds.cpp',
+  'src/EditorConflicts.cpp',
   'src/Markdown.cpp',
   'src/CsvTable.cpp',
   'src/HtmlView.cpp',

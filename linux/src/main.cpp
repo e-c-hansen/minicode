@@ -84,6 +84,8 @@
 #include "Lsp.h"
 #include "AgentNotes.h"
 #include "GitGutter.h"
+#include "EditorConflicts.h"
+#include "MergeConflicts.h"
 #include "GitPanel.h"
 #include "InlineAgentBar.h"
 #include "Keys.h"
@@ -2609,6 +2611,10 @@ static void showChangeReview(App* app) {
         return false;
     };
     page->syntaxColor = [](int style) { return g.settings->settings().syntax((TokenStyle)style); };
+    page->mergeColor = [](bool incoming) {
+        const Settings& st = g.settings->settings();
+        return incoming ? st.mergeIncomingColor() : st.mergeCurrentColor();
+    };
     page->applySettings();
     app->editor->showPage(page);
 }
@@ -2662,6 +2668,16 @@ static void makeGitPanel(App* app) {
         if (!app->dead && app->git) app->git->refresh();
     };
     app->gitGutter->installActions(G_ACTION_MAP(app->window));
+    // The editor's merge conflicts (EditorConflicts.h): a choice says in the
+    // status bar how many are left, as on the Mac.
+    app->editor->conflicts()->onResolved = [app](size_t left) {
+        if (app->dead) return;
+        const std::string& path = app->editor->currentPath();
+        const size_t slash = path.rfind('/');
+        const std::string name = path.empty() ? "the file"
+                                 : slash == std::string::npos ? path : path.substr(slash + 1);
+        flashStatus(app, MergeConflicts::resolvedNote(name, left));
+    };
     app->editor->notes()->installActions(G_ACTION_MAP(app->window));   // the tour's keys
     // The inline agent's bar (PARITY.md 3.3).
     app->editor->inlineAgent()->command = [] { return g.settings->settings().agentCommand(); };
@@ -2838,6 +2854,10 @@ static void compareWorktree(App* app) {
         return false;
     };
     page->syntaxColor = [](int style) { return g.settings->settings().syntax((TokenStyle)style); };
+    page->mergeColor = [](bool incoming) {
+        const Settings& st = g.settings->settings();
+        return incoming ? st.mergeIncomingColor() : st.mergeCurrentColor();
+    };
     // After Apply to Main: the main checkout's changes, here when this
     // window is on it (and not on the worktree), else in a window of its own.
     page->onShowSourceControl = [app, path](const std::string& mainPath) {
