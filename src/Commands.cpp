@@ -356,6 +356,10 @@ const std::vector<Command>& all() {
         // clicked or selected folder, else the open file's). No key.
         {"minicode.tree.addToFocus", "Add to Focus", "File", "", A, "addFolderToFocus:", 0, 0,
          nullptr},
+        // Add Folder to Focus…: minicode's folder picker, scoped to the
+        // window's folder (also the + on the tree's focus row). No key.
+        {"minicode.tree.addFolderToFocus", "Add Folder to Focus…", "File", "", A,
+         "chooseFolderToAddToFocus:", 0, 0, nullptr},
         {"workbench.action.files.copyPathOfActiveFile", "Copy Path of Active File", "File", "", A,
          "copyActiveFilePath:", 0, 0, nullptr},
         {"workbench.action.files.copyRelativePathOfActiveFile",

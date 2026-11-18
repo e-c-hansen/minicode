@@ -22,11 +22,19 @@
 // window (each root open or closed as it was) and its folder's session,
 // folders gone since dropped; a record in the old single-path form still
 // restores; a root deleted on disk leaves the others.
+//
+// Add Folder to Focus… (2026-11-18): the focus row's + opens minicode's
+// folder picker scoped to the window's folder; a sibling's name and Return
+// add it (two roots); the palette's Add to Focus with nothing new to add
+// opens the picker too, where a typed path (linux/s) completes; nothing
+// outside the window's folder is offered (../, an absolute path), and Esc
+// changes nothing.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
 #import "SessionStore.h"
 #import "TreeFocusBar.h"
+#import "PalettePanel.h"
 
 #include "TabSessions.h"
 
@@ -144,6 +152,39 @@ void CloseChecked(EditorController *w) {
         MCGuiNote(@"closing %@ (focus \"%@\"): %lu windows, then %lu", w.rootPath.lastPathComponent,
                   w.treeFocus, (unsigned long)before, (unsigned long)after);
     GCHECK(![MCGuiControllers() containsObject:w]);
+}
+
+// The folder picker in the window's palette box.
+NSView *Picker(EditorController *c) { return MCCommandPaletteIn(c.window); }
+NSArray<NSString *> *PickerLabels(EditorController *c) { return MCCommandPaletteLabels(Picker(c)); }
+NSString *PickerSelected(EditorController *c) {
+    const NSInteger i = MCCommandPaletteSelection(Picker(c));
+    NSArray *l = PickerLabels(c);
+    return i >= 0 && i < (NSInteger)l.count ? l[(NSUInteger)i] : nil;
+}
+NSTextView *PickerEditor(EditorController *c) {
+    return (NSTextView *)MCCommandPaletteField(Picker(c)).currentEditor;
+}
+void PickerType(EditorController *c, NSString *text) {
+    NSTextView *ed = PickerEditor(c);
+    ed.selectedRange = NSMakeRange(0, ed.string.length);
+    [ed insertText:text replacementRange:ed.selectedRange];
+}
+void PickerCommand(EditorController *c, SEL sel) { [PickerEditor(c) doCommandBySelector:sel]; }
+// Every row is a folder inside the window's folder, spelled from it.
+BOOL PickerScoped(EditorController *c) {
+    for (NSString *l in PickerLabels(c))
+        if ([l hasPrefix:@"/"] || [l hasPrefix:@"~"] || [l hasPrefix:@"Choose in Finder"] ||
+            [l hasPrefix:@".."]) {
+            MCGuiNote(@"a row outside the window's folder: %@ (rows %@)", l, PickerLabels(c));
+            return NO;
+        }
+    return YES;
+}
+// Only the note that nothing outside is offered.
+BOOL PickerRefuses(EditorController *c) {
+    NSArray<NSString *> *l = PickerLabels(c);
+    return l.count == 1 && [l[0] hasPrefix:@"Only folders inside"];
 }
 
 NSInteger RowsOf(EditorController *c, NSString *path) {
@@ -550,6 +591,75 @@ MC_GUI_SUITE(tree_focus) {
         GCHECK_EQ_STR(TopLabels(c), @"mac/src linux/src");
         GCHECK_EQ_STR(Labels(c), @"mac/src › linux/src");
         GCHECK_EQ_STR(StoredFocus(repo), @"mac/src, linux/src");
+    });
+
+    // ---- Add Folder to Focus… (the + and the picker)
+    MCGuiStep(@"one folder focused: the + opens the picker over the window's folder", ^{
+        GCHECK(([c setTreeFocusFolders:@[@"mac/src"]]));
+        MCTreeFocusBar *bar = [c treeFocusBar];
+        GCHECK(bar && !bar.hidden && !bar.showsFolders);
+        GCHECK(NSMaxX([bar addRect]) <= NSMinX([bar closeRect]));
+        GCHECK(NSMaxX([bar rectOfPart:(NSInteger)bar.partLabels.count - 1]) <= NSMinX([bar addRect]));
+        ClickBar(c, [bar addRect]);
+        GCHECK(Picker(c) != nil);
+        GCHECK(c.window.firstResponder == PickerEditor(c));
+    });
+    MCGuiWait(@"the window's subfolders listed, by their names", 5, ^BOOL {
+        return [PickerLabels(c) containsObject:@"docs"] && [PickerLabels(c) containsObject:@"linux"];
+    });
+    MCGuiStep(@"nothing outside; a sibling's name and Return add it: two roots", ^{
+        MCGuiNote(@"rows: %@", PickerLabels(c));
+        GCHECK(PickerScoped(c));
+        GCHECK(![PickerLabels(c) containsObject:@"mac/src"]);   // focused already, not recent
+        PickerType(c, @"docs");
+        GCHECK_EQ_STR(PickerSelected(c), @"docs");
+        PickerCommand(c, @selector(insertNewline:));
+        GCHECK(Picker(c) == nil);
+    });
+    MCGuiWait(@"docs added", 5, ^BOOL { return [c.treeFocus isEqualToString:@"mac/src, docs"]; });
+    MCGuiStep(@"two roots and their labels; then the palette's Add to Focus with nothing new opens it", ^{
+        GCHECK_EQ_STR(TopLabels(c), @"mac/src docs");
+        GCHECK([c treeFocusBar].showsFolders);
+        GCHECK_EQ_STR(Labels(c), @"mac/src › docs");
+        GCHECK(!NSIsEmptyRect([[c treeFocusBar] addRect]));
+        GCHECK(NSMaxX([[c treeFocusBar] removeRectOfPart:1]) <= NSMinX([[c treeFocusBar] addRect]));
+        [c revealPath:file(@"mac/src/a.mm") open:YES from:EditorTabs::OpenFrom::QuickOpen];
+        [c.outline deselectAll:nil];
+        GCHECK([c folderToAddToFocus] == nil);
+        NSMenuItem *add = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(addFolderToFocus:)
+                                              keyEquivalent:@""];
+        GCHECK([c validateMenuItem:add]);
+        [c addFolderToFocus:nil];
+        GCHECK(Picker(c) != nil);
+        PickerType(c, @"linux/s");
+    });
+    MCGuiWait(@"a typed path lists linux's folders", 5, ^BOOL {
+        return [PickerSelected(c) isEqualToString:@"linux/src"];
+    });
+    MCGuiStep(@"Return adds linux/src", ^{
+        GCHECK(PickerScoped(c));
+        PickerCommand(c, @selector(insertNewline:));
+        GCHECK(Picker(c) == nil);
+    });
+    MCGuiWait(@"three roots", 5, ^BOOL {
+        return [c.treeFocus isEqualToString:@"mac/src, docs, linux/src"];
+    });
+    MCGuiStep(@"the folder above the window's is not offered", ^{
+        GCHECK_EQ_STR(TopLabels(c), @"mac/src docs linux/src");
+        [c chooseFolderToAddToFocus:nil];
+        GCHECK(Picker(c) != nil);
+        PickerType(c, @"../");
+    });
+    MCGuiWait(@"../ lists nothing", 5, ^BOOL { return PickerRefuses(c); });
+    MCGuiStep(@"nor an absolute path outside it", ^{
+        PickerType(c, [MCGuiScratch() stringByAppendingString:@"/"]);
+    });
+    MCGuiWait(@"the scratch folder lists nothing", 5, ^BOOL { return PickerRefuses(c); });
+    MCGuiStep(@"Esc closes the picker and changes nothing", ^{
+        MCGuiNote(@"rows: %@", PickerLabels(c));
+        PickerCommand(c, @selector(cancelOperation:));
+        GCHECK(Picker(c) == nil);
+        GCHECK_EQ_STR(c.treeFocus, @"mac/src, docs, linux/src");
     });
 
     MCGuiStep(@"close the window", ^{

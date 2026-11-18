@@ -46,6 +46,13 @@
 @property(nonatomic, copy) NSString *baseFolder;   // listed under them; relative paths start here
 @property(nonatomic, copy) void (^choose)(NSString *path);   // after the palette has closed
 @property(nonatomic, copy) void (^chooseInFinder)(void);
+// Add Folder to Focus…: only folders strictly inside scopeFolder are
+// offered (labelled by their path from it), and there is no Choose in
+// Finder…. The field's placeholder and the typed folder's row ("Open This
+// Folder") may be given their own words.
+@property(nonatomic, copy) NSString *scopeFolder;
+@property(nonatomic, copy) NSString *placeholder;
+@property(nonatomic, copy) NSString *typedRowTitle;
 @end
 
 // Shows the folder picker over window (it must have a content view).

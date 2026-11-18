@@ -304,7 +304,8 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     f.cell.scrollable = YES;
     f.placeholderAttributedString = [[NSAttributedString alloc]
         initWithString:context.folderPick
-                           ? @"Open a folder: type its name, or a path such as ~/Code/ or ../"
+                           ? context.folderPick.placeholder ?:
+                           @"Open a folder: type its name, or a path such as ~/Code/ or ../"
                            : context.pick.placeholder ?:
                            @"Search files by name (> commands, : a line, @ a symbol, # in the workspace)"
             attributes:@{NSForegroundColorAttributeName: self.mutedColor,
@@ -631,6 +632,8 @@ static std::string PHome(void) { return PUtf8(NSHomeDirectory()); }
     return PUtf8(b.length ? b : NSHomeDirectory());
 }
 
+- (std::string)folderScope { return PUtf8(self.context.folderPick.scopeFolder ?: @""); }
+
 // The folder's listing when it has been read; otherwise it is read now on a
 // background queue (the reading of a folder asked for before is cancelled:
 // the text has moved on) and the list fills in when it arrives.
@@ -662,8 +665,8 @@ static std::string PHome(void) { return PUtf8(NSHomeDirectory()); }
 - (void)folderListed:(const std::string &)dir listing:(const FolderPicker::Listing &)listing {
     _folderListings[dir] = listing;
     if (_folderListingDir == dir) _folderListingDir.clear();
-    FolderPicker::Input in =
-        FolderPicker::parse(PUtf8(self.field.stringValue ?: @""), PHome(), [self folderBase]);
+    FolderPicker::Input in = FolderPicker::parse(PUtf8(self.field.stringValue ?: @""), PHome(),
+                                                 [self folderBase], [self folderScope]);
     if (in.dir == dir) [self refilter];
 }
 
@@ -711,7 +714,7 @@ static std::string PHome(void) { return PUtf8(NSHomeDirectory()); }
     const std::string home = PHome();
     NSString *text = self.field.stringValue ?: @"";
     _folderShownText = [text copy];
-    FolderPicker::Input in = FolderPicker::parse(PUtf8(text), home, [self folderBase]);
+    FolderPicker::Input in = FolderPicker::parse(PUtf8(text), home, [self folderBase], [self folderScope]);
     const FolderPicker::Listing *listing = [self folderListing:in.dir];
     std::vector<std::string> recent;
     for (NSString *r in pick.recentFolders) recent.push_back(PUtf8(r));
@@ -749,7 +752,7 @@ static std::string PHome(void) { return PUtf8(NSHomeDirectory()); }
         }
         if (!path) continue;   // a name that is not UTF-8
         if (r.kind == FolderPicker::RowKind::OpenTyped) {
-            it.label = @"Open This Folder";
+            it.label = pick.typedRowTitle ?: @"Open This Folder";
             it.opensTyped = YES;
             it.keys = @"\u2318\u23CE";
             NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
@@ -783,7 +786,7 @@ static std::string PHome(void) { return PUtf8(NSHomeDirectory()); }
     NSString *path = self.items[(NSUInteger)self.selected].folderPath;
     if (!path) return NO;
     const std::string t = FolderPicker::complete(PUtf8(self.field.stringValue ?: @""),
-                                                 PUtf8(path), PHome());
+                                                 PUtf8(path), PHome(), [self folderScope]);
     [self takeText:[NSString stringWithUTF8String:t.c_str()] ?: @""];
     return YES;
 }
@@ -1141,7 +1144,8 @@ static NSString *POneLine(NSString *s) {
         self.selected < (NSInteger)self.items.count &&
         self.items[(NSUInteger)self.selected].folderPath) {
         const std::string t = FolderPicker::complete(
-            PUtf8(was), PUtf8(self.items[(NSUInteger)self.selected].folderPath), PHome());
+            PUtf8(was), PUtf8(self.items[(NSUInteger)self.selected].folderPath), PHome(),
+            [self folderScope]);
         [self takeText:[NSString stringWithUTF8String:t.c_str()] ?: now];
         return;
     }

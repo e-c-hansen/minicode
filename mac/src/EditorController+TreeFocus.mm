@@ -14,6 +14,7 @@
 // adding a folder, the labels) are the core's, FileDetails.h's TreeFocus.
 #import "EditorController+Private.h"
 #import "EditorController+TreeFocusIvars.h"
+#import "PalettePanel.h"
 
 #include "FileDetails.h"
 
@@ -254,6 +255,7 @@ BOOL MCPathAtOrBelow(NSString *path, FileItem *folder) {
             [s selectTreeRoot:folder];
             [s.window makeFirstResponder:s.outline];
         };
+        _treeFocusBar.onAdd = ^{ [weakSelf chooseFolderToAddToFocus:nil]; };
         self.sidebarScroll.topBar = _treeFocusBar;
     }
     _treeFocusBar.textColor = [[AppSettings shared] text:Surface::Sidebar];
@@ -332,6 +334,12 @@ BOOL MCPathAtOrBelow(NSString *path, FileItem *folder) {
 - (void)addFolderToFocus:(id)sender {
     (void)sender;
     NSString *rel = [self folderToAddToFocus];
+    // Nothing new to add by the selection or the open file (with the tree
+    // focused, every row is inside it): pick one instead.
+    if (!rel && self.outline.clickedRow < 0) {
+        [self chooseFolderToAddToFocus:nil];
+        return;
+    }
     if (!rel) {
         NSBeep();
         [self showStatusNote:@"The tree shows that folder already"];
@@ -341,6 +349,49 @@ BOOL MCPathAtOrBelow(NSString *path, FileItem *folder) {
         NSBeep();
         [self showStatusNote:@"That folder is not in the tree"];
     }
+}
+
+// Add Folder to Focus…: minicode's folder picker (PalettePanel.h,
+// MCFolderPick) scoped to the window's folder: the folders of the open
+// tabs not shown yet first, most recent first, then the window's
+// subfolders; a typed path ("linux/src") goes deeper. The folder chosen is
+// added as Add to Focus adds one (nested folders merged by the core).
+- (void)chooseFolderToAddToFocus:(id)sender {
+    (void)sender;
+    if (!_root.path.length) {
+        NSBeep();
+        return;
+    }
+    NSMutableArray<NSString *> *recent = [NSMutableArray array];
+    for (NSString *p in [self recentTabPaths]) {
+        NSString *rel = [self treeRelative:p.stringByDeletingLastPathComponent];
+        if (![self addableFocus:rel]) continue;
+        NSString *dir = [_root.path stringByAppendingPathComponent:rel];
+        if (![recent containsObject:dir]) [recent addObject:dir];
+    }
+    MCFolderPick *pick = [MCFolderPick new];
+    pick.recentFolders = recent;
+    pick.baseFolder = _root.path;
+    pick.scopeFolder = _root.path;
+    pick.placeholder = @"Add a folder to the tree's focus: type its name, or a path such as src/";
+    pick.typedRowTitle = @"Add This Folder";
+    __weak EditorController *weakSelf = self;
+    pick.choose = ^(NSString *path) { [weakSelf addPickedFolderToFocus:path]; };
+    MCShowFolderPicker(self.window, pick);
+}
+
+- (void)addPickedFolderToFocus:(NSString *)path {
+    NSString *rel = [self treeRelative:path];
+    if (!rel.length) {
+        NSBeep();
+        return;
+    }
+    if (![self addTreeFocus:rel]) {
+        NSBeep();
+        [self showStatusNote:@"That folder is not in the tree"];
+        return;
+    }
+    [self.window makeFirstResponder:self.outline];
 }
 
 // The root row clicked or selected, while several folders are focused.
@@ -367,7 +418,9 @@ BOOL MCPathAtOrBelow(NSString *path, FileItem *folder) {
 - (BOOL)validateTreeFocusItem:(NSMenuItem *)item enabled:(BOOL *)enabled {
     if (item.action == @selector(showWholeFolderInTree:)) *enabled = _treeFocusItems.count > 0;
     else if (item.action == @selector(focusOnFolder:)) *enabled = [self folderToFocus] != nil;
-    else if (item.action == @selector(addFolderToFocus:)) *enabled = [self folderToAddToFocus] != nil;
+    else if (item.action == @selector(addFolderToFocus:))
+        *enabled = [self folderToAddToFocus] != nil || (self.outline.clickedRow < 0 && _root.path.length);
+    else if (item.action == @selector(chooseFolderToAddToFocus:)) *enabled = _root.path.length > 0;
     else if (item.action == @selector(removeFolderFromFocus:)) *enabled = [self focusedRootToRemove] != nil;
     else return NO;
     return YES;

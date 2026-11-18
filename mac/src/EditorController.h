@@ -197,6 +197,8 @@
 @interface EditorController (TreeFocus)
 - (void)focusOnFolder:(id)sender;
 - (void)addFolderToFocus:(id)sender;
+// Add Folder to Focus…: the folder picker scoped to the window's folder.
+- (void)chooseFolderToAddToFocus:(id)sender;
 - (void)removeFolderFromFocus:(id)sender;
 - (void)showWholeFolderInTree:(id)sender;
 // The focus as a path from the window's folder ("mac/src"), several joined

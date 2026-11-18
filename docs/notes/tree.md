@@ -178,9 +178,22 @@ found through that list.
   `minicode.tree.addToFocus`, the File menu, a folder row's right click)
   takes the clicked row's folder on a right click, else the selected
   row's, else the open file's, the first not shown yet
-  (`folderToAddToFocus`): with the tree focused every row is inside a
-  focused folder, so the palette's way to add one is to open a file there
-  first. Remove from Focus on a root row of several, a label's × in the
+  (`folderToAddToFocus`). **Add Folder to Focus…** (2026-11-18,
+  `chooseFolderToAddToFocus:`, `minicode.tree.addFolderToFocus`, the File
+  menu, the palette, and the bar's + (`addRect`, `onAdd`, before the last
+  ×, on the breadcrumb and the label row alike), since with the tree
+  focused every row is inside a focused folder and nothing is left to
+  right click): minicode's folder picker (`MCFolderPick`) with
+  `scopeFolder` the window's folder, so the core's `FolderPicker` (its
+  `scope`: `parse`'s fourth argument, `inScope`, `folderpick:scope`)
+  offers only folders strictly inside it, labels them by their path from
+  it, completes a name with Tab to that path, and drops Choose in Finder…;
+  `../`, `~/` or an absolute path elsewhere list nothing but "Only folders
+  inside …". Its recent rows are the open tabs' folders not shown yet,
+  most recent first; Return goes through `addTreeFocus:` (the core's
+  merging). Add to Focus with nothing new to add and no clicked row
+  (`clickedRow < 0`: the palette or the File menu) opens it instead of
+  beeping, so it stays enabled there. Remove from Focus on a root row of several, a label's × in the
   label row, and `dropLostTreeFocus` (each root checked as the one focus
   was; those gone dropped, the whole folder when none is left) take
   folders out; one left gives the breadcrumb back. The label row is the
