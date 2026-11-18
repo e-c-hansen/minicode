@@ -100,7 +100,9 @@ void restoreBom(std::u16string& staged, bool stripped);
 // in `fileEncoding` with or without a byte order mark (the tab's, as
 // FolderSearch::decodeFileText found them). A UTF-16 file's blob that
 // starts with that order's mark is read unit for unit, the mark taken
-// off, exactly (a lone surrogate stays one); anything else is UTF-8
+// off, exactly (a lone surrogate stays one); a Windows-1252 file's blob
+// that is not UTF-8 (readsAsWindows1252) is read as Windows-1252, and
+// staged back so; anything else is UTF-8
 // (fromUtf8), its U+FEFF taken off when the file's UTF-8 BOM is kept
 // apart (stripBom). A UTF-16 file whose index holds UTF-8, or the other
 // order, then differs on every line, which it does.

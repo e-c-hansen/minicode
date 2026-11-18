@@ -284,6 +284,21 @@ static void testQuickDiff() {
         const Original eight = readOriginal("a\n", TextEncoding::Utf16LE, true);
         CHECK(eight.text == u16("a\n") && eight.encoding == TextEncoding::Utf8 && !eight.bom);
         CHECK(stagedBlob(u16("b\n"), eight) == "b\n");
+        // A Windows-1252 file (readsAsWindows1252): a blob that is not UTF-8
+        // is read as Windows-1252 and staged back byte for byte; one that is
+        // UTF-8 (the file was converted since) is read as UTF-8.
+        {
+            const Original w = readOriginal("caf\xE9\nb\x93\n", TextEncoding::Windows1252, false);
+            CHECK(w.encoding == TextEncoding::Windows1252 && !w.bom);
+            CHECK(w.text == u"caf\u00E9\nb\u201C\n");
+            CHECK(stagedBlob(w.text, w) == "caf\xE9\nb\x93\n");
+            const std::u16string n = u"caf\u00E9\nB\u201C\n";
+            const V bs = bars(w.text, n);
+            CHECK(bs == V({bar(Kind::Modified, 1, 1, 1, 1)}));
+            CHECK(stagedBlob(stagedText(bs[0], w.text, n), w) == "caf\xE9\nB\x93\n");
+            const Original asU8 = readOriginal("caf\xC3\xA9\n", TextEncoding::Windows1252, false);
+            CHECK(asU8.encoding == TextEncoding::Utf8 && asU8.text == u"caf\u00E9\n");
+        }
         // A UTF-8 file goes the old way: its BOM stripped only when kept apart.
         const Original u8bom = readOriginal("\xEF\xBB\xBF" "a\n", TextEncoding::Utf8, true);
         CHECK(u8bom.text == u16("a\n") && u8bom.bom);

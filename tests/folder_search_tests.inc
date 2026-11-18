@@ -5,6 +5,8 @@
 // bound on the CPU a search of a few hundred files takes. Kept in its own
 // file and included there.
 
+#include "Document.h"
+
 #include <random>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -696,6 +698,124 @@ static void testFolderSearchParallel() {
             }
         }
         CHECK(decoded > 500 && refused > 500);
+    }
+
+    GROUP("encoding:windows1252");
+    {
+        // The editor opens a Latin-1 or Windows-1252 file as text, by the
+        // rule Find in Folder searches it by (readsAsWindows1252), and
+        // saves it in its encoding; C3b, 2026-11-18.
+        // Valid UTF-8 stays UTF-8, its mark kept apart as before.
+        for (const std::string& u8 : {std::string("caf\xC3\xA9\n"), std::string("plain\n"),
+                                      std::string("\xEF\xBB\xBF" "caf\xC3\xA9\n"), std::string()}) {
+            std::string b = u8;
+            TextEncoding e = TextEncoding::Windows1252;
+            bool bom = false;
+            CHECK(!readsAsWindows1252(u8));
+            CHECK(decodeFileText(&b, &e, &bom) && e == TextEncoding::Utf8);
+            CHECK(encodeFileText(b, e, bom) == u8);
+        }
+        // Not UTF-8: Windows-1252, the five bytes it leaves undefined as
+        // Latin-1 has them (C1 controls), so every byte comes back.
+        const std::string latin = "caf\xE9 \x80 \x93quoted\x94 \x81\x8D\x8F\x90\x9D na\xEFve\r\n";
+        CHECK(readsAsWindows1252(latin));
+        {
+            std::string b = latin;
+            TextEncoding e = TextEncoding::Utf8;
+            bool bom = true;
+            CHECK(decodeFileText(&b, &e, &bom));
+            CHECK(e == TextEncoding::Windows1252 && !bom);
+            CHECK(b == "caf\xC3\xA9 \xE2\x82\xAC \xE2\x80\x9Cquoted\xE2\x80\x9D "
+                       "\xC2\x81\xC2\x8D\xC2\x8F\xC2\x90\xC2\x9D na\xC3\xAFve\r\n");
+            CHECK(isValidUtf8(b));
+            CHECK(encodeFileText(b, e, bom) == latin);
+            CHECK(canEncode(b, e));
+            CHECK(std::string(encodingLabel(e, bom)) == "Windows-1252");
+            CHECK(std::string(encodingName(e, bom)) == "windows1252");
+            TextEncoding e2 = TextEncoding::Utf8;
+            bool bom2 = true;
+            CHECK(parseEncodingName("windows1252", &e2, &bom2) &&
+                  e2 == TextEncoding::Windows1252 && !bom2);
+        }
+        // Every byte but NUL, in every order: decoded and encoded back exactly.
+        std::string all;
+        for (int c = 1; c < 256; ++c) all += static_cast<char>(c);
+        {
+            std::string b = all;
+            TextEncoding e = TextEncoding::Utf8;
+            bool bom = false;
+            CHECK(decodeFileText(&b, &e, &bom) && e == TextEncoding::Windows1252);
+            CHECK(encodeFileText(b, e, bom) == all);
+            std::string out;
+            CHECK(encodeWindows1252(b, &out) && out == all);
+        }
+        // Binary is not text: invalid UTF-8 with a NUL anywhere (past the
+        // 8 KB head the viewers sniff too) is left as it was, for the
+        // caller's UTF-8 decoder to refuse.
+        {
+            const std::string bin = std::string(9000, 'a') + std::string("\xE9\0x", 3);
+            CHECK(!readsAsWindows1252(bin));
+            std::string b = bin;
+            TextEncoding e = TextEncoding::Windows1252;
+            bool bom = false;
+            decodeFileText(&b, &e, &bom);
+            CHECK(e == TextEncoding::Utf8 && b == bin && !isValidUtf8(b));
+            std::u16string text;
+            CHECK(!Model::decodeFileText(bin, &text, &e, &bom));
+            CHECK(Model::decodeFileText(latin, &text, &e, &bom) && e == TextEncoding::Windows1252);
+        }
+        // A character Windows-1252 has no byte for: canEncode says which
+        // first; encodeText writes '?' for each, never a wrong byte.
+        {
+            const std::string typed = "caf\xC3\xA9 \xE2\x86\x92 \xE2\x82\xAC \xF0\x9F\x98\x80\n";
+            std::string unheld;
+            CHECK(!canEncode(typed, TextEncoding::Windows1252, &unheld));
+            CHECK(unheld == "\xE2\x86\x92");
+            CHECK(encodeText(typed, TextEncoding::Windows1252) == "caf\xE9 ? \x80 ?\n");
+            CHECK(canEncode(typed, TextEncoding::Utf8) && canEncode(typed, TextEncoding::Utf16LE));
+            // U+0080 is a C1 control Windows-1252 puts the euro sign in place of.
+            CHECK(!canEncode("\xC2\x80", TextEncoding::Windows1252, &unheld) &&
+                  unheld == "\xC2\x80");
+            CHECK(std::string(encodingLabel(TextEncoding::Utf8, false)) == "UTF-8");
+            CHECK(std::string(encodingLabel(TextEncoding::Utf8, true)) == "UTF-8 with BOM");
+            CHECK(std::string(encodingLabel(TextEncoding::Utf16LE, true)) == "UTF-16 LE");
+            CHECK(std::string(encodingLabel(TextEncoding::Utf16BE, true)) == "UTF-16 BE");
+        }
+        // The core's document saves it back; an unheld character fails
+        // with a reason (the Mac writes UTF-8 then, and says so).
+        {
+            Model::Document d;
+            CHECK(d.load(latin, FolderSearch::FileStamp()));
+            CHECK(d.encoding() == TextEncoding::Windows1252);
+            std::string bytes, why;
+            CHECK(d.bytesToWrite(&bytes, &why) && bytes == latin);
+            d.replace(0, 0, u"\u2192");
+            CHECK(!d.bytesToWrite(&bytes, &why));
+            CHECK(why.find("Windows-1252 cannot store") != std::string::npos);
+        }
+        // Random single-byte files: whatever is not UTF-8 decodes and
+        // comes back exactly; the rule is the search's (a file the search
+        // reads as Windows-1252 is one the editor opens so).
+        std::mt19937 rng(1252);
+        int legacy = 0;
+        for (int round = 0; round < 3000; ++round) {
+            std::string b;
+            const int n = 1 + (int)(rng() % 40);
+            for (int i = 0; i < n; ++i) {
+                const unsigned r = rng() % 6;
+                b += r < 3 ? static_cast<char>('a' + rng() % 26)
+                           : static_cast<char>(1 + rng() % 255);
+            }
+            if (isValidUtf8(b)) continue;
+            ++legacy;
+            std::string t = b;
+            TextEncoding e = TextEncoding::Utf8;
+            bool bom = false;
+            CHECK(decodeFileText(&t, &e, &bom) && e == TextEncoding::Windows1252);
+            CHECK(t == decodeWindows1252(b) && isValidUtf8(t));
+            CHECK(encodeFileText(t, e, bom) == b);
+        }
+        CHECK(legacy > 1000);
     }
 
     GROUP("search:stream");

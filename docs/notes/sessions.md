@@ -80,7 +80,23 @@ found through that list.
   file gone by the restore. Anything comparing a tab with the disk reads
   the disk with `MCReadDiskText`, never `stringWithContentsOfFile:` as
   UTF-8 (Replace in Folder once took a clean UTF-16 tab for unsaved
-  changes). UTF-16 without a BOM stays Quick Look.
+  changes). UTF-16 without a BOM stays Quick Look. **Windows-1252**
+  (2026-11-18, C3b): bytes that are not UTF-8 and hold no NUL anywhere
+  (`FolderSearch::readsAsWindows1252`, the rule Find in Folder searches
+  by) decode as Windows-1252, its five undefined bytes as Latin-1's C1
+  controls, so all 255 non-NUL bytes round-trip; valid UTF-8 is never
+  read so. `MCTextEncodingWindows1252` mirrors the core's value. A save
+  whose text holds a character Windows-1252 lacks (`canEncode`) writes
+  UTF-8 instead (`MCEncodingToWrite`), switches the tab to UTF-8 and
+  says so in the status bar: chosen over a question on every save, and
+  never a '?' written. The status bar's `encodingLabel` names any
+  encoding but plain UTF-8 (`MCEncodingStatusLabel`, the core's
+  `encodingLabel`), refreshed from `updateSavedStatus`. The git gutter
+  and the review read a Windows-1252 file's blob the same way
+  (`QuickDiff::readOriginal`, `encodingOfBlob`) and stage it back so.
+  Replace in Folder still leaves these files alone (it writes UTF-8 and
+  UTF-16 only). The GTK editor still opens UTF-8 only
+  (`DocumentView.cpp`'s `g_utf8_validate`).
 - **One writer**: Cmd+S, `saveTab:` and auto-save all go through
   `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
   (a symlink stays a link, a dangling one too, creating the file it names;
