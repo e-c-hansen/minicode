@@ -17,8 +17,12 @@
 // one text. The page's tree lists the window's folder through the host: a
 // click on a folder opens it, a click on a file in it opens that file in
 // the window's tab, which the page then shows, and a picture says it opens
-// in the window. Closing the window stops the server. No browser window
-// opens.
+// in the window. The page's address field asks the window's browser pane
+// to open an address: javascript: is refused, an http address on this Mac
+// opens in the pane, and the page lists the window's browser tab under
+// "Browser" and frames it, with its new-tab link and the line that a
+// loopback address is this machine's. Closing the window stops the server.
+// No browser window opens.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 #import "EditorController.h"
@@ -224,7 +228,25 @@ NSString *const kRead =
     @" dirty: !!document.querySelector('#tabs button.shown.dirty'),"
     @" shown: !!document.querySelector('#tabs button.shown'),"
     @" tree: window.mcSessionView ? window.mcSessionView.tree().join('|') : '',"
-    @" note: window.mcSessionView ? window.mcSessionView.treeNote() : ''})";
+    @" note: window.mcSessionView ? window.mcSessionView.treeNote() : '',"
+    @" browseField: !document.getElementById('browse').classList.contains('hidden'),"
+    @" toast: document.getElementById('toast').textContent,"
+    @" browser: window.mcSessionView ? window.mcSessionView.browser().join('|') : '',"
+    @" web: window.mcSessionView ? window.mcSessionView.web() : null})";
+
+// An address typed into the page's address field, then Return.
+void Browse(NSString *url) {
+    NSData *quoted = [NSJSONSerialization dataWithJSONObject:@[ url ] options:0 error:nil];
+    NSString *js = [NSString stringWithFormat:
+        @"(() => { const f = document.getElementById('browse'); f.value = %@[0];"
+        @" f.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));"
+        @" return 1; })()",
+        [[NSString alloc] initWithData:quoted encoding:NSUTF8StringEncoding]];
+    [gPage evaluateJavaScript:js inFrame:nil inContentWorld:WKContentWorld.pageWorld
+            completionHandler:^(id, NSError *error) {
+                if (error) MCGuiNote(@"browse: %@", error.localizedDescription);
+            }];
+}
 
 // A click on the page's tree row for `rel`.
 void ClickRow(NSString *rel) {
@@ -515,6 +537,36 @@ MC_GUI_SUITE(session_browser) {
     MCGuiWait(@"says it opens in the window", 20, ^BOOL {
         Read();
         return [gSeen[@"note"] isEqualToString:@"logo.png opens in the minicode window."];
+    });
+    MCGuiStep(@"the editable page has an address field; javascript: typed into it", ^{
+        GCHECK([gSeen[@"browseField"] boolValue]);
+        GCHECK_EQ_STR(gSeen[@"browser"], @"");   // no browser pane yet: no group
+        Browse(@"javascript:alert(1)");
+    });
+    MCGuiWait(@"is refused, and the window opens nothing", 20, ^BOOL {
+        Read();
+        return [gSeen[@"toast"] hasPrefix:@"Not opened"];
+    });
+    __block NSString *address = nil;
+    MCGuiStep(@"an address on this Mac typed into it", ^{
+        GCHECK([gC browserPane] == nil || ![[gC browserPane].tabAddresses containsObject:@"javascript:alert(1)"]);
+        address = [NSString stringWithFormat:@"http://127.0.0.1:%d/browser-tab", gPort];
+        Browse(address);
+    });
+    MCGuiWait(@"opens in the window's browser pane", 20, ^BOOL {
+        return [[gC browserPane].tabAddresses containsObject:address];
+    });
+    MCGuiWait(@"and the page lists the window's browser tab and frames it", 20, ^BOOL {
+        Read();
+        NSDictionary *web = [gSeen[@"web"] isKindOfClass:NSDictionary.class] ? gSeen[@"web"] : nil;
+        return [[gSeen[@"browser"] componentsSeparatedByString:@"|"] containsObject:address] &&
+               [web[@"src"] isEqualToString:address];
+    });
+    MCGuiStep(@"with its link to a new tab and the loopback line", ^{
+        MCGuiNote(@"browser tabs: %@", gSeen[@"browser"]);
+        NSDictionary *web = gSeen[@"web"];
+        GCHECK_EQ_STR(web[@"open"], address);
+        GCHECK([web[@"loopback"] boolValue]);
     });
     MCGuiStep(@"the window closes, and the server with it", ^{
         [gPage stopLoading];
