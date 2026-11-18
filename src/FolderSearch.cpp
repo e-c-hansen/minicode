@@ -390,16 +390,19 @@ std::size_t decodeUtf16Piece(const char* p, std::size_t n, bool le, bool last, s
     return i;
 }
 
+// Windows-1252's 0x80..0x9F as the WHATWG encoding standard's index has
+// them; the five it leaves out (81, 8D, 8F, 90, 9D) are their C1 controls,
+// as Latin-1 has them, so every byte is a character and comes back.
+const char16_t kWindows1252High[32] = {
+    0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+};
+
 // Windows-1252 bytes to UTF-8, appended to *utf8: every byte a character.
 void appendWindows1252(std::string_view bytes, std::string* utf8) {
-    // 0x80..0x9F as the WHATWG encoding standard's windows-1252 index has
-    // them; the five it leaves out are their C1 controls.
-    static const char16_t k80[32] = {
-        0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
-        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
-        0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
-        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
-    };
+    const char16_t* k80 = kWindows1252High;
     utf8->reserve(utf8->size() + bytes.size() + bytes.size() / 8);
     for (const char ch : bytes) {
         const unsigned char b = static_cast<unsigned char>(ch);
@@ -491,8 +494,9 @@ FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::str
     }
     if (!isValidUtf8(*out)) {
         // Not UTF-8: a single-byte encoding (Latin-1, Windows-1252), read
-        // as Windows-1252, unless a NUL anywhere says it is binary.
-        if (std::memchr(out->data(), 0, out->size())) return FileKind::Silent;
+        // as Windows-1252, unless a NUL anywhere says it is binary (the
+        // rule the editor opens such a file by: readsAsWindows1252).
+        if (!readsAsWindows1252(*out)) return FileKind::Silent;
         *out = decodeWindows1252(*out);
         return FileKind::Legacy;
     }
@@ -1745,6 +1749,68 @@ std::string decodeWindows1252(std::string_view bytes) {
     return out;
 }
 
+bool readsAsWindows1252(std::string_view bytes) {
+    return !std::memchr(bytes.data(), 0, bytes.size()) && !isValidUtf8(bytes);
+}
+
+namespace {
+// The Windows-1252 byte for a code point, or -1 when it has none.
+int windows1252Byte(char32_t cp) {
+    if (cp < 0x80 || (cp >= 0xA0 && cp <= 0xFF)) return static_cast<int>(cp);
+    for (int i = 0; i < 32; ++i)
+        if (static_cast<char32_t>(kWindows1252High[i]) == cp) return 0x80 + i;
+    return -1;
+}
+}  // namespace
+
+bool encodeWindows1252(std::string_view utf8, std::string* out, std::string* unheld) {
+    std::string bytes;
+    bytes.reserve(utf8.size());
+    const std::string s(utf8);
+    bool all = true;
+    for (std::size_t i = 0, len = 1; i < s.size(); i += len) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c < 0x80) {
+            bytes += static_cast<char>(c);
+            len = 1;
+            continue;
+        }
+        const std::size_t n = (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3
+                            : (c & 0xF8) == 0xF0 ? 4 : 0;
+        char32_t cp = 0xFFFD;
+        if (n && i + n <= s.size() && isValidUtf8(std::string_view(s).substr(i, n))) {
+            cp = decodeAt(s, i, &len);
+        } else {
+            len = 1;
+        }
+        const int b = windows1252Byte(cp);
+        if (b < 0) {
+            if (all && unheld) *unheld = cp == 0xFFFD ? std::string("\xEF\xBF\xBD") : s.substr(i, len);
+            all = false;
+            bytes += '?';
+        } else {
+            bytes += static_cast<char>(b);
+        }
+    }
+    if (out) *out = std::move(bytes);
+    return all;
+}
+
+bool canEncode(const std::string& utf8, TextEncoding encoding, std::string* unheld) {
+    if (encoding != TextEncoding::Windows1252) return true;
+    return encodeWindows1252(utf8, nullptr, unheld);
+}
+
+const char* encodingLabel(TextEncoding encoding, bool bom) {
+    switch (encoding) {
+    case TextEncoding::Utf16LE: return "UTF-16 LE";
+    case TextEncoding::Utf16BE: return "UTF-16 BE";
+    case TextEncoding::Windows1252: return "Windows-1252";
+    case TextEncoding::Utf8: break;
+    }
+    return bom ? "UTF-8 with BOM" : "UTF-8";
+}
+
 bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* encoding,
                  bool strict) {
     if (!hasUtf16Bom(bytes)) return false;
@@ -1782,6 +1848,11 @@ bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* enco
 
 std::string encodeText(const std::string& utf8, TextEncoding encoding) {
     if (encoding == TextEncoding::Utf8) return utf8;
+    if (encoding == TextEncoding::Windows1252) {
+        std::string out;
+        encodeWindows1252(utf8, &out, nullptr);
+        return out;
+    }
     const bool le = encoding == TextEncoding::Utf16LE;
     std::string out;
     out.reserve(utf8.size() * 2 + 2);
@@ -1824,6 +1895,14 @@ bool decodeFileText(std::string* bytes, TextEncoding* encoding, bool* bom) {
         *bom = true;
         return true;
     }
+    // Not UTF-8 and no NUL: Latin-1 or Windows-1252, as Find in Folder
+    // reads it (readsAsWindows1252).
+    if (readsAsWindows1252(*bytes)) {
+        *bytes = decodeWindows1252(*bytes);
+        *encoding = TextEncoding::Windows1252;
+        *bom = false;
+        return true;
+    }
     *encoding = TextEncoding::Utf8;
     *bom = stripUtf8Bom(bytes);
     return true;
@@ -1843,6 +1922,7 @@ const char* encodingName(TextEncoding encoding, bool bom) {
     switch (encoding) {
     case TextEncoding::Utf16LE: return "utf16le";
     case TextEncoding::Utf16BE: return "utf16be";
+    case TextEncoding::Windows1252: return "windows1252";
     case TextEncoding::Utf8: break;
     }
     return bom ? "utf8bom" : "utf8";
@@ -1855,6 +1935,9 @@ bool parseEncodingName(const std::string& name, TextEncoding* encoding, bool* bo
     } else if (name == "utf16le" || name == "utf16be") {
         *encoding = name == "utf16le" ? TextEncoding::Utf16LE : TextEncoding::Utf16BE;
         *bom = true;
+    } else if (name == "windows1252") {
+        *encoding = TextEncoding::Windows1252;
+        *bom = false;
     } else {
         return false;
     }

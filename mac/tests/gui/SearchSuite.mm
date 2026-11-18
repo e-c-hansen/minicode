@@ -8,7 +8,9 @@
 // pattern left to std::regex that runs past its time stops the search
 // with a reason. Each hit shows its line number and the lines just above
 // and below (one a neighbouring hit shows already, once), and opens at its
-// own line.
+// own line. A hit in a Windows-1252 file opens it as text at its line,
+// the status bar naming the encoding, and it is saved in it, byte for
+// byte, or as UTF-8, said, once it holds what Windows-1252 cannot.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -25,6 +27,22 @@ void WriteBytes(NSString *path, NSData *data) {
                                                   error:nil];
     [data writeToFile:path atomically:YES];
 }
+// An edit as a key press makes it: one undo group of its own (SaveSuite).
+void Type(EditorController *c, NSString *s, NSUInteger at) {
+    NSTextView *tv = c.textView;
+    NSUndoManager *u = tv.undoManager;
+    if (u.groupsByEvent && u.groupingLevel > 0) [u endUndoGrouping];
+    MCGuiUndoGroup(u, ^{ [tv insertText:s replacementRange:NSMakeRange(at, 0)]; });
+}
+NSUInteger CaretLine(EditorController *c) {
+    NSString *text = c.textView.string;
+    const NSUInteger at = MIN(c.textView.selectedRange.location, text.length);
+    NSUInteger line = 1;
+    for (NSUInteger i = 0; i < at; i++)
+        if ([text characterAtIndex:i] == '\n') line++;
+    return line;
+}
+NSData *Bytes(const char *s) { return [NSData dataWithBytes:s length:strlen(s)]; }
 }  // namespace
 
 MC_GUI_SUITE(search) {
@@ -296,6 +314,88 @@ MC_GUI_SUITE(search) {
         MCGuiNote(@"caret at %lu, line %lu", (unsigned long)at, (unsigned long)line);
         GCHECK(line == 7);
         [NSFileManager.defaultManager removeItemAtPath:[dir stringByAppendingPathComponent:@"excerpt.txt"]
+                                                 error:nil];
+        Panel(c).includeField.stringValue = scopeInclude ?: @"";
+    });
+
+    // ---- a Windows-1252 file opens as text at its hit's line, says its
+    // encoding in the status bar, and is saved in it (C3b, 2026-11-18:
+    // the hit opened Quick Look, with no line)
+    static const char *const k1252 =
+        "first line\ncaf\xE9 au lait\nthe \x93needle\x94 costs \x80" "5\nlast \x81 byte\n";
+    MCGuiStep(@"a Windows-1252 file with a hit on line 3", ^{
+        WriteBytes([dir stringByAppendingPathComponent:@"cp1252.txt"], Bytes(k1252));
+        SearchPanel *p = Panel(c);
+        p.includeField.stringValue = [scopeInclude.length ? [scopeInclude stringByAppendingString:@"/"] : @""
+                                         stringByAppendingString:@"cp1252.txt"];
+        [p runSearch:nil];
+    });
+    MCGuiWait(@"its hit", 10, ^BOOL {
+        return !Panel(c).busy && Hits(c).count == 1 &&
+               [[Hits(c).firstObject valueForKey:@"path"] hasSuffix:@"/cp1252.txt"];
+    });
+    MCGuiStep(@"the hit opened", ^{
+        SearchPanel *p = Panel(c);
+        GCHECK_EQ_STR([Hits(c).firstObject valueForKey:@"text"],
+                      @"the \u201Cneedle\u201D costs \u20AC5");
+        NSTableView *t = p.table;
+        GCHECK(t.numberOfRows == 2);
+        [t selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
+        [NSApp sendAction:t.doubleAction to:t.target from:t];
+    });
+    MCGuiWait(@"the Windows-1252 file open", 10, ^BOOL {
+        return [c.currentPath hasSuffix:@"/cp1252.txt"];
+    });
+    MCGuiStep(@"as text, at line 3, the status bar saying Windows-1252", ^{
+        NSTextField *enc = [c valueForKey:@"encodingLabel"];
+        MCGuiNote(@"viewer %ld, editable %d, caret line %lu, encoding \"%@\" (hidden %d)",
+                  (long)c.viewerKind, c.textView.editable, (unsigned long)CaretLine(c),
+                  enc.stringValue, enc.hidden);
+        GCHECK(c.viewerKind == MCViewerNone);
+        GCHECK(c.textView.editable && !c.showingMessage);
+        GCHECK_EQ_STR(c.textView.string,
+                      @"first line\ncaf\u00E9 au lait\nthe \u201Cneedle\u201D costs \u20AC5\n"
+                       "last \u0081 byte\n");
+        GCHECK(CaretLine(c) == 3);
+        GCHECK(!enc.hidden);
+        GCHECK_EQ_STR(enc.stringValue, @"Windows-1252");
+        GCHECK(!c.dirty);
+        // Laid out in the bar, left of what is right of it.
+        GCHECK(enc.superview == c.statusBar && NSWidth(enc.frame) > 20);
+        // Saved with nothing changed: the same bytes.
+        [c saveCurrentFile:nil];
+        NSData *disk = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"cp1252.txt"]];
+        GCHECK([disk isEqualToData:Bytes(k1252)]);
+        // An edit Windows-1252 holds is written in it.
+        [c focusEditor:nil];
+        Type(c, @"\u00E0 la ", 0);
+        GCHECK(c.dirty);
+        [c saveCurrentFile:nil];
+        GCHECK(!c.dirty);
+        disk = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"cp1252.txt"]];
+        NSMutableData *want = [Bytes("\xE0 la ") mutableCopy];
+        [want appendData:Bytes(k1252)];
+        MCGuiNote(@"on disk: %@", disk);
+        GCHECK([disk isEqualToData:want]);
+        GCHECK_EQ_STR(enc.stringValue, @"Windows-1252");
+    });
+    MCGuiStep(@"a character Windows-1252 cannot store: saved as UTF-8, and said", ^{
+        NSTextField *enc = [c valueForKey:@"encodingLabel"];
+        NSTextField *note = [c valueForKey:@"settingsLabel"];
+        Type(c, @"\u2192 ", 0);
+        [c saveCurrentFile:nil];
+        GCHECK(!c.dirty);
+        NSData *disk = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"cp1252.txt"]];
+        NSString *text = [[NSString alloc] initWithData:disk encoding:NSUTF8StringEncoding];
+        MCGuiNote(@"note: %@; encoding \"%@\" (hidden %d)", note.stringValue, enc.stringValue,
+                  enc.hidden);
+        GCHECK_EQ_STR(text, c.textView.string);
+        GCHECK([text hasPrefix:@"\u2192 \u00E0 la first line\ncaf\u00E9"]);
+        GCHECK_EQ_STR(note.stringValue,
+                      @"Saved cp1252.txt as UTF-8: Windows-1252 cannot store \u201C\u2192\u201D");
+        GCHECK(enc.hidden);   // plain UTF-8 now, which the bar leaves unnamed
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
+        [NSFileManager.defaultManager removeItemAtPath:[dir stringByAppendingPathComponent:@"cp1252.txt"]
                                                  error:nil];
         Panel(c).includeField.stringValue = scopeInclude ?: @"";
     });
