@@ -824,7 +824,9 @@ static void testSessionHost() {
             caret++;
             a.client->closeStep(9, {{caret, caret}});
         }
-        a.client->dispatch();
+        // Each acknowledgement sends the next edit, whose own comes back at
+        // once here; dispatch() takes only what was queued when called.
+        for (int i = 0; i < 20000 && a.client->unconfirmed(); i++) a.client->dispatch();
         const double ms = cpuMs() - t0;
         std::printf("  host:speed: 5,000 keys at 100,000 lines in %.1f ms CPU (%.1f us a key)\n", ms,
                     ms * 1000 / 5000);

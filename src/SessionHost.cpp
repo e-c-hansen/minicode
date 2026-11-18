@@ -999,22 +999,41 @@ void SessionHost::setFolder(std::string folder) {
     wake();
 }
 
-void SessionHost::inspect(const std::function<void(const Host&)>& f) {
-    std::mutex m;
-    std::condition_variable cv;
-    bool done = false;
+bool SessionHost::inspect(const std::function<void(const Host&)>& f, int timeoutMs) {
+    // Shared with the queued item, which may outlive this call when it
+    // times out: it then finds `abandoned` and leaves `f` (whose captures
+    // are this caller's) alone.
+    struct Wait {
+        std::mutex m;
+        std::condition_variable cv;
+        bool started = false, done = false, abandoned = false;
+    };
+    auto w = std::make_shared<Wait>();
+    const std::function<void(const Host&)>* fp = &f;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        queue_.push_back(Item{0, Message(), [&] {
-                                  f(host_);
-                                  std::lock_guard<std::mutex> l(m);
-                                  done = true;
-                                  cv.notify_all();
+        queue_.push_back(Item{0, Message(), [this, w, fp] {
+                                  {
+                                      std::lock_guard<std::mutex> l(w->m);
+                                      if (w->abandoned) return;
+                                      w->started = true;
+                                  }
+                                  (*fp)(host_);
+                                  std::lock_guard<std::mutex> l(w->m);
+                                  w->done = true;
+                                  w->cv.notify_all();
                               }});
     }
     wake();
-    std::unique_lock<std::mutex> lk(m);
-    cv.wait(lk, [&] { return done; });
+    std::unique_lock<std::mutex> lk(w->m);
+    if (w->cv.wait_for(lk, std::chrono::milliseconds(std::max(0, timeoutMs)), [&] { return w->done; }))
+        return true;
+    if (!w->started) {
+        w->abandoned = true;
+        return false;
+    }
+    w->cv.wait(lk, [&] { return w->done; });   // `f` is running: it ends
+    return true;
 }
 
 // Messages first, then whatever the ptys have, then a wait in poll(2) for
