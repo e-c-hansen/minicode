@@ -224,9 +224,30 @@ void Document::rehost(std::shared_ptr<SessionLink::Link> link) {
     id_ = client().newId();
     hostPath_.clear();
     if (kind_ != Kind::Text) return;
-    client().open(id_, path_, text(), this);
+    // The file's text as last read or saved is the host's saved text, and
+    // the buffer's difference from it an edit outside the history, so the
+    // host counts it unsaved (its lifetime keeps an unsaved file).
+    const std::string now = text();
+    client().open(id_, path_, now, this);
+    hostPath_ = path_;
+    hostSavedFromDisk(now);
     if (stepOpen_) client().openStep(id_, {"Typing", false}, selection());
-    tellHostPath();
+}
+
+// The host's saved text made the file's (as last read or saved) when the
+// buffer holds `now`, which differs from it (a buffer opened anew on a host,
+// or a backup restored): the host's copy is set to the file's text and the
+// difference goes as an edit outside the history, so the host counts it
+// unsaved, and its lifetime keeps an unsaved file (a headless host after
+// the app quits). The mirror already holds `now`.
+void Document::hostSavedFromDisk(const std::string& now) {
+    if (kind_ != Kind::Text || !diskKnown_ || saved_ == now || !client().isOpen(id_)) return;
+    client().reset(id_, saved_);
+    std::size_t p = 0, q = 0;
+    commonEnds(saved_, now, p, q);
+    const std::size_t from = g_utf8_strlen(saved_.data(), (gssize)p);
+    const std::size_t del = g_utf8_strlen(saved_.data() + p, (gssize)(saved_.size() - p - q));
+    client().recordOutside(id_, Ot::Op{from, del, Model::utf16FromUtf8(now.substr(p, now.size() - p - q))});
 }
 
 void Document::tellHostPath() {
@@ -437,6 +458,7 @@ void Document::restoreText(const std::string& path, const std::string& text,
     watch();
     refreshTaskCount();
     checkDirty();
+    hostSavedFromDisk(text);   // the host counts the backup's text unsaved too
 }
 
 void Document::askAboutDiskChange() {

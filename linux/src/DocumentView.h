@@ -543,6 +543,7 @@ private:
     std::string   hostPath_;          // the path the host was told (DocPath)
     bool          detached_ = false;  // detachFromHost: the host keeps it
     void tellHostPath();
+    void hostSavedFromDisk(const std::string& now);
     Kind          kind_ = Kind::Text;
     std::string   path_, ext_;
     bool          markdown_ = false, latex_ = false;

@@ -632,7 +632,10 @@ it after the app quits; an in-process one while the app runs.
   while the host is gone), finds or starts the host again; every window on
   the old link moves to the new one (`rehostWindows`): each document opens
   on it anew under a new id with its buffer's text (`Document::rehost`:
-  nothing typed is lost; its undo went with the old host), and each
+  nothing typed is lost; its undo went with the old host; the file's text
+  is the host's saved text and the difference an edit outside the
+  history, `hostSavedFromDisk`, so the host counts it unsaved and its
+  lifetime keeps it, as a backup restored now is too), and each
   terminal there starts a new shell (`Terminal::rehost`).
 - **VTE as a renderer among several.** What VTE commits with no key
   pressed (`userInput_`) and that reads as answers

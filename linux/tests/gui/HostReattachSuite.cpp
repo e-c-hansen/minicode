@@ -18,6 +18,8 @@
 //     connection gone), a second app process (_host_reattach_child, as the
 //     _backups_ suites run one) opens the folder and finds the unsaved file
 //     and the running counter, then quits keeping them;
+//   - the host killed: Reconnect in the status bar starts a new one, and
+//     the file is on it with everything typed, before and after, unsaved;
 //   - in-process: the same within this process, the host kept while the
 //     app runs (SessionLink::keepWhileHolding).
 #include "Harness.h"
@@ -335,12 +337,51 @@ MC_GUI_SUITE(host_reattach) {
                    d.out.find("== terminal " + std::to_string(gTermId) + " (") != std::string::npos;
         });
     });
-    MCGuiStep("the host ended by its pid", [] {
+    // ---- the host gone, then Reconnect
+    MCGuiStep("a window takes them back, then the host is killed", [] {
         gDump.reset();
+        MCGuiOpenWindow(gDir);
+        MCGuiSetKeyWindow(nullptr);
+        GCHECK_EQ_STR(textOf(notesDoc(gDir)), kText + "kept");
+        GCHECK(alive(gHostPid));
+        kill(gHostPid, SIGKILL);
+    });
+    MCGuiWait("Reconnect in the status bar", 15, [] {
+        GtkWidget* b = MCGuiFindButton(MCGuiApp().statusBar, "Reconnect");
+        return MCGuiApp().editor->sessionLink()->lost() && b && gtk_widget_get_visible(b);
+    });
+    MCGuiStep("typed meanwhile, then Reconnect", [] {
+        gtk_widget_grab_focus(MCGuiApp().editor->textView());
+        MCGuiKey("ctrl+end");
+        MCGuiType("!");
+    });
+    MCGuiStep("Reconnect", [] { MCGuiClick(MCGuiFindButton(MCGuiApp().statusBar, "Reconnect")); });
+    MCGuiWait("a new host, the file on it with everything typed", 30, [] {
+        SessionLink::Link* l = notesDoc(gDir) ? notesDoc(gDir)->sessionLink() : nullptr;
+        if (!l || l->lost() || l->startedHost() <= 0) return false;
+        return dumpUntil(gDir, [](const Dump& d) {
+            return d.status == 0 && d.out.find(", unsaved)\n" + kText + "kept!") != std::string::npos;
+        });
+    });
+    MCGuiStep("its button gone; the window closes, Don't Save", [] {
+        gDump.reset();
+        gHostPid = (int)notesDoc(gDir)->sessionLink()->startedHost();
+        GtkWidget* b = MCGuiFindButton(MCGuiApp().statusBar, "Reconnect");   // only a shown one is found
+        GCHECK(!b || !gtk_widget_get_visible(b));
+        GCHECK(MCGuiApp().editor->sessionLink() == notesDoc(gDir)->sessionLink());
+        gtk_window_close(MCGuiApp().window);
+    });
+    MCGuiWait("asked", 10, [] { return buttonUp("Don't Save"); });
+    MCGuiStep("Don't Save", [] { answer("Don't Save"); });
+    MCGuiWait("gone", 15, [] { return MCGuiAppWindows().size() == gWindows; });
+    MCGuiStep("the new host ended by its pid", [] {
+        MCGuiSetKeyWindow(nullptr);
         GCHECK(alive(gHostPid));
         kill(gHostPid, SIGTERM);
     });
-    MCGuiWait("ended, and its shells with it", 15, [] { return !alive(gHostPid) && !alive(gShellPid); });
+    MCGuiWait("ended, and the old shells with the old host", 15, [] {
+        return !alive(gHostPid) && !alive(gShellPid);
+    });
 
     // ---- in-process: within this app
     MCGuiStep("MUTIBLE_HOST=inprocess", [] {
