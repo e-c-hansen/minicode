@@ -131,14 +131,12 @@ MC_GUI_SUITE(harness) {
     // first shown (R3), so the pane is shown first, and hidden again after.
     // An earlier suite may have left the pane shown, and its web view made.
     static bool hadWebView = false;
-    MCGuiStep("the browser pane hidden, if an earlier suite left it shown", [] {
+    MCGuiStep("whether an earlier suite made the web view", [] {
         MCGuiSetKeyWindow(nullptr);
         GCHECK(MCGuiApp().browser != nullptr);
         hadWebView = browserWebView() != nullptr;
-        if (MCGuiApp().layout->browserShown())
-            g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
     });
-    MCGuiWait("the pane hidden", 10, [] { return !MCGuiApp().layout->browserShown(); });
+    MCGuiHideBrowserPane();
     MCGuiStep("the browser pane shown", [] {
         GCHECK(MCGuiApp().browser && !MCGuiApp().layout->browserShown());
         MCGuiKey("ctrl+shift+b");

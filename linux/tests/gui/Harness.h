@@ -209,6 +209,10 @@ GtkWidget* MCGuiTreeRow(const std::string& path);
 // still (a double-click whose second press lands on the next row is two
 // single clicks).
 void MCGuiBringTreeRow(const std::string& path, double timeout = 10);
+// Queues hiding the newest window's browser pane, when an earlier suite left
+// it shown (the pane takes the editor's width: a PDF's pages narrower, the
+// keyboard maybe in the page), and a wait until it is hidden.
+void MCGuiHideBrowserPane();
 // Whether a GtkTextView has laid out every line of the buffer it shows.
 // After a buffer comes on show GTK lays it out in idle slices, from the
 // top, for seconds when it is big (longer on a loaded machine), and until

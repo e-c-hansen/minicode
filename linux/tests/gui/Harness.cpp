@@ -7,6 +7,7 @@
 #include "FileTree.h"
 #include "SessionLink.h"
 #include "TerminalDock.h"
+#include "WindowLayout.h"
 #include "../../../tests/GuiRetry.h"
 
 #include <execinfo.h>
@@ -456,6 +457,18 @@ void MCGuiBringTreeRow(const std::string& path, double timeout) {
             return false;
         }
         return MCGuiNowMs() - *since >= 300;
+    });
+}
+
+void MCGuiHideBrowserPane() {
+    MCGuiStep("the browser pane hidden, if an earlier suite left it shown", [] {
+        // The window action, as View > Toggle Browser: a key could go to the
+        // page or the terminal, wherever the keyboard was left.
+        if (MCGuiApp().layout && MCGuiApp().layout->browserShown())
+            g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
+    });
+    MCGuiWait("the browser pane hidden", 10, [] {
+        return !MCGuiApp().layout || !MCGuiApp().layout->browserShown();
     });
 }
 

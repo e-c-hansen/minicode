@@ -88,9 +88,22 @@ void checkPhase(const std::string& what) {
 std::string dir() { return MCGuiProjectFile("a-tree-stall"); }
 std::string at(const std::string& name) { return dir() + "/" + name; }
 
-GtkWidget* row(const std::string& name) {
-    return MCGuiFindLabel(GTK_WIDGET(MCGuiApp().window), name);
+// A row of this suite's folder (or the folder's own), by its name: after
+// other suites the project has a note.txt and a big.txt of its own.
+GtkWidget* ownRow(GtkWidget* w, const std::string& name) {
+    if (!w || !gtk_widget_get_mapped(w)) return nullptr;
+    if (GTK_IS_LABEL(w)) {
+        const char* p = static_cast<const char*>(g_object_get_data(G_OBJECT(w), "minicode-path"));
+        const std::string path = p ? p : "";
+        const bool ours = path == dir() || path.rfind(dir() + "/", 0) == 0;
+        return ours && name == gtk_label_get_text(GTK_LABEL(w)) && MCGuiOnScreen(w) ? w : nullptr;
+    }
+    for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = ownRow(c, name)) return hit;
+    return nullptr;
 }
+
+GtkWidget* row(const std::string& name) { return ownRow(MCGuiApp().tree->widget(), name); }
 
 // Rows the tree shows, open folders' entries included.
 guint rowCount() {
@@ -145,6 +158,13 @@ MC_GUI_SUITE(tree_stall) {
                             if (status) MCGuiNote("%s", err.c_str());
                             done();
                         });
+    });
+    // First in the tree only while the tree is at its top: an earlier suite
+    // may have left it scrolled down (a row revealed far below).
+    MCGuiStep("the tree scrolled to its top", [] {
+        GtkAdjustment* v =
+            gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(MCGuiApp().tree->widget()));
+        gtk_adjustment_set_value(v, gtk_adjustment_get_lower(v));
     });
     MCGuiStep("the stall meter starts", [] { gMeter.start(); });
     clickRow("a-tree-stall");
