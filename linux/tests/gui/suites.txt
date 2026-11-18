@@ -118,6 +118,7 @@ HostLinkSuite.cpp
 HostReattachSuite.cpp
 HostBackupsSuite.cpp
 HostPanSuite.cpp
+HostSplitsSuite.cpp
 PlanUsageSuite.cpp
 Latin1FilesSuite.cpp
 HostWrapSuite.cpp

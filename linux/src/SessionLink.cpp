@@ -311,11 +311,15 @@ Json Link::tabsJson(std::uint64_t window, const Model::Window& w) const {
     if (t != windowTerms_.end())
         for (std::uint64_t id : t->second) terms.push(Json((int64_t)id));
     tabs.set("terms", std::move(terms));
+    auto l = windowLayout_.find(window);
+    if (l != windowLayout_.end() && !l->second.isNull()) tabs.set("termLayout", l->second);
     return tabs;
 }
 
-void Link::windowTerminals(std::uint64_t window, const Model::Window& w, std::vector<std::uint64_t> terms) {
+void Link::windowTerminals(std::uint64_t window, const Model::Window& w, std::vector<std::uint64_t> terms,
+                           Json layout) {
     windowTerms_[window] = std::move(terms);
+    windowLayout_[window] = std::move(layout);
     windowTabs(window, w);
 }
 
@@ -332,6 +336,7 @@ void Link::windowDetached(std::uint64_t window, const Model::Window& w) {
         hostWindow_.erase(it);
         sentTabs_.erase(window);
         windowTerms_.erase(window);
+        windowLayout_.erase(window);
         return;
     }
     windowClosed(window);
@@ -375,6 +380,7 @@ void Link::windowTabs(std::uint64_t window, const Model::Window& w) {
 void Link::windowClosed(std::uint64_t window) {
     sentTabs_.erase(window);
     windowTerms_.erase(window);
+    windowLayout_.erase(window);
     auto it = hostWindow_.find(window);
     if (it == hostWindow_.end()) return;   // never sent
     client_->windowClosed(it->second);

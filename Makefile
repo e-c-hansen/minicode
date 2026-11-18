@@ -62,7 +62,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/ClaudeUsage.cpp src/ClaudeStatusLine.cpp \
             src/PageCheck.cpp src/IdeLink.cpp src/MermaidDiagram.cpp src/LatexScratch.cpp \
             src/LatexLog.cpp \
-            src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/RightAreaLayout.cpp \
+            src/MarkdownHtml.cpp src/MarkdownPage.cpp src/TerminalLayout.cpp src/TermDockRecord.cpp src/RightAreaLayout.cpp \
             src/Snippet.cpp src/EditBatch.cpp \
             src/BrowserTabs.cpp src/WebBookmark.cpp src/SpellCheck.cpp src/ProcessEnv.cpp
 

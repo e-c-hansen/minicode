@@ -37,6 +37,8 @@ TerminalDock::TerminalDock(std::function<Terminal*()> make) : make_(std::move(ma
 
 TerminalDock::~TerminalDock() {
     closingAll_ = true;
+    if (sharesTimer_) g_source_remove(sharesTimer_);
+    sharesTimer_ = 0;
     if (rename_) gtk_widget_unparent(rename_);
     for (auto& g : groups_)
         for (Terminal* t : g->panes()) {
@@ -66,7 +68,7 @@ std::vector<Terminal*> TerminalDock::all() const {
 void TerminalDock::hook(Terminal* t) {
     t->onTitleChanged = [this] { refresh(); };
     t->onFocusIn = [this, t] {
-        if (closingAll_) return;
+        if (closingAll_ || switching_) return;
         const int i = indexOf(t);
         if (i < 0 || i != active_) return;   // a hidden tab's pane gets no keyboard
         if (groups_[(size_t)i]->active() == t) return;
@@ -80,7 +82,20 @@ void TerminalDock::hook(Terminal* t) {
 void TerminalDock::add(Terminal* t, int at) {
     groups_.insert(groups_.begin() + at, std::make_unique<TerminalGroup>(t));
     gtk_stack_add_child(GTK_STACK(stack_), groups_[(size_t)at]->widget());
+    groups_[(size_t)at]->onSharesChanged = [this] { sharesMoved(); };
     hook(t);
+}
+
+// A drag moves the shares many times a second: told once it rests.
+void TerminalDock::sharesMoved() {
+    if (closingAll_) return;
+    if (sharesTimer_) g_source_remove(sharesTimer_);
+    sharesTimer_ = g_timeout_add(300, +[](gpointer p) -> gboolean {
+        TerminalDock* d = static_cast<TerminalDock*>(p);
+        d->sharesTimer_ = 0;
+        if (d->onSharesChanged) d->onSharesChanged();
+        return G_SOURCE_REMOVE;
+    }, this);
 }
 
 void TerminalDock::refresh() {
@@ -104,11 +119,21 @@ void TerminalDock::refresh() {
     strip_->setItems(items, active_);
 }
 
+// With the keyboard in the tab going, GtkStack gives it to the first pane of
+// the tab coming (gtk_widget_child_focus), whose focus-in would take the
+// tab's active place: the tab's active pane takes the keyboard instead, and
+// that focus-in is not taken for a click.
 void TerminalDock::activate(int i) {
+    GtkRoot* root = gtk_widget_get_root(stack_);
+    GtkWidget* focus = root ? gtk_root_get_focus(root) : nullptr;
+    const bool hadKeyboard = focus && gtk_widget_is_ancestor(focus, stack_);
     active_ = i;
+    switching_ = true;
     gtk_stack_set_visible_child(GTK_STACK(stack_), groups_[(size_t)i]->widget());
+    switching_ = false;
     refresh();
     if (onActiveChanged) onActiveChanged(groups_[(size_t)i]->active());
+    if (hadKeyboard) groups_[(size_t)i]->active()->focus();
 }
 
 Terminal* TerminalDock::newTerminal(const std::string& title) {
@@ -148,17 +173,48 @@ void TerminalDock::setNotice(GtkWidget* bar) {
 void TerminalDock::next() { step(1); }
 void TerminalDock::previous() { step(-1); }
 
-void TerminalDock::focusPane(Terminal* t) {
+void TerminalDock::focusPane(Terminal* t, bool focus) {
     const int i = indexOf(t);
     if (i < 0) return;
+    const bool moved = groups_[(size_t)i]->active() != t;
     groups_[(size_t)i]->setActive(t);
     if (i != active_) {
         activate(i);
         if (onChanged) onChanged();
-    } else if (onActiveChanged && active() == t) {
-        onActiveChanged(t);
+    } else {
+        if (onActiveChanged && active() == t) onActiveChanged(t);
+        if (moved) {
+            refresh();
+            if (onChanged) onChanged();
+        }
     }
-    t->focus();
+    if (focus) t->focus();
+}
+
+int TerminalDock::restoreTab(int into, const std::vector<size_t>& rows, const TerminalLayout::Layout& shares,
+                             int activeColumn, int activeRow) {
+    int i = into;
+    if (i < 0 || i >= count()) {
+        add(make_(), count());
+        i = count() - 1;
+    }
+    TerminalGroup* g = groups_[(size_t)i].get();
+    for (size_t c = 0; c < rows.size(); c++)
+        for (size_t r = 0; r < rows[c]; r++) {
+            if (c == 0 && r == 0) continue;   // the tab's own
+            Terminal* fresh = make_();
+            g->append(fresh, r == 0);
+            hook(fresh);
+        }
+    g->setShares(shares);
+    const auto& cols = g->columns();
+    if (activeColumn >= 0 && (size_t)activeColumn < cols.size() && activeRow >= 0 &&
+        (size_t)activeRow < cols[(size_t)activeColumn].size())
+        g->setActive(cols[(size_t)activeColumn][(size_t)activeRow]);
+    refresh();
+    if (i == active_ && onActiveChanged) onActiveChanged(g->active());
+    if (onChanged) onChanged();
+    return i;
 }
 
 // A whole tab. A program running in any pane asks first (the first such pane).

@@ -96,9 +96,12 @@ public:
     void removeLostListener(int token);
 
     // A window's tabs, sent when they differ from what was sent last, with
-    // the host terminals its dock shows ("terms", as the Mac's window has).
+    // the host terminals its dock shows ("terms", as the Mac's window has)
+    // and how they sit in its tabs and panes ("termLayout", the core's
+    // Shared::termLayoutJson, TermDockRecord.h; null leaves it out).
     void windowTabs(std::uint64_t window, const Model::Window& w);
-    void windowTerminals(std::uint64_t window, const Model::Window& w, std::vector<std::uint64_t> terms);
+    void windowTerminals(std::uint64_t window, const Model::Window& w, std::vector<std::uint64_t> terms,
+                         Json layout = Json());
     void windowClosed(std::uint64_t window);
     // The window closes and detaches (stage 6, step 2): its record stays on
     // the host, sent once more so it is the latest a closing window left,
@@ -165,6 +168,7 @@ private:
     std::map<std::uint64_t, std::string> sentTabs_;
     std::map<std::uint64_t, std::uint64_t> hostWindow_;
     std::map<std::uint64_t, std::vector<std::uint64_t>> windowTerms_;
+    std::map<std::uint64_t, Json> windowLayout_;
 };
 
 // The link to the host of `root`'s folder: the one already made for it,

@@ -172,6 +172,9 @@ top of a turn, never inside a text system callback.
 
 - **A tree listing runs on the host's thread**, between typing messages;
   hence `kMaxListed`. Stage 7's bigger reads belong on a worker.
+- **GtkStack moves the keyboard to a tab's first pane** when it shows
+  another tab with the keyboard in the one going ("Terminal splits in the
+  record"): `TerminalDock::activate` hands it to the tab's active pane.
 - **Confine with `confinedPath`, never by spelling.** A path from a page
   is held inside the folder by its `realpath` (symlinks followed) and
   must not hold "..", ".", empty names or a leading '/'; the Mac's `open`
@@ -623,8 +626,9 @@ it after the app quits; an in-process one while the app runs.
   `Document::attachHeld` reads the file, whose text counts as saved, so
   the tab is unsaved when the two differ. The undo history is the host's.
   After the session, the record's tab on show is put on show.
-- **Terminals** go to the dock in order, one tab each (splits are not
-  kept): `makeTerminal` gives each its held id (`Terminal::attachHeld`,
+- **Terminals** go to the dock as the record's layout has them (below,
+  "Terminal splits in the record"; a tab each for a record without one):
+  `makeTerminal` gives each its held id (`Terminal::attachHeld`,
   the pid and the host's TermShell at once, so busy() and the title work
   before it is shown), and when VTE is made it attaches (`attachShell`:
   TermAttach, the replay fed to VTE, then live output; the shell is zsh
@@ -770,11 +774,109 @@ The host-side items left before the default can flip (2026-11-18).
   focus still VTE's, and the window typing takes the pty back in one
   step).
 
+### Terminal splits in the record (stage 6, 2026-11-18)
+
+A window's record keeps how its dock's terminals sit, so the folder's
+next window puts split panes back as splits (linux/HANDOFF.md item 106).
+`src/TermDockRecord.{h,cpp}` (core, `Shared::TermDock`) writes and reads
+it for both apps; GTK does both, **the Mac's session should** (below).
+
+- **The field.** `"termLayout"` in the record's tabs (the WindowTabs
+  json), beside `"terms"`, which stays the flat list it was (an app
+  before the layout reads `terms` alone; the browser's view still reads
+  only `terms`):
+
+      "terms": [11, 12, 13, 14],
+      "termLayout": {
+        "tabs": [
+          {"columns": [[11], [12, 13]],
+           "columnShares": [0.6, 0.4],
+           "rowShares": [[1], [0.25, 0.75]],
+           "activeColumn": 1, "activeRow": 0},
+          {"columns": [[14]], "columnShares": [1], "rowShares": [[1]],
+           "activeColumn": 0, "activeRow": 0}
+        ],
+        "activeTab": 1
+      }
+
+  One entry per dock tab, in the strip's order. `columns` holds host
+  terminal ids, columns left to right, each top to bottom: the shape of
+  `TerminalLayout::Layout`, which both docks use (GTK's `TerminalGroup`,
+  the Mac's `MCTerminalPanel`), one level deep, so a split's direction is
+  where its pane is (Split Terminal makes a column, Split Terminal Down
+  stacks a pane in its column). `columnShares` are the columns' shares of
+  the width, `rowShares[c]` the panes' shares of column c's height (the
+  layout's fractions, written to four places), `activeColumn` and
+  `activeRow` the tab's pane with the keyboard, `activeTab` the tab on
+  show. The keys are the window list's for a terminal tab
+  (TabSessions.cpp's `encodeTerminalTab`) with ids where that has panes.
+  A pane not on the window's host (a terminal from before Open Folder) or
+  with no shell yet is left out of `terms` and of the layout alike
+  (`termLayoutJson` drops id 0, its share to its neighbour); a dock with
+  none writes no `termLayout`.
+- **Reading** (`termDockFrom(Reattach::tabs, ids of Reattach::terms)`,
+  after `reattachFrom`): only the terminals the window took, each once.
+  A pane naming one that is gone (its shell ended while no window showed
+  it: the host ends the terminal and its state no longer lists it) or
+  that another window shows drops out, its share given to its neighbour
+  as closing it would (`TerminalLayout::removePane`), the others keeping
+  their places; the active pane, if it went, is the one the keyboard
+  would move to (above, else below; a column gone, the column before,
+  else after); a tab left with none goes, the tab on show moving as
+  closing it would. Shares that do not read or do not match their panes
+  are equal ones. Taken terminals the layout does not place (a record
+  with no `termLayout`, terminals no record names) follow as a tab each
+  in `terms` order, and with no layout the first tab is on show.
+  `TermDock::order()` is the order a dock makes them back: tab by tab,
+  column by column, top to bottom.
+- **GTK writes it** in `reportTerminals` (main.cpp), from each
+  `TerminalGroup`'s columns, layout and active pane, on every dock change
+  (`onChanged`: a split, a pane closed, a tab added, closed, moved or
+  selected, a pane given the keyboard) and when a boundary moves (a bar
+  dragged, the keyboard's resize: `TerminalGroup::onSharesChanged`, told
+  by the dock 300 ms after the last move, `TerminalDock::onSharesChanged`),
+  and once more as the window detaches. `Link::windowTerminals` keeps it
+  beside `terms`; a record that changes only past the fourth place of a
+  share is not sent again.
+- **GTK rebuilds it** (`takeHeldTerminals`, `buildHeldTerminals`): the
+  held terminals queued in `order()`, so `makeTerminal` gives each pane
+  its held id as the dock makes it; the dock's first tab (made with the
+  window) is the layout's first; `TerminalDock::restoreTab` makes the
+  rest of each tab's panes (`TerminalGroup::append`: a new column or the
+  foot of the last, with no size rule, since the record's panes fit
+  where they were) and sets the shares (`setShares`) and the active
+  pane; then the record's tab on show is shown with its active pane as
+  the window's terminal (`focusPane(t, false)`: the keyboard stays where
+  it was). Open Folder adds the new folder's tabs after the dock's own.
+  **Trap:** with the keyboard in the dock, GtkStack showing another tab
+  gives it to that tab's first pane (`gtk_widget_child_focus`), whose
+  focus-in took the tab's active place, so every tab switch (a click on
+  the strip, Next Terminal) lost the pane the record named and put the
+  first one in it (`host_splits` saw the restored pane replaced as soon as
+  the dock was shown and a tab picked). `TerminalDock::activate` now
+  ignores focus-ins while it switches and gives the keyboard, when the
+  dock had it, to the tab's active pane.
+- **For the Mac's session:** `MCSessionWindow`'s record adds
+  `termLayout` from each panel tab's `columns` and `layout` (`Shared::
+  termLayoutJson`, ids as in its `terms`), and its reattach builds the
+  panel's tabs from `termDockFrom` rather than one tab each (the panel's
+  split code already keeps `TerminalLayout::Layout` per tab). The
+  window's `terms` and the held terminals' order stay as they are.
+- **Checks**: `make test`'s `termdock:*` (tests/term_dock_record_tests.inc:
+  the exact shape, a record without the layout, terminals gone from the
+  middle, top or a whole column with the neighbours and active pane
+  following, whole tabs, records that do not read, through
+  `reattachFrom`), and `make guitest`'s `host_splits` (HostSplitsSuite.cpp:
+  over a headless host, split right then down with boundaries moved and a
+  second tab, a plain detach, back the same; a shell killed while
+  detached, its pane left out; the record rewritten without the layout,
+  a tab each).
+
 **Left before the default flips:** the Mac's half of step 3 (its step 2,
 below, is done: reattaching through `reattachFrom`, `setKeepsBackups`,
 untitled buffers, its own backups written at once after reattaching);
 the browser's view lists a closed window's record among the windows;
-terminal splits come back as tabs.
+the Mac's half of the terminal splits in the record (above).
 
 ### The Mac reattaches (stage 6, step 2)
 
