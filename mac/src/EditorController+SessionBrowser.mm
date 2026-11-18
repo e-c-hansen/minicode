@@ -114,6 +114,15 @@ static BOOL MCSessionBrowserEditableChoice(void) {
             }];
         b.save = ^(uint64_t docId) { [weakSelf saveSessionDocument:docId]; };
         b.open = ^(NSString *path, BOOL keep) { [weakSelf openSessionPath:path keep:keep]; };
+        // This window's terminals on the host, and no other window's.
+        b.terminals = ^NSArray<NSNumber *> * {
+            EditorController *s = weakSelf;
+            if (!s) return @[];
+            NSMutableArray<NSNumber *> *ids = [NSMutableArray array];
+            for (TerminalView *t in [s controlTerminals])
+                if (t.sessionTerminal) [ids addObject:@(t.sessionTerminal)];
+            return ids;
+        };
         objc_setAssociatedObject(self, &kSessionBrowserKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     b.editable = editable;

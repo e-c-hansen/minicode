@@ -1375,6 +1375,162 @@ static void testSessionWeb() {
         roThread.join();
     }
 
+    // One window's view sees one window's terminals (R5): the Mac's window
+    // reports its own with its tabs ("terms"), and a page of that window's
+    // view lists, attaches to and types into those alone; a crafted show,
+    // keys, text or resize for another window's terminal id are refused.
+    // A headless host's view (no window) sees every terminal.
+    GROUP("sessionweb:window-terminals");
+    {
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        SocketRenderer a;
+        CHECK(a.attach(rig.path(), "editor"));
+        const std::string home = scratchFolder();
+        auto windowOf = [&](std::vector<Shared::TermId> terms) {
+            Json w = Json::object();
+            w.set("root", Json(rig.proj));
+            w.set("focused", Json(0));
+            w.set("groups", Json::array());
+            Json ids = Json::array();
+            for (Shared::TermId t : terms) ids.push(Json((int64_t)t));
+            w.set("terms", std::move(ids));
+            return w;
+        };
+        auto renderersOf = [&](Shared::TermId t) {
+            const Json st = a.client->sessionState();   // kept: the loop reads into it
+            for (const Json& j : st["terminals"].elements())
+                if ((Shared::TermId)j["term"].asInt() == t) return (int)j["renderers"].asInt();
+            return -1;
+        };
+        auto hostCols = [&](Shared::TermId t) {
+            int cols = 0;
+            rig.server->host().inspect([&](const Shared::Host& h) {
+                if (const TerminalScreen* s = h.screen(t)) cols = s->cols();
+            });
+            return cols;
+        };
+        auto idsOf = [](const Json& state) {
+            std::string s;
+            for (const Json& t : state["terms"].elements()) s += std::to_string(t["id"].asInt()) + " ";
+            return s;
+        };
+        Web::Server web, all;
+        Web::Options o;
+        o.hostSocket = rig.path();
+        o.folder = rig.proj;
+        o.pollMs = 100;
+        o.editable = true;
+        o.window = 5;
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        Web::Options allo = o;   // a headless host's view: no window
+        allo.window = 0;
+        CHECK(all.start(allo, &error));
+        std::thread allThread([&] { all.run(); });
+        if (a.client && web.port() > 0 && all.port() > 0) {
+            a.client->openTerminal(11, shellSpec(home, {"sh"}), &a);   // window 5's
+            a.client->openTerminal(12, shellSpec(home, {"sh"}), &a);   // window 6's
+            auto prompt = [&](Shared::TermId t) {
+                for (const std::string& r : hostRows(rig, t))
+                    if (r.find("$") != std::string::npos) return true;
+                return false;
+            };
+            CHECK(a.wait([&] { return prompt(11) && prompt(12); }));
+            a.client->windowTabs(5, windowOf({11}));
+            a.client->windowTabs(6, windowOf({12}));
+            CHECK(a.client->settle());
+
+            PageClient p;
+            CHECK(p.upgrade(web.port(), "/ws?t=" + web.token()));
+            Json state;
+            PageTerm term;
+            std::vector<Shared::TermId> snapshots;
+            auto take = [&](const Json& m) {
+                const std::string t = m["t"].asString();
+                if (t == "state") state = m;
+                if (t == "term") snapshots.push_back((Shared::TermId)m["id"].asInt());
+                term.take(m);
+            };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            if (idsOf(state) != "11 ") std::printf("  window-terminals: %s\n", idsOf(state).c_str());
+            CHECK(idsOf(state) == "11 ");
+
+            // Window 6's terminal, asked for by id: never shown, never
+            // attached to, and nothing typed or sized reaches it.
+            p.sendText("{\"t\":\"show\",\"doc\":0,\"term\":12}");
+            p.sendText("{\"t\":\"ttext\",\"term\":12,\"text\":\"echo pwned-$((1+1))\",\"mods\":0}");
+            p.sendText("{\"t\":\"tkey\",\"term\":12,\"key\":\"Enter\",\"mods\":0}");
+            p.sendText("{\"t\":\"tpaste\",\"term\":12,\"text\":\"echo pasted-$((2+2))\\n\"}");
+            p.sendText("{\"t\":\"resize\",\"term\":12,\"cols\":40,\"rows\":10}");
+            p.sendText("{\"t\":\"tresize\",\"term\":12,\"cols\":40,\"rows\":10}");
+            p.pump(take, [] { return false; }, 500);
+            a.client->settle();
+            CHECK(snapshots.empty());
+            CHECK(renderersOf(12) == 1);   // the editor alone
+            CHECK(hostCols(12) == 80);
+            CHECK(a.out.find("pwned-2") == std::string::npos && a.out.find("pasted-4") == std::string::npos);
+
+            // Its own terminal: shown whole, and typed into.
+            p.sendText("{\"t\":\"show\",\"doc\":0,\"term\":11}");
+            CHECK(p.pump(take, [&] { return term.snapshots == 1 && term.id == 11; }));
+            CHECK(renderersOf(11) == 2);
+            p.sendText("{\"t\":\"ttext\",\"term\":11,\"text\":\"echo own-$((6*7))\",\"mods\":0}");
+            p.sendText("{\"t\":\"tkey\",\"term\":11,\"key\":\"Enter\",\"mods\":0}");
+            CHECK(p.pump(take, [&] { return term.all().find("own-42") != std::string::npos; }));
+            // Keys for the other window's terminal while its own is on show.
+            p.sendText("{\"t\":\"ttext\",\"term\":12,\"text\":\"echo pwned-$((1+1))\\n\",\"mods\":0}");
+            p.pump(take, [] { return false; }, 300);
+            a.client->settle();
+            CHECK(a.out.find("pwned-2") == std::string::npos);
+
+            // The headless view sees both.
+            PageClient q;
+            CHECK(q.upgrade(all.port(), "/ws?t=" + all.token()));
+            Json allState;
+            CHECK(q.pump([&](const Json& m) { if (m["t"].asString() == "state") allState = m; },
+                         [&] { return allState.isObject(); }));
+            CHECK(idsOf(allState) == "11 12 ");
+            q.close();
+
+            // The window opens a terminal: the page lists it once reported;
+            // and it closes one: the page drops it.
+            a.client->openTerminal(13, shellSpec(home, {"sh"}), &a);
+            CHECK(a.wait([&] { return prompt(13); }));
+            p.pump(take, [] { return false; }, 300);
+            CHECK(idsOf(state) == "11 ");   // not reported yet: not this window's
+            const double t0 = nowMs();
+            a.client->windowTabs(5, windowOf({11, 13}));
+            CHECK(p.pump(take, [&] { return idsOf(state) == "11 13 "; }, 3000));
+            CHECK(nowMs() - t0 < 1500);
+            a.client->closeTerminal(13);
+            CHECK(p.pump(take, [&] { return idsOf(state) == "11 "; }, 3000));
+
+            // A terminal the window stops reporting is let go: what was on
+            // show is no longer fed, and typing into it is refused.
+            a.client->windowTabs(5, windowOf({}));
+            CHECK(p.pump(take, [&] { return state["terms"].size() == 0; }, 3000));
+            const std::string seen = term.all();
+            p.sendText("{\"t\":\"ttext\",\"term\":11,\"text\":\"echo late-$((3+3))\\n\",\"mods\":0}");
+            p.pump(take, [] { return false; }, 300);
+            a.client->settle();
+            CHECK(a.out.find("late-6") == std::string::npos);
+            a.client->terminalInput(11, "echo after-$((4+4))\n");
+            CHECK(a.wait([&] { return a.out.find("after-8") != std::string::npos; }));
+            p.pump(take, [] { return false; }, 300);
+            CHECK(term.all() == seen);
+            p.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0; }));
+            a.client->closeTerminal(11);
+            a.client->closeTerminal(12);
+        }
+        web.stop();
+        webThread.join();
+        all.stop();
+        allThread.join();
+    }
+
     // The page's tree (stage 7's first read): the host lists one folder a
     // time over the socket, confined to its folder; a click on a file asks
     // the app to open it (Options::open), read-only pages included; nothing

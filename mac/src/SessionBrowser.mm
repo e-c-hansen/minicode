@@ -160,10 +160,17 @@ std::atomic<uint64_t> gNextWindow{1000};   // clear of GTK's and the checks' sma
     w.set("focused", Json(0));
     w.set("groups", std::move(jgroups));
     w.set("closed", Json(0));
+    // The window's own terminals: the page's view shows no others.
+    Json terms = Json::array();
+    for (NSNumber *t in _terminals ? _terminals() : @[])
+        if (t.unsignedLongLongValue) terms.push(Json((int64_t)t.unsignedLongLongValue));
+    w.set("terms", std::move(terms));
     std::string dump = w.dump();
     if (dump == _sentTabs) return;
     _sentTabs = std::move(dump);
     MCSessionClient().windowTabs(_windowId, std::move(w));
+    // The view follows now, not at its next half-second look.
+    if (_server) _server->lookNow();
 }
 
 - (void)stop {

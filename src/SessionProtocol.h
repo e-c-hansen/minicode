@@ -234,6 +234,9 @@ Message roundTrip(const Message& m);
 // (document, file, preview kind) with the one on show. When each tab was
 // last used and the groups' share are left out: they move without the tabs
 // changing (stage 6, which gives them to a second screen, adds them).
+// The Mac's window adds "terms", the ids of the host terminals in its
+// panel: a browser's view of one window (SessionWeb.h, Options::window)
+// shows and types into those and no others.
 Json windowJson(const Model::Window& w);
 
 }  // namespace Shared

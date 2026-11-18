@@ -269,8 +269,8 @@ release. With the setting off nothing changes, MCPty included.
   that could not start says why on the screen.
 - **What other screens see.** Every renderer of the host sees every
   terminal on it (the state's `terminals`); the browser's view of one
-  window (`SessionBrowser`) shows all of the app's host terminals, since
-  the Mac does not report which window holds one. Notes the panel writes
+  window (`SessionBrowser`) shows only that window's, which the window
+  reports with its tabs (below, "One window's terminals"). Notes the panel writes
   on the screen itself ("[shell exited — restarting]") are only on the
   Mac's screen. Terminal size follows the Mac (any `TermResize` wins).
 
@@ -517,20 +517,41 @@ Cancel.
   `windowClosed` when it stops. `Web::Options::window` keeps the state the
   browsers get to that window and its documents, and a `show` of any other
   document answers `gone`. Window ids start at 1000.
-- **Terminals** opened while the setting is on are the host's (above,
-  "Terminals on the host"), every window's; `Options::termNote` (in the
-  hello) puts "Terminals opened while the session host is on appear here"
-  in a muted line while the state has none.
+- **One window's terminals** (R5, 2026-11-18). Terminals opened while
+  the setting is on are the host's (above, "Terminals on the host"), and
+  the host does not know which window holds one. The window says, as it
+  says its tabs: `reportTabs` adds `"terms"` (each panel terminal's
+  `sessionTerminal`, from `controlTerminals`) to its `WindowTabs` json,
+  and `lookNow()`s the server after a change, so the page follows an
+  opened or closed terminal within the half-second report. With
+  `Options::window` the server (not the page's script) keeps
+  `allowedTerms` from that array at each look: the state's `terms` lists
+  only those, `show` of another id shows nothing and attaches to nothing,
+  `tkey`, `ttext` and `tpaste` for one are dropped, and a terminal the
+  window stops reporting is taken off every page and its `TermView`
+  dropped. There is no resize message from a page, and the host refuses
+  a guest's `TermResize`. A window that reports no `terms` has none on
+  its page; a headless host's view (`window` 0) sees every terminal, as
+  before. `Options::termNote` (in the hello) puts "Terminals opened while
+  the session host is on appear here" in a muted line while the state
+  has none.
 - A tab opened before the setting was on has no document on the host and
   is left out of the page until it is opened again.
 
 Checks: `sessionweb:in-process` (an in-process `SessionHost` with a routing
 Sink, two windows' tabs, the view filtered to one, typing followed, the
-host let go when the browser leaves); `make guitest
+host let go when the browser leaves); `sessionweb:window-terminals` (two
+windows' terminals on one host: window 5's editable view lists only its
+own, a show, keys, text, paste and resize for window 6's id reach nothing
+and attach nothing, its own is shown and typed into, a view with no
+window lists both, an opened terminal appears once reported and a closed
+one leaves, one no longer reported is let go); `make guitest
 SUITES=session_browser` (the alert's Cancel and Turn On, the address
 caught rather than opened, Copy, plain requests with and without the
 token and with another Host, a WebSocket that gets the window's document
-and an edit typed in the window, the port closed once the window is).
+and an edit typed in the window, two windows each with a terminal and a
+page listing only its own, the other's id refused and its own typed into,
+a closed terminal leaving its page, the port closed once the window is).
 
 ### Editing in the browser (stage 8b)
 

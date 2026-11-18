@@ -51,7 +51,8 @@
 //           first
 //   palette {palette}: the host's settings file changed (paletteJson)
 //   state   {windows, docs, terms}: whenever the session's state changes
-//           (looked at every half second)
+//           (looked at every half second, or at once on lookNow()); with
+//           Options::window, that window's tabs, documents and terminals
 //   doc     {id, path, kind, version, editable, indent, lines, html | note}:
 //           the document the browser shows, whole: kind "code" (lines, each
 //           [text, spans] or [text, spans, break], spans [[start, length,
@@ -294,8 +295,11 @@ struct Options {
     // then serves no one folder, so its state's folder is not checked.
     std::function<std::function<void()>(Client& client)> connect;
     std::string folder;       // resolved: the host must serve it
-    // Only this window's tabs and their documents (0: every window's and
-    // every document).
+    // Only this window's tabs, their documents, and the terminals the
+    // window reports with them (the "terms" array of its WindowTabs json);
+    // a page's show, keys or text for any other terminal are refused, and
+    // the view never attaches to one. 0: every window's tabs, every
+    // document and every terminal (a headless host, which has no windows).
     std::uint64_t window = 0;
     // A muted line where the terminals go while there are none ("" for
     // none).
@@ -349,6 +353,9 @@ public:
     // The settings file changed (any thread): read it now rather than at
     // the next look.
     void reloadSettings();
+    // The session's state changed (a window reported its tabs): look at it
+    // now rather than at the next poll (any thread).
+    void lookNow();
     // The palette the pages were last sent (the server's thread, or before
     // run()).
     const Json& palette() const { return palette_; }
@@ -367,6 +374,7 @@ private:
     std::string settingsPath_, settingsStamp_;
     std::chrono::steady_clock::time_point lastSettingsLook_;
     std::atomic<bool> reload_{false};
+    std::atomic<bool> look_{false};
     // Reads the settings file when it changed (or `force`): true when the
     // palette did.
     bool lookAtSettings(bool force);
