@@ -419,6 +419,7 @@ MC_GUI_SUITE(agents) {
                !has(terminalText(), "not found"));
         GCHECK_EQ_STR(listingOf(fixturesDir()), gFixturesBefore);
     });
+    MCGuiClearTerminalLine("pytest -q");
     MCGuiStep("the transcripts folder removed", [] {
         GCHECK(system(("rm -rf '" + gProjects + "'").c_str()) == 0);
     });

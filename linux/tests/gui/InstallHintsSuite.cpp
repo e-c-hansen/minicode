@@ -127,6 +127,7 @@ MC_GUI_SUITE(install_hints) {
         GCHECK(t.find("uv tool install", first + 1) == std::string::npos);
         GCHECK(t.find("command not found") == std::string::npos);
     });
+    MCGuiClearTerminalLine("uv tool install");
 #endif
     MCGuiStep("the server appears: a script at the settings' path", [] {
         MCGuiWriteFile(F("bin/mc-late-server"), "#!/bin/sh\nexec /bin/cat > /dev/null\n");
@@ -210,6 +211,7 @@ MC_GUI_SUITE(install_hints) {
         const std::string t = terminalText();
         GCHECK(t.find("command not found") == std::string::npos);
     });
+    MCGuiClearTerminalLine("pyink");
 #endif
     MCGuiStep("tidy up the formatter case", [] {
         EnvLock::envSet("PATH", gPathKept.c_str(), TRUE);

@@ -473,6 +473,33 @@ void MCGuiHideBrowserPane() {
     });
 }
 
+void MCGuiClearTerminalLine(const std::string& typed) {
+#ifdef MINICODE_ENABLE_TERMINAL
+    MCGuiStep("the line typed at the shell's prompt taken back (Ctrl+U)", [] {
+        Terminal* t = MCGuiApp().terminal;
+        std::vector<GtkWidget*> todo;
+        if (t) todo.push_back(t->widget());
+        while (!todo.empty()) {
+            GtkWidget* w = todo.back();
+            todo.pop_back();
+            if (VTE_IS_TERMINAL(w)) {
+                vte_terminal_feed_child(VTE_TERMINAL(w), "\x15", 1);
+                return;
+            }
+            for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+                todo.push_back(c);
+        }
+    });
+    if (typed.empty()) return;
+    MCGuiWait("\"" + typed + "\" gone from the shell's prompt", 10, [typed] {
+        Terminal* t = MCGuiApp().terminal;
+        return !t || t->recentText(1).find(typed) == std::string::npos;
+    });
+#else
+    (void)typed;
+#endif
+}
+
 bool MCGuiTextLaidOut(GtkWidget* textView) {
     if (!textView || !GTK_IS_TEXT_VIEW(textView)) return false;
     GtkTextIter end;

@@ -213,6 +213,13 @@ void MCGuiBringTreeRow(const std::string& path, double timeout = 10);
 // it shown (the pane takes the editor's width: a PDF's pages narrower, the
 // keyboard maybe in the page), and a wait until it is hidden.
 void MCGuiHideBrowserPane();
+// Queues taking back what a suite typed at the newest window's shell prompt
+// and left there (Run in Terminal and Open in Terminal type a command
+// without Return): Ctrl+U sent to the shell, then, unless `typed` is empty,
+// a wait until the terminal's last line no longer shows it. A line left
+// there joins the next suite's typing: find_bar's "stty raw ..." became
+// part of install_hints' "uv tool install ..." and never ran.
+void MCGuiClearTerminalLine(const std::string& typed);
 // Whether a GtkTextView has laid out every line of the buffer it shows.
 // After a buffer comes on show GTK lays it out in idle slices, from the
 // top, for seconds when it is big (longer on a loaded machine), and until
