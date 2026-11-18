@@ -7,11 +7,12 @@ found through that list.
 ## The rename (2026-11-18)
 
 minicode becomes mutible in 1.6.0 (CLAUDE.md, "The name"). The Mac side, <!-- rename-mutible: keep -->
-the core and the docs moved on the `rename-mutible` branch; the Linux
-session renames `linux/` and `debian/` (app id `ai.ible.Mutible`, the PPA's
-new `mutible` source with a transitional `minicode` package) in its own <!-- rename-mutible: keep -->
-pull request on top of it, with `Rename::linuxItems` ready for its XDG
-migration. Android is frozen under its old name. What needs the user's
+the core and the docs moved on the `rename-mutible` branch, and the Linux
+side on top of it: app id `ai.ible.Mutible`, `mutible` with `mbl` and <!-- rename-mutible: keep -->
+`minicode` as links, the XDG folders copied on first launch <!-- rename-mutible: keep -->
+(`linux/src/MigrationLinux`, over `Rename::linuxItems`), and the PPA's
+new `mutible` source with a transitional `minicode` package in the same <!-- rename-mutible: keep -->
+PPA (linux/HANDOFF.md item 97). Android is frozen under its old name. What needs the user's
 eyes after 1.6.0: the first launch's migration on their own Mac (the
 tabs, backups, settings, and browser sign-ins come back), macOS asking
 again for folder and microphone access (it keeps those by bundle id),

@@ -1314,7 +1314,7 @@ re-investigates them.
    editor (`linux/HANDOFF.md`, item 18).
 
 4. **GtkTextTag setup and CSS.** The tag properties and the
-   `.mutible-editor text { ... }` node selector are all correct; the editor and
+   `.minicode-editor text { ... }` node selector are all correct; the editor and
    Markdown preview render with the intended VS Code dark palette.
 
 ## What needs a person
