@@ -5,7 +5,9 @@
 </picture>
 </h1>
 
-Take back your space. Quickly explore your files, open and render just about anything, edit it in realtime, or watch your agents work through it all.
+*Your machine, in plain sight.*
+
+Quickly explore your files, open and render just about anything, edit it in realtime, or watch your agents work through it all.
 
 mutible is a small native app for macOS and Linux, with no Electron and no third-party libraries. Code opens in an editor with language servers behind it, Markdown and LaTeX as pages you can edit, and PDFs, pictures, video, spreadsheets, and databases in viewers of their own. A terminal, a browser, a git panel, and a dashboard of what your Claude Code sessions did are a keystroke away.
 

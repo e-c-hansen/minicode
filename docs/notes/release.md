@@ -54,7 +54,7 @@ found through that list.
   move), never stamped again; `release.sh` writes it into the old tap when
   it differs. The new cask links `mutible`, `mbl` and `minicode`, so it <!-- rename-mutible: keep -->
   `conflicts_with` the old one, which links `minicode` too. The cask's <!-- rename-mutible: keep -->
-  `desc` is "Take back your space" (brew style refuses a full stop).
+  `desc` is "Your machine, in plain sight" (brew style refuses a full stop).
   The Android APK keeps its name and key, and the PPA its name, through
   the rename. Both casks load with
   `brew ruby -e 'Cask::CaskLoader::FromPathLoader.new(Pathname(ARGV[0])).load(config: nil)' <file>`
