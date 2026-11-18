@@ -432,6 +432,7 @@ struct LoadJob {
     // Results.
     Document::Read result = Document::Read::Failed;
     std::string content;
+    Document::FileEncoding encoding;
     Document::DiskStamp stamp;
     size_t chars = 0, utf16 = 0;
     bool large = false, blank = false;
@@ -513,7 +514,7 @@ void Document::beginLoading(const std::string& path) {
             job->stamp.inode = (uint64_t)st.st_ino;
             job->stamp.size = (int64_t)st.st_size;
         }
-        job->result = Document::readText(job->path, job->content);
+        job->result = Document::readText(job->path, job->content, &job->encoding);
         if (job->result == Document::Read::Ok && !job->cancelled) {
             const std::string& c = job->content;
             for (unsigned char ch : c)
@@ -588,6 +589,7 @@ void Document::finishLoading() {
     Load* L = load_;
     std::shared_ptr<LoadJob> job = L->job;
     diskKnown_ = true;
+    encoding_ = job->encoding;
     saved_ = std::move(L->content);
     savedChars_ = (long)job->chars;
     diskQuestion_ = false;
