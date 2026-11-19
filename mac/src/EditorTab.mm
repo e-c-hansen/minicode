@@ -1,5 +1,6 @@
 // EditorTab.mm — see EditorTab.h.
 #import "EditorTab.h"
+#import "PieceString.h"
 #import "SessionLink.h"
 #import "SourceStorage.h"
 #include "FolderSearch.h"
@@ -106,6 +107,7 @@ MCDiskText *ReadLargeText(NSString *path, unsigned long long maxBytes) {
                 munmap(pages, mapped);
             }];
             if (!text) munmap(pages, mapped);
+            else MCSetHeldAsciiBytes(text, (const char *)bytes + skip, got - skip);
         } else {
             // UTF-16 in the string (twice the bytes), the pages let go; not
             // UTF-8 at all (UTF-16 with its mark, Windows-1252): the

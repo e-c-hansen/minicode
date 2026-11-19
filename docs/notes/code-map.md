@@ -116,7 +116,9 @@ goes here first, with tests; the GUI only displays it.
   parse, expand, the tab stops through edits), `LineIndex` (line starts, a gap
   buffer), `PieceTable` (a text as pieces of an original and of its
   edits: large-file mode's storage), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
-  UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
+  UTF-8), `TextScan` (a large text searched for what every match holds
+  first, sixteen bytes at a time: the find bar's large files and Find in
+  Folder's needle), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
   header only), `WrapIndent.h` (where a wrapped line goes on,
   editor.wrapping-indent, header only), `SpellCheck` (which words of a file are prose for the

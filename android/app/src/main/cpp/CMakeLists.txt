@@ -24,6 +24,7 @@ add_library(minicode SHARED
     ${CORE}/MarkdownTasks.cpp
     ${CORE}/FolderSearch.cpp
     ${CORE}/TextFind.cpp
+    ${CORE}/TextScan.cpp
     ${CORE}/Regex.cpp
     ${CORE}/LineComments.cpp
     ${CORE}/AutoIndent.cpp

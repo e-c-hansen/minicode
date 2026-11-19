@@ -42,7 +42,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/MarkdownEmoji.c
             src/LspClient.cpp src/LspProtocol.cpp src/LspText.cpp src/LspServers.cpp \
             src/LspDiagnostics.cpp src/LspCompletion.cpp src/LspSync.cpp src/LspFeatures.cpp \
             src/LspEdits.cpp \
-            src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/Regex.cpp \
+            src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/TextScan.cpp src/Regex.cpp \
             src/EditSpans.cpp src/FindRules.cpp src/Text.cpp src/Document.cpp src/UndoHistory.cpp \
             src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/SessionServer.cpp src/HostPty.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebViewers.cpp src/SessionWebAccess.cpp src/SessionFiles.cpp src/SqliteRead.cpp \
@@ -76,7 +76,7 @@ OBJDIR   := build/obj
 SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.cpp \
             src/SessionProtocol.cpp src/Ot.cpp src/HostPty.cpp src/TerminalScreen.cpp \
             src/TerminalStream.cpp src/Document.cpp src/UndoHistory.cpp src/Text.cpp \
-            src/EditSpans.cpp src/FolderSearch.cpp src/EditorTabs.cpp src/TextFind.cpp \
+            src/EditSpans.cpp src/FolderSearch.cpp src/EditorTabs.cpp src/TextFind.cpp src/TextScan.cpp \
             src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp src/MarkdownEmoji.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebAccess.cpp src/IdeLink.cpp src/MarkdownHtml.cpp \
             src/SyntaxHighlighter.cpp src/Settings.cpp src/AutoIndent.cpp src/LineComments.cpp \

@@ -11810,6 +11810,7 @@ static void testMultiCaretOccurrences() {
 #include "markdown_page_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
+#include "text_scan_tests.inc"
 #include "wrap_indent_tests.inc"
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
@@ -11866,6 +11867,7 @@ int main() {
     testSyntaxLiterals();
     testIncrementalHighlight();
     testLargeFiles();
+    testTextScan();
     testWrapIndent();
     testTermLinks();
     benchIncrementalHighlight();

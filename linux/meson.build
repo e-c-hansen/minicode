@@ -28,6 +28,7 @@ core_sources = [
   core_dir / 'KeepSorted.cpp',
   core_dir / 'FolderSearch.cpp',
   core_dir / 'TextFind.cpp',
+  core_dir / 'TextScan.cpp',
   core_dir / 'Regex.cpp',
   # The find bar's rules, several replacements over one text, and the word
   # at the caret that seeds the query (PARITY.md 1.6).

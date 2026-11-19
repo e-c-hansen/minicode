@@ -1,6 +1,7 @@
 // FolderSearch.cpp — see FolderSearch.h.
 #include "FolderSearch.h"
 #include "MarkdownTasks.h"
+#include "TextScan.h"
 
 #include <algorithm>
 #include <cctype>
@@ -114,109 +115,11 @@ bool cancelled(const std::atomic<bool>* cancel) {
 
 // ------------------------------------------------------------ the needle
 // Text a line must hold to match, looked for in a whole file at once
-// (Horspool's search, on bytes, ASCII letters folded when `fold`).
-struct Needle {
-    std::string bytes;    // lower case when fold
-    bool fold = false;
-    bool never = false;   // holds a line break, so no line can hold it
-    unsigned char skip[256] = {};
+// (TextScan.h, which the editor's find bar shares).
+using Needle = TextScan::Needle;
 
-    bool empty() const { return bytes.empty(); }
-
-    void prepare() {
-        const std::size_t m = bytes.size();
-        if (fold)
-            for (char& c : bytes) c = static_cast<char>(asciiLower(static_cast<unsigned char>(c)));
-        const unsigned char cap = static_cast<unsigned char>(std::min<std::size_t>(m, 255));
-        for (unsigned char& k : skip) k = cap;
-        for (std::size_t k = 0; k + 1 < m; ++k)
-            skip[static_cast<unsigned char>(bytes[k])] =
-                static_cast<unsigned char>(std::min<std::size_t>(m - 1 - k, cap));
-    }
-
-    unsigned char at(const char* s, std::size_t i) const {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        return fold ? asciiLower(c) : c;
-    }
-
-    // The first occurrence in s[from, n), or npos.
-    std::size_t find(const char* s, std::size_t n, std::size_t from) const {
-        const std::size_t m = bytes.size();
-        if (m == 0 || from > n || n - from < m) return std::string::npos;
-        const unsigned char* b = reinterpret_cast<const unsigned char*>(bytes.data());
-        if (m == 1 && !fold) {
-            const void* p = std::memchr(s + from, b[0], n - from);
-            return p ? static_cast<std::size_t>(static_cast<const char*>(p) - s) : std::string::npos;
-        }
-        const unsigned char last = b[m - 1];
-        if (!fold) {
-            // The first byte by memchr, then the rest: quick when that byte
-            // is rare, which a query's first letter usually is per line.
-            for (std::size_t i = from; i + m <= n;) {
-                const void* p = std::memchr(s + i, b[0], n - m + 1 - i);
-                if (!p) return std::string::npos;
-                i = static_cast<std::size_t>(static_cast<const char*>(p) - s);
-                if (static_cast<unsigned char>(s[i + m - 1]) == last &&
-                    std::memcmp(s + i + 1, b + 1, m - 1) == 0)
-                    return i;
-                ++i;
-            }
-            return std::string::npos;
-        }
-        for (std::size_t i = from; i + m <= n;) {
-            const unsigned char c = at(s, i + m - 1);
-            if (c == last) {
-                std::size_t k = 0;
-                while (k + 1 < m && at(s, i + k) == b[k]) ++k;
-                if (k + 1 == m) return i;
-            }
-            i += skip[c];
-        }
-        return std::string::npos;
-    }
-};
-
-// The needle for text every match holds (TextFind::requiredText, or the
-// query): its UTF-8 when matching case; ignoring case, its longest run of
-// ASCII characters, which only ASCII characters fold to.
 Needle makeNeedle(const std::u32string& text, bool caseSensitive) {
-    Needle nd;
-    for (char32_t c : text)
-        if (c == '\n' || c == '\r' || c == 0x2029) {
-            nd.never = true;
-            return nd;
-        }
-    if (caseSensitive) {
-        for (char32_t c : text) {
-            if (c < 0x80) nd.bytes += static_cast<char>(c);
-            else if (c < 0x800) {
-                nd.bytes += static_cast<char>(0xC0 | (c >> 6));
-                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
-            } else if (c < 0x10000) {
-                nd.bytes += static_cast<char>(0xE0 | (c >> 12));
-                nd.bytes += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
-                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
-            } else {
-                nd.bytes += static_cast<char>(0xF0 | (c >> 18));
-                nd.bytes += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
-                nd.bytes += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
-                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
-            }
-        }
-    } else {
-        std::string run;
-        for (char32_t c : text) {
-            if (c < 0x80) {
-                run += static_cast<char>(c);
-                if (run.size() > nd.bytes.size()) nd.bytes = run;
-            } else {
-                run.clear();
-            }
-        }
-        nd.fold = true;
-    }
-    nd.prepare();
-    return nd;
+    return Needle::make(text, caseSensitive);
 }
 
 std::u32string decodeAll(const std::string& s) {
@@ -550,7 +453,7 @@ struct Matcher {
         const bool legacy = o.kind == FileKind::Legacy;
         if (legacy) o.kind = FileKind::Searched;
         if (o.kind != FileKind::Searched) return;
-        if (useNeedle && needle.never) return;   // no line can match
+        if (useNeedle && needle.never()) return;   // no line can match
         const Needle* nd = useNeedle ? &needle : nullptr;
         auto halted = [this, &o] {
             if (cancelled(cancel)) o.cancelled = true;
@@ -652,7 +555,7 @@ struct Matcher {
             }
             const std::string_view view(text.data(), cut);
             if (k) finishAfter(view, o, k);
-            if (!full && !(useNeedle && needle.never))
+            if (!full && !(useNeedle && needle.never()))
                 rows(view, nd, halted, o, line, limit, !eof, &tail);
             full = o.rows.size() >= limit;
             if (eof || (full && o.needAfter.empty())) return;
@@ -750,7 +653,7 @@ struct Matcher {
         std::vector<MarkdownTasks::OpenTask> tasks;
         if (markdown) tasks = MarkdownTasks::openTasks(std::string(content));
         std::size_t nextTask = 0;
-        const std::size_t m = needle.bytes.size();
+        const std::size_t m = needle.byteLength();
         eachLine(content, nd, halted, [&](int lineNo, std::size_t start, std::size_t end,
                                           std::size_t at) {
             const std::string line(content.substr(start, end - start));
@@ -1621,13 +1524,13 @@ FolderSearchResult search(const std::string& root, const std::string& query,
     if (tq.usable()) {
         m.tq = &tq;
         m.needle = makeNeedle(TextFind::requiredText(tq), options.caseSensitive);
-        m.useNeedle = m.needle.never || !m.needle.empty();
+        m.useNeedle = m.needle.never() || !m.needle.empty();
     } else {
         m.needle = makeNeedle(decodeAll(q), options.caseSensitive);
-        m.useNeedle = m.needle.never || !m.needle.empty();
+        m.useNeedle = m.needle.never() || !m.needle.empty();
         // Plain text matching case, or in ASCII (which only ASCII folds
         // to): the needle is the query.
-        m.exact = m.useNeedle && !m.needle.never && (options.caseSensitive || isAscii(q));
+        m.exact = m.useNeedle && !m.needle.never() && (options.caseSensitive || isAscii(q));
     }
     Walker w(options, cancel, out, m);
     w.start(root);
@@ -1683,7 +1586,7 @@ FolderReplacePlan planReplace(const std::string& root, const std::string& query,
     m.tq = &tq;
     m.plan = true;
     m.needle = makeNeedle(TextFind::requiredText(tq), options.caseSensitive);
-    m.useNeedle = m.needle.never || !m.needle.empty();
+    m.useNeedle = m.needle.never() || !m.needle.empty();
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) m.rootCanon = canon.string();
     Walker w(options, cancel, out, m);
