@@ -63,6 +63,9 @@
 #include "SessionLink.h"
 #include "TermDockRecord.h"
 #include "FileTree.h"
+#include "HintsColumns.h"
+#include "HintsSearchBox.h"
+#include "WindowTitle.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
 #include "FolderPicker.h"  // inScope (Add Folder to Focus…)
 #include "Folds.h"
@@ -114,6 +117,7 @@
 #include "Rename.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <deque>
 #include <map>
@@ -202,9 +206,18 @@ struct App {
 
     // The floating shortcut list and the status-bar label that advertises it.
     GtkWidget* hintsPanel = nullptr;
-    GtkWidget* hintsLabel = nullptr;
     GtkWidget* hintsScroll = nullptr;
     GtkWidget* hintsHint  = nullptr;
+    // Its list in columns (HintsColumns.h), deleted with its widget; the
+    // width it was laid out for, and a relayout waiting for the window's
+    // new width.
+    HintsColumns* hintsColumns = nullptr;
+    double hintsRoom = -1;
+    guint hintsRelayout = 0;
+    // The box at the panel's top (HintsSearchBox.h), deleted with its widget.
+    HintsSearchBox* hintsSearch = nullptr;
+    // The pane the title last spoke for (titleFocus).
+    WindowTitle::Focus titleFocus = WindowTitle::Focus::Document;   // as last titled
 
     std::string rootDir;
     // The session's host for the folder (SessionLink.h): its tabs are
@@ -338,29 +351,81 @@ static void updateMediaKey(App* app) {
     g_simple_action_set_enabled(G_SIMPLE_ACTION(a), on);
 }
 
-static void updateTitle(void* userp) {
-    App* app = static_cast<App*>(userp);
-    std::string title = "mutible";
-    const std::string& p = app->editor->currentPath();
+// `w` is `area` or inside it (through a popover too: the editor's own menu
+// is still the editor).
+static bool insideWidget(GtkWidget* w, GtkWidget* area) {
+    return w && area && (w == area || gtk_widget_is_ancestor(w, area));
+}
+
+// Which pane the title speaks for (WindowTitle::Focus): the terminal's or
+// the browser's while it has the keyboard, else the document's (the editor,
+// the tree, any other pane). The palette and the hints' search box only
+// borrow the keyboard, so the title stays as it was while they have it (the
+// box's: as where it took the keyboard from).
+static WindowTitle::Focus titleFocus(App* app) {
+    GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
+    if (app->hintsSearch && app->hintsSearch->hasKeyboard()) focus = app->hintsSearch->previous();
+    else if (app->palette && insideWidget(focus, app->palette->box())) focus = nullptr;
+    if (!focus) return app->titleFocus;
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (app->termDock && insideWidget(focus, app->termDock->widget())) return WindowTitle::Focus::Terminal;
+#endif
+#ifdef MUTIBLE_ENABLE_BROWSER
+    if (app->browser && insideWidget(focus, app->browser->widget())) return WindowTitle::Focus::Browser;
+#endif
+    return WindowTitle::Focus::Document;
+}
+
+// The window's title, by the core's rule, the Mac's too (WindowTitle.h):
+// "src/main.cpp — mutible" for the document, its path from the window's
+// folder, else with ~ for home, "● " in front while it has unsaved changes
+// and its detail after (a Markdown file's tasks, a picture's size, a PDF's
+// pages); the terminal's or the page's own title while one of them has the
+// keyboard. Run as well when the keyboard moves between panes
+// (onFocusWidget).
+static void setWindowTitle(App* app) {
+    if (app->dead || !app->editor) return;
+    app->titleFocus = titleFocus(app);
+    WindowTitle::Input in;
+    in.focus = app->titleFocus;
+    in.folder = app->rootDir;
+    const char* home = g_get_home_dir();
+    in.home = home ? home : "";
     if (app->editor->isDiff()) {
-        // "name (diff)" or "<short hash> <subject>", as the Mac titles it.
-        title = "mutible — " + app->editor->diffTitle();
-    } else if (!p.empty()) {
-        auto slash = p.find_last_of('/');
-        std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
-        title = "mutible — " + base + (app->editor->dirty() ? " *" : "");
-        // A Markdown file with tasks: how many are done.
-        if (app->editor->tasksTotal() > 0)
-            title += " — " + std::to_string(app->editor->tasksDone()) + " of " +
-                     std::to_string(app->editor->tasksTotal()) + " done";
-        title += app->editor->titleSuffix();   // pixel size or page count
+        in.name = app->editor->diffTitle();   // "name (diff)" or "<short hash> <subject>"
+    } else {
+        in.path = app->editor->currentPath();
+        in.dirty = !in.path.empty() && app->editor->dirty();
+        if (!in.path.empty()) {
+            // A Markdown file with tasks: how many are done.
+            if (app->editor->tasksTotal() > 0)
+                in.detail = " — " + std::to_string(app->editor->tasksDone()) + " of " +
+                            std::to_string(app->editor->tasksTotal()) + " done";
+            in.detail += app->editor->titleSuffix();   // pixel size or page count
+        }
     }
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (in.focus == WindowTitle::Focus::Terminal && app->termDock && app->termDock->active())
+        in.pane = app->termDock->active()->title();
+#endif
+#ifdef MUTIBLE_ENABLE_BROWSER
+    if (in.focus == WindowTitle::Focus::Browser && app->browser)
+        in.pane = app->browser->tabTitle(app->browser->activeTab());
+#endif
+    std::string title = WindowTitle::title(in);
     // Claude Code sessions waiting for the user, in any window (PARITY.md 3.6):
     // the count leads the title, which the task switcher shows (GTK4 has no
     // Dock badge or urgency hint to set).
     if (int waiting = TerminalAttention::waitingCount())
         title = "(" + std::to_string(waiting) + " waiting) " + title;
-    gtk_window_set_title(GTK_WINDOW(app->window), title.c_str());
+    const char* now = gtk_window_get_title(GTK_WINDOW(app->window));
+    if (!now || title != now) gtk_window_set_title(GTK_WINDOW(app->window), title.c_str());
+}
+
+static void updateTitle(void* userp) {
+    App* app = static_cast<App*>(userp);
+    setWindowTitle(app);
+    const std::string& p = app->editor->currentPath();
     // Nothing to save while an image, a PDF or a binary file is shown.
     if (GAction* save = g_action_map_lookup_action(G_ACTION_MAP(app->window), "save"))
         g_simple_action_set_enabled(G_SIMPLE_ACTION(save), app->editor->canSave());
@@ -773,6 +838,43 @@ static bool isBrowserWindow(App* app) {
     return !app->rootDir.empty() && Bookmarks::sameFolder(app->rootDir, bookmarksFolder());
 }
 
+static App* appForWindow(GtkWindow* w);
+
+// Bookmarks per workspace (the Mac's #206): the window's folders
+// (WebBookmark::places), its folder's .mutible/bookmarks to save in and
+// list first, whatever the tree's focus, and the bookmark folder as Shared;
+// in the browser window and with no window, the bookmark folder alone.
+static WebBookmark::Places bookmarkPlaces(App* app) {
+    return Bookmarks::places(app && !app->dead ? app->rootDir : std::string(), bookmarksFolder());
+}
+
+// The window the menu bar's Bookmarks menu is filled for: GTK's active
+// window (the one focused last), else the newest open one.
+static App* bookmarksMenuWindow() {
+    App* a = appForWindow(gtk_application_get_active_window(g.gapp));
+    if (a && !a->dead) return a;
+    for (auto it = g.windows.rbegin(); it != g.windows.rend(); ++it)
+        if (!(*it)->dead) return *it;
+    return nullptr;
+}
+
+// Where a bookmark or a folder of them is, for the status bar:
+// ".mutible/bookmarks" for one inside the window's folder, else
+// "~/Bookmarks/Reading" (and always in the browser window).
+static std::string bookmarkPlace(App* app, const std::string& path) {
+    if (!isBrowserWindow(app) && Bookmarks::inside(path, app->rootDir)) {
+        char* real = realpath(path.c_str(), nullptr);
+        char* root = realpath(app->rootDir.c_str(), nullptr);
+        std::string rel;
+        if (real && root && std::strncmp(real, root, std::strlen(root)) == 0)
+            rel = real + std::strlen(root) + (std::strcmp(root, "/") == 0 ? 0 : 1);
+        free(real);
+        free(root);
+        if (!rel.empty()) return rel;
+    }
+    return Bookmarks::shortPath(path);
+}
+
 // The addresses shown in the window's browser pane, the pane made visible
 // with the keyboard where it was; the page gets it when asked for (or when
 // what had it is hidden now). In the browser window the page has the whole
@@ -876,12 +978,18 @@ static void scheduleBookmarkRefresh() {
     }, nullptr);
 }
 
-// A watch on the bookmark folder and the folders below it (three levels, a
-// hundred at most), made again when that set changes.
+// A watch on the bookmark folder, each window's .mutible/bookmarks and the
+// folders below them (three levels, a hundred at most), made again when
+// that set changes (a first save makes a workspace's folder).
 static void watchBookmarkFolders() {
     std::vector<std::string> dirs;
-    const std::string root = bookmarksFolder();
-    std::vector<std::pair<std::string, int>> todo = {{root, 0}};
+    std::vector<std::pair<std::string, int>> todo = {{bookmarksFolder(), 0}};
+    for (App* a : g.windows) {
+        const std::string own = bookmarkPlaces(a).save;
+        if (std::find_if(todo.begin(), todo.end(), [&own](const auto& t) { return t.first == own; }) ==
+            todo.end())
+            todo.push_back({own, 0});
+    }
     while (!todo.empty() && dirs.size() < 100) {
         const auto [dir, depth] = todo.back();
         todo.pop_back();
@@ -913,7 +1021,10 @@ static void watchBookmarkFolders() {
     }
 }
 
-// The menu bar's Bookmarks menu: Bookmark This Page, then the folder.
+// The menu bar's Bookmarks menu: Bookmark This Page, then the bookmarks of
+// the window in front (its workspace's, then Shared). It is one menu for
+// every window, so it is filled again when another window comes to the
+// front.
 static void fillBookmarksMenu() {
     if (!g.bookmarksMenu) return;
     g_menu_remove_all(g.bookmarksMenu);
@@ -921,7 +1032,7 @@ static void fillBookmarksMenu() {
     g_menu_append(top, "Bookmark This Page", "win.savebookmark");
     g_menu_append_section(g.bookmarksMenu, nullptr, G_MENU_MODEL(top));
     g_object_unref(top);
-    GMenu* list = Bookmarks::menu(bookmarksFolder());
+    GMenu* list = Bookmarks::menu(bookmarkPlaces(bookmarksMenuWindow()));
     g_menu_append_section(g.bookmarksMenu, nullptr, G_MENU_MODEL(list));
     g_object_unref(list);
 }
@@ -976,8 +1087,26 @@ static void act_open_bookmark_folder(GSimpleAction*, GVariant* param, gpointer u
     showWebAddresses(app, urls, true);
 }
 
+// Shared > Move to This Workspace: the shared bookmark (the item's target)
+// moved into this window's .mutible/bookmarks, under a free name.
+static void act_move_bookmark(GSimpleAction*, GVariant* param, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!param || app->dead) return;
+    std::string err;
+    const std::string to =
+        Bookmarks::moveToWorkspace(bookmarkPlaces(app), g_variant_get_string(param, nullptr), &err);
+    if (to.empty()) {
+        flashStatus(app, "The bookmark was not moved: " + err);
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    flashStatus(app, "Moved “" + baseName(to) + "” to " +
+                         bookmarkPlace(app, to.substr(0, to.rfind('/'))));
+    refreshBookmarkUi();
+}
+
 // The star: a page not bookmarked is saved; the filled star moves its
-// bookmark to the Trash.
+// bookmark (this workspace's, else the shared one) to the Trash.
 static void starClicked(App* app, const std::string& url, bool bookmarked) {
     if (app->dead) return;
     if (!bookmarked) {
@@ -985,7 +1114,7 @@ static void starClicked(App* app, const std::string& url, bool bookmarked) {
         scheduleBookmarkRefresh();
         return;
     }
-    const std::string file = Bookmarks::fileFor(bookmarksFolder(), url);
+    const std::string file = Bookmarks::fileFor(bookmarkPlaces(app), url);
     std::string err;
     if (file.empty()) {
         flashStatus(app, "That page is not bookmarked");
@@ -997,11 +1126,17 @@ static void starClicked(App* app, const std::string& url, bool bookmarked) {
     refreshBookmarkUi();
 }
 
-// The palette's rows, "Bookmarks > Folder/Name", read now.
-static std::vector<PalettePanel::Context::BookmarkRow> paletteBookmarks() {
+// The palette's rows, as the window's Bookmarks menu has them and read now:
+// "Bookmarks > Folder/Name" for the workspace's, "Bookmarks > Shared >
+// Folder/Name" for the shared folder's.
+static std::vector<PalettePanel::Context::BookmarkRow> paletteBookmarks(App* app) {
     std::vector<PalettePanel::Context::BookmarkRow> out;
-    for (const Bookmarks::Found& f : Bookmarks::all(bookmarksFolder(), 3000))
+    const WebBookmark::Places p = bookmarkPlaces(app);
+    for (const Bookmarks::Found& f : Bookmarks::all(p.save, 3000))
         out.push_back({"Bookmarks > " + f.menuPath, f.path});
+    if (!p.shared.empty())
+        for (const Bookmarks::Found& f : Bookmarks::all(p.shared, 3000))
+            out.push_back({"Bookmarks > Shared > " + f.menuPath, f.path});
     return out;
 }
 
@@ -1049,6 +1184,7 @@ static void openFolder(App* app, const std::string& dir) {
         buildHeldTerminals(app, false);
     }
     app->nav->clear();   // Go Back's places were the old folder's
+    scheduleBookmarkRefresh();   // the new folder's bookmarks, its star
     // After the tabs close, so no old file is reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
 #ifdef MUTIBLE_ENABLE_TERMINAL
@@ -1712,11 +1848,12 @@ static void act_new_browser_tab(GSimpleAction*, GVariant*, gpointer userp) {
 // ---- Saving pages as bookmarks (PARITY.md 4.8; the Mac's saveBrowserBookmark:)
 #ifdef MUTIBLE_ENABLE_BROWSER
 // Where a bookmark is saved: in the window rooted at the bookmark folder the
-// tree's selected folder (a selected file's folder), else the bookmark
-// folder itself, made when missing. "" with a note in the status bar when it
-// cannot be made.
+// tree's selected folder (a selected file's folder), else this workspace's
+// .mutible/bookmarks (the window's folder's, whatever the tree's focus),
+// made when missing; no .gitignore, since committing them is the point. ""
+// with a note in the status bar when it cannot be made.
 static std::string bookmarkFolderForSaving(App* app) {
-    const std::string folder = bookmarksFolder();
+    const std::string folder = bookmarkPlaces(app).save;
     if (isBrowserWindow(app)) {
         std::string sel = app->tree->selectedDir();
         if (sel.empty()) {
@@ -1737,10 +1874,14 @@ static void act_save_bookmark(GSimpleAction*, GVariant*, gpointer userp) {
     const std::string url = app->browser->tabUrl(app->browser->activeTab());
     const std::string title = app->browser->tabTitle(app->browser->activeTab());
     if (!WebBookmark::isWebAddress(url)) return;
-    // A page saved once is not saved again under another number.
-    const std::string have = Bookmarks::fileFor(bookmarksFolder(), url);
+    // A page saved once, here or in the shared folder, is not saved again
+    // under another number.
+    const WebBookmark::Places places = bookmarkPlaces(app);
+    const std::string have = Bookmarks::fileFor(places, url);
     if (!have.empty()) {
-        flashStatus(app, "Already bookmarked as " + Bookmarks::shortPath(have));
+        const bool shared = Bookmarks::inside(have, places.shared);
+        flashStatus(app, (shared ? "Already bookmarked in Shared as " : "Already bookmarked as ") +
+                             bookmarkPlace(app, have));
         return;
     }
     const std::string folder = bookmarkFolderForSaving(app);
@@ -1752,7 +1893,7 @@ static void act_save_bookmark(GSimpleAction*, GVariant*, gpointer userp) {
         return;
     }
     flashStatus(app, "Saved \u201c" + path.substr(path.rfind('/') + 1) + "\u201d in " +
-                         Bookmarks::shortPath(folder));
+                         bookmarkPlace(app, folder));
     scheduleBookmarkRefresh();
 }
 
@@ -1780,7 +1921,7 @@ static void act_save_browser_tabs(GSimpleAction*, GVariant*, gpointer userp) {
         return;
     }
     std::string note = "Saved " + std::to_string(saved) + (saved == 1 ? " tab" : " tabs") +
-                       " in \u201c" + Bookmarks::shortPath(folder) + "\u201d";
+                       " in \u201c" + bookmarkPlace(app, folder) + "\u201d";
     if (!err.empty()) note += " (not all: " + err + ")";
     flashStatus(app, note);
     scheduleBookmarkRefresh();
@@ -2634,16 +2775,23 @@ static void trashNow(App* app, const std::string& path) {
         g_clear_error(&err);
         return;
     }
+    // Only its row goes (HANDOFF item 110): the selection moves to the row
+    // after it, the tree keeps its scroll and open folders. Its folder's
+    // listing takes the row out a moment later.
+    app->tree->removing(path);
     // The tabs of what went close, in every window, unless they hold unsaved
     // changes: those stay open, and saving writes the file again (the Mac's
-    // rule).
+    // rule). The tab shown next is not revealed in any tree: following it
+    // put the tree at that file, the top of the tree for one near it ("the
+    // view resets and I am brought to the top").
     for (App* a : g.windows) {
+        if (a->treeFollow) a->treeFollow->quiet(true);
         a->editor->pathTrashed(path);
+        if (a->treeFollow) a->treeFollow->quiet(false);
         a->nav->removed(path);   // no place to go back to
         updateTitle(a);
         refreshHints(a);
     }
-    app->tree->clearSelection();
 }
 
 static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {
@@ -3480,7 +3628,9 @@ static void showPalette(App* app, const char* text) {
     ctx.openWorkspaceSymbol = [app](const Lsp::Symbol& symbol) {
         if (!app->dead && app->lsp) app->lsp->revealSymbol(symbol);
     };
-    ctx.bookmarks = [] { return paletteBookmarks(); };
+    ctx.bookmarks = [app] {
+        return app->dead ? std::vector<PalettePanel::Context::BookmarkRow>() : paletteBookmarks(app);
+    };
     app->palette->show(text, ctx);
 }
 
@@ -3559,16 +3709,10 @@ static void act_todos(GSimpleAction*, GVariant*, gpointer userp) {
 // status bar, because nothing else in the UI tells you the bindings exist. This
 // is that panel. As on the Mac, what each row does is written here and its key
 // comes from the registry (Keys::label), so keys.conf moves it too; a command
-// keys.conf took every key from shows "—". The panel is monospace, so the key
-// column is as wide as its widest key.
-namespace {
-struct HintRow {
-    enum Kind { Heading, Row, Text } kind;
-    std::string key, text;
-};
-}  // namespace
-
-static std::string hintsText(App* app) {
+// keys.conf took every key from shows "—". A row is a HintRow
+// (HintsSearchBox.h), which HintsColumns lays out in as many columns as the
+// window's width holds and tells where it landed, for the search box's marks.
+static std::vector<HintRow> hintsRows(App* app) {
     std::vector<HintRow> rows;
     auto heading = [&](const std::string& title) { rows.push_back({HintRow::Heading, "", title}); };
     auto text = [&](const std::string& line) { rows.push_back({HintRow::Text, "", line}); };
@@ -3578,9 +3722,14 @@ static std::string hintsText(App* app) {
     // The command's key at `index` (the first by default); "—" for none, and
     // nothing at all for a second key it does not have.
     auto row = [&](const char* id, const std::string& what, size_t index = 0) {
-        const std::string key = Keys::label(id, " ", index);
+        const std::string key = Keys::hintLabel(id, index);
         if (key.empty() && index > 0) return;
         plain(key.empty() ? "—" : key, what);
+    };
+    // A pane's row, its state ("open") drawn muted at a stop of its own.
+    auto pane = [&](const char* id, const std::string& what, const std::string& state) {
+        const std::string key = Keys::hintLabel(id, 0);
+        rows.push_back({HintRow::Row, key.empty() ? "—" : key, what, state});
     };
 
     heading("Keyboard Shortcuts");
@@ -3650,8 +3799,7 @@ static std::string hintsText(App* app) {
     row("editor.action.fontZoomIn", "Zoom in");
     row("editor.action.fontZoomOut", "Zoom out");
     row("editor.action.fontZoomReset", "Reset zoom");
-    row("editor.action.toggleWordWrap",
-        std::string("Word wrap   (") + (Zoom::wordWrap() ? "on" : "off") + ")");
+    pane("editor.action.toggleWordWrap", "Word wrap", Zoom::wordWrap() ? "on" : "off");
 
     heading("Tabs");
     row("workbench.action.nextEditor", "Next tab");
@@ -3674,8 +3822,7 @@ static std::string hintsText(App* app) {
     row("explorer.newFolder", "New folder");
     row("renameFile", "Rename (in the tree)");
     row("moveFileToTrash", "Move to Trash (in the tree)");
-    row("mutible.toggleHiddenFiles",
-        std::string("Hidden files (") + (g.showHidden ? "shown" : "hidden") + ")");
+    pane("mutible.toggleHiddenFiles", "Hidden files", g.showHidden ? "shown" : "hidden");
 
     heading("Language servers");
     row("editor.action.triggerSuggest", "Complete");
@@ -3685,31 +3832,24 @@ static std::string hintsText(App* app) {
     row("editor.action.goToReferences", "Find all references");
     row("editor.action.quickFix", "Quick fix");
     row("editor.action.organizeImports", "Organize imports");
-    row("workbench.actions.view.problems",
-        std::string("Problems    (") + (app->problems && app->problems->shown() ? "shown" : "hidden") +
-            ")");
+    pane("workbench.actions.view.problems", "Problems",
+         app->problems && app->problems->shown() ? "shown" : "hidden");
     row("editor.action.marker.next", "Next problem");
     row("editor.action.marker.prev", "Previous problem");
 
     heading("Panes");
     row("workbench.action.toggleSidebarVisibility", "Sidebar");
-    row("mutible.toggleEditor",
-        std::string("Editor      (") + (app->layout->editorShown() ? "shown" : "collapsed") + ")");
-    row("mutible.toggleMaximizedPane",
-        std::string("Maximize    (") + (app->layout->maximized() ? "maximized" : "off") + ")");
+    pane("mutible.toggleEditor", "Editor", app->layout->editorShown() ? "shown" : "collapsed");
+    pane("mutible.toggleMaximizedPane", "Maximize", app->layout->maximized() ? "maximized" : "off");
 #ifdef MUTIBLE_ENABLE_TERMINAL
-    row("workbench.action.terminal.toggleTerminal",
-        std::string("Terminal    (") +
-            (app->layout->terminalShown() ? "open" : "hidden") + ")");
+    pane("workbench.action.terminal.toggleTerminal", "Terminal",
+         app->layout->terminalShown() ? "open" : "hidden");
     row("workbench.action.terminal.toggleTerminal", "Terminal, too", 1);
 #endif
 #ifdef MUTIBLE_ENABLE_BROWSER
-    row("mutible.toggleBrowser",
-        std::string("Browser     (") +
-            (app->layout->browserShown() ? "open" : "hidden") + ")");
+    pane("mutible.toggleBrowser", "Browser", app->layout->browserShown() ? "open" : "hidden");
 #endif
-    row("workbench.view.scm",
-        std::string("Git panel   (") + (app->gitShown ? "open" : "hidden") + ")");
+    pane("workbench.view.scm", "Git panel", app->gitShown ? "open" : "hidden");
     if (app->gitShown) {
         plain("Enter", "Show the diff or commit");
         plain("Space", "Stage or unstage");
@@ -3719,8 +3859,7 @@ static std::string hintsText(App* app) {
         plain("Right click", "Push, pull, stage all, discard, stash");
     }
     if (app->editor->isMarkdown()) {
-        row("markdown.showPreview", std::string("Markdown    (") +
-                                        (app->editor->inPreview() ? "rendered" : "source") + ")");
+        pane("markdown.showPreview", "Markdown", app->editor->inPreview() ? "rendered" : "source");
         if (app->editor->inPreview()) {
             plain("Click a box", "Check or clear a task");
         } else {
@@ -3729,8 +3868,7 @@ static std::string hintsText(App* app) {
         }
     }
     if (app->editor->isLatex()) {
-        row("markdown.showPreview", std::string("LaTeX       (") +
-                                        (app->editor->inPreview() ? "preview" : "source") + ")");
+        pane("markdown.showPreview", "LaTeX", app->editor->inPreview() ? "preview" : "source");
         row("mutible.latex.exportPDF", "Export PDF");
         row("latex-workshop.synctex", "Show the caret's line in the PDF");
     }
@@ -3760,45 +3898,121 @@ static std::string hintsText(App* app) {
         for (const Commands::Key& k : Keys::keymap().keysOf(c->id))
             if (!(k.mods & (Commands::Shift | Commands::Alt)) &&
                 !Commands::linuxTerminalTakes(*c, k))
-                plain(Commands::linuxLabel(k), Commands::titleOf(*c, Commands::Platform::Linux));
+                plain(Commands::keyLabel(k, Commands::Platform::Linux), Commands::titleOf(*c, Commands::Platform::Linux));
     }
 #endif
 
     rows.push_back({HintRow::Text, "", ""});
     row("mutible.toggleShortcutHints", "Hide these hints");
-
-    size_t width = 0;
-    for (const HintRow& r : rows)
-        if (r.kind == HintRow::Row) width = std::max(width, (size_t)g_utf8_strlen(r.key.c_str(), -1));
-    std::string s;
-    for (const HintRow& r : rows) {
-        switch (r.kind) {
-        case HintRow::Heading:
-            if (!s.empty()) s += "\n";
-            s += r.text + "\n────────────────────────────────────────\n";
-            break;
-        case HintRow::Text:
-            s += r.text + "\n";
-            break;
-        case HintRow::Row:
-            s += r.key + std::string(width + 2 - (size_t)g_utf8_strlen(r.key.c_str(), -1), ' ') +
-                 r.text + "\n";
-            break;
-        }
-    }
-    if (!s.empty() && s.back() == '\n') s.pop_back();
-    return s;
+    return rows;
 }
-static GtkWidget* buildHintsPanel(App* app) {
-    app->hintsLabel = gtk_label_new("");
-    gtk_label_set_xalign(GTK_LABEL(app->hintsLabel), 0.0);
-    // Room for the scrollbar, which is drawn over the content.
-    gtk_widget_set_margin_end(app->hintsLabel, 10);
 
-    // The list is taller than a laptop's window once the terminal's keys and a
-    // file's own are in it, so it scrolls. The scrolled window asks for the
-    // label's whole size, GtkOverlay never gives an overlay child more than the
-    // overlay has, and what does not fit is a wheel turn away.
+// The width the hints' text may take: the panes' (the overlay the panel
+// floats over) less the panel's margins, 18 a side as the Mac's, its
+// padding and border (ThemeCss.cpp's .minicode-hints: 18 and 1 a side) and
+// the room kept for the scroll bar drawn over the text (10).
+static double hintsRoom(App* app) {
+    GtkWidget* over = app->hintsPanel ? gtk_widget_get_parent(app->hintsPanel) : nullptr;
+    int w = over ? gtk_widget_get_width(over) : 0;
+    if (w <= 0) w = gtk_widget_get_width(app->window);
+    if (w <= 0) w = 1100;
+    return std::max(120.0, w - 2.0 * 18) - 2 * 18 - 2 - 10;
+}
+
+// The rows laid out for the window's width at the editor's zoom, in as
+// many columns as fit (HintsColumns.h), marked for the search box's query:
+// what it finds marked, the rest dimmed, nothing moved.
+static void showHintsText(App* app) {
+    std::vector<HintRow> rows = hintsRows(app);
+    app->hintsRoom = hintsRoom(app);
+    // The desktop's size at the editor's zoom, to the half point (the Mac's
+    // 12 * MCZoomScale, rounded so).
+    const double scale = Zoom::previewScale();
+    app->hintsColumns->show(rows, app->hintsRoom, std::round(Zoom::desktopPoints() * scale * 2) / 2,
+                            scale, app->hintsSearch ? app->hintsSearch->query() : std::string());
+}
+
+// The query changed: the marks again, the layout as it was, the highest
+// mark scrolled into sight (the top with none), as the Mac's
+// hintsQueryChanged.
+static void hintsQueryChanged(App* app) {
+    if (app->dead || !app->hintsPanel || !gtk_widget_get_visible(app->hintsPanel)) return;
+    const double top =
+        app->hintsColumns->mark(app->hintsSearch ? app->hintsSearch->query() : std::string());
+    GtkAdjustment* adj =
+        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app->hintsScroll));
+    if (top < 0) {
+        gtk_adjustment_set_value(adj, 0);
+        return;
+    }
+    const double bottom = top + app->hintsColumns->lineHeight();
+    const double value = gtk_adjustment_get_value(adj), page = gtk_adjustment_get_page_size(adj);
+    if (top < value || bottom > value + page)
+        gtk_adjustment_set_value(adj, std::max(0.0, std::round(top - page / 3)));
+}
+
+// The panel shown or hidden. Hidden, its box empties and gives the keyboard
+// back where it took it from (the editor when it cannot tell), before the
+// panel goes, so the keyboard never falls to whatever GTK picks.
+static void setHintsShown(App* app, bool showing) {
+    if (showing) {
+        // Rebuilt on every open, not once at startup: half its value is
+        // reporting which panels are currently up.
+        showHintsText(app);
+        gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(
+                                     GTK_SCROLLED_WINDOW(app->hintsScroll)), 0);
+    } else if (app->hintsSearch) {
+        const bool had = app->hintsSearch->hasKeyboard();
+        if (had && !app->hintsSearch->giveBackKeyboard())
+            gtk_widget_grab_focus(app->editor->textView());
+        app->hintsSearch->clear();
+    }
+    gtk_widget_set_visible(app->hintsPanel, showing);
+    gtk_label_set_text(GTK_LABEL(app->hintsHint), hintsHintText(showing).c_str());
+}
+
+// The overlay places the panel whenever the window's size changes: when
+// its width is not the one the list was laid out for, the list is laid out
+// again for it, once the window's layout is done (not in the middle of it).
+static gboolean onHintsPlaced(GtkOverlay*, GtkWidget* child, GdkRectangle*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->dead || child != app->hintsPanel || !gtk_widget_get_visible(child)) return FALSE;
+    if (app->hintsRelayout || std::fabs(hintsRoom(app) - app->hintsRoom) < 0.5) return FALSE;
+    app->hintsRelayout = g_idle_add(
+        +[](gpointer userp) -> gboolean {
+            App* app = static_cast<App*>(userp);
+            app->hintsRelayout = 0;
+            if (!app->dead && gtk_widget_get_visible(app->hintsPanel)) showHintsText(app);
+            return G_SOURCE_REMOVE;
+        },
+        app);
+    return FALSE;
+}
+
+// Every key press in the window goes by the hints' search box first, before
+// any view, and (seen on GTK 4.22, where this controller, added after the
+// window's own, runs first) before the application's accelerators: Alt+Z
+// types "z" into the box and leaves Word Wrap alone (hints_panel).
+static gboolean onHintsKey(GtkEventControllerKey* controller, guint keyval, guint,
+                           GdkModifierType state, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->dead || !app->hintsSearch || !gtk_widget_get_visible(app->hintsPanel)) return FALSE;
+    if (app->palette && app->palette->isOpen()) return FALSE;   // its own typing
+    return app->hintsSearch->takeKey(controller, keyval, state);
+}
+
+static GtkWidget* buildHintsPanel(App* app) {
+    app->hintsColumns = new HintsColumns();
+    GtkWidget* text = app->hintsColumns->widget();
+    gtk_widget_set_halign(text, GTK_ALIGN_START);
+    gtk_widget_set_valign(text, GTK_ALIGN_START);
+    // Room for the scrollbar, which is drawn over the content.
+    gtk_widget_set_margin_end(text, 10);
+
+    // As many columns as the window's width holds (HintsColumns.h); when even
+    // those are taller than the window, the list scrolls. The scrolled window
+    // asks for the text's whole size, GtkOverlay never gives an overlay child
+    // more than the overlay has, and what does not fit is a wheel turn away.
     app->hintsScroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(app->hintsScroll),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -3807,10 +4021,25 @@ static GtkWidget* buildHintsPanel(App* app) {
     gtk_scrolled_window_set_propagate_natural_height(
         GTK_SCROLLED_WINDOW(app->hintsScroll), TRUE);
     gtk_widget_add_css_class(app->hintsScroll, "minicode-scroller");
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(app->hintsScroll), app->hintsLabel);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(app->hintsScroll), text);
+
+    // The search box over the list (HintsSearchBox.h), and the window's
+    // keys handed to it while the panel shows.
+    app->hintsSearch = new HintsSearchBox();
+    gtk_widget_set_margin_bottom(app->hintsSearch->widget(), 10);
+    gtk_widget_set_margin_end(app->hintsSearch->widget(), 10);
+    app->hintsSearch->onChange = [app] { hintsQueryChanged(app); };
+    app->hintsSearch->onClose = [app] {
+        if (!app->dead) setHintsShown(app, false);
+    };
+    GtkEventController* keys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(onHintsKey), app);
+    gtk_widget_add_controller(app->window, keys);
 
     app->hintsPanel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(app->hintsPanel, "minicode-hints");
+    gtk_box_append(GTK_BOX(app->hintsPanel), app->hintsSearch->widget());
     gtk_box_append(GTK_BOX(app->hintsPanel), app->hintsScroll);
 
     // Float it in the top-right corner, the same corner macOS puts it in, and
@@ -3832,22 +4061,12 @@ static GtkWidget* buildHintsPanel(App* app) {
 // four places (EditorController.mm).
 static void refreshHints(App* app) {
     if (app->dead || !app->layout) return;
-    if (app->hintsPanel && gtk_widget_get_visible(app->hintsPanel))
-        gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
+    if (app->hintsPanel && gtk_widget_get_visible(app->hintsPanel)) showHintsText(app);
 }
 
 static void act_toggle_hints(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    const bool showing = !gtk_widget_get_visible(app->hintsPanel);
-    // Rebuilt on every open, not once at startup: half its value is reporting
-    // which panels are currently up.
-    if (showing) {
-        gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
-        gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(
-                                     GTK_SCROLLED_WINDOW(app->hintsScroll)), 0);
-    }
-    gtk_widget_set_visible(app->hintsPanel, showing);
-    gtk_label_set_text(GTK_LABEL(app->hintsHint), hintsHintText(showing).c_str());
+    setHintsShown(app, !gtk_widget_get_visible(app->hintsPanel));
 }
 
 // ---------------------------------------------------------------- settings
@@ -4100,6 +4319,7 @@ static void updateKeyPlace() {
 static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     updateKeyPlace();
+    setWindowTitle(app);   // the file's path while the editor has the keyboard
     updateMediaKey(app);
     if (!app->dead && app->editor)   // focus outside the editor closes the inline agent's bar
         app->editor->inlineAgent()->focusMoved(gtk_root_get_focus(GTK_ROOT(app->window)));
@@ -4937,13 +5157,13 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->browser->onChanged = [app] {
         if (!app->dead && app->persist) app->persist->changed(nullptr);
     };
-    app->browser->isBookmarked = [](const std::string& url) {
-        return !Bookmarks::fileFor(bookmarksFolder(), url).empty();
+    app->browser->isBookmarked = [app](const std::string& url) {
+        return !app->dead && !Bookmarks::fileFor(bookmarkPlaces(app), url).empty();
     };
     app->browser->onStar = [app](const std::string& url, bool bookmarked) {
         starClicked(app, url, bookmarked);
     };
-    app->browser->bookMenu = [] { return Bookmarks::menu(bookmarksFolder()); };
+    app->browser->bookMenu = [app] { return Bookmarks::menu(bookmarkPlaces(app)); };
     browserPane = app->browser->widget();
     StartupLog::mark("window: browser");
 #endif
@@ -5077,6 +5297,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     GtkWidget* overlay = gtk_overlay_new();
     gtk_overlay_set_child(GTK_OVERLAY(overlay), app->layout->widget());
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), buildHintsPanel(app));
+    g_signal_connect(overlay, "get-child-position", G_CALLBACK(onHintsPlaced), app);
     // The palette over the panes and the hints, hidden until opened.
     app->palette = new PalettePanel(GTK_WINDOW(app->window), GTK_OVERLAY(overlay), app->editor);
     // What it previews is no jump; Go to Line and a symbol are, from where
@@ -5280,7 +5501,8 @@ static App* newWindow(const std::string& root, const std::string& file,
     addAction(app, "savebrowsertabs", G_CALLBACK(act_save_browser_tabs));
     const std::vector<std::pair<const char*, GCallback>> bookmarkActions = {
         {"openbookmark", G_CALLBACK(act_open_bookmark)},
-        {"openbookmarkfolder", G_CALLBACK(act_open_bookmark_folder)}};
+        {"openbookmarkfolder", G_CALLBACK(act_open_bookmark_folder)},
+        {"movebookmark", G_CALLBACK(act_move_bookmark)}};
     for (const auto& [name, cb] : bookmarkActions) {
         GSimpleAction* a = g_simple_action_new(name, G_VARIANT_TYPE_STRING);
         g_signal_connect(a, "activate", cb, app);

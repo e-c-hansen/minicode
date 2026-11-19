@@ -2,7 +2,8 @@
 // fixes of 2026-11-05, against the scripted server (build/fakelsp), so they
 // run anywhere: diagnostics for an old version dropped, every tab's file
 // open on the server with its unsaved text, completion with
-// additionalTextEdits as one undo step, rename across an unsaved tab, a
+// additionalTextEdits as one undo step, rename across an unsaved tab (its
+// box kept, with the name typed, through a switch to another app), a
 // rename that cannot be made changing nothing, and Ruff's second server:
 // which server answers what, its quick fixes, a command's
 // workspace/applyEdit, and Organize Imports preferring Ruff's.
@@ -10,6 +11,8 @@
 #import "EditorController.h"
 #import "Lsp.h"
 #import "LspPicker.h"
+#import <objc/message.h>
+#include <initializer_list>
 
 namespace {
 
@@ -75,6 +78,25 @@ NSArray<NSString *> *Messages(EditorController *c) {
     for (MCDiagnosticMark *m in ((CodeTextView *)Text(c)).diagnostics) [out addObject:m.message];
     return out;
 }
+
+// A color as 0xRRGGBB in sRGB (0xFFFFFFFF when it has no such form).
+unsigned RGBOf(NSColor *color) {
+    NSColor *s = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!s) return 0xFFFFFFFF;
+    return ((unsigned)lround(s.redComponent * 255) << 16) |
+           ((unsigned)lround(s.greenComponent * 255) << 8) | (unsigned)lround(s.blueComponent * 255);
+}
+
+// A popup's window has the background `want`; a picture of it either way.
+BOOL Background(NSWindow *w, unsigned want, NSString *picture) {
+    if (w) MCGuiSnapshot(w.contentView, picture);
+    const unsigned got = w ? RGBOf(w.backgroundColor) : 0xFFFFFFFF;
+    if (got != want) MCGuiNote(@"%@: background %06X, want %06X", picture, got, want);
+    return got == want;
+}
+
+// A view's frame on the screen.
+NSRect OnScreen(NSView *v, NSRect r) { return [v.window convertRectToScreen:[v convertRect:r toView:nil]]; }
 
 void TypeAt(EditorController *c, NSUInteger at, NSString *s) {
     NSTextView *tv = Text(c);
@@ -187,8 +209,29 @@ MC_GUI_SUITE(lsp_fixes) {
         MCRenameBox *box = [Lsp(c) valueForKey:@"rename"];
         GCHECK(box.visible);
         GCHECK_EQ_STR(Lsp(c).renameField.stringValue, @"helper");
+        // The new name typed, then a look at another app and back (D2 on
+        // 1.6.3: the box closed as its panel lost the keyboard, and the
+        // name typed was gone): the box stays, with the name.
+        NSTextField *field = Lsp(c).renameField;
+        field.stringValue = @"assist";
+        NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+        [nc postNotificationName:NSApplicationWillResignActiveNotification object:NSApp];
+        GCHECK(box.waitingForApp);
+        // The panel gives up the keyboard as the app goes.
+        [nc postNotificationName:NSWindowDidResignKeyNotification object:field.window];
+        [nc postNotificationName:NSApplicationDidResignActiveNotification object:NSApp];
+        GCHECK(box.visible);
+        [nc postNotificationName:NSApplicationDidBecomeActiveNotification object:NSApp];
+        MCGuiNote(@"after the switch: visible %d, field \"%@\", waiting %d", box.visible,
+                  Lsp(c).renameField.stringValue, box.waitingForApp);
+        GCHECK(box.visible && !box.waitingForApp);
+        GCHECK_EQ_STR(Lsp(c).renameField.stringValue, @"assist");
+        // A click elsewhere in the window, with the app in front, still
+        // cancels.
+        NSWindow *panel = field.window;
+        [nc postNotificationName:NSWindowDidResignKeyNotification object:panel];
+        GCHECK(!box.visible);
         if (box.onCommit) box.onCommit(@"assist");
-        [box close];
     });
     MCGuiWait(@"renamed", 10, ^BOOL { return [Lsp(c).lastNote hasPrefix:@"Renamed"]; });
     MCGuiStep(@"both files renamed, b.py at its unsaved places, nothing saved", ^{
@@ -357,6 +400,116 @@ MC_GUI_SUITE(lsp_fixes) {
         GCHECK_EQ_STR(Text(c).string, @"import os\nimport sys\n\nprint(sys)\n");
         GCHECK(![Text(c).string containsString:@"# main"]);
     });
+
+    // ------------------------------- the popups in the theme's colors
+    // The hover box, the completion list, the signature hint and the
+    // references list take the theme's editorWidget background, light or
+    // dark, and the rename field its input background; the rename field
+    // sits over the name's line in the editor's font, the old name
+    // selected, clear of the line below (on 1.6.3 every popup was dark on
+    // a light theme, and the F2 box covered the next line's code).
+    NSString *themed = MCGuiProjectFile(@"lsp/themed.py");
+    NSString *themedText = @"def helper(x):\n    return x\n\nhelper(1)\nhelper(2)\n";
+    __block NSString *themedCmd = nil;
+    MCGuiStep(@"a server with hover, references, rename, completion and signatures", ^{
+        MCGuiWriteFile(themed, themedText);
+        NSArray *refs = @[@{@"uri": @"${uri}", @"range": Rng(0, 4, 0, 10)},
+                          @{@"uri": @"${uri}", @"range": Rng(3, 0, 3, 6)},
+                          @{@"uri": @"${uri}", @"range": Rng(4, 0, 4, 6)}];
+        themedCmd = MCGuiFakeLsp(@"themed", @{
+            @"name": @"fakelsp",
+            @"capabilities": @{@"textDocumentSync": @1, @"hoverProvider": @YES,
+                               @"referencesProvider": @YES, @"renameProvider": @YES,
+                               @"completionProvider": @{@"triggerCharacters": @[@"."]},
+                               @"signatureHelpProvider": @{@"triggerCharacters": @[@"("]}},
+            @"rules": @[
+                @{@"method": @"textDocument/references", @"result": refs},
+                @{@"method": @"textDocument/hover",
+                  @"result": @{@"contents": @{@"kind": @"markdown",
+                                              @"value": @"**helper**(x) gives back `x`"}}},
+                @{@"method": @"textDocument/completion",
+                  @"result": @{@"isIncomplete": @NO,
+                               @"items": @[@{@"label": @"helper", @"kind": @3},
+                                           @{@"label": @"help", @"kind": @3}]}},
+                @{@"method": @"textDocument/signatureHelp",
+                  @"result": @{@"signatures": @[@{@"label": @"helper(x)",
+                                                  @"parameters": @[@{@"label": @[@7, @8]}]}],
+                               @"activeSignature": @0, @"activeParameter": @0}}]}, nil, nil);
+    });
+    struct ThemeCase { NSString *theme; unsigned widget, input; };
+    for (const ThemeCase &t : {ThemeCase{@"dark-modern", 0x202020, 0x313131},
+                               ThemeCase{@"light-modern", 0xF8F8F8, 0xFFFFFF}}) {
+        NSString *theme = t.theme;
+        const unsigned widget = t.widget, input = t.input;
+        MCGuiStep([NSString stringWithFormat:@"%@: themed.py on its server", theme], ^{
+            MCGuiSetSettings([NSString stringWithFormat:
+                @"theme = %@\nlsp.enabled = true\nlsp.python = %@\nlsp.python.also = off\n",
+                theme, themedCmd]);
+            GCHECK([c showFile:themed]);
+            [c.window makeFirstResponder:Text(c)];
+        });
+        MCGuiWait(@"its server runs", 20, ^BOOL { return Running(c, 1, @"themed"); });
+        MCGuiStep([NSString stringWithFormat:@"%@: the hover box", theme], ^{
+            Text(c).selectedRange = NSMakeRange(5, 0);   // in helper
+            [Lsp(c) showHoverInfo];
+        });
+        MCGuiWait(@"it shows", 10, ^BOOL { return Lsp(c).hoverWindow != nil; });
+        MCGuiStep([NSString stringWithFormat:@"%@: the hover box's background; references", theme], ^{
+            GCHECK(Background(Lsp(c).hoverWindow, widget,
+                              [NSString stringWithFormat:@"lsp-popups-%@-hover", theme]));
+            Text(c).selectedRange = NSMakeRange(5, 0);
+            [Lsp(c) findReferences];
+        });
+        MCGuiWait(@"the references", 10, ^BOOL {
+            return [Lsp(c).pickerKind isEqualToString:@"references"];
+        });
+        MCGuiStep([NSString stringWithFormat:@"%@: the references' background; completion", theme], ^{
+            GCHECK(Lsp(c).pickerRows.count == 4);   // the file's heading and its three
+            GCHECK(Background(Lsp(c).pickerView.window, widget,
+                              [NSString stringWithFormat:@"lsp-popups-%@-references", theme]));
+            [Lsp(c) handleCommand:@selector(cancelOperation:)];
+            Text(c).selectedRange = NSMakeRange(32, 0);   // after "hel" of helper(1)
+            [Lsp(c) triggerCompletion];
+        });
+        MCGuiWait(@"the list", 10, ^BOOL { return Lsp(c).completionWindow != nil; });
+        MCGuiStep([NSString stringWithFormat:@"%@: the list's background; the signature hint", theme], ^{
+            GCHECK(Background(Lsp(c).completionWindow, widget,
+                              [NSString stringWithFormat:@"lsp-popups-%@-completion", theme]));
+            [Lsp(c) handleCommand:@selector(cancelOperation:)];
+            [c.window makeFirstResponder:Text(c)];
+            Text(c).selectedRange = NSMakeRange(36, 0);   // helper(|1)
+            // What typing "(" asks (popupsFollowEdit), without the edit.
+            ((void (*)(id, SEL, id))objc_msgSend)(Lsp(c), NSSelectorFromString(@"requestSignature:"),
+                                                  @"(");
+        });
+        MCGuiWait(@"the signature hint", 10, ^BOOL { return Lsp(c).signatureWindow != nil; });
+        MCGuiStep([NSString stringWithFormat:@"%@: the hint's background; F2 over the name", theme], ^{
+            GCHECK(Background(Lsp(c).signatureWindow, widget,
+                              [NSString stringWithFormat:@"lsp-popups-%@-signature", theme]));
+            GCHECK_EQ_STR(Text(c).string, themedText);
+            Text(c).selectedRange = NSMakeRange(6, 0);   // in helper, on the first line
+            [Lsp(c) renameSymbol];
+            MCRenameBox *box = [Lsp(c) valueForKey:@"rename"];
+            NSTextField *field = Lsp(c).renameField;
+            GCHECK(box.visible && field != nil);
+            GCHECK_EQ_STR(field.stringValue, @"helper");
+            GCHECK(NSEqualRanges(field.currentEditor.selectedRange, NSMakeRange(0, 6)));
+            GCHECK(field.font.pointSize == Text(c).font.pointSize);
+            GCHECK(Background(field.window, input,
+                              [NSString stringWithFormat:@"lsp-popups-%@-rename", theme]));
+            GCHECK(RGBOf(field.backgroundColor) == input);
+            // Over the name's own line, and not the line below it.
+            NSRect f = OnScreen(field, field.bounds);
+            NSRect line = OnScreen(Text(c), MCGuiLineTextRect(Text(c), 4));
+            NSRect next = OnScreen(Text(c), MCGuiLineTextRect(Text(c), 15));
+            MCGuiNote(@"%@: rename field %@, its line %@, the next %@", theme,
+                      NSStringFromRect(f), NSStringFromRect(line), NSStringFromRect(next));
+            GCHECK(NSIntersectsRect(f, line));
+            GCHECK(!NSIntersectsRect(f, next));
+            [box close];
+            GCHECK(!box.visible);
+        });
+    }
 
     MCGuiStep(@"language servers off again; unsaved tabs closed unasked", ^{
         MCGuiSetSettings(@"lsp.enabled = false\n");

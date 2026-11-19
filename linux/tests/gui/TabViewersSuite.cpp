@@ -83,7 +83,7 @@ MC_GUI_SUITE(tab_viewers) {
     MCGuiStep("with its size in the title, and nothing to save", [] {
         GCHECK_EQ_STR(titles(), "v-text.txt v-pic.png");
         GCHECK(ed()->media()->kind() == MediaView::Kind::Image);
-        GCHECK(title().find("v-pic.png  40 × 30") != std::string::npos);
+        GCHECK(title().find("v-pic.png — mutible  40 × 30") != std::string::npos);
         GCHECK(!ed()->canSave() && !ed()->dirty() && !ed()->isSource());
         GCHECK(ed()->active()->kind() == Document::Kind::Media);
     });
@@ -93,7 +93,7 @@ MC_GUI_SUITE(tab_viewers) {
         return ed()->media()->kind() == MediaView::Kind::Pdf && ed()->showingPdf();
     });
     MCGuiStep("two pages, as the title says", [] {
-        GCHECK(title().find("v-doc.pdf  2 pages") != std::string::npos);
+        GCHECK(title().find("v-doc.pdf — mutible  2 pages") != std::string::npos);
     });
 #endif
     MCGuiStep("tab 1, the text", [] { MCGuiKey("alt+1"); });
@@ -108,7 +108,7 @@ MC_GUI_SUITE(tab_viewers) {
     MCGuiStep("tab 2, the picture again", [] { MCGuiKey("alt+2"); });
     MCGuiWait("shown again", 10, [] {
         return ed()->isMedia() && ed()->media()->kind() == MediaView::Kind::Image &&
-               title().find("v-pic.png  40 × 30") != std::string::npos;
+               title().find("v-pic.png — mutible  40 × 30") != std::string::npos;
     });
 
 #ifdef MUTIBLE_ENABLE_PDF

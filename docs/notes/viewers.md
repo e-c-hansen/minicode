@@ -52,6 +52,9 @@ found through that list.
 - **Images** (not SVG, which is source): `NSImageView`, scaled down never up,
   `animates`, size set to pixels (a 144 dpi screenshot drew at half size); one
   that fails to decode falls through to the text path's "Cannot display".
+  The review and commit pages show a binary picture's versions the same
+  way (sized from pixels, never past 320 points tall), over empty rows of
+  their own (git.md, "Pictures" in the review view).
   **PDFs**: `PDFView`, reload keeping page, point and scale; a new one
   opens at the top of its first page (`MCPDFShowFirstPageTop`, PageZoom.mm,
   the LaTeX preview's too; until 2026-11-17 a tall page opened scrolled to
@@ -80,12 +83,39 @@ found through that list.
   splice (`registerViewerUndoFrom:`); going back from the text to the table
   turns its NSTextView typing steps (target: the text storage) into one
   "Typing" step from `MCTab.textSessionStart`, since the table empties the
-  text view they were recorded against.
+  text view they were recorded against. **Trap (round 9)**: the grid's
+  `validateMenuItem:` ended in `[super validateMenuItem:]`, which
+  NSTableView does not have (it validates through
+  `validateUserInterfaceItem:`), so validating any menu item the grid was
+  the target of threw, AppKit dropped the key, and no menu key worked while
+  the grid had the keyboard: Shift+Cmd+P "did nothing". Before calling
+  super in a validation, check the superclass has it. `previews` now
+  validates every menu item against each viewer's keyboard and presses
+  Shift+Cmd+P and Cmd+P there (CSV table and a cell being typed into, the
+  JSON outline, SQLite's lists, a notebook, an image, a PDF, a movie, an
+  HTML page, a Markdown page, the compare view, the review and commit
+  pages). The palette closing hands the keyboard back to a page too
+  (`grantKeyboard`), which refused it before.
 - **JSON outline**: beside the text; a node selects its text with the keyboard
   kept in the outline, the caret selects its node; re-parsed 0.3 s after
   typing, the last good outline kept under an error line, dimmed and
   selecting nothing (`stale`: its offsets are off). `.jsonc`, tsconfig*.json,
   `.vscode/*.json` and the like allow comments (`JsonOutline::allowsComments`).
+  **Its error is a problem too** (2026-11-18, `Lsp+JsonCheck.mm`, core
+  `JsonOutline::problems` and `checksAsJson`, `jsonoutline:problems`, `make
+  guitest SUITES=problems`): a JSON file no server has (`_servers` empty)
+  is parsed on a queue when it comes on show and 0.3 s after typing; the
+  error is the list of a server of the session's own, `mutible.json`, in
+  `_store`, so squiggle, Problems, the status bar's count, hover and F8
+  are a server's (`paintDiagnostics` and `collectProblems` take
+  `jsonCheckedUri` where `_uri` is nil; `problemsKnown` is YES meanwhile,
+  so a valid file says "No problems"). As VS Code says them: "Trailing
+  comma" on the comma, "Comments are not permitted in JSON" over a comment
+  in strict JSON, else the parser's message on the token; an empty file is
+  none. JSONC files (allowsComments) parse leniently. A server attaching
+  (attachDocument) erases the editor's list; a closed tab's goes in
+  `tabsChanged`; `stopAllServers` clears the store, and documentOpened
+  checks again. Over 8 M characters: no check.
   Every row is one line of constant height (2026-11-18): the label and the
   summary go through `JsonOutline::oneLine` (line breaks, tabs and other
   control characters as `\n`, `\t`, `\u2028` escapes the Mac draws dimmed,
@@ -145,5 +175,6 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- CSV and TSV: **Trap (round 9)**: the grid's `validateMenuItem:` ended in `[super validateMenuItem:]`, which NSTableView does not have (it validates through `validateUserInterfaceItem:`), so validating any menu item the grid was the target of threw, AppKit dropped the key, and no menu key worked while the grid had the keyboard: Shift+Cmd+P "did nothing".
 - JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).
 - Viewers in the editor's slot (Mac): Trap: laying both panes out to size them took 1.5 s on the main thread for 50,000 lines a side; every row has one fixed height (a paragraph style), so sizes and row rects are arithmetic and layout is non-contiguous.

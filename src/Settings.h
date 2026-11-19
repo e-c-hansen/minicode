@@ -13,6 +13,7 @@
 // stays solid over a see-through panel.
 #pragma once
 #include "SyntaxHighlighter.h"   // TokenStyle
+#include "WrapIndent.h"
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -226,6 +227,14 @@ public:
     // The terminal's input line draws no background of its own (it is part of
     // the panel), only its text, a little brighter than the output's.
     Rgba terminalInputText() const;
+    // The terminal's cursor, opaque: the terminal's text color (no built-in
+    // theme has a cursor color of its own), as the Mac's grid draws it; and
+    // the character under a block cursor, in the terminal's background,
+    // opaque. A renderer sets both: VTE's own default for an unset cursor
+    // color with a set cursor text was the background, so no cursor showed
+    // (linux/HANDOFF.md item 108).
+    Rgba terminalCursor() const;
+    Rgba terminalCursorText() const;
 
     bool blur() const { return blur_; }
     // window.dock-menu: Linux's recent folders in the dock icon's menu.
@@ -317,6 +326,10 @@ public:
     // editor.word-wrap: long lines wrap at the pane's edge (on, the
     // default), or run on past it with a horizontal scroll bar (off).
     bool wordWrap() const { return wordWrap_; }
+    // editor.wrapping-indent: where a wrapped line's continuation starts
+    // (WrapIndent.h): same (the default, as VS Code's editor.wrappingIndent),
+    // indent, or none.
+    WrapIndent::Mode wrappingIndent() const { return wrappingIndent_; }
     // editor.auto-close: brackets and quotes close as they are typed, are
     // typed over and deleted in pairs, by VS Code's rules for the file's
     // language (AutoClose; on, the default, as VS Code's
@@ -601,6 +614,7 @@ private:
     double tabsFontSize_ = 12;
     LineNumbers lineNumbers_ = LineNumbers::On;
     bool wordWrap_ = true;
+    WrapIndent::Mode wrappingIndent_ = WrapIndent::Mode::Same;
     bool autoClose_ = true;
     SessionHostMode sessionHostMode_ = SessionHostMode::Off;
     double sessionWebIdleMinutes_ = 60;

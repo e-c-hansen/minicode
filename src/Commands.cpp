@@ -846,6 +846,17 @@ const std::vector<Command>& all() {
          Fixed, "the editor's text view"},
         {"cursorBottomSelect", "Select to the End of the File", "Editor",
          "shift+cmd+down shift+cmd+end", E, nullptr, 0, Fixed, "the editor's text view"},
+        // VS Code's Mac Home and End: the line's first non-blank character
+        // (then column 0) and its end, or a wrapped row's end first, with
+        // Shift selecting (AppKit's scroll the document instead).
+        {"cursorHome", "Go to the Start of the Line", "Editor", "home", E, nullptr, 0, Fixed,
+         "the editor's text view"},
+        {"cursorHomeSelect", "Select to the Start of the Line", "Editor", "shift+home", E, nullptr,
+         0, Fixed, "the editor's text view"},
+        {"cursorEnd", "Go to the End of the Line", "Editor", "end", E, nullptr, 0, Fixed,
+         "the editor's text view"},
+        {"cursorEndSelect", "Select to the End of the Line", "Editor", "shift+end", E, nullptr, 0,
+         Fixed, "the editor's text view"},
         {"deleteAllLeft", "Delete to the Start of the Line", "Editor", "cmd+backspace", E, nullptr,
          0, Fixed, "the editor's text view"},
         {"workbench.action.terminal.scrollUpPage", "Scroll Up a Page", "Terminal",

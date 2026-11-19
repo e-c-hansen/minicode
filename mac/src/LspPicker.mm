@@ -1,13 +1,7 @@
 // LspPicker.mm — Objective-C++. See LspPicker.h.
 #import "LspPicker.h"
 #import "EditorFont.h"
-
-static NSColor *PHex(unsigned int rgb) {
-    return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
-                               green:((rgb >> 8) & 0xFF) / 255.0
-                                blue:(rgb & 0xFF) / 255.0
-                               alpha:1.0];
-}
+#import "FindWidget.h"
 
 // ----------------------------------------------------------- MCPickerPopup
 @interface MCPickerPanel : NSPanel
@@ -17,16 +11,14 @@ static NSColor *PHex(unsigned int rgb) {
 - (BOOL)canBecomeMainWindow { return NO; }
 @end
 
-// The selected row in VS Code's list selection blue, drawn the same whether
-// or not its window has the keyboard (it never does: the editor keeps it).
-@interface MCPickerRowView : NSTableRowView
-@end
-@implementation MCPickerRowView
-- (BOOL)isEmphasized { return YES; }
+@implementation MCPopupRowView
+- (BOOL)isEmphasized { return NO; }
+// The row's text keeps the colors its attributed string gives it.
+- (NSBackgroundStyle)interiorBackgroundStyle { return NSBackgroundStyleNormal; }
 - (void)drawSelectionInRect:(NSRect)dirty {
     (void)dirty;
-    [PHex(0x04395E) setFill];
-    NSRectFill(self.bounds);
+    [(self.selectionColor ?: NSColor.selectedContentBackgroundColor) setFill];
+    NSRectFillUsingOperation(self.bounds, NSCompositingOperationSourceOver);
 }
 @end
 
@@ -35,6 +27,8 @@ static NSColor *PHex(unsigned int rgb) {
 
 @implementation MCPickerPopup {
     MCPickerPanel *_panel;
+    NSScrollView *_scroll;
+    NSColor *_selection;   // the theme's list selection, as of the last showing
     NSTableView *_table;
     NSIndexSet *_headers;
     NSInteger _maxRows;
@@ -49,8 +43,6 @@ static const CGFloat kPickerRowHeight = 20;
                     backing:NSBackingStoreBuffered defer:YES];
     _panel.hasShadow = YES;
     _panel.releasedWhenClosed = NO;
-    _panel.backgroundColor = PHex(0x252526);
-    _panel.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     _panel.becomesKeyOnlyIfNeeded = YES;
 
     NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:_panel.contentView.bounds];
@@ -60,7 +52,7 @@ static const CGFloat kPickerRowHeight = 20;
     scroll.drawsBackground = NO;
     scroll.wantsLayer = YES;
     scroll.layer.borderWidth = 1;
-    scroll.layer.borderColor = PHex(0x454545).CGColor;
+    _scroll = scroll;
 
     _table = [[NSTableView alloc] initWithFrame:scroll.bounds];
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"row"];
@@ -69,7 +61,6 @@ static const CGFloat kPickerRowHeight = 20;
     _table.headerView = nil;
     _table.rowHeight = kPickerRowHeight;
     _table.intercellSpacing = NSMakeSize(0, 0);
-    _table.backgroundColor = PHex(0x252526);
     _table.style = NSTableViewStylePlain;
     _table.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
     _table.dataSource = self;
@@ -103,11 +94,12 @@ static const CGFloat kPickerRowHeight = 20;
 
 - (NSTableRowView *)tableView:(NSTableView *)tv rowViewForRow:(NSInteger)row {
     (void)row;
-    MCPickerRowView *v = [tv makeViewWithIdentifier:@"pickerRow" owner:self];
+    MCPopupRowView *v = [tv makeViewWithIdentifier:@"pickerRow" owner:self];
     if (!v) {
-        v = [MCPickerRowView new];
+        v = [MCPopupRowView new];
         v.identifier = @"pickerRow";
     }
+    v.selectionColor = _selection;
     return v;
 }
 
@@ -151,6 +143,13 @@ static const CGFloat kPickerRowHeight = 20;
     atScreenRect:(NSRect)caret
           parent:(NSWindow *)parent {
     if (!_panel) [self build];
+    // The theme's widget colors, which may have changed since the last time.
+    MCFindStyle *style = [MCFindStyle current];
+    _panel.backgroundColor = style.widgetBackground;
+    _panel.appearance = style.appearance;
+    _scroll.layer.borderColor = style.widgetEdge.CGColor;
+    _table.backgroundColor = style.widgetBackground;
+    _selection = style.selection;
     _rows = [rows copy];
     _headers = [headers copy] ?: [NSIndexSet indexSet];
     _maxRows = MAX(maxRows, 1);
@@ -208,7 +207,7 @@ static const CGFloat kPickerRowHeight = 20;
 @end
 
 // ------------------------------------------------------------ MCRenameBox
-// A small panel of its own under the name, which takes the keyboard while it
+// A small panel of its own over the name, which takes the keyboard while it
 // shows. A popover would do on screen, but this one also works in a window
 // that is never shown (the offscreen tests), and its place is exact.
 @interface MCRenamePanel : NSPanel
@@ -222,6 +221,7 @@ static const CGFloat kPickerRowHeight = 20;
     MCRenamePanel *_panel;
     NSView *_content;
     __weak NSWindow *_parent;
+    BOOL _appLeaving;   // between the app resigning active and coming back
 }
 
 - (NSView *)contentView { return _content; }
@@ -231,51 +231,100 @@ static const CGFloat kPickerRowHeight = 20;
 }
 
 - (void)build {
-    const CGFloat w = 300, h = 56;
     _panel = [[MCRenamePanel alloc]
-        initWithContentRect:NSMakeRect(0, 0, w, h)
+        initWithContentRect:NSMakeRect(0, 0, 200, 20)
                   styleMask:NSWindowStyleMaskBorderless
                     backing:NSBackingStoreBuffered defer:YES];
     _panel.hasShadow = YES;
     _panel.releasedWhenClosed = NO;
-    _panel.backgroundColor = PHex(0x252526);
-    _panel.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    // It stays with its window while another app is in front, behind that
+    // app's windows as its window is, rather than being ordered out.
+    _panel.hidesOnDeactivate = NO;
     _content = _panel.contentView;
     _content.wantsLayer = YES;
     _content.layer.borderWidth = 1;
-    _content.layer.borderColor = PHex(0x4EA1F7).CGColor;
-    _field = [[NSTextField alloc] initWithFrame:NSMakeRect(8, 25, w - 16, 23)];
-    _field.font = MCMonoFont(12.5, NSFontWeightRegular);
+    _field = [[NSTextField alloc] initWithFrame:NSMakeRect(2, 1, 196, 18)];
     _field.delegate = self;
+    _field.bezeled = NO;
+    _field.bordered = NO;
+    _field.drawsBackground = YES;
+    _field.focusRingType = NSFocusRingTypeNone;
     _field.usesSingleLineMode = YES;
     _field.cell.scrollable = YES;
     _field.cell.wraps = NO;
+    _field.toolTip = @"Return to rename, Esc to cancel";
     [_content addSubview:_field];
-    NSTextField *hint = [NSTextField labelWithString:@"Return to rename, Esc to cancel"];
-    hint.font = [NSFont systemFontOfSize:11];
-    hint.textColor = PHex(0x9D9D9D);
-    hint.frame = NSMakeRect(9, 5, w - 18, 15);
-    [_content addSubview:hint];
-    // A click anywhere else takes the keyboard away, which cancels.
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(resignedKey:)
-                                                 name:NSWindowDidResignKeyNotification
-                                               object:_panel];
+    // A click anywhere else takes the keyboard away, which cancels; but
+    // switching to another app takes it away too, and that keeps the box
+    // and what was typed in it, with the keyboard again on the way back
+    // (D2 on 1.6.3: the name typed was gone after a look at Terminal).
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(resignedKey:)
+               name:NSWindowDidResignKeyNotification object:_panel];
+    [nc addObserver:self selector:@selector(appWillResignActive:)
+               name:NSApplicationWillResignActiveNotification object:nil];
+    [nc addObserver:self selector:@selector(appDidBecomeActive:)
+               name:NSApplicationDidBecomeActiveNotification object:nil];
 }
 
-- (void)showWithName:(NSString *)name relativeToRect:(NSRect)rect ofView:(NSView *)view {
+// The app is going to the background: the panel's window gives up the
+// keyboard next, which is not a click elsewhere.
+- (void)appWillResignActive:(NSNotification *)note {
+    (void)note;
+    if (_visible) _appLeaving = YES;
+}
+
+// Back: the box takes the keyboard again, its text and selection as they
+// were (the field editor stays the panel's first responder meanwhile).
+// AppKit gives the keyboard back to the window that had it after this
+// notification, so the panel asks for it a turn later, and only if its
+// window has it or nothing does.
+- (void)appDidBecomeActive:(NSNotification *)note {
+    (void)note;
+    if (!_appLeaving) return;
+    _appLeaving = NO;
+    if (!_visible) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSWindow *parent = self->_parent;
+        if (!self->_visible || !parent || self->_panel.isKeyWindow) return;
+        NSWindow *key = NSApp.keyWindow;
+        if (key && key != parent) return;
+        [self->_panel makeKeyWindow];
+    });
+}
+
+// For tests: whether the box is waiting for the app to come back.
+- (BOOL)waitingForApp { return _appLeaving; }
+
+- (void)showWithName:(NSString *)name relativeToRect:(NSRect)rect ofView:(NSView *)view
+                font:(NSFont *)font {
     if (!_panel) [self build];
     [self close];
     NSWindow *parent = view.window;
     if (!parent) return;
+    // The theme's input colors (VS Code's input.* and focusBorder).
+    MCFindStyle *style = [MCFindStyle current];
+    _panel.appearance = style.appearance;
+    _panel.backgroundColor = style.inputBackground;
+    _content.layer.borderColor = style.focusBorder.CGColor;
+    _field.backgroundColor = style.inputBackground;
+    _field.textColor = style.inputForeground;
+    _field.font = font ?: MCMonoFont(MCEditorFontSize(), NSFontWeightRegular);
     _field.stringValue = name ?: @"";
-    // Under the name's line, lined up with the name.
-    NSRect screen = [parent convertRectToScreen:[view convertRect:rect toView:nil]];
-    NSRect f = _panel.frame;
-    f.origin = NSMakePoint(NSMinX(screen) - 9, NSMinY(screen) - NSHeight(f) - 2);
+    // Over the name's line, its text where the name's is: the field holds
+    // the line's height from just above its bottom edge to its top, and the
+    // border stands 2 points above the line, so the line below stays in
+    // view. As wide as the name and room to type, at least 180 points.
+    NSRect line = [parent convertRectToScreen:[view convertRect:rect toView:nil]];
+    const CGFloat lineH = ceil(NSHeight(line));
+    const CGFloat nameW = ceil([_field.stringValue sizeWithAttributes:
+                                   @{NSFontAttributeName: _field.font}].width);
+    const CGFloat w = MAX(nameW + 6 + ceil(_field.font.pointSize) * 6, 180);
+    NSRect f = NSMakeRect(NSMinX(line) - 4, NSMinY(line), w, lineH + 2);
     NSRect vis = (parent.screen ?: [NSScreen mainScreen]).visibleFrame;
-    if (NSMinY(f) < NSMinY(vis)) f.origin.y = NSMaxY(screen) + 2;   // above it
-    if (NSMaxX(f) > NSMaxX(vis)) f.origin.x = NSMaxX(vis) - NSWidth(f);
-    [_panel setFrame:f display:YES];
+    if (NSMaxX(f) > NSMaxX(vis)) f.origin.x = MAX(NSMinX(vis), NSMaxX(vis) - w);
+    [_panel setFrame:f display:NO];
+    _field.frame = NSMakeRect(2, 1, w - 4, lineH - 1);
     [parent addChildWindow:_panel ordered:NSWindowAbove];
     _parent = parent;
     _visible = YES;
@@ -305,12 +354,14 @@ static const CGFloat kPickerRowHeight = 20;
 
 - (void)resignedKey:(NSNotification *)note {
     (void)note;
+    if (_appLeaving) return;   // another app in front: kept (appDidBecomeActive:)
     [self close];
 }
 
 - (void)close {
     if (!_visible) return;
     _visible = NO;
+    _appLeaving = NO;
     NSWindow *parent = _parent;
     [parent removeChildWindow:_panel];
     [_panel orderOut:nil];

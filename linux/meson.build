@@ -186,6 +186,8 @@ gui_sources = [
   'src/FileTree.cpp',
   # The tree following the active tab (explorer.auto-reveal).
   'src/TreeFollow.cpp',
+  # A file row's icon from the system icon theme, by the core's FileIcon::Type.
+  'src/TreeIcons.cpp',
   'src/ClickCount.cpp',
   # The editor: the view (Editor.cpp), each open file (DocumentView.cpp), the
   # tabs (Tabs.cpp) and their strip (TabStrip.cpp).
@@ -345,6 +347,10 @@ gui_sources = [
   'src/Math.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # The shortcut hints' search box.
+  'src/HintsSearchBox.cpp',
+  # The shortcut hints in columns, as many as fit the window.
+  'src/HintsColumns.cpp',
   # The window's panes: the sidebar, and the editor, browser and terminal
   # laid out as on the Mac.
   'src/WindowLayout.cpp',

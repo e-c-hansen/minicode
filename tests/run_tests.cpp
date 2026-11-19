@@ -4061,8 +4061,8 @@ void testSettings() {
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
-    // editor.session-web-idle-minutes.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 142);
+    // editor.session-web-idle-minutes, and editor.wrapping-indent.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 143);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4272,6 +4272,8 @@ void testSettings() {
                 same(none.gitGutterColor(i), named.gitGutterColor(i), "change bar");
             same(none.markdownCodeBackground(), named.markdownCodeBackground(), "code background");
             same(none.terminalInputText(), named.terminalInputText(), "terminal input");
+            same(none.terminalCursor(), named.terminalCursor(), "terminal cursor");
+            same(none.terminalCursorText(), named.terminalCursorText(), "terminal cursor text");
             same(none.rulerColor(), named.rulerColor(), "ruler");
             same(none.gutterBackground(), named.gutterBackground(), "gutter");
             same(none.lineNumberColor(), named.lineNumberColor(), "line number");
@@ -4296,6 +4298,42 @@ void testSettings() {
                       named.treeGitColor((TreeGitColor)i));
             for (int i = 0; i < 3; i++)
                 CHECK(documented.gitGutterColor(i) == named.gitGutterColor(i));
+        }
+
+        GROUP("settings:terminal-cursor");
+        // The terminal's cursor stands out from its background on every
+        // built-in theme, and the character under a block cursor from the
+        // cursor (WCAG's contrast ratio, 3:1 for large shapes), both opaque
+        // whatever the terminal's opacity (linux/HANDOFF.md item 108: VTE drew
+        // the cursor in the background's color, so it never showed).
+        {
+            auto lum = [](const Rgba &c) {
+                auto ch = [](uint8_t v) {
+                    const double x = v / 255.0;
+                    return x <= 0.03928 ? x / 12.92 : std::pow((x + 0.055) / 1.055, 2.4);
+                };
+                return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+            };
+            auto ratio = [&](const Rgba &a, const Rgba &b) {
+                const double x = lum(a), y = lum(b);
+                return (std::max(x, y) + 0.05) / (std::min(x, y) + 0.05);
+            };
+            for (const Theme &t : Settings::themes()) {
+                const Settings s = parseSettings(std::string("theme = ") + t.id + "\nterminal.opacity = 60%\n");
+                const Rgba cursor = s.terminalCursor(), under = s.terminalCursorText();
+                const Rgba bg = s.background(Surface::Terminal);
+                const double againstBg = ratio(cursor, bg), againstText = ratio(under, cursor);
+                if (againstBg < 3 || againstText < 3)
+                    std::printf("    %s: cursor %s on %s (%.1f:1), its text %s (%.1f:1)\n", t.id,
+                                Settings::formatColor(cursor).c_str(), Settings::formatColor(bg).c_str(),
+                                againstBg, Settings::formatColor(under).c_str(), againstText);
+                CHECK(againstBg >= 3 && againstText >= 3);
+                CHECK(cursor.a == 1 && under.a == 1 && bg.a < 1);
+                CHECK(cursor.rgb() == s.text(Surface::Terminal).rgb() && under.rgb() == bg.rgb());
+            }
+            // A text color of the user's own is the cursor's too.
+            const Settings own = parseSettings("terminal.text = #FFCC00\n");
+            CHECK(own.terminalCursor() == Rgba::hex(0xFFCC00));
         }
 
         GROUP("settings:with-theme");
@@ -4422,6 +4460,17 @@ void testSettings() {
         Settings ww = parseSettings("editor.word-wrap = bounded\n", &we);
         CHECK(we.size() == 1 && ww.wordWrap() &&
               we[0].message.find("on or off") != std::string::npos);
+        // Wrapped lines go on under their indentation by default, as
+        // VS Code's editor.wrappingIndent "same".
+        CHECK(parseSettings("").wrappingIndent() == WrapIndent::Mode::Same);
+        CHECK(parseSettings("editor.wrapping-indent = none\n").wrappingIndent() ==
+              WrapIndent::Mode::None);
+        CHECK(parseSettings("editor.wrapping-indent = Indent\n").wrappingIndent() ==
+              WrapIndent::Mode::Indent);
+        std::vector<SettingsError> wie;
+        Settings wi = parseSettings("editor.wrapping-indent = deep\n", &wie);
+        CHECK(wie.size() == 1 && wi.wrappingIndent() == WrapIndent::Mode::Same &&
+              wie[0].message.find("same, indent or none") != std::string::npos);
         // Auto-closing pairs: on by default, as in VS Code.
         CHECK(parseSettings("").autoClose());
         CHECK(!parseSettings("").sessionHost());
@@ -9382,6 +9431,104 @@ static void testEditorTabs() {
     CHECK((labels({"/m.c", "/x/m.c"}) == std::vector<std::string>{"m.c", "x/m.c"}));
     CHECK(labels({}).empty());
 
+    GROUP("tabs:names");
+    {   // the name, and the shortest parent folders that tell it apart
+        auto names = [](const std::vector<std::string> &paths) {
+            std::string s;
+            for (const TabName &t : tabNames(paths)) s += t.name + "|" + t.hint + " ";
+            return s;
+        };
+        CHECK((names({"/p/a.txt", "/p/b.txt"})) == std::string("a.txt| b.txt| "));
+        CHECK((names({"/w/src/app/index.ts", "/w/src/lib/index.ts", "/w/x.ts"})) ==
+                 std::string("index.ts|app index.ts|lib x.ts| "));
+        CHECK((names({"/a/x/m.c", "/b/x/m.c"})) == std::string("m.c|a/x m.c|b/x "));
+        CHECK((names({"/p/one/README.md", "", "/p/two/README.md"})) ==
+                 std::string("README.md|one | README.md|two "));
+        CHECK((names({"/p/q.md", "/p/q.md"})) == std::string("q.md| q.md| "));   // one file twice
+        CHECK((names({"/m.c", "/x/m.c"})) == std::string("m.c| m.c|x "));
+        // Three of one name: each takes only what it needs.
+        CHECK((names({"/r/a/k/i.ts", "/r/b/k/i.ts", "/r/c/i.ts"})) ==
+                 std::string("i.ts|a/k i.ts|b/k i.ts|c "));
+        CHECK(tabNames({}).empty());
+        Model::Window w;
+        w.append(1, "/p/src/main.cpp");
+        w.append(2, "/p/tests/main.cpp");
+        CHECK(w.tabNames(0).size() == 2 && w.tabNames(0)[1].name == "main.cpp" &&
+              w.tabNames(0)[1].hint == "tests");
+    }
+
+    GROUP("tabs:strip-widths");
+    {   // natural widths between the bounds, never squeezed to fit
+        const StripLayout l = layoutStrip({50, 120.2, 900}, 80, 300);
+        CHECK(l.w == (std::vector<double>{80, 121, 300}));
+        CHECK(l.x == (std::vector<double>{0, 80, 201}));
+        CHECK(l.content == 501);
+        CHECK(layoutStrip({}, 80, 300).content == 0);
+        // Fifteen tabs in a narrow strip keep their widths: the row is wider.
+        const StripLayout many = layoutStrip(std::vector<double>(15, 140), 80, 300);
+        CHECK(many.w.back() == 140 && many.content == 15 * 140);
+    }
+
+    GROUP("tabs:strip-scroll");
+    {
+        CHECK(clampScroll(-5, 1000, 400) == 0);
+        CHECK(clampScroll(900, 1000, 400) == 600);
+        CHECK(clampScroll(100, 300, 400) == 0);   // it all fits
+        // Revealing moves only as far as it must.
+        CHECK(revealScroll(0, 100, 200, 1000, 400) == 0);       // in view already
+        CHECK(revealScroll(0, 500, 650, 1000, 400) == 250);     // right edge to the view's
+        CHECK(revealScroll(300, 100, 200, 1000, 400) == 100);   // left edge to the view's
+        CHECK(revealScroll(0, 860, 1000, 1000, 400) == 600);    // the last tab, whole
+        CHECK(revealScroll(0, 100, 700, 1000, 400) == 100);     // wider than the view: its left
+        // The wheel: the larger delta, vertical too; lines scaled, points not.
+        CHECK(wheelScroll(100, -30, 2, true, 10, 1000, 400) == 130);
+        CHECK(wheelScroll(100, 0, -3, false, 10, 1000, 400) == 130);
+        CHECK(wheelScroll(100, 0, 50, true, 10, 1000, 400) == 50);
+        CHECK(wheelScroll(590, -40, 0, true, 10, 1000, 400) == 600);   // clamped
+        CHECK(wheelScroll(0, -40, 0, true, 10, 300, 400) == 0);        // nothing to scroll
+        // Dragging near an edge scrolls that way, faster nearer it.
+        CHECK(dragAutoScroll(200, 400, 24, 12) == 0);
+        CHECK(dragAutoScroll(0, 400, 24, 12) == -12);
+        CHECK(dragAutoScroll(12, 400, 24, 12) == -6);
+        CHECK(dragAutoScroll(388, 400, 24, 12) == 6);
+        CHECK(dragAutoScroll(450, 400, 24, 12) == 12);
+        CHECK(dragAutoScroll(-30, 400, 24, 12) == -12);
+        // The fades: which ends are cut off.
+        CHECK(!clipped(0, 300, 400).left && !clipped(0, 300, 400).right);
+        CHECK(!clipped(0, 1000, 400).left && clipped(0, 1000, 400).right);
+        CHECK(clipped(300, 1000, 400).left && clipped(300, 1000, 400).right);
+        CHECK(clipped(600, 1000, 400).left && !clipped(600, 1000, 400).right);
+    }
+
+    GROUP("tabs:fit-title");
+    {   // ten points a code point, the ellipsis too
+        const Measure m = [](const std::string &s) {
+            double n = 0;
+            for (unsigned char ch : s) n += (ch & 0xC0) != 0x80 ? 10 : 0;
+            return n;
+        };
+        CHECK((fitMiddle("summary.py", 100, m)) == std::string("summary.py"));
+        CHECK((fitMiddle("summary.py", 99, m)) == std::string("summ\xE2\x80\xA6y.py"));
+        CHECK((fitMiddle("summary.py", 50, m)) == std::string("su\xE2\x80\xA6py"));
+        CHECK((fitMiddle("summary.py", 10, m)) == std::string("\xE2\x80\xA6"));
+        CHECK((fitMiddle("summary.py", 9, m)) == std::string(""));
+        CHECK((fitMiddle("", 0, m)) == std::string(""));
+        // Never inside a code point.
+        CHECK((fitMiddle("\xC3\xA9t\xC3\xA9_\xC3\xA9t\xC3\xA9", 50, m)) ==
+                 std::string("\xC3\xA9t\xE2\x80\xA6t\xC3\xA9"));
+        // A name and its hint: both, the hint cut, or the name alone.
+        const TabName t{"index.ts", "src/app"};
+        auto fit = [&](double w) {
+            TabName f = fitName(t, w, 6, 30, m, m);
+            return f.name + "|" + f.hint;
+        };
+        CHECK((fit(156)) == std::string("index.ts|src/app"));
+        CHECK((fit(126)) == std::string("index.ts|sr\xE2\x80\xA6p"));
+        CHECK((fit(100)) == std::string("index.ts|"));     // under 30 left for the hint
+        CHECK((fit(60)) == std::string("ind\xE2\x80\xA6ts|"));
+        CHECK((fitName({"a.txt", ""}, 200, 6, 30, m, m).name) == std::string("a.txt"));
+    }
+
     GROUP("tabs:closed");
     {   // the newest comes back first, with what it kept
         ClosedTabs c;
@@ -10710,6 +10857,63 @@ static void testMultiCaret() {
         CHECK(move(t, carets({0}), Move::DocumentStart, true)[0] == (Caret{0, 0}));
     }
 
+    GROUP("multicaret:home-end");
+    {
+        // VS Code's cursorHome and cursorEnd (the Mac's Home and End).
+        const std::u16string t = u"    foo bar\n\t\n  baz\r\nx";
+        // Home: the first non-blank character, then column 0, then back.
+        CHECK(homeTarget(t, 8) == 4);
+        CHECK(homeTarget(t, 4) == 0);
+        CHECK(homeTarget(t, 0) == 4);
+        CHECK(homeTarget(t, 2) == 4);    // inside the indentation
+        CHECK(homeTarget(t, 13) == 12);  // a blank line: column 0
+        CHECK(homeTarget(t, 12) == 12);
+        CHECK(homeTarget(t, 18) == 16);  // a \r\n line
+        CHECK(homeTarget(t, 21) == 21);  // the last line, no indentation
+        CHECK(homeTarget(t, t.size()) == 21);
+        // End: the line's end, before its break.
+        CHECK(endTarget(t, 0) == 11);
+        CHECK(endTarget(t, 11) == 11);
+        CHECK(endTarget(t, 15) == 19);
+        CHECK(endTarget(t, 21) == t.size());
+        CHECK(endTarget(u"", 0) == 0);
+        // A wrapped line: "alpha beta gamma delta" in rows of 11, 6 and 5
+        // characters. End goes to the row's end (before the space it broke
+        // at), then to the line's end; on the last row at once.
+        const std::u16string w = u"alpha beta gamma delta\nz";
+        const Row r0{0, 11}, r1{11, 17}, r2{17, 23};
+        CHECK(endTarget(w, 2, r0) == 10);
+        CHECK(endTarget(w, 10, r0) == 22);
+        CHECK(endTarget(w, 12, r1) == 16);
+        CHECK(endTarget(w, 16, r1) == 22);
+        CHECK(endTarget(w, 18, r2) == 22);
+        // Home on a later row: the row's start first, then as on one row.
+        CHECK(homeTarget(w, 14, r1) == 11);
+        CHECK(homeTarget(w, 11, r1) == 0);
+        CHECK(homeTarget(w, 3, r0) == 0);
+        // A row given for another line, or past it, is clamped to the line.
+        CHECK(endTarget(w, 24, Row{5, 30}) == 24);
+        CHECK(homeTarget(w, 24, Row{5, 30}) == 23);
+        // A row ending in a surrogate pair ends before the whole pair.
+        const std::u16string e = u"ab\U0001F600cd";
+        CHECK(endTarget(e, 0, Row{0, 4}) == 2);
+        // Several carets, each moved from its head; extending keeps anchors.
+        std::vector<Caret> c = {{8, 8}, {18, 18}};
+        CHECK(heads(homeCarets(t, c, {}, false)) == (std::vector<size_t>{4, 16}));
+        CHECK(heads(endCarets(t, c, {}, false)) == (std::vector<size_t>{11, 19}));
+        std::vector<Caret> x = homeCarets(t, c, {}, true);
+        CHECK(x.size() == 2 && x[0] == (Caret{8, 4}) && x[1] == (Caret{18, 16}));
+        x = endCarets(t, {{6, 2}}, {}, true);
+        CHECK(x.size() == 1 && x[0] == (Caret{6, 11}));
+        // A selection without Shift collapses at the head's target.
+        x = endCarets(t, {{2, 6}, {16, 18}}, {}, false);
+        CHECK(heads(x) == (std::vector<size_t>{11, 19}) && x[0].empty());
+        // Rows per caret; carets that meet merge.
+        x = endCarets(w, {{2, 2}, {14, 14}}, {r0, r1}, false);
+        CHECK(heads(x) == (std::vector<size_t>{10, 16}));
+        CHECK(endCarets(t, {{1, 1}, {3, 3}}, {}, false).size() == 1);
+    }
+
     GROUP("multicaret:surround");
     {
         const std::u16string t = u"say hello now";
@@ -11437,6 +11641,7 @@ static void testMultiCaretOccurrences() {
 #include "markdown_page_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
+#include "wrap_indent_tests.inc"
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
@@ -11491,6 +11696,7 @@ int main() {
     testSyntaxLiterals();
     testIncrementalHighlight();
     testLargeFiles();
+    testWrapIndent();
     testTermLinks();
     benchIncrementalHighlight();
     testMarkdown();

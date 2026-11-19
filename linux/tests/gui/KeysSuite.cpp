@@ -12,6 +12,7 @@
 #include "Editor.h"
 #include "FileTree.h"
 #include "FindBar.h"
+#include "HintsColumns.h"
 #include "Keys.h"
 #include "PalettePanel.h"
 
@@ -637,34 +638,37 @@ MC_GUI_SUITE(keys) {
     MCGuiStep("the hints show the new key", [] { MCGuiKey("ctrl+shift+h"); });
     MCGuiWait("they are up", 10, [] { return gtk_widget_get_visible(MCGuiApp().hintsPanel); });
     MCGuiStep("with it, and the moved keys", [] {
-        const std::string hints = gtk_label_get_text(GTK_LABEL(MCGuiApp().hintsLabel));
+        // Every column's text, a line a row: its key, a tab, what it does.
+        std::string hints;
+        const HintsColumns* columns = MCGuiApp().hintsColumns;
+        for (int c = 0; c < columns->count(); ++c) hints += columns->text(c) + "\n";
         // The row naming a thing, as its key column reads.
         auto keyOf = [&hints](const std::string& what) {
             const size_t at = hints.find(what);
             if (at == std::string::npos) return std::string("(no row for " + what + ")");
-            const size_t start = hints.rfind('\n', at) + 1;
+            const size_t start = at == 0 ? 0 : hints.rfind('\n', at - 1) + 1;
             std::string key = hints.substr(start, at - start);
-            while (!key.empty() && key.back() == ' ') key.pop_back();
+            while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
             return key;
         };
-        GCHECK_EQ_STR(keyOf("Markdown    (source)"), "Ctrl Alt J");
-        GCHECK_EQ_STR(keyOf("TODOs in folder"), "Ctrl Shift D");
-        GCHECK_EQ_STR(keyOf("Toggle task\n"), "Ctrl Alt L");
-        GCHECK_EQ_STR(keyOf("Toggle task, too"), "Alt C");
-        GCHECK_EQ_STR(keyOf("New file"), "Ctrl N");
-        GCHECK_EQ_STR(keyOf("New window"), "Ctrl Shift N");
-        GCHECK_EQ_STR(keyOf("New folder"), "Ctrl Alt N");
-        GCHECK_EQ_STR(keyOf("Close window"), "Ctrl Shift W");
-        GCHECK_EQ_STR(keyOf("Hover info"), "Ctrl Alt I");
+        GCHECK_EQ_STR(keyOf("Markdown\tsource"), "Ctrl+Alt+J");   // its state at a stop
+        GCHECK_EQ_STR(keyOf("TODOs in folder"), "Ctrl+Shift+D");
+        GCHECK_EQ_STR(keyOf("Toggle task\n"), "Ctrl+Alt+L");
+        GCHECK_EQ_STR(keyOf("Toggle task, too"), "Alt+C");
+        GCHECK_EQ_STR(keyOf("New file"), "Ctrl+N");
+        GCHECK_EQ_STR(keyOf("New window"), "Ctrl+Shift+N");
+        GCHECK_EQ_STR(keyOf("New folder"), "Ctrl+Alt+N");
+        GCHECK_EQ_STR(keyOf("Close window"), "Ctrl+Shift+W");
+        GCHECK_EQ_STR(keyOf("Hover info"), "Ctrl+Alt+I");
         GCHECK_EQ_STR(keyOf("Find next"), "F3");
-        GCHECK_EQ_STR(keyOf("Hidden files ("), "Ctrl Shift .");
-        GCHECK_EQ_STR(keyOf("Rename (in the tree)"), "Ctrl Alt R");
+        GCHECK_EQ_STR(keyOf("Hidden files\t"), "Ctrl+Shift+.");
+        GCHECK_EQ_STR(keyOf("Rename (in the tree)"), "Ctrl+Alt+R");
         // The task's old Ctrl+Shift+L is Select All Occurrences' (item 1.9).
-        GCHECK_EQ_STR(keyOf("Select all occurrences"), "Ctrl Shift L");
-        GCHECK(hints.find("Ctrl Shift L") == hints.rfind("Ctrl Shift L"));
-        // Ctrl Shift P only for the palette, no longer the preview.
-        GCHECK_EQ_STR(keyOf("Command palette"), "Ctrl Shift P");
-        GCHECK(hints.find("Ctrl Shift P") == hints.rfind("Ctrl Shift P"));
+        GCHECK_EQ_STR(keyOf("Select all occurrences"), "Ctrl+Shift+L");
+        GCHECK(hints.find("Ctrl+Shift+L") == hints.rfind("Ctrl+Shift+L"));
+        // Ctrl+Shift+P only for the palette, no longer the preview.
+        GCHECK_EQ_STR(keyOf("Command palette"), "Ctrl+Shift+P");
+        GCHECK(hints.find("Ctrl+Shift+P") == hints.rfind("Ctrl+Shift+P"));
         MCGuiKey("ctrl+shift+h");
     });
     MCGuiWait("they go", 10, [] { return !gtk_widget_get_visible(MCGuiApp().hintsPanel); });

@@ -142,7 +142,18 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   Zed's Uncommitted Changes as an `EditorPage` (key `review:<root>`, one
   per window). A file row's click, Return and Open Changes call the
   panel's `onReview` (Open as git Diff keeps the raw diff and its hunk
-  links); Review Changes (the panel's top, View > Source Control) opens
+  links), a single click with `preview` (2026-11-18): the page goes in
+  the group's preview tab (`showPage:preview:`, Model::Preview::User,
+  the keyboard left in the list), a double-click on the same row or
+  Return keeps it (`keepPreviewTab:`). `MCGitTable mouseDown:` hands
+  every tracked press to `clickedRow:graph:clickCount:sameRow:modifiers:`
+  (the GUI checks call it), which decides by `EditorTabs::treeClick`:
+  the old `clickCount == 1` test opened nothing for a quick click on
+  another row (the window server counts clicks by time alone) or a
+  synthetic click, which the 1.6.3 walker met as "a click only
+  selects". Command, Shift and Control clicks open nothing; arrows only
+  move the selection, as in VS Code's list. A replaced preview tab's
+  page is closed (`letGoOfReplacedTab:` calls `closePageOf:`); Review Changes (the panel's top, View > Source Control) opens
   it at its top. Staged files (HEAD to index, Unstage) then the Changes
   list (index to work tree, Stage and Discard), each file a header row
   then blocks split at every run of changed rows (`SideBySide::hunks`,
@@ -162,7 +173,27 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   `writeFileAtomically`, so a clean tab follows the disk ("Reload from
   Disk"); a dirty tab's file is refused. Every action, and every panel
   refresh (`MCGitPanelDidRefreshNotification`), reads again and keeps the
-  place by `ChangeReview::anchorAt`/`rowFor`. An action's note
+  place by `ChangeReview::anchorAt`/`rowFor` (the top row), except the
+  first read showing an action's result (2026-11-18, `review:acted-place`):
+  a press records `ChangeReview::actedPlace` (the file by key, the block's
+  place on the side the action leaves alone, the other files' keys) and
+  the row's height on screen, and the first read started after `act:`
+  queued the work (reads carry a serial, `_readsStarted`) puts
+  `rowAfterAction`'s row there: the next block of that file, else what
+  followed it. The top row alone had kept another file's line in sight
+  (the walker's jump from summary.py to models.py), and a file that went
+  fell back to its index, which a staged list appearing above shifts. A
+  refusal drops the place. **Pictures** (2026-11-18, `review:images`): a
+  binary file with an image extension (`FileIcon::isImageExtension`; SVG
+  is text) whose versions ImageIO reads (`CGImageSourceCopyPropertiesAtIndex`,
+  no decode, on the queue) becomes `File::image` by `ChangeReview::showAsImages`
+  (each side at most 64 megapixels, the 4 MB a side cap as before): the
+  layout gives it `imageRows` empty `RowKind::Image` rows, and the page
+  lays an `MCReviewImageBox` over them in the text view (a label and an
+  NSImageView per version, at pixel size, at most 320 points tall, Before
+  and After side by side), made again with each read and kept in sight on
+  a sideways scroll. Commit pages and worktree pages read them the same
+  way. The bytes stay in `Extra::oldImage`/`newImage`. An action's note
   (`ChangeReview::ActionNote`, `noteRead:`) speaks of the files the action
   touched on the HEAD read on the queue as it ran (`act:`): it stays while
   the page shows those files as the first read shown after it did (or, for
@@ -178,8 +209,11 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   deleted, binary, submodule, conflicted and `add -N` files go whole
   (`wholeOnlyReason`). The GTK and Android panels can follow over the
   same core. **A commit from the graph** opens the same page in commit
-  mode (`initForCommitsWithRoot:`, key `commit:<root>`, one tab that each
-  commit replaces, through the panel's `onReviewCommit`): `show -s` for
+  mode (`initForCommitsWithRoot:`, key `commit:<root>:<hash>` since
+  2026-11-18, through the panel's `onReviewCommit`): a single click shows
+  it in the preview tab, a commit page already there taking the new commit
+  (`showCommit:` again), a double-click or Return keeps it, so kept commit
+  pages stay beside the preview one; Line History's click opens in preview: `show -s` for
   the header (`Git::parseShow`), `diff-tree -r -z -M` against the first
   parent (`--root` for a first commit) for the files
   (`ChangeReview::parseRawDiff`), their blobs in one `cat-file --batch`,

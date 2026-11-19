@@ -36,6 +36,7 @@ class ProblemsPanel;
 class ProcessesPanel;
 class IdeLinkServer;
 class AgentsPanel;
+class HintsColumns;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -62,8 +63,9 @@ struct MCGuiAppWindow {
     FindBar*    findBar = nullptr;         // the editor's find and replace bar
     SearchPanel* search = nullptr;         // Find in Folder, null until first shown
     GtkWidget*  hintsPanel = nullptr;      // the shortcut hints, and their text
-    GtkWidget*  hintsLabel = nullptr;
+    HintsColumns* hintsColumns = nullptr;  // their list in columns (HintsColumns.h)
     GtkWidget*  hintsHint = nullptr;       // the status bar's note on them
+    GtkWidget*  hintsSearch = nullptr;     // their search box (HintsSearchBox.h), a GtkSearchEntry
     PalettePanel* palette = nullptr;       // the palette over the panes
     NavHistoryUi* nav = nullptr;           // Go Back and Go Forward's history
     ConsentBar* consentBar = nullptr;      // the folder's own tools' question (2.3)
@@ -77,7 +79,8 @@ struct MCGuiAppWindow {
 };
 
 GtkApplication* MCGuiApplication();
-// The menu bar's Bookmarks menu (4.8): Bookmark This Page, then the folder.
+// The menu bar's Bookmarks menu (4.8): Bookmark This Page, then the window
+// in front's bookmarks: its .mutible/bookmarks, then "Shared" (~/Bookmarks).
 GMenu* MCGuiBookmarksMenu();
 std::vector<MCGuiAppWindow> MCGuiAppWindows();   // open windows, oldest first
 MCGuiAppWindow MCGuiApp();                       // the newest; empty with none open

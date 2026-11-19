@@ -87,7 +87,11 @@ static NSString *ColumnName(NSUInteger i) {
         item.title = u.redoMenuItemTitle ?: @"Redo";
         return u.canRedo;
     }
-    return [super validateMenuItem:item];
+    // NSTableView validates through validateUserInterfaceItem: and has no
+    // validateMenuItem: of its own: asking super for that one threw, and
+    // AppKit dropped the key, so no menu key worked while the grid had the
+    // keyboard (round 9: Shift+Cmd+P did nothing there).
+    return [super validateUserInterfaceItem:item];
 }
 @end
 

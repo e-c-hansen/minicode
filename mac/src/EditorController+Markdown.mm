@@ -309,10 +309,21 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
 
 // A double-click on rendered Markdown opens the block behind it (a
 // paragraph, heading, list item, quote, code block or table cell) in a
-// popover holding its Markdown; saving splices just those bytes back into
+// popover holding its Markdown; applying splices just those bytes back into
 // the buffer, which is then dirty until Cmd+S, as typing leaves it.
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point {
     if (!self.isMarkdown || !self.previewMode) return NO;
+    // A box still open with an edit in it goes in first; the page is then
+    // rendered again, so the character is read anew under the point.
+    if (self.markdownEditPanel.edited) {
+        NSString *was = self.sourceText;
+        [self.markdownEditPanel commitEditing];
+        if (self.sourceText != was && ![self.sourceText isEqualToString:was]) {
+            NSTextView *tv = self.textView;
+            [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
+            index = [tv characterIndexForInsertionAtPoint:point];
+        }
+    }
     return [self editMarkdownIn:self.textView atCharacter:index point:point];
 }
 
@@ -321,8 +332,27 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
 // typing it there would (applySidePreviewEdit:).
 - (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point {
     if (![self sidePreviewShowing] || !self.textView.editable) return NO;
+    // A box still open with an edit in it goes in first (the page then
+    // catches up, below).
+    if (self.markdownEditPanel.edited) [self.markdownEditPanel commitEditing];
     if ([self catchUpSidePage]) return YES;
     return [self editMarkdownIn:_sidePreview.textView atCharacter:index point:point];
+}
+
+- (BOOL)editPageAtWindowPoint:(NSPoint)at {
+    NSMutableArray<NSTextView *> *pages = [NSMutableArray array];
+    if ([self showsRenderedMarkdown] && self.isMarkdown) [pages addObject:self.textView];
+    if ([self sidePreviewShowing] && _sidePreview.textView) [pages addObject:_sidePreview.textView];
+    for (NSTextView *page in pages) {
+        if (!page.window || page.hiddenOrHasHiddenAncestor) continue;
+        const NSPoint p = [page convertPoint:at fromView:nil];
+        if (!NSPointInRect(p, page.visibleRect)) continue;
+        [page.layoutManager ensureLayoutForTextContainer:page.textContainer];
+        const NSUInteger i = [page characterIndexForInsertionAtPoint:p];
+        return page == self.textView ? [self editMarkdownAtCharacter:i point:p]
+                                     : [self editSidePreviewAtCharacter:i point:p];
+    }
+    return NO;
 }
 
 // Whether the page beside the source was rendered from the buffer as it is
@@ -378,7 +408,7 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
                                        @"Quote", @"Code block", @"Table cell", @"Table row",
                                        @"Formula", @"HTML"};
     NSString *title = [titles[block.kind] stringByAppendingString:
-        @" (Markdown; Return saves, Shift+Return for a new line)"];
+        @" (Markdown; Return applies, Shift+Return for a new line)"];
     NSString *text = [NSString stringWithUTF8String:
         src.substr(block.start, block.end - block.start).c_str()] ?: @"";
 
@@ -452,6 +482,10 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
         }
         addItem:addItem];
     return YES;
+}
+
+- (void)commitPageEdit {
+    if (self.markdownEditPanel.edited) [self.markdownEditPanel commitEditing];
 }
 
 - (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side {
@@ -1051,9 +1085,12 @@ static NSUInteger MCMathNoteLength(NSTextStorage *st) {
 // After a page is replaced and scrolled back, all the pane is redrawn:
 // TextKit marks only the page's own column of what it replaced (and the
 // top screenful, scrolled there for a moment), so with a new zoom the old
-// page's ink stayed in the margins of a page scrolled down.
+// page's ink stayed in the margins of a page scrolled down. The whole
+// view, as CodeTextView's redrawWholePane marks it: tiles the layer keeps
+// past the visible rect held the old page too.
 static void MCRedrawWholePane(NSTextView *tv) {
-    [tv setNeedsDisplayInRect:tv.visibleRect avoidAdditionalLayout:YES];
+    if ([tv isKindOfClass:CodeTextView.class]) [(CodeTextView *)tv redrawWholePane];
+    else [tv setNeedsDisplayInRect:tv.bounds avoidAdditionalLayout:YES];
 }
 
 - (void)renderMarkdownKeepingPlace {
@@ -1065,6 +1102,26 @@ static void MCRedrawWholePane(NSTextView *tv) {
         [me renderMarkdown:[me markdownToRender]];
     }];
     if (unscrolled) _previewEntryScroll = clip.bounds.origin;
+}
+
+// The tab on show has new text (its file changed on disk and was read
+// again, or that reload was undone). A source shows it as refreshDisplay
+// does; a rendered page is rendered again at the same height down the
+// pane, as a browser keeps its place on a reload, clamped to the new
+// page's end, never scrolled to its top (a file another program rewrites
+// every few minutes jumped the page up each time). Then all of the pane is
+// drawn: the old page's tiles past the screen must not come back.
+- (void)refreshDisplayKeepingPage {
+    if (![self showsRenderedMarkdown] || self.showingMessage) {
+        [self refreshDisplay];
+        return;
+    }
+    NSScrollView *scroll = self.editorScroll;
+    const CGFloat y = scroll.contentView.bounds.origin.y;
+    [self refreshDisplay];
+    CodeTextView *tv = self.textView;
+    if (y > 0 && tv.textStorage.length > 0) MCScrollTextViewToY(scroll, tv, y);
+    [tv redrawWholePane];
 }
 
 // `render` replaces the page in `tv` (scrolled by `scroll`): the text at the

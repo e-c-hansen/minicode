@@ -22,6 +22,7 @@
 #import "SessionLink.h"
 #import "Terminal.h"
 #import "TerminalPanel.h"
+#import "Keymap.h"
 #include "../../../tests/GuiRetry.h"
 
 // The panel's close without the question (TerminalPanel.mm), for the
@@ -70,6 +71,8 @@ static NSMutableArray<NSString *> *gSheets;
 static NSString *gLastInformative;
 static __weak NSWindow *gLastSheetWindow;
 static __weak NSWindow *gKeyWindow;
+// The last window the app asked to make key (the swizzles do nothing).
+static __weak NSWindow *gMadeKey;
 // What failed, by suite, for the first stage's retry (tests/GuiRetry.h);
 // gOutside while the end's checks or the run's own limit fail.
 static GuiRetry::Results gResults;
@@ -286,7 +289,11 @@ static NSWindow *TestKeyWindow(void) {
     return w ?: MCGuiController().window;
 }
 
-void MCGuiSetKeyWindow(NSWindow *window) { gKeyWindow = window; }
+void MCGuiSetKeyWindow(NSWindow *window) {
+    gKeyWindow = window;
+    gMadeKey = nil;
+}
+NSWindow *MCGuiWindowMadeKey(void) { return gMadeKey; }
 
 void MCGuiAnswerAlerts(NSArray<NSNumber *> *answers) {
     if (!gAnswers) gAnswers = [NSMutableArray array];
@@ -677,6 +684,20 @@ void MCGuiSendKeyToApp(NSWindow *window, unsigned short keyCode, NSEventModifier
     [NSApp sendEvent:e];
 }
 
+BOOL MCGuiPressKey(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags) {
+    NSEvent *made = MenuKeyEvent(keyCode, flags, nil, NO);
+    // The same press, addressed to the window, for the monitor's question
+    // of what has the keyboard.
+    NSEvent *e = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                             modifierFlags:made.modifierFlags timestamp:0
+                              windowNumber:window.windowNumber context:nil
+                                characters:made.characters
+               charactersIgnoringModifiers:made.charactersIgnoringModifiers
+                                 isARepeat:NO keyCode:keyCode];
+    if (MCKeymapHandleKeyDown(e)) return YES;
+    return MCGuiPerformMenuKey(window, keyCode, flags, nil, nil);
+}
+
 void MCGuiUndoGroup(NSUndoManager *undo, void (^block)(void)) {
     BOOL byEvent = undo.groupsByEvent;
     undo.groupsByEvent = NO;
@@ -997,11 +1018,11 @@ static void InstallExceptionReporting(void) {
 static void InstallSwizzles(void) {
     InstallExceptionReporting();
     Class W = NSWindow.class;
-    Replace(W, @selector(makeKeyAndOrderFront:), ^(id, id) {});
+    Replace(W, @selector(makeKeyAndOrderFront:), ^(NSWindow *w, id) { gMadeKey = w; });
     Replace(W, @selector(orderFront:), ^(id, id) {});
     Replace(W, @selector(orderFrontRegardless), ^(id) {});
     Replace(W, @selector(orderWindow:relativeTo:), ^(id, NSWindowOrderingMode, NSInteger) {});
-    Replace(W, @selector(makeKeyWindow), ^(id) {});
+    Replace(W, @selector(makeKeyWindow), ^(NSWindow *w) { gMadeKey = w; });
     Replace(W, @selector(makeMainWindow), ^(id) {});
     Replace(W, @selector(addChildWindow:ordered:), ^(id, NSWindow *, NSWindowOrderingMode) {});
     Replace(W, @selector(isKeyWindow), ^BOOL(NSWindow *w) { return w == TestKeyWindow(); });

@@ -80,7 +80,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -203,8 +205,36 @@ struct FolderReplacePlan {
     // counted): a replacement is written as UTF-8 or UTF-16 only.
     std::vector<std::string> otherEncoding;
     std::size_t otherEncodingCount = 0;
+    // After excludeDismissed: the matches left alone for dismissed rows,
+    // and the files left alone whole because a dismissed line of theirs no
+    // longer reads as its row showed (changed since the search; relative
+    // paths, all of them).
+    std::size_t dismissed = 0;
+    std::vector<std::string> changedSinceSearch;
     bool cancelled = false;
     std::string error;                      // the regex did not compile: why
+};
+
+// Rows dismissed from Find in Folder's results (VS Code's Dismiss, the x on
+// a row), which Replace All and Replace in This File then leave alone: a
+// file's row the whole file, a line's row every match on that line. A line
+// is held by its number and its text as the row showed it
+// (FolderSearchMatch::text), so a file changed since the search cannot have
+// another line kept, or the dismissed one replaced, in its place
+// (dismissedLines). Paths are spelled as the search's rows spell them.
+struct FolderReplaceExclusions {
+    std::set<std::string> files;
+    std::map<std::string, std::map<int, std::string>> lines;
+    void dismissFile(const std::string& path) { files.insert(path); }
+    void dismissLine(const std::string& path, int line, const std::string& text) {
+        lines[path][line] = text;
+    }
+    bool excludesFile(const std::string& path) const { return files.count(path) > 0; }
+    bool empty() const { return files.empty() && lines.empty(); }
+    void clear() {
+        files.clear();
+        lines.clear();
+    }
 };
 
 namespace FolderSearch {
@@ -340,12 +370,31 @@ FolderReplacePlan planReplace(const std::string& root, const std::string& query,
                               const std::atomic<bool>* cancel = nullptr,
                               const FolderSearchOptions& options = {});
 
+// `plan` without what dismissed rows hold: a dismissed file leaves it, a
+// file with dismissed lines is read again and loses their matches (leaving
+// when none are left), and a file whose dismissed line no longer reads as
+// its row showed leaves it, named in changedSinceSearch. plan.dismissed
+// counts the matches left out; plan.matches is counted again.
+void excludeDismissed(FolderReplacePlan& plan, const std::string& query,
+                      const FolderSearchOptions& options, const FolderReplaceExclusions& ex);
+
+// The 1-based lines of `content` (a file's text, UTF-8) whose matches
+// dismissed rows of `path` leave alone. False when one of them no longer
+// reads as its row showed (FolderSearch::displayText of the line against the
+// row's text): the file changed since the search, and is to be left alone
+// whole.
+bool dismissedLines(const std::string& content, const std::string& path,
+                    const FolderReplaceExclusions& ex, std::size_t maxLineChars,
+                    std::set<int>* lines);
+
 // `content` (valid UTF-8) with every match of the query replaced, as
 // Replace in Folder writes it: TextFind::replaceInText with makeQuery's
 // query. Line endings are kept. *count says how many were replaced.
+// Matches on `skipLines` (dismissedLines) are left alone.
 std::string replaceInText(const std::string& content, const std::string& query,
                           const std::string& replacement, const FolderSearchOptions& options,
-                          std::size_t* count = nullptr);
+                          std::size_t* count = nullptr,
+                          const std::set<int>* skipLines = nullptr);
 
 // Only the match a result row stands for: the one starting at byteColumn of
 // 1-based `line`. False when it is no longer there. With `expectedText`

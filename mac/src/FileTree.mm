@@ -21,6 +21,7 @@ MCTreeEntry *MCTreeStat(NSString *path) {
     e.isDir = have && S_ISDIR(st.st_mode);
     const struct stat &use = have ? st : lst;
     e.size = have && S_ISREG(st.st_mode) ? (long long)st.st_size : -1;
+    e.executable = have && S_ISREG(st.st_mode) && (st.st_mode & 0111) != 0;
     e.modified = (have || haveL)
         ? (double)use.st_mtimespec.tv_sec + use.st_mtimespec.tv_nsec / 1e9 : 0;
     e.created = (have || haveL)
@@ -76,6 +77,7 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
 
 - (void)takeStat:(MCTreeEntry *)e {
     self.isLink = e.isLink;
+    self.executable = e.executable;
     self.size = e.size;
     self.modified = e.modified;
     self.created = e.created;
@@ -139,9 +141,17 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
     _lastPressItem = item;
     // The native tracking runs first (selection, expansion, and a drag once
     // the mouse moves), and returns at the release or when a drag starts.
-    // A press that became a drag opens nothing; any other is a click.
+    // A press that became a drag opens nothing; any other is a click. The
+    // drag is known when the tracking begins its session
+    // (beginDraggingSessionWithItems:, below), before the tracking returns:
+    // the delegate's draggingSession:willBeginAtPoint: may come only later,
+    // and a quick drag then opened the file it dragged. The tracking
+    // returning on a drag event rather than the release is a drag too.
     self.dragBegan = NO;
     [super mouseDown:event];
+    NSEvent *last = NSApp.currentEvent;
+    if (last.type == NSEventTypeLeftMouseDragged && last.timestamp >= event.timestamp)
+        self.dragBegan = YES;
     // An open Quick Look panel follows a click as it follows the arrows.
     if (!self.dragBegan) [[MCQuickLookPanel shared] followURLs:[self selectedFileURLs]];
     if (!item || self.dragBegan || !self.onRowClick) return;
@@ -151,6 +161,12 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
     if (now < 0) return;
     p.y += NSMinY([self rectOfRow:now]) - NSMinY(pressedRect);
     self.onRowClick(now, p);
+}
+- (NSDraggingSession *)beginDraggingSessionWithItems:(NSArray<NSDraggingItem *> *)items
+                                               event:(NSEvent *)event
+                                              source:(id<NSDraggingSource>)source {
+    self.dragBegan = YES;
+    return [super beginDraggingSessionWithItems:items event:event source:source];
 }
 - (void)keyDown:(NSEvent *)event {
     // F2 (rename) and Cmd+Delete (Move to Trash) are the registry's tree

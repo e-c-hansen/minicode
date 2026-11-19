@@ -1036,6 +1036,12 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.wordWrap_ = on;
                return true;),
+        MC_KEY("editor.wrapping-indent", Word, false,
+               if (!WrapIndent::parseMode(v, s.wrappingIndent_)) {
+                   e = "'" + v + "' is not same, indent or none";
+                   return false;
+               }
+               return true;),
         MC_KEY("editor.auto-close", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1561,6 +1567,12 @@ Rgba Settings::terminalInputText() const {
                                         : Rgba::hex(theme_->terminalInput);
 }
 
+Rgba Settings::terminalCursor() const { return Rgba::hex(text(Surface::Terminal).rgb()); }
+
+Rgba Settings::terminalCursorText() const {
+    return Rgba::hex(background(Surface::Terminal).rgb());
+}
+
 bool Settings::isDark() const {
     Rgba bg = background(Surface::Editor);
     bg.a = 1;
@@ -1748,6 +1760,11 @@ const char* Settings::defaultFileText() {
 # horizontal scroll bar (off). View > Word Wrap, Option+Z, turns it over
 # for the session (macOS).
 # editor.word-wrap = on
+# Where a wrapped line goes on: under the line's first character that is
+# not a space or a tab (same, as in VS Code), one level further in
+# (indent), or at the left edge (none). A line indented more than half the
+# pane's width goes on at the edge whatever this says.
+# editor.wrapping-indent = same
 # Brackets and quotes close as you type them, as in VS Code (macOS): ( gives
 # (), typing the ) it put there steps over it, and Backspace between the two
 # deletes both. Quotes close only outside strings and comments and not

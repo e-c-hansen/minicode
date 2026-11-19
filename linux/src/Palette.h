@@ -24,7 +24,6 @@ namespace pal {
     // panel reads as a separate surface, as the theme's panel is.
     constexpr const char* TermBg     = "#181818";
     constexpr const char* TermText   = "#CCCCCC";
-    constexpr const char* TermCursor = "#AEAFAD";
 
     // Markdown preview colors.
     constexpr const char* MdHeading  = "#FFFFFF";

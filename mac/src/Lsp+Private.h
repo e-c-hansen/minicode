@@ -74,7 +74,8 @@ static inline void TrimTrailingSpace(NSMutableAttributedString *s) {
 }
 
 static inline NSAttributedString *MCDocText(NSString *text, BOOL markdown) {
-    NSColor *body = LHex(0xCCCCCC);
+    MCFindStyle *style = PopupStyle();
+    NSColor *body = style.widgetForeground;
     NSMutableAttributedString *s = [NSMutableAttributedString new];
     if (!markdown) {
         [s appendAttributedString:[[NSAttributedString alloc]
@@ -97,9 +98,10 @@ static inline NSAttributedString *MCDocText(NSString *text, BOOL markdown) {
         if (r.code && !r.codeBlock)
             text = [text stringByReplacingOccurrencesOfString:@"\\_" withString:@"_"];
         NSFont *font = DocFont(mono, r.bold || r.heading, r.italic, mono ? 11.5 : 12);
-        NSColor *color = r.codeBlock ? LHex(0xD4D4D4)
-                       : r.code ? LHex(0xCE9178)
-                       : r.link ? LHex(0x4EA1F7) : body;
+        // Inline code in the theme's string color, as the editor shows it.
+        NSColor *color = r.codeBlock ? body
+                       : r.code ? [[AppSettings shared] syntax:TokenStyle::String]
+                       : r.link ? style.textLink : body;
         [s appendAttributedString:[[NSAttributedString alloc]
             initWithString:text
                 attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: color}]];
@@ -254,6 +256,17 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
                     server:(MCLspServer *)server;
 - (void)problemsChanged;
 - (void)paintDiagnostics;
+@end
+
+@interface LspSession (JsonCheck)
+// The file on show's canonical URI while the editor checks it as JSON
+// itself (no language server has it), else nil.
+- (NSString *)jsonCheckedUri;
+- (void)jsonCheckDocument;
+- (void)jsonDocumentClosed;
+- (void)checkJsonAfter:(NSTimeInterval)delay;
+- (NSString *)jsonTabPathForURI:(NSString *)uri;
+- (void)forgetJsonChecksOfClosedTabs;
 @end
 
 @interface LspSession (Completion)

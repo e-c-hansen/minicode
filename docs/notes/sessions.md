@@ -42,7 +42,27 @@ found through that list.
   one tab.
 - `EditorTabs` rules: a new tab right of the active one, the most recently used
   after closing the active one, wrap on next and previous, labels that add
-  folders when names clash. `TabStrip` only draws and reports clicks. Its titles are `tabs.font-size` points (12 unset; `MCTabStripFont`) in every strip, editor, split group, browser and terminals, and a strip is `MCTabStripHeight()` tall (30, more for a bigger font), which the owners read on every layout and lay out again on a settings change. A tab's
+  folders when names clash. `TabStrip` only draws and reports clicks.
+  **Widths and scrolling** (2026-11-18, VS Code's tabSizing "fit",
+  `tabs:strip-widths`, `tabs:strip-scroll`, `tabs:fit-title`,
+  `tabs:names`, `preview_tabs`): a tab keeps its natural width (80 to
+  320 points, `EditorTabs::layoutStrip`) and is never squeezed; a longer
+  row scrolls by trackpad or wheel, vertical too (`wheelScroll`), with a
+  thin bar while the pointer is over it and fades at the cut-off ends
+  (`clipped`), and a dragged tab held near an end scrolls the row
+  (`dragAutoScroll`, a 60 Hz timer). The tab on show is revealed
+  (`revealScroll`) only when it changes: a new active index, a row of
+  another length, or its title or tooltip changed (a preview replaced),
+  and on a new width; a dirty dot leaves the row where the user scrolled
+  it. A title is cut in the middle only past the widest tab
+  (`fitMiddle`, `fitName`; the strip cuts it, the paragraph style only
+  clips). The editor's tabs carry the name and, for same-named files, a
+  hint (`EditorTabs::tabNames`, `Model::Window::tabNames`: `labels`'
+  extra folders) drawn dimmed a point smaller after it
+  (`MCTabStripItem.hint`); the terminals' and the browser's strips are
+  the same class and scroll the same way. `displayedTitleForTab:`,
+  `contentWidth` and `scrollOffset` are for the checks. GTK still
+  shows `labels` (linux/src/Tabs.cpp) and has yet to take these. The strips' titles are `tabs.font-size` points (12 unset; `MCTabStripFont`) in every strip, editor, split group, browser and terminals, and a strip is `MCTabStripHeight()` tall (30, more for a bigger font), which the owners read on every layout and lay out again on a settings change. A tab's
   right click (`menuForTabAtIndex:`) has the close commands, copy paths,
   reveal, rename and trash; the File menu repeats them for the active tab so
   the palette finds them.
@@ -235,7 +255,10 @@ found through that list.
   Cmd+1, Cmd+2) copies what the editor shows into the mirror, focuses the
   window's other group (`_win->focus`), swaps the strips (`self.tabStrip`
   is always the focused group's) and activates the other tab at the
-  mirror's place; a press goes on to the same character. The groups are
+  mirror's place; a press goes on to the same character. A two-click press
+  on a page shown as a picture opens the page's block editor at once
+  (`editPageAtWindowPoint:`, `docs/notes/markdown.md`), and the picture
+  accepts the first mouse, as the text does. The groups are
   `_win`'s; `tabs` is every document of either group
   (`Model::Window::documents`: backups, sessions, auto-save, disk checks,
   the servers' open files untouched); the strip, tab keys and closing use

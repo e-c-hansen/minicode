@@ -67,10 +67,11 @@
 - (std::vector<Lsp::Problem>)collectProblems {
     std::vector<Lsp::Problem> out;
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    NSString *shown = _uri ?: [self jsonCheckedUri];
     for (const std::string &key : _store.uris()) {
         NSString *uri = NS(key);
         [seen addObject:uri];
-        BOOL onShow = _uri && [self uri:key isSameFileAs:_uri];
+        BOOL onShow = shown && [self uri:key isSameFileAs:shown];
         // Listed under the tree's spelling of the path, as the files no tab
         // has are, so they sort together; the tab's own spelling finds its text.
         NSString *tabPath = onShow ? _path : [self tabPathForURI:uri];
@@ -170,7 +171,7 @@
 - (NSInteger)problemWarnings { return [self problemCounts].warnings; }
 
 - (BOOL)problemsKnown {
-    if (!_store.empty()) return YES;
+    if (!_store.empty() || [self jsonCheckedUri]) return YES;
     for (MCLspEntry *e in _entries.allValues)
         if (e.server) return YES;
     return NO;
@@ -190,7 +191,7 @@
     NSArray<MCDiagnosticMark *> *all = _tv.diagnostics;
     NSMutableArray<MCDiagnosticMark *> *marks = [NSMutableArray array];
     for (MCDiagnosticMark *m in all) if (m.severity != 4 && !m.quiet) [marks addObject:m];
-    if (!_uri || marks.count == 0) {
+    if (!(_uri ?: [self jsonCheckedUri]) || marks.count == 0) {
         NSBeep();
         [self flash:@"No problems in this file"];
         return;
@@ -216,8 +217,10 @@
 // computed on text typed over since are left out until the server
 // publishes for the new text (Lsp::diagnosticSpans).
 - (void)paintDiagnostics {
-    if (!_uri) return;
-    std::vector<const Lsp::DiagnosticStore::Set *> sets = _store.forUri(Std(_uri));
+    // A server's file, or JSON the editor checks itself (Lsp+JsonCheck.mm).
+    NSString *uri = _uri ?: [self jsonCheckedUri];
+    if (!uri) return;
+    std::vector<const Lsp::DiagnosticStore::Set *> sets = _store.forUri(Std(uri));
     if (sets.empty()) {
         _tv.diagnostics = @[];
         [self updateStatus];
