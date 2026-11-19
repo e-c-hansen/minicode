@@ -6646,7 +6646,7 @@ the editor is selected.
   `onHintsKey` (a key controller in the window's capture phase);
   `setWindowTitle` and `titleFocus`, run from `updateTitle` and
   `onFocusWidget`; `Keys::hintLabel`. The panel's columns are as they were
-  (PageMeasure::layoutHints on GTK is next).
+  (PageMeasure::layoutHints on GTK came next: item 112).
 - **Traps.** An input method types nothing for an Alt+letter
   (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`): forwarded, Alt+Z was lost and the
   box held "s" (hints_panel failed so), so the box inserts the letter
@@ -6663,3 +6663,69 @@ the editor is selected.
 - **Checks**: `hints_panel` (HintsPanelSuite.cpp) and `window_title`
   (WindowTitleSuite.cpp), their headers saying what they check; the
   core's `hints:*` and `window-title:*` groups of `make test`.
+
+### 112. The shortcut hints in as many columns as fit the window (November 2026)
+
+The owner's ask: "I don't know why the help window is only two columns wide
+with a scroll bar. It should be wider to show everything on one screen,
+ideally." The Mac's answer (12d7a32c, #203) in the core,
+`PageMeasure::layoutHints`, now lays out the GTK panel too.
+
+- **What a user meets.** Ctrl+Shift+H shows the shortcuts in as many
+  columns as the window's width holds (16 at most), their heights
+  balanced, so on a wide window every shortcut is on one screen: five
+  columns and nothing to scroll on a 2000x1000 window at the desktop's 10
+  points, three at 1400 (the list scrolls when even those are taller than
+  the window, as at 1400x900), one on a 640 pixel window. The columns
+  follow the window as it is resized and the editor's zoom (Ctrl+= and
+  Ctrl+-: three steps in, 12.5 points, two columns at 1400). Keys are blue and in
+  Monospace, what they do in the desktop's font, a pane's state ("Terminal
+  hidden") muted at a stop of its own, headings small, semibold and in
+  capitals, as on the Mac; a heading or the terminal's note is never a
+  column's last line, and every column's lines line up. The search box
+  marks and dims as before, the columns, their text and the panel's size
+  unchanged while it searches, and the highest mark is scrolled to. With
+  no room for one column (a 440 pixel window) the one column's labels wrap
+  under themselves, at the label's stop.
+- **Code.** Core: none; `PageMeasure::layoutHints` is the Mac's. GTK:
+  `linux/src/HintsColumns.{h,cpp}` (new; both build lists): the rows'
+  widths measured with Pango in the fonts drawn (a cache a size), the
+  core's items made from the GTK rows (a line of text kept with what
+  follows it as a heading is, a row with no key a second line of the row
+  before it, the blank line before "Hide these hints" a gap), each column
+  one PangoLayout with its own tab stops, drawn a line at a time into one
+  GtkDrawingArea in the panel's scrolled window; `HintRow` gained `state`,
+  `column` and `stateAt`; `HintsSearchBox::attributes` adds the marks to
+  each column's attribute list (the state is a third field searched, as
+  the Mac's); main.cpp's `hintsRows` (pane rows by `pane()`, the state no
+  longer spaces in the label), `hintsRoom`, `showHintsText`,
+  `hintsQueryChanged`, and `onHintsPlaced` on the overlay's
+  `get-child-position`, which lays the list out again, from an idle, when
+  the overlay's width is not the one it was laid out for. The harness's
+  Xvfb screen is 2560x1600 (`Wrapper.cpp`).
+- **Traps.** Pango's absolute line height
+  (`pango_attr_line_height_new_absolute`) does not make lines that mix
+  fonts as tall as asked: each run's box is centered on its own font's
+  metrics and the line is their union, so a key in Monospace beside a
+  label in Cantarell came out half a pixel taller, 586 pixels for 26
+  lines of 22 (hints_panel's first run), and the columns drifted apart;
+  the lines are drawn one by one at n line heights down instead
+  (`pango_cairo_show_layout_line`, `lineTop` for the scroll). GTK keeps a
+  window inside its monitor: on the harness's old 1280x1024 screen a
+  window asked to be 2000 wide stayed 1280, hence the wider screen. The
+  scrolled window's viewport puts its child at whole pixels, so a
+  scroll value that is not whole moved the text a pixel in hints_panel's
+  geometry check; the scroll to a mark is rounded and the check allows a
+  pixel. After a relayout the drawing area is allocated its new width a
+  frame later: the checks wait for it (`settled`) before measuring.
+- **Not done.** The search box's own font does not follow the zoom (the
+  Mac's does). Pango has no per-paragraph indent, so in the wrapped one
+  column a heading or the terminal's note that wraps also continues at
+  the label's stop.
+- **Checks**: `hints_panel` (HintsPanelSuite.cpp, its header saying what
+  it checks: 2000x1000 five columns and nothing to scroll, 1400x900 three,
+  640x800 one, 440x700 one that wraps, zoomed in two, every column ending
+  on a shortcut and clear of the next, the search's marks and dims with
+  the columns and the panel's size unchanged), and `keys` (the hints'
+  keys, read from the columns' text). The whole GUI set passed on the
+  wider screen (5,770 checks).

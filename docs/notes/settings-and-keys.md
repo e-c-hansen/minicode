@@ -139,6 +139,35 @@ found through that list.
   wrong column; a heading has a blank line above it except at a column's
   top. With no room for one column the text is the old one column, labels
   wrapping at their stop. `hintsText` (tests) is one column.
+- **The hints' columns on Linux** (2026-11-18, `linux/src/HintsColumns.{h,cpp}`,
+  `linux/HANDOFF.md` item 112): the same `layoutHints`, from widths
+  measured with Pango in the fonts drawn (keys in Monospace, labels in the
+  desktop's family, headings at 10/12 of the size, semibold, letter-spaced
+  and in capitals by a Pango text transform, so the text keeps "Windows"),
+  the size the desktop's points times the editor's zoom (`previewScale`,
+  the Mac's `MCZoomScale`). Pango has no tab stops per paragraph, so each
+  column is a PangoLayout of its own with its own stops, drawn side by side
+  in one GtkDrawingArea in the scrolled window, a line at a time, line n's
+  top n line heights down (`pango_cairo_show_layout_line`), so the lines
+  line up and a column is its line count times that height. **Trap**:
+  Pango's absolute line height (`pango_attr_line_height_new_absolute`)
+  does not do it: each run's box is centered on its own font's metrics and
+  a line is their union, so a Monospace key beside a label in the desktop's
+  font came out half a pixel taller (586 pixels for 26 lines of 22) and
+  the columns drifted apart. The GTK rows have what the Mac's lack: a line
+  of text (the terminal's note) is kept with what follows it as a heading
+  is, a row with no key goes with the row before it, and a pane's state
+  ("open") is a field of its own at its own stop, no longer spaces in the
+  label. Each `HintRow` is told its column and its bytes in that column's
+  text, and `HintsSearchBox::attributes` adds the marks to each column's
+  attributes over the fonts and colors, so a search moves nothing; the
+  list scrolls to the highest mark. The room is the overlay's width less
+  the panel's margins, padding, border and the scroll bar's 10 pixels
+  (main.cpp's `hintsRoom`); the overlay's `get-child-position`, emitted as
+  it places the panel, sees a new width and lays the list out again from
+  an idle, not in the middle of the window's layout. The GUI checks need a
+  window wider than 1280 pixels, and GTK keeps a window inside its
+  monitor, so the harness's Xvfb screen is 2560x1600.
 - **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified"
   check had sent the event to the menu directly. Test such keys through
   `[window sendEvent:]` or `MCGuiSendKeyToApp`, never the menu alone.
@@ -154,9 +183,9 @@ found through that list.
   closed: it takes the keyboard at the first key (remembering where from,
   given back on close, the editor when a click put it there), forwards the
   key to the entry's GtkText (`gtk_event_controller_key_forward`), and types
-  an Alt+letter's letter itself. Marks and dims are Pango attributes on the
-  label (a background, a foreground alpha), so the text and its size never
-  change. The controller, added to the window after GTK's own, runs before
+  an Alt+letter's letter itself. Marks and dims are Pango attributes on
+  each column's layout (a background, a foreground alpha), so the text and
+  its size never change. The controller, added to the window after GTK's own, runs before
   the application's accelerators on GTK 4.22: Alt+Z reached the box and
   left Word Wrap alone with nothing unbound (checked by taking Keys out of
   it; the accelerators of Ctrl keys and function keys run because the box
@@ -173,3 +202,4 @@ text is in place in its section.
 - Settings, themes and Adjust Settings: Trap: an NSTextView with `usesFontPanel` sets the shared NSColorPanel to the color under the caret when the selection moves, and the panel forwarded that to `colorPicked:`, so every pick became the text color; the editor sets `usesFontPanel = NO`.
 - Keys: the registry, keys.conf and the key monitor: **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified" check had sent the event to the menu directly.
 - Keys: the registry, keys.conf and the key monitor: **Trap** (the hints' search box on Linux): an input method types nothing for Alt+letter (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`), so a forwarded Alt+Z was lost.
+- Keys: the registry, keys.conf and the key monitor: **Trap** (the hints' columns on Linux): Pango's absolute line height does not make lines that mix fonts as tall as asked, so the columns are drawn a line at a time.
