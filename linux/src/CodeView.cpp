@@ -85,6 +85,21 @@ CodeView::~CodeView() { gutter_.reset(); }
 
 void CodeView::setBuffer(GtkTextBuffer* buffer) { setViewBuffer(textView(), buffer); }
 
+// Empties the line display cache of every layout showing a buffer of this
+// buffer's tag table (CodeView.h): a tag of the table, never applied to any
+// text, reported changed with no change of size.
+static void emptyLineCaches(GtkTextBuffer* buffer) {
+    static const char kFlush[] = "minicode-layout-flush";
+    GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buffer);
+    GtkTextTag* tag = gtk_text_tag_table_lookup(table, kFlush);
+    if (!tag) {
+        tag = gtk_text_tag_new(kFlush);
+        gtk_text_tag_table_add(table, tag);
+        g_object_unref(tag);
+    }
+    gtk_text_tag_changed(tag, FALSE);
+}
+
 void CodeView::setViewBuffer(GtkTextView* view, GtkTextBuffer* buffer) {
     GtkTextBuffer* old = gtk_text_view_get_buffer(view);
     if (old == buffer) return;
@@ -114,18 +129,17 @@ void CodeView::setViewBuffer(GtkTextView* view, GtkTextBuffer* buffer) {
     if (old)
         for (GtkAdjustment* a : adjs)
             if (a) gtk_adjustment_set_value(a, 0);
-    if (old) {
-        static const char kFlush[] = "minicode-layout-flush";
-        GtkTextTagTable* table = gtk_text_buffer_get_tag_table(old);
-        GtkTextTag* tag = gtk_text_tag_table_lookup(table, kFlush);
-        if (!tag) {
-            tag = gtk_text_tag_new(kFlush);   // never applied to any text
-            gtk_text_tag_table_add(table, tag);
-            g_object_unref(tag);
-        }
-        gtk_text_tag_changed(tag, FALSE);
-    }
+    if (old) emptyLineCaches(old);
     gtk_text_view_set_buffer(view, buffer);
+    // And once more now the view shows the new buffer, so that no display of
+    // the old one can stay whatever laid its lines out after the emptying
+    // above: set_buffer drops only the displays of lines the view had
+    // validated, and one more of the old buffer crashed the next draw once
+    // that buffer was freed (#165's scroll, two main runs of the GTK job in
+    // semantic_tokens; `tab_close_now`). Emptying a cache whole reads none
+    // of its lines (GTK removes each display by pointer), so a line already
+    // freed is safe here.
+    if (old && buffer) emptyLineCaches(buffer);
 }
 
 // ---------------------------------------------------------------- passes

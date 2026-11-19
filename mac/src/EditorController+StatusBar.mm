@@ -139,6 +139,9 @@
         : t.encoding == MCTextEncodingWindows1252
             ? @"The file's encoding, kept when it is saved; a character Windows-1252 cannot "
               @"store has it saved as UTF-8"
+        : t.encoding == MCTextEncodingUtf8Raw
+            ? @"UTF-8 with bytes that are not UTF-8, shown as boxes and saved back as they "
+              @"were"
             : @"The file's encoding, kept when it is saved";
     self.encodingLabel.hidden = hidden;
     [self layoutStatusRight];

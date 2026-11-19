@@ -1573,6 +1573,13 @@ void testMarkdownEdit() {
         // Nothing to find: punctuation alone, or a word the source lacks.
         CHECK(at("A, b.", ",") == "<none>" && at("abc", "xyz") == "<none>" && at("", "a") == "<none>");
         CHECK(at("a [x](http://example.org) b", "example") == "example@13");   // only in the URL
+        // Round 10: a word the page runs together through emphasis
+        // ("foo**bar**" shows "foobar") is found where it was clicked.
+        CHECK(at("foobar and foo**bar** too", "foobar", "foobar and ", " too") ==
+              "foo**bar@11");
+        CHECK(at("foobar and foo**bar** too", "foobar", "", " and foobar") == "foobar@0");
+        CHECK(at("x foo*bar*baz y", "foobarbaz", "x ", " y") == "foo*bar*baz@2");
+        CHECK(at("snake_case here", "snake_case", "", " here") == "snake_case@0");
     }
 
     GROUP("mdedit:rebase");

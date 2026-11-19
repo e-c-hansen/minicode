@@ -3,7 +3,8 @@
 // footnotes, HTML blocks taken as HTML rather than Markdown, and quotes and
 // code inside list items (and lists inside quotes) nesting as GitHub draws
 // them, and GitHub's alerts, emoji shortcodes and front matter (`md:alerts`,
-// `md:emoji`, `md:front-matter`). Included there; mdText, mdRun, mdAny and
+// `md:emoji`, `md:front-matter`), and round 10's block edges (`md:quote-code`,
+// `md:item-html`, `md:list-ends`). Included there; mdText, mdRun, mdAny and
 // mdCount are its helpers.
 
 static void testMarkdownGfm() {
@@ -339,6 +340,25 @@ static void testMarkdownGfm() {
         // The space between its blocks is in it too, so its bar goes on.
         CHECK(mdAny(r, [](const MdRun &x) { return x.gap && x.quote && x.alert == 4; }));
         CHECK(!mdAny(r, [](const MdRun &x) { return x.gap && x.quote && x.alert == 0; }));
+        // Round 10: a quote in a list item is never an alert, and neither is
+        // a marker with nothing after it: both plain quotes on GitHub.
+        auto inItem = P::parse("- item\n\n  > [!NOTE]\n  > text\n");
+        CHECK(!mdAny(inItem, [](const MdRun &x) { return x.alert != 0; }));
+        CHECK(mdRun(inItem, "[!NOTE]").quote && mdRun(inItem, "text").quote);
+        auto empty = P::parse("> [!NOTE]\n\nafter\n");
+        CHECK(!mdAny(empty, [](const MdRun &x) { return x.alert != 0 || x.alertTitle; }));
+        CHECK(mdRun(empty, "[!NOTE]").quote && !mdRun(empty, "[!NOTE]").bold);
+        CHECK(mdRun(P::parse("> [!TIP]\n>\n>\n"), "[!TIP]").alert == 0);
+        // A lazy line after the title is the alert's text, as on GitHub.
+        auto lazy = P::parse("> [!NOTE]\nlazy text\nmore\n\nafter\n");
+        CHECK(mdRun(lazy, "Note").alertTitle && mdRun(lazy, "lazy text").alert == 1);
+        CHECK(mdRun(lazy, "lazy text").quote && !mdRun(lazy, "lazy text").bold);
+        CHECK(mdRun(lazy, "more").alert == 1 && mdRun(lazy, "after").alert == 0);
+        const std::string lazySrc = "> [!NOTE]\nlazy text\n";
+        CHECK(MarkdownEdit::blockAt(lazySrc, 1).kind == MarkdownEdit::Block::Quote &&
+              MarkdownEdit::blockAt(lazySrc, 1).firstLine == 0);
+        // A plain quote's lazy line goes on as before.
+        CHECK(mdRun(P::parse("> a\nb\n"), "b").quote);
     }
 
     GROUP("md:emoji");
@@ -368,6 +388,16 @@ static void testMarkdownGfm() {
         CHECK(mdRun(r, ":tada:\n").codeBlock);
         CHECK(mdRun(r, "\xF0\x9F\x94\xA5").bold);
         CHECK(mdAny(r, [](const MdRun &x) { return x.link && x.text == "https://x.org/:tada:"; }));
+        // Nor in a web address written out, which links to http://...:
+        // round 10's www.example.com/:smile:/x.
+        auto www = P::parse("see www.example.com/:smile:/x and :smile:\n");
+        CHECK(mdAny(www, [](const MdRun &x) {
+            return x.link && x.text == "www.example.com/:smile:/x" &&
+                   x.url == "http://www.example.com/:smile:/x";
+        }));
+        CHECK(mdText(www).find(" and \xF0\x9F\x98\x84") != std::string::npos);
+        // A link's own text is still text.
+        CHECK(mdRun(P::parse("[go :rocket:](https://x.org)\n"), "go \xF0\x9F\x9A\x80").link);
         // In a heading and a table cell too; the table is measured after.
         auto t = P::parse("# Hi :wave:\n\n| a |\n|---|\n| :x: |\n");
         CHECK(mdRun(t, "Hi \xF0\x9F\x91\x8B").heading == 1);
@@ -409,6 +439,118 @@ static void testMarkdownGfm() {
         // Not front matter: not at the top, or no key on its first line.
         CHECK(!mdAny(P::parse("x\n\n---\ntitle: y\n---\n"), [](const MdRun &x) { return x.frontMatter; }));
         CHECK(!mdAny(P::parse("---\nplain words\n---\n"), [](const MdRun &x) { return x.frontMatter; }));
+    }
+
+    GROUP("md:quote-code");
+    {
+        // Round 10: a fenced block in a quote is a code block, as on GitHub,
+        // not one inline code span "py x = 1".
+        auto q = P::parse("> ```py\n> x = 1\n>\n>     y\n> ```\nafter\n");
+        const MdRun x = mdRun(q, "x = 1\n");
+        CHECK(x.codeBlock && x.code && x.quote && x.quoteDepth == 1 && x.lang == "py");
+        CHECK(mdRun(q, "\n").codeBlock && mdRun(q, "    y\n").codeBlock);   // as written
+        CHECK(!mdRun(q, "after").quote && mdText(q).find("```") == std::string::npos);
+        // In an alert, after its text: the alert's bar goes round it.
+        auto note = P::parse("> [!NOTE]\n> Run:\n> ```sh\n> make\n> ```\n> Done.\n");
+        const MdRun make = mdRun(note, "make\n");
+        CHECK(make.codeBlock && make.alert == 1 && make.quote && make.lang == "sh");
+        CHECK(mdRun(note, "Run:").alert == 1 && mdRun(note, "Done.").alert == 1);
+        CHECK(!mdRun(note, "Done.").code);
+        // The quote ending ends the block; a nested quote's fence keeps
+        // its inner markers; ~~~ and an indented fence work too.
+        auto open = P::parse("> ```\n> a\nb\n");
+        CHECK(mdRun(open, "a\n").codeBlock && !mdRun(open, "b").quote && !mdRun(open, "b").code);
+        auto deep = P::parse("> > ```\n> > > c\n> > ```\n");
+        CHECK(mdRun(deep, "> c\n").codeBlock && mdRun(deep, "> c\n").quoteDepth == 2);
+        auto tilde = P::parse(">   ~~~\n>   t\n>   ~~~\n");
+        CHECK(mdRun(tilde, "t\n").codeBlock);
+        // In a quote's list item: at the item's indent.
+        auto item = P::parse("> - step\n>   ```\n>   z\n>   ```\n");
+        CHECK(mdRun(item, "z\n").codeBlock && mdRun(item, "z\n").listDepth == 1);
+        // The whole quote still edits as one block, its code with it.
+        const std::string src = "> Run:\n> ```sh\n> make\n> ```\n";
+        const auto lines = P::lines(src);
+        CHECK(lines[2].kind == MdLine::Quote && lines[2].block == lines[0].block);
+        const MarkdownEdit::Block b = MarkdownEdit::blockAt(src, 2);
+        CHECK(b.kind == MarkdownEdit::Block::Quote && b.firstLine == 0 && b.lastLine == 3);
+        // Exported inside the quote, or the alert's <div>.
+        const std::string html = MarkdownHtml::page("> [!TIP]\n> ```sh\n> make\n> ```\n", "t");
+        CHECK(html.find("<div class=\"markdown-alert markdown-alert-tip\">") != std::string::npos);
+        CHECK(html.find("<pre><code class=\"language-sh\">make\n</code></pre>\n</div>") !=
+              std::string::npos);
+        CHECK(MarkdownHtml::page("> ```\n> x\n> ```\n", "t")
+                  .find("<blockquote>\n<pre><code>x\n</code></pre>\n</blockquote>") !=
+              std::string::npos);
+    }
+
+    GROUP("md:item-html");
+    {
+        // Round 10: an HTML block in a list item ends with the item, so the
+        // next item keeps its marker (it was "2. b" as text).
+        auto markers = [](const std::vector<MdRun> &r) {
+            std::string out;
+            for (const MdRun &x : r)
+                if (x.marker) out += x.text + "|";
+            return out;
+        };
+        auto det = P::parse("1. a\n   <details><summary>S</summary>\n   body\n2. b\n");
+        CHECK(markers(det) == "  1. |  2. |");
+        CHECK(mdRun(det, "b").listDepth == 1 && mdRun(det, "  2. ").marker);
+        CHECK(!mdAny(det, [](const MdRun &x) { return x.text.find("2. b") != std::string::npos; }));
+        // Left open, the <details> closes with its item, as a browser
+        // closes it at the </li>: item 2 is not in it.
+        CHECK(mdRun(det, "S").summary && mdRun(det, "S").details == 1);
+        CHECK(mdRun(det, "b").details == 0 && mdRun(det, "  2. ").details == 0);
+        CHECK(mdText(P::fold(det, [](int, bool) { return false; })).find("b") !=
+              std::string::npos);
+        auto div = P::parse("1. a\n   <div>x\n   y</div>\n2. b\n3. c\n");
+        CHECK(markers(div) == "  1. |  2. |  3. |");
+        CHECK(mdRun(div, "x y").listDepth == 1);
+        auto bullet = P::parse("- a\n  <div>\n  in\n  </div>\n- b\n");
+        CHECK(markers(bullet) == "  \xE2\x80\xA2 |  \xE2\x80\xA2 |");
+        // Still one HTML block while the lines are indented into the item.
+        auto kept = P::parse("- a\n\n  <div>\n  one\n    two\n  </div>\n");
+        CHECK(mdRun(kept, "one two").listDepth == 1);
+        // The export nests it in the item and goes on with the list.
+        const std::string html =
+            MarkdownHtml::page("1. a\n   <details><summary>S</summary>\n\n   body\n\n   "
+                               "</details>\n2. b\n", "t");
+        CHECK(html.find("<ol>\n<li>a<details>\n<summary><strong>S</strong></summary>\n"
+                        "<p>body</p>\n</details>\n</li>\n<li>b</li>\n</ol>") != std::string::npos);
+    }
+
+    GROUP("md:list-ends");
+    {
+        // Round 10: an HTML comment or a link definition at the margin ends
+        // the list (GitHub starts another at 5, which the page shows apart).
+        auto markers = [](const std::string &md) {
+            std::string out;
+            for (const MdRun &r : P::parse(md))
+                if (r.marker) out += r.text + "|";
+            return out;
+        };
+        CHECK(markers("1. a\n2. b\n<!-- x -->\n5. c\n") == "  1. |  2. |  5. |");
+        CHECK(markers("1. a\n2. b\n\n[x]: /u\n\n5. c\n") == "  1. |  2. |  5. |");
+        CHECK(markers("1. a\n2. b\n<!--\nlong\n-->\n5. c\n") == "  1. |  2. |  5. |");
+        auto apart = P::parse("1. a\n2. b\n<!-- x -->\n5. c\n");
+        size_t five = 0;
+        while (five < apart.size() && apart[five].text != "  5. ") five++;
+        CHECK(five > 0 && five < apart.size() && apart[five - 1].gap);
+        // Indented into an item, they leave the list alone.
+        CHECK(markers("1. a\n   <!-- x -->\n2. b\n") == "  1. |  2. |");
+        CHECK(markers("1. a\n\n   [x]: /u\n\n7. b\n") == "  1. |  2. |");
+        // A link definition right under an item's text is that text, lazily
+        // (it cannot interrupt a paragraph), as in CommonMark.
+        CHECK(mdText(P::parse("1. a\n[x]: /u\n")).find("[x]: /u") != std::string::npos);
+        // A comment ends a quote, too.
+        auto quotes = P::parse("> a\n<!-- x -->\n> b\n");
+        CHECK(mdAny(quotes, [](const MdRun &x) { return x.gap && !x.quote; }));
+        // The export writes two lists: the second starts at 5.
+        const std::string html = MarkdownHtml::page("1. a\n2. b\n<!-- x -->\n5. c\n", "t");
+        CHECK(html.find("<li>b</li>\n</ol>\n<ol start=\"5\">\n<li>c</li>") != std::string::npos);
+        // A list counting on as the page does stays one.
+        CHECK(MarkdownHtml::page("1. a\n1. b\n1. c\n", "t").find("</ol>\n<ol") ==
+              std::string::npos);
     }
 
     GROUP("md:gfm-speed");

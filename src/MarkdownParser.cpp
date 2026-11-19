@@ -305,18 +305,30 @@ struct Details {
         int line = -1;          // its <details> tag's
         bool open = false;      // the tag's open attribute
         bool inSummary = false;
+        int index = 0;          // which <details> tag on its line (MdRun::detailsIndex)
+        int at = 0;             // the list levels and quotes it sits in (MdRun::detailsAt)
+        // What holds it: the quote (a quote group) and the list item (a
+        // block) its tag is in, -1 for none. It closes when they end, as a
+        // browser closes an open <details> at the </li> or </blockquote>.
+        int quote = -1, item = -1;
     };
     std::vector<Open> stack;
     long changes = 0;   // how many tags have been read, to tell a block that held one
+    // The block being read: what a <details> opened in it sits in.
+    int blockQuote = -1, blockItem = -1, blockAt = 0;
+    int lastLine = -1, onLine = 0;   // the last <details> tag's line, and its index there
     void stamp(MdRun& r) const {
         r.details = (int)stack.size();
         r.detailsLine = stack.empty() ? -1 : stack.back().line;
+        r.detailsIndex = stack.empty() ? 0 : stack.back().index;
+        r.detailsAt = stack.empty() ? 0 : stack.back().at;
         r.detailsOpen = !stack.empty() && stack.back().open;
         r.summary = !stack.empty() && stack.back().inSummary;
     }
     bool same(const MdRun& a, const MdRun& b) const {
         return a.details == b.details && a.detailsLine == b.detailsLine &&
-               a.summary == b.summary && a.detailsOpen == b.detailsOpen;
+               a.detailsIndex == b.detailsIndex && a.summary == b.summary &&
+               a.detailsOpen == b.detailsOpen;
     }
 };
 
@@ -1433,7 +1445,12 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
             details->changes++;
             auto& st = details->stack;
             if (p.kind == Piece::DetailsOpen) {
-                if (st.size() < 64) st.push_back({lineOf(p.at), p.display, false});
+                const int line = lineOf(p.at);
+                details->onLine = line == details->lastLine ? details->onLine + 1 : 0;
+                details->lastLine = line;
+                if (st.size() < 64)
+                    st.push_back({line, p.display, false, details->onLine, details->blockAt,
+                                  details->blockQuote, details->blockItem});
             } else if (p.kind == Piece::DetailsClose) {
                 if (!st.empty()) st.pop_back();
             } else if (!st.empty()) {
@@ -1557,11 +1574,17 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
         mergeable = canMerge;
     }
     // GitHub's emoji shortcodes (":tada:"), in text only: never in code,
-    // math, a picture's alt text or an address shown as its own link text.
+    // math, a picture's alt text or an address shown as its own link text
+    // (www.example.com/:smile:/x links to http://www.example.com/...).
+    auto address = [](const MdRun& r) {
+        if (!r.link || r.text.empty() || r.url.size() < r.text.size()) return false;
+        const std::string prefix = r.url.substr(0, r.url.size() - r.text.size());
+        return r.url.compare(prefix.size(), std::string::npos, r.text) == 0 &&
+               (prefix.empty() || prefix == "http://");
+    };
     for (size_t k = outStart; k < out.size(); k++) {
         MdRun& r = out[k];
-        if (r.code || r.math || r.image || r.media || r.footnote || r.hardBreak ||
-            (r.link && r.text == r.url))
+        if (r.code || r.math || r.image || r.media || r.footnote || r.hardBreak || address(r))
             continue;
         if (r.text.find(':') != std::string::npos) r.text = MarkdownEmoji::replace(r.text);
     }
@@ -1726,6 +1749,9 @@ struct Block {
     int alert = 0;               // in an alert (MdRun::alert)
     bool frontMatter = false;    // the table of the file's YAML front matter
     bool blankBefore = false;    // a blank line separates it from the block before
+    // The list item it sits in (an item's own index for an item), and an
+    // item's parent item, so a <details> opened in an item closes with it.
+    int item = -1, parentItem = -1;
     std::vector<std::pair<std::string, int>> text;   // content lines
     std::vector<std::pair<std::string, int>> code;   // a code block's lines
     std::vector<std::vector<std::string>> rows;      // a table's
@@ -2166,7 +2192,7 @@ Doc analyze(const std::string& md) {
     int editIds = 0, quoteGroups = 0;
     int open = -1;                 // the block lazy lines continue
     bool blank = false;            // a blank line since the last block line
-    struct Level { size_t indent, content; };
+    struct Level { size_t indent, content; int item = -1; };
     std::vector<Level> list;
     bool inFence = false, inComment = false;
     char fenceChar = 0;
@@ -2181,12 +2207,24 @@ Doc analyze(const std::string& md) {
     int quoteOuter = 0;            // the list levels the quote being read sits in
     std::vector<Level> quoteList;  // its list items, by indentation past the "> "
     int noteBlock = -1;            // the footnote definition later paragraphs may join
+    // A fenced code block inside a quote: its block, how many > deep it
+    // is, and the indentation its lines lose (the fence's, past the > ).
+    int quoteFence = -1, quoteFenceDepth = 0;
+    size_t quoteFenceIndent = 0;
+    // An HTML block inside a quote (<details>, <div>): its block, which
+    // quote and how deep; a blank quote line ends it.
+    int quoteHtml = -1, quoteHtmlGroup = -1, quoteHtmlDepth = 0;
+    // An alert's title line, which a lazy line may continue as the
+    // alert's text, and the marker as written, for an alert with no text.
+    size_t alertTitleLine = std::string::npos;
+    std::map<int, std::pair<int, std::string>> alertMarkers;   // quote group: block, marker
 
     auto newBlock = [&](Block::Kind kind, int line) -> Block& {
         Block b;
         b.kind = kind;
         b.first = b.last = line;
         b.blankBefore = blank;
+        b.item = list.empty() ? -1 : list.back().item;
         d.blocks.push_back(std::move(b));
         blank = false;
         noteBlock = -1;
@@ -2217,6 +2255,16 @@ Doc analyze(const std::string& md) {
     auto settleList = [&](size_t indent) {
         while (!list.empty() && indent < list.back().content) list.pop_back();
         if (numbering.size() > list.size()) numbering.resize(list.size());
+    };
+    // A line that is not a block of its own (an HTML comment, a link
+    // definition) still ends the lists it is not indented into, and a
+    // quote; a list it ends leaves a gap before whatever comes next, as
+    // GitHub shows two lists.
+    auto endContainers = [&](size_t indent) {
+        const bool had = !list.empty();
+        settleList(indent);
+        if (had && list.empty()) blank = true;
+        quoteGroup = -1;
     };
 
     size_t start = 0;
@@ -2294,7 +2342,46 @@ Doc analyze(const std::string& md) {
             open = -1;
             blank = true;
             quoteGroup = -1;
+            quoteFence = quoteHtml = -1;
             continue;
+        }
+        // A quote's fenced code block goes on while its quote does: a line
+        // with as many > markers holds a line of code (or the closing
+        // fence); any other line ends the block, as the quote ends.
+        if (quoteFence >= 0) {
+            size_t p = 0;
+            int seen = 0;
+            while (seen < quoteFenceDepth && p < body.size() && body[p] == '>') {
+                p++;
+                seen++;
+                if (p < body.size() && (body[p] == ' ' || body[p] == '\t')) p++;
+                if (seen < quoteFenceDepth) {   // up to three spaces before the next >
+                    size_t q = p;
+                    while (q < body.size() && q - p < 3 && body[q] == ' ') q++;
+                    if (q < body.size() && body[q] == '>') p = q;
+                }
+            }
+            if (seen == quoteFenceDepth) {
+                const std::string content = body.substr(p);
+                Block& fb = d.blocks[(size_t)quoteFence];
+                L.kind = MdLine::Quote;
+                L.block = fb.edit;
+                blank = false;
+                size_t lead = 0;
+                while (lead < content.size() && lead < 3 && content[lead] == ' ') lead++;
+                if (isFenceClose(content.substr(lead), fenceChar, fenceLen)) {
+                    quoteFence = -1;
+                    open = -1;
+                    continue;
+                }
+                size_t strip = 0;
+                while (strip < content.size() && strip < quoteFenceIndent && content[strip] == ' ')
+                    strip++;
+                fb.code.push_back({content.substr(strip), (int)i});
+                fb.last = (int)i;
+                continue;
+            }
+            quoteFence = -1;
         }
         if (codeBlock >= 0) {
             if (cols >= codeIndent) {
@@ -2472,18 +2559,22 @@ Doc analyze(const std::string& md) {
             i = mathLast;
             continue;
         }
-        // An HTML comment starting a line hides it, and ends any paragraph.
+        // An HTML comment starting a line hides it, and ends any paragraph,
+        // and the lists and quote it is not inside ("2. b", a comment, "5.
+        // c" is two lists on GitHub, the second starting at 5).
         if (shallow && body.compare(0, 4, "<!--") == 0) {
             const size_t close = body.find("-->", 4);
             if (close == std::string::npos) {
                 inComment = true;
                 L.kind = MdLine::Hidden;
                 open = -1;
+                endContainers(cols);
                 continue;
             }
             if (trim(body.substr(close + 3)).empty()) {
                 L.kind = MdLine::Hidden;
                 open = -1;
+                endContainers(cols);
                 continue;
             }
         }
@@ -2502,14 +2593,22 @@ Doc analyze(const std::string& md) {
             settleList(cols);
             const bool shown = html >= 6 || pre;
             const size_t opener = html == 3 ? 2 : html == 5 ? 9 : html == 4 ? 2 : 0;
+            // In a list item the block ends with the item: at a line that
+            // is not indented into it (the next item's marker, say), as
+            // CommonMark ends any container's HTML block.
+            const size_t within = list.empty() ? 0 : list.back().content;
             int filling = -1;   // the Html block taking lines
             size_t j = i;
             for (; j < n; j++) {
                 const std::string& line = raw[j];
                 MdLine& H = d.lines[j];
-                size_t q = 0;
-                while (q < line.size() && (line[q] == ' ' || line[q] == '\t')) q++;
+                size_t q = 0, qc = 0;
+                while (q < line.size() && (line[q] == ' ' || line[q] == '\t')) {
+                    qc = line[q] == '\t' ? qc + 4 - qc % 4 : qc + 1;
+                    q++;
+                }
                 if (html >= 6 && q == line.size()) break;   // the blank line ending it
+                if (j > i && q < line.size() && qc < within) break;
                 const bool ends = html <= 5 && (j == i ? htmlBlockEnds(html, body, opener)
                                                        : htmlBlockEnds(html, line, 0));
                 if (!shown) {
@@ -2645,8 +2744,17 @@ Doc analyze(const std::string& md) {
             quoteFirst = false;
             if (ct.empty()) {                   // a paragraph break inside the quote
                 open = -1;
+                quoteHtml = -1;
                 continue;
             }
+            // An HTML block in the quote takes its lines to a blank one.
+            if (quoteHtml >= 0 && quoteHtmlGroup == quoteGroup && depth >= quoteHtmlDepth) {
+                Block& hb = d.blocks[(size_t)quoteHtml];
+                hb.text.push_back({ct, (int)i});
+                hb.last = (int)i;
+                continue;
+            }
+            quoteHtml = -1;
             // The outer quote's items a new block on this line belongs to:
             // those whose text starts no further in than it does.
             const size_t at = depth == 1 ? inner : nestAt;
@@ -2664,13 +2772,41 @@ Doc analyze(const std::string& md) {
                 qb.edit = quoteEdit;
                 return qb;
             };
-            const int alert = firstLine && depth == 1 ? alertKind(ct) : 0;
+            // GitHub makes an alert only of a quote of its own: not one in
+            // a list item, nor one in a quote.
+            const int alert = firstLine && depth == 1 && quoteOuter == 0 ? alertKind(ct) : 0;
             ListMarker m;
+            bool qpre = false;
+            int qhtml = 0;
             if (alert) {
                 Block& qb = quoted(Block::Para);
                 qb.title = true;
                 qb.text.push_back({alertTitle(alert), (int)i});
                 alerts[quoteGroup] = alert;
+                alertMarkers[quoteGroup] = {(int)d.blocks.size() - 1, ct};
+                alertTitleLine = i;
+                open = -1;
+            } else if (inner < 4 && isFenceOpen(ct, fenceChar, fenceLen, &info)) {
+                // A fenced code block in the quote (a command in a note).
+                settleQuoteList();
+                Block& qb = quoted(Block::Code);
+                qb.math = info == "math";
+                qb.lang = info;
+                qb.label = fenceLabel(ct);
+                quoteFence = (int)d.blocks.size() - 1;
+                quoteFenceDepth = depth;
+                quoteFenceIndent = inner;
+                open = -1;
+            } else if (inner < 4 && ct[0] == '<' && !parseHtmlHeading(ct, level, a, b) &&
+                       (qhtml = htmlBlockStart(ct, open >= 0, &qpre)) >= 6 && !qpre) {
+                // A block-level tag (<details>, <div>): HTML to the quote's
+                // next blank line, as outside a quote.
+                settleQuoteList();
+                Block& qb = quoted(Block::Html);
+                qb.text.push_back({ct, (int)i});
+                quoteHtml = (int)d.blocks.size() - 1;
+                quoteHtmlGroup = quoteGroup;
+                quoteHtmlDepth = depth;
                 open = -1;
             } else if (parseAtx(ct, level, a, b)) {
                 settleQuoteList();
@@ -2738,8 +2874,11 @@ Doc analyze(const std::string& md) {
                 // deeper ones close, its earlier sibling's numbering kept.
                 while (!list.empty() && cols < list.back().content) list.pop_back();
                 const ListMarker shown = numbered(numbering, list.size(), m);
-                list.push_back({cols, cols + (m.empty ? m.written.size() + 1 : m.textStart)});
+                const int parent = list.empty() ? -1 : list.back().item;
+                list.push_back({cols, cols + (m.empty ? m.written.size() + 1 : m.textStart),
+                                (int)d.blocks.size()});
                 Block& it = newBlock(Block::Item, (int)i);
+                it.parentItem = parent;
                 it.edit = editIds++;
                 it.listish = true;
                 it.depth = (int)list.size();
@@ -2785,6 +2924,7 @@ Doc analyze(const std::string& md) {
         if (shallow && open < 0 && parseLinkDef(body, label, dest)) {
             d.refs.emplace(normalizeLabel(label), dest);   // the first definition wins
             L.kind = MdLine::Hidden;
+            endContainers(cols);   // as a comment does
             continue;
         }
 
@@ -2799,6 +2939,21 @@ Doc analyze(const std::string& md) {
             blank = false;
             continue;
         }
+        // A lazy line right after an alert's title is the alert's text, as
+        // it continues the title's paragraph on GitHub.
+        if (quoteGroup >= 0 && alertTitleLine != std::string::npos && alertTitleLine + 1 == i &&
+            alertMarkers.count(quoteGroup)) {
+            Block& qb = newBlock(Block::Para, (int)i);
+            qb.quote = true;
+            qb.quoteGroup = quoteGroup;
+            qb.quoteDepth = 1;
+            qb.edit = quoteEdit;
+            qb.text.push_back({body, (int)i});
+            L.kind = MdLine::Text;
+            L.block = quoteEdit;
+            open = (int)d.blocks.size() - 1;
+            continue;
+        }
         quoteGroup = -1;
         settleList(cols);
         Block& p = newBlock(Block::Para, (int)i);
@@ -2811,6 +2966,18 @@ Doc analyze(const std::string& md) {
         L.kind = MdLine::Text;
         L.block = p.edit;
         open = (int)d.blocks.size() - 1;
+    }
+    // An alert with nothing in it but its marker is a quote of that
+    // marker, as on GitHub.
+    for (const auto& marker : alertMarkers) {
+        bool content = false;
+        for (const Block& b : d.blocks)
+            if (b.quote && b.quoteGroup == marker.first && !b.title) content = true;
+        if (content) continue;
+        Block& t = d.blocks[(size_t)marker.second.first];
+        t.title = false;
+        t.text = {{marker.second.second, t.first}};
+        alerts.erase(marker.first);
     }
     // Every block of an alert's quote is in the alert.
     if (!alerts.empty())
@@ -2838,7 +3005,19 @@ void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRu
     case Block::Para:
         if (b.title) base.bold = true;
         inlineRuns(b.text, base, ctx, out);
-        if (out.size() > start) out.push_back(std::move(end));
+        if (out.size() > start) {
+            // The paragraph's end goes with its last run, a <summary> in it too.
+            if (ctx.details && ctx.details->changes != before) {
+                const MdRun& last = out.back();
+                end.details = last.details;
+                end.detailsLine = last.detailsLine;
+                end.detailsIndex = last.detailsIndex;
+                end.detailsAt = last.detailsAt;
+                end.summary = last.summary;
+                end.detailsOpen = last.detailsOpen;
+            }
+            out.push_back(std::move(end));
+        }
         break;
     case Block::Heading: {
         base.heading = b.level;
@@ -2896,6 +3075,8 @@ void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRu
             const MdRun& last = out.back();
             end.details = last.details;
             end.detailsLine = last.detailsLine;
+            end.detailsIndex = last.detailsIndex;
+            end.detailsAt = last.detailsAt;
             end.summary = last.summary;
             end.detailsOpen = last.detailsOpen;
             out.push_back(std::move(end));
@@ -2938,6 +3119,8 @@ void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRu
             r.lang = b.lang;
             r.label = b.label;
             r.quote = b.quote;
+            r.quoteDepth = base.quoteDepth;   // a code block in a quote (or an alert)
+            r.quoteIndent = base.quoteIndent;
             r.listDepth = b.depth;   // in a list item, at its indent
             r.text = line.first + "\n";
             r.line = line.second;
@@ -3010,6 +3193,20 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
     bool any = false;
     auto emit = [&](const Block& b) {
         const size_t mark = out.size();
+        // A <details> left open in a list item or a quote ends with it.
+        auto holds = [&](const Details::Open& o) {
+            if (o.quote >= 0 && !(b.quote && b.quoteGroup == o.quote)) return false;
+            if (o.item < 0) return true;
+            for (int it = b.item; it >= 0; it = d.blocks[(size_t)it].parentItem)
+                if (it == o.item) return true;
+            return false;
+        };
+        size_t kept = 0;
+        while (kept < details.stack.size() && holds(details.stack[kept])) kept++;
+        details.stack.resize(kept);
+        details.blockQuote = b.quote ? b.quoteGroup : -1;
+        details.blockItem = b.item;
+        details.blockAt = b.depth + (b.quote ? std::max(1, b.quoteDepth) : 0);
         // The items of a list sit together unless a blank line parts them,
         // or one is in a quote the other is not in.
         const bool together = prev.listish && b.listish && !b.blankBefore &&
@@ -3122,7 +3319,7 @@ std::vector<MdRun> MarkdownParser::fold(const std::vector<MdRun>& runs,
     if (!any) return runs;
 
     struct Level {
-        int line = -1;
+        int line = -1, index = 0;
         bool open = true;
         bool summarySeen = true;
     };
@@ -3140,6 +3337,8 @@ std::vector<MdRun> MarkdownParser::fold(const std::vector<MdRun>& runs,
         t.footnotes = from.footnotes;
         t.details = from.details;
         t.detailsLine = from.detailsLine;
+        t.detailsIndex = from.detailsIndex;
+        t.detailsAt = from.detailsAt;
         t.detailsOpen = from.detailsOpen;
         t.summary = true;
         t.line = from.detailsLine >= 0 && from.line < 0 ? from.detailsLine : from.line;
@@ -3155,11 +3354,13 @@ std::vector<MdRun> MarkdownParser::fold(const std::vector<MdRun>& runs,
             shown.push_back(1);
             continue;
         }
-        if (!(levels.size() >= d && levels[d - 1].line == r.detailsLine)) {
+        if (!(levels.size() >= d && levels[d - 1].line == r.detailsLine &&
+              levels[d - 1].index == r.detailsIndex)) {
             if (levels.size() > d - 1) levels.resize(d - 1);
             while (levels.size() < d - 1) levels.push_back(Level());   // not seen: open
             Level l;
             l.line = r.detailsLine;
+            l.index = r.detailsIndex;
             l.open = isOpen ? isOpen(r.detailsLine, r.detailsOpen) : r.detailsOpen;
             l.summarySeen = false;
             levels.push_back(l);

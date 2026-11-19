@@ -75,7 +75,7 @@ found through that list.
   reaches no `openURL:`, and a real click (mouse down and up handed to
   the web view) asks and opens. The GTK port can tell the two apart
   (WebKitGTK's `webkit_navigation_action_is_user_gesture`), and does
-  (HANDOFF item 122; `HtmlPage::follow(nav, gestureKnown)`,
+  (HANDOFF item 123; `HtmlPage::follow(nav, gestureKnown)`,
   `htmlpage:app-gesture`): a followed link to another app asks only when
   the user's click or key made it, in a `Question::ask` window over the
   app's with the Mac's words and buttons (Open, then Cancel; Return
