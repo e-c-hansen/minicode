@@ -104,8 +104,13 @@ NSString *ApplyKeepSorted(NSTextView *tv, const KeepSorted::Edit &e, NSString *a
 
 }  // namespace
 
+// Past this many units the indentation commands leave the key to AppKit:
+// each copies the whole text (AutoIndent reads from the top), 520 MB a
+// Return in a 260 MB log. Return then just breaks the line.
+static const NSUInteger kIndentTextLimit = 16u << 20;
+
 BOOL MCIndentCommand(NSTextView *tv, SEL command, NSString *path, BOOL markdown) {
-    if (!tv.editable || tv.hasMarkedText) return NO;
+    if (!tv.editable || tv.hasMarkedText || tv.string.length > kIndentTextLimit) return NO;
     const std::string name = FileName(path);
     const NSRange sel = tv.selectedRange;
     const size_t a = sel.location, b = NSMaxRange(sel);
@@ -173,7 +178,7 @@ void MCIndentDidChange(NSTextView *tv, NSString *path) {
     const NSUInteger caret = at.unsignedIntegerValue;
     const NSRange sel = tv.selectedRange;
     if (gApplying || sel.length != 0 || sel.location != caret || caret > tv.string.length ||
-        tv.hasMarkedText)
+        tv.hasMarkedText || tv.string.length > kIndentTextLimit)
         return;
     // Only a closer first on its line, or a colon on a line starting with
     // one of Python's dedenting words, can move it: look at the line before

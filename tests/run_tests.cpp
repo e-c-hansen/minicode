@@ -4061,8 +4061,9 @@ void testSettings() {
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
     // editor.session-web-idle-minutes, and editor.wrapping-indent, and
-    // terminal.mac-style-keys, and terminal.close-on-exit.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 145);
+    // terminal.mac-style-keys, and terminal.close-on-exit, and
+    // files.hot-exit.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 146);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -5367,6 +5368,15 @@ void testSettings() {
             CHECK(ie.size() == 1 && ie[0].message.find("minutes") != std::string::npos);
         }
         CHECK(parseSettings("editor.auto-save-delay = 600000\n").autoSaveDelay() == 600000);
+        // files.hot-exit: on-exit unless turned off.
+        CHECK(parseSettings("").hotExit() == Settings::HotExit::OnExit);
+        CHECK(parseSettings("files.hot-exit = off\n").hotExit() == Settings::HotExit::Off);
+        CHECK(parseSettings("files.hot-exit = on-exit\n").hotExit() == Settings::HotExit::OnExit);
+        {
+            std::vector<SettingsError> he;
+            CHECK(parseSettings("files.hot-exit = on-close\n", &he).hotExit() == Settings::HotExit::OnExit);
+            CHECK(he.size() == 1);
+        }
         for (const char *bad : {"editor.auto-save = afterDelay\n", "editor.auto-save = on\n",
                                 "editor.auto-save-delay = 99\n",
                                 "editor.auto-save-delay = 600001\n",

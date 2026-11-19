@@ -54,6 +54,38 @@ struct Tab {
     long into = 0;
 };
 
+// One side of a comparison as it is made again when its tab comes back:
+// the file on disk (rev ""), or the file as git has it at a revision (rev
+// "HEAD", a commit's hash) or in the index (rev ":"). A side git does not
+// have (a file added since) is empty.
+struct ComparedSide {
+    std::string path;    // absolute
+    std::string rev;
+    std::string label;   // its pane's header, as it was
+};
+
+// A tab that shows no file (2026-11-18), brought back by making it again
+// from git and the disk rather than from what it showed: "review" (the
+// window's Uncommitted Changes), "commit" (a commit's page: `ref` its hash,
+// `title` the tab's) or "compare" (a side-by-side comparison of `left` and
+// `right`: `title` the tab's, `fileName` the name its colors go by). Kept
+// apart from the files (Session::pages), so a mutible from before, or the
+// GTK port, reads the files as it always did and leaves these out.
+struct PageTab {
+    std::string kind;
+    int at = 0;   // its place among the window's tabs, the files counted too
+    std::string ref;
+    std::string title;
+    std::string fileName;
+    ComparedSide left, right;
+};
+// The kinds above; a page of another kind does not read.
+bool isPageKind(const std::string &kind);
+// A revision a side may name: "", ":" (the index), or a ref of letters,
+// digits and . _ / ~ ^ - that starts with none of - . / (no option, no
+// path), at most 200 bytes.
+bool isComparedRev(const std::string &rev);
+
 // One browser tab of a window: its address, its title and WebKit's record
 // of its history and scroll (base64; empty when there is none). A tab whose
 // record is left out still comes back at its address (BrowserTabs.h).
@@ -93,6 +125,11 @@ struct Session {
     // port checks each still names a folder (TreeFocus::restoredSet)
     // before it uses them.
     std::vector<std::string> treeFocus;
+    // Its tabs that show no file (PageTab), in tab order, and which of them
+    // was on show (-1: a file was, or none); `active` then names the file
+    // shown last, which a mutible from before shows instead.
+    std::vector<PageTab> pages;
+    int activePage = -1;
 };
 
 // Every folder's, by its resolved path.
@@ -113,7 +150,7 @@ Sessions decode(const std::string &text);
 Session merged(const Session &mine, const std::vector<Session> &others);
 
 // `s` as the folder's session, written at `now`; a session with no tab
-// (and no browser tab or tree focus) removes the folder. Past `max` folders, those written longest ago go.
+// (and no page, browser tab or tree focus) removes the folder. Past `max` folders, those written longest ago go.
 void put(Sessions &all, const std::string &key, Session s, double now,
          size_t max = kMaxFolders);
 
@@ -232,6 +269,15 @@ std::vector<Window> mergeWindows(const std::vector<Window> &mine, const std::vec
 // give two windows on one folder, each writing over the other).
 std::vector<Window> toRestore(const std::vector<Window> &stored, const Process &me,
                               IsRunning running, void *context);
+
+// The stored window a folder opened by name (the command line, Finder, a
+// window per folder with backups) comes back as, VS Code's way of reopening
+// a folder with its editors and panels (2026-11-18): the first on `root`
+// that neither another running mutible holds open nor `me` wrote (a window
+// this process closed went with its own tabs to the folder's session); -1
+// for none, and the folder's session alone brings its tabs back.
+int toReopen(const std::vector<Window> &stored, const std::string &root, const Process &me,
+             IsRunning running, void *context);
 
 // Where a saved frame goes on the screens there are now (their visible
 // frames, the main screen first): where it was when it lies on a screen,

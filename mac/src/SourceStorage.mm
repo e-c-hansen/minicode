@@ -1,6 +1,7 @@
 // SourceStorage.mm — see SourceStorage.h.
 #import "SourceStorage.h"
 #import "WrapIndentContainer.h"
+#import "PieceString.h"
 #include <vector>
 #include "InlayHints.h"
 #include "MultiCaret.h"
@@ -40,15 +41,20 @@ bool GapAttribute(NSAttributedStringKey name) {
 // Whether every character in `range` is printable ASCII, a tab or a line
 // break: characters every font the editor uses has, so font substitution
 // finds nothing to do in them.
+// A block at a time with no early exit inside it, which the compiler turns
+// into vector compares: a 260 MB log is checked in a few tens of ms.
 BOOL OnlyPlainAscii(NSString *string, NSRange range) {
     unichar buf[4096];
     for (NSUInteger at = range.location, end = NSMaxRange(range); at < end;) {
         const NSUInteger n = MIN((NSUInteger)4096, end - at);
         [string getCharacters:buf range:NSMakeRange(at, n)];
+        unsigned bad = 0;
         for (NSUInteger i = 0; i < n; i++) {
             const unichar c = buf[i];
-            if ((c < 0x20 || c > 0x7E) && c != '\t' && c != '\n' && c != '\r') return NO;
+            bad |= (unsigned)((unichar)(c - 0x20) > 0x5E) & (unsigned)(c != '\t') &
+                   (unsigned)(c != '\n') & (unsigned)(c != '\r');
         }
+        if (bad) return NO;
         at += n;
     }
     return YES;
@@ -361,8 +367,9 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
         _willReplaceAllCharacters();
     if (_willReplaceAll && range.location == 0 && range.length == _store.length && range.length)
         _willReplaceAll();
+    const NSRange inStore = [self letGoOfLargeTextFor:range];
     [self styleRunReplaced:range length:str.length joins:[self plainTextJoinsStyleRun:range]];
-    [_store replaceCharactersInRange:range withString:str];
+    [_store replaceCharactersInRange:inStore withString:str];
     _charEdits++;
     [self noteReplacement:range length:str.length];
     [self moveGapsForEdit:range newLength:str.length];
@@ -511,12 +518,45 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
 
 - (NSUInteger)length { return _store.length; }
 
+// ---- a large text held without a copy (SourceStorage.h)
+- (BOOL)holdsLargeText { return [_store isKindOfClass:MCPieceAttributedString.class]; }
+
+- (void)holdLargeText:(NSString *)text attributes:(NSDictionary *)attributes {
+    text = [text copy] ?: @"";
+    const NSRange all = NSMakeRange(0, _store.length);
+    [self beginEditing];
+    if (_willReplaceCharacters) _willReplaceCharacters(all, text);
+    if (_willReplaceAllCharacters) _willReplaceAllCharacters();
+    if (_willReplaceAll && all.length) _willReplaceAll();
+    [self styleRunReplaced:all length:text.length joins:NO];
+    _store = [[MCPieceAttributedString alloc] initWithText:text attributes:attributes];
+    _charEdits++;
+    [self noteReplacement:all length:text.length];
+    [self moveGapsForEdit:all newLength:text.length];
+    if (_onReplaceCharacters) _onReplaceCharacters(all, text.length);
+    [self edited:NSTextStorageEditedCharacters | NSTextStorageEditedAttributes range:all
+        changeInLength:(NSInteger)text.length - (NSInteger)all.length];
+    [self endEditing];
+}
+
+// Every character is about to be replaced: an ordinary store again, so the
+// next text (another tab's, a preview's) is held as before. The range to
+// replace in the store: none of the new, empty one.
+- (NSRange)letGoOfLargeTextFor:(NSRange)range {
+    if (range.location == 0 && range.length == _store.length && self.holdsLargeText) {
+        _store = [[NSMutableAttributedString alloc] init];
+        return NSMakeRange(0, 0);
+    }
+    return range;
+}
+
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(NSAttributedString *)attr {
     if (_willReplaceCharacters) _willReplaceCharacters(range, attr.string);
     if (_willReplaceAllCharacters && range.location == 0 && range.length == _store.length)
         _willReplaceAllCharacters();
     if (_willReplaceAll && range.location == 0 && range.length == _store.length && range.length)
         _willReplaceAll();
+    const NSRange inStore = [self letGoOfLargeTextFor:range];
     if (_styleRunKnown) {
         // Whether every new character has the run's paragraph style.
         __block BOOL joins = YES;
@@ -528,7 +568,7 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
         }];
         [self styleRunReplaced:range length:attr.length joins:joins];
     }
-    [_store replaceCharactersInRange:range withAttributedString:attr];
+    [_store replaceCharactersInRange:inStore withAttributedString:attr];
     _charEdits++;
     [self noteReplacement:range length:attr.length];
     [self moveGapsForEdit:range newLength:attr.length];

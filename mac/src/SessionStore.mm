@@ -127,6 +127,20 @@ bool MCSessionsIsRunning(long pid, double start, void *) {
     return now > 0 && fabs(now - start) < 1.0;
 }
 
+BOOL MCSessionsWindowToReopen(NSString *root, TabSessions::Window *out) {
+    const TabSessions::Store store = MCSessionsRead();
+    auto resolved = [](NSString *p) {
+        return std::string(p.stringByResolvingSymlinksInPath.UTF8String ?: "");
+    };
+    std::vector<TabSessions::Window> spelled = store.windows;
+    for (TabSessions::Window &w : spelled) w.root = resolved(@(w.root.c_str()) ?: @"");
+    const int i = TabSessions::toReopen(spelled, resolved(root ?: @""), MCSessionsThisProcess(),
+                                        MCSessionsIsRunning, nullptr);
+    if (i < 0) return NO;
+    *out = store.windows[(size_t)i];
+    return YES;
+}
+
 std::vector<TabSessions::Window> MCSessionsWindowsToRestore(void) {
     return TabSessions::toRestore(MCSessionsRead().windows, MCSessionsThisProcess(),
                                   MCSessionsIsRunning, nullptr);

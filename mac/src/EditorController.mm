@@ -111,8 +111,9 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     // folder's next window (EditorController+Session.mm).
     [self detachFromSessionHost];
     [_agent close];
-    // Asked already (windowShouldClose:): what is still unsaved was let go.
-    for (MCTab *t in [self tabs]) [self discardBackupOf:t];
+    // Asked already (windowShouldClose:): what is still unsaved was let go,
+    // unless quitting kept it for the next launch (hot exit).
+    [self discardBackupsAsWindowCloses];
     for (MCTab *t in [self tabs]) [t.latex stopPreview];   // no typeset or output folder outlives it
     _closing = YES;
     [self stopSavePlan];   // nothing more written for it on a timer

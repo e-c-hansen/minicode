@@ -37,6 +37,10 @@ void MCSessionsPutWindows(const std::vector<TabSessions::Window> &windows);
 // The windows a launch with nothing to open brings back: the stored ones
 // but those another running mutible holds open (TabSessions::toRestore).
 std::vector<TabSessions::Window> MCSessionsWindowsToRestore(void);
+// The window the record keeps on `root` for a folder opened by name
+// (TabSessions::toReopen, each folder compared with its links resolved);
+// NO when there is none.
+BOOL MCSessionsWindowToReopen(NSString *root, TabSessions::Window *out);
 // This process as the windows record names it, and whether a process it
 // names runs now (pid and start time, as the backups' owners).
 TabSessions::Process MCSessionsThisProcess(void);
