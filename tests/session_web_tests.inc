@@ -1236,6 +1236,132 @@ static void testSessionWeb() {
         }
     }
 
+    // Closed windows (stage 6): a record whose renderer went, or that a
+    // closing window left on the host detached for the folder's next
+    // window, is no window on the page; its documents still are, and a
+    // window taking the record over shows again.
+    GROUP("sessionweb:closed-windows");
+    {
+        auto record = [](int connected, int detached) {
+            Json r = Json::object();
+            if (connected >= 0) r.set("connected", Json(connected == 1));
+            Json tabs = Json::object();
+            if (detached >= 0) tabs.set("detached", Json(detached == 1));
+            r.set("tabs", std::move(tabs));
+            return r;
+        };
+        CHECK(Web::windowOpen(record(1, -1)));
+        CHECK(Web::windowOpen(record(-1, -1)));   // a host from before `connected`
+        CHECK(Web::windowOpen(record(1, 0)));
+        CHECK(!Web::windowOpen(record(0, -1)));
+        CHECK(!Web::windowOpen(record(1, 1)));
+        CHECK(!Web::windowOpen(record(0, 1)));
+
+        std::mutex routesMu;
+        std::map<Shared::ClientId, Shared::Client*> routes;
+        Shared::SessionHost host([&](Shared::ClientId to, Message&& m) {
+            std::lock_guard<std::mutex> lk(routesMu);
+            auto it = routes.find(to);
+            if (it != routes.end()) it->second->deliver(std::move(m));
+        });
+        auto join = [&](Shared::Client& c) {
+            const Shared::ClientId id = host.connect();
+            {
+                std::lock_guard<std::mutex> lk(routesMu);
+                routes[id] = &c;
+            }
+            c.connect([&host, id](Message&& m) { host.post(id, std::move(m)); });
+            return id;
+        };
+        auto tabsOf = [](Shared::DocId d, const std::string& path) {
+            Json t = Json::object();
+            t.set("doc", Json((int64_t)d));
+            t.set("path", Json(path));
+            Json tabs = Json::array();
+            tabs.push(std::move(t));
+            Json g = Json::object();
+            g.set("tabs", std::move(tabs));
+            g.set("active", Json((int64_t)d));
+            Json groups = Json::array();
+            groups.push(std::move(g));
+            Json w = Json::object();
+            w.set("root", Json("/w"));
+            w.set("focused", Json(0));
+            w.set("groups", std::move(groups));
+            return w;
+        };
+        Shared::Client editor(Model::Unit::Utf16, "editor"), other(Model::Unit::Utf16, "other");
+        join(editor);
+        const Shared::ClientId otherId = join(other);
+        editor.open(1, "/w/a.txt", "a\n", nullptr);
+        editor.open(2, "/w/b.txt", "b\n", nullptr);
+        other.open(3, "/w/c.txt", "c\n", nullptr);
+        editor.windowTabs(5, tabsOf(1, "/w/a.txt"));   // open
+        Json left = tabsOf(2, "/w/b.txt");
+        left.set("detached", Json(true));               // a closing window's
+        editor.windowTabs(6, left);
+        editor.detach(2);
+        other.windowTabs(7, tabsOf(3, "/w/c.txt"));
+        CHECK(editor.settle() && other.settle());
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes.erase(otherId);
+        }
+        host.disconnect(otherId);   // its renderer goes: window 7 is closed
+        CHECK(editor.settle());
+
+        Web::Server web;
+        Web::Options o;
+        o.folder = "/w";
+        o.pollMs = 100;
+        o.connect = [&](Shared::Client& c) -> std::function<void()> {
+            const Shared::ClientId id = join(c);
+            return [&, id] {
+                {
+                    std::lock_guard<std::mutex> lk(routesMu);
+                    routes.erase(id);
+                }
+                host.disconnect(id);
+            };
+        };
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        {
+            PageClient p;
+            CHECK(p.upgrade(web.port(), "/ws?t=" + web.token()));
+            Json state;
+            auto take = [&](const Json& m) {
+                if (m["t"].asString() == "state") state = m;
+            };
+            auto actives = [&] {
+                std::string out;
+                for (const Json& w : state["windows"].elements())
+                    out += std::to_string(w["groups"][0]["active"].asInt()) + " ";
+                return out;
+            };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            // Window 5 only; every document still listed.
+            CHECK(actives() == "1 ");
+            if (actives() != "1 ") std::printf("  closed-windows: %s\n", state.dump().c_str());
+            CHECK(state["docs"].size() == 3);
+            // The folder's next window takes record 6 over: shown again.
+            editor.open(2, "/w/b.txt", "", nullptr);
+            editor.windowTabs(6, tabsOf(2, "/w/b.txt"));
+            CHECK(editor.settle());
+            web.lookNow();
+            CHECK(p.pump(take, [&] { return actives() == "1 2 "; }, 5000));
+            p.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0; }));
+        }
+        web.stop();
+        webThread.join();
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes.clear();
+        }
+    }
+
     // A page that edits (stage 8b): its edits reach the host and the
     // window's renderer, crossing the renderer's own in flight and ending
     // on one text; Return takes the core's indentation; undo is the host's;
