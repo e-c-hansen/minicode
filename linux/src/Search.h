@@ -9,6 +9,16 @@
 // click, or Enter) hands it to the open callback, which opens the file at
 // that line.
 //
+// The panes take the keyboard as on the Mac (#210, Search.mm): a single
+// click on a match shows it in the preview tab, the keyboard staying in the
+// results, where the arrows move between matches and Enter opens one in a
+// tab of its own (which, like a double-click, brings the editor window up).
+// A pane command pressed in this window (Ctrl+` or Ctrl+Shift+T for the
+// terminal, the palette, the hints, the sidebar's panels: kPaneCommands in
+// Search.cpp) goes to the editor window, which takes the keyboard first; a
+// toggle (the terminal, the browser) shows its pane and focuses it, never
+// hides it, as the Mac's AppDelegate currentForPane: does.
+//
 // Searching runs on a GTask worker thread. Every new search bumps a generation
 // counter and raises the previous search's cancel flag, and a result that comes
 // back from a superseded generation is dropped, so typing quickly never shows a
@@ -27,6 +37,19 @@
 //     another window follows the disk).
 //   - Ctrl+Shift+1 on a selected row replaces only that row's match, and
 //     only while its line still reads as it did when searched.
+//   - Enter in the replacement never replaces: it does what Enter in the
+//     query does (searches, or goes into the results when they answer the
+//     query), as VS Code's search view and the Mac's since #210. Replace
+//     All is its button or Ctrl+Alt+Enter (editor.action.replaceAll) while
+//     the replace row shows, and both ask the same question.
+//   - A row's × (shown while the pointer is over it or it is selected), or
+//     Delete in the results, dismisses its line; its right click menu
+//     dismisses it or its whole file. A dismissed row leaves the results,
+//     and Replace All leaves its matches alone until the next search
+//     (FolderReplaceExclusions, FolderSearch::excludeDismissed and
+//     dismissedLines; TextFind::dropEditsOnLines in a tab); a file whose
+//     dismissed line no longer reads as its row showed is left alone whole
+//     and named.
 //   - What was done goes in the status line, before the new results.
 //
 // The same panel, made with Mode::Todos, is the TODOs window (Ctrl+Shift+D):
@@ -69,6 +92,11 @@ public:
     SearchPanel& operator=(const SearchPanel&) = delete;
 
     void setOpenCallback(OpenCb cb, void* user) { openCb_ = cb; openUser_ = user; }
+    // A pane command (a registry id of kPaneCommands) pressed in this
+    // window: the editor window runs it, taking the keyboard first.
+    void setPaneCommand(std::function<void(const std::string& commandId)> run) {
+        paneCommand_ = std::move(run);
+    }
     OpenCb openCallback() const { return openCb_; }   // the harness wraps it with a slow one
     void*  openCallbackUser() const { return openUser_; }
     // Replace in Folder's view of the tabs: every window's editor, asked
@@ -97,6 +125,11 @@ public:
     void replaceAll();
     // The match row `row` stands for, alone.
     void replaceMatchAt(guint row);
+    // Dismiss row `row` (its line), or every row of its file: they leave
+    // the results, and Replace All leaves them alone until the next search.
+    void dismissRow(guint row);
+    void dismissFileOf(guint row);
+    const FolderReplaceExclusions& dismissed() const { return dismissed_; }
 
     // For the checks, and for anyone who needs to look inside.
     GtkWidget* window() const { return window_; }
@@ -111,6 +144,7 @@ public:
     GtkWidget* preserveButton() const { return preserve_; }
     GtkWidget* replaceAllButton() const { return replaceAllButton_; }
     GtkWidget* detailsButton() const { return details_; }
+    GtkWidget* rowMenu() const { return rowMenu_; }   // the right click menu, while up
     bool replaceShown() const { return replaceShown_; }
     const std::vector<FolderSearchMatch>& matches() const { return hits_; }
     bool searching() const { return searching_; }
@@ -145,7 +179,11 @@ private:
     Hold holdOf(const std::string& path, Document** here) const;
     void planned(PlanJob* job);
     void replaceInPaths(const std::vector<std::string>& paths, const FolderSearchMatch* hit,
-                        std::vector<std::string> held);
+                        std::vector<std::string> held, const FolderReplaceExclusions& dismissed);
+    void removeRows(const std::function<bool(const FolderSearchMatch&)>& gone);
+    void showDismissedStatus();
+    void showRowMenu(guint row, double x, double y);
+    void fieldReturn();     // Enter in the query or the replacement
     void written(WriteJob* job);
 
     static void onSearchChanged(GtkSearchEntry* e, gpointer self);
@@ -155,6 +193,8 @@ private:
                                GdkModifierType mods, gpointer self);
     static void onRowPressed(GtkGestureClick* g, int n, double x, double y, gpointer self);
     static void onRowReleased(GtkGestureClick* g, int n, double x, double y, gpointer self);
+    static void onRowMenu(GtkGestureClick* g, int n, double x, double y, gpointer self);
+    bool runPaneKey(GdkEvent* key);   // a pane command's key, run in the editor window
     static gboolean onListKey(GtkEventControllerKey* c, guint keyval, guint keycode,
                               GdkModifierType mods, gpointer self);
     static gboolean onWindowKey(GtkEventControllerKey* c, guint keyval, guint keycode,
@@ -175,6 +215,7 @@ private:
     GtkWidget*     status_     = nullptr;
     GtkWidget*     listView_   = nullptr;
     GtkStringList* rows_       = nullptr;   // one display string per match
+    GtkWidget*     rowMenu_    = nullptr;   // a row's right click menu, while up
     guint          pressRow_   = GTK_INVALID_LIST_POSITION;   // where a click began
     guint32        pressTime_  = 0;
     ClickCount     clicks_;
@@ -205,12 +246,16 @@ private:
     bool        searching_  = false;
     bool        replaceShown_ = false;
     bool        replacing_ = false;         // a Replace All or Replace Match under way
+    // The rows dismissed since the last search, which Replace All leaves
+    // alone (the Mac's _dismissed).
+    FolderReplaceExclusions dismissed_;
     std::string afterNote_;                 // what a replace did, shown with the next results
     bool        afterNoteError_ = false;
     std::shared_ptr<std::atomic<bool>> cancel_;   // the running search's flag
 
     OpenCb openCb_   = nullptr;
     void*  openUser_ = nullptr;
+    std::function<void(const std::string&)> paneCommand_;
     std::function<std::vector<Editor*>()> editors_;
     Editor* mine_ = nullptr;
     // A finished search checks this before touching the panel, which may
