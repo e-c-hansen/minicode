@@ -7064,3 +7064,109 @@ they do in Terminal.app.
   window, as item 110 read them, and whether its Super+Alt keymap for
   mutible is wanted), and GNOME on Wayland, where the harness's X11 Super
   (Mod4) cannot speak for GDK's Super mask.
+
+### 115. Tabs: whole names and a scrolling row, as VS Code's tabSizing "fit" (November 2026)
+
+The Mac's #211 brought to GTK with the same core calls
+(`EditorTabs::tabNames` through `Model::Window::tabNames`, `layoutStrip`,
+`clampScroll`, `revealScroll`, `wheelScroll`, `dragAutoScroll`,
+`clipped`, `fitName` and its `fitMiddle`; none of their logic copied).
+
+- **What a user meets.** A tab keeps its natural width, its whole title,
+  80 to 320 pixels, and is never squeezed: before this, every title had a
+  30-character cap and Pango's middle ellipsis. Only a title wider than
+  the widest tab is cut, in the middle ("a_rather_long_modul…_their_
+  summaries.py"). A row wider than the strip scrolls sideways by the wheel,
+  vertical too, or a touchpad, with a thin bar along the bottom while the
+  pointer is over it and fades over the cut-off ends; the tab on show
+  comes into view whenever it is another tab (a new active index, a row of
+  another length, its title or path changed by a preview replaced) and
+  when the strip gets a new width, never for an unsaved-changes dot. Files
+  of one name show the name and, after it, smaller and dimmed, the
+  folders that tell them apart ("index.ts app", "index.ts lib"), where
+  "one/README.md" was one label. A tab still drags along its row, and
+  held near either end the row scrolls under it each frame. The terminal
+  dock's and the browser's strips are the same class and behave the same;
+  their titles have no hints.
+- **Code.** `linux/src/TabStrip.{h,cpp}`: the scrolled window and its
+  inner box are gone. The tabs are children of `row_`, a GtkBox whose
+  layout is a `gtk_custom_layout_new` (as `Groups.cpp`'s), clipped
+  (`GTK_OVERFLOW_HIDDEN`), asking no width and only its natural height as
+  the scroller did. `rowAllocate` places each tab at `layoutStrip`'s x
+  less the scroll, at its width, then the two fades and the bar, which
+  never take a click (`gtk_widget_set_child_visible` by `clipped` and the
+  pointer). A tab's natural width is GTK's measure of its box less its
+  names box (`chrome`: padding, the gap, the close button) plus its whole
+  title and hint measured with Pango in each label's own font (the CSS's
+  italics and sizes), so it never depends on what the labels show cut, and
+  `fitTitles` puts `fitName`'s result in the labels in `setItems`, and
+  again from an idle when a layout finds the fonts changed since
+  (`tabs.font-size`, a strip not yet on screen). The tabs are measured
+  only when GTK asked the row's size again (`rowMeasure` marks it), never
+  for a scroll. The wheel is a `GtkEventControllerScroll` on the row,
+  both axes, its deltas negated (GTK's point the way the view goes, the
+  core's the way the content goes), a notch 48 pixels, a touchpad's
+  pixels as they are where GDK says they are pixels
+  (`GDK_SCROLL_UNIT_SURFACE`, Wayland; X11 gives a touchpad fractional
+  notches); over a row that fits it lets the event go.
+  A capture-phase motion controller on the row sees a held tab's pointer
+  (the tab's click gesture keeps the drag) and starts a tick callback
+  scrolling by `dragAutoScroll` (28 pixels from an end, 14 a frame). The
+  press and release places are the tab's left edge in the whole row plus
+  the pointer's x in the tab, so a row scrolled meanwhile drops right
+  (`dropIndex` over the core's widths, not the allocations). Each tab is
+  a names box (the title, then the hint with a 5 pixel margin, on one
+  baseline) and the close label; the names box expands, so at 80 pixels
+  the close button stays at the right end. `Tabs.cpp`'s `refreshStrip`
+  and `Groups.cpp`'s `refreshMirror` take `tabNames` (a diff keeps its
+  title); `ThemeCss.cpp` adds `.minicode-tab-hint` (92%, opacity 0.55),
+  the fades in the strip's color and the bar in the sidebar text's at
+  0.45. Checks read `displayedTitle`, `displayedHint`, `hintWidget`,
+  `rowWidget`, `tabLeft`, `tabWidth`, `contentWidth` and `scrollOffset`
+  (as last laid out: read right after a title changed, it can be the old
+  layout's, even past the end).
+- **Trap: a reveal waiting for its frame undid a wheel.** `setItems`
+  only marks the reveal; the layout does it. In `browser_tabs` (two runs
+  in eight) the page's title came in, so the active tab's title changed,
+  and the wheel clicks arrived before the next frame: they scrolled the
+  row, and the layout after them revealed the active tab again, back at
+  the end. `settle()` now does the layout's pending work (measuring anew
+  if GTK has not, the reveal) before a wheel, a drag's press and each
+  auto-scroll frame, so the user's scroll goes on from where the row is
+  about to be. `tab_strip` sends Alt+1 and two wheel clicks in one step
+  and wants the row two notches from its start; with `settle` emptied it
+  failed three runs in three, and it passed eight browser_tabs runs in
+  eight after.
+- **The old strip squeezed.** The scrolled window gave its row the
+  view's width whenever the tabs' smallest widths (an ellipsis each) fit,
+  so its tabs shrank instead of scrolling, and `browser_tabs` clicked the
+  first tab and dragged it onto the last with five tabs in a 378 pixel
+  pane. They are 88 pixels each now, a row of 440 scrolled to the last;
+  the suite wheels the row back to its start before clicking the first,
+  and drags it by holding it at the strip's right end until the row has
+  scrolled to its end, then letting go.
+- **Checks.** `tab_strip` (TabStripSuite.cpp, 130 checks): seventeen
+  files (the Mac's fifteen, a.c and a 75-character name) in an 851 pixel
+  strip, a row of 2116; every title whole but the long one, which keeps
+  its first and last eight bytes around "…", and no label ellipsized by
+  Pango; widths 80 (a.c) to 320 (the long one), end to end, each where
+  GTK allocated it; the last tab in view at the row's end with the left
+  fade only; Alt+1 back to 0 with the right fade only, Ctrl+Page Up to
+  the end again; two wheel clicks up 96 pixels with the bar and both fades
+  and nothing chosen, one down 48; typing in a tab scrolled half out of
+  view put its dot there without moving the row, undone; the index.ts
+  tabs' hints, after the title, 12.3 pt to its 13.3; summary.py dragged
+  past config.json; a tab held at the strip's right end scrolling the row
+  to its end and dropped last; Alt+1 with two wheel clicks at once (the
+  trap above). With the reveal taken out 14 checks failed; with a reveal
+  on every `setItems`, the dot's. `tabs` now also checks the README.md
+  tabs' name and hint, and `browser_tabs` scrolls its row (above). With
+  `tabs`, `preview_tabs`, `tab_viewers`,
+  `split_editor`, `sessions`, `window_title`, `go_back`, `terminal_tabs`,
+  `terminal_splits`, `layout`, `adjust_settings`, `backups`,
+  `browser_tabs`, `themes`, `compare` and `owner_reports` passing. The
+  core's `tabs:names`, `tabs:strip-widths`, `tabs:strip-scroll` and
+  `tabs:fit-title` groups of `make test` are the Mac's.
+- **Needs a person:** a real touchpad's feel (its smooth deltas go in as
+  pixels, with no kinetic glide after the fingers lift, as the Mac's
+  strip) and a real wheel's notch size on the owner's mouse.

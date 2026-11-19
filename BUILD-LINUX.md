@@ -929,7 +929,16 @@ Verified by running it:
   Don't Save, and Save each did their part; a window with two dirty tabs
   asked once. Ctrl Alt Shift T reopened tabs newest first with their caret
   and scroll, and skipped a removed file; Ctrl Alt S saved every dirty tab;
-  two README.md files were labelled by folder. The tab menu's Close Tabs to
+  two README.md files were labelled by folder (the name, then the folder
+  dimmed after it, since item 115). The `tab_strip` suite (2026-11-19)
+  opened seventeen files in an 851 pixel strip: every title whole but one
+  past the widest tab, cut in the middle; widths 80 to 320 where GTK
+  allocated them; the row scrolled, with the tab on show in view after
+  opening, Alt 1 and Ctrl Page Up; two wheel clicks moved it 96 pixels and
+  chose nothing; a dot left it where it was; two index.ts tabs showed
+  "app" and "lib" smaller after the name; a drag still reordered, and a
+  drag held at the right end scrolled the row to its end and dropped the
+  tab last. The tab menu's Close Tabs to
   the Right, Close Other Tabs, and Copy Path did their part, and a middle
   click on a tab or its close button closed it. A single click in the tree or Find in
   Folder opens a preview tab (italic) that the next replaces; a double
