@@ -7374,3 +7374,130 @@ Enter, no Dismiss at all, and a search window no accelerator reached.
 - **Needs the owner's eyes:** the × on hover, the right click menu's look,
   and the click-then-arrows feel with a real window manager, which keeps
   the transient search window over the editor's.
+
+### 117. `exit` closes the terminal; a detached job is its terminal's (November 2026)
+
+The Mac's #224 brought to GTK with the same core calls
+(`TerminalExit::fromWaitStatus` and `decide`, `Settings::
+terminalCloseOnExit`; none of their logic copied). The Processes half
+needed no GTK code: the panel's `Procs::Tracker` samples `ProcFs::Source`,
+whose stat parse now carries the session id, so it follows the core.
+
+- **What a user meets.** `exit`, or Ctrl+D at an empty prompt, closes
+  the terminal, as Terminal.app, VS Code, Zed and the Mac do: a split's
+  pane alone, the tab with its last pane, and the dock with the last tab
+  (a fresh terminal then waits, its shell started when the dock shows
+  again), nobody asked. Any exit code closes; `exit 1` too, as on the
+  Mac. terminal.close-on-exit = off keeps the terminal, saying "Process
+  exited. Press Return to start a new shell." (with "(code 3)" when not
+  0). A shell killed by a signal never closes its terminal: "The shell
+  ended (signal 9). Press Return to start a new one.", in red. A shell
+  that ends before its first prompt (a ~/.bashrc that exits) says "The
+  shell exited as it started (code 4). Press Return to try again." and
+  waits, where it used to restart three times in a second and then stop.
+  While a terminal waits, only Return reaches anything (it starts the
+  new shell); Run File, `mutible term --run` and Run in Terminal start
+  one and run their line in it. Before this a shell that exited printed
+  "[shell exited — restarting]" and started again, so `exit` closed
+  nothing. With terminal.mac-style-keys on, Close Tab (Ctrl+W) closes a
+  waiting terminal unasked (nothing runs in it), and Super+D at an empty
+  prompt sends ^D, which ends the shell and closes the terminal as
+  Ctrl+D does with the setting off.
+- **Processes.** A job detached with `( server & )`, or nohup and disown
+  just before `exit`, is the subreaper's (systemd's, or the GUI harness's)
+  before any look sees it under the shell. It now shows under the
+  terminal that started it, by its session (the host's child calls
+  `setsid`, so the shell leads the pty's session and the job keeps it),
+  and as an orphan of the window once `exit` closes that terminal. Before
+  it was "not started here".
+- **Code.** `Terminal::shellExited(status, error)` (linux/src/Terminal.cpp)
+  takes the host's TermExited status (`Client::TermListener::termExited`'s
+  `status`, ignored until now) after `vteCaughtUp`, as before, so the
+  host's last word on the shell, and its prompt count, are applied first.
+  `prompted` is `seenPrompt_` (a TermShell with prompts, or a held shell
+  attached, which ran before), the host's prompt count, or 2 s since the
+  spawn (a shell without the integration). On Close, `onShellExit` is
+  called from an idle (`exitIdle_`, removed by the destructor), not from
+  inside the host listener's call, and only while no shell started again
+  meanwhile; the idle calls a copy of the callback, since the call
+  deletes the terminal. `TerminalDock::hook` sets it to `closePane(t,
+  false)`, so the close is the same code as Close Terminal's and Close
+  Tab's: `removePane` gives the keyboard to the neighbour, `remove`
+  leaves a fresh terminal and calls `onEmpty`, and `onChanged` reports
+  the session record. The dock clears `onShellExit` wherever it clears
+  `onFocusIn`. Waiting (`awaitReturn_`, `waitingForReturn()` for the
+  checks), `onCommit` sends nothing to a host (there is no pty) and a
+  Return calls `startAgain`; `typeText` and `runLine` call it too. A
+  line `runLine` or `typeText` still holds when the shell ends gets a new
+  shell, not a close, as the Mac's waiting `runCommand:`. Before the note
+  VTE is fed the alternate screen's end, a soft reset and bracketed paste
+  and mouse reports off, as the Mac's grid is. `rapidExits_` is gone.
+  `feedNotice` takes an `error` flag (bright red, ANSI 91, the Mac's
+  0xF48771 in this palette).
+- **The session host.** Every GTK terminal is on it: the host reaps the
+  shell and sends TermExited with its wait status after the output before
+  it, and has ended its terminal by then, so `hostTerm_` goes to 0 and
+  the destructor closes nothing. A held terminal attached by a later
+  window closes on `exit` too (`seenPrompt_` set in `attachShell`). The
+  host going away is not a shell's exit: the lost listener's note, and
+  no Return restart, as before.
+- **Checks.** A new suite, `terminal_exit` (TerminalExitSuite.cpp), with
+  real keys: `exit` in the second of two tabs closes it, nobody asked,
+  the first active with the keyboard and the dock shown; Ctrl+D in a
+  third does the same; in a split, `exit 1` closes only that pane, the
+  other keeping its shell and the keyboard; `exit` in the last terminal
+  hides the dock, and showing it starts a new shell; `kill -9 $$` keeps
+  the terminal with the signal's line, and Return starts a new shell; a
+  ~/.bashrc with `exit 4` says so, stays 1.5 s with no shell (a negative
+  check), and Return with the file mended starts one; with
+  close-on-exit off, `exit 3` and `exit` each say so and stay, Return
+  starts a shell, and `runLine` on a waiting terminal starts a shell and
+  runs the line; with mac-style keys on, Ctrl+W closes a waiting
+  terminal unasked and Super+D at an empty prompt closes the last
+  terminal and the dock. `processes` adds the detached job:
+  `( (trap '' HUP; exec sleep 623) & echo $! > file )` in a terminal of
+  its own, whose parent is then not the shell but whose session is,
+  shows under that terminal in the panel (its row's terminal id), `exit`
+  closes the terminal, and the job is in the panel's orphans; the suite
+  then kills it. `host_reattach`'s in-process part ends the reattached
+  (held) shell with ^C and `exit` instead of closing its pane by hand: the
+  terminal closes and a fresh one waits. The crash is SIGKILL, not
+  SIGSEGV: a segfaulting bash
+  would leave a core or an apport report outside the scratch world, and
+  `bash -c 'kill -SEGV $$'` typed at the prompt kills a child, not the
+  terminal's shell, which only prints "Segmentation fault".
+- **Numbers** (2026-11-19, this ThinkPad, cores 0 to 3): `terminal_exit`
+  42 checks in 3.8 s alone; with `terminal_tabs`, `terminal_splits`,
+  `terminal_keys`, `terminal_marks`, `processes`, `host_reattach`,
+  `host_splits` and `shell_integration`, 454 checks, none failed, in
+  53 s. Seen failing without the feature: the dock's `onShellExit` made
+  a no-op, `terminal_exit` failed 35 checks (nothing closed); the
+  session id blanked in `ProcFs::Source::list`, `processes` failed 2
+  (the job neither under its terminal nor an orphan). The detached job's
+  parent was the harness's subreaper, its session the shell's pid.
+- **Not this change: `processes` and a long scratch path.** Run with
+  MC_GUI_ROOT inside this worktree's `linux/build`, the second window's
+  "the command is at the prompt" failed every time (and passed with
+  /tmp, and with an equally long root under /tmp): bash's prompt there
+  (`user@host:` and the 110-character project path) plus `(trap '' HUP;
+  exec sleep` is exactly 160 characters, two full rows of the hidden
+  terminal's 80 columns, and VTE's screen text ends at "sleep", the rest
+  of the line never drawn on a third row. A line that fills its rows
+  exactly is worth a look in the port (readline's wrap, VTE fed by the
+  host while hidden); the check is unchanged.
+- **Trap: suites restarted the shell with `exit`.** `shell_integration`
+  (its `startShell`, for a new `$SHELL`, and its last step) and
+  `terminal_marks` (a bash with no earlier suite's commands) typed `exit`
+  and waited for the restarted shell; with `exit` closing the terminal
+  they waited 30 s for a prompt that never came and failed 31 and 19
+  checks. Each now makes a new terminal and closes the dock's others
+  (`newTerminal`, then `close(0, false)` until one is left), as
+  `terminal_tabs` and `terminal_splits` start; shell_integration carries
+  its `onShellStateChanged` counter over to the new one. A new suite
+  wanting a fresh shell does the same.
+- **Not the product: a Ctrl+W that missed the terminal.** With the dock's
+  close turned off to see `terminal_exit` fail (35 failed checks: no tab,
+  pane or dock closed), the keyboard never reached the ended terminal and
+  Ctrl+W, mac-style, closed the window; the next wait read a null dock and
+  the run crashed. The step now presses Ctrl+W only while the terminal
+  has the keyboard.

@@ -21,7 +21,8 @@
 //   - the host killed: Reconnect in the status bar starts a new one, and
 //     the file is on it with everything typed, before and after, unsaved;
 //   - in-process: the same within this process, the host kept while the
-//     app runs (SessionLink::keepWhileHolding).
+//     app runs (SessionLink::keepWhileHolding); the reattached shell's own
+//     `exit` closes its terminal (linux/HANDOFF.md item 117).
 #include "Harness.h"
 
 #include "DocumentView.h"
@@ -56,6 +57,7 @@ size_t gWindows = 0;
 int gHostPid = 0;
 uint64_t gDocId = 0, gTermId = 0;
 int gShellPid = 0, gTicksBefore = 0;
+Terminal* gHeld = nullptr;   // the reattached terminal whose shell runs `exit`
 
 std::string rp(const std::string& p) {
     char buf[PATH_MAX];
@@ -437,10 +439,27 @@ MC_GUI_SUITE(host_reattach) {
     MCGuiWait("its terminal attached, counting on", 30, [] {
         return lastTick(MCGuiApp().terminal) > gTicksBefore + 2;
     });
-    MCGuiStep("closed by hand: the shell ends", [] {
-        MCGuiApp().termDock->closePane(MCGuiApp().terminal, false);
+    // The held shell's own `exit` closes its terminal (linux/HANDOFF.md
+    // item 117), as the first part's close by hand ends it.
+    MCGuiStep("the counter stopped (^C)", [] {
+        gHeld = MCGuiApp().terminal;
+        GCHECK(gHeld && gHeld->onShellExit != nullptr);
+        if (gHeld && gHeld->vteWidget()) vte_terminal_feed_child(VTE_TERMINAL(gHeld->vteWidget()), "\x03", 1);
     });
-    MCGuiWait("ended", 15, [] { return !alive(gShellPid); });
+    MCGuiWait("the held shell at its prompt", 15, [] {
+        return gHeld->shellState().known && gHeld->shellState().atPrompt && !gHeld->busy();
+    });
+    MCGuiStep("exit, run in the held shell", [] {
+        gHeld->runLine("exit", [](const std::string& why) { GCHECK_EQ_STR(why, ""); });
+    });
+    MCGuiWait("it closes its terminal; a fresh one waits", 15, [] {
+        return MCGuiApp().termDock->indexOf(gHeld) < 0 && MCGuiApp().termDock->count() == 1 &&
+               MCGuiApp().terminal->hostTerminal() != gTermId;
+    });
+    MCGuiWait("ended", 15, [] {
+        gHeld = nullptr;
+        return !alive(gShellPid);
+    });
     MCGuiStep("the window closes", [] { gtk_window_close(MCGuiApp().window); });
     MCGuiWait("gone", 15, [] { return MCGuiAppWindows().size() == gWindows; });
 
