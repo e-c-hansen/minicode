@@ -650,24 +650,37 @@ MC_GUI_SUITE(hints_panel) {
     MCGuiStep("still none; what a relayout and a mark cost on this thread", [] {
         GCHECK(cols()->layouts() == gLayouts);
         // A query that finds other rows lays the list out again; one that
-        // finds the same only marks. CPU time, the worst of five.
-        double relayout = 0, marks = 0;
+        // finds the same only marks. CPU time, the median of five each (the
+        // worst of five was one preemption away from failing under load: a
+        // mark at 12 ms against 5 to 6 quietly), and a mark compared with
+        // the relayouts measured beside it, as the room for CI's machine.
+        std::vector<double> relayouts, markings;
         for (int i = 0; i < 5; ++i) {
             double c0 = MCGuiThreadCpuMs();
             cols()->mark("control");
-            relayout = std::max(relayout, MCGuiThreadCpuMs() - c0);
+            relayouts.push_back(MCGuiThreadCpuMs() - c0);
             c0 = MCGuiThreadCpuMs();
             cols()->mark("control ");
-            marks = std::max(marks, MCGuiThreadCpuMs() - c0);
+            markings.push_back(MCGuiThreadCpuMs() - c0);
             c0 = MCGuiThreadCpuMs();
             cols()->mark("save");
-            relayout = std::max(relayout, MCGuiThreadCpuMs() - c0);
+            relayouts.push_back(MCGuiThreadCpuMs() - c0);
         }
-        MCGuiNote("a relayout %.2f ms of CPU, a mark alone %.2f ms (%d layouts)", relayout, marks,
-                  cols()->layouts() - gLayouts);
+        auto median = [](std::vector<double> v) {
+            std::sort(v.begin(), v.end());
+            return v[v.size() / 2];
+        };
+        const double relayout = median(relayouts), marks = median(markings);
+        MCGuiNote("a relayout %.2f ms of CPU, a mark alone %.2f ms (medians; %d layouts)", relayout,
+                  marks, cols()->layouts() - gLayouts);
         GCHECK(cols()->layouts() - gLayouts == 10);
-        GCHECK_TIME(relayout, 25, "a keystroke that finds other rows");
-        GCHECK_TIME(marks, 8, "a keystroke that finds the same rows");
+        // The relative check is the one that holds: on this ThinkPad both
+        // medians grew 2.5 times under other builds' load (a relayout 11.6
+        // to 27.5 ms, a mark 6.2 to 15.6) while a mark stayed 0.5 to 0.7 of
+        // a relayout. The bounds only catch a gross regression (two frames).
+        GCHECK(marks < relayout);   // marking alone is the cheaper path
+        GCHECK_TIME(relayout, 50, "a keystroke that finds other rows");
+        GCHECK_TIME(marks, 32, "a keystroke that finds the same rows");
     });
     typeInBox("shift+ctrl+h");
     MCGuiWait("laid out for it", 5, settled);
