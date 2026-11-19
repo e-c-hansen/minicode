@@ -6811,20 +6811,37 @@ cursor in the terminal for dark mode does not appear to exist", and
   mutible at all: its `clas` wants `^ai\\.ible\\.Mutible$`. Adding mutible
   to Toshy's `terminals` list instead would make Cmd keys Ctrl+Shift in
   the whole window (Cmd+S as Save As), so it is not the fix.
-- **The `agents` suite's "the same key closes the panel" (open).** It
-  failed 1 of 5 plain runs of `agents` alone here (and in several logs of
-  other branches today), never in 44 runs since: 34 with a probe of the
-  test's own (an `activate` handler on the action, key controllers on the
-  window, or only the focus read before the key) and 10 with one
-  `fprintf` in `act_toggle_agents`. What the runs showed: the keyboard is
-  not in the terminal when the key is pressed but in the editor's tab
-  strip's GtkScrolledWindow (TabStrip's `scroller_`; every failing log
-  says the same), `<Control><Shift>a` runs `win.toggleagents` then, and
-  in a passing run the action runs once per press. Whether a failing run
-  runs it no times or twice is not known, so no fix was made; the next
-  step is a failing run with the `fprintf` probe, or the focus put back in
-  the editor when the agents panel's list empties, if the scroller turns
-  out to matter.
+- **The `agents` suite's "the same key closes the panel" (fixed, November
+  19).** It failed 2 of 3 runs of `agents` alone on main's build (3 of 5 on
+  another branch), the panel left open and the Worktrees steps after it
+  failing in turn. A probe (`fprintf` in `act_toggle_agents`, in the
+  window's capture-phase key controller `onHintsKey`, and in the step)
+  found the action ran no times: as the key went, the window's focus was a
+  `GtkListBoxRow` with no parent and no root, and the key reached none of
+  the window's controllers. `AgentsPanel::rebuild` removes every row and
+  makes them again; the last session's row had the keyboard (the step's
+  click on it), and GTK moves the keyboard off a removed widget only at
+  the window's next frame. Until then `gtk_root_get_focus` names the
+  removed row, a key goes to that row alone (its event's path runs up its
+  parents, and it has none), and no accelerator runs. The step pressed the
+  key as soon as the wait saw the rows gone: in passing runs 33 to 47 ms
+  after the rebuild, after GTK's frame had put the keyboard in the tab
+  strip's GtkScrolledWindow (where the failing logs found it, 5 s later);
+  in failing runs before it. A person met it too: a key pressed in the
+  frame after any remake of the rows, on a model change while Claude Code
+  writes a transcript or on the 30 s tick, was lost while a session row
+  had the keyboard; the Processes panel remakes its rows every half
+  second the same way. Now `linux/src/ListKeyboard.h` (header only) puts
+  the keyboard on the panel itself before the old rows go, and on the
+  selected new row (else the first) once they are in, or leaves it on the
+  panel, focusable while it has it, when there are none, so the window's
+  focus is never a removed widget; both panels use it. Opening the Agents
+  panel with no sessions now gives the panel the keyboard (its list is
+  hidden and could not take it), as the Problems panel does. The step
+  checks the keyboard is on the panel before the key, which failed in
+  every run without the fix (on the removed row, or in the tab strip once
+  GTK had moved it), where the key itself failed only when the race was
+  lost. Then 15 runs of `agents` alone passed in a row.
 - **Docs.** `docs/REFERENCE.md`: the Linux column says "in the terminal
   the program has it" for Ctrl+D, Q, C, X, V, F, N, O, S, L, B and Z, the
   terminal's word and line deletion row has Ctrl+W and Ctrl+U, and the
