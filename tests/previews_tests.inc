@@ -130,6 +130,107 @@ static void testHtmlPage() {
         rl.kind = N::Kind::BackForward;
         CHECK(HtmlPage::decide(rl, own, asked) == HtmlPage::Verdict::Drop);
     }
+    GROUP("htmlpage:follow");
+    {
+        // Round 10's documents defect 2: a page sending itself elsewhere (a
+        // meta refresh, a script) opened another app with no click.
+        using N = HtmlPage::Navigation;
+        using P = HtmlPage::Policy;
+        const std::string own = "/w/a.html";
+        const std::set<std::string> asked = {"/w/a.html", "/w/b.html"};
+        auto nav = [](const char *scheme, const std::string &path, N::Kind kind,
+                      bool gesture = false) {
+            N n;
+            n.scheme = scheme;
+            n.path = path;
+            n.kind = kind;
+            n.userGesture = gesture;
+            return n;
+        };
+        // The user's: a link, a form, a gesture; never a refresh or a script.
+        CHECK(HtmlPage::byUser(nav("https", "", N::Kind::Link)));
+        CHECK(HtmlPage::byUser(nav("https", "", N::Kind::Form)));
+        CHECK(HtmlPage::byUser(nav("https", "", N::Kind::Other, true)));
+        CHECK(!HtmlPage::byUser(nav("https", "", N::Kind::Other)));
+        // The Mac's MCHtmlMayFollow: the user's, always, to any scheme.
+        for (bool scripts : {false, true}) {
+            CHECK(HtmlPage::mayFollow(nav("zoommtg", "", N::Kind::Link), scripts));
+            CHECK(HtmlPage::mayFollow(nav("file", "/w/c.html", N::Kind::Form), scripts));
+            CHECK(HtmlPage::mayFollow(nav("smb", "", N::Kind::Other, true), scripts));
+        }
+        // The page's own: a web address while its scripts run, nothing else.
+        CHECK(HtmlPage::mayFollow(nav("https", "", N::Kind::Other), true));
+        CHECK(HtmlPage::mayFollow(nav("http", "", N::Kind::Other), true));
+        CHECK(!HtmlPage::mayFollow(nav("https", "", N::Kind::Other), false));
+        CHECK(!HtmlPage::mayFollow(nav("http", "", N::Kind::Other), false));
+        for (const char *s : {"zoommtg", "smb", "mailto", "file", "about", "data", ""}) {
+            CHECK(!HtmlPage::mayFollow(nav(s, "", N::Kind::Other), true));
+            CHECK(!HtmlPage::mayFollow(nav(s, "", N::Kind::Other), false));
+        }
+        // What a frame can load at all.
+        for (const char *s : {"http", "https", "file", "data", "blob", "about", ""})
+            CHECK(HtmlPage::loadsInFrame(s));
+        for (const char *s : {"zoommtg", "smb", "mailto", "tel", "ftp", "javascript"})
+            CHECK(!HtmlPage::loadsInFrame(s));
+
+        // GTK's policy check, frames not told apart. In the page's view: the
+        // own file, about:blank and a frame's load as before; a page's jump
+        // to an app's scheme refused at once, with scripts on or off; one a
+        // frame could load let through (the main frame's is caught later).
+        for (bool scripts : {false, true}) {
+            CHECK(HtmlPage::policy(nav("file", own, N::Kind::Other), false, scripts, own, asked) == P::Load);
+            CHECK(HtmlPage::policy(nav("about", "", N::Kind::Other), false, scripts, own, asked) == P::Load);
+            CHECK(HtmlPage::policy(nav("zoommtg", "", N::Kind::Other), false, scripts, own, asked) ==
+                  P::Refuse);
+            CHECK(HtmlPage::policy(nav("smb", "", N::Kind::Other), false, scripts, own, asked) == P::Refuse);
+            CHECK(HtmlPage::policy(nav("https", "", N::Kind::Other), false, scripts, own, asked) == P::Load);
+            CHECK(HtmlPage::policy(nav("file", "/w/c.html", N::Kind::Other), false, scripts, own, asked) ==
+                  P::Load);
+            CHECK(HtmlPage::policy(nav("data", "", N::Kind::Other), false, scripts, own, asked) == P::Load);
+            // The user's leave the page, whatever the scheme.
+            CHECK(HtmlPage::policy(nav("zoommtg", "", N::Kind::Link), false, scripts, own, asked) == P::Open);
+            CHECK(HtmlPage::policy(nav("https", "", N::Kind::Form), false, scripts, own, asked) == P::Open);
+            CHECK(HtmlPage::policy(nav("mailto", "", N::Kind::Other, true), false, scripts, own, asked) ==
+                  P::Open);
+            // Stale loads stay dropped.
+            CHECK(HtmlPage::policy(nav("file", "/w/b.html", N::Kind::Other), false, scripts, own, asked) ==
+                  P::Drop);
+            CHECK(HtmlPage::policy(nav("file", "/w/c.html", N::Kind::Reload), true, scripts, own, asked) ==
+                  P::Drop);
+        }
+        // A new window: the user's opens; the page's own only as mayFollow
+        // says, and a blank one is nothing to open.
+        CHECK(HtmlPage::policy(nav("file", "/w/c.html", N::Kind::Link), true, false, own, asked) == P::Open);
+        CHECK(HtmlPage::policy(nav("zoommtg", "", N::Kind::Other, true), true, false, own, asked) == P::Open);
+        CHECK(HtmlPage::policy(nav("file", own, N::Kind::Link), true, false, own, asked) == P::Open);
+        CHECK(HtmlPage::policy(nav("zoommtg", "", N::Kind::Other), true, true, own, asked) == P::Refuse);
+        CHECK(HtmlPage::policy(nav("https", "", N::Kind::Other), true, false, own, asked) == P::Refuse);
+        CHECK(HtmlPage::policy(nav("https", "", N::Kind::Other), true, true, own, asked) == P::Open);
+        CHECK(HtmlPage::policy(nav("file", "/w/c.html", N::Kind::Other), true, true, own, asked) ==
+              P::Refuse);
+        CHECK(HtmlPage::policy(nav("about", "", N::Kind::Other), true, true, own, asked) == P::Drop);
+        CHECK(HtmlPage::policy(nav("", "", N::Kind::Other), true, true, own, asked) == P::Drop);
+        // decide() and started() as before, for a page's jump to an app.
+        CHECK(HtmlPage::decide(nav("zoommtg", "", N::Kind::Other), own, asked) == HtmlPage::Verdict::Allow);
+        CHECK(HtmlPage::started(nav("zoommtg", "", N::Kind::Other), own, asked) ==
+              HtmlPage::Started::RestoreAndOpen);
+
+        // The status bar's note, in the Mac's words.
+        CHECK(HtmlPage::refusedNote("zoommtg://example") ==
+              "The page tried to open zoommtg://example by itself; mutible did not open it");
+        CHECK(HtmlPage::refusedNote("HTTPS://example.com/") ==
+              "The page tried to open HTTPS://example.com/ by itself; with its scripts off, it was "
+              "not followed");
+        CHECK(HtmlPage::refusedNote("file:///w/c.html") ==
+              "The page tried to open file:///w/c.html by itself; mutible did not open it");
+        // Cut to 79 characters and an ellipsis past 80, never inside a character.
+        const std::string eighty = "smb://" + std::string(74, 'x');
+        CHECK(HtmlPage::refusedNote(eighty).find(eighty + " by itself") != std::string::npos);
+        const std::string longer = "smb://" + std::string(73, 'x') + "\xC3\xA9\xC3\xA9tail";
+        CHECK(HtmlPage::refusedNote(longer) ==
+              "The page tried to open smb://" + std::string(73, 'x') +
+                  "\xE2\x80\xA6 by itself; mutible did not open it");
+    }
 }
 
 static void testFileSniff() {

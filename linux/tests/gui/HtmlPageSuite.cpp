@@ -7,10 +7,21 @@
 // and back; a save and a write from outside load the page again with its
 // scroll kept; a link to another local file opens it in a tab of its own; a
 // remembered answer writes html.scripts as the Mac does and later pages run
-// unasked, and `off` never runs or asks.
+// unasked, and `off` never runs or asks. A page that sends itself elsewhere
+// (round 10's documents defect 2, the Mac's html_page): a meta refresh to
+// zoommtg://, a script setting location to smb:// or to a local file, and
+// window.open to zoommtg:// without a click open nothing and leave the page
+// as it is, the refused ones named in the status bar; a meta refresh to a
+// web address is followed only while scripts run; a real click on a link,
+// and on a target=_blank one, still opens its file.
 //
-// Only local pages (file://), nothing off this machine. Page state is read in
-// the view's own script world.
+// Only local pages (file://), nothing off this machine: every address the
+// page hands the link handler is recorded (HtmlView::linkSpy) and only a
+// file reaches it, the desktop's handler is the harness's recorder
+// (MCGuiLaunchedUris), and the web address is https://127.0.0.1:2/, where
+// nothing listens (not port 9: WebKit never navigates to a port on the
+// fetch standard's bad-ports list, so a refresh there does nothing at all).
+// Page state is read in the view's own script world.
 #include "Harness.h"
 
 #include "AppSettings.h"
@@ -75,12 +86,55 @@ size_t gDocs = 0;
 bool gBrowserBefore = false;   // another suite may have left the pane shown
 std::string gWasSettings;
 
+// Every address the page handed the link handler (HtmlView::linkSpy); only a
+// local file goes on to it, so nothing leaves this machine. And how many
+// there were, and how many the desktop's handler got, before a step.
+std::vector<std::string> gOpened;
+size_t gOpenedBefore = 0, gLaunchedBefore = 0;
+bool spy(const std::string& url) {
+    gOpened.push_back(url);
+    return url.rfind("file:", 0) == 0;
+}
+void countBefore() {
+    gOpenedBefore = gOpened.size();
+    gLaunchedBefore = MCGuiLaunchedUris().size();
+}
+
+std::string statusText() { return gtk_label_get_text(GTK_LABEL(MCGuiApp().statusLabel)); }
+std::string pageUri() {
+    const char* uri = page() && page()->webView() ? webkit_web_view_get_uri(page()->webView()) : nullptr;
+    return uri ? uri : "";
+}
+// Nothing reached the link handler or the desktop's since countBefore, and
+// the tab and its page are still `name`.
+void nothingOpened(const std::string& name) {
+    MCGuiNote("opened %zu -> %zu, launched %zu -> %zu; page %s; status \"%s\"", gOpenedBefore,
+              gOpened.size(), gLaunchedBefore, MCGuiLaunchedUris().size(), pageUri().c_str(),
+              statusText().c_str());
+    GCHECK(gOpened.size() == gOpenedBefore);
+    GCHECK(MCGuiLaunchedUris().size() == gLaunchedBefore);
+    GCHECK(has(ed()->active()->path(), "/" + name) && ed()->active()->showsPage());
+    GCHECK(has(pageUri(), name));
+    GCHECK(MCGuiApp().layout->browserShown() == gBrowserBefore);
+}
+// The links page laid out: its second link 60 pixels down.
+bool laidOut() {
+    if (gSeen.empty()) read("Math.round(document.getElementById('blank').getBoundingClientRect().top)");
+    else if (gSeen == "60") return true;
+    else gSeen.clear();
+    return false;
+}
+size_t gLaunchedAtStart = 0;
+const char* const kNotOpened = " by itself; mutible did not open it";
+const char* const kNotFollowed = " by itself; with its scripts off, it was not followed";
+
 }  // namespace
 
 MC_GUI_SUITE(html_page) {
     MCGuiStep("a folder with pages; html.scripts unset", [] {
         ed()->closeAllTabs();
         gWasSettings = settingsText();
+        gLaunchedAtStart = MCGuiLaunchedUris().size();
         gBrowserBefore = MCGuiApp().layout->browserShown();
         MCGuiSetSettings("lsp.enabled = false\n");
         MCGuiWriteFile(F("index.html"), pageSource("First"));
@@ -95,6 +149,8 @@ MC_GUI_SUITE(html_page) {
         return d && d->isHtml() && d->showsPage() && page() && loaded(1, "index.html");
     });
     MCGuiStep("its text is readable, its stylesheet applies, its script has not run", [] {
+        gOpened.clear();
+        page()->linkSpy = spy;
         GCHECK(gtk_widget_get_visible(page()->bar()));
         GCHECK(page()->asking() && !page()->runsScripts());
         GCHECK_EQ_STR(page()->barText(), "This page has scripts. Run them?");
@@ -188,6 +244,7 @@ MC_GUI_SUITE(html_page) {
         GCHECK(!page()->asking() && !page()->noting());
         GCHECK(!gtk_widget_get_visible(page()->bar()));
         GCHECK(ed()->documents().size() == 2);
+        GCHECK(gOpened.size() == 1 && has(gOpened[0], "/other.html"));   // the link, through the handler
     });
 
     // ------------------------------------------------- remembered answers
@@ -240,6 +297,43 @@ MC_GUI_SUITE(html_page) {
         GCHECK_EQ_STR(gSeen, "not run|Three|0|rgb(1, 2, 3)");
     });
 
+    // ------------------------------- a page that goes somewhere by itself
+    // Round 10's documents defect 2: a meta refresh to another app's scheme
+    // opened that app with no click. Only a link the user clicks, or a form
+    // they send, is followed; a web address the page goes to by itself only
+    // while its scripts run (HtmlPage::mayFollow). Scripts are off here.
+    MCGuiStep("a page whose meta refresh goes to zoommtg://", [] {
+        MCGuiWriteFile(F("refresh-app.html"),
+                       "<html><head><title>Refresh</title>"
+                       "<meta http-equiv=\"refresh\" content=\"0; url=zoommtg://example\">"
+                       "</head><body><p id=marker>refreshing</p></body></html>");
+        countBefore();
+        MCGuiOpenFileKept(F("refresh-app.html"));
+    });
+    MCGuiWait("it loads, and its refresh is refused, named in the status bar", 20, [] {
+        return loaded(1, "refresh-app.html") && has(statusText(), "zoommtg://example");
+    });
+    MCGuiStep("nothing opened, the page still the file, the Mac's words", [] {
+        nothingOpened("refresh-app.html");
+        GCHECK_EQ_STR(statusText(), std::string("The page tried to open zoommtg://example") + kNotOpened);
+    });
+    MCGuiStep("one to a web address, with no scripts running", [] {
+        MCGuiWriteFile(F("refresh-web.html"),
+                       "<html><head><title>Web</title>"
+                       "<meta http-equiv=\"refresh\" content=\"0; url=https://127.0.0.1:2/refused\">"
+                       "</head><body><p>refreshing</p></body></html>");
+        countBefore();
+        MCGuiOpenFileKept(F("refresh-web.html"));
+    });
+    MCGuiWait("is not followed either", 20, [] {
+        return loaded(1, "refresh-web.html") && has(statusText(), "127.0.0.1:2/refused");
+    });
+    MCGuiStep("(nothing opened, the page still the file)", [] {
+        nothingOpened("refresh-web.html");
+        GCHECK_EQ_STR(statusText(),
+                      std::string("The page tried to open https://127.0.0.1:2/refused") + kNotFollowed);
+    });
+
     // ----------------------------------- frames, and a script's navigation
     MCGuiStep("scripts on; a page with an unnamed iframe to a local file", [] {
         MCGuiSetSettings("lsp.enabled = false\nhtml.scripts = on\n");
@@ -271,25 +365,134 @@ MC_GUI_SUITE(html_page) {
                        "<p>jumping</p><script>if (window.name !== 'jumped') {"
                        " window.name = 'jumped'; location = 'target.html'; }</script>");
         gDocs = ed()->documents().size();
+        countBefore();
         MCGuiOpenFileKept(F("jump.html"));
     });
-    MCGuiWait("the script's navigation away opens that file in a tab of its own", 20, [] {
+    // A file, even with scripts on, is not a web address: the Mac's rule.
+    // The note is cut at 80 characters (HtmlPage::refusedNote, the Mac's
+    // wording) and flashed: under CI's long scratch root the file's name
+    // falls past the cut, so the wait looks for the note's start while it
+    // shows, and the next step does not read the status again.
+    MCGuiWait("the script's navigation to a local file is refused, named in the status bar", 20, [] {
+        return loaded(1, "jump.html") && has(statusText(), "The page tried to open file://");
+    });
+    MCGuiStep("no tab for it, and the page is still its own", [] {
+        nothingOpened("jump.html");
+        GCHECK(ed()->documents().size() == gDocs + 1);   // jump.html only
+        GCHECK(!has(pageUri(), "target.html"));
+    });
+
+    MCGuiStep("a meta refresh to a web address, with scripts on", [] {
+        MCGuiWriteFile(F("refresh-on.html"),
+                       "<html><head><title>Web</title>"
+                       "<meta http-equiv=\"refresh\" content=\"0; url=https://127.0.0.1:2/followed\">"
+                       "</head><body><p>refreshing</p></body></html>");
+        countBefore();
+        MCGuiOpenFileKept(F("refresh-on.html"));
+    });
+    MCGuiWait("is followed: the address goes to the link handler", 20, [] {
+        return loaded(1, "refresh-on.html") && gOpened.size() > gOpenedBefore;
+    });
+    MCGuiStep("that address and nothing else, the page still the file", [] {
+        MCGuiNote("opened: %s", gOpened.back().c_str());
+        GCHECK(gOpened.size() == gOpenedBefore + 1);
+        GCHECK_EQ_STR(gOpened.back(), "https://127.0.0.1:2/followed");
+        gOpenedBefore = gOpened.size();   // the rest as for a refused one
+        nothingOpened("refresh-on.html");
+        GCHECK(!has(statusText(), "127.0.0.1:2/followed"));
+    });
+
+    MCGuiStep("a script setting location to smb://", [] {
+        MCGuiWriteFile(F("script-smb.html"),
+                       "<p id=out>not run</p>"
+                       "<script>location = 'smb://x/share';"
+                       "document.getElementById('out').textContent = 'ran';</script>");
+        countBefore();
+        MCGuiOpenFileKept(F("script-smb.html"));
+    });
+    MCGuiWait("is refused, named in the status bar", 20, [] {
+        return loaded(1, "script-smb.html") && has(statusText(), "smb://x/share");
+    });
+    MCGuiStep("nothing opened, though its scripts run", [] {
+        GCHECK(page()->runsScripts());
+        nothingOpened("script-smb.html");
+        GCHECK_EQ_STR(statusText(), std::string("The page tried to open smb://x/share") + kNotOpened);
+    });
+
+    MCGuiStep("a window.open to zoommtg:// without a click", [] {
+        MCGuiWriteFile(F("popup.html"),
+                       "<p id=out>not run</p>"
+                       "<script>var w = window.open('zoommtg://y/meeting');"
+                       "document.getElementById('out').textContent = w ? 'a window' : 'no window';</script>");
+        countBefore();
+        gSeen.clear();
+        MCGuiOpenFileKept(F("popup.html"));
+    });
+    MCGuiWait("its script has run", 20, [] {
+        if (!loaded(1, "popup.html")) return false;
+        if (gSeen.empty()) read("document.getElementById('out').textContent");
+        else if (gSeen == "a window" || gSeen == "no window") return true;
+        else gSeen.clear();
+        return false;
+    });
+    // Time is the condition: a refusal or an open, on its way, has had its
+    // chance to arrive.
+    MCGuiPause(0.5);
+    MCGuiStep("nothing opened (refused, or no window given at all)", [] {
+        MCGuiNote("window.open gave %s", gSeen.c_str());
+        nothingOpened("popup.html");
+        GCHECK(!has(statusText(), "zoommtg://y") || has(statusText(), kNotOpened));
+    });
+
+    // ----------------------------------------------- the user's own click
+    MCGuiStep("a page of links, clicked for real", [] {
+        MCGuiWriteFile(F("clicked.html"), "<p>the clicked link's page</p>");
+        MCGuiWriteFile(F("blank-target.html"), "<p>the target=_blank link's page</p>");
+        MCGuiWriteFile(F("links.html"),
+                       "<body style='margin:0'>"
+                       "<a id=plain href='clicked.html' style='display:block;width:400px;height:60px'>plain</a>"
+                       "<a id=blank href='blank-target.html' target=_blank"
+                       " style='display:block;width:400px;height:60px'>blank</a></body>");
+        gDocs = ed()->documents().size();
+        MCGuiOpenFileKept(F("links.html"));
+        gSeen.clear();
+    });
+    MCGuiWait("laid out", 20, [] {
+        if (!loaded(1, "links.html")) return false;
+        return laidOut();
+    });
+    MCGuiStep("a click on the plain link", [] {
+        countBefore();
+        MCGuiClick(GTK_WIDGET(page()->webView()), 60, 30);
+    });
+    MCGuiWait("opens its file in a tab of its own, as a page", 20, [] {
         Document* d = ed()->active();
-        return d && has(d->path(), "/target.html") && d->showsPage() && loaded(1, "target.html");
+        return d && has(d->path(), "/clicked.html") && d->showsPage() && loaded(1, "clicked.html");
     });
-    MCGuiStep("the HTML tab is still there, and shows its own page", [] {
-        GCHECK(ed()->documents().size() == gDocs + 2);   // jump.html and target.html
-        gLoads = page()->loads();
-        MCGuiOpenFileKept(F("jump.html"));
+    MCGuiStep("through the link handler", [] {
+        GCHECK(gOpened.size() == gOpenedBefore + 1 && has(gOpened.back(), "/clicked.html"));
+        GCHECK(ed()->documents().size() == gDocs + 2);
+        MCGuiOpenFileKept(F("links.html"));
+        gSeen.clear();
     });
-    MCGuiWait("jump.html shows", 20, [] {
+    MCGuiWait("the links again", 20, [] {
+        if (!loaded(1, "links.html")) return false;
+        return laidOut();
+    });
+    MCGuiStep("a click on the target=_blank link", [] {
+        countBefore();
+        MCGuiClick(GTK_WIDGET(page()->webView()), 60, 90);
+    });
+    MCGuiWait("opens its file in a tab of its own too", 20, [] {
         Document* d = ed()->active();
-        return d && has(d->path(), "/jump.html") && loaded(1, "jump.html");
+        return d && has(d->path(), "/blank-target.html") && d->showsPage() &&
+               loaded(1, "blank-target.html");
     });
-    MCGuiStep("its own page, not the target, and the frame opened no browser", [] {
-        const char* uri = webkit_web_view_get_uri(page()->webView());
-        GCHECK(uri && has(uri, "jump.html") && !has(uri, "target.html"));
+    MCGuiStep("through the link handler, and the desktop's handler never got anything", [] {
+        GCHECK(gOpened.size() == gOpenedBefore + 1 && has(gOpened.back(), "/blank-target.html"));
+        GCHECK(MCGuiLaunchedUris().size() == gLaunchedAtStart);
         GCHECK(MCGuiApp().layout->browserShown() == gBrowserBefore);
+        page()->linkSpy = nullptr;
         ed()->closeAllTabs();
         MCGuiSetSettings(gWasSettings);
     });

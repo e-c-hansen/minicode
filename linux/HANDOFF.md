@@ -5583,7 +5583,8 @@ script not running and then running after Run Scripts, the keyboard, the
 toggle, a write from outside keeping the scroll, a link to another file, the
 remembered answer's setting and `off`, an unnamed iframe to a local file
 (its text shows, nothing opens), and a script's `location =` (opened as a
-link, the page kept).
+link, the page kept). Item 121 changed the last: a navigation the page
+starts by itself no longer opens a file, nor another app.
 ### 87. The session's host owns each document's text and undo (done, November 2026; SESSION-DESIGN.md stage 4a)
 
 What a user meets: nothing, by design. Who owns the text changed under
@@ -7845,3 +7846,119 @@ change; GTK had all four.
   This change touches neither the menus nor MenuBarFocus; a longer
   stylesheet for each theme change is the likeliest reason the race shows
   more here. `openThemeMenu` now waits for the keyboard to be off the bar.
+
+### 121. An HTML page opens nothing by itself (the Mac's #249; round 10's documents defect 2; November 2026)
+
+On the Mac since #249, a navigation an HTML page starts by itself (a
+`<meta http-equiv="refresh">`, a script setting `location`, `window.open`
+without a click) is followed only to a web address while the page's
+scripts run; anything else is refused and the status bar names it. A meta
+refresh to `zoommtg://` had opened Zoom with no click, and `html.scripts`
+never applied, a refresh not being a script. GTK now follows the same rule.
+
+- **The core** (`src/HtmlPage.{h,cpp}`, `htmlpage:follow`):
+  `HtmlPage::mayFollow(nav, scriptsRun)` is the Mac's `MCHtmlMayFollow`
+  (the user's navigation, `byUser`: a clicked link, a submitted form, a
+  gesture, always; the page's own only to http or https, and only while
+  its scripts run). `loadsInFrame(scheme)` (http, https, file, data, blob,
+  about) and `policy(nav, newWindow, scriptsRun, own, requested)`, GTK's
+  answer at the policy check, are built on `decide`, which is unchanged,
+  as are `started` and the rest; `refusedNote(url)` is the status bar's
+  note in the Mac's words (cut to 80 characters). The Mac uses none of
+  these: its .mm keeps its own copy.
+- **Every path on GTK** (`linux/src/HtmlView.cpp`), and what it does now:
+  - The policy check (`onPolicy`, `HtmlPage::policy`). The user's leaves
+    the page for the link handler as before. One the page started by
+    itself to a scheme no frame loads (zoommtg:, smb:, mailto:) is
+    refused there, in any frame, before anything loads: WebKitGTK cannot
+    tell the main frame at this check, and no frame could load it. One a
+    frame could load is let through, as before (an iframe loads).
+  - A new window (a NEW_WINDOW_ACTION, which a target=_blank meets, and
+    the `create` signal, which `window.open` reaches): the user's opens
+    as before; the page's own is opened only as `mayFollow` says, else
+    refused, and a blank one is dropped (it used to go to the link
+    handler, and so `about:blank` to the desktop's). WebKit's own popup
+    blocker already stops `window.open` without a click
+    (`javascript-can-open-windows-automatically` is off), as the check
+    found: the script gets no window and `create` is never called.
+  - The main frame's answer (`onResponse`, the response check, the one
+    place WebKitGTK tells the main frame:
+    `webkit_response_policy_decision_is_main_frame_main_resource`). A
+    main-frame load away from the page's file that is not one it asked
+    for is the page's own doing; it is ignored there, so the page never
+    leaves and is never loaded again, and it goes to `followOrRefuse`.
+    And nothing the page loads by itself is downloaded (a response
+    WebKit cannot show is ignored; WebKitGTK's default is to download it).
+  - A main-frame load that fails before any answer (`onFailed`: nothing
+    listening, no such host, a missing file, a scheme WebKit cannot
+    show): when the page started it, away from its file, it goes to
+    `followOrRefuse` and no error page is shown. This is how a custom
+    scheme ended before: allowed at the policy check, `zoommtg://example`
+    failed with `WEBKIT_POLICY_ERROR_CANNOT_SHOW_URI` ("The URL can't be
+    shown"), the default `load-failed` handler committed its error page
+    at `zoommtg://example`, and that reached the COMMITTED path below,
+    which gave it to the link handler, so to `GtkUriLauncher`. Seen in a
+    trace (2026-11-19) with the policy check let through and `onFailed`
+    left to the default: `load-changed` COMMITTED with the view at
+    `zoommtg://example`, then, the page loaded again, the refresh asked
+    for `zoommtg://example` once more.
+  - `WEBKIT_LOAD_COMMITTED` (the old path): a load this page asked for
+    earlier still puts the page back. A load the page made by itself no
+    longer gets here; should one, it is followed or refused by the same
+    rule (it used to go to the link handler every time, and loading the
+    file again fired its refresh again, round after round).
+  - WebKitGTK itself hands no address to another app: none of its
+    library or helper processes import `g_app_info_launch*`,
+    `gtk_show_uri` or `gtk_uri_launcher_*` (`nm -D`, 2.52.6). The one way
+    out is the link handler, `Editor::openMarkdownLink`, which gives any
+    scheme but http(s) and file to `GtkUriLauncher`.
+- **Refused** ones go to `HtmlView::Host::refused`, wired in
+  `Editor::showHtml` to `Editor::htmlRefused`, which main.cpp points at
+  `flashStatus` with `HtmlPage::refusedNote`: "The page tried to open
+  zoommtg://example by itself; mutible did not open it", or, for a web
+  address with scripts off, "...; with its scripts off, it was not
+  followed".
+- **The harness**: `Editor::launchUriHook`, when set, takes what
+  `openMarkdownLink` would give the desktop's handler; the harness sets it
+  at startup to a recorder (`MCGuiLaunchedUris()`, the Mac's
+  `MCGuiOpenedURLs`), so no check starts another app. `HtmlView::linkSpy`
+  sees every address the page hands the link handler; html_page records
+  them and lets only `file:` ones through, so a followed web address
+  never loads in the browser pane.
+- **The check** (`html_page`, its new steps): with scripts off, a meta
+  refresh to `zoommtg://example` and one to `https://127.0.0.1:2/refused`
+  (nothing listens there; no network is needed) open nothing, leave the
+  page on show, and the status bar says the Mac's words; with scripts on,
+  `location = 'target.html'` (a file: the Mac's rule, the old check said
+  it opened) and `location = 'smb://x/share'` are refused and named, a
+  meta refresh to `https://127.0.0.1:2/followed` reaches the link handler
+  and nothing else does, and `window.open('zoommtg://y/meeting')` without
+  a click opens nothing; a real click (XTest) on a link, and on a
+  target=_blank link, opens its file in a tab through the link handler,
+  and the desktop's handler got nothing all along.
+  What the trace showed for each: the zoommtg refresh and the smb
+  `location =` were refused at the policy check; `location =
+  'target.html'` at the response check (`is_main_frame_main_resource`
+  true for a file); both https refreshes failed with "Connection
+  refused" and went through `onFailed`; `window.open` reached neither
+  the policy check nor `create` (the script got no window).
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7, MC_GUI_ROOT=/tmp):
+  `html_page` 81 passed, none failed (78 passed and 5 failed while the
+  web address was on port 9, below). With markdown_side,
+  markdown_side_edit, markdown_side_sync, markdown_tables, tab_viewers,
+  browser_pages, browser_tabs and browser_find: 299 passed, none failed.
+  The core's `make test` 196,924 passed (`htmlpage:follow` new);
+  `meson test --no-suite gui` and linux's `make test` (435) pass.
+- **Trap (the check): a bad port does nothing.** The web address was
+  first `https://127.0.0.1:9/`: WebKit never navigates to a port on the
+  fetch standard's bad-ports list (9, discard, is one), so the refresh
+  made no navigation at all, and nothing was followed or named. Port 2
+  is not on the list.
+- **Not changed**: a script's synthetic click on a link (`a.click()`), or
+  its `form.submit()`, counts as the user's on both platforms (WebKit
+  reports a link click or a form submission), so a page whose scripts run
+  can still open another app; scripts run only once the user says so.
+  A real meta refresh, an app's scheme and the look of the status bar's
+  note need the owner's eyes on the ThinkPad; a real Zoom was never
+  started (no handler for zoommtg: or smb: is installed here, and the
+  checks record the desktop's handler instead).
