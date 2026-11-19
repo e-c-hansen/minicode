@@ -41,6 +41,14 @@ found through that list.
   kept side piece's shift (`toggleMarkdownDetails:atIndex:inPage:`).
   Quotes carry `quoteDepth` and, inside a list item, `quoteIndent`; a quote
   keeps its own list stack (`quoteList`), and a fence in an item its depth.
+  An ordered list counts on from its first item's number (2026-11-18,
+  `md:list-numbers`, CommonMark and GitHub: "1. 3. 4." shows 1, 2, 3):
+  `analyze()` keeps a `Numbering` per open list level (and per level of
+  a quote's own lists; a nested quote's items keep their numbers), which
+  a block out of the level, a sibling of the enclosing item, or another
+  delimiter or bullet ends. The marker run carries the counted number,
+  so the GTK and Android pages follow; the HTML export already wrote
+  `<ol start>` with the first number and let the browser count.
   Between blocks comes exactly one `"\n"`
   run with `gap` set, however many blank lines. Brackets are matched once per
   block with a stack and nesting stops at 8, so bad input stays linear.
@@ -104,11 +112,39 @@ found through that list.
   switch** (2026-11-16, the owner's screenshot: settings.conf's text, its
   swatches too, in the margins beside JOBS.md's page, the title saying
   [Preview]): a page shown in place of another tab's text marked only its
-  column. `CodeTextView redrawWholePane` marks the visible and prepared
-  rects now and again from a run-loop block, where the pane ended up;
+  column. `CodeTextView redrawWholePane` marks the whole view (the
+  visible and prepared rects until 2026-11-18, see the next trap) now
+  and again from a run-loop block, where the pane ended up;
   `activateTab:` and `renderMarkdown:` call it, and the view calls it when
   shown again (`viewDidUnhide`: marks made while hidden had no visible
   rect). markdown_side records the view's marks across switches.
+  **Trap: mark the whole view, not what shows** (2026-11-18, the owner's
+  screenshot of `.grades/STATUS.md` on 1.6.3, a file a script rewrites
+  every few minutes, in a 2300-pixel window: an older, narrower copy of
+  the page in its left margin, cut off where the page's column starts,
+  starting partway down). CodeTextView's `setNeedsDisplay:` override and
+  `redrawWholePane` marked only the visible and prepared rects, so
+  NSTextView's own whole-view marks (a new inset as the pane widens)
+  reached no further, while the layer keeps drawn tiles past them and
+  TextKit's marks for the new layout cover the page's whole column at
+  every height: those tiles came back with a fresh column and the old
+  margins. Both now mark `bounds` with `avoidAdditionalLayout:YES` (no
+  layout, as TextKit's own column marks; only what is drawn costs), and
+  `applyMarkdownMeasure` calls `redrawWholePane` whenever the inset
+  moves. `setNeedsDisplay:` still marks what shows with layout first: an
+  inset that changes during layout (a legacy scroll bar appearing as a
+  page goes in) stops `ensureLayoutForTextContainer` short, and that mark
+  laid the screen out again (without it markdown_preview read a picture's
+  size as -1 by -1). A tab read again from disk while its page shows
+  (`refreshDisplayKeepingPage`, from `takeDiskRead:`, `takeDiskText:` and
+  `putBackText:`) is rendered at the same height down the pane, clamped
+  to the new end; it went back to the top on every reload until then.
+  `markdown_page` rewrites a long page in place (truncate and write, as
+  Python's `open(..., 'w')`) and by renaming over it, scrolled near its
+  end at 2300 points, resizes the window and the sidebar between, and
+  checks the place, one text view over the slot, the centered measure,
+  and a mark holding the whole view (saving pictures under
+  `MC_GUI_SNAPSHOTS`).
 - Every run carries its source `line` (`kMarkdownSourceLine`): Shift+Cmd+V
   opens the preview at the caret and the source where a scrolled preview is.
   Links (`openMarkdownLink:`): `#heading` by GitHub's anchor
@@ -372,6 +408,7 @@ plays a stand-in mermaid.js whose colors come from its style sheet.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- Markdown: **Trap: mark the whole view, not what shows** (2026-11-18, the owner's screenshot of `.grades/STATUS.md` on 1.6.3, a file a script rewrites every few minutes, in a 2300-pixel window: an older, narrower copy of the page in its left margin, cut off where the page's column starts, starting partway down).
 - Markdown: Trap: `setNeedsDisplayInRect:` on the pane after a splice laid out the page to that rect in small steps, each walking every laid-out line fragment (the text blocks' slow path, see the editor's trap): 4.3 s at 20,000 lines; the mark uses `avoidAdditionalLayout:YES`.
 - Markdown: Traps: the TextKit 1 editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);
 - Math in the Markdown preview (Mac): **Trap**: `\begin{x}` runs `\csname x\endcsname` and `\end{x}` `\csname endx\endcsname`, so `\begin{pagecolor}` was `\pagecolor` past the word list; an environment's name must be letters in braces and is checked as both words, ignoring case, and `\lowercase`, `\uppercase`, `\Make...`, `\UseName` and `\ExpandArgs` are refused as more ways to build a word.

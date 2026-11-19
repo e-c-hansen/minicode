@@ -1051,9 +1051,12 @@ static NSUInteger MCMathNoteLength(NSTextStorage *st) {
 // After a page is replaced and scrolled back, all the pane is redrawn:
 // TextKit marks only the page's own column of what it replaced (and the
 // top screenful, scrolled there for a moment), so with a new zoom the old
-// page's ink stayed in the margins of a page scrolled down.
+// page's ink stayed in the margins of a page scrolled down. The whole
+// view, as CodeTextView's redrawWholePane marks it: tiles the layer keeps
+// past the visible rect held the old page too.
 static void MCRedrawWholePane(NSTextView *tv) {
-    [tv setNeedsDisplayInRect:tv.visibleRect avoidAdditionalLayout:YES];
+    if ([tv isKindOfClass:CodeTextView.class]) [(CodeTextView *)tv redrawWholePane];
+    else [tv setNeedsDisplayInRect:tv.bounds avoidAdditionalLayout:YES];
 }
 
 - (void)renderMarkdownKeepingPlace {
@@ -1065,6 +1068,26 @@ static void MCRedrawWholePane(NSTextView *tv) {
         [me renderMarkdown:[me markdownToRender]];
     }];
     if (unscrolled) _previewEntryScroll = clip.bounds.origin;
+}
+
+// The tab on show has new text (its file changed on disk and was read
+// again, or that reload was undone). A source shows it as refreshDisplay
+// does; a rendered page is rendered again at the same height down the
+// pane, as a browser keeps its place on a reload, clamped to the new
+// page's end, never scrolled to its top (a file another program rewrites
+// every few minutes jumped the page up each time). Then all of the pane is
+// drawn: the old page's tiles past the screen must not come back.
+- (void)refreshDisplayKeepingPage {
+    if (![self showsRenderedMarkdown] || self.showingMessage) {
+        [self refreshDisplay];
+        return;
+    }
+    NSScrollView *scroll = self.editorScroll;
+    const CGFloat y = scroll.contentView.bounds.origin.y;
+    [self refreshDisplay];
+    CodeTextView *tv = self.textView;
+    if (y > 0 && tv.textStorage.length > 0) MCScrollTextViewToY(scroll, tv, y);
+    [tv redrawWholePane];
 }
 
 // `render` replaces the page in `tv` (scrolled by `scroll`): the text at the

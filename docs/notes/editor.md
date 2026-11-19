@@ -256,8 +256,11 @@ found through that list.
 - **Trap: anything that lays out all of a large text stays.** Two did on
   every open after a file with diagnostics or a preview: `needsDisplay =
   YES` on the text view, which NSTextView answers by laying out every glyph
-  of its bounds (CodeTextView's `setNeedsDisplay:` now redraws only the
-  visible and prepared rects; clearing squiggles took 2.5 s at 25 MB), and
+  of its bounds (CodeTextView's `setNeedsDisplay:` marks only the visible
+  and prepared rects that way, and since 2026-11-18 the bounds too with
+  `avoidAdditionalLayout:YES`, which lays out nothing: tiles past them
+  kept an older page's ink, see the Markdown notes; clearing
+  squiggles took 2.5 s at 25 MB), and
   the gutter appearing after the text went in, which narrows the view and
   lays out all of it for its height (`displaySourceEditable` shows the
   gutter over an empty storage first for a text over 1 MB). Check with
@@ -498,7 +501,7 @@ text is in place in its section.
 - The editor's text view (Mac): **Trap: a Markdown page's text blocks outlive it** (2026-11-07).
 - The editor's text view (Mac): Traps: NSScrollView lays a ruler out as a content inset of a clip view that still spans the width, so `PanelScrollView tile` subtracts the insets; never change `ruleThickness` inside a storage edit (tile asked for text that was gone and threw), so it changes on the next run-loop turn.
 - The editor's text view (Mac): **Trap: word wrap stays as set**, unlike VS Code: a TextKit view that does not wrap lays out all of its text in `sizeToFit` to learn its width (5.5 s for 25 MB, nine tenths of it there).
-- The editor's text view (Mac): **Trap: anything that lays out all of a large text stays.** Two did on every open after a file with diagnostics or a preview: `needsDisplay = YES` on the text view, which NSTextView answers by laying out every glyph of its bounds (CodeTextView's `setNeedsDisplay:` now redraws only the visible and prepared rects; clearing ...
+- The editor's text view (Mac): **Trap: anything that lays out all of a large text stays.** Two did on every open after a file with diagnostics or a preview: `needsDisplay = YES` on the text view, which NSTextView answers by laying out every glyph of its bounds (CodeTextView's `setNeedsDisplay:` marks only the visible and prepared rects that way, and since 2026-11-18 the bounds too with `avoidAdditionalLayout:YES`, which lays out nothing: tiles past them kept an older page's ink, see the Markdown notes; clearing ...
 - Folding (Mac): Trap: one region at a time was quadratic (6 s and 18 s for Fold All and Unfold All of 50,000); they go in as one sorted merge and one invalidation (`collapseAll`).
 - Several carets and line commands (Mac): **Trap (2026-11-06)**: the window server counts clicks by time alone (HIDClickSpace is (0,0)), so a second click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView.
 - Several carets and line commands (Mac): GUI trap: a simulated key press that changes nothing, wrapped in `MCGuiUndoGroup`, leaves an empty undo group on top that a real key press never opens.

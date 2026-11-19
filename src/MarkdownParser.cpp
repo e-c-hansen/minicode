@@ -2117,8 +2117,31 @@ Doc analyze(const std::string& md) {
         noteBlock = -1;
         return d.blocks.back();
     };
+    // Each open list's numbering, a level an entry: an ordered list counts
+    // on from its first item's number (CommonMark and GitHub: "1. 3. 4."
+    // reads 1, 2, 3), whatever the later items say. A list goes on while
+    // items of its kind (bullet, or "." or ")") follow at its level; a block
+    // out of its level ends it, and so does a sibling of the item it is in.
+    struct Numbering { char delim; long next; };
+    std::vector<Numbering> numbering;
+    std::vector<Numbering> quoteNumbering;   // quoteList's
+    // The marker an item shows: an ordered one's number counted on in its
+    // list, `levels` the list levels open above it in the same run of lists.
+    auto numbered = [](std::vector<Numbering>& runs, size_t levels, const ListMarker& m) {
+        const char delim = m.written.empty() ? 0 : m.written.back();
+        ListMarker shown = m;
+        if (runs.size() > levels && runs[levels].delim == delim) {
+            if (m.ordered) shown.written = std::to_string(runs[levels].next++) + delim;
+            runs.resize(levels + 1);
+        } else {
+            runs.resize(levels);
+            runs.push_back({delim, m.number + 1});
+        }
+        return shown;
+    };
     auto settleList = [&](size_t indent) {
         while (!list.empty() && indent < list.back().content) list.pop_back();
+        if (numbering.size() > list.size()) numbering.resize(list.size());
     };
 
     size_t start = 0;
@@ -2512,6 +2535,7 @@ Doc analyze(const std::string& md) {
                 quoteFirst = true;
                 quoteOuter = (int)list.size();   // a quote inside a list item
                 quoteList.clear();
+                quoteNumbering.clear();
             }
             // The > markers, and how far into the outer quote's text a
             // nested > stands: it may sit inside a list item of that quote.
@@ -2547,6 +2571,7 @@ Doc analyze(const std::string& md) {
             const size_t at = depth == 1 ? inner : nestAt;
             auto settleQuoteList = [&] {
                 while (!quoteList.empty() && at < quoteList.back().content) quoteList.pop_back();
+                if (quoteNumbering.size() > quoteList.size()) quoteNumbering.resize(quoteList.size());
             };
             auto quoted = [&](Block::Kind kind) -> Block& {
                 Block& qb = newBlock(kind, (int)i);
@@ -2575,7 +2600,16 @@ Doc analyze(const std::string& md) {
                        !(open >= 0 && d.blocks[(size_t)open].kind == Block::Para &&
                          !d.blocks[(size_t)open].listish &&
                          (m.empty || (m.ordered && m.number != 1)))) {
-                settleQuoteList();
+                // Numbered on in the quote's own lists; a nested quote's
+                // items keep the numbers they were written with.
+                ListMarker shown = m;
+                if (depth == 1) {
+                    while (!quoteList.empty() && at < quoteList.back().content)
+                        quoteList.pop_back();
+                    shown = numbered(quoteNumbering, quoteList.size(), m);
+                } else {
+                    settleQuoteList();
+                }
                 int itemDepth;
                 if (depth == 1) {
                     quoteList.push_back(
@@ -2588,7 +2622,7 @@ Doc analyze(const std::string& md) {
                 qb.listish = true;
                 qb.depth = itemDepth;
                 qb.ordered = m.ordered;
-                qb.marker = markerText(m, itemDepth - quoteOuter);
+                qb.marker = markerText(shown, itemDepth - quoteOuter);
                 qb.task = m.task ? (m.checked ? 2 : 1) : 0;
                 std::string text = ct.substr(std::min(m.textStart, ct.size()));
                 if (m.task) text = text.size() > 3 ? text.substr(4) : "";
@@ -2618,14 +2652,17 @@ Doc analyze(const std::string& md) {
             if (interrupts) {
                 open = -1;
                 quoteGroup = -1;
-                settleList(cols);
+                // The levels above it: what is open once its own level and
+                // deeper ones close, its earlier sibling's numbering kept.
+                while (!list.empty() && cols < list.back().content) list.pop_back();
+                const ListMarker shown = numbered(numbering, list.size(), m);
                 list.push_back({cols, cols + (m.empty ? m.written.size() + 1 : m.textStart)});
                 Block& it = newBlock(Block::Item, (int)i);
                 it.edit = editIds++;
                 it.listish = true;
                 it.depth = (int)list.size();
                 it.ordered = m.ordered;
-                it.marker = markerText(m, it.depth);
+                it.marker = markerText(shown, it.depth);
                 it.task = m.task ? (m.checked ? 2 : 1) : 0;
                 std::string text = body.substr(std::min(m.textStart, body.size()));
                 if (m.task) text = text.size() > 3 ? text.substr(4) : "";

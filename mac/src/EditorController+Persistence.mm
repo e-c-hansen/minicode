@@ -1018,7 +1018,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
         NSString *old = t.sourceText ?: @"";
         t.sourceText = fresh;
         if (![old isEqualToString:fresh]) [self registerReloadUndoForTab:t text:old];
-        if (t == _activeTab) [self refreshDisplay];
+        if (t == _activeTab) [self refreshDisplayKeepingPage];
         else [self.lsp tabsChanged];   // the server gets the disk's text for it too
     }
     t.dirty = NO;
@@ -1070,7 +1070,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
     }
     t.sourceText = text;
     t.dirty = t.gone || ![text isEqualToString:t.savedText ?: @""];
-    if (t == _activeTab) [self refreshDisplay];
+    if (t == _activeTab) [self refreshDisplayKeepingPage];
     else [self.lsp tabsChanged];
     [self updateTitle];
     [self scheduleBackups];
@@ -1143,7 +1143,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
     t.pendingSort = nil;
     [self recordStamp:d.stamp ofTab:t];
     [self forgetHistoryOf:t];
-    if (t == _activeTab) [self refreshDisplay];
+    if (t == _activeTab) [self refreshDisplayKeepingPage];
     else [self.lsp tabsChanged];   // the server gets the disk's text for it too
     [self updateTitle];
 }
