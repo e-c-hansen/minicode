@@ -80,7 +80,7 @@
 // the user's tab on show loads it, or a new tab right of it with newTab.
 - (void)showAddress:(NSString *)url inNewTab:(BOOL)newTab;
 // The toolbar's star (Bookmark This Page, filled once the page on show is
-// in the bookmark folder, then a click removes it) and book (the folder as
+// in the window's bookmarks or the shared ones, then a click removes it) and book (the folder as
 // a menu, `bookmarksMenu`; a bookmark loads in the tab on show, or a new
 // tab with Command held). bookmarkPath is the page's bookmark file as last
 // looked up; bookmarksChanged looks again (after a save or a removal).
@@ -104,7 +104,8 @@
 // the address bar (`addressNotice`) and nothing loads.
 - (void)navigateToString:(NSString *)raw;
 // The window's folder, which file names typed in the address bar are
-// looked up in.
+// looked up in, and whose bookmarks (.mutible/bookmarks, then the shared
+// ones) the star and the book use.
 @property(nonatomic, copy) NSString * (^folderForAddresses)(void);
 // The address bar: one line, scrolling while typed in, a long address
 // shown with "…" in its middle otherwise.

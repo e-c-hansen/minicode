@@ -253,4 +253,96 @@ std::string menuTitle(const std::string &fileName) {
     return fileName;
 }
 
+// ------------------------------------------------ per-workspace bookmarks
+const char *const kWorkspaceFolder = ".mutible/bookmarks";
+
+namespace {
+std::string noTrailingSlash(std::string s) {
+    while (s.size() > 1 && s.back() == '/') s.pop_back();
+    return s;
+}
+}  // namespace
+
+std::string workspaceFolder(const std::string &root) {
+    const std::string r = noTrailingSlash(root);
+    if (r.empty()) return "";
+    return (r == "/" ? std::string() : r) + "/" + kWorkspaceFolder;
+}
+
+Places places(const std::string &root, const std::string &shared) {
+    const std::string r = noTrailingSlash(root), s = noTrailingSlash(shared);
+    Places p;
+    if (r.empty() || r == s) {
+        p.save = s;   // the browser window, or no window: the shared folder alone
+        return p;
+    }
+    p.save = workspaceFolder(r);
+    p.shared = s;
+    return p;
+}
+
+std::vector<std::string> lookupOrder(const Places &p) {
+    std::vector<std::string> out;
+    if (!p.save.empty()) out.push_back(p.save);
+    if (!p.shared.empty() && p.shared != p.save) out.push_back(p.shared);
+    return out;
+}
+
+std::vector<Entry> entries(const std::string &dir, const std::vector<Name> &names, bool shared,
+                           size_t max) {
+    std::vector<Entry> folders, files;
+    const std::string base = noTrailingSlash(dir);
+    for (const Name &n : names) {
+        if (n.name.empty() || n.name[0] == '.' || n.name.find('/') != std::string::npos) continue;
+        Entry e;
+        e.path = (base == "/" ? std::string() : base) + "/" + n.name;
+        e.folder = n.folder;
+        e.shared = shared;
+        if (n.folder) {
+            e.title = n.name;
+            folders.push_back(e);
+        } else if (isBookmarkPath(n.name)) {
+            e.title = menuTitle(n.name);
+            files.push_back(e);
+        }
+    }
+    std::vector<Entry> out;
+    for (auto *group : {&folders, &files})
+        for (Entry &e : *group) {
+            if (out.size() >= max) return out;
+            out.push_back(std::move(e));
+        }
+    return out;
+}
+
+std::vector<Entry> mergedEntries(const Places &p, const std::vector<Name> &own,
+                                 const std::vector<Name> &shared, size_t max) {
+    std::vector<Entry> out = p.save.empty() ? std::vector<Entry>() : entries(p.save, own, false, max);
+    if (!p.shared.empty() && p.shared != p.save)
+        for (Entry &e : entries(p.shared, shared, true, max)) out.push_back(std::move(e));
+    return out;
+}
+
+std::string moveDestination(const Places &p, const std::string &file,
+                            const std::function<bool(const std::string &)> &taken) {
+    const std::string s = noTrailingSlash(p.shared);
+    if (s.empty() || p.save.empty() || s == noTrailingSlash(p.save)) return "";
+    const std::string prefix = s == "/" ? "/" : s + "/";
+    if (file.size() <= prefix.size() || file.compare(0, prefix.size(), prefix) != 0) return "";
+    if (!isBookmarkPath(file)) return "";
+    // No step out of the shared folder ("a/../../x").
+    const std::string rest = file.substr(prefix.size());
+    size_t at = 0;
+    while (at <= rest.size()) {
+        const size_t slash = rest.find('/', at);
+        const std::string part = rest.substr(at, slash == std::string::npos ? std::string::npos
+                                                                            : slash - at);
+        if (part.empty() || part == "." || part == "..") return "";
+        if (slash == std::string::npos) break;
+        at = slash + 1;
+    }
+    const std::string name = file.substr(file.rfind('/') + 1);
+    return noTrailingSlash(p.save) + "/" + uniqueName(name, taken);
+}
+
 }  // namespace WebBookmark

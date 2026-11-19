@@ -5,17 +5,22 @@
 // (javascript:) opens as text, and Open as Text shows any of them so. A
 // folder's Open All in Browser Tabs opens its bookmarks in name order.
 // Save Page as Bookmark writes a .url file named for the page into the
-// bookmark folder (browser.bookmarks), made on first use, and only once
-// a page (saving again says where it is); Cmd+D does it while the page has
-// the keyboard and stays Add Next Occurrence in the editor. The toolbar's
-// star fills once the page on show is bookmarked, and a click on it then
-// moves the bookmark to the Trash. Save All Tabs writes a folder of them.
-// The toolbar's book and the menu bar's Bookmarks menu list the folder,
-// its folders as submenus; a bookmark loads in the tab on show, a folder's
-// Open All in Tabs opens each. Bookmarks and web addresses opened as Finder and the
+// workspace's .mutible/bookmarks, made on first use (and nothing in the
+// shared folder, browser.bookmarks), and only once a page (saving again
+// says where it is); Cmd+D does it while the page has the keyboard and
+// stays Add Next Occurrence in the editor. The toolbar's star fills once
+// the page on show is bookmarked, and a click on it then moves the
+// bookmark to the Trash. Save All Tabs writes a folder of them. The
+// toolbar's book and the menu bar's Bookmarks menu list the workspace's
+// bookmarks, its folders as submenus, and not another workspace's; a
+// bookmark loads in the tab on show, a folder's Open All in Tabs opens
+// each. The shared folder's bookmarks show under Shared, a page there is
+// already saved, and Move to This Workspace moves the file into the
+// workspace's folder. Bookmarks and web addresses opened as Finder and the
 // launcher open them (application:openURLs:, a "web" request file) go to
 // the browser window, the window on the bookmark folder, made when
-// missing, the page over the editor's side. The launcher sorts addresses
+// missing, the page over the editor's side; it lists and saves in the
+// shared folder itself, with no Shared part. The launcher sorts addresses
 // from paths and refuses what is no web address.
 //
 // Pages come from an HTTP server inside the test process on 127.0.0.1;
@@ -223,6 +228,10 @@ MC_GUI_SUITE(bookmarks) {
     NSString *three = [links stringByAppendingPathComponent:@"three.webloc"];
     NSString *bad = [links stringByAppendingPathComponent:@"bad.url"];
     NSString *notes = [proj stringByAppendingPathComponent:@"notes.txt"];
+    // The workspace's own bookmark folder, and another workspace's.
+    NSString *ws = [proj stringByAppendingPathComponent:@".mutible/bookmarks"];
+    NSString *proj2 = [MCGuiScratch() stringByAppendingPathComponent:@"bm-other"];
+    NSString *ws2 = [proj2 stringByAppendingPathComponent:@".mutible/bookmarks"];
     const bool serving = StartServer();
 
     MCGuiStep(@"bookmarks of each kind, the setting, and a window of the suite's own", ^{
@@ -238,6 +247,8 @@ MC_GUI_SUITE(bookmarks) {
         GCHECK([binary writeToFile:three atomically:YES]);
         MCGuiWriteFile(bad, @"[InternetShortcut]\nURL=javascript:alert(1)\n");
         MCGuiWriteFile(notes, @"alpha beta alpha\n");
+        MCGuiWriteFile([ws2 stringByAppendingPathComponent:@"Other.url"],
+                       [NSString stringWithFormat:@"[InternetShortcut]\nURL=%@\n", Page(@"other")]);
         MCGuiSetSettings([NSString stringWithFormat:@"lsp.enabled = false\n"
                                                     @"browser.bookmarks = %@\n", bm]);
         GCHECK([MCBookmarksFolder() isEqualToString:bm]);
@@ -246,6 +257,13 @@ MC_GUI_SUITE(bookmarks) {
         c = MCGuiController();
         MCGuiSetKeyWindow(c.window);
         GCHECK(!c.isBrowserWindow);
+        // A window on a folder saves in its .mutible/bookmarks and lists
+        // the bookmark folder as Shared.
+        GCHECK([MCSaveBookmarksFolder(c.rootPath).stringByResolvingSymlinksInPath
+                   isEqualToString:ws.stringByResolvingSymlinksInPath]);
+        GCHECK([MCSharedBookmarksFolder(c.rootPath) isEqualToString:bm]);
+        GCHECK(MCSharedBookmarksFolder(bm) == nil);
+        GCHECK([MCSaveBookmarksFolder(bm) isEqualToString:bm]);
         GCHECK(MCBookmarkAddress(three) && [MCBookmarkAddress(three) isEqualToString:Page(@"three")]);
         GCHECK(MCBookmarkAddress(bad) == nil);
     });
@@ -296,18 +314,28 @@ MC_GUI_SUITE(bookmarks) {
         GCHECK(!c.canOpenBookmarksInTabs);
     });
 
-    MCGuiStep(@"Save Page as Bookmark makes the folder and writes the page there", ^{
+    MCGuiStep(@"Save Page as Bookmark makes the workspace's folder and writes the page there", ^{
         GCHECK(c.canSaveBrowserBookmark);
+        GCHECK(![fm fileExistsAtPath:ws]);
         [NSApp sendAction:@selector(saveBrowserBookmark:) to:nil from:nil];
-        NSString *saved = [bm stringByAppendingPathComponent:@"One.url"];
+        NSString *saved = [ws stringByAppendingPathComponent:@"One.url"];
         GCHECK([fm fileExistsAtPath:saved]);
         GCHECK([Read(saved) isEqualToString:
                     @(WebBookmark::shortcutText(Page(@"one").UTF8String).c_str())]);
         GCHECK([MCBookmarkAddress(saved) isEqualToString:Page(@"one")]);
-        GCHECK([MCBookmarkFileFor(bm, Page(@"one")) isEqualToString:saved]);
+        GCHECK([MCBookmarkFileFor(ws, Page(@"one")) isEqualToString:saved]);
+        NSString *note = [[c valueForKey:@"statusLabel"] stringValue];
+        MCGuiNote(@"status: %@", note);
+        GCHECK([note containsString:@".mutible/bookmarks"]);
+        // Nothing in the shared folder, and no .gitignore: committing them
+        // is the point.
+        GCHECK(![fm fileExistsAtPath:bm]);
+        GCHECK([Names([proj stringByAppendingPathComponent:@".mutible"])
+                   isEqualToArray:@[@"bookmarks"]]);
         // Again: the page is bookmarked already, so nothing is written.
         [NSApp sendAction:@selector(saveBrowserBookmark:) to:nil from:nil];
-        GCHECK([Names(bm) isEqualToArray:@[@"One.url"]]);
+        GCHECK([Names(ws) isEqualToArray:@[@"One.url"]]);
+        GCHECK([[[c valueForKey:@"statusLabel"] stringValue] containsString:@"Already bookmarked"]);
     });
     MCGuiWait(@"the star fills for the bookmarked page", 10, ^BOOL {
         return [c.browser.bookmarkPath.lastPathComponent isEqualToString:@"One.url"];
@@ -319,7 +347,7 @@ MC_GUI_SUITE(bookmarks) {
         UseScratchTrash(YES);
         [c.browser.bookmarkButton performClick:nil];
         UseScratchTrash(NO);
-        GCHECK(Names(bm).count == 0);
+        GCHECK(Names(ws).count == 0);
         GCHECK([fm fileExistsAtPath:[ScratchTrash() stringByAppendingPathComponent:@"One.url"]]);
     });
     MCGuiWait(@"the star empties", 10, ^BOOL { return c.browser.bookmarkPath == nil; });
@@ -329,23 +357,23 @@ MC_GUI_SUITE(bookmarks) {
         [c.browser focusPage];
         GCHECK(InPage(c));
         Key(c.window, kVK_ANSI_D, NSEventModifierFlagCommand);
-        GCHECK([fm fileExistsAtPath:[bm stringByAppendingPathComponent:@"One.url"]]);
+        GCHECK([fm fileExistsAtPath:[ws stringByAppendingPathComponent:@"One.url"]]);
         GCHECK([c showFile:notes]);
         [c.window makeFirstResponder:c.textView];
         c.textView.selectedRange = NSMakeRange(0, 5);   // "alpha"
-        const NSUInteger before = Names(bm).count;
+        const NSUInteger before = Names(ws).count;
         Key(c.window, kVK_ANSI_D, NSEventModifierFlagCommand);
-        GCHECK(Names(bm).count == before);
+        GCHECK(Names(ws).count == before);
         GCHECK(c.textView.selectedRanges.count == 2);   // both "alpha"s
     });
 
     MCGuiStep(@"Save All Tabs writes a folder with a bookmark a tab", ^{
         GCHECK(c.canSaveBrowserTabs);
-        NSArray *before = Names(bm);
+        NSArray *before = Names(ws);
         [NSApp sendAction:@selector(saveBrowserTabsAsBookmarks:) to:nil from:nil];
         NSString *folder = nil;
-        for (NSString *n in Names(bm))
-            if (![before containsObject:n]) folder = [bm stringByAppendingPathComponent:n];
+        for (NSString *n in Names(ws))
+            if (![before containsObject:n]) folder = [ws stringByAppendingPathComponent:n];
         GCHECK([folder.lastPathComponent hasPrefix:@"Tabs "]);
         NSMutableSet *addresses = [NSMutableSet set];
         for (NSString *n in Names(folder)) {
@@ -358,7 +386,7 @@ MC_GUI_SUITE(bookmarks) {
     });
 
     MCGuiStep(@"the toolbar's book lists the folder; a bookmark loads in the tab on show", ^{
-        MCGuiWriteFile([bm stringByAppendingPathComponent:@"Five.url"],
+        MCGuiWriteFile([ws stringByAppendingPathComponent:@"Five.url"],
                        [NSString stringWithFormat:@"[InternetShortcut]\nURL=%@\n", Page(@"five")]);
         NSMenu *menu = [c.browser bookmarksMenu];
         NSMenuItem *folder = nil;
@@ -371,7 +399,16 @@ MC_GUI_SUITE(bookmarks) {
         NSMenuItem *five = MenuItem(menu, @"Five");
         GCHECK(five && five.action == @selector(openBookmarkFromMenu:) && five.target == c.browser);
         GCHECK(MenuItem(menu, @"One") != nil);
-        GCHECK(MenuItem(menu, @"Show Bookmarks Folder") != nil);
+        // The workspace's folder in Finder, and the shared one; no Shared
+        // submenu while the shared folder has nothing.
+        GCHECK(MenuItem(menu, @"Show Bookmarks Folder").action ==
+               @selector(showWorkspaceBookmarksFolder:));
+        GCHECK([[MenuItem(menu, @"Show Bookmarks Folder").representedObject
+                   stringByResolvingSymlinksInPath] isEqualToString:ws.stringByResolvingSymlinksInPath]);
+        GCHECK(MenuItem(menu, @"Show Shared Bookmarks Folder").action ==
+               @selector(showBookmarksFolder:));
+        GCHECK(MenuItem(menu, @"Shared") == nil);
+        GCHECK(MenuItem(menu, @"Other") == nil);   // another workspace's
         GCHECK([MenuItem(menu, @"Remove Bookmark").target isEqual:c.browser]);  // One is on show
         NSMenuItem *all = MenuItem(folder.submenu, @"Open All in Tabs");
         GCHECK(all && all.action == @selector(openBookmarkFolderFromMenu:));
@@ -402,7 +439,7 @@ MC_GUI_SUITE(bookmarks) {
     });
 
     MCGuiStep(@"the menu bar's Bookmarks menu loads a bookmark with the editor in front", ^{
-        MCGuiWriteFile([bm stringByAppendingPathComponent:@"Six.url"],
+        MCGuiWriteFile([ws stringByAppendingPathComponent:@"Six.url"],
                        [NSString stringWithFormat:@"[InternetShortcut]\nURL=%@\n", Page(@"six")]);
         NSMenu *menu = MenuBarBookmarks();
         GCHECK(menu != nil);
@@ -420,6 +457,91 @@ MC_GUI_SUITE(bookmarks) {
     MCGuiWait(@"the page loads and its star fills", 20, ^BOOL {
         return Loaded(c.browser, @"Six") &&
                [c.browser.bookmarkPath.lastPathComponent isEqualToString:@"Six.url"];
+    });
+
+    MCGuiStep(@"the shared folder's bookmarks show under Shared", ^{
+        MCGuiWriteFile([bm stringByAppendingPathComponent:@"Seven.url"],
+                       [NSString stringWithFormat:@"[InternetShortcut]\nURL=%@\n", Page(@"seven")]);
+        MCGuiWriteFile([bm stringByAppendingPathComponent:@"Work/Eight.url"],
+                       [NSString stringWithFormat:@"[InternetShortcut]\nURL=%@\n", Page(@"eight")]);
+        NSMenu *menu = MenuBarBookmarks();
+        GCHECK(MenuItem(menu, @"Six") != nil);
+        GCHECK(MenuItem(menu, @"Seven") == nil);   // not among the workspace's own
+        NSMenu *shared = MenuItem(menu, @"Shared").submenu;
+        GCHECK(shared != nil);
+        NSMenuItem *seven = MenuItem(shared, @"Seven");
+        GCHECK(seven && seven.action == @selector(openBookmarkFromMenu:));
+        GCHECK([seven.representedObject isEqualToString:
+                                            [bm stringByAppendingPathComponent:@"Seven.url"]]);
+        GCHECK(MenuItem(shared, @"Work").submenu != nil);
+        GCHECK(MenuItem(MenuItem(shared, @"Work").submenu, @"Eight") != nil);
+        GCHECK(MenuItem(shared, @"Six") == nil);
+        NSMenu *move = MenuItem(shared, @"Move to This Workspace").submenu;
+        GCHECK(move != nil);
+        GCHECK(MenuItem(move, @"Seven").action == @selector(moveBookmarkToWorkspace:));
+        // The toolbar's book has the same Shared part.
+        GCHECK(MenuItem(MenuItem([c.browser bookmarksMenu], @"Shared").submenu, @"Seven") != nil);
+        // A shared bookmark opens here as any.
+        GCHECK([NSApp sendAction:seven.action to:nil from:seven]);
+        GCHECK([ShownAddress(c.browser) isEqualToString:Page(@"seven")]);
+    });
+    MCGuiWait(@"the shared bookmark's page loads and its star fills", 20, ^BOOL {
+        return Loaded(c.browser, @"Seven") &&
+               [c.browser.bookmarkPath.stringByResolvingSymlinksInPath
+                   isEqualToString:[bm stringByAppendingPathComponent:@"Seven.url"]
+                                       .stringByResolvingSymlinksInPath];
+    });
+
+    MCGuiStep(@"a page in Shared is saved already; Move to This Workspace moves the file", ^{
+        [NSApp sendAction:@selector(saveBrowserBookmark:) to:nil from:nil];
+        NSString *note = [[c valueForKey:@"statusLabel"] stringValue];
+        MCGuiNote(@"status: %@", note);
+        GCHECK([note containsString:@"Already bookmarked in Shared"]);
+        GCHECK(![fm fileExistsAtPath:[ws stringByAppendingPathComponent:@"Seven.url"]]);
+        NSMenu *shared = MenuItem(MenuBarBookmarks(), @"Shared").submenu;
+        NSMenuItem *move = MenuItem(MenuItem(shared, @"Move to This Workspace").submenu, @"Seven");
+        GCHECK(move != nil);
+        GCHECK([NSApp sendAction:move.action to:move.target from:move]);
+        GCHECK(![fm fileExistsAtPath:[bm stringByAppendingPathComponent:@"Seven.url"]]);
+        NSString *moved = [ws stringByAppendingPathComponent:@"Seven.url"];
+        GCHECK([MCBookmarkAddress(moved) isEqualToString:Page(@"seven")]);
+        NSMenu *menu = MenuBarBookmarks();
+        GCHECK(MenuItem(menu, @"Seven") != nil);
+        GCHECK(MenuItem(MenuItem(menu, @"Shared").submenu, @"Seven") == nil);
+    });
+    MCGuiWait(@"the star follows the moved bookmark", 10, ^BOOL {
+        return [c.browser.bookmarkPath.stringByResolvingSymlinksInPath
+            isEqualToString:[ws stringByAppendingPathComponent:@"Seven.url"]
+                                .stringByResolvingSymlinksInPath];
+    });
+
+    __block EditorController *c2 = nil;
+    MCGuiStep(@"another workspace's menu lists its own bookmarks, not this one's", ^{
+        [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:proj2];
+        for (EditorController *o in MCGuiControllers())
+            if ([o.rootPath.stringByResolvingSymlinksInPath
+                    isEqualToString:proj2.stringByResolvingSymlinksInPath])
+                c2 = o;
+        GCHECK(c2 != nil && c2 != c);
+        MCGuiSetKeyWindow(c2.window);
+        NSMenu *menu = MenuBarBookmarks();
+        GCHECK(MenuItem(menu, @"Other") != nil);
+        GCHECK(MenuItem(menu, @"One") == nil);
+        GCHECK(MenuItem(menu, @"Seven") == nil);
+        // The shared folder shows in every workspace.
+        GCHECK(MenuItem(MenuItem(menu, @"Shared").submenu, @"Work") != nil);
+        MCGuiSetKeyWindow(c.window);
+        GCHECK(MenuItem(MenuBarBookmarks(), @"Other") == nil);
+        GCHECK(MenuItem(MenuBarBookmarks(), @"One") != nil);
+        [c2.window close];
+        c2 = nil;
+    });
+    MCGuiWait(@"the other workspace's window is gone", 10, ^BOOL {
+        for (EditorController *o in MCGuiControllers())
+            if ([o.rootPath.stringByResolvingSymlinksInPath
+                    isEqualToString:proj2.stringByResolvingSymlinksInPath])
+                return NO;
+        return YES;
     });
 
     MCGuiStep(@"bookmarks opened from Finder go to the browser window, as tabs", ^{
@@ -472,6 +594,17 @@ MC_GUI_SUITE(bookmarks) {
         [b saveBrowserBookmark:nil];
         NSArray *names = Names(sub);
         GCHECK(names.count == 1 && [names.firstObject hasSuffix:@".url"]);
+        // The browser window keeps to the shared folder: nothing made in
+        // it, its menu the folder itself with no Shared part.
+        GCHECK(![fm fileExistsAtPath:[bm stringByAppendingPathComponent:@".mutible"]]);
+        NSMenu *menu = MenuBarBookmarks();
+        GCHECK(MenuItem(menu, @"Work").submenu != nil);
+        GCHECK(MenuItem(menu, @"Reading").submenu != nil);
+        GCHECK(MenuItem(menu, @"Shared") == nil);
+        GCHECK(MenuItem(menu, @"One") == nil);   // the code window's
+        GCHECK(MenuItem(menu, @"Show Bookmarks Folder").action == @selector(showBookmarksFolder:));
+        GCHECK(MenuItem(menu, @"Show Shared Bookmarks Folder") == nil);
+        GCHECK(MenuItem([b.browser bookmarksMenu], @"Work") != nil);
         // A file opened beside it brings the editor back.
         [b openFileAtPath:[sub stringByAppendingPathComponent:names.firstObject]];
         GCHECK(b.browserVisible);

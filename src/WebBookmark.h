@@ -7,6 +7,14 @@
 // `browser.bookmarks` says otherwise) is the bookmark manager: folders,
 // renames, the Trash and git all work as for any file.
 //
+// Bookmarks are kept per workspace (2026-11-18): a page saved in a window
+// on a folder goes in that folder's `.mutible/bookmarks/`, so they travel
+// with the repository and can be committed, and the window's Bookmarks
+// menu lists them first. The bookmark folder of before (~/Bookmarks) is
+// the shared one: every workspace lists it under "Shared", with Move to
+// This Workspace, and the browser window (the window on it) works on it
+// alone, as before (`places`, `mergedEntries`, `moveDestination`).
+//
 // Plain C++ with no I/O, so every port can use it and it is unit-tested
 // (`bookmarks:*`).
 #pragma once
@@ -70,5 +78,64 @@ bool sameAddress(const std::string &a, const std::string &b);
 // A bookmark's name in a menu: its file name without the .url or .webloc
 // extension (the name itself when nothing else is left).
 std::string menuTitle(const std::string &fileName);
+
+// ------------------------------------------------ per-workspace bookmarks
+// The folder inside a workspace that keeps its bookmarks.
+extern const char *const kWorkspaceFolder;   // ".mutible/bookmarks"
+
+// `root`'s bookmark folder, `root`/.mutible/bookmarks ("" for no root). A
+// trailing slash on `root` is dropped.
+std::string workspaceFolder(const std::string &root);
+
+// The folders of a window on `root` given the shared folder `shared`
+// (browser.bookmarks, ~/Bookmarks), both spelled alike by the caller
+// (symlinks resolved, or not, in both):
+//  - save: where Save Page as Bookmark writes, made on the first save:
+//    the workspace's folder (workspaceFolder(root)); the shared folder
+//    itself in the window on it (the browser window) or with no root.
+//  - shared: the folder listed under "Shared", "" when the window's own
+//    folder is the shared one (or there is none).
+struct Places {
+    std::string save;
+    std::string shared;
+};
+Places places(const std::string &root, const std::string &shared);
+
+// The folders "is this page bookmarked?" looks in, in order: the
+// workspace's, then the shared one (each once, none empty).
+std::vector<std::string> lookupOrder(const Places &p);
+
+// A folder's entry, as the platform lists it (in its own name order).
+struct Name {
+    std::string name;
+    bool folder = false;
+};
+
+// A row of a bookmarks menu: a folder (a submenu) or a bookmark file.
+struct Entry {
+    std::string path;    // dir + "/" + name
+    std::string title;   // a folder's name; a bookmark's menuTitle
+    bool folder = false;
+    bool shared = false; // from the shared folder (the "Shared" section)
+};
+
+// The rows of the folder `dir` listed as `names`: hidden names dropped,
+// folders first, then bookmark files (isBookmarkPath; other files
+// dropped), each group in the order given, at most `max` in all.
+std::vector<Entry> entries(const std::string &dir, const std::vector<Name> &names, bool shared,
+                           size_t max = 1000);
+
+// The workspace's bookmarks menu: the rows of p.save listed as `own`, then
+// those of p.shared listed as `shared` (marked shared; none when p.shared
+// is ""), at most `max` in each part.
+std::vector<Entry> mergedEntries(const Places &p, const std::vector<Name> &own,
+                                 const std::vector<Name> &shared, size_t max = 1000);
+
+// Where Move to This Workspace puts `file`, a bookmark in p.shared or a
+// folder below it: p.save + "/" + its name, a number added when
+// `taken(name)` (uniqueName). "" when `file` is no bookmark file below
+// p.shared, or p.shared is "" (the browser window has nowhere to move to).
+std::string moveDestination(const Places &p, const std::string &file,
+                            const std::function<bool(const std::string &)> &taken);
 
 }  // namespace WebBookmark
