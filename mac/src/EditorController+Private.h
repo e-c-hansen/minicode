@@ -1082,6 +1082,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSTextView *)notesTextView;
 - (id)notesActiveTab;
 - (void)showPage:(id<MCEditorPage>)page;
+- (MCTab *)showPage:(id<MCEditorPage>)page preview:(BOOL)preview;
 - (void)closePageOf:(MCTab *)t;
 - (void)agentWorktreesChanged;
 - (BOOL)agentWorktreesOnShow;

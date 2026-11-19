@@ -5,6 +5,7 @@
 #import "AppSettings.h"
 #import "Appearance.h"
 #import "Lsp.h"   // MCFindProgram, MCSearchDirs
+#include "EditorTabs.h"
 #include "GitStatus.h"
 #include "GitGraph.h"
 #include "GitModel.h"
@@ -722,7 +723,10 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 @interface MCGitTable : NSTableView
 @property(nonatomic, copy) void (^onActivate)(NSInteger row);
 @property(nonatomic, copy) void (^onToggle)(NSInteger row);
-@property(nonatomic, copy) void (^onClick)(NSInteger row);
+// A press tracked to its end on a row: its count, whether the press
+// before was on the same row, and the modifiers held.
+@property(nonatomic, copy) void (^onClick)(NSInteger row, NSInteger count, BOOL sameRow,
+                                           NSEventModifierFlags modifiers);
 @property(nonatomic, copy) void (^onTab)(void);
 @property(nonatomic, copy) void (^onBackTab)(void);            // Shift+Tab; else onTab
 @property(nonatomic, copy) void (^onPastEnd)(NSInteger step);  // an arrow off either end
@@ -730,16 +734,20 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 @property(nonatomic, copy) NSMenu *(^menuForRow)(NSInteger row);   // a row's right click
 - (BOOL)moveBy:(NSInteger)step;   // to the next file row up or down; NO if none
 @end
-@implementation MCGitTable
+@implementation MCGitTable {
+    NSInteger _lastPressRow;   // the row the press before this one was on
+}
 - (void)mouseDown:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger row = [self rowAtPoint:p];
+    // The window server counts clicks by time alone: a quick click on
+    // another row comes as a second click, and must open as a first one
+    // (clickCount == 1 alone missed such clicks, and synthetic ones with
+    // no count, so a click seemed only to select).
+    const BOOL sameRow = row >= 0 && row == _lastPressRow;
+    _lastPressRow = row;
     [super mouseDown:event];
-    // A Command or Shift click chooses rows (several at once) without
-    // showing a diff, as in VS Code.
-    const BOOL choosing = (event.modifierFlags &
-                           (NSEventModifierFlagCommand | NSEventModifierFlagShift)) != 0;
-    if (row >= 0 && self.onClick && event.clickCount == 1 && !choosing) self.onClick(row);
+    if (row >= 0 && self.onClick) self.onClick(row, event.clickCount, sameRow, event.modifierFlags);
 }
 // A file row's menu (Open File, Stage, Discard, ...) above Adjust Settings,
 // the row selected as in VS Code (a row among several chosen keeps them
@@ -1055,7 +1063,9 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _table.dataSource = self;
     _table.delegate = self;
     _table.onActivate = ^(NSInteger row) { [weakSelf reviewRow:row]; };
-    _table.onClick = ^(NSInteger row) { [weakSelf reviewRow:row]; };
+    _table.onClick = ^(NSInteger row, NSInteger count, BOOL sameRow, NSEventModifierFlags m) {
+        [weakSelf clickedRow:row graph:NO clickCount:count sameRow:sameRow modifiers:m];
+    };
     _table.onToggle = ^(NSInteger row) { [weakSelf toggleStageAtRow:row]; };
     _table.onTab = ^{ [weakSelf focusGraph]; };
     _table.onBackTab = ^{ [weakSelf focusMessage]; };
@@ -1119,7 +1129,9 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
     _graphTable.dataSource = self;
     _graphTable.delegate = self;
     _graphTable.onActivate = ^(NSInteger row) { [weakSelf showCommitAtRow:row]; };
-    _graphTable.onClick = ^(NSInteger row) { [weakSelf showCommitAtRow:row]; };
+    _graphTable.onClick = ^(NSInteger row, NSInteger count, BOOL sameRow, NSEventModifierFlags m) {
+        [weakSelf clickedRow:row graph:YES clickCount:count sameRow:sameRow modifiers:m];
+    };
     _graphTable.onTab = ^{ [weakSelf focusMessageOrList]; };
     _graphTable.onBackTab = ^{ [weakSelf focusListFromGraph:YES]; };
     _graphTable.onPastEnd = ^(NSInteger step) {
@@ -1825,13 +1837,28 @@ static NSColor *LetterColor(unichar c, BOOL unmerged) {
 
 // The review of every change, at a row's file, or from its top.
 - (void)reviewChanges {
-    if (self.onReview) self.onReview(nil, NO);
+    if (self.onReview) self.onReview(nil, NO, NO);
 }
-- (void)reviewRow:(NSInteger)row {
+- (void)reviewRow:(NSInteger)row { [self reviewRow:row preview:NO]; }
+- (void)reviewRow:(NSInteger)row preview:(BOOL)preview {
     MCGitRow *r = [self fileRow:row];
     if (!r) return;
-    if (self.onReview) self.onReview(r.path, r.staged);
+    if (self.onReview) self.onReview(r.path, r.staged, preview);
     else [self showDiffAtRow:row];
+}
+
+// A click opens as the tree's does (EditorTabs::treeClick): the preview
+// tab, kept on a double-click on the same row.
+- (void)clickedRow:(NSInteger)row graph:(BOOL)graph clickCount:(NSInteger)count
+           sameRow:(BOOL)sameRow modifiers:(NSEventModifierFlags)modifiers {
+    if (row < 0) return;
+    if (modifiers & (NSEventModifierFlagCommand | NSEventModifierFlagShift |
+                     NSEventModifierFlagControl))
+        return;
+    const BOOL preview = EditorTabs::treeClick((int)count, sameRow, false) ==
+                         EditorTabs::OpenFrom::TreeClick;
+    if (graph) [self showCommitAtRow:row preview:preview];
+    else [self reviewRow:row preview:preview];
 }
 
 // Stage All and Unstage All: planned from a status read now, so the counts
@@ -2696,7 +2723,8 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
 // A commit's header, message and diff (against its first parent for a
 // merge, which is what the merge brought in; git's default for a merge is a
 // combined diff that is usually empty).
-- (void)showCommitAtRow:(NSInteger)row {
+- (void)showCommitAtRow:(NSInteger)row { [self showCommitAtRow:row preview:NO]; }
+- (void)showCommitAtRow:(NSInteger)row preview:(BOOL)preview {
     if (!_graph || row < 0 || !_topLevel) return;
     if (row >= (NSInteger)_graph->g.commits.size()) {
         if (_graph.hasMore) [self showMore];
@@ -2706,7 +2734,7 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
     NSString *title = NSFromBytes(GitUi::commitTitle(c));
     if (self.onReviewCommit) {
         ++_diffGeneration;
-        self.onReviewCommit(NSFromBytes(c.hash), title);
+        self.onReviewCommit(NSFromBytes(c.hash), title, preview);
         return;
     }
     NSArray *args = NSArgs(GitUi::showArgs(c.hash));
