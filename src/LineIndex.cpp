@@ -1,11 +1,50 @@
 // LineIndex.cpp — see LineIndex.h.
 #include "LineIndex.h"
 
+#include <algorithm>
+
 void LineIndex::reset(const char16_t* text, size_t length) {
     starts_.assign(1, 0);
     length_ = length;
     for (size_t i = 0; i < length; i++)
         if (breaksAfter(text[i], i + 1 < length ? text[i + 1] : 0)) starts_.push_back(i + 1);
+    gap_ = starts_.size();
+}
+
+void LineIndex::reset(size_t length, const Reader& read) {
+    // Each block with the unit after it, which says whether a '\r' ending
+    // the block ends a line. One pass: the starts are reserved by the first
+    // block's count of lines, scaled to the text, so a log of even lines
+    // never grows the vector (each growth left the old one behind).
+    constexpr size_t kBlock = 1 << 16;
+    std::vector<char16_t> buf(kBlock + 2);
+    starts_.clear();
+    starts_.shrink_to_fit();
+    starts_.push_back(0);
+    for (size_t at = 0; at < length; at += kBlock) {
+        const size_t n = std::min(kBlock, length - at);
+        const size_t got = std::min(kBlock + 1, length - at);
+        read(at, got, buf.data());
+        buf[got] = 0;
+        size_t i = 0;
+        // Eight units at a time, skipped when none can end a line: the
+        // test without a branch per unit runs as vector compares.
+        for (; i + 8 <= n; i += 8) {
+            unsigned any = 0;
+            for (size_t k = 0; k < 8; k++) {
+                const char16_t c = buf[i + k];
+                any |= (unsigned)(c <= u'\r') | (unsigned)(c == 0x2029);
+            }
+            if (!any) continue;
+            for (size_t k = i; k < i + 8; k++)
+                if (breaksAfter(buf[k], buf[k + 1])) starts_.push_back(at + k + 1);
+        }
+        for (; i < n; i++)
+            if (breaksAfter(buf[i], buf[i + 1])) starts_.push_back(at + i + 1);
+        if (at == 0 && length > n)
+            starts_.reserve((size_t)((double)starts_.size() * (double)length / (double)n * 1.05) + 16);
+    }
+    length_ = length;
     gap_ = starts_.size();
 }
 

@@ -1,5 +1,6 @@
 // BackupStore.mm — see BackupStore.h.
 #import "BackupStore.h"
+#import "EditorTab.h"
 #import "Environment.h"
 #include <sys/sysctl.h>
 #include <unistd.h>
@@ -116,9 +117,8 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
     dispatch_async(_queue, ^{
         if (![self isNewest:bid stamp:stamp]) return;   // a newer one follows
         // UTF-8 here, off the main thread: a large buffer costs nothing there.
-        NSData *bytes = [copy dataUsingEncoding:NSUTF8StringEncoding];
-        if (!bytes) return;
-        std::string t((const char *)bytes.bytes, bytes.length);
+        std::string t;
+        if (!MCUtf8Bytes(copy, &t)) return;
         if (!self->_store.save(e, t))
             NSLog(@"mutible: could not write the backup of %@ in %@", path, self.directory);
     });

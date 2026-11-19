@@ -131,6 +131,16 @@ BOOL MCIsGapParagraphStyle(NSParagraphStyle *style, NSParagraphStyle **stored);
 - (NSUInteger)singleInsertedCharacter;
 // The room the gaps open after character `index` (a kern), 0 for none.
 - (CGFloat)gapWidthAfterCharacter:(NSUInteger)index;
+// Every character replaced by `text` (immutable) with `attributes`, held
+// without a copy: the store becomes an MCPieceAttributedString over it
+// (PieceString.h), whose edits keep `text` as it is. For large-file mode,
+// where the tab's text, the store's and the copy made to set it were three
+// copies of a 260 MB log. Reported as setAttributedString: reports it. The
+// next replacement of every character (another tab's text) puts back an
+// ordinary store.
+- (void)holdLargeText:(NSString *)text attributes:(NSDictionary *)attributes;
+// The store holds a large text without a copy (holdLargeText:).
+@property(nonatomic, readonly) BOOL holdsLargeText;
 @end
 
 // The editor's layout manager. A gap's room is a kern, part of the glyph
