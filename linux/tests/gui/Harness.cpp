@@ -145,6 +145,22 @@ void MCGuiWaitQuiet(const std::string& what, double quiet, double timeout,
     });
 }
 
+void MCGuiWaitCpu(const std::string& what, double cpuSeconds, double wallSeconds,
+                  std::function<bool()> until) {
+    auto cpu0 = std::make_shared<double>(-1);
+    const double budgetMs = cpuSeconds * 1000 * MCGuiWaitScale();
+    MCGuiWait(what, wallSeconds, [=] {
+        if (*cpu0 < 0) *cpu0 = MCGuiThreadCpuMs();
+        if (until()) return true;
+        if (MCGuiThreadCpuMs() - *cpu0 < budgetMs) return false;
+        char text[256];
+        snprintf(text, sizeof text, "%.0f s of the main thread's CPU without: %s", budgetMs / 1000,
+                 what.c_str());
+        MCGuiCheck(false, text, __FILE__, __LINE__);
+        return true;
+    });
+}
+
 // ---------------------------------------------------------------- checks
 bool MCGuiCheck(bool ok, const std::string& what, const char* file, int line) {
     if (ok) {
@@ -815,6 +831,7 @@ struct World {
     std::string settings, keys;
     std::string folderSearch;   // what Find in Folder keeps that a new window's has not
     bool projectRepository = false;   // the project folder has a .git
+    int browsers = 0;   // windows with the browser pane on show
 };
 World gWorldAtStart;
 
@@ -843,6 +860,8 @@ World lookAtWorld() {
         if (!changes.empty()) w.folderSearch += (w.folderSearch.empty() ? "" : "; ") + changes;
     }
     w.projectRepository = MCGuiProjectIsRepository();
+    for (const MCGuiAppWindow& a : all)
+        if (a.layout && a.layout->browserShown()) w.browsers++;
     return w;
 }
 
@@ -1004,6 +1023,19 @@ void checkWhatSuiteLeft() {
                  (was.folderSearch.empty() ? "" : " (was " + was.folderSearch + ")"),
              false);
         if (putBack) MCGuiResetFolderSearch();
+    }
+    // The browser pane left on show takes the right side's width from the
+    // editor: browser_tabs left it, and tab_strip, after it in the soak's
+    // order, found a strip half as wide that widened under its drag. Said,
+    // not failed, and hidden as View > Toggle Browser hides it.
+    if (now.browsers > was.browsers) {
+        leak("left the browser pane on show in " + std::to_string(now.browsers) + " window(s) where it found " +
+                 std::to_string(was.browsers) + ", hidden",
+             false);
+        if (putBack)
+            for (const MCGuiAppWindow& a : MCGuiAppWindows())
+                if (a.layout && a.layout->browserShown())
+                    g_action_group_activate_action(G_ACTION_GROUP(a.window), "togglebrowser", nullptr);
     }
     // The project folder made a git repository and left one: every row of
     // the tree is then untracked, with a tooltip ("Untracked (git)"), the

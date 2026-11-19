@@ -373,12 +373,72 @@ five soak rounds without it:
   left the tree scrolled past them), so every other row it clicks is
   brought into view by its path first (`MCGuiBringTreeRow`).
 
+A fourth pass (2026-11-19): round 2's order (seed 4059859019, the first
+half's 74 suites) replayed with `MC_GUI_IN_ORDER=1` on a ThinkPad
+loaded by three other agents failed five suites; in CI the same order
+failed only `tab_strip`. Each was run alone, quiet and on one or two
+cores beside busy loops, then in the order with a probe of the main
+thread's CPU over three idle seconds before each suite:
+
+- GTK `tab_strip`, "the row scrolls to its end while the tab is held
+  there" (CI and the replay; state left): browser_tabs ended with the
+  browser pane on show, so the row was 472 wide, not 851; the press on
+  config.json's tab put its JSON outline beside the text, the right side
+  was laid out again, and the row went to 713 under the held drag, the
+  pointer at its old end no longer near the end (12 pixels scrolled; the
+  failure pictures show the outline and a narrowed browser pane). Two
+  local replays with the pane left on show kept the row 421 wide and
+  passed: the outline's width there left the editor wide enough.
+  browser_tabs hides the pane as it ends, tab_strip hides it first, the
+  harness says `LEFT` for a browser pane left on show and hides it, and
+  tab_strip checks the row kept its width under the drag.
+- GTK `auto_save`, "the tab on show is written" (load): the wait for
+  outside.txt's edit passed on its first key, and "ne " of "mine " came
+  after other.txt was shown ("one other.txt"); the status line's path
+  was that failure's, its note gone by then. It waits for the whole
+  edit.
+- GTK `host_wrap`, "VTE at the view's own grid again" (load): the view's
+  grid was read as VTE's 80 x 24 before the new window's first layout
+  (104 x 10 in CI). It waits for the grid VTE's frame holds.
+- GTK `gutter_typing`, "the main thread idle" (load): a wait for the
+  main thread's CPU to stand still for half a second, which a caret
+  fading at 60 frames a second for 10 s after the last key never lets
+  happen once frames cost enough. It waits for the last line colored,
+  what the idle time was for.
+- GTK `large_file`, "its place as it was" (load): GTK's layout of the
+  25 MB file took 13 to 44 s of the main thread's CPU and 14 to 470 s
+  of the clock (one core beside eight busy loops); the replay took 155 s
+  for the first layout and outran the wait's 180 s (270 with the scale)
+  on the second. Both waits are bounded by the main thread's CPU now
+  (`MCGuiWaitCpu`: 90 s of it, the clock's 900 s only for a wait
+  nothing moves). Still open: the editor's settling (`settleOnPlace`)
+  has limits of the clock of its own, three minutes and a second
+  without the height growing; on one core beside eight busy loops it
+  ended early (the top line 17,296 of 299,985 after 900 s, 70 s of
+  CPU), as it would have before.
+- word_wrap left its 300,001-line file open, and each settings file a
+  later suite put back cost over a second of the main thread (as
+  tab_strip began); it closes its tabs now. browser_pages, browser_find
+  and bookmark_save left the browser pane on show too (the new `LEFT`
+  lines); they hide it as they end. browser_tabs, which counts the
+  pane's tabs from none, failed after bookmark_save's; it closes any
+  left first.
+
+With the changes, the round's 74 suites replayed in order on four cores
+beside four busy loops, twice, the five above passing both times
+(large_file's layouts 18 to 27 s of CPU, 26 to 32 s of the clock):
+3262 passed and 2 failed, then 3262 and 4. Both runs failed
+`editor_keys`' "the caret at 0" (the selection left at 0 to 3), the
+round's own still-open failure below; the second also failed
+`preview_tabs`' "gone" after Ctrl+W, the keyboard in the window's
+GtkPaned rather than the editor (seen once, not looked into).
+
 Still open from that soak:
 
 - Seen in one round each: Mac `organize_on_save` (an alert count off by
-  one as its servers were turned off), GTK `tree_clicks`, `tab_strip`,
-  `editor_keys`, `agents` and `attention` (issue #127 has each one's
-  first failure).
+  one as its servers were turned off), GTK `tree_clicks`,
+  `editor_keys` (again in the fourth pass's loaded replay), `agents`
+  and `attention` (issue #127 has each one's first failure).
 
 - GTK `agents`, "the same key closes the panel": in one local full run
   on the ThinkPad (2026-11-17, main at b0ce717 plus a test-only change),

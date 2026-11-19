@@ -31,7 +31,10 @@ found through that list.
   before it ends, and so is the project folder left a git repository
   (2026-11-19: agents' git init, worktree and branches), removed by
   `MCGuiRemoveProjectRepository` with the worktrees git lists inside it,
-  which a suite that made it one calls before it ends.
+  which a suite that made it one calls before it ends. A browser pane
+  left on show is a LEFT line on GTK too (2026-11-19, after browser_tabs
+  left one and tab_strip's row was half as wide), hidden as View >
+  Toggle Browser hides it.
   `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
   are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
   picture of the test window (the first ten); CI keeps them as an
@@ -67,6 +70,34 @@ found through that list.
   click, press, drag or wheel goes there (`uncover` in Input.cpp), with
   a note ("a tooltip (...) over the point to click, hidden first");
   anything else over the point is left for the check to see.
+- **A long run on a loaded machine** (2026-11-19, GTK, soak #127, round
+  2's order replayed beside three other agents' builds). Traps, each a
+  wait that held only on a quiet machine:
+  - GDK hands the window one X event a turn of the main loop, so a wait
+    on the first effect of `MCGuiType("mine ")` (the tab dirty) can pass
+    with "ne " still to come, and the next step's tab gets them
+    (auto_save's other.txt read "one other.txt"). Wait for all of it.
+  - A window's VTE has its 80 x 24 grid until GTK first lays the window
+    out, and its shell can start before that (host_wrap read 80 x 24 as
+    the view's grid). Wait for the grid its frame holds.
+  - Work the main thread does itself (GTK laying out 470,000 lines) is
+    bounded by its CPU time, not the clock: `MCGuiWaitCpu(what, cpu,
+    wall)` fails after `cpu` seconds of the main thread's CPU, the clock's
+    `wall` only ending a wait nothing moves. large_file's layout took 13
+    to 44 s of CPU and 14 to 470 s of the clock. The editor's settling
+    (`settleOnPlace`, `settleOnCaret`) has limits of the clock of its own
+    (three minutes, a second without growth): with eight busy loops on
+    one core it ended early and the place was lost, still open.
+  - "The main thread idle" as its CPU standing still for half a second
+    (`MCGuiWaitQuiet` over `MCGuiThreadCpuMs() / 20`) never comes while a
+    text view with the keyboard blinks its caret: GTK 4 fades it, at 60
+    frames a second, for 10 s after the last key (20 to 85 ms of CPU a
+    second here), and a loaded machine makes each frame dearer
+    (gutter_typing, after fifty suites). Wait for what the idle time was
+    for (gutter_typing: the last line colored).
+  - A tab a suite leaves open costs every later suite: word_wrap's
+    300,001-line file took over a second of the main thread each time a
+    later suite's settings were put back. Close what you open.
 - **Two harnesses at once** (2026-11-17, CI's halves): each process makes
   its own world, so nothing a suite touches is shared. Mac: `/tmp/mcgui-*`
   by mkdtemp, home, TMPDIR (so control sockets; `MUTIBLE_CONTROL_DIR`
@@ -188,6 +219,7 @@ text is in place in its section.
 
 - Verification reality (important) (the rest): **What a suite needs, it sets up**: in CI's order a suite runs after the same few suites every time, so it can pass for months on what they happen to leave and fail in every shuffled order.
 - Verification reality (important) (the rest): **A tooltip takes the next click**: GTK's tooltip is an X window below a resting pointer, and XTest's pointer jumps onto it; the harness hides one over the point before pointer input goes there.
+- Verification reality (important) (the rest): **A long run on a loaded machine**: GDK hands the window one X event a turn of the main loop, so wait for all of a typed string; VTE is 80 x 24 until the window's first layout; bound the main thread's own work by its CPU (`MCGuiWaitCpu`); a caret blinking keeps the main thread from ever standing still; close the tabs a suite opens.
 - Verification reality (important) (the rest): **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events through the window then the main menu (`MCGuiPerformMenuKey`, built from the key code; setting the unicode string made the menu refuse a matching key); tree keys through `[window ...
 - Verification reality (important) (the rest): Older traps: an arrow key event needs the function-key character (U+F701...) as `characters`, and an empty string makes `-[NSMenu performKeyEquivalent:]` throw;
 - Verification reality (important) (the rest): **Docker trap**: `open -g -a Docker` raised an administrator password prompt and the daemon never started; never start Docker unattended.

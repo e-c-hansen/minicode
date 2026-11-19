@@ -385,4 +385,10 @@ MC_GUI_SUITE(word_wrap) {
         MCGuiKey("ctrl+z");
     });
     MCGuiWait("taken back", 10, [] { return !ed()->dirty(); });
+    // Its tabs closed, wrap-big.txt's 300,001 lines among them: left open,
+    // every settings change a later suite made was applied to them too,
+    // a second and more of the main thread's CPU (format_offer's, as
+    // tab_strip began, in the soak's order).
+    MCGuiStep("tidy up: the tabs closed", [] { ed()->closeAllTabs(); });
+    MCGuiWait("none", 10, [] { return ed()->tabCount() == 0; });
 }
