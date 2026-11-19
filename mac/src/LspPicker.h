@@ -53,10 +53,14 @@
 @interface MCRenameBox : NSObject <NSTextFieldDelegate>
 // Return with a name typed (trimmed; never empty).
 @property(nonatomic, copy) void (^onCommit)(NSString *name);
-// The box went, by Return, Esc or a click elsewhere.
+// The box went, by Return, Esc or a click elsewhere. Switching to another
+// app and back keeps it, with what was typed, and gives it the keyboard
+// again.
 @property(nonatomic, copy) void (^onClose)(void);
 @property(nonatomic, readonly) NSTextField *field;
 @property(nonatomic, readonly) BOOL visible;
+// Between the app resigning active with the box showing and its return.
+@property(nonatomic, readonly) BOOL waitingForApp;
 // Over `rect` (the name, in `view`'s coordinates), the field's text in
 // `font` (the editor's) at the name's place.
 - (void)showWithName:(NSString *)name relativeToRect:(NSRect)rect ofView:(NSView *)view

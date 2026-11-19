@@ -648,6 +648,8 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
                     key2:[self hk:@"editor.action.copyLinesUpAction"] label2:@"Copy line up" state:nil];
     [self appendHintsRow:s key:[self hk:@"cursorTop"] label:@"Start of the file"
                     key2:[self hk:@"cursorBottom"] label2:@"End of the file (⇧ selects)" state:nil];
+    [self appendHintsRow:s key:[self hk:@"cursorHome"] label:@"Start of the line"
+                    key2:[self hk:@"cursorEnd"] label2:@"End of the line (⇧ selects)" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.insertCursorBelow"] label:@"Add cursor below"
                     key2:[self hk:@"editor.action.insertCursorAbove"] label2:@"Add cursor above" state:nil];
     [self appendHintsRow:s key:[self hk:@"editor.action.addSelectionToNextFindMatch"] label:@"Add next occurrence"
@@ -846,6 +848,13 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
         [self appendHintsRow:s key:[self hk:@"mutible.latex.exportPDF"] label:@"Export PDF"
                         key2:[self hk:@"latex-workshop.synctex"] label2:@"Cursor's line in PDF"
                        state:nil];
+        [self appendHintsRow:s key:[self hk:@"markdown.showPreviewToSide"]
+                       label:@"Page to the side" key2:@"\u2318-click" label2:@"Page to its source line"
+                       state:[self pageSideShowing] ? @"open" : nil];
+    } else if (self.viewerKind == MCViewerHtml) {
+        [self appendHintsRow:s key:[self hk:@"markdown.showPreview"] label:@"Page or source"
+                        key2:[self hk:@"markdown.showPreviewToSide"] label2:@"Page to the side"
+                       state:[self pageSideShowing] ? @"side" : self.previewMode ? @"page" : @"source"];
     }
     if (self.isMedia) {
         [self appendHintsRow:s key:[self hk:@"mutible.togglePlayback"] label:@"Play or pause"

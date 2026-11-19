@@ -7,6 +7,7 @@ KeysSuite.cpp
 TreeStallSuite.cpp
 TabsSuite.cpp
 PreviewTabsSuite.cpp
+TabStripSuite.cpp
 TabViewersSuite.cpp
 LayoutSuite.cpp
 PaletteSuite.cpp
@@ -105,6 +106,7 @@ MarkdownSideEditSuite.cpp
 BookmarkSaveSuite.cpp
 BookmarksSuite.cpp
 BookmarkMenuSuite.cpp
+BookmarkWorkspaceSuite.cpp
 RecentFoldersSuite.cpp
 DemoSuite.cpp
 UndoHistorySuite.cpp
@@ -127,3 +129,6 @@ HostWrapSuite.cpp
 TreeEditsSuite.cpp
 HintsPanelSuite.cpp
 WindowTitleSuite.cpp
+EditorKeysSuite.cpp
+TerminalExitSuite.cpp
+GitPanelSuite.cpp

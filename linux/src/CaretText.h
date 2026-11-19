@@ -28,6 +28,12 @@ public:
     // The whole buffer, read in blocks where a command looks. It must not
     // outlive this, nor the buffer's text as it is now.
     MultiCaret::Text text();
+    // The same, with the lines holding `offsets` read whole first, once
+    // each (their breaks included), and read from there: a command that
+    // reads only those lines (Home, End) reads a 5 MB line in one go, where
+    // text()'s 1,024-character blocks each found their place in it from its
+    // start (49 s of CPU for End there; LargeFileSuite).
+    MultiCaret::Text textNear(const std::vector<size_t>& offsets);
     // The units of `n` characters from `from`, read now.
     std::u16string slice(size_t from, size_t to);
     // UTF-8 as units, and units back as UTF-8.
@@ -44,4 +50,9 @@ private:
     std::unordered_map<uint32_t, char16_t> slot_;
     std::vector<uint32_t> back_;
     bool full_ = false;
+    struct Line {
+        size_t start;
+        std::u16string units;
+    };
+    std::vector<Line> lines_;   // textNear's
 };

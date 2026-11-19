@@ -7,7 +7,9 @@
 // from an autofocus field and a script's focus(); Shift+Cmd+V flips to the
 // source and back; a save, and a write from outside, load the page again
 // with its scroll kept; a link opens its file in a tab of its own; a page
-// with no scripts is never asked about.
+// with no scripts is never asked about. Open Preview to the Side puts the
+// page beside the editable source, follows the typing before any save
+// (its stylesheet and picture still the folder's), and closes again.
 //
 // Only local pages (file://), in a window of the suite's own on a scratch
 // folder. Page state is read in an isolated world, which runs whether or
@@ -46,6 +48,23 @@ void Ask(EditorController *c, NSString *js, void (^answer)(id value)) {
                  if (error) MCGuiNote(@"script error: %@", error.localizedDescription);
                  answer(value);
              }];
+}
+
+// The page beside the source (Open Preview to the Side), and a script's
+// answer from it.
+MCHtmlPage *SidePage(EditorController *c) { return [c valueForKey:@"sideHtml"]; }
+void AskSide(EditorController *c, NSString *js, void (^answer)(id value)) {
+    [SidePage(c).webView evaluateJavaScript:js inFrame:nil
+                             inContentWorld:WKContentWorld.defaultClientWorld
+                          completionHandler:^(id value, NSError *error) {
+                              if (error) MCGuiNote(@"script error: %@", error.localizedDescription);
+                              answer(value);
+                          }];
+}
+BOOL SideLoaded(EditorController *c, NSUInteger loads) {
+    MCHtmlPage *p = SidePage(c);
+    return p.webView && !p.webView.isLoading && p.loads >= loads && !p.restoringPlace &&
+           !p.isHiddenOrHasHiddenAncestor;
 }
 
 BOOL KeyboardInPage(EditorController *c) {
@@ -261,6 +280,76 @@ MC_GUI_SUITE(html_page) {
         MCGuiSetSettings(@"lsp.enabled = false\nhtml.scripts = off\n");
         [[AppSettings shared] reload];
         GCHECK(!Page(c).asking && !Page(c).runsScripts);
+    });
+
+    // ------------------------------------------- the page beside the source
+    __block NSUInteger sideLoads = 0;
+    MCGuiStep(@"Open Preview to the Side (Control+Command+V) on index.html", ^{
+        GCHECK([c showFile:F(@"index.html")]);
+        GCHECK(c.previewMode && c.canToggleSidePreview);
+        GCHECK(MCGuiPerformMenuKey(c.window, 9 /* V */,
+                                   NSEventModifierFlagControl | NSEventModifierFlagCommand, nil, nil));
+        GCHECK(!c.previewMode && [c pageSideShowing]);
+    });
+    MCGuiStep(@"its source, editable and with the keyboard, its page beside it", ^{
+        NSView *src = c.editorScroll;
+        MCHtmlPage *side = SidePage(c);
+        GCHECK(side != nil && !side.hidden && Page(c).hidden);
+        MCGuiNote(@"source %@, page %@", NSStringFromRect(src.frame), NSStringFromRect(side.frame));
+        GCHECK(!src.hidden && NSMinX(side.frame) >= NSMaxX(src.frame) - 1);
+        GCHECK(NSWidth(src.frame) >= 150 && NSWidth(side.frame) >= 150);
+        GCHECK(EditorText(c).editable && c.window.firstResponder == EditorText(c));
+    });
+    MCGuiWait(@"the page beside it loads", 20, ^BOOL { return SideLoaded(c, 1); });
+    MCGuiAsync(@"the file's page, its stylesheet loaded", 10, ^(MCGuiDone done) {
+        AskSide(c, @"[document.getElementById('marker').textContent,"
+                   @" getComputedStyle(document.body).color]", ^(id v) {
+            NSArray *a = [v isKindOfClass:NSArray.class] ? v : nil;
+            MCGuiNote(@"beside: %@", [a componentsJoinedByString:@", "]);
+            GCHECK(a.count == 2);
+            GCHECK_EQ_STR(a.firstObject, @"Outside");
+            GCHECK_EQ_STR(a.lastObject, @"rgb(1, 2, 3)");
+            done();
+        });
+    });
+    MCGuiStep(@"typed in the source, not saved", ^{
+        sideLoads = SidePage(c).loads;
+        NSTextView *tv = EditorText(c);
+        const NSRange r = [tv.string rangeOfString:@"<p id=marker>"];
+        GCHECK(r.location != NSNotFound);
+        if (r.location == NSNotFound) return;
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [tv insertText:@"Typed " replacementRange:NSMakeRange(NSMaxRange(r), 0)];
+        });
+        GCHECK(c.dirty);
+    });
+    MCGuiWait(@"the page beside it follows the typing", 20, ^BOOL {
+        return SideLoaded(c, sideLoads + 1);
+    });
+    MCGuiAsync(@"showing the typed text, relative addresses still the folder's", 10,
+               ^(MCGuiDone done) {
+        AskSide(c, @"[document.getElementById('marker').textContent,"
+                   @" getComputedStyle(document.body).color,"
+                   @" document.getElementById('pic').naturalWidth]", ^(id v) {
+            NSArray *a = [v isKindOfClass:NSArray.class] ? v : nil;
+            MCGuiNote(@"after typing: %@", [a componentsJoinedByString:@", "]);
+            GCHECK(a.count == 3);
+            GCHECK_EQ_STR(a.firstObject, @"Typed Outside");
+            GCHECK_EQ_STR(a[1], @"rgb(1, 2, 3)");
+            GCHECK([a[2] intValue] == 37);
+            GCHECK(![[NSString stringWithContentsOfFile:F(@"index.html")
+                                                encoding:NSUTF8StringEncoding
+                                                   error:nil] containsString:@"Typed"]);
+            done();
+        });
+    });
+    MCGuiStep(@"Control+Command+V again closes it, the source keeping the slot", ^{
+        [c toggleSidePreview:nil];
+        GCHECK(![c pageSideShowing] && SidePage(c).hidden);
+        GCHECK(!c.previewMode && !c.editorScroll.hidden);
+        GCHECK(c.window.firstResponder == EditorText(c));
+        [EditorText(c).undoManager undo];
+        GCHECK(![EditorText(c).string containsString:@"Typed"]);
     });
 
     MCGuiStep(@"the suite's window closes", ^{

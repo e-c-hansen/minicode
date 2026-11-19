@@ -5,7 +5,18 @@
 // book, the Bookmarks menu and the palette. What an address means and how
 // the files read and are named is the core's WebBookmark; nothing here
 // touches GTK widgets.
+//
+// Bookmarks per workspace (2026-11-18, the Mac's #206): a window on a
+// folder saves in `<folder>/.mutible/bookmarks` and lists those first, then
+// the bookmark folder (~/Bookmarks, browser.bookmarks) under "Shared", each
+// of its folders ending with Move to This Workspace. The window on the
+// bookmark folder itself (the browser window) and no window keep the one
+// folder. Which folder is which is WebBookmark::places, the menu's rows
+// WebBookmark::mergedEntries and entries, a move's destination
+// WebBookmark::moveDestination; this file only reads and moves the files.
 #pragma once
+
+#include "WebBookmark.h"
 
 #include <gio/gio.h>
 
@@ -25,6 +36,20 @@ bool ensureFolder(const std::string& dir, std::string* error);
 
 // Whether `path` and `dir` name the same folder once symlinks are resolved.
 bool sameFolder(const std::string& path, const std::string& dir);
+
+// The folders of a window on `root` (WebBookmark::places) with the shared
+// folder `shared` (folder()): `root` is taken as `shared` when the two are
+// the same folder however spelled, so the browser window keeps the one
+// folder. An empty `root` (no window) is the shared folder alone too.
+WebBookmark::Places places(const std::string& root, const std::string& shared);
+
+// Whether `path` is inside the folder `dir` (below it, not `dir` itself),
+// symlinks resolved where they can be.
+bool inside(const std::string& path, const std::string& dir);
+
+// What is directly in `dir`, in the tree's order (names case folded and
+// collated), for WebBookmark::entries: a folder (symlinks followed) or not.
+std::vector<WebBookmark::Name> names(const std::string& dir);
 
 // The address the bookmark file at `path` holds, or "" when the file is not
 // a bookmark, cannot be read, or holds none that may open (a binary .webloc
@@ -60,14 +85,32 @@ struct Found {
 };
 std::vector<Found> all(const std::string& dir, size_t limit = 3000);
 
-// The folder as a menu model, for the book and the Bookmarks menu: folders
-// first, each a submenu opening with "Open All in Tabs"
-// (`win.openbookmarkfolder`, the folder's path as its target), then the
-// bookmark files titled by WebBookmark::menuTitle (`win.openbookmark`, the
-// file's path as its target). Read from the folder when called, nothing
-// kept; at most `limit` entries in all and six levels. An empty folder is
-// one disabled row (`win.nobookmarks`). The caller owns the result.
-GMenu* menu(const std::string& dir, size_t limit = 2000);
+// A window's bookmarks as a menu model, for the book and the Bookmarks menu
+// (WebBookmark::mergedEntries). First the rows of `p.save`: folders first,
+// each a submenu opening with "Open All in Tabs" (`win.openbookmarkfolder`,
+// the folder's path as its target), then the bookmark files titled by
+// WebBookmark::menuTitle (`win.openbookmark`, the file's path as its
+// target), one disabled row (`win.nobookmarks`) when there are none. Then,
+// when `p.shared` has any rows, a "Shared" submenu of them in which the
+// shared folder and each folder below it end with a "Move to This
+// Workspace" submenu of its bookmark files (`win.movebookmark`, the file's
+// path as its target). Read from the folders when called, nothing kept; at
+// most `limit` entries in each part and six levels. A submenu label met
+// again in the menu (a second Move to This Workspace, two folders of one
+// name) gets zero-width spaces after it: GtkPopoverMenu names its pages by
+// label and opens the first of two alike. The caller owns the result.
+GMenu* menu(const WebBookmark::Places& p, size_t limit = 2000);
+
+// The bookmark file of the page at `url` in the folders
+// WebBookmark::lookupOrder gives, the workspace's first; "" when none.
+std::string fileFor(const WebBookmark::Places& p, const std::string& url);
+
+// Move to This Workspace: the shared bookmark `file` moved to
+// WebBookmark::moveDestination (the workspace's folder, made first, under a
+// free name), never over a file. Returns where it went, or "" with
+// `error`.
+std::string moveToWorkspace(const WebBookmark::Places& p, const std::string& file,
+                            std::string* error);
 
 // Writes a bookmark of `url` titled `title` in `dir` under its title's name
 // (a number added when taken), never over a file. Returns the path, or ""

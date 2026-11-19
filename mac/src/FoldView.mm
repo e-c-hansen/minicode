@@ -29,6 +29,7 @@ static dispatch_queue_t FoldQueue(void) {
 @implementation MCFolds {
     __weak NSTextView *_tv;
     LineIndex _index;
+    BOOL _indexStale;   // let go while nothing needs lines (needsLines)
     Fold::Collapsed _folds;
     std::vector<Fold::Span> _outer;      // _folds.outermost(), kept for the delegate
     std::vector<Fold::Range> _core;      // computed, for the text at _coreGen
@@ -67,15 +68,25 @@ static dispatch_queue_t FoldQueue(void) {
 }
 
 // ---- lines
+// Read a block at a time, as the gutter's (Gutter.mm).
 - (void)reindex {
     NSString *s = _tv.textStorage.string;
-    std::vector<unichar> buf(s.length);
-    if (s.length) [s getCharacters:buf.data() range:NSMakeRange(0, s.length)];
-    _index.reset(reinterpret_cast<const char16_t *>(buf.data()), buf.size());
+    _index.reset(s.length, [s](size_t start, size_t n, char16_t *out) {
+        [s getCharacters:reinterpret_cast<unichar *>(out) range:NSMakeRange(start, n)];
+    });
+    _indexStale = NO;
 }
 
 - (void)checkIndex {
-    if (_index.length() != _tv.textStorage.length) [self reindex];
+    if (_indexStale || _index.length() != _tv.textStorage.length) [self reindex];
+}
+
+// Lines are kept only while something needs them: regions to find (a file
+// name), a server's, or folds. In large-file mode none do, and its index of
+// a 2,500,000-line log is 20 MB the gutter's own already holds; it is let go
+// and made again by checkIndex when wanted.
+- (BOOL)needsLines {
+    return _fileName.length || !_server.empty() || !_folds.empty();
 }
 
 // Where a line's text ends: before its "\n", "\r\n", "\r" or U+2029.
@@ -114,7 +125,12 @@ static dispatch_queue_t FoldQueue(void) {
         _outer.clear();
         for (const Fold::Span &s : was) [self invalidate:s];
     }
-    [self checkIndex];
+    if ([self needsLines]) {
+        [self checkIndex];
+    } else {
+        _index = LineIndex();
+        _indexStale = YES;
+    }
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(computeRegions)
                                                object:nil];
     if (_fileName.length) [self performSelector:@selector(computeRegions) withObject:nil afterDelay:0];
@@ -127,6 +143,14 @@ static dispatch_queue_t FoldQueue(void) {
     const NSRange er = ts.editedRange;
     const NSInteger delta = ts.changeInLength;
     const NSUInteger oldLen = (NSUInteger)((NSInteger)er.length - delta);
+    if (![self needsLines]) {
+        if (!_indexStale) {
+            _index = LineIndex();
+            _indexStale = YES;
+        }
+        _generation++;
+        return;
+    }
     std::vector<unichar> buf;
     const BOOL small = er.length < 1 << 20 || !_folds.empty();
     if (small) {

@@ -312,6 +312,7 @@ public:
     struct SemanticState;
     struct SymbolsState;
     struct FoldingState;
+    struct JsonCheckState;
 
 private:
     // ---- shared by the parts (Lsp.cpp)
@@ -658,6 +659,24 @@ private:
     void scheduleFoldingRanges(guint ms);
     void requestFoldingRanges();
     void forgetFoldingRanges();
+
+    // ---- JSON no server checks (LspSessionJsonCheck.cpp)
+    std::unique_ptr<JsonCheckState> json_;
+    // The file on show came or its servers changed: checked by the editor
+    // when it is JSON (JsonOutline::checksAsJson) and no server has it.
+    void jsonCheckDocument();
+    // It left the view.
+    void jsonDocumentClosed();
+    // A check `ms` from now (0.3 s after typing), on a thread of its own.
+    void checkJsonAfter(guint ms);
+    void checkJsonNow();
+    void jsonChecked(const std::vector<Lsp::Diagnostic>& list, const std::string& uri,
+                     std::shared_ptr<const std::u16string> base);
+    // The tabs changed: the checks of files no tab has go.
+    void forgetJsonChecksOfClosedTabs();
+    // The URI whose diagnostics the file on show draws: its server's, else
+    // the editor's own JSON check's, else "".
+    const std::string& shownUri() const;
 };
 
 // Stop every server the app started, now: shutdown and exit, then SIGTERM and

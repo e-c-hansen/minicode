@@ -50,7 +50,9 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -160,6 +162,28 @@ std::u16string expand(const std::u16string& replacement, const std::u16string& t
 std::vector<Edit16> replaceAll(const std::u16string& text, const Query& query,
                                const std::u16string& replacement);
 
+// Edits of `text` (ascending, as replaceAll makes them) without those
+// whose match starts on one of `lines` (1-based, numbered as Find in Folder
+// numbers them: \n, \r, \r\n and U+2029 end a line): Replace in Folder
+// leaving the lines of dismissed rows alone in a tab.
+void dropEditsOnLines(const std::u16string& text, std::vector<Edit16>* edits,
+                      const std::set<int>& lines);
+
+// findAll and replaceAll over a text read a block of whole lines at a time
+// (`read(start, n, out)` puts units [start, start + n) in out), for a text
+// too large to copy whole: a 260 MB log was 520 MB more as one u16string.
+// Since no match spans a line break, the matches and edits are exactly the
+// whole text's. A block is about `blockUnits` long, cut after its last line
+// break; a line longer than that is read whole.
+using Reader = std::function<void(std::size_t start, std::size_t n, char16_t* out)>;
+std::vector<Match> findAll(std::size_t length, const Reader& read, const Query& query,
+                           std::size_t limit = 0, bool* truncated = nullptr,
+                           const std::atomic<bool>* cancel = nullptr, bool* cancelled = nullptr,
+                           std::size_t blockUnits = 1 << 20);
+std::vector<Edit16> replaceAll(std::size_t length, const Reader& read, const Query& query,
+                               const std::u16string& replacement,
+                               std::size_t blockUnits = 1 << 20);
+
 // `text` with the edits (ascending, not overlapping) applied.
 std::u16string applyEdits(const std::u16string& text, const std::vector<Edit16>& edits);
 
@@ -192,9 +216,11 @@ bool findInLine(const std::string& line, const Query& query, std::size_t* byteCo
 std::vector<Match> findAllInLine(const std::string& line, const Query& query);
 
 // `content` (valid UTF-8) with every match replaced. Line endings are kept
-// as they were. *count is the number of matches replaced.
+// as they were. *count is the number of matches replaced. Matches on the
+// 1-based lines in `skipLines` (the lines of dismissed rows) are left alone.
 std::string replaceInText(const std::string& content, const Query& query,
-                          const std::string& replacement, std::size_t* count);
+                          const std::string& replacement, std::size_t* count,
+                          const std::set<int>* skipLines = nullptr);
 
 // `content` with only the match that starts at `byteColumn` of 1-based line
 // `line` replaced (the line as FolderSearch numbers lines). False, leaving

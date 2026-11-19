@@ -156,6 +156,9 @@ NSString *MCGuiBuildDir(void);              // build/, where guitest and mutible
 EditorController *MCGuiController(void);    // the newest editor window's controller
 NSArray<EditorController *> *MCGuiControllers(void);
 void MCGuiSetKeyWindow(NSWindow *window);   // what keyWindow reports (nil: the newest)
+// The last window the app asked to make key since MCGuiSetKeyWindow (the
+// harness keeps keyWindow as set; this says what the app wanted), or nil.
+NSWindow *MCGuiWindowMadeKey(void);
 // Answers for the next alerts (NSAlertFirstButtonReturn and so on), in order.
 void MCGuiAnswerAlerts(NSArray<NSNumber *> *answers);
 NSArray<NSString *> *MCGuiAlertsShown(void); // their message texts, so far

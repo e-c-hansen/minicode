@@ -339,9 +339,12 @@ Verified by running it:
   three runs and delivered nothing in two, while other mutible windows were
   running and writing the clipboard; Wayland only gives the clipboard to the
   focused window, so treat that one as unconfirmed.
-- The shell restarts in place when it exits. Confirmed by sending `exit` to the
-  child and reading the terminal buffer back: the notice line, a fresh prompt,
-  and a command run successfully in the new shell.
+- `exit`, or Ctrl+D at an empty prompt, closes the terminal (its pane, its
+  tab, the dock with the last), as on the Mac since November 2026
+  (terminal.close-on-exit; a killed shell, or one ending before its first
+  prompt, says so and waits for Return). Checked by the `terminal_exit` GUI
+  suite with real keys (linux/HANDOFF.md item 117). Until then the shell
+  restarted in place when it exited.
 - Find in Folder (Ctrl+Shift+F, September 2026). Checked on Ubuntu 26.04
   under GNOME on Wayland with a temporary test hook that drove the real code
   paths inside the running app, then was removed: the action opens the window
@@ -357,6 +360,14 @@ Verified by running it:
   is not a folder is refused; closing the window hides it and keeps the
   results. The search itself is the shared `src/FolderSearch.cpp`, with its
   own tests in the core suite.
+- Find in Folder's keys and dismissed rows (November 2026, HANDOFF item
+  117), by real keys and clicks in the `replace_in_folder` GUI suite under
+  the harness's Xvfb: Enter in the replace field never replaces; a click
+  on a result keeps the keyboard in the results, where the arrows move;
+  a row's ×, Delete and Dismiss File take rows out, and Replace All leaves
+  them unchanged; Ctrl+` in the search window brings the editor window up
+  with its terminal holding the keyboard. The × on hover and the menu's
+  look have not been seen on a real desktop.
 - All 13 window actions were registered with the intended accelerators, and the
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
   change the state they claim to. (Since item 0.3 the actions, the menu bar,
@@ -929,7 +940,16 @@ Verified by running it:
   Don't Save, and Save each did their part; a window with two dirty tabs
   asked once. Ctrl Alt Shift T reopened tabs newest first with their caret
   and scroll, and skipped a removed file; Ctrl Alt S saved every dirty tab;
-  two README.md files were labelled by folder. The tab menu's Close Tabs to
+  two README.md files were labelled by folder (the name, then the folder
+  dimmed after it, since item 115). The `tab_strip` suite (2026-11-19)
+  opened seventeen files in an 851 pixel strip: every title whole but one
+  past the widest tab, cut in the middle; widths 80 to 320 where GTK
+  allocated them; the row scrolled, with the tab on show in view after
+  opening, Alt 1 and Ctrl Page Up; two wheel clicks moved it 96 pixels and
+  chose nothing; a dot left it where it was; two index.ts tabs showed
+  "app" and "lib" smaller after the name; a drag still reordered, and a
+  drag held at the right end scrolled the row to its end and dropped the
+  tab last. The tab menu's Close Tabs to
   the Right, Close Other Tabs, and Copy Path did their part, and a middle
   click on a tab or its close button closed it. A single click in the tree or Find in
   Folder opens a preview tab (italic) that the next replaces; a double
@@ -1598,6 +1618,13 @@ that are files, databases made with the C API) on Xvfb. The details are in
   yourself, start Claude Code in two terminal tabs and a split, and see the
   dot (" ●") and the done mark (" ✓") on the right tab, Next Waiting Terminal
   landing on it, and `mutible state` listing each terminal with its own id.
+- [ ] Home, End and wrapped indentation (`linux/HANDOFF.md` item 114): in
+  an indented Python line, Home twice and back, End, Shift+Home, with a
+  real keyboard (a laptop's Fn+arrows too); on a wrapped line, End goes to
+  the row's end first. A long indented line, wrapped, goes on under its
+  first character; say how it looks as the window is resized and zoomed
+  (Ctrl+= and Ctrl+-), with editor.wrapping-indent = indent and none. A
+  package.json with a trailing comma shows a red squiggle and one problem.
 
 ### Sessions and losing work
 

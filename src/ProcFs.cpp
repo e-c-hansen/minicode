@@ -94,6 +94,7 @@ bool parseStat(const std::string& text, Stat& out) {
     if (f.size() < 20) return false;
     out.ppid = atoi(f[1].c_str());
     out.pgid = atoi(f[2].c_str());
+    out.sid = atoi(f[3].c_str());
     out.utime = strtoull(f[11].c_str(), nullptr, 10);
     out.stime = strtoull(f[12].c_str(), nullptr, 10);
     out.startTicks = strtoull(f[19].c_str(), nullptr, 10);
@@ -183,6 +184,7 @@ std::vector<Procs::Basic> Source::list() {
         b.pid = s.pid;
         b.ppid = s.ppid;
         b.pgid = s.pgid;
+        b.sid = s.sid;
         b.uid = st.st_uid;
         b.start = boot_ + (int64_t)(s.startTicks * 1000000ull / (uint64_t)ticks_);
         b.name = s.name;

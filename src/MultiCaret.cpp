@@ -233,6 +233,79 @@ std::vector<Caret> move(const Text& text, const std::vector<Caret>& carets, Move
     return normalize(out, text.size());
 }
 
+namespace {
+
+// A row clamped to the caret's line [s, e]: its start, and its end (e when
+// the row reaches the line's end, so the last row is the line's own end).
+void clampRow(const Text& text, size_t p, Row row, size_t* s, size_t* e, size_t* rs,
+              size_t* re) {
+    *s = lineStart(text, p);
+    *e = lineEnd(text, p);
+    *rs = std::min(std::max(row.start, *s), *e);
+    if (row.end >= *e || row.end <= *rs) {
+        *re = *e;
+        return;
+    }
+    // Before the row's last character (a surrogate pair whole).
+    size_t r = row.end - 1;
+    if (r > *rs && isLow(text[r]) && isHigh(text[r - 1])) r--;
+    *re = std::max(r, *rs);
+}
+
+size_t firstNonBlank(const Text& text, size_t from, size_t e) {
+    while (from < e && isBlank(text[from])) from++;
+    return from;
+}
+
+}  // namespace
+
+size_t homeTarget(const Text& text, size_t p, Row row) {
+    p = std::min(p, text.size());
+    size_t s, e, rs, re;
+    clampRow(text, p, row, &s, &e, &rs, &re);
+    if (rs > s) {   // a later row of a wrapped line
+        const size_t f = firstNonBlank(text, rs, re);
+        if (p != f) return f;
+    }
+    size_t f = firstNonBlank(text, s, e);
+    if (f == e) f = s;   // all blank: column 0, as VS Code
+    return p == f ? s : f;
+}
+
+size_t endTarget(const Text& text, size_t p, Row row) {
+    p = std::min(p, text.size());
+    size_t s, e, rs, re;
+    clampRow(text, p, row, &s, &e, &rs, &re);
+    return p == re ? e : re;
+}
+
+namespace {
+
+std::vector<Caret> homeOrEnd(const Text& text, const std::vector<Caret>& carets,
+                             const std::vector<Row>& rows, bool extend, bool end) {
+    std::vector<Caret> out;
+    out.reserve(carets.size());
+    for (size_t i = 0; i < carets.size(); i++) {
+        const Caret& c = carets[i];
+        const Row row = i < rows.size() ? rows[i] : Row{};
+        const size_t p = end ? endTarget(text, c.head, row) : homeTarget(text, c.head, row);
+        out.push_back(extend ? Caret{c.anchor, p} : Caret{p, p});
+    }
+    return normalize(out, text.size());
+}
+
+}  // namespace
+
+std::vector<Caret> homeCarets(const Text& text, const std::vector<Caret>& carets,
+                              const std::vector<Row>& rows, bool extend) {
+    return homeOrEnd(text, carets, rows, extend, false);
+}
+
+std::vector<Caret> endCarets(const Text& text, const std::vector<Caret>& carets,
+                             const std::vector<Row>& rows, bool extend) {
+    return homeOrEnd(text, carets, rows, extend, true);
+}
+
 std::vector<std::u16string> pieces(const std::u16string& clip, size_t carets) {
     if (carets < 2) return {clip};
     std::u16string body = clip;
@@ -501,7 +574,7 @@ bool wholeWordAt(const std::u16string& t, size_t s, size_t len) {
 
 }  // namespace
 
-Caret wordAt(const std::u16string& text, size_t p) {
+Caret wordAt(const Text& text, size_t p) {
     const size_t n = text.size();
     if (p > n) p = n;
     if (!((p < n && isWordChar(text[p])) || (p > 0 && isWordChar(text[p - 1])))) return {p, p};

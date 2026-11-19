@@ -12,6 +12,11 @@
 #import "EditorController.h"
 #import "EditorController+Private.h"
 #import "ControlServer.h"
+#import "EditorFind.h"
+#import "FindWidget.h"
+#import "PieceString.h"
+#import "SourceStorage.h"
+#include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -27,6 +32,32 @@ double Ms() {
 
 CodeTextView *Editor(EditorController *c) { return [c valueForKey:@"textView"]; }
 MCTab *Active(EditorController *c) { return [c valueForKey:@"activeTab"]; }
+
+// The process's physical footprint (what Activity Monitor's Memory column
+// and `footprint` report), in MB.
+double FootprintMB() {
+    task_vm_info_data_t info;
+    mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &n) != KERN_SUCCESS) return 0;
+    return (double)info.phys_footprint / 1048576.0;
+}
+
+// A server log of about `bytes` (timestamps, levels, messages; ASCII, as
+// logs are), its last line holding NEEDLE-4242.
+void WriteLog(NSString *path, size_t bytes) {
+    FILE *f = fopen(path.fileSystemRepresentation, "w");
+    if (!f) return;
+    const char *levels[] = {"INFO ", "INFO ", "DEBUG", "WARN ", "ERROR"};
+    size_t written = 0;
+    for (unsigned i = 0; written < bytes; i++) {
+        written += (size_t)fprintf(f, "2026-11-18T%02u:%02u:%02u.%03uZ %s worker-%02u request id=%08u "
+                                      "path=/api/items/%u took=%ums\n",
+                                   (i / 3600) % 24, (i / 60) % 60, i % 60, i % 1000, levels[i % 5],
+                                   i % 32, i, i % 9973, (i * 7919) % 1000);
+    }
+    fprintf(f, "2026-11-18T23:59:59.999Z ERROR worker-07 NEEDLE-4242 payment failed\n");
+    fclose(f);
+}
 
 BOOL FullPerf() { return NSProcessInfo.processInfo.environment[@"MC_GUI_FULL_PERF"].length > 0; }
 
@@ -439,6 +470,147 @@ MC_GUI_SUITE(large_file) {
         GCHECK(c.window.firstResponder == tv);
         GCHECK([c closeTab:Active(c) prompt:NO]);
         unlink(huge.fileSystemRepresentation);
+    });
+
+    // Round 9's grading: a 259 MB log took 1.7 GB, the text held four
+    // times over (read bytes, the tab's string, a copy made to set the
+    // storage, the storage's own) and copied to UTF-16 for each line
+    // index, and macOS keeps a freed block that size in the footprint. Now
+    // the file's bytes are the tab's string and the storage edits over it
+    // (PieceString.h): about the file's size.
+    NSString *log100 = [dir stringByAppendingPathComponent:@"server100.log"];
+    __block double logFootprint = 0, logMB = 0;
+    __block NSData *logBytes = nil;
+    MCGuiStep(@"a 100 MB log opens in about its size, its first screen quickly", ^{
+        WriteLog(log100, 100u << 20);
+        logMB = (double)MCStampOfFile(log100).size / 1048576.0;
+        // A baseline from this run: reading the file into a string and
+        // counting its lines, the least an open does, on this thread.
+        double base = MCGuiThreadCpuMs();
+        @autoreleasepool {
+            NSData *d = [NSData dataWithContentsOfFile:log100];
+            NSString *read = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+            std::vector<unichar> buf(1 << 16);
+            size_t lines = 0;
+            for (NSUInteger at = 0; at < read.length; at += buf.size()) {
+                const NSUInteger k = MIN(buf.size(), read.length - at);
+                [read getCharacters:buf.data() range:NSMakeRange(at, k)];
+                for (NSUInteger i = 0; i < k; i++) lines += buf[i] == '\n';
+            }
+            GCHECK(lines > 1000000);
+        }
+        base = MCGuiThreadCpuMs() - base;
+        logFootprint = FootprintMB();
+        const double t0 = Ms(), c0 = MCGuiThreadCpuMs();
+        GCHECK([c showFile:log100]);
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, 4000)];
+        const double shown = Ms() - t0, shownCpu = MCGuiThreadCpuMs() - c0;
+        const double grown = FootprintMB() - logFootprint;
+        MCGuiNote(@"opening a %.0f MB log: its first screen laid out by %.0f ms (%.0f ms of "
+                  @"main-thread CPU; the baseline %.0f ms); the footprint %.0f MB more",
+                  logMB, shown, shownCpu, base, grown);
+        GCHECK(Active(c).largeFile && [c largeFileFeaturesOff]);
+        GCHECK([tv.string hasPrefix:@"2026-11-18T00:00:00.000Z INFO  worker-00"]);
+        GCHECK([tv.string hasSuffix:@"NEEDLE-4242 payment failed\n"]);
+        // The storage holds the tab's string itself, unedited.
+        GCHECK([(MCSourceStorage *)tv.textStorage holdsLargeText]);
+        GCHECK([tv.string isKindOfClass:MCPieceString.class] && ((MCPieceString *)tv.string).isOriginal);
+        GCHECK([tv.string copy] == Active(c).sourceText);
+        MCGuiNote(@"caret %@, top of the pane %.0f", NSStringFromRange(tv.selectedRange),
+                  NSMinY(tv.visibleRect));
+        // Under a second of the main thread, or three times the baseline on a
+        // slow core (the 25 MB file's rule).
+        GCHECK_TIME(shownCpu, MAX(1000, 3 * base), @"a 100 MB log shows its first screen");
+    });
+    MCGuiStep(@"its memory stays near its size", ^{
+        // A turn later, so what the open left for the run loop has run.
+        const double grown = FootprintMB() - logFootprint;
+        MCGuiNote(@"the footprint grew %.0f MB for a %.0f MB log (%.2f times its size; 1.7 GB "
+                  @"for 259 MB, 6.5 times, before)", grown, logMB, grown / logMB);
+        GCHECK(grown < 1.5 * logMB);
+    });
+    MCGuiStep(@"typed in, it is dirty; typed back, it is not", ^{
+        logBytes = [NSData dataWithContentsOfFile:log100];
+        const NSUInteger at = tv.string.length / 2;
+        tv.selectedRange = NSMakeRange(at, 0);
+        [tv scrollRangeToVisible:tv.selectedRange];
+        [tv.layoutManager ensureLayoutForCharacterRange:NSMakeRange(at, 2000)];
+        std::vector<double> times = TypeChars(tv, @"ab cd ab cd ab cd ab cd ");
+        Bounds(times, @"a 100 MB log", 20, 60, __FILE__, __LINE__);
+        GCHECK(Active(c).dirty);
+        // Deleted again, the text is the file's: not dirty, found without
+        // reading the 100 MB (the pieces join back into the original).
+        for (int i = 0; i < 24; i++)
+            MCGuiUndoGroup(tv.undoManager, ^{ [tv deleteBackward:nil]; });
+        const double c0 = MCGuiThreadCpuMs();
+        GCHECK(!Active(c).dirty);
+        GCHECK(((MCPieceString *)tv.string).isOriginal);
+        MCGuiNote(@"back to the file's text: dirty %d, %.2f ms", Active(c).dirty,
+                  MCGuiThreadCpuMs() - c0);
+    });
+    MCGuiStep(@"an edit saves exactly", ^{
+        const NSUInteger at = tv.string.length / 3;
+        tv.selectedRange = NSMakeRange(at, 5);
+        MCGuiUndoGroup(tv.undoManager, ^{ [tv insertText:@"EDITED" replacementRange:tv.selectedRange]; });
+        GCHECK(Active(c).dirty);
+        [c saveCurrentFile:nil];
+        GCHECK(!Active(c).dirty);
+        NSMutableData *want = [logBytes mutableCopy];
+        [want replaceBytesInRange:NSMakeRange(at, 5) withBytes:"EDITED" length:6];
+        NSData *saved = [NSData dataWithContentsOfFile:log100];
+        MCGuiNote(@"saved %lu bytes, %lu expected", (unsigned long)saved.length,
+                  (unsigned long)want.length);
+        GCHECK([saved isEqualToData:want]);
+        logBytes = nil;
+    });
+    MCGuiStep(@"Cmd+F finds its last line without holding the main thread", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        tv.selectedRange = NSMakeRange(0, 0);
+        [c.window makeFirstResponder:tv];
+        GCHECK(MCGuiPerformMenuKey(c.window, 3, NSEventModifierFlagCommand, nil, nil));
+        GCHECK(find.shown);
+        NSTextView *ed = (NSTextView *)find.bar.findField.currentEditor;
+        const double c0 = MCGuiThreadCpuMs();
+        [ed insertText:@"NEEDLE-4242" replacementRange:ed.selectedRange];
+        const double typed = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"the query typed: %.1f ms of the main thread", typed);
+        GCHECK_TIME(typed, 100, @"typing a query in a 100 MB log");
+    });
+    MCGuiWait(@"the search reaches the end of the log", 60, ^BOOL {
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        return find.resultsCurrent && find.matchRanges.count == 1;
+    });
+    MCGuiStep(@"its one match, at the end", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        const NSRange m = find.matchRanges.firstObject.rangeValue;
+        GCHECK(m.location == [tv.string rangeOfString:@"NEEDLE-4242" options:NSBackwardsSearch].location);
+        GCHECK(NSEqualRanges(tv.selectedRange, m));
+        [find close];
+        GCHECK([c closeTab:Active(c) prompt:NO]);
+        unlink(log100.fileSystemRepresentation);
+    });
+    MCGuiStep(@"large files not in ASCII: UTF-8 and Windows-1252", ^{
+        // Past the size read into pages of their own: UTF-8 with an accent
+        // becomes UTF-16 (the pages let go), and bytes that are not UTF-8
+        // go to the ordinary read, which takes them as Windows-1252.
+        NSString *utf8 = [dir stringByAppendingPathComponent:@"accents.log"];
+        NSString *latin = [dir stringByAppendingPathComponent:@"latin1.log"];
+        NSMutableData *u = [NSMutableData data], *l = [NSMutableData data];
+        const char lineU[] = "caf\xC3\xA9 line of a log\n", lineL[] = "caf\xE9 line of a log\n";
+        while (u.length < (6u << 20)) [u appendBytes:lineU length:sizeof lineU - 1];
+        while (l.length < (6u << 20)) [l appendBytes:lineL length:sizeof lineL - 1];
+        GCHECK([u writeToFile:utf8 atomically:NO] && [l writeToFile:latin atomically:NO]);
+        GCHECK([c showFile:utf8]);
+        GCHECK([tv.string hasPrefix:@"café line"] && Active(c).encoding == MCTextEncodingUtf8);
+        GCHECK(tv.string.length == u.length - u.length / (sizeof lineU - 1));
+        GCHECK([c showFile:latin]);
+        GCHECK([tv.string hasPrefix:@"café line"] &&
+               Active(c).encoding == MCTextEncodingWindows1252);
+        GCHECK(tv.string.length == l.length);
+        GCHECK([c closeTab:Active(c) prompt:NO]);
+        GCHECK([c closeTab:Active(c) prompt:NO]);
+        unlink(utf8.fileSystemRepresentation);
+        unlink(latin.fileSystemRepresentation);
     });
 
     MCGuiStep(@"past 1 GB it still asks before anything is read", ^{

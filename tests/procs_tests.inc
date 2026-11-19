@@ -197,6 +197,91 @@ static void testProcs() {
         CHECK(old && !old->alive && old->key.start == 41);
     }
 
+    // A job no look saw under its shell (round 9, A4: `nohup python3 -m
+    // http.server & disown`, then `exit`, was "not started here"): its
+    // session is the pty's, led by the terminal's shell.
+    GROUP("procs:session-leader");
+    {
+        FakeProcs f;
+        world(f);
+        for (auto& p : f.ps) p.b.sid = p.b.pid == 200 || p.b.pid == 210 || p.b.pid == 211 ? 200
+                                     : p.b.pid == 300 ? 300 : p.b.pid == 1 ? 1 : self;
+        // `( server & )` in terminal 2: launchd's at once, the session the shell's.
+        f.add(320, 1, 45, "python3", folder).b.sid = 300;
+        f.add(321, 320, 46, "python3", folder).b.sid = 300;
+        // Terminal.app's, in the folder too, a session of its own.
+        f.add(500, 1, 47, "node", folder).b.sid = 499;
+        // A session that claims shell 300 but began before it (a pid used
+        // again): not taken.
+        f.add(330, 1, 25, "old", folder).b.sid = 300;
+        Tracker t;
+        t.sample(f, 1000, terms, {folder}, self, 501);
+        const Proc* server = tracked(t, 320);
+        CHECK(server && server->origin == Origin::Terminal && server->terminal == 2 &&
+              server->window == 7);
+        CHECK(tracked(t, 321) && tracked(t, 321)->origin == Origin::Terminal &&
+              tracked(t, 321)->terminal == 2);
+        CHECK(tracked(t, 500) && tracked(t, 500)->origin == Origin::Outside);
+        CHECK(tracked(t, 330) && tracked(t, 330)->origin == Origin::Outside);
+        CHECK(!tracked(t, 300) && !tracked(t, 150));   // the shell, mutible's own
+        // Terminal 2 leaves the window while its shell runs on (held on the
+        // session's host): the shell, its session's leader, is not listed.
+        t.sample(f, 1001, {terms[0]}, {folder}, self, 501);
+        CHECK(!tracked(t, 300));
+        CHECK(tracked(t, 320) && tracked(t, 320)->terminal == 2);
+        // In the view: under terminal 2, never "not started here".
+        View v = buildView(t.snapshot(), terms, 7, folder);
+        bool underTerminal = false, outside = false;
+        for (const Group& g : v.groups)
+            for (const Node& n : g.roots)
+                if (n.proc.key.pid == 320) {
+                    underTerminal = g.kind == GroupKind::Terminal && g.terminal == 2;
+                    outside = g.kind == GroupKind::Outside;
+                }
+        CHECK(underTerminal && !outside);
+
+        // Shell 200 is seen; then a server is started with nohup and disown
+        // and the shell exits before the next look, its terminal closed:
+        // the server, launchd's by then, is an orphan of terminal 1.
+        f.add(260, 1, 90, "python3", folder).b.sid = 200;
+        f.remove(210);
+        f.remove(211);
+        f.remove(200);
+        const std::vector<Terminal> left = {terms[1]};
+        t.sample(f, 1002, left, {folder}, self, 501);
+        const Proc* orphan = tracked(t, 260);
+        CHECK(orphan && orphan->origin == Origin::Terminal && orphan->terminal == 1 &&
+              orphan->window == 7);
+        View v2 = buildView(t.snapshot(), left, 7, folder);
+        bool inOrphans = false;
+        for (const Group& g : v2.groups)
+            for (const Node& n : g.roots)
+                if (n.proc.key.pid == 260) inOrphans = g.kind == GroupKind::Orphans;
+        CHECK(inOrphans);
+
+        // The session empties: shell 200 is forgotten, so pid 200 used again
+        // for a session of its own is nobody's terminal.
+        f.remove(260);
+        t.sample(f, 1004, left, {folder}, self, 501);
+        f.add(200, 1, 120, "login", "/").b.sid = 200;
+        f.add(270, 200, 121, "node", folder).b.sid = 200;
+        t.sample(f, 1006, left, {folder}, self, 501);
+        CHECK(tracked(t, 270) && tracked(t, 270)->origin == Origin::Outside);
+
+        // A shell's pid used again while its session still has a member:
+        // forgotten as well (the start time differs).
+        FakeProcs g;
+        world(g);
+        for (auto& p : g.ps) p.b.sid = p.b.pid == 300 ? 300 : 0;
+        Tracker t2;
+        t2.sample(g, 1000, terms, {folder}, self, 501);
+        g.remove(300);
+        g.add(300, 1, 200, "other", "/").b.sid = 300;
+        g.add(340, 1, 201, "node", folder).b.sid = 300;
+        t2.sample(g, 1002, {terms[0]}, {folder}, self, 501);
+        CHECK(tracked(t2, 340) && tracked(t2, 340)->origin == Origin::Outside);
+    }
+
     // R7.4 (AG-D8): which Claude Code session started a process, from the
     // session `mutible notify` named in its terminal.
     GROUP("procs:session");

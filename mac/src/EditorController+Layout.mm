@@ -609,8 +609,16 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
                                : editorRect;
     const BOOL showText = showEditor && !showLatex && !showImage && !showPDF && !showMedia &&
                           !showDiff && !showCompare && !showPage && !showViewer;
-    // A Markdown tab's page beside its source (Control+Command+V).
+    // The LaTeX preview in the editor's slot; beside the source instead
+    // when the tab has its page to the side (layoutPageSideIn: frames it).
+    if (self.latex) {
+        self.latex.frame = editorRect;
+        self.latex.hidden = !showLatex;
+    }
+    // A Markdown tab's page beside its source (Control+Command+V), or a
+    // LaTeX or HTML tab's.
     textRect = [self layoutSidePreviewIn:textRect textShown:showText];
+    textRect = [self layoutPageSideIn:textRect textShown:showText];
     self.editorScroll.frame = textRect;
     self.editorScroll.hidden = !showText;
     [_editorFind layoutInEditorRect:textRect visible:!self.editorScroll.hidden];
@@ -634,10 +642,6 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     if (self.playerView) {
         self.playerView.frame = editorRect;
         self.playerView.hidden = !showMedia;
-    }
-    if (self.latex) {
-        self.latex.frame = editorRect;
-        self.latex.hidden = !showLatex;
     }
     if (self.browser) {
         self.browser.frame = browserRect;
@@ -668,6 +672,7 @@ static const CGFloat kSideSnapDistance = 16;   // bar this close to a side hides
     // order: moving a bar in the middle of its own drag is asking for trouble.
     NSMutableArray<NSView *> *bars = [NSMutableArray array];
     if (NSView *side = [self sidePreviewDivider]) [bars addObject:side];
+    if (NSView *side = [self pageSideDivider]) [bars addObject:side];
     if (NSView *groups = [self groupDivider]) [bars addObject:groups];
     if (self.browserDivider) [bars addObject:self.browserDivider];
     if (self.termDivider) [bars addObject:self.termDivider];

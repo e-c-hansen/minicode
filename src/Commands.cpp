@@ -515,8 +515,10 @@ const std::vector<Command>& all() {
          0, nullptr},
         // VS Code's Cmd+K V. mutible has no chords: a Cmd+K chord is
         // Control+Command and its second key, as the folding keys are.
+        // Markdown's, LaTeX's and HTML's page beside the source; the menu
+        // item is off for any other file.
         {"markdown.showPreviewToSide", "Open Preview to the Side", "View", "ctrl+cmd+v", E,
-         "toggleSidePreview:", 0, 0, nullptr, "markdown"},
+         "toggleSidePreview:", 0, 0, nullptr},
         // LaTeX Workshop's latex-workshop.synctex (SyncTeX from Cursor).
         {"latex-workshop.synctex", "Show Line in PDF", "View", "alt+cmd+j", A, "showLineInPDF:", 0,
          0, nullptr},
@@ -840,6 +842,17 @@ const std::vector<Command>& all() {
          Fixed, "the editor's text view"},
         {"cursorBottomSelect", "Select to the End of the File", "Editor",
          "shift+cmd+down shift+cmd+end", E, nullptr, 0, Fixed, "the editor's text view"},
+        // VS Code's Mac Home and End: the line's first non-blank character
+        // (then column 0) and its end, or a wrapped row's end first, with
+        // Shift selecting (AppKit's scroll the document instead).
+        {"cursorHome", "Go to the Start of the Line", "Editor", "home", E, nullptr, 0, Fixed,
+         "the editor's text view"},
+        {"cursorHomeSelect", "Select to the Start of the Line", "Editor", "shift+home", E, nullptr,
+         0, Fixed, "the editor's text view"},
+        {"cursorEnd", "Go to the End of the Line", "Editor", "end", E, nullptr, 0, Fixed,
+         "the editor's text view"},
+        {"cursorEndSelect", "Select to the End of the Line", "Editor", "shift+end", E, nullptr, 0,
+         Fixed, "the editor's text view"},
         {"deleteAllLeft", "Delete to the Start of the Line", "Editor", "cmd+backspace", E, nullptr,
          0, Fixed, "the editor's text view"},
         {"workbench.action.terminal.scrollUpPage", "Scroll Up a Page", "Terminal",

@@ -468,6 +468,14 @@ MC_GUI_SUITE(agents) {
         if (!havePanel()) return;
         GCHECK(panel()->notice().find("claude-agents/projects") != std::string::npos);
         GCHECK_EQ_STR(panel()->summary(), "");
+        // The last session's row went with the keyboard on it (the click
+        // above): the panel holds it now, not the removed row, which GTK left
+        // the window's focus until its next frame. A key pressed then reached
+        // nothing of the window's, and Ctrl+Shift+A below did not close the
+        // panel in about half the runs (ListKeyboard.h).
+        GtkWidget* f = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
+        GCHECK_EQ_STR(f ? G_OBJECT_TYPE_NAME(f) : "nothing", "GtkBox");
+        GCHECK(f == panel()->widget());
         MCGuiKey("ctrl+shift+a");
     });
     MCGuiWait("the same key closes the panel", 5, [] { return !MCGuiApp().agentsShown; });

@@ -157,6 +157,17 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
             NSMakePoint(NSMidX(tv.visibleRect), NSMinY(tv.visibleRect) + 4)];
         previewLine = [self markdownSourceLineNear:top];
     }
+    // LaTeX, from the page: the source at the document's line highest on
+    // the page on show (SyncTeX), unless the caret's own line is on show
+    // there, which comes back as it was.
+    NSInteger pageLine = 0;
+    if (!toPreview && self.isLatex && [self latexIsShowing]) {
+        pageLine = [self.latex sourceLineOnScreen];
+        const NSInteger caretLine =
+            [self lineOfCharacter:_sourceSelection.location inString:self.sourceText ?: @""] + 1;
+        if (pageLine > 0 && _haveSourcePosition && [self.latex sourceLineIsOnScreen:caretLine])
+            pageLine = 0;
+    }
     if (tv.editable) self.sourceText = tv.string;  // keep edits
     if (overText && toPreview) [self endTextSessionOfTab:_activeTab];
     self.previewMode = toPreview;
@@ -173,9 +184,18 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
         if (!NSIsEmptyRect(r))
             [self scrollEditorToY:NSMinY(r) - NSHeight(tv.visibleRect) / 3];
         _previewEntryScroll = self.editorScroll.contentView.bounds.origin;
+    } else if (toPreview && self.isLatex && sourceLine >= 0) {
+        // The page at the caret's line, when it is not on show already.
+        [self.latex keepSourceLineInView:sourceLine + 1];
     } else if (!toPreview && previewLine >= 0) {
         // The preview was scrolled: open the source where it was looking.
         NSUInteger at = [self characterAtStartOfLine:previewLine inString:tv.string];
+        tv.selectedRange = NSMakeRange(at, 0);
+        NSRect r = [self textRectForCharacter:at];
+        if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - 8];
+    } else if (!toPreview && pageLine > 0) {
+        // The LaTeX page's line at the top of the source.
+        NSUInteger at = [self characterAtStartOfLine:pageLine - 1 inString:tv.string];
         tv.selectedRange = NSMakeRange(at, 0);
         NSRect r = [self textRectForCharacter:at];
         if (!NSIsEmptyRect(r)) [self scrollEditorToY:NSMinY(r) - 8];
@@ -309,10 +329,21 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
 
 // A double-click on rendered Markdown opens the block behind it (a
 // paragraph, heading, list item, quote, code block or table cell) in a
-// popover holding its Markdown; saving splices just those bytes back into
+// popover holding its Markdown; applying splices just those bytes back into
 // the buffer, which is then dirty until Cmd+S, as typing leaves it.
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point {
     if (!self.isMarkdown || !self.previewMode) return NO;
+    // A box still open with an edit in it goes in first; the page is then
+    // rendered again, so the character is read anew under the point.
+    if (self.markdownEditPanel.edited) {
+        NSString *was = self.sourceText;
+        [self.markdownEditPanel commitEditing];
+        if (self.sourceText != was && ![self.sourceText isEqualToString:was]) {
+            NSTextView *tv = self.textView;
+            [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
+            index = [tv characterIndexForInsertionAtPoint:point];
+        }
+    }
     return [self editMarkdownIn:self.textView atCharacter:index point:point];
 }
 
@@ -321,8 +352,27 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
 // typing it there would (applySidePreviewEdit:).
 - (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point {
     if (![self sidePreviewShowing] || !self.textView.editable) return NO;
+    // A box still open with an edit in it goes in first (the page then
+    // catches up, below).
+    if (self.markdownEditPanel.edited) [self.markdownEditPanel commitEditing];
     if ([self catchUpSidePage]) return YES;
     return [self editMarkdownIn:_sidePreview.textView atCharacter:index point:point];
+}
+
+- (BOOL)editPageAtWindowPoint:(NSPoint)at {
+    NSMutableArray<NSTextView *> *pages = [NSMutableArray array];
+    if ([self showsRenderedMarkdown] && self.isMarkdown) [pages addObject:self.textView];
+    if ([self sidePreviewShowing] && _sidePreview.textView) [pages addObject:_sidePreview.textView];
+    for (NSTextView *page in pages) {
+        if (!page.window || page.hiddenOrHasHiddenAncestor) continue;
+        const NSPoint p = [page convertPoint:at fromView:nil];
+        if (!NSPointInRect(p, page.visibleRect)) continue;
+        [page.layoutManager ensureLayoutForTextContainer:page.textContainer];
+        const NSUInteger i = [page characterIndexForInsertionAtPoint:p];
+        return page == self.textView ? [self editMarkdownAtCharacter:i point:p]
+                                     : [self editSidePreviewAtCharacter:i point:p];
+    }
+    return NO;
 }
 
 // Whether the page beside the source was rendered from the buffer as it is
@@ -378,7 +428,7 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
                                        @"Quote", @"Code block", @"Table cell", @"Table row",
                                        @"Formula", @"HTML"};
     NSString *title = [titles[block.kind] stringByAppendingString:
-        @" (Markdown; Return saves, Shift+Return for a new line)"];
+        @" (Markdown; Return applies, Shift+Return for a new line)"];
     NSString *text = [NSString stringWithUTF8String:
         src.substr(block.start, block.end - block.start).c_str()] ?: @"";
 
@@ -452,6 +502,12 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
         }
         addItem:addItem];
     return YES;
+}
+
+- (void)commitPageEdit {
+    if (self.markdownEditPanel.edited) [self.markdownEditPanel commitEditing];
+    // The LaTeX page's box too, the same way.
+    if (self.latex.editPending) [self.latex commitPendingEdit];
 }
 
 - (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side {
@@ -1195,9 +1251,12 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
            [self sidePreviewWanted];
 }
 
+// Markdown, LaTeX and HTML files have a page to put beside their source
+// (LaTeX's and HTML's in EditorController+PageSide.mm); for any other the
+// item is off.
 - (BOOL)canToggleSidePreview {
-    return self.isMarkdown && _activeTab != nil && !self.showingMessage && !self.isDiff &&
-           self.currentPath != nil;
+    return (self.isMarkdown || self.isLatex || self.viewerKind == MCViewerHtml) &&
+           _activeTab != nil && !self.showingMessage && !self.isDiff && self.currentPath != nil;
 }
 
 // A rendered page is on show: the full preview, or the one beside the source.
@@ -1616,6 +1675,10 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
         [self closeSidePreview];
         return;
     }
+    if (t.sidePreview && [self pageSideWanted]) {
+        [self closePageSide];
+        return;
+    }
     t.sidePreview = YES;
     if (self.previewMode) {
         // From the full preview: the source comes back, with the page beside it.
@@ -1624,6 +1687,7 @@ static const NSTimeInterval kSidePreviewDelay = 0.3;
         [self revealEditor];
         [self relayoutRightArea];
         [self refreshSidePreview];
+        [self refreshPageSide];
     }
     [self saveSession];
     if (self.hintsVisible) [self updateHints];

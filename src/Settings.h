@@ -300,6 +300,13 @@ public:
     enum class AutoSave { Off, AfterDelay, FocusChange };
     AutoSave autoSave() const { return autoSave_; }
     int autoSaveDelay() const { return autoSaveDelay_; }
+    // files.hot-exit (the Mac's, 2026-11-18): on-exit (the default) quits
+    // without asking about unsaved changes, which are kept in the backups
+    // and come back unsaved with their windows at the next launch, as VS
+    // Code's files.hotExit onExit; off asks Save, Don't Save or Cancel at
+    // quit, as before. Closing a tab or a window asks either way.
+    enum class HotExit { Off, OnExit };
+    HotExit hotExit() const { return hotExit_; }
     // editor.ruler: the columns a thin vertical line marks in the editor,
     // ascending ({100} by default; empty for off). editor.ruler-color is the
     // line's color.
@@ -445,6 +452,13 @@ public:
     double terminalFontSize() const { return terminalFontSize_; }
     int terminalScrollback() const { return terminalScrollback_; }
     bool terminalOptionAsMeta() const { return terminalOptionAsMeta_; }
+    // terminal.mac-style-keys (Linux only, false by default): for a
+    // Mac-style remapper (Toshy, Kinto), which sends the key beside the
+    // space bar, the Mac's Cmd, as Ctrl and the physical Ctrl as Super.
+    // While the terminal has the keyboard, Ctrl keys are mutible's, as Cmd
+    // keys are in the Mac's Terminal, and Super keys go to the program as
+    // their Ctrl key (Commands::linuxMacStyleKey).
+    bool terminalMacStyleKeys() const { return terminalMacStyleKeys_; }
     // terminal.activate-venv: a new terminal starts with the folder's Python
     // environment active, as VS Code's shellStartup activation does: its
     // bin first on PATH, VIRTUAL_ENV set, its name before the prompt and a
@@ -452,6 +466,12 @@ public:
     // is run to do it; the folder's own .venv waits for the same yes the
     // language servers wait for.
     bool terminalActivateVenv() const { return terminalActivateVenv_; }
+    // terminal.close-on-exit: `exit`, or Ctrl+D at an empty prompt, closes
+    // the terminal (on, the default, as Terminal.app, VS Code and Zed do);
+    // off leaves it saying "Process exited" until Return starts a new
+    // shell. A shell killed by a signal never closes its terminal
+    // (TerminalExit.h). The Mac's terminals and the GTK port's.
+    bool terminalCloseOnExit() const { return terminalCloseOnExit_; }
     // terminal.multiline-paste-warning: auto (the default), always or
     // never; when a paste of several lines asks first
     // (TerminalScreen::checkPaste, VS Code's enableMultiLinePasteWarning).
@@ -607,6 +627,7 @@ private:
     int gitAutoFetchPeriod_ = 180;
     AutoSave autoSave_ = AutoSave::Off;
     int autoSaveDelay_ = 1000;
+    HotExit hotExit_ = HotExit::OnExit;
     std::vector<int> rulers_ = {100};
     std::optional<Rgba> rulerColor_;
     double editorFontSize_ = 13;
@@ -639,7 +660,9 @@ private:
     int terminalScrollback_ = 10000;
     double terminalFontSize_ = 12;
     bool terminalOptionAsMeta_ = true;
+    bool terminalMacStyleKeys_ = false;
     bool terminalActivateVenv_ = true;
+    bool terminalCloseOnExit_ = true;
     std::string terminalPasteWarning_ = "auto";
     std::string terminalCursorStyle_ = "block";
     bool searchUseIgnoreFiles_ = true;

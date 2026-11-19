@@ -474,13 +474,16 @@ MC_GUI_SUITE(terminal_reflow) {
     MCGuiWait(@"the prompt", 10, ^BOOL { return term.atPrompt && Screen(term)->bracketedPaste(); });
 
     // The shell dies in DEC line drawing and a synchronized frame; the
-    // screen is reset before the new shell's prompt.
+    // screen is reset before the new shell's prompt. Killed, it waits for
+    // Return (TerminalExit.h) rather than closing the terminal.
     MCGuiStep(@"a shell killed mid-frame", ^{
         [term runCommand:@"printf '\\e(0\\e[?2026h'; kill -9 $$"];
     });
-    MCGuiWait(@"a new shell's prompt", 20, ^BOOL {
-        return term.atPrompt && [[term recentText:8] containsString:@"shell exited"];
+    MCGuiWait(@"the crash is said", 20, ^BOOL {
+        return term.shellPid == 0 && [[term recentText:8] containsString:@"The shell ended (signal 9)"];
     });
+    MCGuiStep(@"Return starts a new shell", ^{ Send(grid, @"\r"); });
+    MCGuiWait(@"a new shell's prompt", 20, ^BOOL { return term.atPrompt && term.shellPid > 0; });
     MCGuiStep(@"q is q again, and the frame is over", ^{
         GCHECK(!Screen(term)->synchronizedOutput());
         [term runCommand:@"echo qqq"];

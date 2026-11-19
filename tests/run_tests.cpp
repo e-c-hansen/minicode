@@ -4061,8 +4061,9 @@ void testSettings() {
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
     // editor.session-web-idle-minutes, and editor.wrapping-indent, and
-    // workbench.sidebar-icons.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 144);
+    // terminal.mac-style-keys, and terminal.close-on-exit, and
+    // files.hot-exit, and workbench.sidebar-icons.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 147);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4140,6 +4141,7 @@ void testSettings() {
           d.terminalScrollback() == 10000);
     CHECK(un.terminalOptionAsMeta() == d.terminalOptionAsMeta() &&
           d.terminalOptionAsMeta());
+    CHECK(un.terminalMacStyleKeys() == d.terminalMacStyleKeys() && !d.terminalMacStyleKeys());
     CHECK(un.developCommand() == d.developCommand() && d.developCommand() == "claude");
     CHECK(un.developSource().empty() && d.developSource().empty());
     CHECK(un.agentCommand() == d.agentCommand() && d.agentCommand() == "claude");
@@ -4541,16 +4543,20 @@ void testSettings() {
                                    "terminal.option-as-meta = false\n", &te);
         CHECK(te.empty() && t.terminalLineMode() && t.terminalScrollback() == 0 &&
               !t.terminalOptionAsMeta());
+        // Linux's Mac-style keys in the terminal (Commands::linuxMacStyleKey).
+        CHECK(parseSettings("terminal.mac-style-keys = true").terminalMacStyleKeys());
+        CHECK(!parseSettings("terminal.mac-style-keys = false").terminalMacStyleKeys());
         CHECK(!parseSettings("terminal.mode = GRID").terminalLineMode());
         CHECK(parseSettings("terminal.scrollback = 100000").terminalScrollback() == 100000);
         for (const char *bad : {"terminal.mode = tty", "terminal.scrollback = -1",
                                 "terminal.scrollback = 100001", "terminal.scrollback = 1e3",
-                                "terminal.option-as-meta = left", "terminal.colour = red"}) {
+                                "terminal.option-as-meta = left", "terminal.colour = red",
+                                "terminal.mac-style-keys = toshy"}) {
             std::vector<SettingsError> be;
             Settings b = parseSettings(bad, &be);
             CHECK(be.size() == 1);
             CHECK(!b.terminalLineMode() && b.terminalScrollback() == 10000 &&
-                  b.terminalOptionAsMeta());
+                  b.terminalOptionAsMeta() && !b.terminalMacStyleKeys());
         }
         // The surface keys under terminal. still work beside them.
         CHECK(parseSettings("terminal.text = #FF0000\nterminal.mode = line")
@@ -5214,6 +5220,15 @@ void testSettings() {
             CHECK(ie.size() == 1 && ie[0].message.find("minutes") != std::string::npos);
         }
         CHECK(parseSettings("editor.auto-save-delay = 600000\n").autoSaveDelay() == 600000);
+        // files.hot-exit: on-exit unless turned off.
+        CHECK(parseSettings("").hotExit() == Settings::HotExit::OnExit);
+        CHECK(parseSettings("files.hot-exit = off\n").hotExit() == Settings::HotExit::Off);
+        CHECK(parseSettings("files.hot-exit = on-exit\n").hotExit() == Settings::HotExit::OnExit);
+        {
+            std::vector<SettingsError> he;
+            CHECK(parseSettings("files.hot-exit = on-close\n", &he).hotExit() == Settings::HotExit::OnExit);
+            CHECK(he.size() == 1);
+        }
         for (const char *bad : {"editor.auto-save = afterDelay\n", "editor.auto-save = on\n",
                                 "editor.auto-save-delay = 99\n",
                                 "editor.auto-save-delay = 600001\n",
@@ -10857,6 +10872,63 @@ static void testMultiCaret() {
         CHECK(move(t, carets({0}), Move::DocumentStart, true)[0] == (Caret{0, 0}));
     }
 
+    GROUP("multicaret:home-end");
+    {
+        // VS Code's cursorHome and cursorEnd (the Mac's Home and End).
+        const std::u16string t = u"    foo bar\n\t\n  baz\r\nx";
+        // Home: the first non-blank character, then column 0, then back.
+        CHECK(homeTarget(t, 8) == 4);
+        CHECK(homeTarget(t, 4) == 0);
+        CHECK(homeTarget(t, 0) == 4);
+        CHECK(homeTarget(t, 2) == 4);    // inside the indentation
+        CHECK(homeTarget(t, 13) == 12);  // a blank line: column 0
+        CHECK(homeTarget(t, 12) == 12);
+        CHECK(homeTarget(t, 18) == 16);  // a \r\n line
+        CHECK(homeTarget(t, 21) == 21);  // the last line, no indentation
+        CHECK(homeTarget(t, t.size()) == 21);
+        // End: the line's end, before its break.
+        CHECK(endTarget(t, 0) == 11);
+        CHECK(endTarget(t, 11) == 11);
+        CHECK(endTarget(t, 15) == 19);
+        CHECK(endTarget(t, 21) == t.size());
+        CHECK(endTarget(u"", 0) == 0);
+        // A wrapped line: "alpha beta gamma delta" in rows of 11, 6 and 5
+        // characters. End goes to the row's end (before the space it broke
+        // at), then to the line's end; on the last row at once.
+        const std::u16string w = u"alpha beta gamma delta\nz";
+        const Row r0{0, 11}, r1{11, 17}, r2{17, 23};
+        CHECK(endTarget(w, 2, r0) == 10);
+        CHECK(endTarget(w, 10, r0) == 22);
+        CHECK(endTarget(w, 12, r1) == 16);
+        CHECK(endTarget(w, 16, r1) == 22);
+        CHECK(endTarget(w, 18, r2) == 22);
+        // Home on a later row: the row's start first, then as on one row.
+        CHECK(homeTarget(w, 14, r1) == 11);
+        CHECK(homeTarget(w, 11, r1) == 0);
+        CHECK(homeTarget(w, 3, r0) == 0);
+        // A row given for another line, or past it, is clamped to the line.
+        CHECK(endTarget(w, 24, Row{5, 30}) == 24);
+        CHECK(homeTarget(w, 24, Row{5, 30}) == 23);
+        // A row ending in a surrogate pair ends before the whole pair.
+        const std::u16string e = u"ab\U0001F600cd";
+        CHECK(endTarget(e, 0, Row{0, 4}) == 2);
+        // Several carets, each moved from its head; extending keeps anchors.
+        std::vector<Caret> c = {{8, 8}, {18, 18}};
+        CHECK(heads(homeCarets(t, c, {}, false)) == (std::vector<size_t>{4, 16}));
+        CHECK(heads(endCarets(t, c, {}, false)) == (std::vector<size_t>{11, 19}));
+        std::vector<Caret> x = homeCarets(t, c, {}, true);
+        CHECK(x.size() == 2 && x[0] == (Caret{8, 4}) && x[1] == (Caret{18, 16}));
+        x = endCarets(t, {{6, 2}}, {}, true);
+        CHECK(x.size() == 1 && x[0] == (Caret{6, 11}));
+        // A selection without Shift collapses at the head's target.
+        x = endCarets(t, {{2, 6}, {16, 18}}, {}, false);
+        CHECK(heads(x) == (std::vector<size_t>{11, 19}) && x[0].empty());
+        // Rows per caret; carets that meet merge.
+        x = endCarets(w, {{2, 2}, {14, 14}}, {r0, r1}, false);
+        CHECK(heads(x) == (std::vector<size_t>{10, 16}));
+        CHECK(endCarets(t, {{1, 1}, {3, 3}}, {}, false).size() == 1);
+    }
+
     GROUP("multicaret:surround");
     {
         const std::u16string t = u"say hello now";
@@ -11619,6 +11691,7 @@ static void testMultiCaretOccurrences() {
 #include "markup_syntax_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
+#include "terminal_exit_tests.inc"
 #include "right_area_tests.inc"
 #include "browser_tabs_tests.inc"
 #include "bookmark_tests.inc"
@@ -11698,6 +11771,7 @@ int main() {
     testMarkupSyntax();
     testBracketPairs();
     testTerminalLayout();
+    testTerminalExit();
     testRightArea();
     testGettingAround();
     testAdjustSettings();

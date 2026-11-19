@@ -127,7 +127,7 @@ int LspSession::problemErrors() { return Lsp::countProblems(collectProblems()).e
 int LspSession::problemWarnings() { return Lsp::countProblems(collectProblems()).warnings; }
 
 bool LspSession::problemsKnown() const {
-    if (!diagnosticStore().empty()) return true;
+    if (!diagnosticStore().empty() || !json_->uri.empty()) return true;
     for (const auto& [key, s] : servers_)
         if (s && s->running() && !s->stopping()) return true;
     return false;
@@ -150,7 +150,7 @@ void LspSession::previousProblem() { goToProblem(false); }
 void LspSession::goToProblem(bool forward) {
     uint64_t gen = 0;
     const std::vector<std::pair<size_t, size_t>> spans = problemMarks(&gen);
-    if (uri_.empty() || spans.empty() || !buffer_) {
+    if (shownUri().empty() || spans.empty() || !buffer_) {
         gtk_widget_error_bell(view_);
         flash("No problems in this file");
         return;

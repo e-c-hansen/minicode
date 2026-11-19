@@ -161,6 +161,7 @@ void CodeView::snapshotLayer(GtkTextViewLayer layer, GtkSnapshot* s) {
 // the gutter, which the view only reallocates, draws again.
 void CodeView::allocated() {
     if (gutter_) gutter_->queueDraw();
+    if (onAllocated) onAllocated();
 }
 
 // ---------------------------------------------------------------- settings

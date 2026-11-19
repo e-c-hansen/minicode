@@ -989,6 +989,15 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.autoSaveDelay_ = (int)ms;
                return true;),
+        MC_KEY("files.hot-exit", Word, false,
+               const std::string w = lower(v);
+               if (w == "off" || w == "false" || w == "none") s.hotExit_ = HotExit::Off;
+               else if (w == "on-exit" || w == "on" || w == "true") s.hotExit_ = HotExit::OnExit;
+               else {
+                   e = "'" + v + "' is not on-exit or off";
+                   return false;
+               }
+               return true;),
         MC_KEY("editor.ruler", Word, false,
                // A column, a list of them without spaces (80,120), or off.
                const std::string w = lower(v);
@@ -1216,8 +1225,12 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return true;),
         MC_KEY("terminal.option-as-meta", Word, false,
                return boolValue(v, s.terminalOptionAsMeta_, e);),
+        MC_KEY("terminal.mac-style-keys", Word, false,
+               return boolValue(v, s.terminalMacStyleKeys_, e);),
         MC_KEY("terminal.activate-venv", Word, false,
                return boolValue(v, s.terminalActivateVenv_, e);),
+        MC_KEY("terminal.close-on-exit", Word, false,
+               return boolValue(v, s.terminalCloseOnExit_, e);),
         MC_KEY("terminal.multiline-paste-warning", Word, false,
                const std::string w = lower(v);
                if (w != "auto" && w != "always" && w != "never") {
@@ -1868,6 +1881,12 @@ const char* Settings::defaultFileText() {
 # saving it by hand asks what to do.
 # editor.auto-save = off
 # editor.auto-save-delay = 1000
+# Quitting with unsaved changes (macOS): on-exit quits without asking and
+# keeps them, so every window comes back at the next launch with its unsaved
+# tabs still unsaved, as VS Code's files.hotExit onExit; off asks whether to
+# save them, and Don't Save throws them away. Closing a tab or a window asks
+# either way.
+# files.hot-exit = on-exit
 # Change bars beside the line numbers for a file git tracks (macOS), as VS
 # Code's: lines added, lines changed, and where lines were deleted, against
 # the version git has staged for it (else the last commit's). A click on one
@@ -1896,11 +1915,26 @@ const char* Settings::defaultFileText() {
 # Option+F move by words). false lets Option type what your keyboard layout
 # puts on it, such as @ and { on many European layouts.
 # terminal.option-as-meta = true
+# Linux only, for a Mac-style key remapper such as Toshy or Kinto, which
+# sends the key beside the space bar (the Mac's Cmd) as Ctrl and the
+# physical Ctrl as Super. With true, the terminal takes them as the Mac's
+# Terminal does: Ctrl+W closes the terminal, Ctrl+C and Ctrl+V copy and
+# paste, and Ctrl+F, Ctrl+S, Ctrl+P and the rest run their commands, with
+# no Ctrl key reaching the program; Super+C, Super+W, Super+R and the other
+# Super keys reach it as Ctrl+C, Ctrl+W and Ctrl+R (Super+Alt too, for the
+# keys the remapper or the desktop take). false: plain Ctrl keys go to the
+# program, as in any Linux terminal.
+# terminal.mac-style-keys = false
 # A new terminal starts with the folder's Python environment active, as
 # after source .venv/bin/activate: the interpreter Run File uses (the
 # folder's choice, python.interpreter, or the folder's own .venv once you
 # allow it for the language servers), when it is a virtual environment.
 # terminal.activate-venv = true
+# exit, or Ctrl+D at an empty prompt, closes the terminal (the dock goes
+# with the last one). off leaves it saying Process exited until Return
+# starts a new shell. A shell that was killed or crashed always stays, with
+# the signal, until Return.
+# terminal.close-on-exit = on
 # Pasting several lines asks first: auto when the program running has not
 # said it takes pasted lines as text (zsh's prompt does; cat and an older
 # REPL do not, and run each line as it arrives), always, or never.

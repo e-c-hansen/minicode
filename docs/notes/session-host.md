@@ -313,9 +313,9 @@ release. With the setting off nothing changes, MCPty included.
 - **What other screens see.** Every renderer of the host sees every
   terminal on it (the state's `terminals`); the browser's view of one
   window (`SessionBrowser`) shows only that window's, which the window
-  reports with its tabs (below, "One window's terminals"). Notes the panel writes
-  on the screen itself ("[shell exited — restarting]") are only on the
-  Mac's screen. Terminal size follows the renderer that last typed
+  reports with its tabs (below, "One window's terminals"). Notes a renderer
+  writes on its own screen ("Process exited", the shell's end) are only on
+  that screen. Terminal size follows the renderer that last typed
   (stage 6's **Size**, and **Size** above): the browser's view says the
   size of the page that typed there last (`tsize`, below), so a page that
   only looks never shrinks the window's terminal.
@@ -1023,8 +1023,13 @@ place on its link, and `EditorController+Session.mm` the window's hooks.
   starting a new host with everything typed unsaved there and a new
   shell; Don't Save. The harness ends what closed windows left between
   suites (`MCSession::endDetached`).
-- **Not yet:** quitting asks Keep Unsaved on a headless host but Restart
-  keeps its backups as before.
+- **Quitting** (hot exit, 2026-11-18, `docs/notes/sessions.md`): with
+  `files.hot-exit = on-exit` quitting asks nothing, on a headless host
+  too: each document detaches as Keep Unsaved leaves it (nothing is
+  dropped, `sessionDropOnClose:nil`), and the Mac's backups are written
+  besides, as a restart's always were; the next window takes the host's
+  documents and removes the backups of their paths. With `off` quitting
+  asks Keep Unsaved as before.
 
 ### The Mac's half of step 3
 

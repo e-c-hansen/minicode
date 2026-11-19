@@ -193,6 +193,13 @@ found through that list.
   (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`), so a forwarded Alt+Z was lost
   (hints_panel's "both are the box's" failed with "s"); the box inserts
   the letter itself.
+- **Linux keys in the terminal** follow `Commands::linuxTerminalTakes`
+  (plain Ctrl keys the program's unless Global), or with
+  `terminal.mac-style-keys` on (a Mac-style remapper's Cmd as Ctrl, its
+  Ctrl as Super) every Ctrl key the app's and Super keys sent to the
+  program as Ctrl (`Keys::setTerminalMacStyle`,
+  `Commands::linuxMacStyleKey`): docs/notes/terminal.md, "Mac-style keys
+  in the GTK terminal" (2026-11-19, linux/HANDOFF.md item 113).
 
 ## Traps
 

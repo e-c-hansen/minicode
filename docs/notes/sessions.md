@@ -61,8 +61,15 @@ found through that list.
   extra folders) drawn dimmed a point smaller after it
   (`MCTabStripItem.hint`); the terminals' and the browser's strips are
   the same class and scroll the same way. `displayedTitleForTab:`,
-  `contentWidth` and `scrollOffset` are for the checks. GTK still
-  shows `labels` (linux/src/Tabs.cpp) and has yet to take these. The strips' titles are `tabs.font-size` points (12 unset; `MCTabStripFont`) in every strip, editor, split group, browser and terminals, and a strip is `MCTabStripHeight()` tall (30, more for a bigger font), which the owners read on every layout and lay out again on a settings change. A tab's
+  `contentWidth` and `scrollOffset` are for the checks. GTK's
+  `TabStrip` (2026-11-19, `linux/HANDOFF.md` item 115, `tab_strip`)
+  does the same by the same calls, in every strip (both editor groups,
+  the terminal dock's, the browser's): a GtkBox with a custom layout
+  places each tab at `layoutStrip`'s place less the scroll, the title cut
+  by `fitName` (a label for the name, one for the hint), the wheel and a
+  touchpad by `wheelScroll`, a held drag's frames by `dragAutoScroll`,
+  the fades by `clipped`; the editor's owners take `tabNames`
+  (Tabs.cpp, Groups.cpp). The strips' titles are `tabs.font-size` points (12 unset; `MCTabStripFont`) in every strip, editor, split group, browser and terminals, and a strip is `MCTabStripHeight()` tall (30, more for a bigger font), which the owners read on every layout and lay out again on a settings change. A tab's
   right click (`menuForTabAtIndex:`) has the close commands, copy paths,
   reveal, rename and trash; the File menu repeats them for the active tab so
   the palette finds them.
@@ -147,7 +154,9 @@ found through that list.
   `closedPlaceOf:`'s place, selection, scroll, mode and side page),
   skipping files gone.
 - **Unsaved tabs are never dropped**: a dirty tab asks Save / Don't Save /
-  Cancel; window close, Open Folder and quit ask once for all. Trash closes
+  Cancel; window close and Open Folder ask once for all. Quit keeps them
+  for the next launch without asking (hot exit, below); with
+  `files.hot-exit = off` it asks once for all too. Trash closes
   only clean tabs of what went; `pathMovedFrom:to:` moves tabs.
 - **The disk**: a buffer replaced from disk by choice (Reload) loses its undo
   steps (`forgetHistoryOf:`). Every save checks the stamp first (`mayWriteTab:`:
@@ -166,6 +175,28 @@ found through that list.
   show as text an undo action of its own, `registerReloadUndoForTab:`; an
   NSTextView registration made during an undo redid onto the wrong range).
   A read that fails moves no date.
+- **Tabs that show no file come back made again** (2026-11-18,
+  `TabSessions::PageTab`, `Session::pages` and `activePage`,
+  `tab-sessions:pages`, `EditorController+PageTabs.mm`): the review page
+  ("Uncommitted Changes"), a commit's page and a side-by-side comparison
+  are kept beside the files (each with `at`, its place among the tabs) in
+  both the folder's session and a window's record, and restoreSession makes
+  them again after the files (`tabForRestoredPage:`, inserted at `at`; the
+  one on show is shown instead of a file): the review and commit pages
+  (`newChangeReviewPage`, `newCommitReviewPage` in +Git, the same hooks as
+  a click makes) read git when first shown, and a comparison's two sides
+  are read off the main thread (`remakeComparisonOfTab:`) from its recipe,
+  `MCComparison leftPath/leftRev/rightPath/rightRev` (rev "" the disk, ":"
+  the index, else a revision; a side git lacks is empty), set where a
+  comparison can be made again: the review page's side by side (index
+  against the disk, HEAD against the index, a commit against its parent)
+  and `mutible diff` (a revision against the disk, a file against a file).
+  Left out: a worktree's page and comparison, a conflict's two sides, an
+  agent's proposed change (`decisionPrompt`), agent preview tabs, the old
+  shared diff tab, and a revision the record refuses (`isComparedRev`: no
+  option, no `..`, nothing but letters, digits and `._/~^-`; a commit's
+  ref is hex only). Pages are a key of their own, so an older mutible and
+  the GTK port read the files as before and leave the pages out.
 - **Sessions** (since stage 3c, 2026-11-17, `SessionStore.{h,mm}`): a
   folder's `TabSessions::Session` in sessions.json
   (`~/Library/Application Support/Mutible/sessions.json`, NSHomeDirectory,
@@ -224,7 +255,21 @@ found through that list.
   last (`finishRestoringWindow`); a tab's place goes back when it is first
   read (`MCTab placeFromSession`, `applySessionPlaceOf:` from
   `loadActiveTab`). A path argument or a Finder open at launch opens only
-  that, as before. The Mac's selection offsets are UTF-16 and GTK's code
+  that, as before, but **a folder opened by name comes back as its
+  window** (2026-11-18, VS Code's way with a folder; the walker's
+  `open -n -a Mutible.app <folder>` lost its terminal, review page and
+  commit tab): AppDelegate's `openWindowAtPath:` (every open of a folder
+  no window here shows: the command line, Finder, `open -a`, `mutible
+  dir`, a window per folder with backups) asks
+  `windowRecordToReopenFolder:` (`MCSessionsWindowToReopen`, the core's
+  `toReopen`, `tab-sessions:to-reopen`) for the record's first window on
+  that folder, compared with links resolved, that another running mutible
+  does not hold and this process did not write (a window this process
+  closed went to the folder's session; the GUI harness's own windows never
+  come back into its next ones), and restores it whole: frame, tabs with
+  their places and pages, terminal dock with fresh shells, panels, tree.
+  None: the folder's session alone, as before. A second window on a
+  folder already open (New Window) takes no record. The Mac's selection offsets are UTF-16 and GTK's code
   points: each reads only what it wrote, which stage 3 must settle.
 - **One record on both ports** (2026-11-16, stage 3b): GTK's sessions.json
   keeps the same `TabSessions::Window` list under the key `"windows"`,
@@ -255,7 +300,10 @@ found through that list.
   Cmd+1, Cmd+2) copies what the editor shows into the mirror, focuses the
   window's other group (`_win->focus`), swaps the strips (`self.tabStrip`
   is always the focused group's) and activates the other tab at the
-  mirror's place; a press goes on to the same character. The groups are
+  mirror's place; a press goes on to the same character. A two-click press
+  on a page shown as a picture opens the page's block editor at once
+  (`editPageAtWindowPoint:`, `docs/notes/markdown.md`), and the picture
+  accepts the first mouse, as the text does. The groups are
   `_win`'s; `tabs` is every document of either group
   (`Model::Window::documents`: backups, sessions, auto-save, disk checks,
   the servers' open files untouched); the strip, tab keys and closing use
@@ -280,8 +328,11 @@ found through that list.
 
 ## Backups, hot exit and auto-save (Mac)
 
-- Every dirty tab's text is on disk while edited, as VS Code's backups;
-  quitting still asks (the user wants the question). `Backups.{h,cpp}` (format,
+- Every dirty tab's text is on disk while edited, as VS Code's backups.
+  **Hot exit** (the owner's decision, 2026-11-18, which reversed "quitting
+  still asks (the user wants the question)"; VS Code's `files.hotExit`
+  `onExit`; `files.hot-exit` = `on-exit`, the default, or `off`): Quit
+  never asks to save (see "Quit" below). `Backups.{h,cpp}` (format,
   `Store` over an `Fs`, `plan`, `foldersToReopen`, `expired`, `compare`),
   `BackupStore.mm` (folder, write queue, which process holds a backup),
   +Persistence (what and when). Store: `~/Library/Application
@@ -311,14 +362,44 @@ found through that list.
   and start time); `takeBackup:intoTab:` makes the tab dirty with the backup's
   base date and inode, and on first show (`showRestoredText:`) the backup is
   the buffer, the disk text `savedText`, undo empty, with a note ("Restored
-  unsaved changes to x", and if the disk changed since).
+  unsaved changes to x", and if the disk changed since). A backup whose
+  file never existed and still does not (`diskExisted` false: an untitled
+  buffer the session's host held) comes back `untitled` (not "(deleted)",
+  never auto-saved, Cmd+S makes the file).
   `reopenFoldersWithBackups` opens a window per folder with unheld backups. The
   newest of several wins; orphans over 30 days and temporaries over a day go
   (`cleanUpOnce`).
-- Quit asks as before, then `backupsAppWillTerminate:` removes them. A restart
-  from Request a Change calls `keepUnsavedTabsForRestart` (dirty buffers
-  written synchronously and not asked about; a failed write falls back to the
-  question). A crash, SIGKILL or power loss leaves them.
+- **Quit** (Cmd+Q, the Dock, logout, restart; AppDelegate's
+  `confirmQuitRestarting:`): the running-commands question stays (it is
+  not about saving), then each window with unsaved tabs, under hot exit or
+  a restart from Request a Change, calls `keepUnsavedTabsForNextLaunch`:
+  every dirty buffer written synchronously (`writeNowID:`, F_FULLFSYNC, one
+  write a tab, so `applicationShouldTerminate:` stays quick), the session
+  saved, `_unsavedKeptForNextLaunch` set, nothing asked. NO (backups off,
+  as under `MUTIBLE_DEMO`; a dirty tab `tabTakesBackup:` refuses; a write
+  that fails, such as text UTF-8 cannot carry) and that window asks as
+  before, so quitting never loses what was typed. `backupsAppWillTerminate:`
+  removes the backups only of a window that asked (what is still unsaved
+  there was let go with Don't Save); a Cancel anywhere clears every
+  window's flag (`quitWasCancelled`), so a later Don't Save still removes
+  them. Closing a tab or a window asks as before. The windows record and
+  the sessions are written by `applicationWillTerminate` as always, so the
+  next Dock launch brings every window back with its unsaved tabs (the
+  backups no live process holds, `planForRoot:`), and a folder opened by
+  name its window. With the session's host on (`docs/notes/session-host.md`):
+  no question, so nothing is dropped there (`sessionDropOnClose:nil`); a
+  headless host keeps the documents as Keep Unsaved would and the next
+  window takes them over the backups (restoreSession removes a backup of
+  a path the host gave back); an in-process host ends with the app and the
+  backups carry the text, an untitled buffer included. A crash, SIGKILL or
+  power loss leaves the backups too. Undo history does not survive a quit
+  (the text, caret and scroll do). Trap: `keepUnsavedTabsForRestart`
+  passed over a dirty tab it could not back up, which a quit without a
+  question would have lost; `keepUnsavedTabsForNextLaunch` returns NO for
+  it, and the window asks. Checked by window_restore (`_restore_writer`
+  quits with no alert or sheet, `files.hot-exit = off` asks and Cancel
+  keeps all; `_restore_reader` finds the unsaved and untitled tabs and the
+  pages back).
 - **Auto-save**: `editor.auto-save` = off (default), `after-delay`
   (`editor.auto-save-delay`, 1000 ms) or `focus-change` (the editor loses the
   keyboard, the window resigns key, another tab shows). `scheduleAutoSave` sits
@@ -329,7 +410,8 @@ found through that list.
   inline-agent edit awaiting Keep or Discard (`MCAgentSession editPending`),
   and the tab on show while an input method composes (`hasMarkedText`). The
   close and quit questions run `autoSaveNow` first, so auto-save's writes are
-  not asked about. A restored backup opens in its viewer (a CSV's table).
+  not asked about (`files.hot-exit = off`; hot exit asks nothing). A
+  restored backup opens in its viewer (a CSV's table).
   Trap: the focus-change save and the delay's debounce shared a selector and
   `updateTitle` cancelled the save after a tab switch; nothing may cancel
   `autoSaveNow`.
@@ -341,3 +423,4 @@ text is in place in its section.
 
 - Tabs, sessions and the disk (Mac): **Traps**: never move the mirror's layout manager with `replaceTextStorage:`, which carries every layout manager of the storage, the editor's too (`removeLayoutManager:` then `addLayoutManager:`); the mirror must let go of the editor's storage before its whole text is replaced (`MCSourceStorage willReplaceAll`, and `editorWillShowTab:` ...
 - Backups, hot exit and auto-save (Mac): Trap: the focus-change save and the delay's debounce shared a selector and `updateTitle` cancelled the save after a tab switch; nothing may cancel `autoSaveNow`.
+- Backups, hot exit and auto-save (Mac): Trap: `keepUnsavedTabsForRestart` passed over a dirty tab it could not back up, which a quit without a question would have lost; `keepUnsavedTabsForNextLaunch` returns NO for it, and the window asks.

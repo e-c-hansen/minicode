@@ -149,6 +149,14 @@ inline void ClickRow(const std::string& row, const std::string& mods = "", int b
               });
 }
 
+// A row's raw diff, as its menu's Open as git Diff shows it (a click opens
+// the review since the Mac's #217; git_panel presses that menu item for
+// real, and the Mac's suites call showDiffAtRow: the same way).
+inline void RawDiff(const std::string& row) {
+    MCGuiWait(row + " listed", 10, [row] { return RowOf(row) >= 0; });
+    MCGuiStep("the raw diff of " + row, [row] { Panel()->openRawDiff(RowOf(row)); });
+}
+
 // ---- the Trash: a folder of the scratch world, as the Mac's suites swap
 // trashItemAtURL for one.
 inline std::string ScratchTrash() { return MCGuiScratch() + "/git-trash"; }

@@ -40,13 +40,15 @@ const std::string kB = "def beta():\n    return 1\n" + numbered("# beta", 40);
 const std::string kC = "gamma\n";
 const std::string kNotes = "# Notes\n\nSome text.\n\n- [ ] a task\n";
 
-// The row as the strip shows it: each title, the preview tab's in brackets,
-// a star after one with unsaved changes, ">" before the active one.
+// The row as the strip shows it: each title, after its hint and a slash
+// when it has one ("one/README.md"), the preview tab's in brackets, a star
+// after one with unsaved changes, ">" before the active one.
 std::string row() {
     std::string out;
     for (int i = 0; i < strip()->count(); i++) {
         const TabStrip::Item& it = strip()->item(i);
-        std::string t = it.preview ? "[" + it.title + "]" : it.title;
+        const std::string name = it.hint.empty() ? it.title : it.hint + "/" + it.title;
+        std::string t = it.preview ? "[" + name + "]" : name;
         if (it.dirty) t += "*";
         if (i == strip()->activeIndex()) t = ">" + t;
         out += (out.empty() ? "" : " ") + t;
@@ -527,6 +529,14 @@ MC_GUI_SUITE(tabs) {
     });
     MCGuiWait("their tabs say which folder", 10, [] {
         return row() == "tab-a.txt one/README.md two/README.md >tab-b.py tab-c.txt";
+    });
+    MCGuiStep("as the name, and the folder drawn dimmed after it (EditorTabs::tabNames)", [] {
+        GCHECK_EQ_STR(strip()->item(1).title, "README.md");
+        GCHECK_EQ_STR(strip()->item(1).hint, "one");
+        GCHECK_EQ_STR(strip()->displayedTitle(2), "README.md");
+        GCHECK_EQ_STR(strip()->displayedHint(2), "two");
+        GCHECK(gtk_widget_has_css_class(strip()->hintWidget(2), "minicode-tab-hint"));
+        GCHECK_EQ_STR(strip()->displayedHint(0), "");
     });
     MCGuiStep("with the whole path as the tooltip", [] {
         GCHECK_EQ_STR(strip()->item(1).tooltip, F("one/README.md"));

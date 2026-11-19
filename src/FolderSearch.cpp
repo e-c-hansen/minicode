@@ -1695,10 +1695,66 @@ FolderReplacePlan planReplace(const std::string& root, const std::string& query,
 
 std::string replaceInText(const std::string& content, const std::string& query,
                           const std::string& replacement, const FolderSearchOptions& options,
-                          std::size_t* count) {
+                          std::size_t* count, const std::set<int>* skipLines) {
     if (count) *count = 0;
     if (!isSearchable(query, options)) return content;
-    return TextFind::replaceInText(content, makeQuery(query, options), replacement, count);
+    return TextFind::replaceInText(content, makeQuery(query, options), replacement, count,
+                                   skipLines);
+}
+
+bool dismissedLines(const std::string& content, const std::string& path,
+                    const FolderReplaceExclusions& ex, std::size_t maxLineChars,
+                    std::set<int>* lines) {
+    lines->clear();
+    const auto it = ex.lines.find(path);
+    if (it == ex.lines.end()) return true;
+    for (const auto& [line, text] : it->second) {
+        std::string now;
+        if (!lineAt(content, line, &now) || displayText(now, maxLineChars) != text) {
+            lines->clear();
+            return false;
+        }
+        lines->insert(line);
+    }
+    return true;
+}
+
+void excludeDismissed(FolderReplacePlan& plan, const std::string& query,
+                      const FolderSearchOptions& options, const FolderReplaceExclusions& ex) {
+    if (ex.empty()) return;
+    const TextFind::Query tq = makeQuery(query, options);
+    std::vector<FolderReplaceFile> kept;
+    kept.reserve(plan.files.size());
+    plan.matches = 0;
+    for (FolderReplaceFile& f : plan.files) {
+        if (ex.excludesFile(f.path)) {
+            plan.dismissed += f.matches;
+            continue;
+        }
+        if (ex.lines.count(f.path)) {
+            std::string content;
+            // Unreadable now: kept, and the replacement says why it failed.
+            if (readTextFile(f.path, options.maxFileSize, &content)) {
+                std::set<int> lines;
+                if (!dismissedLines(content, f.path, ex, options.maxLineChars, &lines)) {
+                    plan.changedSinceSearch.push_back(f.relativePath);
+                    continue;
+                }
+                std::size_t gone = 0;
+                for (int line : lines) {
+                    std::string raw;
+                    if (lineAt(content, line, &raw)) gone += TextFind::findAllInLine(raw, tq).size();
+                }
+                gone = std::min(gone, f.matches);
+                plan.dismissed += gone;
+                f.matches -= gone;
+                if (f.matches == 0) continue;
+            }
+        }
+        plan.matches += f.matches;
+        kept.push_back(std::move(f));
+    }
+    plan.files = std::move(kept);
 }
 
 bool lineAt(const std::string& content, int line, std::string* out) {

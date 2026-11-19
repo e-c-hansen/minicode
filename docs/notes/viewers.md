@@ -46,6 +46,17 @@ found through that list.
   media paused (macOS 12; macOS 11 drops it), so it comes back scrolled
   where it was. Cmd+1 and the toggle give it the keyboard through
   `MCFileViewers focusInWindow:` (`grantKeyboard`); nothing else does.
+  **Beside the source** (Control+Command+V, 2026-11-19,
+  `EditorController+PageSide.mm`): a second `MCHtmlPage`, the window's
+  (`_sideHtml`), shows the buffer (`showText:path:`), again 0.4 s after
+  typing stops (`pageSideSourceChanged`), keeping the scroll as a reload
+  does. When the text is what the disk holds it loads the file
+  (`loadFileURL:allowingReadAccessToURL:`, the window's folder); else
+  `loadHTMLString:baseURL:` with the file's URL, which WebKit lets read
+  the file's folder, so relative stylesheets and pictures still load (the
+  navigation is the tab's own file, so the policy allows it). Scripts
+  follow the same rule and answers. The GUI check is html_page's last
+  steps; Linux has no side page for HTML.
   The GTK port shows .html as its page too (`linux/src/HtmlView.cpp`, the
   rules in `src/HtmlPage.{h,cpp}`, `linux/HANDOFF.md` item 83); this file's
   .mm keeps its own copy of those rules.
@@ -101,6 +112,27 @@ found through that list.
   typing, the last good outline kept under an error line, dimmed and
   selecting nothing (`stale`: its offsets are off). `.jsonc`, tsconfig*.json,
   `.vscode/*.json` and the like allow comments (`JsonOutline::allowsComments`).
+  **Its error is a problem too** (2026-11-18, `Lsp+JsonCheck.mm`, core
+  `JsonOutline::problems` and `checksAsJson`, `jsonoutline:problems`, `make
+  guitest SUITES=problems`): a JSON file no server has (`_servers` empty)
+  is parsed on a queue when it comes on show and 0.3 s after typing; the
+  error is the list of a server of the session's own, `mutible.json`, in
+  `_store`, so squiggle, Problems, the status bar's count, hover and F8
+  are a server's (`paintDiagnostics` and `collectProblems` take
+  `jsonCheckedUri` where `_uri` is nil; `problemsKnown` is YES meanwhile,
+  so a valid file says "No problems"). As VS Code says them: "Trailing
+  comma" on the comma, "Comments are not permitted in JSON" over a comment
+  in strict JSON, else the parser's message on the token; an empty file is
+  none. JSONC files (allowsComments) parse leniently. A server attaching
+  (attachDocument) erases the editor's list; a closed tab's goes in
+  `tabsChanged`; `stopAllServers` clears the store, and documentOpened
+  checks again. Over 8 M characters: no check. **Linux** (2026-11-19,
+  `linux/src/LspSessionJsonCheck.cpp`, HANDOFF item 114): the same, with
+  the check on a detached thread whose answer comes back by `afterMs`
+  under the session's `life_` and a generation; `documentChanged` checks
+  when neither `server_` nor `alsoServer_` has the file (servers off
+  included), `shownUri()` stands for `uri_` in painting and F8, and the
+  GTK `problems` suite checks it through the Problems list's rows.
   Every row is one line of constant height (2026-11-18): the label and the
   summary go through `JsonOutline::oneLine` (line breaks, tabs and other
   control characters as `\n`, `\t`, `\u2028` escapes the Mac draws dimmed,

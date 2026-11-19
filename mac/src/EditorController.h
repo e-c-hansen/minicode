@@ -277,10 +277,18 @@
 
 // EditorController+Persistence.mm
 @interface EditorController (Persistence)
-// Request a Change's restart: every unsaved tab's backup written now, for
-// the new build to bring back, so they need no question. NO when that could
-// not be done (backups off, or a write failed), and the question is asked.
-- (BOOL)keepUnsavedTabsForRestart;
+// Quitting (hot exit, files.hot-exit = on-exit) and Request a Change's
+// restart: every unsaved tab's backup written now, on this thread, for the
+// next launch to bring back, so they need no question and are kept as the
+// app terminates. NO when that could not be done (backups off, a tab that
+// cannot be backed up, a write that failed), and the question is asked.
+- (BOOL)keepUnsavedTabsForNextLaunch;
+// The quit was cancelled (a question's Cancel): what the window kept for
+// the next launch is unsaved work again, whose backups go as usual.
+- (void)quitWasCancelled;
+// The window the last run left on a folder opened by name, encoded for
+// restoreWindowRecord:; nil for none (TabSessions::toReopen).
++ (NSString *)windowRecordToReopenFolder:(NSString *)root;
 // Writes this window's session (tabs, browser) now; quitting calls it.
 - (void)saveSession;
 // Every window as it is, for the next launch that is asked to open nothing
@@ -516,6 +524,10 @@
 @property(nonatomic, readonly) BOOL canExportMarkdownHtml;
 - (void)exportMarkdownHtml:(id)sender;
 - (BOOL)writeMarkdownHtmlTo:(NSString *)path;
+// A page edit still open with a change in it goes into its document (one
+// undo step), as Apply would: before a save, a close or a quit asks about
+// unsaved changes, so what was typed there is never dropped unasked.
+- (void)commitPageEdit;
 @end
 // Where Export as HTML… writes, given the suggested path (the file's own,
 // as .html): nil asks with a save panel. The GUI checks answer here.

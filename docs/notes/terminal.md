@@ -26,12 +26,50 @@ for full-screen programs. Both can be open at once.
   SUITES=terminal_pty` checks the teardown (sources finished, fd closed,
   shell reaped; a shell ignoring SIGHUP; 1 MB into a program not reading;
   closing during `yes`), reaching MCPty's state by KVC, no test hook.
+- **The shell's end** (2026-11-19, round 9's A4; `src/TerminalExit.h`,
+  `terminal:exit`): `exit`, or Ctrl+D at an empty prompt, closes the
+  terminal (`terminal.close-on-exit`, on by default): `shellExited:status:`
+  decides from the wait status (MCPty's reap passes it to `exited`, the
+  host's TermExited carries it), and on Close tells `onShellExit` a turn
+  later, which MCTerminalPanel answers with `removeTerminal:` (unasked;
+  the last one empties the dock, `onEmpty`). The host has ended its
+  terminal by then, and the dock's record follows `changed`. Off, it says
+  "Process exited" (with the code when not 0) and waits for Return. A
+  signal never closes it: "The shell ended (signal N). Press Return to
+  start a new one." A shell that ends before its first prompt (no
+  `_seenPrompt`, under 2 s) waits for Return too, so a broken startup file
+  neither closes a new terminal nor loops. A command still waiting
+  (`runCommand:` before the prompt) gets a new shell instead of a close.
+  MCPty also watches the shell's pid (a `DISPATCH_PROC_EXIT` source): on
+  its exit it reads what is left (1 MB at most) and shuts the pty down,
+  so a job left holding the pty open (nohup) no longer keeps `exit` from
+  closing anything, as the host's `exited` already did. Checked in
+  `terminal_pty` (both CI passes): `exit` closes the last terminal and
+  the dock goes, Ctrl+D closes one of two, the setting off says "Process
+  exited (code 3)" and Return starts a shell, SIGKILL says signal 9 and
+  Return starts a shell; `terminal_reflow`'s killed shell waits for Return.
+  The GTK port does the same (2026-11-19, linux/HANDOFF.md item 117):
+  `Terminal::shellExited(status, error)` asks the same core functions
+  with the host's TermExited status (`prompted`: a prompt the host
+  counted, a held shell attached, or 2 s since the spawn), and on Close
+  calls `onShellExit` from an idle, which `TerminalDock::hook` answers
+  with `closePane(t, false)`: a split's pane, the tab with its last pane,
+  the dock with the last tab (`onEmpty`), as Close Tab. Waiting, a Return
+  in VTE's commit starts a new shell (`startAgain`; nothing else typed
+  goes anywhere), and so do `runLine` and `typeText`; a line runLine
+  still waits to type gets a new shell instead of a close. The restart it
+  did before (three quick deaths stopped the loop) is gone. Checked by
+  the GTK harness's `terminal_exit` and `processes` (a `( job & )` under
+  its terminal, then an orphan after `exit`). **Trap**: GTK suites that
+  wanted a fresh shell typed `exit` and waited for the restart
+  (`shell_integration`, `terminal_marks`); they now make a new terminal
+  and close the others.
 - **Output flow**: past 1 MB handed to the main thread the reader
   (`MCPtyReader`) suspends its source (the program blocks) until under 256 KB;
   the main thread parses in 16 KB pieces for about 12 ms a run-loop turn
   (`drainBacklog`, common modes; 36 ms when a turn ends mid-frame of
-  synchronized output). A shell's last output is parsed before "[shell
-  exited]".
+  synchronized output). A shell's last output is parsed before the note
+  that it ended.
 - **The integration is one script for both modes** (2026-11-08):
   `resources/mutible-zsh-integration.zsh`, in the bundle's Resources and
   `build/` (the GUI checks). Terminal.mm reads it once per process and
@@ -612,8 +650,62 @@ SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
   (Toshy, Kinto) turns the physical Ctrl into Super in any window it does
   not list as a terminal, so on the owner's ThinkPad a physical Ctrl+W
   reaches mutible as Super+W: the fix is a keymap in the remapper for
-  `ai.ible.Mutible`, never a key of mutible's. Checked by `terminal_keys`
+  `ai.ible.Mutible`, or the setting below. Checked by `terminal_keys`
   and `terminal_draw` (the GTK harness).
+- **Mac-style keys in the GTK terminal** (2026-11-19, linux/HANDOFF.md
+  item 113): `terminal.mac-style-keys` (Linux only, off by default) is for
+  a Mac-style remapper (Toshy, Kinto), which sends the key beside the
+  space bar, the Mac's Cmd, as Ctrl and the physical Ctrl as Super in any
+  window it does not list as a terminal. With it on, while the terminal
+  has the keyboard, the keys do what they do in the Mac's Terminal:
+  - **Ctrl is the Mac's Cmd.** `Commands::linuxTerminalTakes(c, k, true)`
+    gives no key with Ctrl to the terminal but VTE's Ctrl+Shift+C and V,
+    so Keys.cpp's `bound` (told by `Keys::setTerminalMacStyle`, from
+    `onSettingsChanged` and at startup) binds every Ctrl key of a command
+    that applies there: Ctrl+W, F, S, P, N, O, B, Q, R, T, comma,
+    Ctrl+Shift+G and Ctrl+Shift+Space too. Close Tab with the terminal's
+    keyboard closes that pane (`act_close_tab`, as the Mac's
+    `closeFocusedTerminal`: a running program asks first, the last tab
+    hides the dock), only with the setting on, so the File menu's Close
+    Tab is unchanged with it off. What no accelerator took reaches the
+    terminal's capture controller (`Terminal::macStyleKey`, core
+    `Commands::linuxMacStyleKey`): Ctrl+C copies the selection (nothing
+    without one), Ctrl+V pastes as Ctrl+Shift+V does
+    (`Terminal::pasteClipboard`), Ctrl+A selects all, as the Mac's grid
+    does for Cmd+C, V and A; any other Ctrl key that types a character
+    (Shift or Alt with it too) is dropped, so it never reaches the
+    program. Ctrl with a key that types nothing (Ctrl+Left, Ctrl+Backspace,
+    Ctrl+F4 once unbound) goes on to VTE as before, and Ctrl+Up and
+    Ctrl+Down still move between commands, as Cmd+Up and Down do.
+  - **Super is the program's Ctrl.** Super with a character sends the byte
+    VTE sends for Ctrl with it (`Commands::terminalControlByte`), through
+    `vte_terminal_feed_child`, so it goes by VTE's commit to the host as a
+    key does, counted as typing: every letter (Super+W ^W, Super+C ^C,
+    Super+R ^R), with Shift the same (a terminal sends one byte for Ctrl
+    and Ctrl+Shift with a letter), Super+[ Esc, Super+] ^], Super+\ ^\,
+    Super+Shift+- ^_, Super+Space and Super+Shift+2 NUL, Super+Shift+6
+    ^^, Super+/ ^_, Super+3 to 8 Esc, ^\, ^], ^^, ^_ and DEL, each what
+    VTE itself sends for Ctrl with the key (terminal_keys reads VTE's
+    bytes for all fourteen with the setting off). Super with Alt
+    and a letter sends the same: Toshy's general keymap turns Super+A, E,
+    B, F, N, P, K and D into Home, End, the arrows, Shift+End Backspace and
+    Delete (so the physical Ctrl+A, E, B, F, N and P arrive as keys
+    readline takes the same way, never as Super), and GNOME grabs Super+L
+    to lock the screen, so Toshy's keymap for VS Code's terminal sends the
+    physical Ctrl+K, D and L as Super+Alt+K, D and L, and a keymap for
+    mutible's window can do the same. Super with Ctrl (the Mac's
+    Ctrl+Cmd), or with a key that types nothing, goes on to VTE.
+  - The hints panel's "In the terminal" part says so while it is on. The
+    editor, the other panes and the hints search box (which never takes a
+    key with Super) are the same with it on or off, and so is everything
+    with it off (`terminal_keys`'s first half runs with it off,
+    unchanged).
+  Checked by `terminal_keys` (VTE's own bytes for Ctrl with readline's
+  punctuation against `terminalControlByte`; with the setting on Super's
+  bytes from a raw `head` and VTE's commit, the dropped Ctrl keys, Super+W
+  at a prompt, Super+Alt+K, Super+C on `sleep 100`, Ctrl+A, C and V
+  through the clipboard, Ctrl+W on a terminal tab and on an editor tab,
+  the hints, and off again) and core `commands:linux-terminal`.
 - **The Mac on it** (2026-11-17, with `editor.session-host` on, grid mode
   only): `TerminalView` keeps everything above (its own `TerminalStream`
   and `TerminalScreen` parse the same bytes, so the integration, nonce,
@@ -637,6 +729,7 @@ Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
 - The terminal: Traps: paste only once the tty is raw; check reaping with `kill(pid, 0) == ESRCH`, not `waitpid`.
+- The terminal: **Trap**: GTK suites that wanted a fresh shell typed `exit` and waited for the restart (`shell_integration`, `terminal_marks`); they now make a new terminal and close the others.
 - The terminal: **Trap** (2026-11-16): the queue was one line, and a second `runCommand:` while the first still waited (a prompt between its 133;A and B) replaced it: the first never ran (terminal_reflow's flake on CI, `read` missing from the screen).
 - The terminal: **Trap** (2026-11-18): Ctrl+C typed while ZLE reads left the old B believed until zsh's SIGINT was handled, and a command typed in that moment lost its `ESC [` to the dying line editor and ran as `[9999~read ...` (terminal_paste's flake on CI).
 - The terminal: Trap: the harness can run zsh; an agent's own shell may be refused it by the worktree guard.

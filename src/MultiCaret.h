@@ -108,6 +108,31 @@ enum class Move { Left, Right, WordLeft, WordRight, LineStart, LineEnd, Document
 std::vector<Caret> move(const Text& text, const std::vector<Caret>& carets, Move m,
                         bool extend);
 
+// Home and End, as VS Code's cursorHome and cursorEnd move them on the Mac,
+// word wrap included. A caret's row is the part of its line that is on one
+// row of the screen: the characters [start, end) the layout put there. The
+// default Row, or any row that reaches the line's end, is the whole line.
+struct Row {
+    size_t start = 0, end = size_t(-1);
+};
+// Home: on a wrapped line's later row, to that row's first non-blank
+// character; otherwise (and from there) to the line's first non-blank
+// character, or from it to column 0. A blank line goes to column 0.
+size_t homeTarget(const Text& text, size_t p, Row row = {});
+// End: to the row's end, and from there to the line's end, so the line's
+// last row, or a line that does not wrap, goes to the line's end at once.
+// A row that wraps onto the next ends before its last character (the space
+// it broke at, mostly), where the caret shows at that row's right edge
+// rather than at the next row's start.
+size_t endTarget(const Text& text, size_t p, Row row = {});
+// Both at every caret, from its head: `rows` has each caret's row, in the
+// order given, or is empty for whole lines. Without extend a selection
+// collapses there; with it the anchor stays.
+std::vector<Caret> homeCarets(const Text& text, const std::vector<Caret>& carets,
+                              const std::vector<Row>& rows, bool extend);
+std::vector<Caret> endCarets(const Text& text, const std::vector<Caret>& carets,
+                             const std::vector<Row>& rows, bool extend);
+
 // What Paste puts at each caret: when the clipboard holds exactly as many
 // lines as there are carets (a final newline ignored), a line each, as VS
 // Code and Sublime do; otherwise the whole text at every caret.
@@ -185,8 +210,10 @@ Edit pasteLinesAbove(const Text& text, const std::vector<Caret>& carets,
 
 // The word at p: the run of word characters (letters, digits, _ and anything
 // past ASCII) holding p or touching it on either side, selected from its
-// start to its end. An empty caret at p when no word is there.
-Caret wordAt(const std::u16string& text, size_t p);
+// start to its end. An empty caret at p when no word is there. Over a
+// reader, only the word and a character either side are read (the find
+// bar's seed in a 260 MB log copied all of it).
+Caret wordAt(const Text& text, size_t p);
 
 // What a double-click at p selects, as VS Code's word selection does
 // (WordOperations.word, entering word selection): a run of word characters

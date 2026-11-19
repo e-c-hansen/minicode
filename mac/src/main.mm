@@ -95,7 +95,9 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
             return nil;
         }
         EditorController *owner = [self controllerForWindow:e.window];
-        if (!owner) return e;
+        // Find in Folder and TODOs: only the Global keys (Ctrl+`), which no
+        // menu matches; the window and the menus have the rest.
+        if (!owner) return [self ownerOfWindow:e.window] && MCKeymapHandleGlobalKeyDown(e) ? nil : e;
         // The shortcut hints' search box takes typing while they show,
         // before any command or view sees it (HintsSearchBox.h).
         if ([owner hintsPanelTakesKeyDown:e]) return nil;
@@ -208,15 +210,23 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     return YES;
 }
 
-// Quitting asks about unsaved changes in every window's tabs, as closing
-// each window would; windows are not closed on the way out, so nothing
-// else would.
+// Quitting (Cmd+Q, the Dock, logout or restart) keeps every window's
+// unsaved changes for the next launch without asking (files.hot-exit =
+// on-exit, the owner's decision of 2026-11-18, VS Code's hotExit onExit):
+// each window writes its unsaved buffers to the backups now, on this
+// thread, and they come back unsaved with the window. A window whose
+// backups cannot all be written, or every window with files.hot-exit = off,
+// asks about its unsaved tabs as closing it would; windows are not closed
+// on the way out, so nothing else would.
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app {
     const BOOL restarting = self.restartApp != nil;
     NSApplicationTerminateReply reply = [self confirmQuitRestarting:restarting];
     if (reply == NSTerminateCancel) {
         self.restartApp = nil;
         self.restartRecord = nil;
+        // Nothing was let go: what each window kept for the next launch is
+        // its unsaved work again, whose backups go as a later answer says.
+        for (EditorController *c in self.controllers) [c quitWasCancelled];
     }
     return reply;
 }
@@ -232,9 +242,11 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     if (!MCConfirmClosingRunning(running, restarting ? @"Restart mutible?" : @"Quit Mutible?",
                                  restarting ? @"Restart" : @"Quit"))
         return NSTerminateCancel;
+    const BOOL hotExit = [AppSettings shared].settings.hotExit() == Settings::HotExit::OnExit;
     for (EditorController *c in [self.controllers copy]) {
+        [c commitPageEdit];   // a page edit still open is asked about too, not dropped
         if (!c.hasUnsavedChanges) continue;
-        if (restarting && [c keepUnsavedTabsForRestart]) continue;   // they come back
+        if ((restarting || hotExit) && [c keepUnsavedTabsForNextLaunch]) continue;   // they come back
         [c.window makeKeyAndOrderFront:nil];
         if (![c confirmCloseAllTabsClosing:YES]) return NSTerminateCancel;
     }
@@ -536,8 +548,15 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (EditorController *)controlOpenWindowAtPath:(NSString *)dir { return [self openWindowAtPath:dir]; }
 
 // ------------------------------------------------------- window management
+// A folder no window here shows yet comes back as the window the last run
+// left on it, when it left one (VS Code reopens a folder with its editors
+// and panels); a second window on a folder, or a folder with none, opens
+// with the folder's tabs alone.
 - (EditorController *)openWindowAtPath:(NSString *)path {
-    return [self openWindowAtPath:path restoring:nil];
+    NSString *record = nil;
+    if (path.length && ![self controllerRootedAt:MCComparablePath(path)])
+        record = [EditorController windowRecordToReopenFolder:path];
+    return [self openWindowAtPath:path restoring:record];
 }
 
 // The same, brought back as the last run left it (`record`, from
@@ -566,6 +585,32 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
         if ([c ownsWindow:w]) return c;
     return [self controllerForWindow:NSApp.mainWindow] ?: self.controllers.lastObject;
 }
+
+// The controller owning a window: its own, or Find in Folder's or TODOs'.
+- (EditorController *)ownerOfWindow:(NSWindow *)w {
+    if (!w) return nil;
+    for (EditorController *c in self.controllers)
+        if ([c ownsWindow:w]) return c;
+    return nil;
+}
+
+// For a command that shows a pane of the editor window or puts the
+// keyboard in one (Toggle Terminal, Focus Terminal, Toggle Browser, the
+// sidebar's panels, the palette): run from Find in Folder or TODOs, which
+// float over the editor window and stay key, the editor window takes the
+// keyboard first, so what is typed next goes to the pane asked for, never
+// on into Search's fields (a walker's `pytest` and Return went into the
+// replace field). *fromOther says the keyboard was in such a window.
+- (EditorController *)currentForPane:(BOOL *)fromOther {
+    EditorController *c = [self current];
+    NSWindow *key = NSApp.keyWindow;
+    const BOOL other = c && key && key != c.window && !key.sheetParent && !key.parentWindow &&
+                       [c ownsWindow:key];
+    if (other) [c.window makeKeyAndOrderFront:nil];
+    if (fromOther) *fromOther = other;
+    return c;
+}
+- (EditorController *)currentForPane { return [self currentForPane:nullptr]; }
 
 // Keys that edit the file on show (Format Document, Sort Lines, Run File,
 // Toggle Comment, completion...) act only from the editor window. In Find in
@@ -771,6 +816,10 @@ static BOOL MCWindowTabAction(SEL a) {
 }
 - (void)showLineInPDF:(id)sender   { [[self current] showLineInPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    // Only for a file with a page to put beside its source (Markdown,
+    // LaTeX, HTML): the item never does nothing.
+    if (item.action == @selector(toggleSidePreview:))
+        return [self keyWindowIsEditor] && [self current].canToggleSidePreview;
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
     if (item.action == @selector(toggleTreeColumn:)) {
         item.state = MCTreeColumnShown((MCTreeColumns)item.tag) ? NSControlStateValueOn
@@ -823,11 +872,19 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)togglePlayback:(id)sender  { [[self current] togglePlayback:sender]; }
 - (void)nextTourStop:(id)sender    { [[self current] nextTourStop:sender]; }
 - (void)previousTourStop:(id)sender { [[self current] previousTourStop:sender]; }
-- (void)toggleHints:(id)sender     { [[self current] toggleHints:sender]; }
-- (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
-- (void)newTerminal:(id)sender     { [[self current] newTerminal:sender]; }
-- (void)splitTerminal:(id)sender   { [[self current] splitTerminal:sender]; }
-- (void)splitTerminalDown:(id)sender { [[self current] splitTerminalDown:sender]; }
+- (void)toggleHints:(id)sender     { [[self currentForPane] toggleHints:sender]; }
+// From Find in Folder or TODOs a toggle shows its pane and gives it the
+// keyboard, never hides it: VS Code's toggles hide only the view that has
+// the keyboard.
+- (void)toggleTerminal:(id)sender {
+    BOOL other = NO;
+    EditorController *c = [self currentForPane:&other];
+    if (other) [c focusTerminal:sender];
+    else [c toggleTerminal:sender];
+}
+- (void)newTerminal:(id)sender     { [[self currentForPane] newTerminal:sender]; }
+- (void)splitTerminal:(id)sender   { [[self currentForPane] splitTerminal:sender]; }
+- (void)splitTerminalDown:(id)sender { [[self currentForPane] splitTerminalDown:sender]; }
 - (void)renameTerminal:(id)sender  { [[self current] renameTerminal:sender]; }
 - (void)moveTerminalLeft:(id)sender { [[self current] moveTerminalLeft:sender]; }
 - (void)moveTerminalRight:(id)sender { [[self current] moveTerminalRight:sender]; }
@@ -838,10 +895,15 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)runTestAtCursor:(id)sender { [[self current] runTestAtCursor:sender]; }
 - (void)toggleLineHistory:(id)sender { [[self current] toggleLineHistory:sender]; }
-- (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
-- (void)openBrowserTab:(id)sender  { [[self current] openBrowserTab:sender]; }
-- (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
-- (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
+- (void)toggleBrowser:(id)sender {
+    BOOL other = NO;
+    EditorController *c = [self currentForPane:&other];
+    if (other) [c focusBrowser:sender];
+    else [c toggleBrowser:sender];
+}
+- (void)openBrowserTab:(id)sender  { [[self currentForPane] openBrowserTab:sender]; }
+- (void)toggleSidebarVisibility:(id)sender   { [[self currentForPane] toggleSidebarVisibility:sender]; }
+- (void)toggleSourceControl:(id)sender { [[self currentForPane] toggleSourceControl:sender]; }
 - (void)gitReviewChanges:(id)sender { [[self current] gitReviewChanges:sender]; }
 - (void)gitFetch:(id)sender { [[self current] gitFetch:sender]; }
 - (void)gitPull:(id)sender  { [[self current] gitPull:sender]; }
@@ -860,18 +922,18 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)stageChange:(id)sender    { [[self current] stageChange:sender]; }
 - (void)nextChange:(id)sender     { [[self current] nextChange:sender]; }
 - (void)previousChange:(id)sender { [[self current] previousChange:sender]; }
-- (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
-- (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
+- (void)toggleAgents:(id)sender    { [[self currentForPane] toggleAgents:sender]; }
+- (void)toggleProcesses:(id)sender { [[self currentForPane] toggleProcesses:sender]; }
 - (void)showSessionInBrowser:(id)sender { [[self current] showSessionInBrowser:sender]; }
 - (void)copySessionBrowserLink:(id)sender { [[self current] copySessionBrowserLink:sender]; }
 - (void)showRememberedBrowsers:(id)sender { MCSessionBrowsersShowRemembered(); }
-- (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
+- (void)toggleEditor:(id)sender    { [[self currentForPane] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
-- (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
+- (void)requestChange:(id)sender   { [[self currentForPane] requestChange:sender]; }
 // The palette (PalettePanel.h): commands (Shift+Cmd+P), the folder's files
 // (Cmd+P) and Go to Line (Ctrl+G) are one view, chosen by its first character.
 - (void)showPaletteWithText:(NSString *)text {
-    EditorController *c = [self current];
+    EditorController *c = [self currentForPane];
     if (!c) return;
     MCPaletteContext *ctx = [MCPaletteContext new];
     ctx.root = c.rootPath;
@@ -903,17 +965,17 @@ static BOOL MCWindowTabAction(SEL a) {
 }
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
 - (void)openReplaceInFolder:(id)sender { [[self current] openReplaceInFolder:sender]; }
-- (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
-- (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
-- (void)focusFirstEditorGroup:(id)sender  { [[self current] focusFirstEditorGroup:sender]; }
-- (void)focusSecondEditorGroup:(id)sender { [[self current] focusSecondEditorGroup:sender]; }
+- (void)focusTree:(id)sender       { [[self currentForPane] focusTree:sender]; }
+- (void)focusEditor:(id)sender     { [[self currentForPane] focusEditor:sender]; }
+- (void)focusFirstEditorGroup:(id)sender  { [[self currentForPane] focusFirstEditorGroup:sender]; }
+- (void)focusSecondEditorGroup:(id)sender { [[self currentForPane] focusSecondEditorGroup:sender]; }
 - (void)splitEditor:(id)sender     { [[self current] splitEditor:sender]; }
 - (void)moveEditorToNextGroup:(id)sender { [[self current] moveEditorToNextGroup:sender]; }
 - (void)moveEditorToPreviousGroup:(id)sender {
     [[self current] moveEditorToPreviousGroup:sender];
 }
-- (void)focusTerminal:(id)sender   { [[self current] focusTerminal:sender]; }
-- (void)focusBrowser:(id)sender    { [[self current] focusBrowser:sender]; }
+- (void)focusTerminal:(id)sender   { [[self currentForPane] focusTerminal:sender]; }
+- (void)focusBrowser:(id)sender    { [[self currentForPane] focusBrowser:sender]; }
 - (void)selectNextTab:(id)sender     { [[self current] selectNextTab:sender]; }
 - (void)selectPreviousTab:(id)sender { [[self current] selectPreviousTab:sender]; }
 - (void)selectTabNumber:(id)sender   { [[self current] selectTabNumber:sender]; }
@@ -994,7 +1056,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)organizeImports:(id)sender { [[self current] organizeImports:sender]; }
 - (void)nextProblem:(id)sender     { [[self current] nextProblem:sender]; }
 - (void)previousProblem:(id)sender { [[self current] previousProblem:sender]; }
-- (void)toggleProblems:(id)sender  { [[self current] toggleProblems:sender]; }
+- (void)toggleProblems:(id)sender  { [[self currentForPane] toggleProblems:sender]; }
 - (void)showLanguageServers:(id)sender { [[self current] showLanguageServers:sender]; }
 - (void)restartLanguageServer:(id)sender { [[self current] restartLanguageServer:sender]; }
 - (void)selectPythonInterpreter:(id)sender {
@@ -1470,7 +1532,7 @@ static void BuildMenu(void) {
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:toggle];
     // Control+Command+V, for VS Code's Cmd+K V chord: the page beside the
-    // source of a Markdown file, which keeps the keyboard.
+    // source of a Markdown, LaTeX or HTML file, which keeps the keyboard.
     NSMenuItem *side =
         [[NSMenuItem alloc] initWithTitle:@"Open Preview to the Side"
                                    action:@selector(toggleSidePreview:)

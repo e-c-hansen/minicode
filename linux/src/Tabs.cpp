@@ -411,17 +411,28 @@ void Editor::showComparison(const CompareSpec& spec, std::function<void(Document
 }
 
 // A page in a tab of its own (EditorPage.h), reused by its key: a second
-// open shows the tab that has it and drops the new page.
-Document* Editor::showPage(std::shared_ptr<EditorPage> page) {
+// open shows the tab that has it and drops the new page. In preview (the
+// Mac's showPage:preview:), the page replaces the preview tab as a file
+// opened from the tree does, unless that tab has unsaved changes; a
+// replaced page's tab is deleted, and the page with it (letGo).
+Document* Editor::showPage(std::shared_ptr<EditorPage> page, bool preview) {
     for (Document* t : documentsOf(win_->tabs()))
         if (t->editorPage() && t->editorPage()->key() == page->key()) {
+            if (!preview && t->isPreviewTab()) keepPreviewTab(t);
             activate(t);
             return t;
         }
     Document* d = newDocument();
-    win_->add(d->id(), "");
+    const bool inPreview = preview && previewSettings().enabled;
+    const Model::DocId old =
+        win_->add(d->id(), "", inPreview ? Model::Preview::User : Model::Preview::None,
+                  [this](Model::DocId id) {
+                      Document* o = documentById(id);
+                      return o && o->dirty();
+                  });
     d->setEditorPage(page->title(), page);
     activate(d);
+    if (Document* o = documentById(old)) letGo(o);
     return d;
 }
 
@@ -705,18 +716,24 @@ void Editor::pathTrashed(const std::string& path) {
 
 // ---------------------------------------------------------------- the strip
 
-// What each tab shows: the file's name, with as much of its folder as tells
-// it from another of the same name (EditorTabs::labels), a diff's title, the
-// dot for unsaved changes, and italics for the preview tab.
+// What each tab shows: the file's name and, for files of one name, the
+// folders that tell them apart, drawn dimmed after it (EditorTabs::tabNames,
+// as the Mac's reloadTabStrip), a diff's title, the dot for unsaved changes,
+// and italics for the preview tab.
 void Editor::refreshStrip() {
     syncPaths();
     const std::vector<Document*> tabs = documentsOf(win_->tabs());
-    const std::vector<std::string> names = win_->labels(win_->focused());
+    const std::vector<EditorTabs::TabName> names = win_->tabNames(win_->focused());
     std::vector<TabStrip::Item> items;
     for (size_t i = 0; i < tabs.size() && i < names.size(); i++) {
         const Document* d = tabs[i];
         TabStrip::Item it;
-        it.title = d->kind() == Document::Kind::Diff ? d->diffTitle() : names[i];
+        if (d->kind() == Document::Kind::Diff) {
+            it.title = d->diffTitle();
+        } else {
+            it.title = names[i].name;
+            it.hint = names[i].hint;
+        }
         if (it.title.empty()) it.title = baseName(d->path());
         it.tooltip = d->path().empty() ? it.title : d->path();
         it.dirty = d->dirty();

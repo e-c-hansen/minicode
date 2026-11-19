@@ -45,6 +45,8 @@
 #import "AgentNotes.h"
 #import "CompareView.h"
 #import "FileViewers.h"
+#include "TabSessions.h"
+@class MCChangeReviewPage;
 #import "QuickLook.h"
 #import "MarkdownCode.h"
 #import "Keymap.h"
@@ -855,6 +857,21 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 @end
 
 // EditorController+Persistence.mm: the tabs between runs, backups and hot exit, auto-save, files changed, moved or deleted outside.
+@interface EditorController (PageTabs)
+// A tab that shows no file as the sessions keep it (the review, a commit's
+// page, a comparison that can be made again); NO for any other tab.
+- (BOOL)pageTabOf:(MCTab *)t into:(TabSessions::PageTab *)out;
+// Such a tab made again, in no window yet; nil when it cannot be (a page
+// of its kind is open already). A comparison's sides are read after.
+- (MCTab *)tabForRestoredPage:(const TabSessions::PageTab &)p;
+@end
+
+@interface EditorController (Git)
+// The window's review page and commit page, new, with their hooks.
+- (MCChangeReviewPage *)newChangeReviewPage;
+- (MCChangeReviewPage *)newCommitReviewPage;
+@end
+
 @interface EditorController (Persistence)
 // The folder's session as sessions.json holds it, in the shape the user
 // defaults held it (files, active, preview, sidePreview, groups, browser),
@@ -886,6 +903,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // The window is closing: no backup or auto-save is planned for it any more.
 - (void)stopSavePlan;
 - (void)discardBackupOf:(MCTab *)t;
+// windowWillClose:'s: every tab's backup, unless quitting kept them.
+- (void)discardBackupsAsWindowCloses;
 - (void)backupsAppWillTerminate:(NSNotification *)note;
 - (BOOL)takeBackup:(NSString *)bid intoTab:(MCTab *)t;
 - (void)showRestoredText:(NSString *)text base:(NSDate *)base inode:(uint64_t)inode;
@@ -953,7 +972,25 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)showLatexProblemMarks;
 - (BOOL)latexIsShowing;
 - (void)latexDidEditSource:(NSString *)newSource;
+- (void)latexShowSource:(NSString *)path line:(NSInteger)line column:(NSInteger)column;
 - (void)setPlainMessage:(NSString *)msg;
+@end
+
+// EditorController+PageSide.mm: Open Preview to the Side for LaTeX and HTML files.
+@interface EditorController (PageSide)
+- (BOOL)pageSideWanted;
+- (BOOL)pageSideShowing;
+- (BOOL)pageSideShowsLatex;
+- (NSView *)pageSideDivider;
+- (NSRect)layoutPageSideIn:(NSRect)rect textShown:(BOOL)textShown;
+- (void)refreshPageSide;
+- (void)pageSideSourceChanged;
+- (void)pageSideSelectionChanged;
+- (void)pageSideSaved:(MCTab *)t;
+- (NSString *)pageSideBufferFor:(MCTab *)t;
+- (void)pageSideTabWillLeave:(MCTab *)t;
+- (void)closePageSide;
+- (void)pageSideBarDraggedTo:(CGFloat)x;
 @end
 
 // EditorController+Highlighting.mm: the source's syntax colors, kept up as it is edited.
@@ -1125,6 +1162,11 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSInteger)markdownSourceLineNear:(NSUInteger)i;
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point;
 - (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point;
+// A double-click at `at` (window coordinates) on whichever page is under it,
+// the full page or the one beside the source: the block editor opens, as the
+// page's own double-click opens it. For a double-click that began in the
+// other editor group (otherGroupPressed:).
+- (BOOL)editPageAtWindowPoint:(NSPoint)at;
 - (BOOL)editMarkdownIn:(NSTextView *)page atCharacter:(NSUInteger)index point:(NSPoint)point;
 - (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side;
 - (void)applySidePreviewEdit:(NSString *)source;

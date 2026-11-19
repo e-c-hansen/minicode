@@ -57,6 +57,10 @@ public:
             b.pid = k.kp_proc.p_pid;
             b.ppid = k.kp_eproc.e_ppid;
             b.pgid = k.kp_eproc.e_pgid;
+            // The session, which kinfo_proc does not carry: a job re-parented
+            // to launchd keeps its terminal's (ProcessTable.h).
+            const pid_t sid = getsid(b.pid);
+            b.sid = sid > 0 ? sid : 0;
             b.uid = k.kp_eproc.e_ucred.cr_uid;
             b.start = (int64_t)k.kp_proc.p_starttime.tv_sec * 1000000 + k.kp_proc.p_starttime.tv_usec;
             b.name = std::string(k.kp_proc.p_comm, strnlen(k.kp_proc.p_comm, sizeof k.kp_proc.p_comm));
