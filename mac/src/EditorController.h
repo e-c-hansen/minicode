@@ -66,9 +66,13 @@
 - (void)revertChange:(id)sender;     // the change bar on the caret's line
 - (void)stageChange:(id)sender;
 - (void)gitReviewChanges:(id)sender;   // every uncommitted change in one tab
-// A commit on the commit page (the review page in commit mode), one tab
-// per window that each commit shown replaces.
+// A commit on the commit page (the review page in commit mode): in the
+// preview tab, which the next commit shown in preview replaces (the first
+// form), or in a kept tab of its own.
 - (void)showCommitReview:(NSString *)hash title:(NSString *)title;
+- (void)showCommitReview:(NSString *)hash title:(NSString *)title preview:(BOOL)preview;
+// The review of every uncommitted change at a file (nil: its top).
+- (void)showChangeReviewAt:(NSString *)rel staged:(BOOL)staged preview:(BOOL)preview;
 - (void)gitFetch:(id)sender;
 - (void)gitPull:(id)sender;
 - (void)gitPush:(id)sender;

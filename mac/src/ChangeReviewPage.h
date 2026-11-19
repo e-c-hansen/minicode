@@ -13,7 +13,11 @@
 // conflict block whole instead, markers and all, with Keep Current, Keep
 // Incoming and Keep Both (which write the file), Side by Side of every
 // current side against every incoming one, and once none are left, Mark
-// Resolved, which stages it (ChangeReview::conflictFile).
+// Resolved, which stages it (ChangeReview::conflictFile). A binary file
+// that is a picture (png, jpg, gif, webp, ...) shows the picture, or the
+// old and new ones side by side under Before and After with their sizes
+// in pixels and bytes (ChangeReview::showAsImages); other binary files
+// say they are binary.
 //
 // What the core works out (ChangeReview.h): the rows, and the index text
 // or file text a block's action makes. Staging and unstaging write that
@@ -43,11 +47,12 @@
 // A commit from the graph, the same way and without buttons: a header with
 // its subject, author and date in words, and the rest of its message, then
 // each file it changed against its first parent (what a merge brought in),
-// colored, changed words marked, in one scroll. One such page per window,
-// which each commit shown replaces (its key is the window's, not the
-// commit's), as the diff tab was.
+// colored, changed words marked, in one scroll. Its key is the commit's
+// (commitKeyForRoot:hash:), so a kept commit page stays while the preview
+// tab's page shows each commit clicked in turn (showCommit: again).
 - (instancetype)initForCommitsWithRoot:(NSString *)root panel:(MCGitPanel *)panel;
 - (void)showCommit:(NSString *)hash title:(NSString *)title;
++ (NSString *)commitKeyForRoot:(NSString *)root hash:(NSString *)hash;
 // Compare with Main for a worktree (R2.9), the same way: every file the
 // agent changed (committed or not, untracked ones too) against where its
 // branch left main (the merge base, so main's later work is left out), in
@@ -95,8 +100,14 @@
 @property(nonatomic, readonly) NSTextView *textView;
 @property(nonatomic, readonly) NSScrollView *scrollView;
 @property(nonatomic, readonly) NSUInteger blockCount;
-// "§ Changes  2", "F a.txt  +1 -1", "  same", "- old", "+ new", "~ 6 unchanged lines", "! note"
+// "§ Changes  2", "F a.txt  +1 -1", "  same", "- old", "+ new", "~ 6 unchanged lines", "! note",
+// "I " (a row under a file's pictures)
 - (NSArray<NSString *> *)rowDescriptions;
+// The pictures on show for binary image files, in page order: each its
+// image view (the picture's bytes as read) under its label ("Before: 4 × 3
+// pixels, 75 bytes"), placed over the file's empty rows.
+@property(nonatomic, readonly) NSArray<NSImageView *> *imageViews;
+- (NSArray<NSString *> *)imageLabels;
 - (NSInteger)topRow;                               // the first row on screen
 - (NSInteger)rowOfBlock:(NSUInteger)block;         // its first row, -1 past the end
 - (NSInteger)rowOfFile:(NSString *)rel staged:(BOOL)staged;

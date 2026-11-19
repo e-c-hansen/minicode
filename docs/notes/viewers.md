@@ -52,6 +52,9 @@ found through that list.
 - **Images** (not SVG, which is source): `NSImageView`, scaled down never up,
   `animates`, size set to pixels (a 144 dpi screenshot drew at half size); one
   that fails to decode falls through to the text path's "Cannot display".
+  The review and commit pages show a binary picture's versions the same
+  way (sized from pixels, never past 320 points tall), over empty rows of
+  their own (git.md, "Pictures" in the review view).
   **PDFs**: `PDFView`, reload keeping page, point and scale; a new one
   opens at the top of its first page (`MCPDFShowFirstPageTop`, PageZoom.mm,
   the LaTeX preview's too; until 2026-11-17 a tall page opened scrolled to
