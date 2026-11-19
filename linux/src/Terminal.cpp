@@ -11,6 +11,7 @@
 #include "Appearance.h"
 #include "BackupStore.h"
 #include "ClaudeHooks.h"
+#include "Commands.h"
 #include "Rename.h"
 #include "Palette.h"
 #include "SessionLink.h"
@@ -386,6 +387,9 @@ void Terminal::makeTerminal() {
                 self->userInputIdle_ = 0;
                 return G_SOURCE_REMOVE;
             }, t);
+            // Mac-style keys: Ctrl the Mac's Cmd, Super its Ctrl. No
+            // accelerator took this key (they come first, from the window).
+            if (t->macStyleKeys_ && t->macStyleKey(keyval, held)) return TRUE;
             return FALSE;
         }), this);
         gtk_widget_add_controller(vte_, typed);
@@ -407,11 +411,8 @@ void Terminal::makeTerminal() {
     gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(keys),
         gtk_shortcut_new(gtk_keyval_trigger_new(GDK_KEY_V, (GdkModifierType)(
                              GDK_CONTROL_MASK | GDK_SHIFT_MASK)),
-                         gtk_callback_action_new([](GtkWidget* w, GVariant*, gpointer p) -> gboolean {
-                             // The clipboard comes later, outside the key's
-                             // handling: the paste is the user's now.
-                             static_cast<Terminal*>(p)->userTyped();
-                             vte_terminal_paste_clipboard(VTE_TERMINAL(w));
+                         gtk_callback_action_new([](GtkWidget*, GVariant*, gpointer p) -> gboolean {
+                             static_cast<Terminal*>(p)->pasteClipboard();
                              return TRUE;
                          }, this, nullptr)));
     gtk_widget_add_controller(vte_, keys);
@@ -1261,7 +1262,53 @@ void Terminal::applyFont() {
 
 void Terminal::applySettings(const Settings& s) {
     settings_ = std::make_unique<Settings>(s);   // for a terminal not made yet
+    macStyleKeys_ = s.terminalMacStyleKeys();
     if (vte_) applyColors(s);
+}
+
+void Terminal::pasteClipboard() {
+    if (!vte_) return;
+    // The clipboard comes later, outside the key's handling: the paste is
+    // the user's now.
+    userTyped();
+    vte_terminal_paste_clipboard(VTE_TERMINAL(vte_));
+}
+
+bool Terminal::macStyleKey(guint keyval, GdkModifierType held) {
+    if (!vte_) return false;
+    unsigned mods = 0;
+    if (held & GDK_CONTROL_MASK) mods |= Commands::Ctrl;
+    if (held & GDK_SHIFT_MASK) mods |= Commands::Shift;
+    // Meta comes with Alt on some keymaps.
+    if (held & (GDK_ALT_MASK | GDK_META_MASK)) mods |= Commands::Alt;
+    const bool super = held & GDK_SUPER_MASK;
+    // The character the key types, Shift applied (VTE reads the same
+    // keyval); Return, Tab, Escape and the rest type none here.
+    const gunichar u = gdk_keyval_to_unicode(keyval);
+    const char32_t ch = u >= 0x20 && u != 0x7f ? (char32_t)u : 0;
+    const Commands::MacStyleRoute r = Commands::linuxMacStyleKey(mods, super, ch);
+    VteTerminal* term = VTE_TERMINAL(vte_);
+    switch (r.action) {
+    case Commands::MacStyleAction::Pass:
+        return false;
+    case Commands::MacStyleAction::Drop:
+        return true;
+    case Commands::MacStyleAction::Copy:
+        if (vte_terminal_get_has_selection(term)) vte_terminal_copy_clipboard_format(term, VTE_FORMAT_TEXT);
+        return true;
+    case Commands::MacStyleAction::Paste:
+        pasteClipboard();
+        return true;
+    case Commands::MacStyleAction::SelectAll:
+        vte_terminal_select_all(term);
+        return true;
+    case Commands::MacStyleAction::Send:
+        // Through VTE's commit, as its own keys go (onCommit), while the
+        // key still counts as the user's.
+        vte_terminal_feed_child(term, r.bytes.data(), (gssize)r.bytes.size());
+        return true;
+    }
+    return false;
 }
 
 void Terminal::applyColors(const Settings& s) {
