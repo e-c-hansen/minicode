@@ -339,9 +339,12 @@ Verified by running it:
   three runs and delivered nothing in two, while other mutible windows were
   running and writing the clipboard; Wayland only gives the clipboard to the
   focused window, so treat that one as unconfirmed.
-- The shell restarts in place when it exits. Confirmed by sending `exit` to the
-  child and reading the terminal buffer back: the notice line, a fresh prompt,
-  and a command run successfully in the new shell.
+- `exit`, or Ctrl+D at an empty prompt, closes the terminal (its pane, its
+  tab, the dock with the last), as on the Mac since November 2026
+  (terminal.close-on-exit; a killed shell, or one ending before its first
+  prompt, says so and waits for Return). Checked by the `terminal_exit` GUI
+  suite with real keys (linux/HANDOFF.md item 117). Until then the shell
+  restarted in place when it exited.
 - Find in Folder (Ctrl+Shift+F, September 2026). Checked on Ubuntu 26.04
   under GNOME on Wayland with a temporary test hook that drove the real code
   paths inside the running app, then was removed: the action opens the window

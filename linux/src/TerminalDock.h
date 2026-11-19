@@ -7,7 +7,9 @@
 // Move Terminal Left and Right, and a terminal with a running program asks
 // before it closes. The last tab closing hides the dock (onEmpty) and leaves
 // a fresh terminal whose shell starts when the dock is shown again, so there
-// is always one to ask.
+// is always one to ask. A pane whose shell ended with `exit` or Ctrl+D
+// (Terminal::onShellExit, terminal.close-on-exit) closes the same way,
+// unasked.
 //
 // Compiled only with MUTIBLE_ENABLE_TERMINAL.
 #pragma once

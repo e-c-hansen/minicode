@@ -44,6 +44,7 @@ TerminalDock::~TerminalDock() {
         for (Terminal* t : g->panes()) {
             t->onTitleChanged = nullptr;
             t->onFocusIn = nullptr;
+            t->onShellExit = nullptr;
         }
     groups_.clear();   // each group deletes its terminals
     delete strip_;
@@ -67,6 +68,13 @@ std::vector<Terminal*> TerminalDock::all() const {
 
 void TerminalDock::hook(Terminal* t) {
     t->onTitleChanged = [this] { refresh(); };
+    // `exit` closed its shell (terminal.close-on-exit): the pane goes,
+    // unasked, nothing being left to ask about; the tab with its last pane,
+    // and the dock with the last tab, as Close Tab does (the Mac's
+    // MCTerminalPanel onShellExit).
+    t->onShellExit = [this](Terminal* ended) {
+        if (!closingAll_ && indexOf(ended) >= 0) closePane(ended, false);
+    };
     t->onFocusIn = [this, t] {
         if (closingAll_ || switching_) return;
         const int i = indexOf(t);
@@ -262,6 +270,7 @@ void TerminalDock::removePane(Terminal* t) {
     const bool hadKeyboard = i == active_ && g->active() == t;
     t->onTitleChanged = nullptr;
     t->onFocusIn = nullptr;
+    t->onShellExit = nullptr;
     Terminal* next = nullptr;
     GtkWidget* w = GTK_WIDGET(g_object_ref(t->widget()));
     next = g->take(t);
@@ -279,6 +288,7 @@ void TerminalDock::remove(int i) {
     for (Terminal* t : g->panes()) {
         t->onTitleChanged = nullptr;
         t->onFocusIn = nullptr;
+        t->onShellExit = nullptr;
     }
     const int was = active_;
     // The last tab leaves a fresh terminal whose shell starts when the dock
