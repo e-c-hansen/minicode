@@ -452,7 +452,10 @@ uint32_t ByteSum(NSData *d) {
 
 // The page fetches its typeset frame's address, as its frame does: the
 // answer's status, type, length and byte sum in window.__typesetFetch.
+// What was read before is dropped: Read() answers later, so a wait
+// looking at gSeen at once saw the last fetch's answer (CI, PR #261).
 void FetchTypeset(void) {
+    gSeen = nil;
     Eval(@"(() => { window.__typesetFetch = null; const src = window.mcSessionView.typeset().src;"
          @" if (!src) return false;"
          @" fetch(src).then(r => r.arrayBuffer().then(b => { const a = new Uint8Array(b); let s = 0;"
@@ -468,6 +471,11 @@ NSDictionary *SeenTypeset(void) {
 }
 NSDictionary *SeenFetch(void) {
     return [gSeen[@"fetched"] isKindOfClass:NSDictionary.class] ? gSeen[@"fetched"] : nil;
+}
+// A fetch of the frame's address now on show has answered.
+BOOL FetchedShown(void) {
+    NSString *src = SeenTypeset()[@"src"];
+    return src.length && [SeenFetch()[@"src"] isEqualToString:src];
 }
 
 NSTextView *TV(EditorController *c) { return [c valueForKey:@"textView"]; }
@@ -1266,7 +1274,7 @@ MC_GUI_SUITE(session_browser) {
     });
     MCGuiWait(@"fetched", 20, ^BOOL {
         Read();
-        return SeenFetch() != nil;
+        return FetchedShown();
     });
     MCGuiStep(@"the bytes are the window's PDF; then Show Source", ^{
         NSDictionary *f = SeenFetch();
@@ -1302,7 +1310,7 @@ MC_GUI_SUITE(session_browser) {
     });
     MCGuiWait(@"the new bytes", 20, ^BOOL {
         Read();
-        return SeenFetch() != nil;
+        return FetchedShown();
     });
     MCGuiStep(@"they are the window's new PDF; a document the window has not open, clicked in the tree", ^{
         NSDictionary *f = SeenFetch();
@@ -1326,7 +1334,7 @@ MC_GUI_SUITE(session_browser) {
     });
     MCGuiWait(@"its bytes", 20, ^BOOL {
         Read();
-        return SeenFetch() != nil;
+        return FetchedShown();
     });
     MCGuiStep(@"the stand-in's PDF; the file unchanged and nothing left beside it; both closed", ^{
         NSDictionary *f = SeenFetch();
