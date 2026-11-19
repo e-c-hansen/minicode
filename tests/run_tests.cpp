@@ -5023,6 +5023,8 @@ void testSettings() {
         CHECK(TitlePath::shown("/etc/hosts", "/", home) == "etc/hosts");
         // The window on the home folder: from it, not "~".
         CHECK(TitlePath::shown("/home/u/e.txt", home, home) == "e.txt");
+    }
+
     GROUP("hints:key-labels");
     {
         // The panels' keys in symbols (Commands::keyLabel), and the search
