@@ -149,8 +149,8 @@ found through that list.
   folder's parent see it deleted or renamed; `revealPath(path, widen)`
   and `showsPath` are the Mac's reveal rule; Persistence keeps the focus
   through its `treeFocus` and `restoreTreeFocus` hooks. The breadcrumb is
-  labels laid out by `TreeFocus::fit` in a `GtkCustomLayout`. It keeps no
-  open folders in a window's record, so a window brought back opens none.
+  labels laid out by `TreeFocus::fit` in a `GtkCustomLayout`. Since item 107
+  a window's record keeps its open folders (`FileTree::restoreView`).
 - **Add to Focus, several folders** (2026-11-18, the owner: "what if I'm
   jumping between two different subdirectories"; the same files, core
   `tree:focus-set`, `tab-sessions:put`, the `tree_focus` suite's second
@@ -228,7 +228,8 @@ found through that list.
   GTK port has no palette folder picker), its answer held to that folder
   by `FolderPicker::inScope` (FolderPicker.cpp is in the Linux build for
   it). Persistence keeps the whole list. A drop below several roots is
-  refused, as on the Mac. It keeps no open folders in a window's record.
+  refused, as on the Mac. A window's record keeps the open folders inside
+  and outside the roots (item 107).
 
 - **The tree follows the active tab** (2026-11-18, the owner: "I have to
   hunt for the file that I am already using"; `EditorController+TreeReveal.mm`,
@@ -260,7 +261,37 @@ found through that list.
   the active tab must not scroll for the row a click in the tree opens
   (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`),
   or a click on a row cut by the edge jumps the tree and a restored window
-  loses its scroll. The GTK port does not follow yet.
+  loses its scroll. **The GTK port follows too** (2026-11-18,
+  `linux/HANDOFF.md` item 107, `linux/src/TreeFollow.{h,cpp}`, the
+  `tree_focus` suite's last part): `TreeFollow` holds the Mac's
+  TreeReveal category's rules (the core's `TreeReveal::Follower`, the
+  hold, the setting turned on) over three hooks from `main.cpp`
+  (`treeFollowablePath`, `treeOnShow`, the setting); the editor's
+  `onActiveChanged` calls `activeChanged` where it called
+  `revealActiveInTree`. `FileTree::revealPath` centers: it selects the row
+  without `gtk_list_view_scroll_to` (which only scrolls to the edge) and
+  `centerRow` reads the row's place in the frame clock's after-paint and
+  sets the scroll from `TreeReveal::scrollTop`; the tree's own reveals (a
+  focus changed, hidden files shown, a root's label) keep the edge scroll
+  (`reveal(path, widen, false)`, the Mac's `scrollRowToVisible` there).
+  `FileTree::selectIfListed` is `reselectCurrentFileInTree`, and
+  `opening()` is `treeOpensPath:` (set around the open callback in
+  `actOnRow`). `showsPath` uses `TreeFocus::shows`. Hidden is the sidebar
+  closed, another panel the sidebar stack's child, or the divider at 0;
+  `layout->onChanged`, the stack's `notify::visible-child` and the
+  divider's `notify::position` call `treeMaybeShown`. The hold is around
+  `newWindow`'s and `openFolder`'s `attachHeldDocuments` to
+  `showHeldActive`, and the window's record now keeps the tree's open
+  folders, selected row and scroll (`openFolders`, `scrolled`), which
+  `FileTree::restoreView` puts back once the listings have stopped
+  coming. Quick Open reveals before it opens, whatever the setting, as the
+  Mac's `openFileFromQuickOpen:`. One difference: GtkListView itself
+  scrolls the row a click focuses wholly into view, so a click on a row
+  cut by the edge nudges it in by the part cut off (never centered).
+  Trap (GTK): a row's place is only right after the layout that holds the
+  rows just put in, which comes after a frame's tick callbacks and may
+  come after a low-priority idle, so `centerRow` reads it in the frame
+  clock's after-paint, where no listing can have moved the rows since.
 
 ## Traps
 
@@ -270,3 +301,4 @@ text is in place in its section.
 - The file tree (Mac): Trap: NSTableCellView moves its textField to the cell's width without a layout pass, so `MCTreeCell` places its fields again in `viewWillDraw`.
 - The file tree (Mac): Trap: `NSTableViewLastColumnOnlyAutoresizingStyle` moves the column only by the change in the outline's frame, so a width lost once stayed lost and a reload cut every name off; `fitTreeColumn` fits it after each reload and frame change.
 - The file tree (Mac): Trap: the tree following the active tab must not scroll for the row a click in the tree opens (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`).
+- The file tree (GTK): Trap: a row's place is only right after the layout that holds the rows just put in, which comes after a frame's tick callbacks and may come after a low-priority idle, so `centerRow` reads it in the frame clock's after-paint, where no listing can have moved the rows since.

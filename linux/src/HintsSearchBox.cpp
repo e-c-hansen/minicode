@@ -183,7 +183,7 @@ PangoAttrList* HintsSearchBox::attributes(const std::vector<HintRow>& rows,
                                           const std::string& query, int* firstHit) {
     if (firstHit) *firstHit = -1;
     const std::vector<HintsSearch::Word> words =
-        HintsSearch::parse(utf16(query, nullptr), HintsSearch::Spelling::Words);
+        HintsSearch::parse(utf16(query, nullptr), HintsSearch::Spelling::Linux);
     if (words.empty()) return nullptr;
     PangoAttrList* list = pango_attr_list_new();
     std::vector<bool> found(rows.size(), false);

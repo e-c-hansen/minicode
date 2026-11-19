@@ -1420,6 +1420,15 @@ Displays.
   with a pointing hand under the pointer. Narrow the sidebar until the
   middle parts give way to "…". Click a part, then the ×, and see the
   folders you had open still open.
+- [ ] The tree following the tab on show (`linux/HANDOFF.md` item 107): in
+  a large checkout, Ctrl P a file deep in folders you never opened. The
+  tree opens them and its row lands in the middle of the tree, selected,
+  with the caret still in the editor; switching between two tabs whose
+  rows both show leaves the tree still. Say whether the jump (there is no
+  animation) reads well, and whether a click on a row half cut by the
+  tree's bottom edge, which GTK slides into view, feels right. Quit with
+  the tree scrolled somewhere and start mutible from the dock: the tree
+  comes back where it was.
 
 ### Mouse and touchpad
 

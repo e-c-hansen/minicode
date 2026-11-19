@@ -4060,8 +4060,9 @@ void testSettings() {
     // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands, and editor.spell-check with its color, and
-    // editor.session-host, and explorer.auto-reveal.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 141);
+    // editor.session-host, and explorer.auto-reveal, and
+    // editor.session-web-idle-minutes.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 142);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4813,40 +4814,129 @@ void testSettings() {
 
     GROUP("measure:hints");
     {
-        using PageMeasure::HintRow;
-        auto pair = [](double k1, double l1, double k2, double l2) {
-            HintRow r; r.key1 = k1; r.label1 = l1; r.hasKey2 = true; r.key2 = k2; r.label2 = l2;
-            return r;
+        using PageMeasure::HintItem;
+        using PageMeasure::HintsLayout;
+        auto shortcut = [](double key, double label, double h = 10) {
+            HintItem it; it.key = key; it.label = label; it.height = h; return it;
         };
-        auto alone = [](double k1, double l1) { HintRow r; r.key1 = k1; r.label1 = l1; return r; };
-        auto state = [](double k1, double l1, double st) {
-            HintRow r; r.key1 = k1; r.label1 = l1; r.hasState = true; r.state = st; return r;
+        auto heading = [](double w, double h = 10) {
+            HintItem it; it.kind = HintItem::Heading; it.key = w; it.height = h;
+            it.spaceBefore = h; return it;
         };
-        HintRow head; head.heading = true; head.key1 = 60;
-        std::vector<HintRow> rows = {head, pair(20, 150, 30, 120), pair(40, 90, 20, 160),
-                                     alone(20, 300), state(25, 60, 40)};
-        // Wide: two columns, stops past the widest key and the widest paired label.
-        PageMeasure::HintsLayout two = PageMeasure::layoutHints(rows, 1000, 10, 24);
-        CHECK(two.columns == 2 && !two.wraps);
-        CHECK(two.label1 == 50);                       // 40 + 10
-        CHECK(two.key2 == 50 + 150 + 24);              // the long lone label does not push it
-        CHECK(two.label2 == two.key2 + 30 + 10);
-        CHECK(two.state == two.key2);
-        CHECK(two.textWidth == std::max(two.label2 + 160, 50.0 + 300));
-        // Exactly the two-column width still fits; a point less goes to one column.
-        CHECK(PageMeasure::layoutHints(rows, two.textWidth, 10, 24).columns == 2);
-        PageMeasure::HintsLayout one = PageMeasure::layoutHints(rows, two.textWidth - 1, 10, 24);
-        CHECK(one.columns == 1 && !one.wraps);
-        CHECK(one.label1 == 50);                       // every key, either column's
-        CHECK(one.state == 50 + 300 + 10);             // after the longest label
-        CHECK(one.textWidth == one.state + 40);
-        CHECK(one.textWidth < two.textWidth);
-        // Narrower than any row: labels wrap, the text as wide as the room.
-        PageMeasure::HintsLayout tight = PageMeasure::layoutHints(rows, 200, 10, 24);
-        CHECK(tight.columns == 1 && tight.wraps && tight.textWidth == 200);
+        // Four sections of ten: a heading, then shortcuts 30 + 10 + 100 wide.
+        std::vector<HintItem> items;
+        for (int s = 0; s < 4; ++s) {
+            items.push_back(heading(60));
+            for (int i = 0; i < 10; ++i) items.push_back(shortcut(30, 100));
+        }
+        // One column is 140 wide; each more adds 20 between and 140.
+        HintsLayout one = PageMeasure::layoutHints(items, 140, 10, 20);
+        CHECK(one.count() == 1 && !one.wraps);
+        CHECK(one.columns[0].label == 40 && one.textWidth == 140);
+        CHECK(one.textHeight == 44 * 10 + 3 * 10);   // 44 items, 3 spaces (none at the top)
+        CHECK(PageMeasure::layoutHints(items, 299, 10, 20).count() == 1);
+        HintsLayout two = PageMeasure::layoutHints(items, 300, 10, 20);
+        CHECK(two.count() == 2 && two.textWidth == 300);
+        CHECK(two.columns[1].x == 160 && two.columns[1].label == 40);
+        CHECK(PageMeasure::layoutHints(items, 459, 10, 20).count() == 2);
+        HintsLayout three = PageMeasure::layoutHints(items, 460, 10, 20);
+        CHECK(three.count() == 3 && three.textWidth == 460);
+        HintsLayout four = PageMeasure::layoutHints(items, 620, 10, 20);
+        CHECK(four.count() == 4 && four.textWidth == 620);
+        // More columns, shorter text; a wide room still stops at the most asked.
+        CHECK(four.textHeight < three.textHeight && three.textHeight < two.textHeight &&
+              two.textHeight < one.textHeight);
+        CHECK(PageMeasure::layoutHints(items, 100000, 10, 20, 6).count() == 6);
+        CHECK(PageMeasure::layoutHints(items, 100000, 10, 20, 1).count() == 1);
+        // Four sections in four columns: each a section, its heading on top
+        // without the space above it.
+        for (const PageMeasure::HintsColumn& c : four.columns) {
+            CHECK(c.end - c.first == 11 && items[c.first].kind == HintItem::Heading);
+            CHECK(c.height == 110);
+        }
+        // Every layout: the columns follow each other over every item, no
+        // column ends on a heading, and their heights are balanced.
+        for (double room : {140.0, 300.0, 460.0, 620.0, 780.0, 2000.0}) {
+            HintsLayout l = PageMeasure::layoutHints(items, room, 10, 20);
+            size_t next = 0;
+            double lo = 1e9, hi = 0;
+            for (const PageMeasure::HintsColumn& c : l.columns) {
+                CHECK(c.first == next && c.end > c.first);
+                CHECK(items[c.end - 1].kind == HintItem::Shortcut);
+                CHECK(c.x + c.width <= l.textWidth);
+                next = c.end;
+                lo = std::min(lo, c.height);
+                hi = std::max(hi, c.height);
+            }
+            CHECK(next == items.size());
+            CHECK(l.textWidth <= room);
+            CHECK(hi - lo <= 30);   // within a heading, its space, and a row
+        }
+        // Balance: ten rows in three columns are 4, 3, 3 (or so), never 4, 4, 2.
+        {
+            std::vector<HintItem> ten(10, shortcut(30, 100));
+            HintsLayout l = PageMeasure::layoutHints(ten, 460, 10, 20);
+            CHECK(l.count() == 3 && l.textHeight == 40);
+            for (const PageMeasure::HintsColumn& c : l.columns) CHECK(c.height >= 30);
+        }
+        // A heading is never left at a column's foot: one heading and one row
+        // a section, in two columns, cut between sections.
+        {
+            std::vector<HintItem> pairs;
+            for (int i = 0; i < 3; ++i) {
+                pairs.push_back(heading(20));
+                pairs.push_back(shortcut(30, 100));
+            }
+            HintsLayout l = PageMeasure::layoutHints(pairs, 300, 10, 20, 2);
+            CHECK(l.count() == 2);
+            CHECK(l.columns[0].end % 2 == 0);
+            // A gap goes with what follows it too.
+            std::vector<HintItem> gapped(4, shortcut(30, 100));
+            HintItem g; g.kind = HintItem::Gap; g.spaceBefore = 10;
+            gapped.insert(gapped.begin() + 3, g);
+            HintsLayout lg = PageMeasure::layoutHints(gapped, 300, 10, 20, 2);
+            for (const PageMeasure::HintsColumn& c : lg.columns)
+                CHECK(gapped[c.end - 1].kind == HintItem::Shortcut);
+        }
+        // Each column's stops are its own: a long key in one column only.
+        {
+            std::vector<HintItem> mixed(6, shortcut(30, 100));
+            mixed[5].key = 80;
+            HintsLayout l = PageMeasure::layoutHints(mixed, 350, 10, 20);
+            CHECK(l.count() == 2);
+            CHECK(l.columns[0].label == 40 && l.columns[1].label == 90);
+            CHECK(l.columns[1].width == 190 && l.textWidth == 160 + 190);
+        }
+        // A state at its stop, after the longest label that has one.
+        {
+            std::vector<HintItem> panes = {shortcut(30, 200), shortcut(30, 60), shortcut(30, 80)};
+            panes[1].hasState = true; panes[1].state = 40;
+            panes[2].hasState = true; panes[2].state = 30;
+            HintsLayout l = PageMeasure::layoutHints(panes, 250, 10, 20);
+            CHECK(l.count() == 1 && l.columns[0].state == 40 + 80 + 10);
+            CHECK(l.textWidth == 40 + 200);   // the long label is wider than any state
+        }
+        // Zoom: everything twice as big in twice the room is the same layout, doubled.
+        {
+            std::vector<HintItem> big = items;
+            for (HintItem& it : big) {
+                it.key *= 2; it.label *= 2; it.height *= 2; it.spaceBefore *= 2;
+            }
+            HintsLayout z = PageMeasure::layoutHints(big, 920, 20, 40);
+            CHECK(z.count() == 3 && z.textWidth == 2 * three.textWidth &&
+                  z.textHeight == 2 * three.textHeight);
+            CHECK(z.columns[1].x == 2 * three.columns[1].x &&
+                  z.columns[1].label == 2 * three.columns[1].label);
+            // At the old room the zoomed text gets fewer columns.
+            CHECK(PageMeasure::layoutHints(big, 460, 20, 40).count() == 1);
+        }
+        // Narrower than one column: labels wrap, the text as wide as the room.
+        HintsLayout tight = PageMeasure::layoutHints(items, 100, 10, 20);
+        CHECK(tight.count() == 1 && tight.wraps && tight.textWidth == 100);
         // A heading wider than everything sets the width.
-        HintRow wide; wide.heading = true; wide.key1 = 2000;
-        CHECK(PageMeasure::layoutHints({wide, pair(1, 1, 1, 1)}, 5000, 10, 24).textWidth == 2000);
+        CHECK(PageMeasure::layoutHints({heading(2000), shortcut(1, 1)}, 5000, 10, 20).textWidth ==
+              2000);
+        CHECK(PageMeasure::layoutHints({}, 500, 10, 20).count() == 1);
     }
 
     GROUP("hints:search");
@@ -4915,67 +5005,6 @@ void testSettings() {
         CHECK(m.spans.size() == 2 && m.spans[0].start < m.spans[1].start);
     }
 
-    GROUP("hints:search-words");
-    {
-        // The Linux port's hints write keys in words (Commands::linuxLabel).
-        using HintsSearch::Field;
-        const auto W = HintsSearch::Spelling::Words;
-        const std::vector<Field> hide = {{u"Ctrl Shift H", true}, {u"Hide these hints", false}};
-        const std::vector<Field> palette = {{u"Ctrl Shift P", true},
-                                            {u"Command palette", false}};
-        const std::vector<Field> save = {{u"Ctrl S", true}, {u"Save", false}};
-        const std::vector<Field> line = {{u"Alt Down", true}, {u"Move line down", false}};
-        const std::vector<Field> page = {{u"Ctrl Page Down", true}, {u"Next tab", false}};
-        const std::vector<Field> wrap = {{u"Alt Z", true}, {u"Word wrap   (off)", false}};
-        // Text as before: case ignored, every word, marks in their fields.
-        CHECK(HintsSearch::match(u"", save, W).matches);
-        HintsSearch::Match m = HintsSearch::match(u"SAV", save, W);
-        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].field == 1);
-        CHECK(HintsSearch::match(u"ctrl", hide, W).matches);
-        CHECK(!HintsSearch::match(u"alt", hide, W).matches);
-        // Names find their words, in keys only.
-        m = HintsSearch::match(u"control", save, W);
-        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].field == 0 &&
-              m.spans[0].start == 0 && m.spans[0].length == 4);
-        CHECK(HintsSearch::match(u"opt", line, W).matches);
-        CHECK(HintsSearch::match(u"Option", wrap, W).matches);
-        CHECK(HintsSearch::match(u"con", save, W).matches);   // three letters of "control"
-        CHECK(!HintsSearch::match(u"co", save, W).matches);
-        CHECK(HintsSearch::match(u"pageup", {{u"Ctrl Page Up", true}}, W).matches);
-        CHECK(HintsSearch::match(u"pagedown", page, W).matches);
-        CHECK(HintsSearch::match(u"return", {{u"Enter", true}, {u"Show the diff", false}}, W)
-                  .matches);
-        CHECK(!HintsSearch::match(u"return", {{u"Enter the text", false}}, W).matches);
-        // No glyphs: "cmd" finds no ⌘ (and no Ctrl).
-        CHECK(!HintsSearch::match(u"cmd", {{u"⌘S", true}}, W).matches);
-        CHECK(!HintsSearch::match(u"cmd", save, W).matches);
-        // Combinations, modifiers in any order, as a whole key or its end.
-        m = HintsSearch::match(u"shift+ctrl+h", hide, W);
-        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].field == 0 &&
-              m.spans[0].start == 0 && m.spans[0].length == 12);
-        CHECK(HintsSearch::match(u"Ctrl+Shift+H", hide, W).matches);
-        CHECK(HintsSearch::match(u"control+shift+h", hide, W).matches);
-        CHECK(HintsSearch::match(u"shift+h", hide, W).matches);
-        CHECK(!HintsSearch::match(u"ctrl+h", hide, W).matches);
-        CHECK(HintsSearch::match(u"ctrl+s", save, W).matches);
-        CHECK(!HintsSearch::match(u"ctrl+s", palette, W).matches);   // not the S of Shift
-        CHECK(!HintsSearch::match(u"ctrl+shift", save, W).matches);
-        CHECK(HintsSearch::match(u"ctrl+shift", palette, W).matches);
-        CHECK(HintsSearch::match(u"opt+down", line, W).matches);
-        CHECK(HintsSearch::match(u"ctrl+pagedown", page, W).matches);
-        CHECK(!HintsSearch::match(u"ctrl+shift+h", save, W).matches);
-        CHECK(HintsSearch::wordCombination(u"shift+cmd+alt+ctrl+k") == u"ctrl alt shift cmd k");
-        CHECK(HintsSearch::wordCombination(u"ctrl++") == u"ctrl +");
-        CHECK(HintsSearch::wordCombination(u"ctrl+esc") == u"ctrl escape");
-        CHECK(HintsSearch::wordCombination(u"ctrl+ctrl+a") == u"ctrl a");
-        CHECK(HintsSearch::wordCombination(u"a+b").empty());
-        CHECK(HintsSearch::wordCombination(u"ctrl").empty());
-        CHECK(HintsSearch::match(u"ctrl+=", {{u"Ctrl =", true}}, W).matches);
-        // The Mac's spelling is unchanged by it.
-        CHECK(HintsSearch::match(u"cmd+shift+h", {{u"⇧⌘H", true}}).matches);
-        CHECK(!HintsSearch::match(u"cmd+shift+h", hide).matches);
-    }
-
     GROUP("title:path");
     {
         const std::string root = "/home/u/code/app", home = "/home/u";
@@ -4994,6 +5023,104 @@ void testSettings() {
         CHECK(TitlePath::shown("/etc/hosts", "/", home) == "etc/hosts");
         // The window on the home folder: from it, not "~".
         CHECK(TitlePath::shown("/home/u/e.txt", home, home) == "e.txt");
+    GROUP("hints:key-labels");
+    {
+        // The panels' keys in symbols (Commands::keyLabel), and the search
+        // finding them by name on either platform.
+        using Commands::keyLabel;
+        using Commands::Platform;
+        auto K = [](const char* t) {
+            Commands::Key k;
+            Commands::parseKey(t, &k);
+            return k;
+        };
+        CHECK(keyLabel(K("shift+cmd+h"), Platform::Mac) == "⇧⌘H");
+        CHECK(keyLabel(K("cmd+shift+alt+ctrl+k"), Platform::Mac) == "⌃⌥⇧⌘K");
+        CHECK(keyLabel(K("shift+cmd+enter"), Platform::Mac) == "⇧⌘⏎");
+        CHECK(keyLabel(K("cmd+backspace"), Platform::Mac) == "⌘⌫");
+        CHECK(keyLabel(K("escape"), Platform::Mac) == "⎋");
+        CHECK(keyLabel(K("shift+tab"), Platform::Mac) == "⇧⇥");
+        CHECK(keyLabel(K("alt+cmd+left"), Platform::Mac) == "⌥⌘←");
+        CHECK(keyLabel(K("ctrl+shift+p"), Platform::Linux) == "Ctrl+Shift+P");
+        CHECK(keyLabel(K("shift+alt+ctrl+t"), Platform::Linux) == "Ctrl+Alt+Shift+T");
+        CHECK(keyLabel(K("ctrl+enter"), Platform::Linux) == "Ctrl+⏎");
+        CHECK(keyLabel(K("ctrl+backspace"), Platform::Linux) == "Ctrl+⌫");
+        CHECK(keyLabel(K("delete"), Platform::Linux) == "⌦");
+        CHECK(keyLabel(K("escape"), Platform::Linux) == "⎋");
+        CHECK(keyLabel(K("shift+tab"), Platform::Linux) == "Shift+⇥");
+        CHECK(keyLabel(K("alt+up"), Platform::Linux) == "Alt+↑");
+        CHECK(keyLabel(K("ctrl+alt+shift+pagedown"), Platform::Linux) ==
+              "Ctrl+Alt+Shift+Page Down");
+        CHECK(keyLabel(K("ctrl+`"), Platform::Linux) == "Ctrl+`");
+        CHECK(keyLabel(K("ctrl+shift+space"), Platform::Linux) == "Ctrl+Shift+Space");
+        CHECK(keyLabel(K("f12"), Platform::Linux) == "F12");
+        CHECK(keyLabel(K("ctrl+numpad0"), Platform::Linux) == "Ctrl+Keypad 0");
+        // No word for a key that has a symbol, on either platform.
+        for (const char* t : {"shift+cmd+enter", "ctrl+shift+backspace", "alt+escape",
+                              "shift+tab", "ctrl+delete", "alt+up", "alt+down", "ctrl+left",
+                              "ctrl+right"}) {
+            const std::string mac = keyLabel(K(t), Platform::Mac);
+            const std::string onLinux = keyLabel(K(t), Platform::Linux);
+            for (const char* word : {"Shift", "Return", "Enter", "Backspace", "Delete", "Tab",
+                                     "Escape", "Up", "Down", "Left", "Right"}) {
+                CHECK(mac.find(word) == std::string::npos);
+                if (std::string(word) != "Shift") CHECK(onLinux.find(word) == std::string::npos);
+            }
+        }
+        // The search over each platform's labels.
+        using HintsSearch::Field;
+        using HintsSearch::Spelling;
+        auto field = [](const std::string& utf8) {
+            std::u16string out;
+            for (size_t i = 0; i < utf8.size();) {
+                unsigned char c = (unsigned char)utf8[i];
+                char32_t cp;
+                int n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+                cp = n == 1 ? c : (c & (0xFF >> (n + 1)));
+                for (int j = 1; j < n; ++j) cp = (cp << 6) | ((unsigned char)utf8[i + j] & 0x3F);
+                out += (char16_t)cp;   // the keys are all in the BMP
+                i += n;
+            }
+            return out;
+        };
+        const std::vector<Field> macHide = {{field(keyLabel(K("shift+cmd+h"), Platform::Mac)), true},
+                                            {u"Hide these hints", false}};
+        const std::vector<Field> macCommit = {{field(keyLabel(K("cmd+enter"), Platform::Mac)), true},
+                                              {u"Commit", false}};
+        CHECK(HintsSearch::match(u"shift+cmd+h", macHide).matches);
+        CHECK(HintsSearch::match(u"cmd+shift+h", macHide).matches);
+        CHECK(HintsSearch::match(u"shift", macHide).matches);
+        CHECK(HintsSearch::match(u"return", macCommit).matches);
+        CHECK(HintsSearch::match(u"cmd+return", macCommit).matches);
+        CHECK(HintsSearch::match(u"enter", macCommit).matches);
+        CHECK(!HintsSearch::match(u"esc", macCommit).matches);
+        const std::vector<Field> linHide = {
+            {field(keyLabel(K("ctrl+shift+h"), Platform::Linux)), true},
+            {u"Hide these hints", false}};
+        const std::vector<Field> linCommit = {
+            {field(keyLabel(K("ctrl+enter"), Platform::Linux)), true}, {u"Commit", false}};
+        const std::vector<Field> linEsc = {{field(keyLabel(K("escape"), Platform::Linux)), true},
+                                           {u"Back to the editor", false}};
+        const std::vector<Field> linPage = {
+            {field(keyLabel(K("ctrl+alt+shift+pagedown"), Platform::Linux)), true},
+            {u"Tab to right group", false}};
+        CHECK(HintsSearch::match(u"ctrl+shift+h", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"shift+ctrl+h", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"control", linHide, Spelling::Linux).matches);
+        CHECK(!HintsSearch::match(u"alt", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"return", linCommit, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"control+return", linCommit, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"esc", linEsc, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"shift+alt+ctrl+pagedown", linPage, Spelling::Linux).matches);
+        CHECK(HintsSearch::combination(u"shift+ctrl+h", Spelling::Linux) == u"ctrl+shift+h");
+        CHECK(HintsSearch::combination(u"opt+pageup", Spelling::Linux) == u"alt+page up");
+        // The Mac's spelling does not find Linux's words as keys, nor the reverse.
+        CHECK(!HintsSearch::match(u"shift+ctrl+h", linHide).matches);
+        CHECK(!HintsSearch::match(u"shift+cmd+h", macHide, Spelling::Linux).matches);
+        // What is found is marked: the whole of "Shift" for "shi" on Linux.
+        HintsSearch::Match m = HintsSearch::match(u"shi", linHide, Spelling::Linux);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].start == 5 &&
+              m.spans[0].length == 5);
     }
 
     GROUP("settings:keep-sorted");
@@ -5041,6 +5168,19 @@ void testSettings() {
             std::vector<SettingsError> ea;
             CHECK(parseSettings("explorer.auto-reveal = sometimes\n", &ea).explorerAutoReveal());
             CHECK(ea.size() == 1 && ea[0].message.find("not on or off") != std::string::npos);
+        }
+        // editor.session-web-idle-minutes: 60 by default, 0 for ever,
+        // fractions allowed, at most a week.
+        CHECK(parseSettings("").sessionWebIdleMinutes() == 60);
+        CHECK(parseSettings("editor.session-web-idle-minutes = 0\n").sessionWebIdleMinutes() == 0);
+        CHECK(std::abs(parseSettings("editor.session-web-idle-minutes = 0.05\n").sessionWebIdleMinutes() - 0.05) < 1e-9);
+        CHECK(parseSettings("editor.session-web-idle-minutes = 10080\n").sessionWebIdleMinutes() == 10080);
+        for (const char *bad : {"editor.session-web-idle-minutes = -1\n",
+                                "editor.session-web-idle-minutes = 10081\n",
+                                "editor.session-web-idle-minutes = an hour\n"}) {
+            std::vector<SettingsError> ie;
+            CHECK(parseSettings(bad, &ie).sessionWebIdleMinutes() == 60);
+            CHECK(ie.size() == 1 && ie[0].message.find("minutes") != std::string::npos);
         }
         CHECK(parseSettings("editor.auto-save-delay = 600000\n").autoSaveDelay() == 600000);
         for (const char *bad : {"editor.auto-save = afterDelay\n", "editor.auto-save = on\n",
@@ -11531,6 +11671,7 @@ int main() {
     testSessionBackups();
     testTermDockRecord();
     testSessionWeb();
+    testSessionWebAccess();
     testLspProjectCode();
     testLspClangdFlags();
     testMultiEdit();

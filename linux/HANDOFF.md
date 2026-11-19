@@ -6543,7 +6543,65 @@ The last terminal item of "Left before the default flips"
 - **Checks**: `host_splits` (HostSplitsSuite.cpp; its header says what it
   checks) and the `termdock:*` groups of `make test`.
 
-### 109. The hints panel's search box, and the file's path in the title (November 2026)
+### 107. The tree follows the active tab, centered (explorer.auto-reveal; November 2026)
+
+The owner's request ("I have to hunt for the file that I am already
+using"), the Mac's #197 (`../docs/notes/tree.md`, "The tree follows the
+active tab").
+
+- **What a user meets.** Whenever another tab comes on show (a click on
+  its tab, Alt+1 to 9, the next or previous tab, a click into the other
+  editor group, closing the tab before it, Quick Open, a definition, a
+  search result), the tree opens the file's folders, selects its row and
+  scrolls it to the middle; a row already wholly in view is selected and
+  the tree stays where it is. The editor keeps the keyboard. A file
+  outside the focused folders leaves the tree alone (only Reveal Active
+  File in File Tree widens). Pages, comparisons, untitled tabs and files
+  outside the window's folder are not revealed. With the sidebar closed or
+  Source Control, Processes or Agents in the tree's place nothing moves,
+  and the file on show is revealed once when the tree comes back.
+  `explorer.auto-reveal = off` stops it (the row is still selected when it
+  is listed already); turned on again, the file on show is revealed at
+  once, as on the Mac. Reveal Active File and Quick Open center the same
+  way, Quick Open whatever the setting. A window brought back at launch
+  has its tree's open folders, selected row and scroll as it was left,
+  with no jump to its file (new: the record kept none before), and
+  opening a folder leaves its tree as it opens, as the Mac holds it.
+- **Code.** `src/TreeFollow.{h,cpp}` (new): the Mac's
+  `EditorController+TreeReveal.mm` rules over three hooks (the active
+  tab's file the tree can show, whether the tree is on show, the setting)
+  and the core's `TreeReveal::Follower`; `activeChanged`,
+  `treeMaybeShown`, `hold`, `settingsApplied`. `FileTree`: `revealPath`
+  selects without `gtk_list_view_scroll_to` and `centerRow` sets the
+  scroll from `TreeReveal::scrollTop` in the frame clock's after-paint
+  (`scheduleFrame`, `afterLayout`; a row the list has not made is placed
+  from one it has, the rows being of one height); `reveal(path, widen,
+  center)` keeps the edge scroll for the tree's own reveals;
+  `selectIfListed`; `opening()` around the open callback in `actOnRow`;
+  `openFolders`, `scrolled` and `restoreView` (the record's folders
+  opened as their listings come, those outside the focus remembered, the
+  selection and scroll put back once the rows stop coming for 150 ms,
+  3 s at most); `showsPath` through the core's `TreeFocus::shows`.
+  `main.cpp`: `treeFollowablePath`, `treeOnShow` (the sidebar shown, the
+  tree the stack's child, the divider above 0), `onActiveChanged` calls
+  the follower (`revealActiveInTree` is gone), `layout->onChanged`, the
+  stack's `notify::visible-child` and the divider's `notify::position`
+  call `treeMaybeShown`, `applyWindowSettings` calls `settingsApplied`,
+  the hold is around `attachHeldDocuments` to `showHeldActive` in
+  `newWindow` and `openFolder`, the record's `windowState` writes
+  `expanded`, `selected` and `treeScroll`, and `newWindow` calls
+  `restoreView` with them. Settings text: the setting's comment no longer
+  says macOS. REFERENCE.md: the paragraph is the Mac's and Linux's
+  (Alt+1 to 9 on Linux), and a window brought back on Linux has its tree.
+- **Differs from the Mac**: GtkListView brings the row a click focuses
+  wholly into view by itself, so a click on a row cut by the edge nudges
+  it in by the part cut off (the follower adds nothing; never centered).
+- **Checks**: the `tree_focus` suite's last part (its header says what it
+  checks), in a folder of 6,000 files.
+- **Left for a real screen**: the look of the centering and of the scroll
+  jumping (no animation), and a sidebar dragged shut and open by hand.
+
+### 108. The hints panel's search box, and the file's path in the title (November 2026)
 
 The owner's two asks on the ThinkPad: "I cannot search within the help
 panel like I can on mac mutible", and the file's path in the title while

@@ -10,8 +10,8 @@
 // panel; Return and Tab do nothing. A click puts the keyboard in the box
 // too.
 //
-// What a query finds is the core's (HintsSearch.h, Spelling::Words, as the
-// port writes keys: "Ctrl Shift H"); `attributes` marks it on the panel's
+// What a query finds is the core's (HintsSearch.h, Spelling::Linux, as the
+// hints write keys: "Ctrl+Shift+H", Commands::keyLabel); `attributes` marks it on the panel's
 // text and dims the rest, which stays where it was.
 #pragma once
 

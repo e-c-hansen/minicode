@@ -27,7 +27,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
         ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp ../src/Text.cpp ../src/Document.cpp ../src/UndoHistory.cpp \
         ../src/Ot.cpp ../src/SessionProtocol.cpp ../src/SessionHost.cpp ../src/SessionClient.cpp ../src/SessionServer.cpp \
-        ../src/SessionWeb.cpp ../src/SessionWebPage.cpp ../src/SessionFiles.cpp \
+        ../src/SessionWeb.cpp ../src/SessionWebPage.cpp ../src/SessionWebViewers.cpp ../src/SessionWebAccess.cpp ../src/SessionFiles.cpp ../src/SqliteRead.cpp \
         ../src/HostPty.cpp ../src/TerminalStream.cpp ../src/TerminalScreen.cpp \
         ../src/LatexDoc.cpp ../src/LatexLog.cpp ../src/LatexScratch.cpp ../src/SyncTex.cpp \
         ../src/Csv.cpp ../src/JsonOutline.cpp ../src/Notebook.cpp ../src/FileSniff.cpp ../src/HtmlPage.cpp ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp ../src/ControlProtocol.cpp ../src/IdeLink.cpp ../src/PageCheck.cpp ../src/ClaudeHooks.cpp ../src/ClaudeUsage.cpp ../src/ClaudeStatusLine.cpp ../src/AttentionBoard.cpp ../src/AgentIndex.cpp ../src/AgentTranscript.cpp ../src/ProcessTable.cpp ../src/RunFile.cpp ../src/Runnables.cpp ../src/ProcFs.cpp ../src/AgentEvidence.cpp ../src/AgentView.cpp ../src/InlineAgent.cpp \
@@ -51,7 +51,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
 # their feature macro is defined.
-GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/Editor.cpp src/OpacityPicker.cpp src/DocumentView.cpp src/Tabs.cpp src/SessionLink.cpp src/Groups.cpp \
+GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/TreeFollow.cpp src/Editor.cpp src/OpacityPicker.cpp src/DocumentView.cpp src/Tabs.cpp src/SessionLink.cpp src/Groups.cpp \
        src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/HtmlView.cpp src/SqliteView.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
        src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp src/EditorConflicts.cpp \

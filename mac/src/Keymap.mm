@@ -581,13 +581,13 @@ BOOL MCKeymapHandleKeyDown(NSEvent *e) {
 // ------------------------------------------------------------ for the views
 NSString *MCKeymapGlyphs(NSString *commandId) {
     const std::vector<Key> &keys = [[MCKeymap shared] map].keysOf(commandId.UTF8String ?: "");
-    return keys.empty() ? @"" : NS(Commands::glyphs(keys[0]));
+    return keys.empty() ? @"" : NS(Commands::keyLabel(keys[0], Commands::Platform::Mac));
 }
 
 NSArray<NSString *> *MCKeymapAllGlyphs(NSString *commandId) {
     NSMutableArray *out = [NSMutableArray array];
     for (const Key &k : [[MCKeymap shared] map].keysOf(commandId.UTF8String ?: ""))
-        [out addObject:NS(Commands::glyphs(k))];
+        [out addObject:NS(Commands::keyLabel(k, Commands::Platform::Mac))];
     return out;
 }
 

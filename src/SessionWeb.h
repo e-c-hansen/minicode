@@ -21,11 +21,12 @@
 // picked in a frame.
 //
 // Files for the page's viewers (R3): a picture, a PDF, audio, video or an
-// HTML page of the folder is served over HTTP at /file/TOKEN/PATH (PATH the
+// HTML page of the folder is served over HTTP at /v/ID/file/PATH (PATH the
 // file's path from the folder, each name percent-encoded), which the page
-// puts in an <img>, a frame, <audio> or <video>. The token is in the path,
-// not the query, so an HTML page's own relative pictures and style sheets
-// resolve to addresses that carry it. The server reads the bytes from the
+// puts in an <img>, a frame, <audio> or <video>; the browser sends the
+// credential's cookie with each, so an HTML page's own relative pictures
+// and style sheets are served too, and no address on the page holds a
+// secret. The server reads the bytes from the
 // host a piece at a time (FsRead's "read", SessionFiles.h), as the tree's
 // listings are read: confined to the window's folder (no "..", no symlink
 // out, no dotfile unless the tree shows them), only kinds fileType() names,
@@ -35,18 +36,30 @@
 // off. A Range request is answered with that part (206), as audio and
 // video seek and PDF viewers read.
 // A CSV or TSV comes over the socket instead, as rows parsed by the core's
-// Csv (`file` -> `table`).
+// Csv (`file` -> `table`); so do a Jupyter notebook, as Notebook's Markdown
+// rendered by MarkdownHtml for a frame sandboxed with no scripts
+// (`notebook`), and a SQLite database's tables and a page of rows, opened
+// read-only by SqliteRead (`db`).
 //
-// Access: a random token of 48 hex digits, made at start and printed once
-// with the address to open (http://127.0.0.1:PORT/?t=TOKEN), must come in
-// the query of the page's address and of the socket's. The Host header must
-// name the loopback (127.0.0.1, localhost or [::1], any port, so `ssh -L`
-// to another local port still works), and an Origin header, when there is
-// one, the page's own origin (http:// and that Host): a page elsewhere,
-// even one that rebinds a name to 127.0.0.1, is turned away, and the socket
-// opens only with an Origin, which every browser sends. Anything else gets
-// a refusal and nothing more. The page carries a Content-Security-Policy
-// with a per-response nonce for its one script.
+// Access (SessionWebAccess.h): every address is under the view's own path,
+// /v/ID/. A link, http://127.0.0.1:PORT/v/ID/?t=TOKEN with a random token
+// of 48 hex digits, is good for one exchange: the page's first load trades
+// the token for a credential in an HttpOnly, SameSite=Strict cookie scoped
+// to /v/ID/, and its script takes the token out of the address bar and the
+// history (history.replaceState to /v/ID/). The socket (/v/ID/ws), files
+// (/v/ID/file/PATH) and reloads carry the cookie; the token, spent, is
+// refused if it comes again. A credential ends after
+// editor.session-web-idle-minutes with nothing from its browser, and its
+// page is told so. With Options::ask (the Mac), a browser the app does not
+// remember waits on the page until the app's question is answered. The
+// Host header must name the loopback (127.0.0.1, localhost or [::1], any
+// port, so `ssh -L` to another local port still works), and an Origin
+// header, when there is one, the page's own origin (http:// and that
+// Host): a page elsewhere, even one that rebinds a name to 127.0.0.1, is
+// turned away, and the socket opens only with an Origin, which every
+// browser sends. Anything else gets a refusal and nothing more. The page
+// carries a Content-Security-Policy with a per-response nonce for its one
+// script.
 //
 // The server is a renderer of the host (SessionClient.h) that says it only
 // reads (Client::setReadOnly), or, editable, that it is a guest
@@ -109,6 +122,11 @@
 //   termd   {id, hist, rows: [[row, line], ...], cursor, alt, title}: lines
 //           that went into the scrollback since, and rows that changed
 //   ended   {why}: the host went
+//   waiting {text}: the app is asking whether this browser may connect
+//           (sent instead of hello until it is answered)
+//   denied  {text}: the app said no; the socket closes
+//   expired {text}: the credential's idle time passed (or the server knows
+//           it no longer); the socket closes
 //   tree    {path, root, entries, more | error}: one folder's listing
 //           (SessionFiles.h's "list" answer), for a `list`
 //   opening {path, abs, ok, why}: a file a page clicked is opening in the
@@ -121,14 +139,23 @@
 //   closing {doc, ok, why}: a tab a page asked the window to close
 //   table   {path, columns, rows, truncated, size | error}: a CSV or TSV
 //           file as rows of cells (tableJson), for a `file`
+//   notebook {path, html | error}: a notebook as a page (notebookJson)
+//   db      {path, tables, moreTables, table, columns, rows, offset, more
+//           | error}: a database's tables and a page of rows (databaseJson)
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
+//   alive   {}: someone is using the page (sent at most once a minute
+//           while it is visible and was used): the credential's idle time
+//           starts again, as any other message does
 //   list    {path}: one folder of the tree ("" the session's folder), read
 //           by the host (FsRead), each time a folder is opened or refreshed
 //   readfile {path}: a file of the folder for a tab of this page alone,
 //           which changes nothing in the window (any page)
 //   file    {path}: a CSV or TSV file of the folder as a table, read by the
 //           host (any page)
+//   notebook {path}: a notebook of the folder as a page (any page)
+//   db      {path, table, offset}: a database's tables and rows from
+//           `offset` of `table` (any page; nothing in it can change)
 // and, only when editable:
 //   open    {path, keep}: a file the tree's row names, opened as a tab in
 //           the window (Options::open); a page that only reads is refused
@@ -177,6 +204,7 @@
 
 #include "Json.h"
 #include "SessionClient.h"
+#include "SessionWebAccess.h"
 #include "SyntaxHighlighter.h"
 #include "TerminalScreen.h"
 
@@ -220,19 +248,41 @@ struct Answer {
     int status = 403;
     std::string response, why;
     std::string file;   // File: the path from the folder, decoded, not yet checked
+    // The request's credential (Page, Socket, File), and its state: a
+    // socket is taken whatever the state, so its page can be told.
+    std::string credential;
+    Access::State state = Access::State::Unknown;
+    bool exchanged = false;      // Page: a link's token was spent for it
+    std::uint64_t question = 0;  // Page: the question the exchange put (Access::waiting)
+};
+// Who asked, as the server saw it.
+struct Caller {
+    std::string peer;      // "127.0.0.1:PORT"
+    int peerPort = 0;
+    int serverPort = 0;    // the port the server listens on (the cookie's name)
+    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
 };
 // `page` is the HTML to serve; "{{NONCE}}" in it becomes the response's
-// script nonce.
-Answer answer(const Request& r, const std::string& token, const std::string& page);
+// script nonce, and "{{BASE}}" the view's path (access.base()). A page with
+// a live link's token is exchanged here (the token spent, the cookies set);
+// a reload, the socket and files need the credential's cookie.
+Answer answer(const Request& r, Access& access, const std::string& page, const Caller& from);
+// The page's words for a credential that is no more, a browser refused,
+// and one waiting for the app (the `expired`, `denied` and `waiting`
+// messages, and the refusal of a reload).
+extern const char* const kExpiredText;
+extern const char* const kDeniedText;
+extern const char* const kWaitingText;
 
 // ---- files for the page's viewers
 // How the page shows a file, by its name's extension (any case): `view`
 // "image" (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, SVG), "pdf", "audio" (MP3,
 // M4A, AAC, WAV, Ogg, Opus, FLAC), "video" (MP4, M4V, MOV, WebM, OGV),
-// "html" (.html, .htm, .xhtml) or "table" (.csv, .tsv), "" for anything
-// else (text opens as a tab). `mime` is the Content-Type it is served
-// with over HTTP ("" for a table, which comes over the socket, and for
-// anything not served); a style sheet is served (for an HTML page's own)
+// "html" (.html, .htm, .xhtml), "table" (.csv, .tsv), "notebook" (.ipynb)
+// or "database" (.sqlite, .sqlite3, .db, .db3), "" for anything else (text
+// opens as a tab). `mime` is the Content-Type it is served
+// with over HTTP ("" for a table, a notebook and a database, which come
+// over the socket, and for anything not served); a style sheet is served (for an HTML page's own)
 // with no view. `maxBytes`: the most a whole response may be (0 for none:
 // audio and video are served a range at a time as the browser seeks).
 // `sandbox`: served with a sandbox CSP (all but PDF).
@@ -242,9 +292,9 @@ struct FileType {
     bool sandbox = true;
 };
 FileType fileType(const std::string& path);
-// The address a file of the folder is served at: /file/TOKEN/ and `rel`'s
-// names percent-encoded.
-std::string fileTarget(const std::string& token, const std::string& rel);
+// The address a file of the folder is served at: the view's path (`base`,
+// Access::base), "file/" and `rel`'s names percent-encoded.
+std::string fileTarget(const std::string& base, const std::string& rel);
 // A Range header for a file of `size` bytes: Whole (no header, or one this
 // server does not take: several ranges, another unit, a malformed one, all
 // of which HTTP lets a server answer whole), Part (one range, `start` to
@@ -317,6 +367,35 @@ bool windowOpen(const Json& record);
 // first 8 KB).
 constexpr std::size_t kMaxLocalFileBytes = 8u << 20;
 Json localFileJson(const std::string& folder, const std::string& rel, bool hidden);
+// The checks localFileJson makes before it reads, for the page's other
+// readers: `rel` held inside `folder` (confinedPath), no dotfile name
+// unless `hidden`, opened O_NONBLOCK and fstat'ed as a regular file. The
+// open descriptor (the caller closes it), `abs` the path spelled under the
+// folder, `size` the file's; -1 with `why`, a sentence for the page.
+int openLocalFile(const std::string& folder, const std::string& rel, bool hidden,
+                  std::string* abs, std::uint64_t* size, std::string* why);
+
+// ---- what the page renders itself (R3, second slice): read here, from
+// the folder the server serves, as readfile is, and confined the same way
+// (openLocalFile).
+// A Jupyter notebook as a page: {t: "notebook", path, html} (Notebook's
+// Markdown through MarkdownHtml: cells, outputs as text, pictures as
+// data: images, every text escaped, valid UTF-8), drawn in a frame
+// sandboxed with no scripts, or {t: "notebook", path, error}. At most
+// kMaxNotebookBytes.
+constexpr std::size_t kMaxNotebookBytes = 32u << 20;
+Json notebookJson(const std::string& folder, const std::string& rel, bool hidden);
+// A SQLite database (SqliteRead, read-only, each read stopped at its
+// deadline): {t: "db", path, tables: [{name, type}], moreTables, table,
+// columns, rows, offset, more} for `table` ("" the first) from row
+// `offset`, at most kDbPageRows rows and about kDbPageBytes of text. A
+// cell is a string (text, an integer or a real as SQLite spells it), null,
+// {blob: bytes} or, cut at SqliteRead::kMaxCellBytes, {text, bytes}. Or
+// {t: "db", path, error} (and the tables, when only the rows failed).
+constexpr std::size_t kDbPageRows = 100;
+constexpr std::size_t kDbPageBytes = std::size_t(4) << 20;
+Json databaseJson(const std::string& folder, const std::string& rel, bool hidden,
+                  const std::string& table, std::int64_t offset);
 
 // An address a page may frame, or ask the window to open: http or https
 // (any case), a host, no user name or password before it, no space or
@@ -510,7 +589,22 @@ struct Options {
     // Dotfiles in the tree (the window's Show Hidden Files).
     bool showHidden = false;
     int port = 0;             // 0: any free port (checks)
-    std::string token;        // "" for a fresh one
+    std::string token;        // a link of the caller's own besides (checks); "" for none
+    // How long a page's credential lasts with nothing from its browser, in
+    // minutes (fractions allowed); < 0: editor.session-web-idle-minutes in
+    // the settings file (60 when unset); 0: for ever.
+    double idleMinutes = -1;
+    // Asks the person at the app whether a browser it does not remember may
+    // connect (the Mac's sheet). Called on the server's thread; the app
+    // answers with Server::answer, from any thread. Unset (a headless host,
+    // where nobody is there to ask): the link alone admits.
+    std::function<void(const Access::Question&)> ask;
+    // Whether the app remembered a browser id as allowed (any thread).
+    std::function<bool(const std::string& browserId)> remembered;
+    // Called on the server's thread with a fresh address each time a link
+    // is spent, for the next browser (the headless host prints it). Unset:
+    // the app makes links when asked (newLink).
+    std::function<void(const std::string& url)> nextLink;
     int pollMs = 500;         // how often the session's state is looked at
     // The settings file the page's colors come from ("" for
     // $MUTIBLE_SETTINGS, else ~/.config/mutible/settings.conf), looked at
@@ -528,9 +622,20 @@ public:
     // Listens on 127.0.0.1: false, with why, when it cannot.
     bool start(const Options& o, std::string* error);
     int port() const { return port_; }
-    const std::string& token() const { return opt_.token; }
-    // What to open: http://127.0.0.1:PORT/?t=TOKEN.
-    std::string url() const;
+    // The newest link's token that has not been used, made when there is
+    // none (any thread).
+    std::string token();
+    // What to open: http://127.0.0.1:PORT/v/ID/?t=TOKEN with that token.
+    std::string url();
+    // A fresh link, good for one browser (any thread): the Mac's Show and
+    // Copy make one each time.
+    std::string newLink();
+    // The view's own path, /v/ID/.
+    const std::string& base() const { return access_.base(); }
+    // The app's answer to a question Options::ask put (any thread).
+    void answer(std::uint64_t question, bool allow);
+    // Who may use the page (checks look at it; any thread).
+    Access& access() { return access_; }
     // Serves until stop() (false) or the host goes (true).
     bool run();
     // Any thread.
@@ -551,6 +656,16 @@ private:
     struct Conn;
     struct Session;
     Options opt_;
+    Access access_;
+    std::uint64_t asked_ = 0;   // the last question handed to Options::ask
+    double idleFromSettings_ = 60;
+    std::chrono::steady_clock::time_point lastExpire_;
+    void applyIdle();
+    std::string linkUrl(const std::string& token) const;
+    // A page's socket admitted: attached to the host, hello and state sent.
+    void welcome(Conn& c);
+    // Pages waiting for the app's answer, and credentials whose time is up.
+    void lookAtAccess();
     int listen_ = -1, port_ = 0;
     int wake_[2] = {-1, -1};
     std::atomic<bool> stop_{false};

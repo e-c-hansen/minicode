@@ -17,7 +17,7 @@ accelerators taking keys from VTE (`updateShellKeys`), the selection color
 (`ThemeCss.cpp`), one click and autoselect in the tree, `settleOnCaret`,
 `<Ctrl>greater`, `ScrollSettle.h`, links acted on from an idle, embedded
 widgets off the view before a re-render, `Terminal::topRow`, an Alt+letter
-forwarded to a field typing nothing (the hints' search box, item 109;
+forwarded to a field typing nothing (the hints' search box, item 108;
 `docs/notes/settings-and-keys.md`).
 
 ## Traps
@@ -25,4 +25,4 @@ forwarded to a field typing nothing (the hints' search box, item 109;
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
-- The Linux port: Its traps are in HANDOFF.md: accelerators taking keys from VTE (`updateShellKeys`), the selection color (`ThemeCss.cpp`), one click and autoselect in the tree, `settleOnCaret`, `<Ctrl>greater`, `ScrollSettle.h`, links acted on from an idle, embedded widgets off the view before a re-render, `Terminal::topRow`, an Alt+letter forwarded to a field typing nothing (the hints' search box, item 109; `docs/notes/settings-and-keys.md`).
+- The Linux port: Its traps are in HANDOFF.md: accelerators taking keys from VTE (`updateShellKeys`), the selection color (`ThemeCss.cpp`), one click and autoselect in the tree, `settleOnCaret`, `<Ctrl>greater`, `ScrollSettle.h`, links acted on from an idle, embedded widgets off the view before a re-render, `Terminal::topRow`, an Alt+letter forwarded to a field typing nothing (the hints' search box, item 108; `docs/notes/settings-and-keys.md`).

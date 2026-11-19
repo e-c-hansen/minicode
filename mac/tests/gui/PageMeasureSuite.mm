@@ -1,9 +1,11 @@
 // PageMeasureSuite.mm — three of the owner's small things (2026-11-08).
 //
 // `make guitest SUITES=hints_panel`: the shortcut hints (Shift+Cmd+H) fit
-// the window at every size and zoom: two columns of tab stops when they
-// fit side by side, else one, never a row broken in the middle, and a
-// panel no taller than the window's room that scrolls to its last row.
+// the window at every size and zoom: as many columns of tab stops as fit
+// side by side (three or more on a wide window, with no scrolling), fewer
+// on a narrow one or zoomed in, never a row broken in the middle, and a
+// panel no taller than the window's room that scrolls to its last row. The
+// keys are symbols (⇧ ⌘ ⏎), not words.
 // Its search box takes every key without Command or Control while it
 // shows (never the editor or the key monitor), marks what it finds, dims
 // the rest, matches keys by name ("shift+cmd+h"), and Esc clears it, then
@@ -76,7 +78,7 @@ BOOL PanelFits(EditorController *c) {
 }
 
 // The hints panel at this size and zoom: in its room, no row wrapped, the
-// columns expected (0: either), and its last row reachable by scrolling.
+// columns expected (0: any), and its last row reachable by scrolling.
 void CheckHints(EditorController *c, NSString *name, NSInteger columns) {
     NSView *panel = [c valueForKey:@"hintsPanel"];
     NSScrollView *scroll = [c valueForKey:@"hintsScroll"];
@@ -93,7 +95,13 @@ void CheckHints(EditorController *c, NSString *name, NSInteger columns) {
     if (columns) GCHECK(c.hintsColumns == columns);
     // The text is all there, and the last row can be scrolled to.
     GCHECK([tv.string containsString:@"Start of the file"]);
-    GCHECK([tv.string hasSuffix:@"Hide these hints"]);
+    GCHECK([tv.string containsString:@"Hide these hints"]);
+    // The last column ends on the way out.
+    NSArray<NSString *> *lines = [tv.string componentsSeparatedByString:@"\n"];
+    NSString *lastHide = nil;
+    for (NSString *l in lines)
+        if ([l containsString:@"Hide these hints"]) lastHide = l;
+    GCHECK(lastHide && [lastHide hasSuffix:@"Hide these hints"]);
     const CGFloat docH = NSHeight(tv.frame), clipH = NSHeight(scroll.contentView.bounds);
     [tv scrollRangeToVisible:NSMakeRange(tv.string.length, 0)];
     const NSRect visible = scroll.contentView.documentVisibleRect;
@@ -238,14 +246,36 @@ MC_GUI_SUITE(hints_panel) {
         [c toggleHints:nil];
         GCHECK(c.hintsVisible);
     });
-    MCGuiStep(@"wide: two columns on tab stops, nothing wrapped, in the window", ^{
-        CheckHints(c, @"1400x900", 2);
+    __block NSInteger columnsAt1400 = 0, columnsWide = 0;
+    MCGuiStep(@"wide: three or more columns on tab stops, every key on one screen", ^{
+        Resize(c, 2000, 1000);
+        CheckHints(c, @"2000x1000", 0);
         NSTextView *tv = [c valueForKey:@"hintsTextView"];
-        NSArray<NSTextTab *> *stops = RowStops(tv);
-        GCHECK(stops.count == 3);
+        NSScrollView *scroll = [c valueForKey:@"hintsScroll"];
+        columnsWide = c.hintsColumns;
+        GCHECK(columnsWide >= 3);
+        // Nothing to scroll: the text is no taller than its clip.
+        MCGuiNote(@"2000x1000: %ld columns, text %.0f high in a clip %.0f high", (long)columnsWide,
+                  NSHeight(tv.frame), NSHeight(scroll.contentView.bounds));
+        GCHECK(NSHeight(tv.frame) <= NSHeight(scroll.contentView.bounds) + 1);
+        // A line holds a shortcut of every column, each at its own stops.
+        GCHECK(RowStops(tv).count >= 5);
         // Aligned by stops, never spaces: no run of two spaces in a row.
         GCHECK(![tv.string containsString:@"  ("] || [tv.string containsString:@"(also"]);
         GCHECK([tv.string rangeOfString:@"\t"].location != NSNotFound);
+        // The keys are symbols, not words.
+        for (NSString *glyph in @[@"⇧", @"⌘", @"⏎", @"⌥", @"⌃"])
+            GCHECK([tv.string containsString:glyph]);
+        for (NSString *word in @[@"Shift", @"Return", @"Escape", @"Backspace", @"Option"]) {
+            if ([tv.string containsString:word]) MCGuiNote(@"a key's word in the hints: %@", word);
+            GCHECK(![tv.string containsString:word]);
+        }
+    });
+    MCGuiStep(@"1400 wide: fewer columns, nothing wrapped, in the window", ^{
+        Resize(c, 1400, 900);
+        CheckHints(c, @"1400x900", 0);
+        columnsAt1400 = c.hintsColumns;
+        GCHECK(columnsAt1400 >= 2 && columnsAt1400 < columnsWide);
     });
     NSString *file = MCGuiProjectFile(@"hints-search.txt");
     MCGuiStep(@"a key with the hints open goes into their box, not the editor", ^{
@@ -293,7 +323,7 @@ MC_GUI_SUITE(hints_panel) {
         GCHECK(Dimmed(tv, @"TABS"));   // a heading with nothing found under it
         GCHECK(!Dimmed(tv, @"EDITING"));
         GCHECK([tv.string isEqualToString:before]);   // nothing hidden, nothing moved
-        CheckHints(c, @"search_save", 2);
+        CheckHints(c, @"search_save", columnsAt1400);
         // Keys by name and as combinations, modifiers in any order.
         TypeInBox(box, @"cmd+shift+h");
         found = Found(tv);
@@ -301,6 +331,19 @@ MC_GUI_SUITE(hints_panel) {
         GCHECK([found containsObject:@"⇧⌘H"]);
         GCHECK(!Dimmed(tv, @"Hide these hints"));
         GCHECK(Dimmed(tv, @"New file"));
+        TypeInBox(box, @"shift+cmd+h");
+        GCHECK([Found(tv) containsObject:@"⇧⌘H"]);
+        GCHECK(!Dimmed(tv, @"Hide these hints"));
+        GCHECK([tv.string isEqualToString:before]);
+        // Return by name finds ⏎ (Open file, in the tree, and Insert line below's ⌘⏎).
+        TypeInBox(box, @"return");
+        found = Found(tv);
+        MCGuiNote(@"found for return: %@", found);
+        GCHECK([found containsObject:@"⏎"]);
+        GCHECK(!Dimmed(tv, @"Open file"));
+        GCHECK(Dimmed(tv, @"Undo"));
+        GCHECK([tv.string isEqualToString:before]);
+        GCHECK(c.hintsColumns == columnsAt1400);
         TypeInBox(box, @"shift");
         GCHECK([Found(tv) containsObject:@"⇧"]);
         // Nothing found: everything dims, the text stays.
@@ -345,9 +388,11 @@ MC_GUI_SUITE(hints_panel) {
         [c toggleHints:nil];   // open again for the steps below
         GCHECK(c.hintsVisible && box.query.length == 0);
     });
-    MCGuiStep(@"short: the panel stops at the window's room and scrolls", ^{
+    MCGuiStep(@"short: the panel stops at the window's room and scrolls, as many columns", ^{
         Resize(c, 1400, 500);
-        CheckHints(c, @"1400x500", 2);
+        CheckHints(c, @"1400x500", 0);
+        // The width's columns; a scroll bar that takes room (CI) may cost one.
+        GCHECK(c.hintsColumns <= columnsAt1400 && c.hintsColumns >= columnsAt1400 - 1);
         NSScrollView *scroll = [c valueForKey:@"hintsScroll"];
         NSTextView *tv = [c valueForKey:@"hintsTextView"];
         GCHECK(NSHeight(tv.frame) > NSHeight(scroll.contentView.bounds) + 50);
@@ -356,7 +401,7 @@ MC_GUI_SUITE(hints_panel) {
         Resize(c, 460, 700);
         CheckHints(c, @"460x700", 1);
         NSTextView *tv = [c valueForKey:@"hintsTextView"];
-        GCHECK(RowStops(tv).count == 2);
+        GCHECK(RowStops(tv).count == 1);   // the label's
         // The pair "New file | Open folder" is two rows now.
         NSRange nf = [tv.string rangeOfString:@"New file"];
         NSRange of = [tv.string rangeOfString:@"Open folder"];
@@ -367,10 +412,12 @@ MC_GUI_SUITE(hints_panel) {
             GCHECK([between containsString:@"\n"]);
         }
     });
-    MCGuiStep(@"zoomed in: the text grows and still fits, one or two columns", ^{
+    MCGuiStep(@"zoomed in: the text grows and still fits, in fewer columns", ^{
         Resize(c, 1400, 900);
         MCEditorZoomBy(6);
         CheckHints(c, @"1400x900_zoom6", 0);
+        MCGuiNote(@"zoomed: %ld columns, %ld before", (long)c.hintsColumns, (long)columnsAt1400);
+        GCHECK(c.hintsColumns >= 1 && c.hintsColumns < columnsAt1400);
         NSTextView *tv = [c valueForKey:@"hintsTextView"];
         NSFont *f = [tv.textStorage attribute:NSFontAttributeName
                                       atIndex:[tv.string rangeOfString:@"New file"].location

@@ -13,13 +13,10 @@
 // as the hints spell it, its modifiers in Apple's order whatever order they
 // were typed in: "cmd+shift+h" finds ⇧⌘H.
 //
-// The Linux port writes keys in words (Commands::linuxLabel: "Ctrl Shift
-// H", its modifiers Ctrl, Alt, Shift, Cmd in that order) and searches with
-// Spelling::Words: a name finds its word ("control" Ctrl, "opt" Alt,
-// "return" Enter, "pageup" Page Up), and a combination is found only as a
-// whole key or the end of one ("shift+ctrl+h" finds Ctrl Shift H, so does
-// "shift+h", as "cmd+h" finds ⇧⌘H; "ctrl+s" never finds Ctrl Shift P).
-// Tested in hints:search-words.
+// The keys are spelled as Commands::keyLabel spells them for the platform
+// (Spelling): the Mac's in symbols, "⇧⌘H"; Linux's with its modifiers in
+// words, "Ctrl+Shift+H", "Ctrl+⏎", "Shift+Page Up". With Linux's spelling
+// "control" finds Ctrl, "option" Alt, and "shift+ctrl+h" Ctrl+Shift+H.
 #pragma once
 
 #include <algorithm>
@@ -28,18 +25,15 @@
 
 namespace HintsSearch {
 
+// How the keys being searched are spelled (Commands::keyLabel).
+enum class Spelling { Mac, Linux };
+
 // One word of the query: its text in lower case, and what it is as a key
-// (glyph spellings, looked for in keys only).
+// (spellings, looked for in keys only).
 struct Word {
     std::u16string text;
     std::vector<std::u16string> keys;
-    // Spellings looked for in keys only as whole words (Spelling::Words'
-    // combinations).
-    std::vector<std::u16string> whole;
 };
-
-// How the hints write keys: the Mac's glyphs, or the Linux port's words.
-enum class Spelling { Glyphs, Words };
 
 // A shortcut's parts as shown: its key (or keys, "⌘= ⌘-") and its label,
 // and a pane's state ("open").
@@ -106,6 +100,26 @@ inline int modifierRank(char16_t g) {
     }
 }
 
+// A key's glyph as the hints spell it (folded): the glyph on the Mac; on
+// Linux a modifier's word ("ctrl"), and Home, End, Page Up and Page Down by
+// name, as Commands::keyLabel writes them.
+inline std::u16string spelled(char16_t glyph, Spelling sp) {
+    if (sp == Spelling::Linux) {
+        switch (glyph) {
+            case u'⌃': return u"ctrl";
+            case u'⌥': return u"alt";
+            case u'⇧': return u"shift";
+            case u'⌘': return u"cmd";
+            case u'↖': return u"home";
+            case u'↘': return u"end";
+            case u'⇞': return u"page up";
+            case u'⇟': return u"page down";
+            default: break;
+        }
+    }
+    return std::u16string(1, glyph);
+}
+
 // The glyphs a word names: exactly, or as the first three letters or more
 // of a name.
 inline std::vector<char16_t> glyphsNamed(const std::u16string& w) {
@@ -120,9 +134,10 @@ inline std::vector<char16_t> glyphsNamed(const std::u16string& w) {
     return out;
 }
 
-// "cmd+shift+h" as the hints spell it, "⇧⌘h" (compared folded); empty when
-// a part is no key ("+" alone, "a++b").
-inline std::u16string combination(const std::u16string& w) {
+// "cmd+shift+h" as the hints spell it, "⇧⌘h" on the Mac and "shift+cmd+h"
+// on Linux (compared folded); empty when a part is no key ("+" alone,
+// "a++b").
+inline std::u16string combination(const std::u16string& w, Spelling sp = Spelling::Mac) {
     std::vector<std::u16string> parts;
     std::u16string part;
     for (size_t i = 0; i < w.size(); ++i) {
@@ -146,107 +161,22 @@ inline std::u16string combination(const std::u16string& w) {
         } else if (!rest.empty()) {
             return u"";   // two keys that are not modifiers
         } else {
-            rest = other ? std::u16string(1, other) : p;
+            rest = other ? spelled(other, sp) : p;
         }
     }
     std::sort(mods.begin(), mods.end(),
               [](char16_t a, char16_t b) { return modifierRank(a) < modifierRank(b); });
-    return std::u16string(mods.begin(), mods.end()) + rest;
+    if (sp == Spelling::Mac) return std::u16string(mods.begin(), mods.end()) + rest;
+    std::u16string out;
+    for (char16_t m : mods) out += spelled(m, sp) + u"+";
+    return out + rest;
 }
 
 inline bool isSpace(char16_t c) {
     return c == u' ' || c == u'\t' || c == u'\n' || c == u'\r' || c == 0xA0 || c == 0x3000;
 }
 
-// The keys' names as the Linux port writes them (Commands::linuxLabel),
-// in lower case; a modifier with its place in the port's order.
-struct WordName {
-    const char16_t* name;
-    const char16_t* word;
-    int modifier;   // its rank, -1 for a key that is no modifier
-};
-
-inline const std::vector<WordName>& wordNames() {
-    static const std::vector<WordName> names = {
-        {u"ctrl", u"ctrl", 0},            {u"control", u"ctrl", 0},
-        {u"alt", u"alt", 1},              {u"opt", u"alt", 1},
-        {u"option", u"alt", 1},           {u"shift", u"shift", 2},
-        {u"cmd", u"cmd", 3},              {u"command", u"cmd", 3},
-        {u"return", u"enter", -1},        {u"enter", u"enter", -1},
-        {u"esc", u"escape", -1},          {u"escape", u"escape", -1},
-        {u"tab", u"tab", -1},             {u"space", u"space", -1},
-        {u"backspace", u"backspace", -1}, {u"delete", u"delete", -1},
-        {u"up", u"up", -1},               {u"down", u"down", -1},
-        {u"left", u"left", -1},           {u"right", u"right", -1},
-        {u"home", u"home", -1},           {u"end", u"end", -1},
-        {u"pageup", u"page up", -1},      {u"pagedown", u"page down", -1},
-        {u"menu", u"menu", -1},
-    };
-    return names;
-}
-
-// The words a word names, as glyphsNamed: exactly, or as the first three
-// letters or more of a name.
-inline std::vector<std::u16string> wordsNamed(const std::u16string& w) {
-    std::vector<std::u16string> out;
-    if (w.empty()) return out;
-    for (const WordName& k : wordNames()) {
-        const std::u16string name(k.name);
-        const bool named = name == w || (w.size() >= 3 && name.compare(0, w.size(), w) == 0);
-        if (named && std::find(out.begin(), out.end(), k.word) == out.end()) out.push_back(k.word);
-    }
-    return out;
-}
-
-// "shift+ctrl+h" as the Linux port writes it, "ctrl shift h" (compared
-// folded); empty when a part is no key, as combination.
-inline std::u16string wordCombination(const std::u16string& w) {
-    std::vector<std::u16string> parts;
-    std::u16string part;
-    for (size_t i = 0; i < w.size(); ++i) {
-        if (w[i] == u'+' && !part.empty()) {
-            parts.push_back(part);
-            part.clear();
-        } else {
-            part += w[i];   // a "+" first in a part is the key "+"
-        }
-    }
-    if (!part.empty()) parts.push_back(part);
-    if (parts.size() < 2) return u"";
-    std::vector<const WordName*> mods;
-    std::u16string rest;
-    for (const std::u16string& p : parts) {
-        const WordName* named = nullptr;
-        for (const WordName& k : wordNames())
-            if (p == k.name) {
-                named = &k;
-                break;
-            }
-        if (named && named->modifier >= 0) {
-            bool have = false;
-            for (const WordName* m : mods) have = have || m->modifier == named->modifier;
-            if (!have) mods.push_back(named);
-        } else if (!rest.empty()) {
-            return u"";   // two keys that are not modifiers
-        } else {
-            rest = named ? std::u16string(named->word) : p;
-        }
-    }
-    std::sort(mods.begin(), mods.end(),
-              [](const WordName* a, const WordName* b) { return a->modifier < b->modifier; });
-    std::u16string out;
-    for (const WordName* m : mods) {
-        if (!out.empty()) out += u' ';
-        out += m->word;
-    }
-    if (!rest.empty()) {
-        if (!out.empty()) out += u' ';
-        out += rest;
-    }
-    return out;
-}
-
-inline std::vector<Word> parse(const std::u16string& query, Spelling spelling = Spelling::Glyphs) {
+inline std::vector<Word> parse(const std::u16string& query, Spelling sp = Spelling::Mac) {
     std::vector<Word> words;
     std::u16string q = folded(query);
     size_t i = 0;
@@ -257,15 +187,9 @@ inline std::vector<Word> parse(const std::u16string& query, Spelling spelling = 
         if (j > i) {
             Word w;
             w.text = q.substr(i, j - i);
-            if (spelling == Spelling::Words) {
-                w.keys = wordsNamed(w.text);
-                const std::u16string combo = wordCombination(w.text);
-                if (!combo.empty()) w.whole.push_back(combo);
-            } else {
-                for (char16_t g : glyphsNamed(w.text)) w.keys.push_back(std::u16string(1, g));
-                const std::u16string combo = combination(w.text);
-                if (!combo.empty()) w.keys.push_back(combo);
-            }
+            for (char16_t g : glyphsNamed(w.text)) w.keys.push_back(spelled(g, sp));
+            const std::u16string combo = combination(w.text, sp);
+            if (!combo.empty()) w.keys.push_back(combo);
             words.push_back(std::move(w));
         }
         i = j;
@@ -284,26 +208,6 @@ inline void findAll(const std::u16string& hay, const std::u16string& needle, siz
     }
 }
 
-inline bool isWordChar(char16_t c) {
-    return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9') ||
-           c >= 0xC0;
-}
-
-// findAll, counting only a place with no letter or digit just before or
-// just after it (where the needle itself starts or ends with one).
-inline void findWhole(const std::u16string& hay, const std::u16string& needle, size_t field,
-                      std::vector<Span>& out, bool& found) {
-    if (needle.empty() || needle.size() > hay.size()) return;
-    for (size_t at = hay.find(needle); at != std::u16string::npos; at = hay.find(needle, at + 1)) {
-        const size_t end = at + needle.size();
-        if ((at > 0 && isWordChar(hay[at - 1]) && isWordChar(needle.front())) ||
-            (end < hay.size() && isWordChar(hay[end]) && isWordChar(needle.back())))
-            continue;
-        out.push_back({field, at, needle.size()});
-        found = true;
-    }
-}
-
 inline Match match(const std::vector<Word>& words, const std::vector<Field>& fields) {
     Match m;
     if (words.empty()) return m;
@@ -314,10 +218,8 @@ inline Match match(const std::vector<Word>& words, const std::vector<Field>& fie
         bool found = false;
         for (size_t f = 0; f < fields.size(); ++f) {
             findAll(hay[f], w.text, f, m.spans, found);
-            if (fields[f].key) {
+            if (fields[f].key)
                 for (const std::u16string& k : w.keys) findAll(hay[f], folded(k), f, m.spans, found);
-                for (const std::u16string& k : w.whole) findWhole(hay[f], folded(k), f, m.spans, found);
-            }
         }
         if (!found) {
             m.matches = false;
@@ -343,8 +245,8 @@ inline Match match(const std::vector<Word>& words, const std::vector<Field>& fie
 }
 
 inline Match match(const std::u16string& query, const std::vector<Field>& fields,
-                   Spelling spelling = Spelling::Glyphs) {
-    return match(parse(query, spelling), fields);
+                   Spelling sp = Spelling::Mac) {
+    return match(parse(query, sp), fields);
 }
 
 }  // namespace HintsSearch

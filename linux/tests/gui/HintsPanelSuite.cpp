@@ -224,7 +224,7 @@ MC_GUI_SUITE(hints_panel) {
     typeInBox("shift+ctrl+h");
     MCGuiStep("a combination finds its key, its modifiers in any order", [] {
         MCGuiNote("found for shift+ctrl+h: %s", joined(found()).c_str());
-        GCHECK(foundHas("Ctrl Shift H"));
+        GCHECK(foundHas("Ctrl+Shift+H"));   // as Commands::keyLabel draws it
         GCHECK(!dimmed("Hide these hints"));
         GCHECK(dimmed("New file"));
         // Its row is near the end: the list scrolled to it.
