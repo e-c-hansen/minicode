@@ -13,6 +13,8 @@
 //     ESC) asks too, with Paste and Cancel only; a Tab does not. The
 //     question is a sheet on the terminal's window, and a paste while it
 //     is up only beeps.
+//   - Ctrl+C at zsh's prompt uses the prompt up: a command asked for at
+//     once waits for the new prompt instead of losing its first bytes.
 //   - Secure keyboard entry while `read -s` reads with echo off and the grid
 //     has the keyboard, off when the keyboard leaves and when echo returns.
 //   - Drops, as Terminal.app's: files type their paths quoted for the shell
@@ -161,9 +163,17 @@ MC_GUI_SUITE(terminal_paste) {
         if ([recent containsString:@"INJECTED-42"]) MCGuiNote(@"%@", recent);
         const char etx = 0x03;   // drop the line
         Grid(s.term).onInput([NSData dataWithBytes:&etx length:1]);
+        // The prompt is used up until zsh's next B: a command asked for at
+        // once waits for it, and is not typed into the line editor the
+        // SIGINT is ending.
+        GCHECK(![[s.term valueForKey:@"zleReady"] boolValue]);
+        [s.term runCommand:@"echo after-ctrl-c-$((5*5))"];
+    });
+    MCGuiWait(@"the command asked for right after Ctrl+C runs whole", 10, ^BOOL {
+        return [[s.term recentText:4] containsString:@"\nafter-ctrl-c-25"];
     });
     MCGuiWait(@"a fresh prompt", 10, ^BOOL {
-        return s.term.atPrompt && [[s.term valueForKey:@"zleReady"] boolValue];
+        return s.term.atPrompt && !s.term.busy && [[s.term valueForKey:@"zleReady"] boolValue];
     });
 
     // ---- several lines into cat, which takes no bracketed paste
@@ -268,11 +278,12 @@ MC_GUI_SUITE(terminal_paste) {
         GCHECK(MCGuiAlertsShown().count == s.alerts);
         GCHECK_EQ_STR(Str(s.sent), @"x\ry\r");
     });
+    // Ctrl+D alone: the line is empty, so cat reads the end of its input.
+    // A Ctrl+C after it raced cat's exit: landing at the shell's precmd, it
+    // cut the prompt mark off and no prompt was ever seen (CI's retry).
     MCGuiStep(@"cat ends", ^{
         const char eot = 0x04;
         Grid(s.term).onInput([NSData dataWithBytes:&eot length:1]);
-        const char etx = 0x03;
-        Grid(s.term).onInput([NSData dataWithBytes:&etx length:1]);
     });
     MCGuiWait(@"the prompt", 10, ^BOOL {
         return s.term.atPrompt && !s.term.busy && [[s.term valueForKey:@"zleReady"] boolValue];
@@ -380,6 +391,9 @@ MC_GUI_SUITE(terminal_paste) {
     });
 
     // ---- secure keyboard entry
+    // "a fresh prompt" above is the new one: the Ctrl+C clears zleReady
+    // until zsh's next 133;B, so read -s is not typed into the line editor
+    // the SIGINT is ending (its ESC [9999~ eaten, `[9999~read` run).
     MCGuiStep(@"read -s with the keyboard in the grid", ^{
         [s.c.window makeFirstResponder:Grid(s.term)];
         GCHECK(!Grid(s.term).secureInputOn);

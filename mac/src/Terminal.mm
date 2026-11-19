@@ -972,6 +972,16 @@ static std::map<Shared::TermId, std::string> &HostNonces() {
             [s startShell];
             return;
         }
+        // Ctrl+C while ZLE reads: zsh drops the line and draws a new prompt
+        // (A, then B), but until the SIGINT is handled the old B still says
+        // ZLE reads. A command typed in that moment had its ESC [9999~ eaten
+        // by the dying line editor and ran as `[9999~read ...` (CI,
+        // terminal_paste). So the prompt is used up until the new B, or with
+        // no B, 0.3 s from now with the tty raw again.
+        if (s->_zleReady && memchr(bytes.bytes, 0x03, bytes.length)) {
+            s->_zleReady = NO;
+            s->_promptTime = CACurrentMediaTime();
+        }
         [s sendBytes:(const char *)bytes.bytes length:bytes.length];
     };
     self.grid.linkAt = ^id(const std::string &line, size_t byte) {
