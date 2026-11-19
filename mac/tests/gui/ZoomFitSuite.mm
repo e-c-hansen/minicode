@@ -332,7 +332,7 @@ MC_GUI_SUITE(zoomfit) {
         // The keyboard was in the panel's list: it goes to the document.
         GCHECK(fr != c.window.firstResponder);
         Key(c.window, kVK_ANSI_B, kCmd);
-        GCHECK(SidebarShown(c) && c.gitPanelVisible && c.gitPanel.superview == c.splitView);
+        GCHECK(SidebarShown(c) && c.gitPanelVisible && c.gitPanel.superview == c.sidebarHost);
         [c toggleSourceControl:nil];
         GCHECK(!c.gitPanelVisible);
     });

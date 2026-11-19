@@ -31,6 +31,7 @@ std::string MCUtf8(NSString *s) { return s.UTF8String ?: ""; }
 
 - (NSUInteger)runs { return _runs; }
 - (BOOL)inRepository { return _topLevel != nil; }
+- (NSUInteger)changeCount { return _decorations ? (NSUInteger)_decorations->changeCount() : 0; }
 
 - (void)setRoot:(NSString *)root {
     if (root == _root || [root isEqualToString:_root]) return;

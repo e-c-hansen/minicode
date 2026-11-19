@@ -390,7 +390,7 @@ session has a display. Check first.
   large_file, save, paste, zoomfit, spell_check;
   files and windows: tree, tree_hidden, tree_focus, folder_picker, preview_tabs, split_editor, search,
   replace_in_folder, backups, window_restore, palette, symbols, keymap, config_writes,
-  daily_work, structure, utf16, hints_panel, swatch_escape;
+  daily_work, structure, utf16, hints_panel, swatch_escape, sidebar_icons;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
   snippets, completion_keys, problems, clangd_flags, servers_by_extension, server_consent, tools_consent,

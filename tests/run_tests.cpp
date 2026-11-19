@@ -4110,8 +4110,8 @@ void testSettings() {
     // editor.session-host, and explorer.auto-reveal, and
     // editor.session-web-idle-minutes, and editor.wrapping-indent, and
     // terminal.mac-style-keys, and terminal.close-on-exit, and
-    // files.hot-exit.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 146);
+    // files.hot-exit, and workbench.sidebar-icons.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 147);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
