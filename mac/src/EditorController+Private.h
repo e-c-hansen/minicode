@@ -886,6 +886,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // The window is closing: no backup or auto-save is planned for it any more.
 - (void)stopSavePlan;
 - (void)discardBackupOf:(MCTab *)t;
+// windowWillClose:'s: every tab's backup, unless quitting kept them.
+- (void)discardBackupsAsWindowCloses;
 - (void)backupsAppWillTerminate:(NSNotification *)note;
 - (BOOL)takeBackup:(NSString *)bid intoTab:(MCTab *)t;
 - (void)showRestoredText:(NSString *)text base:(NSDate *)base inode:(uint64_t)inode;

@@ -832,6 +832,15 @@ static NSString *MCTabEncodingName(MCTab *t) {
     return YES;
 }
 
+// The window closes (windowWillClose:): its backups go, since closing it
+// asked about them, but not when quitting kept them for the next launch
+// (AppKit may close the windows on the way out, after the app's
+// applicationWillTerminate).
+- (void)discardBackupsAsWindowCloses {
+    if (_unsavedKeptForNextLaunch) return;
+    for (MCTab *t in [self tabs]) [self discardBackupOf:t];
+}
+
 - (void)quitWasCancelled {
     _unsavedKeptForNextLaunch = NO;
 }

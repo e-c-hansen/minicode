@@ -79,7 +79,10 @@ NSString *SettingsText() {
 // The window's tab whose page or comparison is of a kind, else nil.
 MCTab *PageTab(EditorController *c, NSString *kind) {
     for (MCTab *t in [c valueForKey:@"tabs"]) {
-        if ([kind isEqualToString:@"compare"] && t.comparison && !t.page) return t;
+        if ([kind isEqualToString:@"compare"]) {
+            if (t.comparison && !t.page) return t;
+            continue;
+        }
         if (![t.page isKindOfClass:MCChangeReviewPage.class]) continue;
         MCChangeReviewPage *p = (MCChangeReviewPage *)t.page;
         if ([kind isEqualToString:@"commit"] == (p.commit.length > 0)) return t;
@@ -146,6 +149,8 @@ MC_GUI_SUITE(window_restore) {
             GCHECK(status == 0);
             GCHECK(![out containsString:@"FAIL"]);
             if (status != 0 || [out containsString:@"FAIL"]) MCGuiNote(@"writer:\n%@", out);
+            for (NSString *line in [out componentsSeparatedByString:@"\n"])   // the backups as it quit
+                if ([line containsString:@"backups of the folder"]) MCGuiNote(@"writer: %@", line);
             done();
         });
     });
@@ -369,11 +374,14 @@ MC_GUI_SUITE(_restore_writer) {
         };
         GCHECK([want writeToFile:Expect() atomically:YES]);
         MCGuiNote(@"writer: %@", want);
+        MCGuiNote(@"before quitting: %lu backups of the folder, unsaved %d",
+                  (unsigned long)BackupsOfFolder(), (int)c.hasUnsavedChanges);
         // Hot exit: no question at all on the way out, unsaved tabs or not.
         const NSUInteger alerts = MCGuiAlertsShown().count, sheets = MCGuiSheetsShown().count;
         [[NSNotificationCenter defaultCenter]
             addObserverForName:NSApplicationWillTerminateNotification object:nil queue:nil
                     usingBlock:^(NSNotification *) {
+            MCGuiNote(@"at quit: %lu backups of the folder", (unsigned long)BackupsOfFolder());
             const BOOL quiet = MCGuiAlertsShown().count == alerts && MCGuiSheetsShown().count == sheets;
             if (!quiet) MCGuiNote(@"asked at quit: %@ %@", MCGuiAlertsShown(), MCGuiSheetsShown());
             MCGuiCheck(quiet, @"Quit asked nothing", __FILE__, __LINE__);
