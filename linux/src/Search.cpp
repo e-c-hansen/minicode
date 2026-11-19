@@ -8,11 +8,13 @@
 #include "EditSpans.h"
 #include "Editor.h"
 #include "Keys.h"
+#include "ListKeyboard.h"
 #include "MultiEdit.h"
 #include "Question.h"
 #include "TextFind.h"
 #include "Utf8Offsets.h"
 
+#include <algorithm>
 #include <memory>
 #include <set>
 #include <utility>
@@ -38,6 +40,7 @@ struct SearchPanel::PlanJob {
     std::weak_ptr<int> alive;
     std::string root, query, replacement;
     FolderSearchOptions options;
+    FolderReplaceExclusions dismissed;   // the rows dismissed when it was asked
     FolderReplacePlan plan;
 };
 
@@ -53,6 +56,7 @@ struct SearchPanel::WriteJob {
     int line = 0;
     std::size_t byteColumn = 0;
     std::string expected;        // that row's text as searched
+    FolderReplaceExclusions dismissed;   // Replace All: the rows it leaves alone
     // Done on the main thread already:
     std::size_t tabFiles = 0, tabMatches = 0;
     std::vector<std::string> skipped, problems;
@@ -131,6 +135,52 @@ bool active(GtkWidget* toggle) {
 
 std::string textOf(GtkWidget* editable) {
     return editable ? gtk_editable_get_text(GTK_EDITABLE(editable)) : "";
+}
+
+// The commands that show a pane of the editor window or put the keyboard in
+// one, whose keys this window hands to it (the Mac's currentForPane:
+// callers in main.mm, #210). This window is no application window, so
+// without this they did nothing here, and what was typed next stayed in
+// its fields.
+const char* const kPaneCommands[] = {
+    "workbench.action.terminal.toggleTerminal",
+    "workbench.action.terminal.new",
+    "workbench.action.terminal.split",
+    "mutible.terminal.splitDown",
+    "mutible.toggleBrowser",
+    "mutible.browser.newTab",
+    "mutible.toggleShortcutHints",
+    "workbench.action.toggleSidebarVisibility",
+    "workbench.view.scm",
+    "mutible.toggleAgents",
+    "mutible.toggleProcesses",
+    "mutible.toggleEditor",
+    "workbench.actions.view.problems",
+    "workbench.action.showCommands",
+    "workbench.action.quickOpen",
+    "workbench.action.gotoLine",
+    "workbench.action.gotoSymbol",
+    "workbench.action.showAllSymbols",
+    "workbench.action.focusSideBar",
+    "workbench.action.focusFirstEditorGroup",
+    "workbench.action.focusSecondEditorGroup",
+};
+
+// A row's ×, shown while the pointer is over the row or it is selected (the
+// Mac's MCSearchRowView); hidden, it still takes a click where it sits.
+void installRowCss() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    GtkCssProvider* p = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(
+        p, ".minicode-search listview > row .minicode-dismiss { opacity: 0;"
+           " min-height: 0; min-width: 0; padding: 0 6px; }"
+           ".minicode-search listview > row:hover .minicode-dismiss,"
+           ".minicode-search listview > row:selected .minicode-dismiss { opacity: 1; }");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(p),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(p);
 }
 
 }  // namespace
@@ -241,16 +291,18 @@ void SearchPanel::build() {
         replaceEntry_ = gtk_entry_new();
         gtk_entry_set_placeholder_text(GTK_ENTRY(replaceEntry_), "Replace");
         gtk_widget_set_hexpand(replaceEntry_, TRUE);
-        // Enter in the replacement is Replace All, as on the Mac.
+        // Enter in the replacement never replaces: it does what Enter in
+        // the query does, as VS Code's search view (the Mac since #210).
+        // It was Replace All, and text typed here by mistake, then Enter,
+        // rewrote files on the Mac.
         g_signal_connect_swapped(replaceEntry_, "activate", G_CALLBACK(+[](SearchPanel* self) {
-            self->replaceAll();
+            self->fieldReturn();
         }), this);
         preserve_ = optionToggle("AB", keyTip("Preserve Case", "togglePreserveCase"));
         replaceAllButton_ = gtk_button_new_with_label("Replace All");
         gtk_widget_set_focus_on_click(replaceAllButton_, FALSE);
         gtk_widget_set_tooltip_text(replaceAllButton_,
-                                    keyTip("Replace All (Enter in the replacement)",
-                                           "editor.action.replaceAll").c_str());
+                                    keyTip("Replace All", "editor.action.replaceAll").c_str());
         g_signal_connect_swapped(replaceAllButton_, "clicked", G_CALLBACK(+[](SearchPanel* self) {
             self->replaceAll();
         }), this);
@@ -301,9 +353,11 @@ void SearchPanel::build() {
     g_signal_connect(factory, "setup", G_CALLBACK(onSetup), this);
     g_signal_connect(factory, "bind", G_CALLBACK(onBind), this);
     listView_ = gtk_list_view_new(GTK_SELECTION_MODEL(sel), factory);
-    if (!todos)
-        gtk_widget_set_tooltip_text(listView_,
-                                    "Ctrl+Shift+1 replaces the selected row's match alone");
+    installRowCss();
+    gtk_widget_set_tooltip_text(listView_,
+                                todos ? "Delete dismisses the selected row"
+                                      : "Ctrl+Shift+1 replaces the selected row's match alone; "
+                                        "Delete dismisses it, so Replace All leaves it alone");
     // One click opens a match, as on the Mac, and so does Enter. The rows are
     // not activatable (onSetup), so a double-click cannot open it twice.
     // gtk_list_view_set_single_click_activate is not used because it also
@@ -313,6 +367,12 @@ void SearchPanel::build() {
     g_signal_connect(click, "pressed", G_CALLBACK(onRowPressed), this);
     g_signal_connect(click, "released", G_CALLBACK(onRowReleased), this);
     gtk_widget_add_controller(listView_, GTK_EVENT_CONTROLLER(click));
+    // A right click: the row's menu (Dismiss, Dismiss File, and Replace This
+    // Match in Find in Folder).
+    GtkGesture* menuClick = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(menuClick), GDK_BUTTON_SECONDARY);
+    g_signal_connect(menuClick, "pressed", G_CALLBACK(onRowMenu), this);
+    gtk_widget_add_controller(listView_, GTK_EVENT_CONTROLLER(menuClick));
     GtkEventController* listKeys = gtk_event_controller_key_new();
     gtk_event_controller_set_propagation_phase(listKeys, GTK_PHASE_CAPTURE);
     g_signal_connect(listKeys, "key-pressed", G_CALLBACK(onListKey), this);
@@ -348,21 +408,49 @@ void SearchPanel::build() {
             return TRUE;
         }), window_);
     gtk_widget_add_controller(window_, winKeys);
-    // The options' keys, before a field takes them. This window is no
-    // application window, so the editor's accelerators do not reach it.
-    if (!todos) {
-        GtkEventController* optionKeys = gtk_event_controller_key_new();
-        gtk_event_controller_set_propagation_phase(optionKeys, GTK_PHASE_CAPTURE);
-        g_signal_connect(optionKeys, "key-pressed", G_CALLBACK(onWindowKey), this);
-        gtk_widget_add_controller(window_, optionKeys);
-    }
+    // The options' keys and the panes', before a field takes them. This
+    // window is no application window, so the editor's accelerators do not
+    // reach it.
+    GtkEventController* windowKeys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(windowKeys, GTK_PHASE_CAPTURE);
+    g_signal_connect(windowKeys, "key-pressed", G_CALLBACK(onWindowKey), this);
+    gtk_widget_add_controller(window_, windowKeys);
+}
+
+// A pane command's key (kPaneCommands, as keys.conf leaves them): the
+// editor window runs it, taking the keyboard first, so what is typed next
+// goes to that pane and never on into this window's fields.
+bool SearchPanel::runPaneKey(GdkEvent* key) {
+    if (!paneCommand_ || !key) return false;
+    // Typing never runs one (Commands::typesText): only Ctrl, Alt or F keys.
+    const guint keyval = gdk_key_event_get_keyval(key);
+    if (!(gdk_event_get_modifier_state(key) & (GDK_CONTROL_MASK | GDK_ALT_MASK)) &&
+        !(keyval >= GDK_KEY_F1 && keyval <= GDK_KEY_F35))
+        return false;
+    for (const char* id : kPaneCommands)
+        for (const Commands::Key& k : Keys::keymap().keysOf(id))
+            for (const std::string& accel : Commands::linuxAccelerators(k)) {
+                GtkShortcutTrigger* t = gtk_shortcut_trigger_parse_string(accel.c_str());
+                if (!t) continue;
+                const bool hit = gtk_shortcut_trigger_trigger(t, key, FALSE) == GDK_KEY_MATCH_EXACT;
+                g_object_unref(t);
+                if (!hit) continue;
+                // A copy: the editor window may come back into this panel.
+                const std::function<void(const std::string&)> run = paneCommand_;
+                run(id);
+                return true;
+            }
+    return false;
 }
 
 // The registry's keys for the options and Replace All, here too: Alt+C,
-// Alt+W, Alt+R and Alt+P, and Ctrl+Alt+Enter, as keys.conf leaves them.
-gboolean SearchPanel::onWindowKey(GtkEventControllerKey*, guint keyval, guint,
+// Alt+W, Alt+R and Alt+P, and Ctrl+Alt+Enter, as keys.conf leaves them;
+// then the panes' (runPaneKey).
+gboolean SearchPanel::onWindowKey(GtkEventControllerKey* c, guint keyval, guint,
                                   GdkModifierType mods, gpointer selfp) {
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    GdkEvent* event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(c));
+    if (self->mode_ != Mode::Find) return self->runPaneKey(event);
     Commands::Key k;
     const GdkModifierType m =
         (GdkModifierType)(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK));
@@ -372,7 +460,7 @@ gboolean SearchPanel::onWindowKey(GtkEventControllerKey*, guint keyval, guint,
     const guint lower = gdk_keyval_to_lower(keyval);
     if (lower == GDK_KEY_Return || lower == GDK_KEY_KP_Enter) k.name = "enter";
     else if (lower < 0x80 && g_ascii_isalpha((gchar)lower)) k.name = std::string(1, (char)lower);
-    else return FALSE;
+    else return self->runPaneKey(event);
     const struct { const char* id; GtkWidget* toggle; } options[] = {
         {"toggleFindCaseSensitive", self->case_},
         {"toggleFindWholeWord", self->word_},
@@ -385,12 +473,16 @@ gboolean SearchPanel::onWindowKey(GtkEventControllerKey*, guint keyval, guint,
                 gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(o.toggle), !active(o.toggle));
                 return TRUE;
             }
+    // Replace All only while the replace row shows (its field is what
+    // replaces; hidden, it is no text shown to write), as the Mac's
+    // replaceAllFromKey.
     for (const Commands::Key& key : Keys::keymap().keysOf("editor.action.replaceAll"))
         if (key == k) {
-            self->replaceAll();
+            if (self->replaceShown_) self->replaceAll();
+            else gtk_widget_error_bell(self->window_);
             return TRUE;
         }
-    return FALSE;
+    return self->runPaneKey(event);
 }
 
 // ------------------------------------------------------------------ scope
@@ -556,6 +648,7 @@ void SearchPanel::runSearch() {
     lastQuery_ = query;
     clearResults();
     found_.clear();
+    dismissed_.clear();   // a new search shows every row again, as VS Code's does
     if (todos && scope_.empty()) {
         searching_ = false;
         setStatus("");
@@ -752,6 +845,9 @@ void SearchPanel::replaceAll() {
     job->query = gtk_editable_get_text(GTK_EDITABLE(entry_));
     job->replacement = replacement();
     job->options = options();
+    // As they are now: a search while the matches are counted clears the
+    // panel's, never what this replace leaves alone.
+    job->dismissed = dismissed_;
     GTask* task = g_task_new(nullptr, nullptr, [](GObject*, GAsyncResult* res, gpointer) {
         PlanJob* j = static_cast<PlanJob*>(g_task_get_task_data(G_TASK(res)));
         if (!j->alive.expired()) j->self->planned(j);
@@ -760,6 +856,8 @@ void SearchPanel::replaceAll() {
     g_task_run_in_thread(task, [](GTask* t, gpointer, gpointer data, GCancellable*) {
         PlanJob* j = static_cast<PlanJob*>(data);
         j->plan = FolderSearch::planReplace(j->root, j->query, nullptr, j->options);
+        // The rows dismissed from the results stay as they are.
+        FolderSearch::excludeDismissed(j->plan, j->query, j->options, j->dismissed);
         g_task_return_boolean(t, TRUE);
     });
     g_object_unref(task);
@@ -776,6 +874,9 @@ void SearchPanel::planned(PlanJob* job) {
     std::vector<std::string> legacy = job->plan.otherEncoding;
     if (job->plan.otherEncodingCount > legacy.size())
         legacy.push_back("and " + grouped(job->plan.otherEncodingCount - legacy.size()) + " more");
+    // Files with a dismissed row whose line changed since the search: left
+    // alone whole (FolderSearch::excludeDismissed).
+    const std::vector<std::string>& changed = job->plan.changedSinceSearch;
     std::size_t matches = 0;
     for (const FolderReplaceFile& f : job->plan.files) {
         if (holdOf(f.path, nullptr) == Hold::Conflict) {
@@ -797,7 +898,10 @@ void SearchPanel::planned(PlanJob* job) {
                   : !legacy.empty() ? "Nothing replaced: the matches are in files that are not "
                                       "UTF-8 (read as Windows-1252), which Replace in Folder "
                                       "leaves alone (" + joined(legacy) + ")"
-                                  : "Nothing to replace");
+                  : !changed.empty() ? "Nothing replaced: files with dismissed rows changed "
+                                       "after the search (" + joined(changed) + "); search again"
+                  : job->plan.dismissed ? "Nothing replaced: every match left is in a dismissed row"
+                                        : "Nothing to replace");
         return;
     }
     const std::string question = "Replace " + plural(matches, "match", "matches") + " in " +
@@ -817,6 +921,12 @@ void SearchPanel::planned(PlanJob* job) {
     if (!legacy.empty())
         detail += " Left alone, since they are not UTF-8 (read as Windows-1252): " +
                   joined(legacy) + ".";
+    if (const std::size_t d = job->plan.dismissed)
+        detail += " " + plural(d, "match", "matches") + " in dismissed rows " +
+                  (d == 1 ? "is" : "are") + " left alone.";
+    if (!changed.empty())
+        detail += " Left alone, since they changed after the search and have dismissed rows: " +
+                  joined(changed) + ".";
     // The detail can list files by their paths: Question wraps inside them
     // and scrolls a long list.
     Question::Spec spec;
@@ -829,8 +939,10 @@ void SearchPanel::planned(PlanJob* job) {
         SearchPanel* self;
         std::weak_ptr<int> alive;
         std::vector<std::string> todo, held;
+        FolderReplaceExclusions dismissed;
     };
-    auto ask = std::make_shared<Ask>(Ask{this, life_, std::move(todo), std::move(held)});
+    auto ask = std::make_shared<Ask>(
+        Ask{this, life_, std::move(todo), std::move(held), job->dismissed});
     Question::ask(GTK_WINDOW(window_), spec, [ask](int answer) {
         if (ask->alive.expired()) return;
         if (answer != 0) {
@@ -838,7 +950,7 @@ void SearchPanel::planned(PlanJob* job) {
             ask->self->setStatus("Nothing replaced");
             return;
         }
-        ask->self->replaceInPaths(ask->todo, nullptr, ask->held);
+        ask->self->replaceInPaths(ask->todo, nullptr, ask->held, ask->dismissed);
     });
 }
 
@@ -846,14 +958,19 @@ void SearchPanel::replaceMatchAt(guint row) {
     if (row >= hits_.size() || !readyToReplace()) return;
     replacing_ = true;
     const FolderSearchMatch hit = hits_[row];
-    replaceInPaths({hit.path}, &hit, {});
+    replaceInPaths({hit.path}, &hit, {}, FolderReplaceExclusions());
 }
 
 // Replace every match in these files, or only `hit`'s. Tabs first, on the
 // main thread through MultiEdit, then the other files on disk, off it.
-// `held` names files already left out for their unsaved tabs.
+// `held` names files already left out for their unsaved tabs. `dismissed`
+// (Replace All's) holds the rows taken out of the results: their files, and
+// their lines' matches, are left alone (FolderSearch::dismissedLines), and a
+// file whose dismissed line no longer reads as its row showed is left alone
+// whole and named.
 void SearchPanel::replaceInPaths(const std::vector<std::string>& paths,
-                                 const FolderSearchMatch* hit, std::vector<std::string> held) {
+                                 const FolderSearchMatch* hit, std::vector<std::string> held,
+                                 const FolderReplaceExclusions& dismissed) {
     const FolderSearchOptions o = options();
     const std::string raw = gtk_editable_get_text(GTK_EDITABLE(entry_));
     const std::string with = replacement();
@@ -872,12 +989,14 @@ void SearchPanel::replaceInPaths(const std::vector<std::string>& paths,
         job->byteColumn = hit->byteColumn;
         job->expected = hit->text;   // the row's match: only while its line reads as searched
     }
+    if (!hit) job->dismissed = dismissed;
     job->skipped = std::move(held);
     // One file under two names (a symlink, a hard link) is replaced once.
     std::set<std::pair<std::uint64_t, std::uint64_t>> seen;
     for (const std::string& path : paths) {
         const FolderSearch::FileStamp st = FolderSearch::stampOf(path);
         if (st.exists && !seen.insert({st.device, st.inode}).second) continue;
+        if (job->dismissed.excludesFile(path)) continue;
         Document* here = nullptr;
         const Hold hold = holdOf(path, &here);
         if (hold == Hold::Conflict) {
@@ -899,7 +1018,15 @@ void SearchPanel::replaceInPaths(const std::vector<std::string>& paths,
                 TextFind::replaceOneAt(u, query, with16, hit->line, hit->byteColumn, &e))
                 edits.push_back(e);
         } else {
+            std::set<int> keep;
+            if (!FolderSearch::dismissedLines(text, path, job->dismissed, o.maxLineChars, &keep)) {
+                job->problems.push_back(baseName(path) +
+                                        " changed after the search and has dismissed rows: "
+                                        "left alone");
+                continue;
+            }
             edits = TextFind::replaceAll(u, query, with16);
+            TextFind::dropEditsOnLines(u, &edits, keep);
         }
         if (edits.empty()) continue;
         std::vector<std::size_t> at;
@@ -951,7 +1078,16 @@ void SearchPanel::replaceInPaths(const std::vector<std::string>& paths,
                                                      j->line, j->byteColumn, &out, &j->expected))
                     n = 1;
             } else {
-                out = FolderSearch::replaceInText(content, j->query, j->replacement, j->options, &n);
+                std::set<int> keep;
+                if (!FolderSearch::dismissedLines(content, p, j->dismissed, j->options.maxLineChars,
+                                                  &keep)) {
+                    j->failed.push_back(baseName(p) +
+                                        " changed after the search and has dismissed rows: "
+                                        "left alone");
+                    continue;
+                }
+                out = FolderSearch::replaceInText(content, j->query, j->replacement, j->options, &n,
+                                                  &keep);
             }
             if (n == 0 || out == content) continue;
             if (!FolderSearch::writeFileAtomically(p, FolderSearch::encodeText(out, encoding),
@@ -988,6 +1124,167 @@ void SearchPanel::written(WriteJob* job) {
     if (!searching_) setStatus(msg);
 }
 
+// ------------------------------------------------------------------ dismiss
+
+// VS Code's Dismiss (the Mac's dismissItem:): the row leaves the results,
+// and Replace All leaves what it held alone until the next search.
+void SearchPanel::dismissRow(guint row) {
+    if (row >= hits_.size() || replacing_) return;
+    const FolderSearchMatch m = hits_[row];
+    if (mode_ == Mode::Find) dismissed_.dismissLine(m.path, m.line, m.text);
+    removeRows([&m](const FolderSearchMatch& h) { return h.path == m.path && h.line == m.line; });
+}
+
+// A file's rows, all of them (the Mac's Dismiss on a file's row).
+void SearchPanel::dismissFileOf(guint row) {
+    if (row >= hits_.size() || replacing_) return;
+    const std::string path = hits_[row].path;
+    if (mode_ == Mode::Find) dismissed_.dismissFile(path);
+    removeRows([&path](const FolderSearchMatch& h) { return h.path == path; });
+}
+
+// The rows `gone` picks out of hits_ and the list, a run at a time, so the
+// rest keep their places and the list its scroll. The keyboard, when it was
+// in the list, goes to the row now where the first one was: a removed
+// row's widget keeps the window's focus until GTK's next frame, every key
+// until then lost (ListKeyboard.h), so the window's box holds it meanwhile
+// (a box takes the focus itself; the scroller would pass it to the list).
+void SearchPanel::removeRows(const std::function<bool(const FolderSearchMatch&)>& gone) {
+    GtkWidget* holder = gtk_widget_get_parent(gtk_widget_get_parent(listView_));
+    const bool had = ListKeyboard::hold(listView_, holder);
+    guint first = GTK_INVALID_LIST_POSITION;
+    for (guint end = (guint)hits_.size(); end > 0;) {
+        if (!gone(hits_[end - 1])) {
+            --end;
+            continue;
+        }
+        guint start = end - 1;
+        while (start > 0 && gone(hits_[start - 1])) --start;
+        hits_.erase(hits_.begin() + start, hits_.begin() + end);
+        gtk_string_list_splice(rows_, start, end - start, nullptr);
+        first = start;
+        end = start;
+    }
+    if (mode_ == Mode::Todos) {
+        found_.erase(std::remove_if(found_.begin(), found_.end(), gone), found_.end());
+        std::set<std::string> files;
+        for (const FolderSearchMatch& m : found_) files.insert(m.path);
+        foundFiles_ = files.size();
+    }
+    if (first != GTK_INVALID_LIST_POSITION && !hits_.empty()) {
+        const guint at = std::min<guint>(first, (guint)hits_.size() - 1);
+        GtkListScrollFlags flags = GTK_LIST_SCROLL_SELECT;
+        if (had) flags = (GtkListScrollFlags)(flags | GTK_LIST_SCROLL_FOCUS);
+        gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), at, flags, nullptr);
+        if (had) gtk_widget_grab_focus(listView_);
+    } else if (had) {
+        gtk_widget_grab_focus(entry_);   // nothing left to hold it
+    }
+    if (had) gtk_widget_set_focusable(holder, FALSE);
+    if (first == GTK_INVALID_LIST_POSITION) return;
+    if (mode_ == Mode::Todos) setTodoStatus();
+    else showDismissedStatus();
+}
+
+// The status line after a dismiss: what is left to replace.
+void SearchPanel::showDismissedStatus() {
+    std::size_t matches = 0;
+    std::set<std::string> files;
+    for (const FolderSearchMatch& m : hits_) {
+        matches += m.count;
+        files.insert(m.path);
+    }
+    setStatus(grouped(matches) + (matches == 1 ? " match in " : " matches in ") +
+              grouped(files.size()) + (files.size() == 1 ? " file" : " files") +
+              " (dismissed rows are left alone)");
+}
+
+// A row's right click menu: Open, Replace This Match (Find in Folder),
+// Dismiss and Dismiss File. Its items find their row again by its file and
+// line, since a search may have changed the list while it was up.
+void SearchPanel::showRowMenu(guint row, double x, double y) {
+    if (row >= hits_.size()) return;
+    if (rowMenu_) gtk_popover_popdown(GTK_POPOVER(rowMenu_));
+    gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), row,
+        (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
+    gtk_widget_grab_focus(listView_);
+
+    GtkWidget* pop = gtk_popover_new();
+    gtk_popover_set_has_arrow(GTK_POPOVER(pop), FALSE);
+    gtk_popover_set_position(GTK_POPOVER(pop), GTK_POS_BOTTOM);
+    gtk_widget_add_css_class(pop, "menu");
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    struct Item {
+        SearchPanel* self;
+        std::weak_ptr<int> alive;
+        std::string path;
+        int line;
+        int what;   // 0 open, 1 replace, 2 dismiss, 3 dismiss the file
+    };
+    const FolderSearchMatch& m = hits_[row];
+    auto add = [&](const char* label, int what) {
+        GtkWidget* b = gtk_button_new_with_label(label);
+        gtk_widget_add_css_class(b, "flat");
+        gtk_label_set_xalign(GTK_LABEL(gtk_button_get_child(GTK_BUTTON(b))), 0.0);
+        g_object_set_data_full(G_OBJECT(b), "minicode-row-item",
+                               new Item{this, life_, m.path, m.line, what},
+                               [](gpointer p) { delete static_cast<Item*>(p); });
+        g_signal_connect(b, "clicked", G_CALLBACK(+[](GtkButton* button, gpointer popp) {
+            const Item it = *static_cast<Item*>(g_object_get_data(G_OBJECT(button),
+                                                                  "minicode-row-item"));
+            gtk_popover_popdown(GTK_POPOVER(popp));
+            if (it.alive.expired()) return;
+            SearchPanel* self = it.self;
+            // The keyboard back in the results, where the menu came from.
+            gtk_widget_grab_focus(self->listView_);
+            guint at = GTK_INVALID_LIST_POSITION;
+            for (guint i = 0; i < self->hits_.size(); i++)
+                if (self->hits_[i].path == it.path && self->hits_[i].line == it.line) {
+                    at = i;
+                    break;
+                }
+            if (at == GTK_INVALID_LIST_POSITION) return;
+            switch (it.what) {
+            case 0: self->openRow(at, true); break;
+            case 1: self->replaceMatchAt(at); break;
+            case 2: self->dismissRow(at); break;
+            default: self->dismissFileOf(at); break;
+            }
+        }), pop);
+        gtk_box_append(GTK_BOX(box), b);
+    };
+    add("Open", 0);
+    if (mode_ == Mode::Find) add("Replace This Match", 1);
+    gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+    add("Dismiss", 2);
+    add("Dismiss File", 3);
+    gtk_popover_set_child(GTK_POPOVER(pop), box);
+    gtk_widget_set_parent(pop, listView_);
+    const GdkRectangle at = {(int)x, (int)y, 1, 1};
+    gtk_popover_set_pointing_to(GTK_POPOVER(pop), &at);
+    // Taken off the list from an idle, since it is still emitting "closed".
+    g_signal_connect(pop, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer selfp) {
+        SearchPanel* self = static_cast<SearchPanel*>(selfp);
+        if (self->rowMenu_ == GTK_WIDGET(p)) self->rowMenu_ = nullptr;
+        g_idle_add([](gpointer w) -> gboolean {
+            GtkWidget* widget = GTK_WIDGET(w);
+            if (gtk_widget_get_parent(widget)) gtk_widget_unparent(widget);
+            g_object_unref(widget);
+            return G_SOURCE_REMOVE;
+        }, g_object_ref(p));
+    }), this);
+    rowMenu_ = pop;
+    gtk_popover_popup(GTK_POPOVER(pop));
+}
+
+void SearchPanel::onRowMenu(GtkGestureClick* g, int, double x, double y, gpointer selfp) {
+    SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    const guint row = self->rowAt(x, y);
+    if (row == GTK_INVALID_LIST_POSITION) return;
+    gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+    self->showRowMenu(row, x, y);
+}
+
 // ------------------------------------------------------------------ signals
 
 void SearchPanel::onSearchChanged(GtkSearchEntry*, gpointer selfp) {
@@ -996,20 +1293,25 @@ void SearchPanel::onSearchChanged(GtkSearchEntry*, gpointer selfp) {
     else self->runSearch();
 }
 
-// Enter searches at once, unless the list already answers this query, in
-// which case it moves into the list (Enter again opens the match). In the
-// TODOs window the list always answers the field.
-void SearchPanel::onQueryActivate(GtkSearchEntry* e, gpointer selfp) {
-    SearchPanel* self = static_cast<SearchPanel*>(selfp);
-    if (self->mode_ == Mode::Todos) {
-        if (!self->hits_.empty()) self->focusFirstResult();
+void SearchPanel::onQueryActivate(GtkSearchEntry*, gpointer selfp) {
+    static_cast<SearchPanel*>(selfp)->fieldReturn();
+}
+
+// Enter in the query, or in the replacement, which never replaces (#210):
+// it searches at once, unless the list already answers this query, in which
+// case it moves into the list (Enter again opens the match). In the TODOs
+// window the list always answers the field. (A search shows the dismissed
+// rows again, so while some are left Enter keeps the dismissals.)
+void SearchPanel::fieldReturn() {
+    if (mode_ == Mode::Todos) {
+        if (!hits_.empty()) focusFirstResult();
         return;
     }
-    const std::string q = gtk_editable_get_text(GTK_EDITABLE(e));
-    if (q != self->lastQuery_ || (self->hits_.empty() && !self->searching_)) {
-        self->runSearch();
-    } else if (!self->hits_.empty()) {
-        self->focusFirstResult();
+    const std::string q = gtk_editable_get_text(GTK_EDITABLE(entry_));
+    if (q != lastQuery_ || (hits_.empty() && !searching_)) {
+        runSearch();
+    } else if (!hits_.empty()) {
+        focusFirstResult();
     }
 }
 
@@ -1063,6 +1365,13 @@ void SearchPanel::onRowPressed(GtkGestureClick* g, int, double x, double y, gpoi
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
     self->pressTime_ = gtk_event_controller_get_current_event_time(GTK_EVENT_CONTROLLER(g));
     self->pressRow_ = self->rowAt(x, y);
+    // A row's × dismisses it (its own "clicked"); it never opens the row.
+    for (GtkWidget* w = gtk_widget_pick(self->listView_, x, y, GTK_PICK_DEFAULT);
+         w && w != self->listView_; w = gtk_widget_get_parent(w))
+        if (gtk_widget_has_css_class(w, "minicode-dismiss")) {
+            self->pressRow_ = GTK_INVALID_LIST_POSITION;
+            break;
+        }
 }
 
 // The first click of a double-click opens the match in the preview tab; the
@@ -1079,15 +1388,33 @@ void SearchPanel::onRowReleased(GtkGestureClick*, int gtkN, double x, double y, 
                       : self->clicks_.press(self->listView_, self->pressTime_,
                                             GUINT_TO_POINTER(pressed + 1), gtkN, x, y);
     if ((n == 1 || n == 2) && pressed != GTK_INVALID_LIST_POSITION &&
-        self->rowAt(x, y) == pressed)
+        self->rowAt(x, y) == pressed) {
+        // The first click shows the match in the preview tab with the
+        // keyboard in the results (VS Code's search view, the Mac's
+        // previewHandler), so the arrows go on from this row; the second
+        // keeps it, and the editor window comes up (main.cpp).
+        if (n == 1) {
+            gtk_list_view_scroll_to(GTK_LIST_VIEW(self->listView_), pressed,
+                (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
+            gtk_widget_grab_focus(self->listView_);
+        }
         self->openRow(pressed, n == 2);
+    }
 }
 
 // Enter on a result opens it; Ctrl+Shift+1 replaces its match alone (VS
-// Code's key for a match in its search view).
+// Code's key for a match in its search view); Delete dismisses it (VS
+// Code's Dismiss, search.action.remove, on Linux).
 gboolean SearchPanel::onListKey(GtkEventControllerKey*, guint keyval, guint,
                                 GdkModifierType mods, gpointer selfp) {
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    if ((keyval == GDK_KEY_Delete || keyval == GDK_KEY_KP_Delete) &&
+        !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK))) {
+        const guint pos = self->selectedRow();
+        if (pos == GTK_INVALID_LIST_POSITION) return FALSE;
+        self->dismissRow(pos);
+        return TRUE;
+    }
     if (self->mode_ == Mode::Find && (mods & GDK_CONTROL_MASK) && (mods & GDK_SHIFT_MASK) &&
         !(mods & GDK_ALT_MASK) && (keyval == GDK_KEY_exclam || keyval == GDK_KEY_1)) {
         const guint pos = self->selectedRow();
@@ -1104,7 +1431,10 @@ gboolean SearchPanel::onListKey(GtkEventControllerKey*, guint keyval, guint,
     return TRUE;
 }
 
-void SearchPanel::onSetup(GtkSignalListItemFactory*, GObject* obj, gpointer) {
+// A row: its text, and the × that dismisses it (shown while the pointer is
+// over the row or it is selected: installRowCss).
+void SearchPanel::onSetup(GtkSignalListItemFactory*, GObject* obj, gpointer selfp) {
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     GtkWidget* label = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0);
     gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
@@ -1112,14 +1442,29 @@ void SearchPanel::onSetup(GtkSignalListItemFactory*, GObject* obj, gpointer) {
     gtk_widget_add_css_class(label, "monospace");
     gtk_widget_set_margin_top(label, 2);
     gtk_widget_set_margin_bottom(label, 2);
-    gtk_list_item_set_child(GTK_LIST_ITEM(obj), label);
+    gtk_widget_set_hexpand(label, TRUE);
+    GtkWidget* dismiss = gtk_button_new_from_icon_name("window-close-symbolic");
+    gtk_widget_add_css_class(dismiss, "flat");
+    gtk_widget_add_css_class(dismiss, "minicode-dismiss");
+    gtk_widget_set_focusable(dismiss, FALSE);
+    gtk_widget_set_focus_on_click(dismiss, FALSE);
+    gtk_widget_set_valign(dismiss, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(dismiss, "Dismiss (Delete)");
+    g_object_set_data(G_OBJECT(dismiss), "minicode-list-item", obj);
+    g_signal_connect(dismiss, "clicked", G_CALLBACK(+[](GtkButton* b, gpointer p) {
+        auto* li = static_cast<GtkListItem*>(g_object_get_data(G_OBJECT(b), "minicode-list-item"));
+        if (li) static_cast<SearchPanel*>(p)->dismissRow(gtk_list_item_get_position(li));
+    }), selfp);
+    gtk_box_append(GTK_BOX(box), label);
+    gtk_box_append(GTK_BOX(box), dismiss);
+    gtk_list_item_set_child(GTK_LIST_ITEM(obj), box);
     gtk_list_item_set_activatable(GTK_LIST_ITEM(obj), FALSE);   // clicks are ours
-    g_object_set_data(G_OBJECT(label), "minicode-list-item", obj);
+    g_object_set_data(G_OBJECT(box), "minicode-list-item", obj);
 }
 
 void SearchPanel::onBind(GtkSignalListItemFactory*, GObject* obj, gpointer) {
     GtkListItem* li = GTK_LIST_ITEM(obj);
     GtkStringObject* s = GTK_STRING_OBJECT(gtk_list_item_get_item(li));
-    GtkWidget* label = gtk_list_item_get_child(li);
+    GtkWidget* label = gtk_widget_get_first_child(gtk_list_item_get_child(li));
     gtk_label_set_markup(GTK_LABEL(label), s ? gtk_string_object_get_string(s) : "");
 }

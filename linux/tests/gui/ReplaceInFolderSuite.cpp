@@ -7,12 +7,25 @@
 // written to disk; Ctrl+Shift+1 on a row replaces only its match, and only
 // while its line still reads as searched; a file under two names (a
 // symlink) is counted and replaced once; files to include and exclude
-// narrow the search; and Alt+C works in the window.
+// narrow the search; and Alt+C works in the window. From the Mac's #210:
+// Enter in the replacement never replaces (it goes into the results, no
+// question, no file written); the results take the keyboard (the arrows
+// move between rows, a click selects its row and previews it with the
+// search window still the active one); a row's ×, its right click menu's
+// Dismiss File and Delete dismiss a line, a file and a line, and Replace
+// All (Ctrl+Alt+Enter) then counts them out and leaves them unchanged; and
+// Ctrl+` in the search window brings the editor window up with the
+// keyboard in its terminal, and never hides it from there.
 #include "Harness.h"
 
 #include "DocumentView.h"
 #include "Editor.h"
 #include "Search.h"
+#include "WindowLayout.h"
+
+#ifdef MUTIBLE_ENABLE_TERMINAL
+#include "Terminal.h"
+#endif
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -85,6 +98,29 @@ void typeInto(GtkWidget* entry, const std::string& text) {
     MCGuiType(text);
 }
 
+std::string dir4() { return MCGuiProjectFile("rif4"); }
+std::string d4(const char* name) { return dir4() + "/" + name; }
+
+// The results' selected row, or -1.
+int selected() {
+    GtkSelectionModel* m = gtk_list_view_get_model(GTK_LIST_VIEW(panel()->listView()));
+    const guint pos = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(m));
+    return pos == GTK_INVALID_LIST_POSITION ? -1 : (int)pos;
+}
+
+// A row's text as the list shows it ("a.txt:2  cat cat two"), on screen.
+GtkWidget* rowLabel(const std::string& text) { return MCGuiFindLabel(panel()->listView(), text); }
+
+// That row's ×.
+GtkWidget* dismissOf(const std::string& text) {
+    GtkWidget* label = rowLabel(text);
+    return label ? gtk_widget_get_last_child(gtk_widget_get_parent(label)) : nullptr;
+}
+
+bool keyboardInResults() { return focusIn(panel()->listView()); }
+
+bool terminalShownBefore = false;
+
 std::string gStatus;
 
 }  // namespace
@@ -129,7 +165,7 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiNote("status: %s", panel()->statusText().c_str());
         GCHECK_EQ_STR(panel()->statusText(), "6 matches in 4 files");
         typeInto(panel()->replaceEntry(), "dog");
-        MCGuiKey("enter");   // Replace All, from the replacement
+        MCGuiKey("ctrl+alt+enter");   // Replace All (Enter there only searches)
     });
     MCGuiWait("it asks first, three.txt left out of the count", 10, [] {
         return alertAsks("Replace 5 matches in 3 files?");
@@ -209,7 +245,7 @@ MC_GUI_SUITE(replace_in_folder) {
     MCGuiWait("a row under each name", 10, [] { return idle() && panel()->matches().size() == 2; });
     MCGuiStep("\"kitten\", whose \"kit\" would show a second pass; Replace All", [] {
         typeInto(panel()->replaceEntry(), "kitten");
-        MCGuiKey("enter");
+        MCGuiClick(panel()->replaceAllButton());
     });
     MCGuiWait("it asks about one match in one file", 10, [] { return alertAsks("Replace 1 match in 1 file?"); });
     MCGuiStep("Replace", [] {
@@ -239,7 +275,7 @@ MC_GUI_SUITE(replace_in_folder) {
     });
     MCGuiStep("\"dog\"; Replace All", [] {
         typeInto(panel()->replaceEntry(), "dog");
-        MCGuiKey("enter");
+        MCGuiClick(panel()->replaceAllButton());
     });
     MCGuiWait("nothing to replace, and it says why", 10, [] {
         return idle() && panel()->statusText().rfind("Nothing replaced: the matches are in files", 0) == 0;
@@ -254,10 +290,7 @@ MC_GUI_SUITE(replace_in_folder) {
         panel()->runSearch();
     });
     MCGuiWait("both found", 10, [] { return idle() && panel()->matches().size() == 2; });
-    MCGuiStep("Replace All again", [] {
-        MCGuiClick(panel()->replaceEntry());
-        MCGuiKey("enter");
-    });
+    MCGuiStep("Replace All again", [] { MCGuiClick(panel()->replaceAllButton()); });
     MCGuiWait("it asks about the small file", 10, [] { return alertAsks("Replace 1 match in 1 file?"); });
     MCGuiStep("the large file is named in the question; Replace", [] {
         GCHECK(MCGuiFindLabel(GTK_WIDGET(alert()),
@@ -274,6 +307,155 @@ MC_GUI_SUITE(replace_in_folder) {
         GCHECK(MCGuiReadFile(dir3() + "/big.txt").size() == 1024 * 1024 + 100 + 5);
         panel()->setScope(dir());
     });
+
+    // ---- Enter in the replacement never replaces (#210)
+    MCGuiStep("rif4: four files, seven matches on six lines; \"cat\" searched", [] {
+        MCGuiWriteFile(d4("a.txt"), "cat one\ncat cat two\ncat three\n");
+        MCGuiWriteFile(d4("b.txt"), "a cat\n");
+        MCGuiWriteFile(d4("c.txt"), "cat c\n");
+        MCGuiWriteFile(d4("d.txt"), "cat d\n");
+        panel()->setScope(dir4());
+        MCGuiSetKeyWindow(panelWindow());
+        typeInto(panel()->queryEntry(), "cat");
+    });
+    MCGuiWait("six rows", 10, [] { return idle() && panel()->matches().size() == 6; });
+    MCGuiStep("\"dog\" typed in the replacement, then Enter", [] {
+        GCHECK_EQ_STR(panel()->statusText(), "7 matches in 4 files");
+        typeInto(panel()->replaceEntry(), "dog");
+        MCGuiKey("enter");
+    });
+    // The list already answers the query, so Enter goes into it, as Enter
+    // in the query does.
+    MCGuiWait("the keyboard in the results, on the first row", 10, [] {
+        return keyboardInResults() && selected() == 0;
+    });
+    MCGuiPause(1.0);   // a negative check: no question comes, nothing is written
+    MCGuiStep("no question, every file as it was", [] {
+        GCHECK(alert() == nullptr);
+        GCHECK(idle());
+        GCHECK_EQ_STR(MCGuiReadFile(d4("a.txt")), "cat one\ncat cat two\ncat three\n");
+        GCHECK_EQ_STR(MCGuiReadFile(d4("b.txt")), "a cat\n");
+        GCHECK_EQ_STR(MCGuiReadFile(d4("c.txt")), "cat c\n");
+        GCHECK_EQ_STR(MCGuiReadFile(d4("d.txt")), "cat d\n");
+        GCHECK_EQ_STR(panel()->statusText(), "7 matches in 4 files");
+    });
+
+    // ---- the results take the keyboard: arrows, and a click
+    MCGuiStep("Down", [] { MCGuiKey("down"); });
+    MCGuiWait("the second row", 10, [] { return keyboardInResults() && selected() == 1; });
+    MCGuiStep("Down again", [] { MCGuiKey("down"); });
+    MCGuiWait("the third row", 10, [] { return keyboardInResults() && selected() == 2; });
+    MCGuiStep("the keyboard back in the replacement; a click on b.txt's row", [] {
+        MCGuiClick(panel()->replaceEntry());
+    });
+    MCGuiWait("in the replacement", 10, [] { return focusIn(panel()->replaceEntry()); });
+    MCGuiStep("the click", [] { MCGuiClick(rowLabel("b.txt:1  a cat")); });
+    MCGuiWait("b.txt in the preview tab, its row selected, the keyboard in the results", 10, [] {
+        Document* d = ed()->documentFor(d4("b.txt"));
+        return d && d->isPreviewTab() && ed()->currentPath() == d4("b.txt") &&
+               selected() == rowOf(d4("b.txt"), 1) && keyboardInResults();
+    });
+    MCGuiPause(0.5);   // a negative check: the editor window never came up over the results
+    MCGuiStep("the search window still the active one; Up", [] {
+        GCHECK(gtk_window_is_active(panelWindow()));
+        GCHECK(!gtk_window_is_active(MCGuiApp().window));
+        MCGuiKey("up");
+    });
+    MCGuiWait("the row above b.txt's: a.txt's last", 10, [] {
+        return keyboardInResults() && selected() == rowOf(d4("a.txt"), 3);
+    });
+
+    // ---- dismissed rows leave the results, and Replace All leaves them alone
+    MCGuiStep("a.txt:2's ×", [] { MCGuiClick(dismissOf("a.txt:2  cat cat two")); });
+    MCGuiWait("its row gone, its two matches out of the count", 10, [] {
+        return rowOf(d4("a.txt"), 2) < 0 && panel()->matches().size() == 5;
+    });
+    MCGuiStep("said so", [] {
+        GCHECK_EQ_STR(panel()->statusText(), "5 matches in 4 files (dismissed rows are left alone)");
+        GCHECK(panel()->dismissed().lines.count(d4("a.txt")) == 1);
+    });
+    MCGuiStep("b.txt's right click menu", [] { MCGuiClick(rowLabel("b.txt:1  a cat"), -1, -1, 3); });
+    MCGuiClickWhenReady("Dismiss File", [] {
+        return panel()->rowMenu() ? MCGuiFindButton(panel()->rowMenu(), "Dismiss File") : nullptr;
+    });
+    MCGuiWait("b.txt's rows gone, the file dismissed", 10, [] {
+        return rowOf(d4("b.txt"), 1) < 0 && panel()->dismissed().excludesFile(d4("b.txt")) &&
+               !panel()->rowMenu();
+    });
+    MCGuiStep("d.txt's row selected, the keyboard in the results; Delete", [] {
+        GCHECK_EQ_STR(panel()->statusText(), "4 matches in 3 files (dismissed rows are left alone)");
+        selectRow(rowOf(d4("d.txt"), 1));
+        MCGuiKey("delete");
+    });
+    MCGuiWait("d.txt's row gone, the keyboard still in the results on the last row", 10, [] {
+        return rowOf(d4("d.txt"), 1) < 0 && panel()->matches().size() == 3 &&
+               keyboardInResults() && selected() == 2;
+    });
+    MCGuiStep("Up from there", [] {
+        GCHECK_EQ_STR(panel()->statusText(), "3 matches in 2 files (dismissed rows are left alone)");
+        MCGuiKey("up");
+    });
+    MCGuiWait("the row above", 10, [] { return keyboardInResults() && selected() == 1; });
+    MCGuiStep("Ctrl+Alt+Enter: Replace All", [] { MCGuiKey("ctrl+alt+enter"); });
+    MCGuiWait("it asks about what is left", 10, [] { return alertAsks("Replace 3 matches in 2 files?"); });
+    MCGuiStep("the dismissed matches counted out in the question; Replace", [] {
+        GCHECK(MCGuiFindLabel(GTK_WIDGET(alert()),
+                              "Each becomes “dog”. Files open in a tab are changed there, unsaved, "
+                              "and can be undone there; the others are written to disk. 4 matches "
+                              "in dismissed rows are left alone.") != nullptr);
+        MCGuiSetKeyWindow(alert());
+        MCGuiClick(MCGuiFindButton(GTK_WIDGET(alert()), "Replace"));
+    });
+    MCGuiWait("replaced", 10, [] { return idle() && MCGuiReadFile(d4("c.txt")) == "dog c\n"; });
+    MCGuiStep("the dismissed line, file and row untouched, the rest replaced", [] {
+        MCGuiSetKeyWindow(panelWindow());
+        GCHECK_EQ_STR(MCGuiReadFile(d4("a.txt")), "dog one\ncat cat two\ndog three\n");
+        GCHECK_EQ_STR(MCGuiReadFile(d4("b.txt")), "a cat\n");
+        GCHECK_EQ_STR(MCGuiReadFile(d4("d.txt")), "cat d\n");
+        // b.txt's preview tab, clean, left as it was too.
+        GCHECK_EQ_STR(tabText(d4("b.txt")), "a cat\n");
+        GCHECK(!tabDirty(d4("b.txt")));
+        MCGuiNote("status: %s", panel()->statusText().c_str());
+        GCHECK(panel()->statusText().rfind("Replaced 3 matches in 2 files. Now ", 0) == 0);
+        // The search after it shows every row again.
+        GCHECK(panel()->dismissed().empty());
+    });
+    MCGuiWait("the rows still matching, all shown", 10, [] {
+        return idle() && panel()->matches().size() == 3 && rowOf(d4("a.txt"), 2) >= 0 &&
+               rowOf(d4("b.txt"), 1) >= 0 && rowOf(d4("d.txt"), 1) >= 0;
+    });
+
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    // ---- a pane's key in the search window: the editor window takes the keyboard
+    MCGuiStep("Ctrl+` in the search window", [] {
+        terminalShownBefore = MCGuiApp().layout->terminalShown();
+        MCGuiSetKeyWindow(panelWindow());
+        MCGuiClick(panel()->replaceEntry());
+        MCGuiKey("ctrl+`");
+    });
+    MCGuiWait("the editor window active, its terminal shown with the keyboard", 10, [] {
+        MCGuiAppWindow a = MCGuiApp();
+        return a.terminal && gtk_window_is_active(a.window) && a.layout->terminalShown() &&
+               focusIn(a.terminal->widget());
+    });
+    MCGuiStep("the replacement as it was; Ctrl+` there again shows it still", [] {
+        GCHECK_EQ_STR(gtk_editable_get_text(GTK_EDITABLE(panel()->replaceEntry())), "dog");
+        MCGuiSetKeyWindow(panelWindow());
+        MCGuiKey("ctrl+`");
+    });
+    MCGuiPause(0.5);   // a negative check: from the search window it never hides the terminal
+    MCGuiStep("shown, and the keyboard in it", [] {
+        MCGuiAppWindow a = MCGuiApp();
+        GCHECK(a.layout->terminalShown());
+        GCHECK(focusIn(a.terminal->widget()));
+        GCHECK(gtk_window_is_active(a.window));
+        if (!terminalShownBefore) a.layout->toggleTerminal();
+        // The search window over the editor's again, as a window manager
+        // keeps a transient one.
+        MCGuiSetKeyWindow(panelWindow());
+        MCGuiFocusKeyWindow();
+    });
+#endif
 
     // ---- files to include and exclude, and Alt+C in the window
     MCGuiStep("back to rif; \"cat\"; the details", [] {
@@ -312,4 +494,7 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiSetKeyWindow(nullptr);
     });
     MCGuiWait("closed", 10, [] { return !gtk_widget_get_mapped(panel()->window()); });
+    // The X focus back on the app's window, not on the one just closed.
+    MCGuiStep("the keyboard back in the app's window", [] { MCGuiFocusKeyWindow(); });
+    MCGuiWait("active", 10, [] { return gtk_window_is_active(MCGuiApp().window); });
 }

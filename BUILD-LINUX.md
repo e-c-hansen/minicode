@@ -357,6 +357,14 @@ Verified by running it:
   is not a folder is refused; closing the window hides it and keeps the
   results. The search itself is the shared `src/FolderSearch.cpp`, with its
   own tests in the core suite.
+- Find in Folder's keys and dismissed rows (November 2026, HANDOFF item
+  117), by real keys and clicks in the `replace_in_folder` GUI suite under
+  the harness's Xvfb: Enter in the replace field never replaces; a click
+  on a result keeps the keyboard in the results, where the arrows move;
+  a row's ×, Delete and Dismiss File take rows out, and Replace All leaves
+  them unchanged; Ctrl+` in the search window brings the editor window up
+  with its terminal holding the keyboard. The × on hover and the menu's
+  look have not been seen on a real desktop.
 - All 13 window actions were registered with the intended accelerators, and the
   sidebar, dotfile, terminal, browser and preview toggles were confirmed to
   change the state they claim to. (Since item 0.3 the actions, the menu bar,
