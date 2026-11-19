@@ -11,17 +11,31 @@
 // nothing to undo, says so in the status bar, asks about the file changed
 // since, and holds the text of the file gone; quitting with Don't Save
 // leaves no backup and writes nothing.
+//
+// Then backups by window (round 10's workspace item 1, the Mac's #247): a
+// fourth app opens two windows on one folder, each with different unsaved
+// text in a.txt (and the second with b.txt too), and is killed. A fifth,
+// launched with no path, brings both windows back, each with its own
+// unsaved text and nothing of the other's, and no backup deleted; killed in
+// turn, it leaves them to a sixth opened on the folder itself, whose one
+// window takes them all: a.txt with one window's text and "a (unsaved
+// copy).txt" with the other's, not on disk until saved.
 #include "Harness.h"
 
+#include "Backups.h"
 #include "DocumentView.h"
 #include "Editor.h"
+#include "TabSessions.h"
 #include "TabStrip.h"
 
 #include <glib/gstdio.h>
 #include <unistd.h>
 
 #include <memory>
+#include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -111,6 +125,78 @@ void OpenAndType(const std::string& name) {
     });
 }
 
+// ---- two windows on one folder (round 10's workspace item 1, the Mac's #247)
+std::string Folder2() { return MCGuiScratch() + "/bk2"; }
+std::string In2(const std::string& name) { return Folder2() + "/" + name; }
+std::string Copy2() { return In2("a (unsaved copy).txt"); }
+std::string WriterPid2() { return MCGuiScratch() + "/bk2-writer.pid"; }
+std::string RestorePid2() { return MCGuiScratch() + "/bk2-restore.pid"; }
+const char* const kFirstA = "first window shared\n";
+const char* const kSecondA = "second window shared\n";
+const char* const kSecondB = "only second beta two\n";
+
+// The backups in the store of files in the second folder, decoded.
+std::vector<std::pair<Backups::Entry, std::string>> Backups2() {
+    std::vector<std::pair<Backups::Entry, std::string>> out;
+    const char* dir = g_getenv("MUTIBLE_BACKUP_DIR");
+    GDir* d = dir ? g_dir_open(dir, 0, nullptr) : nullptr;
+    if (!d) return out;
+    while (const char* name = g_dir_read_name(d)) {
+        const std::string f = name;
+        if (f.size() < 9 || f.compare(f.size() - 9, 9, ".mcbackup") != 0) continue;
+        Backups::Entry e;
+        std::string text;
+        if (Backups::decode(MCGuiReadFile(std::string(dir) + "/" + f), &e, &text) &&
+            e.path.rfind(Folder2() + "/", 0) == 0)
+            out.push_back({e, text});
+    }
+    g_dir_close(d);
+    return out;
+}
+
+// A window's tabs, "name=text|..." in order, a '*' after an unsaved one's name.
+std::string TabsOf(Editor* e) {
+    std::string out;
+    for (int i = 0; e && i < e->tabCount(); i++) {
+        Document* d = e->document(i);
+        if (!d) continue;
+        const std::string p = d->path();
+        out += (out.empty() ? "" : "|") + p.substr(p.find_last_of('/') + 1) +
+               (d->dirty() ? "*" : "") + "=" + d->text();
+    }
+    return out;
+}
+
+std::vector<MCGuiAppWindow> WindowsOn2() {
+    std::vector<MCGuiAppWindow> out;
+    for (const MCGuiAppWindow& w : MCGuiAppWindows())
+        if (w.rootDir == Folder2() && w.window && gtk_widget_get_mapped(GTK_WIDGET(w.window)))
+            out.push_back(w);
+    return out;
+}
+
+MCGuiAppWindow FolderWindow2() {
+    const std::vector<MCGuiAppWindow> ws = WindowsOn2();
+    return ws.empty() ? MCGuiAppWindow() : ws.front();
+}
+
+// In the two-window writer: `name` typed into at its start in the newest window.
+void TypeInto(const std::string& name, const std::string& words) {
+    MCGuiStep("open " + name + " in the newest window", [name] {
+        MCGuiSetKeyWindow(MCGuiApp().window);
+        MCGuiOpenFileKept(In2(name));
+    });
+    MCGuiWait(name + " on show", 10, [name] { return MCGuiApp().editor->currentPath() == In2(name); });
+    MCGuiStep("type \"" + words + "\" at its start", [words] {
+        MCGuiClick(MCGuiApp().editor->textView());
+        MCGuiKey("ctrl+Home");
+        MCGuiType(words);
+    });
+    MCGuiWait(name + " is unsaved", 10, [words] {
+        return MCGuiApp().editor->dirty() && MCGuiEditorText().rfind(words, 0) == 0;
+    });
+}
+
 // When this app's own backups are written (SavePlan.h), in its window.
 std::string TimingFile() { return MCGuiProjectFile("bk-timing.txt"); }
 Document* Shown() { return MCGuiApp().editor->active(); }
@@ -183,6 +269,103 @@ MC_GUI_SUITE(backups) {
         GCHECK_EQ_STR(MCGuiReadFile(In("a.txt")), "alpha\n");
         GCHECK_EQ_STR(MCGuiReadFile(In("b.txt")), "beta, changed outside\n");
         GCHECK(!MCGuiFileExists(In("c.txt")));
+    });
+
+    // ---- two windows on one folder, both unsaved in a.txt, killed
+    auto two = std::make_shared<Writer>();
+    MCGuiStep("a folder for two windows", [] {
+        MCGuiWriteFile(In2("a.txt"), "shared\n");
+        MCGuiWriteFile(In2("b.txt"), "beta two\n");
+        g_remove(WriterPid2().c_str());
+        g_remove(RestorePid2().c_str());
+    });
+    MCGuiStep("a fourth app opens two windows on it and types into a.txt in both", [two] {
+        MCGuiRunChild("_backups_two_writer", Folder2(), [two](int status, std::string out) {
+            two->status = status;
+            two->out = out;
+            two->done = true;
+        });
+    });
+    MCGuiWait("its backups are written, and it says where it is", 90, [two] {
+        return MCGuiFileExists(WriterPid2()) || two->done;
+    });
+    MCGuiAsync("kill -9 by its PID", 20, [two](MCGuiDone done) {
+        GCHECK(!two->done);
+        if (two->done) MCGuiNote("the writer ended first:\n%s", two->out.c_str());
+        const std::string pid = MCGuiReadFile(WriterPid2());
+        GCHECK(!pid.empty() && pid.find_first_not_of("0123456789") == std::string::npos);
+        MCGuiRunProcess({"/bin/sh", "-c", "kill -9 " + pid}, {},
+                        [done](int status, std::string, std::string) {
+                            GCHECK(status == 0);
+                            done();
+                        });
+    });
+    MCGuiWait("the writer is gone", 30, [two] { return two->done; });
+    MCGuiStep("three backups, each naming its window, as the windows' records do", [two] {
+        GCHECK(two->status == 128 + 9);
+        GCHECK(two->out.find("FAIL") == std::string::npos);
+        if (two->status != 128 + 9 || two->out.find("FAIL") != std::string::npos)
+            MCGuiNote("writer (%d):\n%s", two->status, two->out.c_str());
+        const auto all = Backups2();
+        GCHECK(all.size() == 3);
+        std::set<std::string> keys;
+        for (const auto& b : all) {
+            MCGuiNote("backup of %s by window %s", b.first.path.c_str(), b.first.window.c_str());
+            GCHECK(!b.first.window.empty());
+            keys.insert(b.first.window);
+        }
+        GCHECK(keys.size() == 2);
+        std::set<std::string> recorded;
+        const TabSessions::Store st =
+            TabSessions::decodeStore(MCGuiReadFile(MCGuiScratch() + "/state/mutible/sessions.json"));
+        for (const TabSessions::Window& w : st.windows)
+            if (w.root == Folder2()) recorded.insert(w.backupKey);
+        GCHECK(recorded == keys);
+        GCHECK_EQ_STR(MCGuiReadFile(In2("a.txt")), "shared\n");
+    });
+    auto again = std::make_shared<Writer>();
+    MCGuiStep("a fifth app, launched with no path, brings both windows back", [again] {
+        MCGuiRunChild("_backups_two_restore", "", [again](int status, std::string out) {
+            again->status = status;
+            again->out = out;
+            again->done = true;
+        });
+    });
+    MCGuiWait("each window has its own, and it says where it is", 90, [again] {
+        return MCGuiFileExists(RestorePid2()) || again->done;
+    });
+    MCGuiAsync("kill -9 by its PID", 20, [again](MCGuiDone done) {
+        GCHECK(!again->done);
+        if (again->done) MCGuiNote("the restore ended first (%d):\n%s", again->status, again->out.c_str());
+        const std::string pid = MCGuiReadFile(RestorePid2());
+        GCHECK(!pid.empty() && pid.find_first_not_of("0123456789") == std::string::npos);
+        MCGuiRunProcess({"/bin/sh", "-c", "kill -9 " + pid}, {},
+                        [done](int status, std::string, std::string) {
+                            GCHECK(status == 0);
+                            done();
+                        });
+    });
+    MCGuiWait("it is gone", 30, [again] { return again->done; });
+    MCGuiStep("killed, nothing of it failed, the three backups still there", [again] {
+        GCHECK(again->status == 128 + 9);
+        GCHECK(again->out.find("FAIL") == std::string::npos);
+        if (again->status != 128 + 9 || again->out.find("FAIL") != std::string::npos)
+            MCGuiNote("restore (%d):\n%s", again->status, again->out.c_str());
+        GCHECK(Backups2().size() == 3);
+    });
+    MCGuiAsync("a sixth app, opened on the folder, takes all three in one window", 90,
+               [](MCGuiDone done) {
+        MCGuiRunChild("_backups_two_copy", Folder2(), [done](int status, std::string out) {
+            GCHECK(status == 0);
+            if (status != 0) MCGuiNote("copy (%d):\n%s", status, out.c_str());
+            done();
+        });
+    });
+    MCGuiStep("Don't Save there left no backup, no copy on disk, the files as they were", [] {
+        GCHECK(Backups2().empty());
+        GCHECK(!MCGuiFileExists(Copy2()));
+        GCHECK_EQ_STR(MCGuiReadFile(In2("a.txt")), "shared\n");
+        GCHECK_EQ_STR(MCGuiReadFile(In2("b.txt")), "beta two\n");
     });
 
     // ---- when the backups are written (SavePlan.h), in this app
@@ -325,4 +508,122 @@ MC_GUI_SUITE(_backups_restore) {
     });
     MCGuiWait("every window closes", 15, [] { return MCGuiAppWindows().empty(); });
     MCGuiWait("the backups are gone", 10, [] { return BackupsOfFolder() == 0; });
+}
+
+// ------------------------- two windows on one folder: type in both and die
+MC_GUI_SUITE(_backups_two_writer) {
+    MCGuiStep("the window is on the folder", [] { GCHECK(MCGuiApp().rootDir == Folder2()); });
+    TypeInto("a.txt", "first window ");
+    MCGuiStep("a second window on the same folder", [] { MCGuiOpenWindow(Folder2()); });
+    MCGuiWait("it is up", 10, [] { return WindowsOn2().size() == 2; });
+    TypeInto("a.txt", "second window ");
+    TypeInto("b.txt", "only second ");
+    // Written about a second after typing stops, each naming its window.
+    MCGuiWait("three backups, from two windows", 15, [] {
+        std::set<std::string> keys;
+        for (const auto& b : Backups2()) keys.insert(b.first.window);
+        return Backups2().size() == 3 && keys.size() == 2;
+    });
+    MCGuiWait("both windows' records kept, with their tabs", 15, [] {
+        const TabSessions::Store st = TabSessions::decodeStore(
+            MCGuiReadFile(MCGuiScratch() + "/state/mutible/sessions.json"));
+        int on = 0;
+        bool second = false;
+        for (const TabSessions::Window& w : st.windows) {
+            if (w.root != Folder2() || w.backupKey.empty()) continue;
+            on++;
+            for (const TabSessions::Tab& t : w.tabs.tabs)
+                if (t.path == In2("b.txt")) second = true;
+        }
+        return on == 2 && second;
+    });
+    MCGuiStep("say where it is", [] {
+        const std::vector<MCGuiAppWindow> ws = WindowsOn2();
+        GCHECK(ws.size() == 2);
+        for (const MCGuiAppWindow& w : ws) MCGuiNote("%s", TabsOf(w.editor).c_str());
+        MCGuiWriteFile(WriterPid2(), std::to_string((long)getpid()));
+    });
+    // Killed here. A wait that ends is a failure: the kill never came.
+    MCGuiWait("the SIGKILL", 40, [] { return false; });
+}
+
+// --------------- both windows back, launched with no path: each its own
+MC_GUI_SUITE(_backups_two_restore) {
+    MCGuiWait("both windows are back on the folder", 20, [] {
+        const std::vector<MCGuiAppWindow> ws = WindowsOn2();
+        return ws.size() == 2 && ws[0].editor->tabCount() > 0 && ws[1].editor->tabCount() > 0;
+    });
+    MCGuiStep("each with its own unsaved text, nothing of the other's", [] {
+        const std::vector<MCGuiAppWindow> ws = WindowsOn2();
+        GCHECK(ws.size() == 2);
+        if (ws.size() != 2) return;
+        const std::string one = TabsOf(ws[0].editor), other = TabsOf(ws[1].editor);
+        MCGuiNote("one: %s", one.c_str());
+        MCGuiNote("other: %s", other.c_str());
+        const std::string first = std::string("a.txt*=") + kFirstA;
+        const std::string second = std::string("a.txt*=") + kSecondA + "|b.txt*=" + kSecondB;
+        GCHECK((one == first && other == second) || (one == second && other == first));
+        for (const MCGuiAppWindow& w : MCGuiAppWindows())
+            GCHECK(w.rootDir == Folder2());   // no window for unheld backups
+    });
+    MCGuiStep("a window's restore deleted none of the other's backups", [] {
+        GCHECK(Backups2().size() == 3);
+        MCGuiWriteFile(RestorePid2(), std::to_string((long)getpid()));
+    });
+    MCGuiWait("the SIGKILL", 40, [] { return false; });
+}
+
+// ------- one window opened on the folder: the clash shown as a copy
+MC_GUI_SUITE(_backups_two_copy) {
+    MCGuiWait("the window, its three tabs back", 20, [] {
+        return FolderWindow2().editor && FolderWindow2().editor->tabCount() == 3 &&
+               gtk_widget_get_mapped(GTK_WIDGET(FolderWindow2().window));
+    });
+    MCGuiStep("a.txt with one window's text, a (unsaved copy).txt with the other's", [] {
+        Editor* e = FolderWindow2().editor;
+        MCGuiNote("%s", TabsOf(e).c_str());
+        Document* a = e->documentFor(In2("a.txt"));
+        Document* copy = e->documentFor(Copy2());
+        Document* b = e->documentFor(In2("b.txt"));
+        GCHECK(a && copy && b);
+        if (!a || !copy || !b) return;
+        const std::set<std::string> texts = {a->text(), copy->text()};
+        GCHECK(texts == std::set<std::string>({kFirstA, kSecondA}));
+        GCHECK_EQ_STR(b->text(), kSecondB);
+        GCHECK(a->dirty() && copy->dirty() && b->dirty());
+        GCHECK(e->document(2) == copy);   // after the session's tabs
+        GCHECK(!MCGuiFileExists(Copy2()));   // not on disk until saved
+    });
+    MCGuiStep("every backup kept, the copy's under its own name", [] {
+        const auto all = Backups2();
+        GCHECK(all.size() == 3);
+        int copies = 0;
+        for (const auto& bk : all)
+            if (bk.first.path == Copy2()) {
+                copies++;
+                GCHECK(!bk.first.diskExisted);
+                GCHECK(bk.second == kFirstA || bk.second == kSecondA);
+            }
+        GCHECK(copies == 1);
+    });
+    MCGuiStep("the copy's tab", [] {
+        MCGuiSetKeyWindow(FolderWindow2().window);
+        FolderWindow2().editor->activate(FolderWindow2().editor->documentFor(Copy2()));
+    });
+    MCGuiWait("on show, and the status bar says what it is", 10, [] {
+        GtkWidget* l = FolderWindow2().statusLabel;
+        return FolderWindow2().editor->currentPath() == Copy2() && l &&
+               std::string(gtk_label_get_text(GTK_LABEL(l))) ==
+                   "Unsaved changes to a.txt from another window, kept apart in a (unsaved copy).txt";
+    });
+    MCGuiStep("quit", [] { MCGuiKey("ctrl+q"); });
+    MCGuiWait("one question, for the three unsaved", 15, QuestionUp);
+    MCGuiStep("Don't Save", [] {
+        const std::string q = QuestionText();
+        MCGuiNote("%s", q.c_str());
+        GCHECK(q.find("Save changes to 3 files?") != std::string::npos);
+        Answer("Don't Save");
+    });
+    MCGuiWait("every window closes", 15, [] { return MCGuiAppWindows().empty(); });
+    MCGuiWait("the backups are gone", 10, [] { return Backups2().empty(); });
 }

@@ -103,17 +103,21 @@ std::string replaceSizeLimit() {
     return std::to_string(FolderSearchOptions().maxFileSize / (1024 * 1024)) + " MB";
 }
 
-// Text that is not UTF-8 and holds no NUL: what the search reads, and the
-// editor opens, as Windows-1252 (FolderSearch::readsAsWindows1252), and
-// Replace in Folder, which writes UTF-8 or UTF-16 only, leaves alone. The
-// Mac's MCReadsAsWindows1252.
-bool readsAsWindows1252(const std::string& path) {
+// Text that is not UTF-8 and holds no NUL, which Replace in Folder, writing
+// UTF-8 or UTF-16 only, leaves alone: what the search reads, and the editor
+// opens, as Windows-1252 (FolderSearch::readsAsWindows1252), or mostly UTF-8
+// with a few stray bytes, kept as they are (readsAsUtf8WithStrayBytes,
+// 2026-11-19). The Mac's MCReadsAsWindows1252 and
+// MCReadsAsUtf8WithStrayBytes; "" for anything else.
+std::string notUtf8Reason(const std::string& path) {
     std::string bytes;
     FolderSearch::FileStamp st;
     if (FolderSearch::readFileStable(path, FolderSearchOptions().maxFileSize, &bytes, &st) !=
         FolderSearch::ReadStatus::Ok)
-        return false;
-    return FolderSearch::readsAsWindows1252(bytes);
+        return "";
+    if (FolderSearch::readsAsWindows1252(bytes)) return "is not UTF-8 (read as Windows-1252)";
+    if (FolderSearch::readsAsUtf8WithStrayBytes(bytes)) return "has bytes that are not UTF-8";
+    return "";
 }
 
 GtkWidget* optionToggle(const char* label, const std::string& tip) {
@@ -1097,9 +1101,9 @@ void SearchPanel::replaceInPaths(const std::vector<std::string>& paths,
                 if (st.exists && st.size > FolderSearchOptions().maxFileSize)
                     j->failed.push_back(baseName(p) + " is larger than " + replaceSizeLimit() +
                                         ", which Replace in Folder leaves alone");
-                else if (readsAsWindows1252(p))
-                    j->failed.push_back(baseName(p) + " is not UTF-8 (read as Windows-1252), "
-                                                      "which Replace in Folder leaves alone");
+                else if (const std::string why = notUtf8Reason(p); !why.empty())
+                    j->failed.push_back(baseName(p) + " " + why +
+                                        ", which Replace in Folder leaves alone");
                 else
                     j->failed.push_back(baseName(p) + " could not be read as text");
                 continue;

@@ -242,9 +242,19 @@ void Persistence::saveSession() {
 TabSessions::Window Persistence::windowRecord() {
     TabSessions::Window w;
     w.root = key_;
+    w.backupKey = backupKey();
     w.tabs = session();
     if (host_.windowState) host_.windowState(&w);
     return w;
+}
+
+const std::string& Persistence::backupKey() {
+    if (backupKey_.empty()) backupKey_ = BackupStore::shared().newId();
+    return backupKey_;
+}
+
+void Persistence::setBackupKey(const std::string& key) {
+    if (Backups::validId(key)) backupKey_ = key;
 }
 
 // A window that closes while another stays open on its folder drops out of
@@ -282,19 +292,22 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
     // a backup of a file the session lost comes back after the session's.
     BackupStore& store = BackupStore::shared();
     store.cleanUpOnce();
-    const Backups::Restore plan = store.planForRoot(key_, plain.files);
+    // This window's own, and those of no window still to come back
+    // (BackupStore::reserveWindowKeys); never another's.
+    const Backups::Restore plan = store.planForRoot(key_, plain.files, backupKey());
     std::map<std::string, std::string> backupFor;
     std::vector<std::string> extra;
     for (const Backups::Restore::Item& item : plan.items) {
         backupFor[item.path] = item.id;
         if (!item.inSession) extra.push_back(item.path);
     }
+    std::vector<Backups::Restore::Item> conflicts = plan.conflicts;
     EditorTabs::Session r = EditorTabs::restorable(plain, [&backupFor](const std::string& f) {
         return backupFor.count(f) > 0 || existsNotFolder(f);
     });
     const std::string previewFile = r.preview >= 0 ? r.files[(size_t)r.preview] : "";
     for (const std::string& f : extra) r.files.push_back(f);
-    if (r.files.empty()) return;
+    if (r.files.empty() && conflicts.empty()) return;
     if (r.active < 0) r.active = 0;
 
     std::map<std::string, const TabSessions::Tab*> tabFor;
@@ -303,13 +316,15 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
     std::vector<Document*> changedSince;
     for (size_t i = 0; i < r.files.size(); i++) {
         const std::string& f = r.files[i];
-        if (editor_->documentFor(f)) {
+        if (Document* held = editor_->documentFor(f)) {
             // Open here already: from the session's host when the window
-            // took what it held (stage 6, step 2), whose live text wins over
-            // a backup a process that went left of it.
+            // took what it held (stage 6, step 2), whose live text keeps the
+            // file's tab. A backup a process that went left of it is removed
+            // only when it holds that text; any other is unsaved text of its
+            // own, shown beside it as a copy (restoreConflicts).
             const auto b = backupFor.find(f);
-            if (b != backupFor.end() && editor_->documentFor(f)->kind() == Document::Kind::Text)
-                store.remove(b->second);
+            if (b != backupFor.end() && held->kind() == Document::Kind::Text)
+                conflicts.push_back({f, b->second, true});
             continue;
         }
         const auto b = backupFor.find(f);
@@ -346,12 +361,58 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
         for (Document* d : editor_->documents()) open.push_back(d->path());
         groups = EditorTabs::restoreGroups(saved.groups, open);
     }
+    // The other backups of files back now: copies beside them, after the
+    // session's tabs.
+    const std::string copiesNote = restoreConflicts(conflicts);
     if (groups.split) editor_->restoreGroups(groups);
     else if (shown) editor_->activate(shown);
+    if (!copiesNote.empty() && host_.note) host_.note(copiesNote);
     // Asked about once the window is up and the tab on show (the question
     // is the window's), not while it opens.
     for (Document* d : changedSince) d->askAboutDiskChange();
     scheduleBackups();
+}
+
+// Another window's unsaved text in a file this window brought back (hot exit
+// and a crash keep every window's), or an older draft of it: the Mac's
+// restoreConflictingBackups. Each comes back as a buffer of its own beside
+// the file, unsaved and not on disk until saved, its backup rewritten under
+// that name first (BackupStore::move) so it is never without a copy on
+// disk; one whose text is already the file's tab's is the only backup that
+// goes. Before 2026-11-19 the older one was deleted unseen.
+std::string Persistence::restoreConflicts(const std::vector<Backups::Restore::Item>& conflicts) {
+    BackupStore& store = BackupStore::shared();
+    std::vector<std::string> names;
+    std::string firstCopy;
+    for (const Backups::Restore::Item& c : conflicts) {
+        Backups::Entry e;
+        std::string text;
+        if (!store.load(c.id, &e, &text) ||
+            !g_utf8_validate(text.data(), (gssize)text.size(), nullptr))
+            continue;   // left on disk as it is
+        Document* original = editor_->documentFor(c.path);
+        if (original && original->kind() == Document::Kind::Text && original->text() == text) {
+            store.remove(c.id);   // the same text is back in the file's tab
+            continue;
+        }
+        const std::string draft = Backups::draftPath(c.path, [this](const std::string& p) {
+            struct stat st;
+            return lstat(p.c_str(), &st) == 0 || editor_->documentFor(p) != nullptr;
+        });
+        // Rewritten under its new name, then read back as it now is.
+        if (!store.move(c.id, draft, backupKey()) || !store.load(c.id, &e, &text)) continue;
+        Document* d = editor_->addTab(draft);
+        takeBackup(d, c.id, e, text);
+        d->backup().note = "Unsaved changes to " + baseName(c.path) +
+                           " from another window, kept apart in " + baseName(draft);
+        if (std::find(names.begin(), names.end(), baseName(c.path)) == names.end())
+            names.push_back(baseName(c.path));
+        if (firstCopy.empty()) firstCopy = baseName(draft);
+    }
+    if (firstCopy.empty()) return "";
+    std::string list;
+    for (const std::string& n : names) list += (list.empty() ? "" : ", ") + n;
+    return "Unsaved changes to " + list + " from another window are kept apart in " + firstCopy;
 }
 
 // ---------------------------------------------------------------- backups
@@ -466,6 +527,7 @@ void Persistence::writeBackup(Document* d) {
     e.id = b.id;
     e.path = d->path();
     e.root = key_;
+    e.window = backupKey();   // this window's, so it comes back to this window
     e.diskExisted = disk.exists;
     e.diskMtime = disk.mtime;
     e.diskInode = disk.inode;
@@ -559,6 +621,9 @@ void Persistence::autoSaveNow() {
         if (host_.saveWaits && host_.saveWaits(d)) continue;
         // Moved or deleted: not written again unasked.
         if (d->goneFromDisk()) continue;
+        // Never on disk (a copy kept apart, an untitled buffer the host
+        // held): the file is made only by Ctrl+S, as the Mac's untitled tabs.
+        if (!d->diskStamp().exists && !existsNotFolder(d->path())) continue;
         // Changed (or made) on disk since it was read: never written over
         // unasked. The tab asks Keep Mine or Reload when it is shown, and is
         // left alone until the answer (Editor::askingAboutDisk).

@@ -147,6 +147,10 @@ found through that list.
   writes `encodeFileText` or UTF-8 by `canEncode` with the same note,
   and main.cpp's status bar shows `Document::encodingLabel` left of the
   problem counts; the git gutter reads the blob in the file's encoding.
+  GTK reads Utf8Raw through the same `decodeFileText` (2026-11-19, item
+  121, `latin1_files`): the label is the core's, the tooltip says the
+  bytes are saved back as they were, and Replace in Folder's skip note
+  says "has bytes that are not UTF-8".
 - **One writer**: Cmd+S, `saveTab:` and auto-save all go through
   `writeText:toTab:interactive:` over `FolderSearch::writeFileAtomically`
   (a symlink stays a link, a dangling one too, creating the file it names;
@@ -399,8 +403,22 @@ found through that list.
   `Backups::draftPath` ("a (unsaved copy).txt", `moveID:toPath:window:`,
   never a file on disk until saved) and opens it as an untitled tab
   (`MCTab draftOf`, its own note), or removes it when its text is the
-  file's tab's. GTK still plans with no key (all its windows share "") and
-  leaves the conflicts on disk unshown until it ports this.
+  file's tab's. **GTK** (2026-11-19, `linux/HANDOFF.md` item 121, `backups`
+  suite's two-window part): `Persistence::backupKey` (made by
+  `BackupStore::newId`, kept in `windowRecord`, adopted from the record in
+  `newWindow` by `setBackupKey`), `writeBackup` sets `Entry::window`,
+  `restoreOpenWindows` reserves every record's key
+  (`BackupStore::reserveWindowKeys`) before the first window opens, and
+  `planForRoot` passes the window and the reserved keys to `plan`.
+  `Persistence::restoreConflicts` is `restoreConflictingBackups:`:
+  `BackupStore::move` rewrites the backup under `draftPath` (on the
+  store's thread, then a flush), the tab is `addTab` plus `takeBackup` of
+  the moved entry (`diskExisted` false: unsaved, not on disk, never
+  auto-saved: `autoSaveNow` skips a buffer never on disk), its own note,
+  and the window's note once the tab on show is up. A backup of a file
+  the window already holds from the session's host (`attachHeldDocuments`)
+  is no longer removed unread: it goes only when its text is the held
+  document's, else it is a copy too.
 - **Quit** (Cmd+Q, the Dock, logout, restart; AppDelegate's
   `confirmQuitRestarting:`): the running-commands question stays (it is
   not about saving), then each window with unsaved tabs, under hot exit or
@@ -455,6 +473,6 @@ text is in place in its section.
 
 - Tabs, sessions and the disk (Mac): **Traps**: never move the mirror's layout manager with `replaceTextStorage:`, which carries every layout manager of the storage, the editor's too (`removeLayoutManager:` then `addLayoutManager:`); the mirror must let go of the editor's storage before its whole text is replaced (`MCSourceStorage willReplaceAll`, and `editorWillShowTab:` ...
 - Backups, hot exit and auto-save (Mac): Trap: the focus-change save and the delay's debounce shared a selector and `updateTitle` cancelled the save after a tab switch; nothing may cancel `autoSaveNow`.
-- Backups by window (round 10's item 1): `plan` kept the newest backup of a file and listed the rest to delete, and the first window back on a folder planned for the whole folder, so after hot exit one of two windows' unsaved text in one file was deleted unseen, and the first window took the other's other files. A backup is deleted only once its text is back or saved; a planner never lists any to delete, and a window takes only its own and those of no window still to come back.
+- Backups by window (round 10's item 1): `plan` kept the newest backup of a file and listed the rest to delete, and the first window back on a folder planned for the whole folder, so after hot exit one of two windows' unsaved text in one file was deleted unseen, and the first window took the other's other files. A backup is deleted only once its text is back or saved; a planner never lists any to delete, and a window takes only its own and those of no window still to come back. GTK had the same until linux/HANDOFF.md item 121, and there a document held by the session's host also removed a backup of its file unread; it now goes only when its text is the held document's.
 - Encodings (round 10's item 2): "not valid UTF-8" is not "not UTF-8". One stray byte made `readsAsWindows1252` read a whole UTF-8 file as Windows-1252, and the first character Windows-1252 lacks saved it as UTF-8, every character encoded twice. A new decoding rule must keep both directions byte for byte (`encoding:*` round-trips random bytes through `decodeFileText` and `encodeFileText`).
 - Backups, hot exit and auto-save (Mac): Trap: `keepUnsavedTabsForRestart` passed over a dirty tab it could not back up, which a quit without a question would have lost; `keepUnsavedTabsForNextLaunch` returns NO for it, and the window asks.

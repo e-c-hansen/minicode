@@ -8,7 +8,9 @@
 // "Windows-1252"; a save with nothing changed writes the same bytes; an
 // edit is saved in Windows-1252; "→", which Windows-1252 cannot store, has
 // the file saved as UTF-8 with a note saying so, and the label goes. UTF-16
-// with its byte order mark opens and round-trips the same way. A backup
+// with its byte order mark opens and round-trips the same way. UTF-8 with
+// two stray bytes opens as UTF-8, "UTF-8, bad bytes kept", and saves back
+// byte for byte, edited or not (the Mac's #247). A backup
 // records the encoding, and a second app restoring a buffer whose file has
 // gone saves it back in Windows-1252.
 #include "Harness.h"
@@ -34,6 +36,7 @@ std::string cp1252() { return dir() + "/cp1252.txt"; }
 std::string latin1() { return dir() + "/latin1.txt"; }
 std::string utf16() { return dir() + "/utf16.txt"; }
 std::string hit() { return dir() + "/hit.txt"; }
+std::string stray() { return dir() + "/stray.txt"; }
 
 // "café costs 5 €" and a second line, in Windows-1252.
 const std::string kCp1252 = "caf\xE9 costs 5 \x80\nline two\n";
@@ -42,6 +45,13 @@ const std::string kCp1252 = "caf\xE9 costs 5 \x80\nline two\n";
 const std::string kLatin1 = std::string("Gr\xFC\xDF" "e aus K\xF6ln \xA9\n") + "x\x81y\n";
 // "naïve" in UTF-16 LE with its byte order mark.
 const std::string kUtf16 = std::string("\xFF\xFEn\0a\0\xEF\0v\0" "e\0\n\0", 14);
+// UTF-8 ("naïve café →") with two stray bytes, 0xFF and 0x80: mostly UTF-8
+// (FolderSearch::readsAsUtf8WithStrayBytes), so UTF-8 with the bytes kept,
+// never the whole file as Windows-1252 (round 10's workspace item 2).
+const std::string kStray = "na\xC3\xAFve caf\xC3\xA9 \xE2\x86\x92 \xFF here\nline two \x80 there\n";
+// As the editor holds it: each stray byte b as U+10FE00 + b.
+const std::string kStrayText =
+    "na\xC3\xAFve caf\xC3\xA9 \xE2\x86\x92 \xF4\x8F\xBB\xBF here\nline two \xF4\x8F\xBA\x80 there\n";
 
 // The restore: a folder of its own, whose one buffer's file is gone.
 std::string restoreDir() { return MCGuiScratch() + "/latin1-restore"; }
@@ -158,6 +168,50 @@ MC_GUI_SUITE(latin1_files) {
     });
     MCGuiWait("written again", 10, [] { return inodeOf(utf16()) != gInode; });
     MCGuiStep("byte for byte, its mark first", [] { GCHECK(MCGuiReadFile(utf16()) == kUtf16); });
+
+    // ---- UTF-8 with two stray bytes: UTF-8, the bytes kept (the Mac's #247)
+    MCGuiStep("a UTF-8 file with two stray bytes, 0xFF and 0x80", [] {
+        MCGuiWriteFile(stray(), kStray);
+        open(stray());
+    });
+    MCGuiWait("opens as UTF-8, ï, é and → as they are, each stray byte one character", 10, [] {
+        return showing(stray(), kStrayText);
+    });
+    MCGuiWait("the status bar says UTF-8, bad bytes kept", 5, [] {
+        return encodingShown("UTF-8, bad bytes kept");
+    });
+    MCGuiStep("not Windows-1252, not unsaved; Ctrl+S", [] {
+        GCHECK(!encodingShown("Windows-1252"));
+        GCHECK(!ed()->dirty());
+        gInode = inodeOf(stray());
+        MCGuiClick(ed()->textView());
+        MCGuiKey("ctrl+s");
+    });
+    MCGuiWait("written again", 10, [] { return inodeOf(stray()) != gInode; });
+    MCGuiStep("byte for byte, both stray bytes kept", [] {
+        GCHECK(MCGuiReadFile(stray()) == kStray);
+    });
+    MCGuiStep("an arrow typed at the end, away from the stray bytes", [] {
+        MCGuiClick(ed()->textView());
+        MCGuiKey("ctrl+End");
+        MCGuiType("→ end");
+    });
+    MCGuiWait("in the buffer, unsaved", 10, [] {
+        return MCGuiEditorText() == kStrayText + "→ end" && ed()->dirty();
+    });
+    MCGuiWait("its backup, saying how the file is written", 15, [] {
+        return backupOf(stray()).find("\nfile-encoding: utf8raw\n") != std::string::npos;
+    });
+    MCGuiStep("Ctrl+S", [] { MCGuiKey("ctrl+s"); });
+    MCGuiWait("saved", 10, [] { return !ed()->dirty(); });
+    MCGuiStep("the stray bytes as they were, the arrow once in UTF-8, the label kept", [] {
+        const std::string want = kStray + "\xE2\x86\x92 end";
+        const std::string got = MCGuiReadFile(stray());
+        if (got != want) MCGuiNote("%zu bytes, wanted %zu", got.size(), want.size());
+        GCHECK(got == want);
+        GCHECK(encodingShown("UTF-8, bad bytes kept"));
+        GCHECK(status().find("Saved stray.txt as UTF-8") == std::string::npos);
+    });
 
     // ---- a Find in Folder hit in such a file opens it as text at its line
     MCGuiStep("a Windows-1252 file with a hit on line 3; its folder selected", [] {
@@ -280,7 +334,7 @@ MC_GUI_SUITE(latin1_files) {
     });
 
     MCGuiStep("the tabs closed", [] {
-        for (const std::string& p : {cp1252(), latin1(), utf16(), hit()}) {
+        for (const std::string& p : {cp1252(), latin1(), utf16(), hit(), stray()}) {
             if (Document* d = ed()->documentFor(p)) {
                 GCHECK(!d->dirty());
                 ed()->closeTab(d);

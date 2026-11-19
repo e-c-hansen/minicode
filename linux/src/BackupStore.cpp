@@ -163,16 +163,56 @@ Backups::IsLive BackupStore::liveTest() {
 
 // ------------------------------------------------------------------ restoring
 
+void BackupStore::reserveWindowKeys(const std::vector<std::string>& keys) {
+    std::lock_guard<std::mutex> g(lock_);
+    for (const std::string& k : keys)
+        if (!k.empty()) reserved_.insert(k);
+}
+
 Backups::Restore BackupStore::planForRoot(const std::string& root,
-                                          const std::vector<std::string>& sessionFiles) {
+                                          const std::vector<std::string>& sessionFiles,
+                                          const std::string& window) {
     flush();   // this process's own writes are on disk first
+    std::set<std::string> reserved;
+    {
+        std::lock_guard<std::mutex> g(lock_);
+        reserved_.erase(window);
+        reserved = reserved_;
+    }
     // Another backup of a file this window brings back (r.conflicts) is
-    // never deleted (round 10's workspace item 1): it waits on disk until
-    // this port shows it as a copy, as the Mac does.
-    Backups::Restore r = Backups::plan(store_.list(), root, sessionFiles, liveTest());
+    // never deleted (round 10's workspace item 1): the window shows it as a
+    // copy (Persistence::restoreConflicts, move), as the Mac does.
+    Backups::Restore r =
+        Backups::plan(store_.list(), root, sessionFiles, liveTest(), window, reserved);
     std::lock_guard<std::mutex> g(lock_);
     for (const auto& item : r.items) claimed_.insert(item.id);
     return r;
+}
+
+bool BackupStore::move(const std::string& id, const std::string& path, const std::string& window) {
+    if (!Backups::validId(id) || path.empty()) return false;
+    stamp(id);   // nothing queued for it may land after
+    auto ok = std::make_shared<bool>(false);
+    post([this, id, path, window, ok] {
+        Backups::Entry e;
+        std::string text;
+        if (!store_.load(id, &e, &text)) return;
+        e.path = path;
+        e.window = window;
+        // A buffer with no file yet (an untitled one): it saves to its path.
+        e.diskExisted = false;
+        e.diskMtime = 0;
+        e.diskInode = 0;
+        e.ownerPid = getpid();
+        e.ownerStart = myStart_;
+        *ok = store_.save(e, text);
+    });
+    flush();
+    if (*ok) {
+        std::lock_guard<std::mutex> g(lock_);
+        claimed_.insert(id);
+    }
+    return *ok;
 }
 
 bool BackupStore::load(const std::string& id, Backups::Entry* e, std::string* text) {

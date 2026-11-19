@@ -114,8 +114,11 @@ public:
 
 // How a file's bytes are written (FolderSearch::decodeFileText, the Mac's
 // MCTab encoding and bom): UTF-8, with or without its byte order mark;
-// UTF-16 with its mark; or Windows-1252, for bytes that are not UTF-8 and
-// hold no NUL (FolderSearch::readsAsWindows1252). Document::FileEncoding.
+// UTF-16 with its mark; Windows-1252, for bytes that are not UTF-8 and
+// hold no NUL (FolderSearch::readsAsWindows1252); or, for such bytes that
+// are mostly UTF-8, UTF-8 with each stray byte kept and written back as it
+// was (Utf8Raw, "UTF-8, bad bytes kept": readsAsUtf8WithStrayBytes, since
+// 2026-11-19). Document::FileEncoding.
 struct DocumentFileEncoding {
     FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
     bool bom = false;
