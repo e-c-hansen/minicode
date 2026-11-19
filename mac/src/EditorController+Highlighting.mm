@@ -51,8 +51,13 @@ struct MCOverlay {
         NSParagraphStyleAttributeName: ps,
     };
     NSString *content = self.sourceText ?: @"";
+    // Large-file mode holds the tab's text in the storage without a copy
+    // (holdLargeText:, PieceString.h); anything else is copied in, its
+    // attributed string made first.
+    const BOOL holdLarge = [self largeFileFeaturesOff] &&
+                           [self.textView.textStorage isKindOfClass:MCSourceStorage.class];
     NSMutableAttributedString *attr =
-        [[NSMutableAttributedString alloc] initWithString:content attributes:base];
+        holdLarge ? nil : [[NSMutableAttributedString alloc] initWithString:content attributes:base];
     _liveHighlight = NO;                        // applyHighlighting starts it again
     _sourceAttributes = base;
     // Becoming editable shows the line numbers, which narrows the text view,
@@ -78,7 +83,13 @@ struct MCOverlay {
     if ([self.textView.textContainer isKindOfClass:MCWrapIndentContainer.class])
         ((MCWrapIndentContainer *)self.textView.textContainer).mode =
             [AppSettings shared].settings.wrappingIndent();
-    [self.textView.textStorage setAttributedString:attr];
+    if (holdLarge) {
+        // No regions in large-file mode, so the folds keep no lines of it.
+        self.textView.folds.fileName = nil;
+        [(MCSourceStorage *)self.textView.textStorage holdLargeText:content attributes:base];
+    } else {
+        [self.textView.textStorage setAttributedString:attr];
+    }
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
     [self applyWordWrap];   // a preview always wraps; the source as the setting says

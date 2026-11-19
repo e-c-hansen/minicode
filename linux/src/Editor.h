@@ -428,8 +428,13 @@ public:
     // given, is called then with the tab's document). `mutible diff`, Compare
     // with Main and the IDE link's openDiff come in later items.
     void showComparison(const CompareSpec& spec, std::function<void(Document*)> done = nullptr);
-    // A page (EditorPage.h) in a tab of its own, reused by its key.
-    Document* showPage(std::shared_ptr<EditorPage> page);
+    // A page (EditorPage.h) in a tab of its own, reused by its key; with
+    // `preview` (a single click in Source Control, as the tree opens a
+    // file) in the group's preview tab, which it replaces, the page that
+    // tab held going with it. A kept open of a page in the preview tab
+    // keeps that tab. The keyboard stays where it was: the caller gives it
+    // to the page for a kept open.
+    Document* showPage(std::shared_ptr<EditorPage> page, bool preview = false);
     EditorPage* currentPage() const;   // the active tab's page, or null
     CompareView* compareView() const { return compare_; }
     bool isComparison() const { return active_ && active_->compare(); }
@@ -528,6 +533,12 @@ public:
 
     // Word wrap turned over (Alt+Z) or set: the view follows (Zoom.h).
     void applyWordWrap() { setProseFont(prose_); }
+    // Wrapped lines keep their indentation (WrapIndentTags.h): the tags'
+    // indents from editor.wrapping-indent, a space's width in the source's
+    // font and the room a line has, now; and the same in an idle, after the
+    // view's font or size changed (a zoom, a resize).
+    void updateWrapIndent();
+    void wrapIndentGeometryChanged();
 
     // One observer (the language server session), not owned.
     void setObserver(EditorObserver* o) { observer_ = o; }
@@ -772,6 +783,7 @@ private:
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
     char           typedKey_ = 0;         // ':' or a closer being typed (electric)
     bool           prose_ = true;         // the view shows prose, not source (setProseFont)
+    guint          wrapIdle_ = 0;         // wrapIndentGeometryChanged's
     bool           composing_ = false;    // an input method's text in the view
 
     // The window's tabs (the core's), the documents they name, and the one

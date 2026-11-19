@@ -397,3 +397,25 @@ std::vector<SyncTexBox> SyncTexIndex::boxesForLine(int tag, int line,
     });
     return out;
 }
+
+int SyncTexIndex::topLineInRange(int page, double top, double bottom, int tag) const {
+    // A word's record sits on its baseline; a box reaches up by its height.
+    const Record *best = nullptr, *box = nullptr;
+    auto higher = [](const Record *a, const Record &r) {
+        if (!a) return true;
+        if (std::fabs(r.y - a->y) > 0.5) return r.y < a->y;
+        return r.x < a->x;
+    };
+    for (const Record &r : records_) {
+        if (r.page != page || r.tag != tag) continue;
+        if (r.type == 'g' || r.type == 'k' || r.type == '$' || r.type == 'x') {
+            if (r.y < top || r.y > bottom) continue;
+            if (higher(best, r)) best = &r;
+        } else if (r.type == '(' && r.w > 0 && r.h + r.d > 0) {
+            if (r.y < top || r.y - r.h > bottom) continue;
+            if (higher(box, r)) box = &r;
+        }
+    }
+    if (best) return best->line;
+    return box ? box->line : 0;
+}

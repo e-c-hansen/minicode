@@ -2354,7 +2354,8 @@ static void act_keep_tab(GSimpleAction*, GVariant*, gpointer userp) {
 // The browser panel hides while it has the keyboard, anywhere else the tab
 // on show closes (asking about unsaved changes first), and with no tab
 // left the window closes, so the key is never dead. In the terminal Ctrl+W
-// is the shell's (it deletes a word).
+// is the shell's (it deletes a word), unless terminal.mac-style-keys makes
+// it the Mac's Cmd+W, which closes the terminal pane with the keyboard.
 static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     // The Problems list with the keyboard closes, as the Mac's Cmd+W.
@@ -2363,6 +2364,15 @@ static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
         app->layout->focusAfterClosingPanel();
         return;
     }
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    // As the Mac's closeFocusedTerminal: a program running there asks
+    // first, and the last tab hides the dock (TerminalDock::remove).
+    if (Keys::terminalMacStyle())
+        if (Terminal* t = terminalWithKeyboard(app)) {
+            app->termDock->closePane(t);
+            return;
+        }
+#endif
 #ifdef MUTIBLE_ENABLE_BROWSER
     // The agent page when it shows, else the browser's tab; the last tab
     // hides the pane (Browser::onEmpty), the keyboard to what is left.
@@ -3055,7 +3065,10 @@ static void showDiffInEditor(App* app, const std::string& title, const std::stri
 }
 
 // The review of every uncommitted change (ChangeReviewPage.h), one tab per
-// window (the Mac's showChangeReviewAt:): shown again when it is open.
+// window (the Mac's showChangeReviewAt:staged:preview:): shown again when it
+// is open, at a file (its path from the top level) or from its top (""); in
+// the preview tab for a single click in Source Control, the keyboard left in
+// the list, else kept and given the keyboard.
 static ChangeReviewPage* reviewPageOf(App* app) {
     for (Document* d : app->editor->documents())
         if (d->editorPage())
@@ -3064,12 +3077,13 @@ static ChangeReviewPage* reviewPageOf(App* app) {
     return nullptr;
 }
 
-static void showChangeReview(App* app) {
+static void showChangeReview(App* app, const std::string& rel, bool staged, bool preview) {
     if (app->dead || !app->git) return;
     if (ChangeReviewPage* open = reviewPageOf(app)) {
         app->editor->showPage(std::shared_ptr<EditorPage>(
-            std::shared_ptr<EditorPage>(), open));   // found by its key, the same page
-        open->reload();
+            std::shared_ptr<EditorPage>(), open), preview);   // found by its key, the same page
+        if (!preview) app->editor->focusActiveDocument();
+        open->revealFile(rel, staged);   // reads again
         return;
     }
     auto page = std::make_shared<ChangeReviewPage>(app->git, app->rootDir);
@@ -3093,7 +3107,9 @@ static void showChangeReview(App* app) {
         return incoming ? st.mergeIncomingColor() : st.mergeCurrentColor();
     };
     page->applySettings();
-    app->editor->showPage(page);
+    app->editor->showPage(page, preview);
+    if (!preview) app->editor->focusActiveDocument();
+    page->revealFile(rel, staged);
 }
 
 // The ▶ beside each test (TestGutter.h), made with the window as the Mac's
@@ -3164,7 +3180,9 @@ static void makeGitPanel(App* app) {
     app->git->fileOnShow = [app] {
         return app->dead || app->editor->isDiff() ? std::string() : app->editor->currentPath();
     };
-    app->git->onReview = [app] { showChangeReview(app); };
+    app->git->onReview = [app](const std::string& rel, bool staged, bool preview) {
+        showChangeReview(app, rel, staged, preview);
+    };
     app->git->installActions(G_ACTION_MAP(app->window));
     app->editor->onDiffViewMade = [app](GitDiffView* view) {
         if (!app->dead && app->git) app->git->attachDiffView(view);
@@ -3383,7 +3401,7 @@ static void compareWorktree(App* app) {
         };
         if (inside(app->rootDir, mainPath) && !inside(app->rootDir, path)) {
             if (!app->gitShown) act_toggle_git(nullptr, nullptr, app);
-            showChangeReview(app);
+            showChangeReview(app, "", false, false);
         } else {
             newWindow(mainPath, "");
         }
@@ -3472,8 +3490,10 @@ static void act_toggle_agents(GSimpleAction*, GVariant*, gpointer userp) {
 // A Find in Folder match, a TODO or a definition: open the file (a single
 // click on a result in the preview tab, a double-click or Enter kept, a
 // definition's file in preview), then go to the match. If the file did not
-// end up open (it could not be read), there is nowhere to go.
-static void openMatch(App* app, const FolderSearchMatch& m, EditorTabs::OpenFrom from) {
+// end up open (it could not be read), there is nowhere to go. `present`
+// brings the editor window up, giving it the keyboard.
+static void openMatch(App* app, const FolderSearchMatch& m, EditorTabs::OpenFrom from,
+                      bool present = true) {
     const std::string path = m.path;
     const int line = m.line;
     const std::size_t column = m.byteColumn, length = m.byteLength;
@@ -3485,12 +3505,16 @@ static void openMatch(App* app, const FolderSearchMatch& m, EditorTabs::OpenFrom
             refreshHints(app);   // a Markdown preview may have switched to source
         });
     });
-    gtk_window_present(GTK_WINDOW(app->window));
+    if (present) gtk_window_present(GTK_WINDOW(app->window));
 }
 
+// Find in Folder's and TODOs' rows: a single click shows the match in the
+// preview tab and leaves the keyboard in the results (the Mac's
+// previewHandler, VS Code's search view), where the arrows go on; a
+// double-click or Enter keeps it, and the editor window comes up.
 static void openSearchMatch(const FolderSearchMatch& m, bool kept, void* userp) {
     openMatch(static_cast<App*>(userp), m,
-              kept ? EditorTabs::OpenFrom::SearchOpen : EditorTabs::OpenFrom::SearchClick);
+              kept ? EditorTabs::OpenFrom::SearchOpen : EditorTabs::OpenFrom::SearchClick, kept);
 }
 
 // Language servers (Lsp.h). Each acts on the editor, so only when it has the
@@ -3657,12 +3681,37 @@ static void act_go_to_bracket(GSimpleAction*, GVariant*, gpointer userp) {
         gtk_widget_error_bell(app->editor->textView());
 }
 
+// A pane command pressed in Find in Folder or TODOs (SearchPanel's
+// kPaneCommands): the editor window takes the keyboard first, so what is
+// typed next goes to the pane asked for, never on into the search window's
+// fields; a toggle of the terminal or the browser shows its pane and
+// focuses it, never hides it, as VS Code's toggles hide only the view with
+// the keyboard (the Mac's currentForPane:, #210).
+static void runPaneCommandFromSearch(App* app, const std::string& id) {
+    if (app->dead) return;
+    gtk_window_present(GTK_WINDOW(app->window));
+    if (id == "workbench.action.terminal.toggleTerminal") {
+        if (!app->layout->terminalShown()) app->layout->toggleTerminal();
+        else if (app->layout->focusTerminal) app->layout->focusTerminal();
+        return;
+    }
+    if (id == "mutible.toggleBrowser") {
+        if (!app->layout->browserShown()) app->layout->toggleBrowser();
+        else if (app->layout->focusBrowser) app->layout->focusBrowser();
+        return;
+    }
+    if (const Keys::Action* a = Keys::actionFor(id))
+        gtk_widget_activate_action(app->window, a->action, nullptr);
+}
+
 // Find in Folder: search the folder selected in the tree, or else the open
 // folder, which is what the Mac's Shift+Cmd+F does.
 static SearchPanel* findInFolderPanel(App* app) {
     if (!app->search) {
         app->search = new SearchPanel(GTK_WINDOW(app->window));
         app->search->setOpenCallback(openSearchMatch, app);
+        app->search->setPaneCommand(
+            [app](const std::string& id) { runPaneCommandFromSearch(app, id); });
         // Replace in Folder looks at every window's tabs, and edits this
         // window's (Search.h).
         app->search->setEditors([] {
@@ -3695,6 +3744,8 @@ static void act_todos(GSimpleAction*, GVariant*, gpointer userp) {
     if (!app->todos) {
         app->todos = new SearchPanel(GTK_WINDOW(app->window), SearchPanel::Mode::Todos);
         app->todos->setOpenCallback(openSearchMatch, app);
+        app->todos->setPaneCommand(
+            [app](const std::string& id) { runPaneCommandFromSearch(app, id); });
     }
     app->todos->setRoot(app->rootDir);
     const std::string dir = app->tree->selectedDir();
@@ -3783,6 +3834,8 @@ static std::vector<HintRow> hintsRows(App* app) {
     row("editor.action.copyLinesUpAction", "Copy line up");
     row("cursorTop", "Start of the file");
     row("cursorBottom", "End of the file");
+    row("cursorHome", "Start of the line");
+    row("cursorEnd", "End of the line (Shift selects)");
 
     heading("Navigation");
     row("workbench.action.showCommands", "Command palette");
@@ -3884,21 +3937,36 @@ static std::vector<HintRow> hintsRows(App* app) {
 
 #ifdef MUTIBLE_ENABLE_TERMINAL
     heading("In the terminal");
-    text("Plain Ctrl keys go to the program (Ctrl C,");
-    text("Ctrl W, Ctrl H...). These still work:");
-    plain("Ctrl Shift C", "Copy");
-    plain("Ctrl Shift V", "Paste");
-    plain("Ctrl click", "Open a file:line or URL");
-    plain("Ctrl Shift …", "Ctrl Shift shortcuts, but");
-    plain("", "G and Space (the shell's), and:");
-    // The commands that keep a plain Ctrl key there (Global on Linux).
-    for (const Keys::Action& a : Keys::actions()) {
-        const Commands::Command* c = Commands::find(a.id);
-        if (!c || !Commands::appliesIn(c->when, Commands::When::Terminal)) continue;
-        for (const Commands::Key& k : Keys::keymap().keysOf(c->id))
-            if (!(k.mods & (Commands::Shift | Commands::Alt)) &&
-                !Commands::linuxTerminalTakes(*c, k))
-                plain(Commands::keyLabel(k, Commands::Platform::Linux), Commands::titleOf(*c, Commands::Platform::Linux));
+    if (Keys::terminalMacStyle()) {
+        // terminal.mac-style-keys: a remapper's Cmd is Ctrl, its Ctrl Super.
+        text("Ctrl keys are shortcuts, as Cmd keys on a");
+        text("Mac. Super keys go to the program as Ctrl:");
+        plain("Super C", "Ctrl C, interrupt");
+        plain("Super W", "Ctrl W, delete a word");
+        plain("Super Alt K", "Ctrl K, as Super K");
+        plain("Ctrl C", "Copy");
+        plain("Ctrl V", "Paste");
+        plain("Ctrl A", "Select all");
+        plain("Ctrl W", "Close the terminal");
+        plain("Ctrl click", "Open a file:line or URL");
+    } else {
+        text("Plain Ctrl keys go to the program (Ctrl C,");
+        text("Ctrl W, Ctrl H...). These still work:");
+        plain("Ctrl Shift C", "Copy");
+        plain("Ctrl Shift V", "Paste");
+        plain("Ctrl click", "Open a file:line or URL");
+        plain("Ctrl Shift …", "Ctrl Shift shortcuts, but");
+        plain("", "G and Space (the shell's), and:");
+        // The commands that keep a plain Ctrl key there (Global on Linux).
+        for (const Keys::Action& a : Keys::actions()) {
+            const Commands::Command* c = Commands::find(a.id);
+            if (!c || !Commands::appliesIn(c->when, Commands::When::Terminal)) continue;
+            for (const Commands::Key& k : Keys::keymap().keysOf(c->id))
+                if (!(k.mods & (Commands::Shift | Commands::Alt)) &&
+                    !Commands::linuxTerminalTakes(*c, k))
+                    plain(Commands::keyLabel(k, Commands::Platform::Linux),
+                          Commands::titleOf(*c, Commands::Platform::Linux));
+        }
     }
 #endif
 
@@ -4210,9 +4278,11 @@ static void onSettingsChanged(void*) {
         g_simple_action_set_state(gFormatOnSaveAction,
                                   g_variant_new_boolean(g.settings->settings().formatOnSave()));
     applyStylesheet();
+    Keys::setTerminalMacStyle(g.settings->settings().terminalMacStyleKeys());   // the accelerators
     for (App* a : g.windows) {
         applyWindowSettings(a);
         if (!a->dead && a->formatOffer) a->formatOffer->settingsChanged();
+        if (!a->dead) refreshHints(a);   // the terminal's part says what Ctrl does there
     }
     scheduleBookmarkRefresh();
     refreshDockMenu();   // window.dock-menu
@@ -4459,6 +4529,7 @@ static void initShared() {
     g_object_unref(gFormatOnSaveAction);
 
     Zoom::applySettings(g.settings->settings());   // the zoom from last time, before any view
+    Keys::setTerminalMacStyle(g.settings->settings().terminalMacStyleKeys());
     Keys::init(g.gapp, onKeysChanged);
     // mutible's own writes to the settings file (a theme) wait while any
     // window's tab holds it with unsaved changes; the reason goes to the
@@ -5051,8 +5122,10 @@ static App* newWindow(const std::string& root, const std::string& file,
     Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
     app->zoomListener = Zoom::listen([app](const std::string& what) {
         if (app->dead) return;
-        if (what == "editor") Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
-        else if (what == "terminal") applyTerminalZoom(app);
+        if (what == "editor") {
+            Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
+            app->editor->wrapIndentGeometryChanged();   // a space's width, once restyled
+        } else if (what == "terminal") applyTerminalZoom(app);
         else if (what == "wrap") app->editor->applyWordWrap();
         refreshHints(app);
     });

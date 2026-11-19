@@ -88,6 +88,9 @@ public:
     // The GtkTextView subclass's vfuncs (CodeView.cpp's widget type).
     void snapshotLayer(GtkTextViewLayer layer, GtkSnapshot* snapshot);
     void allocated();
+    // After each allocation (inside it: change nothing that lays out again
+    // there; the wrap indent's tags wait for an idle).
+    std::function<void()> onAllocated;
     ~CodeView();
 
 private:

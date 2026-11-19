@@ -198,6 +198,51 @@ SampleStats Tracker::sample(Source& source, double now, const std::vector<Termin
         });
     }
 
+    // Processes no look saw under a terminal's shell, already re-parented
+    // to launchd (`( server & )`, or nohup and disown just before `exit`):
+    // their session is the pty's, led by the shell that ran there, alive or
+    // not. The shells are remembered while anything is left in their
+    // session; one whose pid now names another process is forgotten, so a
+    // pid used again is never taken for the shell.
+    {
+        for (const Terminal& t : terminals) {
+            if (t.shellPid <= 0) continue;
+            auto b = byPid.find(t.shellPid);
+            if (b == byPid.end()) continue;
+            ShellSeen& seen = shellsSeen_[t.shellPid];
+            seen.start = list[b->second].start;
+            seen.terminal = t;
+        }
+        std::set<int> sessionsLive;
+        for (const Basic& b : list)
+            if (b.sid > 0) sessionsLive.insert(b.sid);
+        for (auto it = shellsSeen_.begin(); it != shellsSeen_.end();) {
+            auto b = byPid.find(it->first);
+            const bool reused = b != byPid.end() && list[b->second].start != it->second.start;
+            const bool alive = b != byPid.end() && !reused;
+            if (reused || (!alive && !sessionsLive.count(it->first))) it = shellsSeen_.erase(it);
+            else ++it;
+        }
+        for (const Basic& b : list) {
+            // Never the shell itself (a held one whose window closed leads
+            // its session still).
+            if (b.sid <= 0 || b.sid == b.pid || b.uid != uid || b.pid <= 1 || b.pid == selfPid ||
+                shells.count(b.pid) || fromTerminal.count(b.pid))
+                continue;
+            auto seen = shellsSeen_.find(b.sid);
+            if (seen == shellsSeen_.end() || b.start < seen->second.start) continue;
+            const Terminal t = seen->second.terminal;   // a copy: walk may grow the map
+            fromTerminal.insert(b.pid);
+            auto found = procs_.find(keyOf(b));
+            Proc& p = procs_[keyOf(b)];
+            if (found == procs_.end()) p.key = keyOf(b);
+            if (found == procs_.end() || p.origin == Origin::Outside) takeTerminal(p, t);
+            walk(b.pid, [&](Proc& q, bool fresh) {
+                if (fresh || q.origin == Origin::Outside) takeTerminal(q, t);
+            });
+        }
+    }
+
     // Processes elsewhere whose working folder is in a watched folder.
     size_t outside = 0;
     for (const auto& kv : procs_)
@@ -493,7 +538,7 @@ std::string displayName(const Proc& p) {
 
 const char* helpText() {
     return "What this window's terminals started, and what other programs run in this "
-           "folder. A process that detaches from its terminal between two looks, a few "
+           "folder. A daemon that starts a session of its own between two looks, a few "
            "seconds apart, can be missed. Nothing here is ever stopped unless you ask.";
 }
 

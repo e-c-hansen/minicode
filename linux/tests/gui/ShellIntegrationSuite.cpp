@@ -157,15 +157,21 @@ std::string gHome;
 
 // Starts the terminal's shell as `shell`: the terminal is made if need be,
 // else its shell is told to exit and the app starts the new one.
+// A new terminal in place of the dock's others, so its shell is $SHELL's,
+// with the suite's hook on it. `exit` restarted the shell until it closed
+// the terminal (terminal.close-on-exit, linux/HANDOFF.md item 117).
 void startShell(const std::string& shell) {
     EnvLock::envSet("SHELL", shell.c_str(), TRUE);
     gOldPid = term()->shellPid();
-    if (!term()->made()) {
-        if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
-        term()->focus();
-    } else {
-        typeLine("exit");
+    const std::function<void()> hook = term()->onShellStateChanged;
+    TerminalDock* d = MCGuiApp().termDock;
+    if (term()->made()) {
+        d->newTerminal();
+        while (d->count() > 1) d->close(0, false);
     }
+    term()->onShellStateChanged = hook;
+    if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
+    term()->focus();
 }
 
 Terminal* gOrig = nullptr;   // the terminal part two began in
@@ -536,8 +542,11 @@ MC_GUI_SUITE(shell_integration) {
     // its prompt. Left as it was, a program held its foreground (a LEAK),
     // and agents' Open in Terminal waited on it in a shuffled order.
     MCGuiStep("the usual shell started again", [] {
-        gOldPid = term()->shellPid();
-        typeLine("exit");
+        gchar* usual = g_strdup(g_getenv("SHELL") ? g_getenv("SHELL") : "/bin/bash");
+        startShell(usual);
+        g_free(usual);
+        if (gHadShell) EnvLock::envSet("SHELL", gOldShell.c_str(), TRUE);
+        else EnvLock::envUnset("SHELL");
     });
     MCGuiWait("it is at its prompt, nothing running", 30, [] {
         return shellAtPrompt() && !term()->busy();

@@ -237,14 +237,81 @@ static void testClaudeUsage() {
             }
             big += usageLine("msg_huge", "req_huge", "2026-11-17T11:00:00Z", "claude-opus-5-5", usageJson(1, 1), "s",
                              false, "[{\"type\":\"text\",\"text\":\"" + std::string(1 << 20, 'z') + "\"}]") + "\n";
-            writeAll((dir / "-Users-x-other" / "big.jsonl").string(), big);
+            const std::string bigPath = (dir / "-Users-x-other" / "big.jsonl").string();
+            writeAll(bigPath, big);
+            // The bound is a multiple of a baseline taken here on this
+            // thread, not a number of milliseconds: an absolute 400 ms
+            // failed on a loaded Linux ThinkPad (408 to 637 ms) and on this
+            // Mac's efficiency cores (`taskpolicy -b`, about 600 ms) with
+            // nothing wrong. The baseline reads the same file in the
+            // scanner's chunks and puts every quoted string (64 bytes at
+            // most) in a std::map: the byte walks, std::string appends and
+            // tree lookups the skim and Json::parse do, so a slower core,
+            // a loaded machine, an unoptimized build, another standard
+            // library or a sanitizer slows both alike. It runs before and
+            // after the scan, and the larger counts.
+            auto baseline = [&](size_t *words) {
+                const double b0 = cpuMs();
+                std::map<std::string, int> seen;
+                std::string buf, word;
+                uint64_t off = 0;
+                bool inString = false;
+                while (posix.read(bigPath, off, 4u << 20, &buf) && !buf.empty()) {
+                    off += buf.size();
+                    for (const char *p = buf.data(), *e = p + buf.size(); p < e; p++) {
+                        if (!inString) {
+                            inString = *p == '"';
+                        } else if (*p == '\\' && p + 1 < e) {
+                            word.push_back(*++p);
+                        } else if (*p != '"') {
+                            if (word.size() < 64) word.push_back(*p);
+                        } else {
+                            seen[word]++;
+                            word.clear();
+                            inString = false;
+                        }
+                    }
+                }
+                *words = seen.size();
+                return cpuMs() - b0;
+            };
+            size_t words = 0;
+            const double before = baseline(&words);
             Tally t;
             Scanner s;
             const double c0 = cpuMs();
             st = s.scan(posix, dir.string(), 0, t);
-            CHECK_TIME(cpuMs() - c0, 400);
-            std::printf("    scanned %d usage lines\n", st.entries);
-            CHECK(st.entries == 5000 + 1 + 2);
+            const double scanMs = cpuMs() - c0;
+            const double base = std::max(before, baseline(&words));
+            // The scan over the baseline, measured (November 2026, M3; the
+            // whole run_tests, and the same code alone; `taskpolicy -b` for
+            // the efficiency cores, load 8 to 14 with ten busy processes):
+            //   clang -O0, libc++:      0.41 to 0.44 in run_tests (scan 102
+            //                           to 648 ms), 0.48 to 0.54 alone
+            //   g++-16 -O0, libstdc++:  0.51 to 0.69 alone (scan 145 to 940 ms)
+            //   ASan and UBSan -O1:     0.81 to 0.99 alone (clang and g++-16)
+            // Each bound is 1.3 to 1.6 times its build's highest ratio, and
+            // under twice its lowest, so the scan running twice as slow
+            // fails in every build, wherever the thread ran.
+#if defined(__SANITIZE_ADDRESS__)
+            const double k = 1.4;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+            const double k = 1.4;
+#elif defined(_LIBCPP_VERSION)
+            const double k = 0.7;
+#else
+            const double k = 1.0;
+#endif
+#elif defined(_LIBCPP_VERSION)
+            const double k = 0.7;
+#else
+            const double k = 1.0;
+#endif
+            std::printf("    scanned %d usage lines in %.0f ms CPU, %.2f times a baseline of %.0f ms (bound %.2f)\n",
+                        st.entries, scanMs, scanMs / base, base, k);
+            CHECK_TIME(scanMs, k * base);
+            CHECK(st.entries == 5000 + 1 + 2 && words > 5000);
         }
         fs::remove_all(dir, ec);
     }

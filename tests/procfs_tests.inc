@@ -15,7 +15,7 @@ static void testProcFs() {
         ProcFs::Stat s;
         CHECK(ProcFs::parseStat(line, s));
         CHECK(s.pid == 4242 && s.name == "my (odd) name");
-        CHECK(s.ppid == 100 && s.pgid == 4242);
+        CHECK(s.ppid == 100 && s.pgid == 4242 && s.sid == 100);
         CHECK(s.utime == 150 && s.stime == 50 && s.startTicks == 987654);
         CHECK(!ProcFs::parseStat("garbage", s));
         CHECK(!ProcFs::parseStat("1 (x) S 1 2", s));   // cut short
@@ -104,7 +104,7 @@ static void testProcFs() {
                       [](const Procs::Basic& a, const Procs::Basic& b) { return a.pid < b.pid; });
             if (l.size() == 2) {
                 CHECK(l[0].pid == 7001 && l[0].name == "python3" && l[0].ppid == 1);
-                CHECK(l[1].pid == 7002 && l[1].ppid == 7001 && l[1].pgid == 7001);
+                CHECK(l[1].pid == 7002 && l[1].ppid == 7001 && l[1].pgid == 7001 && l[1].sid == 7001);
                 CHECK(l[0].uid == (uint32_t)geteuid());
                 const long hz = sysconf(_SC_CLK_TCK);
                 CHECK(l[0].start == 1700000000LL * 1000000 + 200000LL * 1000000 / hz);

@@ -36,6 +36,13 @@
 // Shows the file: loads it when it is another file or changed since it
 // was loaded (keeping the scroll), else leaves the page as it is.
 - (void)showFile:(NSString *)path;
+// The page beside the source (Open Preview to the Side): `text`, the
+// tab's buffer as typed, shown as the file at `path` would be, its
+// relative addresses read against the file's folder. Loaded again,
+// keeping the scroll, when the text changed; the file itself when the
+// text is what the disk holds (so the window's folder may be read), else
+// the text with the file's address as its base (its own folder).
+- (void)showText:(NSString *)text path:(NSString *)path;
 // Loads the file on show again, keeping the scroll, when it changed on
 // disk since it was loaded.
 - (void)reloadIfChanged;

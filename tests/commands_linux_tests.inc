@@ -156,6 +156,10 @@ static void testLinuxCommandDefaults() {
     CHECK(HasKey(d, "editor.action.copyLinesUpAction", "alt+shift+up") &&
           HasKey(d, "editor.action.copyLinesDownAction", "alt+shift+down"));
     CHECK(HasKey(d, "cursorTop", "ctrl+home") && HasKey(d, "cursorBottomSelect", "ctrl+shift+end"));
+    // VS Code's cursorHome and cursorEnd (#213), the view's own keys.
+    CHECK(HasKey(d, "cursorHome", "home") && HasKey(d, "cursorHomeSelect", "shift+home") &&
+          HasKey(d, "cursorEnd", "end") && HasKey(d, "cursorEndSelect", "shift+end"));
+    CHECK(d.commandFor(K("home"), When::Terminal) == nullptr);
     CHECK(std::string(menuOf(*find("editor.action.moveLinesUpAction"), Platform::Linux)) == "Edit");
     CHECK(std::string(menuOf(*find("editor.action.moveLinesUpAction"), Platform::Mac)) == "Editor");
     // Editor commands: in the terminal the shell keeps Ctrl+D and Ctrl+L.
@@ -335,6 +339,104 @@ static void testLinuxTerminalKeys() {
     CHECK(d.keysOf(bracket.id).size() == 1 && format(d.keysOf(bracket.id)[0]) == "ctrl+shift+\\");
     CHECK(!appliesIn(bracket.when, When::Terminal));
     CHECK(linuxAccelerators(K("ctrl+shift+\\")) == std::vector<std::string>{"<Ctrl>bar"});
+
+    // ---- terminal.mac-style-keys: Ctrl is the Mac's Cmd, Super its Ctrl.
+    auto macTakes = [](const char *id, const char *key) {
+        return linuxTerminalTakes(*find(id), K(key), true);
+    };
+    // Every key with Ctrl is its command's in the terminal: Close Tab's
+    // Ctrl+W, Save's, Find's, the palette's, the sidebar's, the ones a
+    // shell reads as Ctrl+G and Ctrl+Space, and Ctrl+F4.
+    CHECK(!macTakes("workbench.action.closeActiveEditor", "ctrl+w"));
+    CHECK(!macTakes("workbench.action.closeActiveEditor", "ctrl+f4"));
+    CHECK(!macTakes("workbench.action.files.save", "ctrl+s"));
+    CHECK(!macTakes("actions.find", "ctrl+f"));
+    CHECK(!macTakes("workbench.action.quickOpen", "ctrl+p"));
+    CHECK(!macTakes("explorer.newFile", "ctrl+n"));
+    CHECK(!macTakes("workbench.action.toggleSidebarVisibility", "ctrl+b"));
+    CHECK(!macTakes("workbench.action.openSettings", "ctrl+,"));
+    CHECK(!macTakes("workbench.view.scm", "ctrl+shift+g"));
+    CHECK(!macTakes("mutible.togglePlayback", "ctrl+shift+space"));
+    CHECK(!macTakes("workbench.action.terminal.toggleTerminal", "ctrl+`"));
+    CHECK(!macTakes("workbench.action.terminal.fontZoomIn", "ctrl+="));
+    // VTE's copy and paste stay its own; keys without Ctrl are as before.
+    CHECK(macTakes("markdown.showPreview", "ctrl+shift+v"));
+    CHECK(macTakes("editor.action.revealDefinition", "f12"));
+    CHECK(macTakes("toggleFindCaseSensitive", "alt+c"));
+    CHECK(!macTakes("editor.action.previousMatchFindAction", "shift+f3"));
+    // So in the terminal every Linux key with Ctrl and no Shift or Alt of a
+    // command that applies there is bound, not only the Global ones.
+    for (const LinuxRow &r : linuxRows()) {
+        const Command &c = *find(r.id);
+        if (!appliesIn(c.when, When::Terminal)) continue;
+        for (const Key &k : d.keysOf(r.id))
+            if ((k.mods & Ctrl) && linuxTerminalTakes(c, k, true) && !linuxTerminalOwnKey(k)) {
+                std::printf("    %s leaves %s to the terminal\n", r.id, format(k).c_str());
+                CHECK(false);
+            }
+    }
+    // With the setting off nothing changed (the checks above, by default).
+    CHECK(takes("workbench.action.closeActiveEditor", "ctrl+w"));
+
+    // What a key no command took does there.
+    using A = MacStyleAction;
+    auto route = [](unsigned mods, bool super, char32_t ch) { return linuxMacStyleKey(mods, super, ch); };
+    // Super is the physical Ctrl: every letter is its control byte, with
+    // Shift (Ctrl+Shift+W is ^W in a terminal) and with Alt (Toshy's
+    // Super+Alt+K, D and L, which its keymap and GNOME would otherwise
+    // take).
+    for (char32_t l = 'a'; l <= 'z'; l++) {
+        for (unsigned m : {0u, (unsigned)Shift, (unsigned)Alt, (unsigned)(Alt | Shift)}) {
+            const char32_t ch = (m & Shift) ? l - 'a' + 'A' : l;
+            const MacStyleRoute r = route(m, true, ch);
+            CHECK(r.action == A::Send && r.bytes == std::string(1, (char)(l - 'a' + 1)));
+        }
+    }
+    CHECK(route(0, true, 'w').bytes == "\x17");   // unix-word-rubout
+    CHECK(route(0, true, 'c').bytes == "\x03");   // interrupt
+    CHECK(route(Alt, true, 'l').bytes == "\x0c"); // clear-screen
+    CHECK(route(Alt, true, 'k').bytes == "\x0b"); // kill-line
+    // readline's punctuation: Esc, character search, quit, undo, set-mark.
+    CHECK(route(0, true, '[').bytes == "\x1b");
+    CHECK(route(0, true, ']').bytes == "\x1d");
+    CHECK(route(0, true, '\\').bytes == "\x1c");
+    CHECK(route(Shift, true, '_').bytes == "\x1f");
+    CHECK(route(0, true, '/').bytes == "\x1f");
+    CHECK((route(Shift, true, '@').bytes == std::string(1, '\0')));
+    CHECK((route(0, true, ' ').bytes == std::string(1, '\0')));
+    CHECK(route(Shift, true, '^').bytes == "\x1e");
+    // Super with Ctrl (the Mac's Ctrl+Cmd), with a key that types nothing,
+    // or with a character Ctrl makes nothing of, passes.
+    CHECK(route(Ctrl, true, 'w').action == A::Pass);
+    CHECK(route(0, true, 0).action == A::Pass);
+    CHECK(route(0, true, ';').action == A::Pass && route(0, true, '9').action == A::Pass);
+    CHECK(route(0, true, U'é').action == A::Pass);
+    // Ctrl is the Mac's Cmd: C, V and A act on the terminal, VTE's own
+    // Ctrl+Shift+C and V pass, and the rest never reach the program.
+    CHECK(route(Ctrl, false, 'c').action == A::Copy);
+    CHECK(route(Ctrl, false, 'C').action == A::Copy);   // Caps Lock
+    CHECK(route(Ctrl, false, 'v').action == A::Paste);
+    CHECK(route(Ctrl, false, 'a').action == A::SelectAll);
+    CHECK(route(Ctrl | Shift, false, 'C').action == A::Pass);
+    CHECK(route(Ctrl | Shift, false, 'V').action == A::Pass);
+    for (char32_t l : {U'w', U'u', U'k', U'r', U'l', U'd', U'z', U'x', U'[', U'2', U' ', U'/'})
+        CHECK(route(Ctrl, false, l).action == A::Drop && route(Ctrl, false, l).bytes.empty());
+    CHECK(route(Ctrl | Shift, false, 'Z').action == A::Drop);
+    CHECK(route(Ctrl | Shift, false, '_').action == A::Drop);
+    CHECK(route(Ctrl | Alt, false, 'w').action == A::Drop);
+    // Ctrl with a key that types nothing goes on to VTE (Ctrl+Left,
+    // Ctrl+Backspace), and so do Alt alone (Meta) and plain keys.
+    CHECK(route(Ctrl, false, 0).action == A::Pass);
+    CHECK(route(Alt, false, 'b').action == A::Pass);
+    CHECK(route(0, false, 'w').action == A::Pass);
+    CHECK(route(Shift, false, 'W').action == A::Pass);
+    // The control bytes, as VTE sends them for Ctrl (terminal_keys reads
+    // VTE's own for the keys it can press there).
+    CHECK(terminalControlByte('a') == 1 && terminalControlByte('Z') == 26);
+    CHECK(terminalControlByte('3') == 0x1b && terminalControlByte('8') == 0x7f);
+    CHECK(terminalControlByte('-') == 0x1f && terminalControlByte('?') == 0x7f);
+    CHECK(terminalControlByte('=') == -1 && terminalControlByte('.') == -1 &&
+          terminalControlByte(0) == -1);
 }
 
 static void testLinuxAccelerators() {

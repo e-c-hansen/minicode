@@ -51,6 +51,37 @@ static void testLineIndex() {
         CHECK(startsOf(indexOf(u"a\r\r\nb")) == (std::vector<size_t>{0, 2, 4}));
     }
 
+    GROUP("lineindex:read-in-blocks");
+    {
+        // Read a block at a time (65,536 units), the index is the one made
+        // from the whole text: a "\r\n" split by a block's end is one break,
+        // a lone '\r' ending a block is one, and the text's end is handled.
+        std::mt19937 rng(5);
+        const char16_t alphabet[] = u"ab\r\n\u2029";
+        for (size_t length : {0ul, 1ul, 65535ul, 65536ul, 65537ul, 200000ul}) {
+            std::u16string t(length, u'a');
+            for (char16_t &c : t) c = alphabet[rng() % 5];
+            if (length > 65536) t[65535] = u'\r', t[65536] = u'\n';   // split across blocks
+            size_t reads = 0, most = 0;
+            LineIndex ix;
+            ix.reset(t.size(), [&](size_t start, size_t n, char16_t *out) {
+                std::copy(t.begin() + (long)start, t.begin() + (long)(start + n), out);
+                reads++;
+                most = std::max(most, n);
+            });
+            CHECK(startsOf(ix) == startsOf(indexOf(t)) && ix.length() == t.size());
+            CHECK(most <= 65537);   // never the whole text at once
+            if (length > 65536) {   // and the lone '\r' at a block's end
+                t[65536] = u'b';
+                LineIndex lone;
+                lone.reset(t.size(), [&](size_t start, size_t n, char16_t *out) {
+                    std::copy(t.begin() + (long)start, t.begin() + (long)(start + n), out);
+                });
+                CHECK(startsOf(lone) == startsOf(indexOf(t)));
+            }
+        }
+    }
+
     GROUP("lineindex:cr-edits");
     {
         // A '\n' typed after a '\r' joins them into one break, and deleting

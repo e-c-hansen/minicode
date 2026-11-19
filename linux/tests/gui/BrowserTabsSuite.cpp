@@ -2,7 +2,8 @@
 // browser_tabs`, PARITY.md 4.5; the Mac's browser_tabs). Pages are files in
 // the project folder; nothing leaves this machine.
 //   - the pane starts with one tab (the home page), a + makes more, a click
-//     on a tab shows it, a drag along the row reorders;
+//     on a tab shows it, the wheel scrolls a row too long for the pane, a
+//     drag along the row reorders, held at its end scrolling it;
 //   - with five tabs only two keep a web view, and a suspended tab comes
 //     back at its address and title when shown;
 //   - Ctrl+PageDown, Alt+N, Ctrl+T (in the page) and Ctrl+W (the tab; the
@@ -78,6 +79,19 @@ MC_GUI_SUITE(browser_tabs) {
         GCHECK(!browser()->tabIsLive(0));
         GCHECK(at(0, "p1.html"));          // a suspended tab keeps its address
         GCHECK(browser()->tabTitle(0) == "Page 1");
+        // Tabs keep their width (TabStrip.h): five do not fit the pane, and
+        // the row is scrolled to the one on show, the first cut off.
+        TabStrip* st = browser()->strip();
+        MCGuiNote("the strip %d wide, its row %.0f, scrolled %.0f", gtk_widget_get_width(st->rowWidget()),
+                  st->contentWidth(), st->scrollOffset());
+        GCHECK(st->scrollOffset() > 0 && st->tabWidth(0) >= 80);
+        MCGuiScroll(st->titleWidget(st->count() - 1), -5);
+    });
+    MCGuiWait("the wheel scrolls the row to its start", 10, [] {
+        return browser()->strip()->scrollOffset() == 0 && MCGuiOnScreen(browser()->strip()->tabWidget(0));
+    });
+    MCGuiStep("a click on the first tab", [] {
+        GCHECK(browser()->activeTab() == 4);   // the wheel chose nothing
         MCGuiClick(browser()->strip()->tabWidget(0), 20, -1);   // shows the first
     });
     MCGuiWait("the suspended tab is shown again, at its address and title", 60, [] {
@@ -114,15 +128,26 @@ MC_GUI_SUITE(browser_tabs) {
     MCGuiWait("it is gone and the pane stays", 30, [] { return browser()->tabCount() == gBefore && shown(); });
     MCGuiStep("the editor's tabs were not touched by those keys", [] { GCHECK(MCGuiApp().browser->tabCount() == 5); });
 
-    // ---- dragging a tab along the row
-    MCGuiStep("a drag of the first tab past the last", [] {
-        GtkWidget* first = browser()->strip()->tabWidget(0);
-        GtkWidget* last = browser()->strip()->tabWidget(browser()->strip()->count() - 1);
-        graphene_point_t in = GRAPHENE_POINT_INIT(0, 0), out;
-        gtk_widget_compute_point(last, first, &in, &out);
-        const double h = gtk_widget_get_height(first) / 2.0;
-        MCGuiDrag(first, 15, h, out.x + gtk_widget_get_width(last) - 4, h);
+    // ---- dragging a tab along the row: the first and the last are not in
+    // view together, so the first is held at the strip's right end, which
+    // scrolls the row to its end (EditorTabs::dragAutoScroll), and let go.
+    MCGuiStep("the row wheeled back to its start", [] {
+        MCGuiScroll(browser()->strip()->titleWidget(0), -5);
     });
+    MCGuiWait("the first tab on screen", 10, [] {
+        return browser()->strip()->scrollOffset() == 0 && MCGuiOnScreen(browser()->strip()->tabWidget(0));
+    });
+    MCGuiStep("the first tab held down", [] { MCGuiPress(browser()->strip()->tabWidget(0), 15, -1); });
+    MCGuiStep("and taken to the strip's right end", [] {
+        GtkWidget* row = browser()->strip()->rowWidget();
+        MCGuiMoveTo(row, gtk_widget_get_width(row) - 3, gtk_widget_get_height(row) / 2.0);
+    });
+    MCGuiWait("the row scrolls to its end under it", 15, [] {
+        TabStrip* st = browser()->strip();
+        const double end = st->contentWidth() - gtk_widget_get_width(st->rowWidget());
+        return end > 0 && st->scrollOffset() == end;
+    });
+    MCGuiStep("let go", [] { MCGuiRelease(1); });
     MCGuiWait("the first page is now the last tab", 30, [] { return at(4, "p1.html") && at(0, "p2.html"); });
     MCGuiStep("the tab on show moved with it", [] { GCHECK(browser()->activeTab() == 4); });
 

@@ -4061,8 +4061,10 @@ void testSettings() {
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
-    // editor.session-web-idle-minutes, and editor.wrapping-indent.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 143);
+    // editor.session-web-idle-minutes, and editor.wrapping-indent, and
+    // terminal.mac-style-keys, and terminal.close-on-exit, and
+    // files.hot-exit.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 146);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4140,6 +4142,7 @@ void testSettings() {
           d.terminalScrollback() == 10000);
     CHECK(un.terminalOptionAsMeta() == d.terminalOptionAsMeta() &&
           d.terminalOptionAsMeta());
+    CHECK(un.terminalMacStyleKeys() == d.terminalMacStyleKeys() && !d.terminalMacStyleKeys());
     CHECK(un.developCommand() == d.developCommand() && d.developCommand() == "claude");
     CHECK(un.developSource().empty() && d.developSource().empty());
     CHECK(un.agentCommand() == d.agentCommand() && d.agentCommand() == "claude");
@@ -4541,16 +4544,20 @@ void testSettings() {
                                    "terminal.option-as-meta = false\n", &te);
         CHECK(te.empty() && t.terminalLineMode() && t.terminalScrollback() == 0 &&
               !t.terminalOptionAsMeta());
+        // Linux's Mac-style keys in the terminal (Commands::linuxMacStyleKey).
+        CHECK(parseSettings("terminal.mac-style-keys = true").terminalMacStyleKeys());
+        CHECK(!parseSettings("terminal.mac-style-keys = false").terminalMacStyleKeys());
         CHECK(!parseSettings("terminal.mode = GRID").terminalLineMode());
         CHECK(parseSettings("terminal.scrollback = 100000").terminalScrollback() == 100000);
         for (const char *bad : {"terminal.mode = tty", "terminal.scrollback = -1",
                                 "terminal.scrollback = 100001", "terminal.scrollback = 1e3",
-                                "terminal.option-as-meta = left", "terminal.colour = red"}) {
+                                "terminal.option-as-meta = left", "terminal.colour = red",
+                                "terminal.mac-style-keys = toshy"}) {
             std::vector<SettingsError> be;
             Settings b = parseSettings(bad, &be);
             CHECK(be.size() == 1);
             CHECK(!b.terminalLineMode() && b.terminalScrollback() == 10000 &&
-                  b.terminalOptionAsMeta());
+                  b.terminalOptionAsMeta() && !b.terminalMacStyleKeys());
         }
         // The surface keys under terminal. still work beside them.
         CHECK(parseSettings("terminal.text = #FF0000\nterminal.mode = line")
@@ -5214,6 +5221,15 @@ void testSettings() {
             CHECK(ie.size() == 1 && ie[0].message.find("minutes") != std::string::npos);
         }
         CHECK(parseSettings("editor.auto-save-delay = 600000\n").autoSaveDelay() == 600000);
+        // files.hot-exit: on-exit unless turned off.
+        CHECK(parseSettings("").hotExit() == Settings::HotExit::OnExit);
+        CHECK(parseSettings("files.hot-exit = off\n").hotExit() == Settings::HotExit::Off);
+        CHECK(parseSettings("files.hot-exit = on-exit\n").hotExit() == Settings::HotExit::OnExit);
+        {
+            std::vector<SettingsError> he;
+            CHECK(parseSettings("files.hot-exit = on-close\n", &he).hotExit() == Settings::HotExit::OnExit);
+            CHECK(he.size() == 1);
+        }
         for (const char *bad : {"editor.auto-save = afterDelay\n", "editor.auto-save = on\n",
                                 "editor.auto-save-delay = 99\n",
                                 "editor.auto-save-delay = 600001\n",
@@ -11677,6 +11693,7 @@ static void testMultiCaretOccurrences() {
 #include "markup_syntax_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
+#include "terminal_exit_tests.inc"
 #include "right_area_tests.inc"
 #include "browser_tabs_tests.inc"
 #include "bookmark_tests.inc"
@@ -11756,6 +11773,7 @@ int main() {
     testMarkupSyntax();
     testBracketPairs();
     testTerminalLayout();
+    testTerminalExit();
     testRightArea();
     testGettingAround();
     testAdjustSettings();

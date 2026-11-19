@@ -46,6 +46,7 @@
 #include "Mermaid.h"
 #include "MarkdownHtml.h"
 #include "FolderSearch.h"
+#include "WrapIndentTags.h"
 #include "Zoom.h"
 
 #include <algorithm>
@@ -75,6 +76,9 @@ Editor::Editor(std::shared_ptr<SessionLink::Link> link) : link_(std::move(link))
     code_ = CodeView::create(welcome_);
     view_ = code_->widget();
     buffer_ = welcome_;
+    // A new size or font (a zoom is a stylesheet's): the wrap indent's
+    // fall back and pixels follow.
+    code_->onAllocated = [this] { wrapIndentGeometryChanged(); };
     Markdown::installTooltips(GTK_TEXT_VIEW(view_));
     // A Mermaid diagram arrived (or failed): a page waiting for one is built
     // again where it stands.
@@ -336,6 +340,9 @@ Editor::~Editor() {
     autoClose_ = nullptr;
     delete brackets_;
     brackets_ = nullptr;
+    if (wrapIdle_) g_source_remove(wrapIdle_);
+    wrapIdle_ = 0;
+    if (CodeView::of(view_)) code_->onAllocated = nullptr;
     stopSettle();
     stopPlace();
     if (previewEntryTimer_) g_source_remove(previewEntryTimer_);
@@ -512,6 +519,36 @@ void Editor::setProseFont(bool prose) {
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view_), wraps ? GTK_WRAP_WORD_CHAR : GTK_WRAP_NONE);
     if (prose) gtk_widget_add_css_class(view_, "minicode-prose");
     else       gtk_widget_remove_css_class(view_, "minicode-prose");
+    if (!prose) wrapIndentGeometryChanged();   // the source's font back
+}
+
+// The wrap indent's tags (WrapIndentTags.h) from the setting, a space in
+// the source's font (the view's own, as the ruler measures it) and the room
+// a line has in the view (its text window less its margins). Only while the
+// view shows source: a page's font is not the source's. A tag whose indent
+// changes lays its lines out again; most changes change none.
+void Editor::updateWrapIndent() {
+    if (prose_) return;
+    PangoLayout* layout = gtk_widget_create_pango_layout(view_, " ");
+    PangoRectangle logical;
+    pango_layout_get_extents(layout, nullptr, &logical);
+    g_object_unref(layout);
+    const double space = (double)logical.width / PANGO_SCALE;
+    GdkRectangle vis{0, 0, 0, 0};
+    gtk_text_view_get_visible_rect(GTK_TEXT_VIEW(view_), &vis);
+    const double room = vis.width - gtk_text_view_get_left_margin(GTK_TEXT_VIEW(view_)) -
+                        gtk_text_view_get_right_margin(GTK_TEXT_VIEW(view_));
+    WrapIndentTable::configure(tags_.table, settings_.wrappingIndent(), space, room);
+}
+
+void Editor::wrapIndentGeometryChanged() {
+    if (wrapIdle_) return;
+    wrapIdle_ = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, [](gpointer p) -> gboolean {
+        Editor* self = static_cast<Editor*>(p);
+        self->wrapIdle_ = 0;
+        self->updateWrapIndent();
+        return G_SOURCE_REMOVE;
+    }, this, nullptr);
 }
 
 // Switching tabs is this: the view takes the document's buffer (D2), which
@@ -1667,6 +1704,10 @@ void Editor::applySettings(const Settings& s) {
     // Semantic tokens' tags (every tab's), and off with their setting.
     SemanticColors::applySettings(tags_.table, s);
     for (Document* d : documents()) d->semanticSettingChanged();
+    // editor.wrapping-indent: the tags' indents, and whether each tab's
+    // lines are kept tagged (WrapIndentTags.h).
+    updateWrapIndent();
+    for (Document* d : documents()) d->wrapIndentSettingChanged();
     // The tags are every tab's: each recolors with them.
     GtkTextTagTable* t = tags_.table;
     for (int i = 0; i < kTokenStyleCount; ++i)

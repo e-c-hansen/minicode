@@ -2,6 +2,7 @@
 #include "ProcessesPanel.h"
 
 #include "Appearance.h"
+#include "ListKeyboard.h"
 
 #include <algorithm>
 #include "ProcessMonitor.h"
@@ -146,6 +147,9 @@ void ProcessesPanel::refresh() {
 }
 
 void ProcessesPanel::rebuild() {
+    // Every half second the rows are made again: the panel holds the keyboard
+    // meanwhile, never a removed row (ListKeyboard.h).
+    const bool hadKeyboard = ListKeyboard::hold(list_, root_);
     int selectedPid = 0;
     if (GtkListBoxRow* sel = gtk_list_box_get_selected_row(GTK_LIST_BOX(list_))) {
         int i = gtk_list_box_row_get_index(sel);
@@ -205,6 +209,7 @@ void ProcessesPanel::rebuild() {
         if (!r.header && r.pid == selectedPid) reselect = GTK_LIST_BOX_ROW(row);
     }
     if (reselect) gtk_list_box_select_row(GTK_LIST_BOX(list_), reselect);
+    ListKeyboard::give(list_, root_, hadKeyboard, reselect);
     applyReveal();
 }
 

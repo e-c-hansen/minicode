@@ -13,11 +13,19 @@
 //     tears everything down, the program included.
 //   - Closing while `yes` floods the terminal: no crash, the shell and yes
 //     gone, no zombie left.
+//   - The shell's own end (terminal.close-on-exit, TerminalExit.h): `exit`
+//     typed at the prompt closes the terminal, torn down the same way, and
+//     as the last one takes the dock with it; Ctrl+D at an empty prompt
+//     does too; with the setting off the terminal stays, saying "Process
+//     exited (code 3)", and Return starts a new shell; a shell killed with
+//     SIGKILL never closes its terminal: "The shell ended (signal 9)",
+//     then Return starts a new one.
 // With editor.session-host on (CI's second pass) the session's host owns
 // the pty (Shared::Pty on its thread, by MCPty's rules): the same cases,
 // with the host's master, its write buffer and its reaping looked at
 // through MCSessionInspectTerminal in place of MCPty's state.
 #import "Harness.h"
+#import "AppSettings.h"
 #import "EditorController.h"
 #import "Terminal.h"
 #import "TerminalPanel.h"
@@ -302,4 +310,124 @@ MC_GUI_SUITE(terminal_pty) {
         GCHECK(!Zombie(s.pid));
         GCHECK(!Zombie(s.child));
     });
+
+    // ---- `exit` closes the terminal, and the last one the dock
+    OpenTerminal(s, @"exit");
+    MCGuiStep(@"it is the only terminal", ^{
+        // Other suites' terminals go (this one's are closed already), so
+        // closing this one is closing the last.
+        for (TerminalView *t in Panel(s).terminals) {
+            if (t == s.term) continue;
+            const BOOL asks = t.runningCommands.count > 0;
+            if (asks) MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+            [Panel(s) closeTerminal:t];
+        }
+        GCHECK(Panel(s).terminals.count == 1 && Panel(s).terminals.firstObject == s.term);
+    });
+    MCGuiStep(@"exit, typed", ^{
+        Remember(s);
+        s.child = 0;
+        TerminalGridView *grid = [s.term valueForKey:@"grid"];
+        grid.onInput([@"exit\r" dataUsingEncoding:NSUTF8StringEncoding]);
+    });
+    MCGuiWait(@"the terminal closes, and the dock with it", 10, ^BOOL {
+        return Panel(s) == nil && ![[s.c valueForKey:@"terminalVisible"] boolValue];
+    });
+    MCGuiStep(@"nothing was asked, and it is closed for good", ^{
+        GCHECK([[s.term valueForKey:@"closed"] boolValue]);
+        GCHECK(s.term.superview == nil);
+        s.term = nil;
+    });
+    WaitTornDown(s, 10);
+
+    // ---- Ctrl+D at an empty prompt
+    OpenTerminal(s, @"Ctrl+D, one of two");
+    MCGuiStep(@"a second terminal beside it", ^{
+        s.pid = s.term.shellPid;
+        [s.c newTerminal:nil];
+    });
+    MCGuiWait(@"its prompt", 20, ^BOOL {
+        TerminalView *t = [s.c valueForKey:@"terminal"];
+        return t != s.term && t.atPrompt && !t.busy;
+    });
+    MCGuiStep(@"Ctrl+D in the second", ^{
+        s.term = [s.c valueForKey:@"terminal"];
+        GCHECK(Panel(s).terminals.count == 2);
+        Remember(s);
+        TerminalGridView *grid = [s.term valueForKey:@"grid"];
+        grid.onInput([NSData dataWithBytes:"\x04" length:1]);
+    });
+    MCGuiWait(@"it closes; the first stays", 10, ^BOOL {
+        return Panel(s) && ![Panel(s).terminals containsObject:s.term] && Panel(s).terminals.count == 1;
+    });
+    MCGuiStep(@"the first is the one left", ^{
+        s.term = Panel(s).terminals.firstObject;
+        GCHECK(s.term.shellPid > 0 && s.term.atPrompt);
+    });
+    WaitTornDown(s, 10);
+    MCGuiStep(@"close the first", ^{
+        Remember(s);
+        Close(s, NO);
+    });
+    WaitTornDown(s, 10);
+
+    // ---- terminal.close-on-exit = off: "Process exited", Return for a new shell
+    MCGuiStep(@"terminal.close-on-exit = off", ^{
+        MCGuiSetSettings(@"lsp.enabled = false\nterminal.close-on-exit = off\n");
+        GCHECK(![AppSettings shared].settings.terminalCloseOnExit());
+    });
+    OpenTerminal(s, @"close-on-exit off");
+    MCGuiStep(@"exit 3", ^{
+        Remember(s);
+        TerminalGridView *grid = [s.term valueForKey:@"grid"];
+        grid.onInput([@"exit 3\r" dataUsingEncoding:NSUTF8StringEncoding]);
+    });
+    MCGuiWait(@"it says so, and stays", 10, ^BOOL {
+        return s.term.shellPid == 0 &&
+               [[s.term recentText:6] containsString:@"Process exited (code 3). Press Return to start a new shell."];
+    });
+    MCGuiStep(@"still in the dock", ^{ GCHECK([Panel(s).terminals containsObject:s.term]); });
+    {
+        // WaitTornDown forgets the terminal's pty; the terminal stays.
+        WaitTornDown(s, 10);
+    }
+    MCGuiStep(@"Return", ^{
+        TerminalGridView *grid = [s.term valueForKey:@"grid"];
+        grid.onInput([NSData dataWithBytes:"\r" length:1]);
+    });
+    MCGuiWait(@"a new shell's prompt", 20, ^BOOL {
+        return s.term.shellPid > 0 && s.term.shellPid != s.pid && s.term.atPrompt && !s.term.busy;
+    });
+    MCGuiStep(@"close it; the setting back on", ^{
+        Remember(s);
+        Close(s, NO);
+        MCGuiSetSettings(@"lsp.enabled = false\n");
+        GCHECK([AppSettings shared].settings.terminalCloseOnExit());
+    });
+    WaitTornDown(s, 10);
+
+    // ---- a shell killed: the crash is said, never a closed tab
+    OpenTerminal(s, @"SIGKILL");
+    MCGuiStep(@"SIGKILL to the shell (this suite's)", ^{
+        Remember(s);
+        GCHECK(kill(s.pid, SIGKILL) == 0);
+    });
+    MCGuiWait(@"the crash line, the terminal kept", 10, ^BOOL {
+        return s.term.shellPid == 0 &&
+               [[s.term recentText:6] containsString:@"The shell ended (signal 9). Press Return to start a new one."];
+    });
+    MCGuiStep(@"still in the dock", ^{ GCHECK([Panel(s).terminals containsObject:s.term]); });
+    WaitTornDown(s, 10);
+    MCGuiStep(@"Return", ^{
+        TerminalGridView *grid = [s.term valueForKey:@"grid"];
+        grid.onInput([NSData dataWithBytes:"\r" length:1]);
+    });
+    MCGuiWait(@"a new shell's prompt", 20, ^BOOL {
+        return s.term.shellPid > 0 && s.term.shellPid != s.pid && s.term.atPrompt && !s.term.busy;
+    });
+    MCGuiStep(@"close it", ^{
+        Remember(s);
+        Close(s, NO);
+    });
+    WaitTornDown(s, 10);
 }

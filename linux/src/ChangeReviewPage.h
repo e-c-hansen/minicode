@@ -43,6 +43,23 @@
 // no block is left, Mark Resolved, which stages the file without the
 // panel's question about conflict marks.
 //
+// A click on a file in the Source Control panel opens the page at that file
+// (revealFile), in the preview tab for a single click, as the Mac's #217.
+// After Stage, Unstage or Discard (a block or a whole file) the first read
+// started after the action keeps the place the eye was on: the row
+// ChangeReview::rowAfterAction gives (the next block of that file, else
+// what followed it) goes where the pressed row was on screen, though a
+// staged list appears above it; other reads keep the top row (anchorAt).
+//
+// A binary picture (ChangeReview::showAsImages: png, jpg, gif, webp, tiff,
+// bmp, heic, ico, icns, as far as GTK's image loaders read them) shows its
+// versions, Before and After side by side, each labelled with its size in
+// pixels and bytes, at its pixel size and never taller than 320 pixels: the
+// sizes are read from the headers and the pictures decoded at the size they
+// are drawn, on the git thread, and laid in the text over the file's first
+// RowKind::Image row (the rest hidden). An animated GIF shows its first
+// frame.
+//
 // Left to the Mac for now: the right click on a selection's lines (and the
 // Keep choices in it), F7 and Shift+F7, a commit's page.
 #pragma once
@@ -94,6 +111,10 @@ public:
 
     // Read everything again, keeping the place.
     void reload();
+    // Scroll to a file's header (its path from the top level, in the staged
+    // list or the changes) once read, or to the top for "" (the Mac's
+    // revealFile:staged:); reads again.
+    void revealFile(const std::string& rel, bool staged);
     // The changes' own: Undo Discard.
     void undoDiscard();
 
@@ -135,6 +156,12 @@ public:
     GtkWidget* undoButton() const { return undo_; }
     GtkWidget* buttonWidget(const std::string& title, size_t row) const;
     void scrollToRow(size_t row);
+    // The row's top `y` pixels below the pane's top: a scroll to a mark now
+    // (GTK waits for the lines around it to be laid out), then put right on
+    // each frame until it holds (onSettle), since a page just made and not
+    // yet given its size, or still being measured, left it elsewhere. A
+    // reveal and the place an action keeps go this way.
+    void scrollRowTo(size_t row, double y);
     GtkTextView* textView() const { return GTK_TEXT_VIEW(view_); }
     std::string rowText(size_t row) const;
     // The tint (paragraph background) a row is drawn with, "" for none.
@@ -142,6 +169,16 @@ public:
     // The block a row is in, or -1.
     int rowBlock(size_t row) const;
     size_t rowCount() const;
+    // Where a row's top is, in pixels below the top of the pane, and how
+    // tall the pane is.
+    double rowScreenY(size_t row) const;
+    double paneHeight() const;
+    long firstVisibleRow() const { return topRow(); }
+    // The pictures on show, in page order: each one's label ("Before: 4 ×
+    // 3 pixels, 75 bytes"), its widget, and the size it is drawn at.
+    std::vector<std::string> imageLabels() const;
+    std::vector<GtkWidget*> imageWidgets() const;
+    std::vector<std::pair<int, int>> imageSizes() const;
 
 private:
     struct Data;
@@ -180,6 +217,14 @@ private:
                        std::function<void(ChangeReviewPage*)> fn);
     size_t rowAtOffset(int offset) const;
     long topRow() const;
+    void applyReveal();
+    static gboolean onSettle(GtkWidget*, GdkFrameClock*, gpointer self);
+    // An action on `row`: where the eye goes once its result is read.
+    void rememberActedRow(size_t row, ChangeReview::Op op);
+    // The action's work goes to the git thread now: reads started from now
+    // on show its result.
+    void actionPosted() { actedFrom_ = readsStarted_ + 1; }
+    GtkWidget* pictureBox(size_t fi);
     static void onPressed(GtkGestureClick*, int n, double x, double y, gpointer self);
 
     GitPanel* panel_;
@@ -200,6 +245,27 @@ private:
     std::vector<Button> buttons_;
     std::vector<int> rowChar_;   // the buffer offset each row starts at
     std::vector<std::string> tints_;
+    // revealFile's file (a File::key), or the top.
+    std::string revealKey_;
+    bool revealTop_ = false;
+    // The place an action keeps (ChangeReview::ActedPlace), the pressed
+    // row's height on screen, and the first read that shows its result.
+    ChangeReview::ActedPlace acted_;
+    double actedY_ = 0;
+    unsigned actedFrom_ = 0, readsStarted_ = 0;
+    bool actedPending_ = false;
+    double rowHeight_ = 17;      // a plain row's height, for the layout's picture rows
+    struct Picture {
+        std::string label;
+        GtkWidget* widget;
+        int width, height;
+    };
+    std::vector<Picture> pictures_;   // on show
+    GtkTextMark* scrollMark_ = nullptr;
+    long settleRow_ = -1;        // scrollRowTo's row while it settles
+    double settleY_ = 0;
+    int settleFrames_ = 0, settleHeld_ = 0;
+    guint settleTick_ = 0;
 
     GtkWidget *root_ = nullptr, *title_ = nullptr, *summary_ = nullptr, *messageLabel_ = nullptr,
               *undo_ = nullptr, *scroll_ = nullptr, *view_ = nullptr, *apply_ = nullptr,

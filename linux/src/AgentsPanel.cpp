@@ -8,6 +8,7 @@
 #include "Appearance.h"
 #include "AgentView.h"
 #include "FileDetails.h"
+#include "ListKeyboard.h"
 #include "UsageView.h"
 
 namespace {
@@ -158,10 +159,18 @@ int AgentsPanel::tick(void* p) {
 }
 
 void AgentsPanel::focus() {
+    // With no sessions the list is hidden and cannot have the keyboard; the
+    // panel takes it, on screen, as the Problems panel does.
+    if (rows_.empty()) {
+        gtk_widget_set_focusable(root_, TRUE);
+        gtk_widget_grab_focus(root_);
+        return;
+    }
     if (!gtk_list_box_get_selected_row(GTK_LIST_BOX(list_)))
         if (GtkListBoxRow* r = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list_), 0))
             gtk_list_box_select_row(GTK_LIST_BOX(list_), r);
     gtk_widget_grab_focus(list_);
+    gtk_widget_set_focusable(root_, FALSE);
 }
 
 GtkWidget* AgentsPanel::rowWidget(int row) const {
@@ -175,6 +184,9 @@ std::string AgentsPanel::notice() const {
 
 void AgentsPanel::rebuild() {
     using namespace AgentModelData;
+    // The rows are made again: the panel holds the keyboard meanwhile, never
+    // a removed row (ListKeyboard.h). Before the list is hidden below.
+    const bool hadKeyboard = ListKeyboard::hold(list_, root_);
     std::string selected;
     if (GtkListBoxRow* sel = gtk_list_box_get_selected_row(GTK_LIST_BOX(list_))) {
         int i = gtk_list_box_row_get_index(sel);
@@ -308,6 +320,7 @@ void AgentsPanel::rebuild() {
         if (r.key == selected) reselect = GTK_LIST_BOX_ROW(row);
     }
     if (reselect) gtk_list_box_select_row(GTK_LIST_BOX(list_), reselect);
+    ListKeyboard::give(list_, root_, hadKeyboard, reselect);
 }
 
 void AgentsPanel::activateRow(int i) {
