@@ -65,7 +65,7 @@ found through that list.
   system lacks: cylinder is macOS 12). Folders and worktree rows keep
   theirs; the git colors tint the name, not the icon. **Icons by type**
   (2026-11-18, the owner on the GTK port: "almost none of the different
-  file types ... have non-default icons"; `linux/HANDOFF.md` item 110):
+  file types ... have non-default icons"; `linux/HANDOFF.md` item 109):
   the core's `FileIcon::typeOf` (FileDetails, `tree:icon-types`) is finer
   than `Kind`: 78 types (C, C header, C++, Python, Rust, Go, ... YAML,
   TOML, LaTeX, fonts, executables, lockfiles, git's files, config,
@@ -330,7 +330,7 @@ found through that list.
 - **A row going keeps the tree's place (GTK)** (2026-11-18, the owner: "If
   I delete a file in the filetree panel, rather than simply removing it
   from my current view, the view resets and I am brought to the top";
-  `linux/HANDOFF.md` item 110, `./build/mutible-guitest tree_edits`). Two
+  `linux/HANDOFF.md` item 109, `./build/mutible-guitest tree_edits`). Two
   causes, both fixed. Move to Trash closed the file's tab, the tab before
   it came on show, and the tree followed it (`TreeFollow`, item 107; before
   it `revealActiveInTree`): to a file near the top, the top of the tree;

@@ -463,6 +463,10 @@ private:
 
     void code(size_t from, size_t to) {
         const std::string& lang = runs_[from].lang;
+        // The rest of the info string (a notebook's "In [3]" and "Out [3]")
+        // as a small line above the block, as the window's preview sets it.
+        const std::string& label = runs_[from].label;
+        if (!label.empty()) out_ += "<div class=\"code-label\">" + escape(label) + "</div>\n";
         out_ += "<pre><code";
         if (!lang.empty()) out_ += " class=\"language-" + escape(lang) + "\"";
         out_ += ">";
@@ -521,6 +525,8 @@ const char* const kStyle =
     "code { padding: .2em .4em; border-radius: 6px; background: rgba(129, 139, 152, .12); }\n"
     "pre { padding: 16px; overflow: auto; border-radius: 6px; background: #f6f8fa; }\n"
     "pre code { padding: 0; background: none; font-size: 100%; }\n"
+    ".code-label { margin: 0 0 4px; font: 75%/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;"
+    " opacity: .65; }\n"
     "blockquote { padding: 0 1em; color: #59636e; border-left: .25em solid #d1d9e0; }\n"
     "table { border-collapse: collapse; }\n"
     "th, td { padding: 6px 13px; border: 1px solid #d1d9e0; }\n"

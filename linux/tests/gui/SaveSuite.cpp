@@ -39,7 +39,7 @@ MC_GUI_SUITE(save) {
     });
     MCGuiStep("the buffer is marked unsaved", [] {
         GCHECK(MCGuiApp().editor->dirty());
-        GCHECK(std::string(gtk_window_get_title(MCGuiApp().window)).find(" *") != std::string::npos);
+        GCHECK(std::string(gtk_window_get_title(MCGuiApp().window)).find("● ") == 0);
     });
     MCGuiStep("with the action disabled, Ctrl+S saves nothing", [] {
         g_simple_action_set_enabled(saveAction(), FALSE);
@@ -58,7 +58,7 @@ MC_GUI_SUITE(save) {
     });
     MCGuiStep("the buffer is clean and the file is what it showed", [] {
         GCHECK(!MCGuiApp().editor->dirty());
-        GCHECK(std::string(gtk_window_get_title(MCGuiApp().window)).find(" *") == std::string::npos);
+        GCHECK(std::string(gtk_window_get_title(MCGuiApp().window)).find("● ") == std::string::npos);
         GCHECK_EQ_STR(MCGuiReadFile(notesPath()), MCGuiEditorText());
     });
 }

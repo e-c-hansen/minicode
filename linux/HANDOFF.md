@@ -6601,7 +6601,70 @@ active tab").
 - **Left for a real screen**: the look of the centering and of the scroll
   jumping (no animation), and a sidebar dragged shut and open by hand.
 
-### 110. A row going keeps the tree's place; file icons by type (November 2026)
+### 108. The hints panel's search box, and the file's path in the title (November 2026)
+
+The owner's two asks on the ThinkPad: "I cannot search within the help
+panel like I can on mac mutible", and the file's path in the title while
+the editor is selected.
+
+- **What a user meets.** With the shortcut hints up (Ctrl+Shift+H), a box
+  at the panel's top, "Type to search the shortcuts". Every key without
+  Ctrl or Super, save a function key and the Menu key, types into it
+  wherever the keyboard was (the editor, the tree, the terminal, a field),
+  an Alt+letter as its letter, and no command or view sees it: Alt+Z
+  types "z", it does not toggle Word Wrap. A shortcut matches when every
+  word is found in its key or its words; the places found are marked (the
+  Mac's orange behind the text) and the rest dimmed, a heading with
+  nothing found under it too, never hidden, so the list keeps its layout
+  and scrolls to the first mark. Keys go by name ("control" finds Ctrl,
+  "opt" Alt, "return" Enter) and as combinations in any order
+  ("shift+ctrl+h" finds Ctrl+Shift+H). Esc empties the box, then closes the
+  panel, the keyboard back where it was; Return and Tab do nothing; a
+  click puts the keyboard in the box; Ctrl keys run their commands (Ctrl+B,
+  Ctrl+Shift+H closing the panel and emptying it), F1 still opens the
+  palette, and the palette's typing stays its own. The keys are drawn as
+  the core's `Commands::keyLabel(key, Platform::Linux)` draws them
+  ("Ctrl+Shift+P", "Ctrl+⏎", "⎋"; `Keys::hintLabel`), the Mac's work
+  (12d7a32c). The title follows the core's rule, the Mac's too
+  (`src/WindowTitle.h`, #200): "src/main.cpp — mutible" (the path from the
+  window's folder, "~/notes/todo.md" for a file in the home folder outside
+  it, the full path outside both, "● " in front while unsaved, the folder's
+  name with no tab) while a document pane (the editor, the tree, any pane
+  but the terminal and the browser) has the keyboard, and the terminal's
+  or the page's own title while one of those has it; it follows the
+  keyboard between panes and the tab on show. The palette and the hints'
+  box only borrow the keyboard, so the title stays as it was while they
+  have it.
+- **Code.** Core: none of its own; the search is `HintsSearch` with
+  `Spelling::Linux` and the title `WindowTitle::title`, both the Mac
+  session's. GTK:
+  `linux/src/HintsSearchBox.{h,cpp}` (the GtkSearchEntry, `takeKey`,
+  `giveBackKeyboard`, `attributes`: Pango background and foreground-alpha
+  attributes on the label); main.cpp's `hintsRows` (was `hintsText`, the
+  rows unchanged), `hintsText` (the same layout, each `HintRow` told where
+  it landed), `showHintsText`, `hintsQueryChanged`, `setHintsShown`,
+  `onHintsKey` (a key controller in the window's capture phase);
+  `setWindowTitle` and `titleFocus`, run from `updateTitle` and
+  `onFocusWidget`; `Keys::hintLabel`. The panel's columns are as they were
+  (PageMeasure::layoutHints on GTK is next).
+- **Traps.** An input method types nothing for an Alt+letter
+  (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`): forwarded, Alt+Z was lost and the
+  box held "s" (hints_panel failed so), so the box inserts the letter
+  itself; other keys are forwarded to the entry's GtkText
+  (`gtk_event_controller_key_forward`) after the box takes the keyboard,
+  so input methods and Backspace work as in any field. `onHintsKey`, added
+  to the window after GTK's own controllers, runs before the application's
+  accelerators on GTK 4.22: with no accelerator unbound, Alt+Z still
+  reached the box and Word Wrap stayed as it was (an unbinding like
+  `updateShellKeys`'s was tried and taken out as needless); a GTK that ran
+  them first would let Alt keys' commands run while the panel shows. The
+  keyboard is given back before the panel hides, or GTK puts it wherever
+  it likes.
+- **Checks**: `hints_panel` (HintsPanelSuite.cpp) and `window_title`
+  (WindowTitleSuite.cpp), their headers saying what they check; the
+  core's `hints:*` and `window-title:*` groups of `make test`.
+
+### 109. A row going keeps the tree's place; file icons by type (November 2026)
 
 The owner, on this ThinkPad: "If I delete a file in the filetree panel,
 rather than simply removing it from my current view, the view resets and I

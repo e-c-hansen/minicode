@@ -453,6 +453,11 @@ jobs:
             ccache-asan-${{ steps.ccache.outputs.compiler }}-${{ hashFiles('Makefile') }}-
             ccache-asan-${{ steps.ccache.outputs.compiler }}-
 
+      # The core links the system SQLite (SqliteRead); the runner image
+      # usually has its headers already.
+      - name: SQLite's headers
+        run: dpkg -s libsqlite3-dev >/dev/null 2>&1 || { sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libsqlite3-dev; }
+
       - name: Run core unit tests with sanitizers
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1
@@ -502,7 +507,7 @@ jobs:
       - name: Install clang and its sanitizer runtimes
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends clang-22 libclang-rt-22-dev gdb ccache
+          sudo apt-get install -y -q --no-install-recommends clang-22 libclang-rt-22-dev gdb ccache libsqlite3-dev
           clang++-22 --version
 
       # ccache in front of clang++-22 (scripts/ci-ccache.sh), as in the macOS job.

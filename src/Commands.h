@@ -143,6 +143,16 @@ struct Error {
 // Whose keys (see "platforms" below).
 enum class Platform { Mac, Linux };
 
+// A key as the shortcut hints show it, in symbols where a key has one. The
+// Mac's is glyphs(): "⇧⌘P", "⌥⌘↓", "⌘⏎". Linux's names its modifiers in
+// words, in the order GTK and VS Code write them, joined by "+", and draws
+// the keys that have a symbol as the Mac does: "Ctrl+Shift+P",
+// "Ctrl+Shift+⏎", "Alt+↑", "Shift+⇥", "⎋", "Ctrl+⌫"; Home, End, Page Up,
+// Page Down, Space, Menu, and the keypad keep their names, which read more
+// plainly there than ↖ ↘ ⇞ ⇟. Menus draw their own keys; this is for the
+// hints panels (HintsSearch.h finds keys in it by name on either platform).
+std::string keyLabel(const Key& k, Platform p);
+
 // The keys in effect: every command's, in order (the first is the one a
 // menu shows; a user's keys come before the defaults).
 class Keymap {

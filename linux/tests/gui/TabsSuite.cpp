@@ -203,7 +203,10 @@ MC_GUI_SUITE(tabs) {
     MCGuiStep("with no tab, an empty editor, and nothing to save", [] {
         GCHECK(!ed()->canSave() && ed()->currentPath().empty());
         GCHECK(MCGuiEditorText().empty());
-        GCHECK_EQ_STR(title(), "mutible");
+        // No tab: the folder's name (WindowTitle.h, the Mac's rule).
+        std::string root = MCGuiProject();
+        while (root.size() > 1 && root.back() == '/') root.pop_back();
+        GCHECK_EQ_STR(title(), root.substr(root.rfind('/') + 1) + " — mutible");
     });
 
     // ---- opening from the tree
@@ -253,7 +256,7 @@ MC_GUI_SUITE(tabs) {
     });
     MCGuiStep("the strip and the title say so", [] {
         GCHECK(stripAgrees());
-        GCHECK(title().find("tab-c.txt *") != std::string::npos);
+        GCHECK(title().find("● tab-c.txt") == 0);   // the unsaved mark in front (WindowTitle.h)
     });
     MCGuiStep("a click on a's tab", [] { MCGuiClick(strip()->titleWidget(0)); });
     MCGuiWait("a on show, as read, with the keyboard", 10, [] {
@@ -361,7 +364,7 @@ MC_GUI_SUITE(tabs) {
     MCGuiStep("no dot, no star; the other tabs keep their typing", [] {
         GCHECK(stripAgrees());
         GCHECK(!ed()->dirty());
-        GCHECK(title().find(" *") == std::string::npos);
+        GCHECK(title().find("● ") == std::string::npos);
         if (!GCHECK(ed()->tabCount() == 3)) return;   // as above: a crash ends the run
         GCHECK_EQ_STR(ed()->document(0)->text(), kA + "A typed");
         GCHECK_EQ_STR(ed()->document(1)->text(), "B typed " + kB);
@@ -513,7 +516,7 @@ MC_GUI_SUITE(tabs) {
     });
     MCGuiStep("the title has no star", [] {
         GCHECK(stripAgrees());
-        GCHECK(title().find(" *") == std::string::npos);
+        GCHECK(title().find("● ") == std::string::npos);
     });
 
     // ---- names that clash

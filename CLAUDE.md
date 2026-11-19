@@ -238,9 +238,12 @@ adding a file or looking for where something lives.
   `<kbd>`); `commands:readme` fails on a Mac chord written otherwise. The hints panel is an attributed string on
   tab stops; never align it with spaces (⌘ ⇧ ⌃ ⌫ ⏎ differ in width). Its
   stops come from the drawn widths of each column's keys and labels
-  (`PageMeasure::layoutHints`): two columns when they fit the window, else
-  one, never a row broken mid-row; it scales with the editor's zoom and
-  scrolls when taller than the window (2026-11-08). **Its search box**
+  (`PageMeasure::layoutHints`): as many columns as fit the window, their
+  heights balanced, a heading kept with its first row, never a row broken
+  mid-row; it scales with the editor's zoom and scrolls only when even
+  those columns are taller than the window (2026-11-18; two at most
+  before). Its keys come from `Commands::keyLabel(key, platform)`, the
+  one function both panels use (`docs/notes/settings-and-keys.md`). **Its search box**
   (2026-11-16, `HintsSearchBox.{h,mm}`, core `HintsSearch.h`,
   `hints:search`): while the panel shows, the key monitor asks
   `hintsPanelTakesKeyDown:` before `MCKeymapHandleKeyDown`, and every key

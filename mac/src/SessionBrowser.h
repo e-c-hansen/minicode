@@ -8,8 +8,16 @@
 // looks.
 //
 // One server per window, made the first time it is asked for and kept while
-// the window lives: 127.0.0.1 on a free port, a fresh 48-hex token, the
-// Host and Origin checks of Web::answer. Its view connects to the process's
+// the window lives: 127.0.0.1 on a free port, the Host and Origin checks of
+// Web::answer. Each Show and Copy makes a fresh link, good for one browser
+// (SessionWebAccess.h): the page trades its token for a cookie and takes it
+// out of the address bar, and the credential ends after
+// editor.session-web-idle-minutes with nothing from its browser. A browser
+// this Mac does not remember waits while a sheet on the window asks (Allow,
+// Deny, Always Allow), naming the browser and where it connects from (this
+// Mac, or the peer of an SSH tunnel into it); Always Allow remembers its id
+// in the app's defaults, which View > Remembered Browsers… lists and
+// forgets. Its view connects to the process's
 // host as a renderer that only reads, or as a guest that may edit
 // (MCSessionConnectViewer), while a browser is connected. The window's tabs that have a document on the host
 // are reported to it (Client::windowTabs) every half second while the server
@@ -60,10 +68,15 @@
 @property(nonatomic, copy) void (^browse)(NSString *url);
 // Starts serving if it is not yet: NO, with why, when it cannot.
 - (BOOL)start:(NSString **)error;
-// http://127.0.0.1:PORT/?t=TOKEN, nil until started.
+// A fresh link, http://127.0.0.1:PORT/v/ID/?t=TOKEN, good for one browser;
+// nil until started.
+- (NSString *)newLink;
+// The last link newLink made, nil until one was.
 @property(nonatomic, readonly) NSString *url;
 @property(nonatomic, readonly) int port;
 @property(nonatomic, readonly) int browsers;   // connected now
+// Browsers waiting for the window's answer, the one asked about included.
+@property(nonatomic, readonly) NSUInteger asking;
 // The window's id on the host (Client::windowTabs).
 @property(nonatomic, readonly) uint64_t windowId;
 // Sends the window's record (MCSessionWindow report) now, when it
@@ -76,5 +89,18 @@
 
 // The line the page shows where terminals would be.
 extern NSString *const MCSessionBrowserTermNote;
+// The browsers Always Allow remembered, each {id, browser, address, since}
+// (any thread), and forgetting them (the main thread).
+NSArray<NSDictionary *> *MCSessionBrowsersRemembered(void);
+void MCSessionBrowsersForget(void);
+// View > Remembered Browsers…: lists them, with Forget All.
+void MCSessionBrowsersShowRemembered(void);
+// Where a connection to the server on `serverPort` from loopback port
+// `peerPort` comes from: "this Mac", or "SSH from ADDRESS" when an SSH
+// tunnel into this Mac holds the other end (any thread).
+NSString *MCSessionBrowserPeer(int peerPort, int serverPort);
 // What opens the page: NSWorkspace's openURL: unless set (checks).
 extern void (^MCSessionBrowserOpener)(NSURL *url);
+// Checks: when set, a browser's sheet is shown only once this calls the
+// block it is given, so a check can see the page wait first.
+extern void (^MCSessionBrowserAskDelay)(dispatch_block_t ask);

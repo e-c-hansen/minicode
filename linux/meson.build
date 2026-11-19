@@ -51,6 +51,9 @@ core_sources = [
   # A browser's read-only view of a host (`mutible host --web`, stage 6b).
   core_dir / 'SessionWeb.cpp',
   core_dir / 'SessionWebPage.cpp',
+  core_dir / 'SessionWebViewers.cpp',
+  core_dir / 'SessionWebAccess.cpp',
+  core_dir / 'SqliteRead.cpp',
   core_dir / 'SessionFiles.cpp',
   # The terminals' ptys belong to the host too (stage 5): a pty per shell,
   # and a headless screen with scrollback fed its bytes, whose marks give
@@ -344,6 +347,8 @@ gui_sources = [
   'src/Math.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # The shortcut hints' search box.
+  'src/HintsSearchBox.cpp',
   # The window's panes: the sidebar, and the editor, browser and terminal
   # laid out as on the Mac.
   'src/WindowLayout.cpp',

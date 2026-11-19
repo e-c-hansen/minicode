@@ -64,6 +64,7 @@ struct MCGuiAppWindow {
     GtkWidget*  hintsPanel = nullptr;      // the shortcut hints, and their text
     GtkWidget*  hintsLabel = nullptr;
     GtkWidget*  hintsHint = nullptr;       // the status bar's note on them
+    GtkWidget*  hintsSearch = nullptr;     // their search box (HintsSearchBox.h), a GtkSearchEntry
     PalettePanel* palette = nullptr;       // the palette over the panes
     NavHistoryUi* nav = nullptr;           // Go Back and Go Forward's history
     ConsentBar* consentBar = nullptr;      // the folder's own tools' question (2.3)

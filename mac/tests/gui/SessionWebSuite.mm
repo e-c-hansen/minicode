@@ -8,8 +8,13 @@
 // follows typing and output live, in the settings file's colors and font
 // size, and recolors when the file changes. The view may edit: key events
 // dispatched into the page type into the host's shell and the file. The
-// same address with a wrong token shows only the refusal. Nothing here
-// reaches the screen.
+// link is good for one browser (SessionWebAccess.h): the page's load trades
+// its token for a cookie and takes it out of the address, a reload works
+// through the cookie, and the same link in another browser is refused. A
+// short editor.session-web-idle-minutes in the settings file ends the page's
+// credential: the page says it has expired and lets the host go. An
+// address with a wrong token shows only the refusal. Nothing here reaches
+// the screen.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 
@@ -55,6 +60,8 @@ struct Rig {
 };
 Rig* gRig = nullptr;
 WKWebView* gPage = nil;
+WKWebView* gOther = nil;     // a second browser, with no cookies of the first's
+NSString* gLink = nil;       // the link the page was opened with
 NSDictionary* gSeen = nil;   // the page as last read
 NSString* gSettings = nil;   // the settings file the page's colors come from
 
@@ -69,6 +76,8 @@ NSString* const kRead =
     @"   s.className + ' ' + s.textContent + ' ' + getComputedStyle(s).color),"
     @" screen: [...document.querySelectorAll('#screen .r')].map(r => r.textContent).join('\\n'),"
     @" bg: getComputedStyle(document.body).backgroundColor,"
+    @" href: location.href, gate: (g => g && !g.classList.contains('hidden') ? g.textContent : '')"
+    @"   (document.getElementById('gate')),"
     @" font: getComputedStyle(document.getElementById('code')).fontSize,"
     @" body: document.body ? document.body.innerText.slice(0, 300) : ''})";
 
@@ -146,14 +155,24 @@ MC_GUI_SUITE(session_web) {
         WKWebViewConfiguration* config = [WKWebViewConfiguration new];
         config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
         gPage = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 900, 700) configuration:config];
-        NSURL* url = [NSURL URLWithString:@(gRig->web.url().c_str())];
-        [gPage loadRequest:[NSURLRequest requestWithURL:url]];
+        gLink = @(gRig->web.url().c_str());
+        [gPage loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:gLink]]];
     });
     MCGuiWait(@"the page draws the file with the highlighter's colors", 30, ^BOOL {
         gRig->client->dispatch();
         Read(gPage);
         NSArray* first = gSeen[@"first"];
         return [gSeen[@"status"] hasPrefix:@"live"] && [gSeen[@"lines"] count] == 3 && first.count > 0;
+    });
+    MCGuiStep(@"the link's token is out of the address bar and the history", ^{
+        NSString* page = [NSString stringWithFormat:@"http://127.0.0.1:%d%s", gRig->web.port(),
+                                                    gRig->web.base().c_str()];
+        MCGuiNote(@"opened %@, now at %@", gLink, gSeen[@"href"]);
+        GCHECK([gLink containsString:@"?t="]);
+        GCHECK_EQ_STR(gSeen[@"href"], page);
+        GCHECK_EQ_STR(gPage.URL.absoluteString, page);
+        GCHECK(![gPage.backForwardList.currentItem.URL.absoluteString containsString:@"t="]);
+        GCHECK(gPage.backForwardList.backList.count == 0);
     });
     MCGuiStep(@"the header, the tab, the lines and their spans", ^{
         GCHECK_EQ_STR(gSeen[@"machine"], @"guitest-host");
@@ -227,8 +246,54 @@ MC_GUI_SUITE(session_web) {
             isEqualToString:HostText()]);
         MCGuiNote(@"browsers attached: %d", gRig->web.browsers());
         GCHECK(gRig->web.browsers() == 1);
+        gSeen = nil;
+        [gPage reload];
+    });
+    MCGuiWait(@"a reload shows the page again, through its cookie", 30, ^BOOL {
+        gRig->client->dispatch();
+        Read(gPage);
+        return [gSeen[@"status"] hasPrefix:@"live"] && [Joined(gSeen[@"lines"]) isEqualToString:HostText()];
+    });
+    MCGuiStep(@"still with no token in its address; the same link in another browser", ^{
+        GCHECK(![gSeen[@"href"] containsString:@"t="]);
+        GCHECK_EQ_STR(gSeen[@"gate"], @"");
+        WKWebViewConfiguration* config = [WKWebViewConfiguration new];
+        config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
+        gOther = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 400, 700) configuration:config];
+        [gOther loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:gLink]]];
+    });
+    MCGuiWait(@"is refused: the link was used", 20, ^BOOL {
+        Read(gOther, kReadBody);
+        return [gSeen[@"body"] containsString:@"used already"];
+    });
+    MCGuiStep(@"a short idle time in the settings file, and nothing from the page", ^{
+        GCHECK(gRig->web.browsers() == 1);
+        [gOther stopLoading];
+        gOther = nil;
+        MCGuiWriteFile(gSettings, @"theme = light-plus\neditor.background = #FAFAF0\n"
+                                  @"editor.font-size = 16\nsyntax.keyword = #AA0011\n"
+                                  @"editor.session-web-idle-minutes = 0.05\n");
+    });
+    MCGuiWait(@"the page says it has expired", 30, ^BOOL {
+        Read(gPage);
+        return [gSeen[@"gate"] isEqualToString:@(Shared::Web::kExpiredText)];
+    });
+    MCGuiWait(@"and its socket is closed", 20, ^BOOL {
+        Read(gPage);
+        return gRig->web.browsers() == 0 && [gSeen[@"status"] isEqualToString:@"expired"];
+    });
+    MCGuiStep(@"a reload says the same; then a wrong token", ^{
+        gSeen = nil;
+        [gPage reload];
+    });
+    MCGuiWait(@"the reload's answer is the sentence", 20, ^BOOL {
+        Read(gPage, kReadBody);
+        return [gSeen[@"body"] containsString:@(Shared::Web::kExpiredText)];
+    });
+    MCGuiStep(@"an address with a wrong token", ^{
         // A wrong token: only the refusal.
-        NSString* bad = [NSString stringWithFormat:@"http://127.0.0.1:%d/?t=%@", gRig->web.port(),
+        NSString* bad = [NSString stringWithFormat:@"http://127.0.0.1:%d%s?t=%@", gRig->web.port(),
+                                                   gRig->web.base().c_str(),
                                                    [@"" stringByPaddingToLength:48 withString:@"0"
                                                                     startingAtIndex:0]];
         gSeen = nil;
