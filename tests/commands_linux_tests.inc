@@ -156,6 +156,10 @@ static void testLinuxCommandDefaults() {
     CHECK(HasKey(d, "editor.action.copyLinesUpAction", "alt+shift+up") &&
           HasKey(d, "editor.action.copyLinesDownAction", "alt+shift+down"));
     CHECK(HasKey(d, "cursorTop", "ctrl+home") && HasKey(d, "cursorBottomSelect", "ctrl+shift+end"));
+    // VS Code's cursorHome and cursorEnd (#213), the view's own keys.
+    CHECK(HasKey(d, "cursorHome", "home") && HasKey(d, "cursorHomeSelect", "shift+home") &&
+          HasKey(d, "cursorEnd", "end") && HasKey(d, "cursorEndSelect", "shift+end"));
+    CHECK(d.commandFor(K("home"), When::Terminal) == nullptr);
     CHECK(std::string(menuOf(*find("editor.action.moveLinesUpAction"), Platform::Linux)) == "Edit");
     CHECK(std::string(menuOf(*find("editor.action.moveLinesUpAction"), Platform::Mac)) == "Editor");
     // Editor commands: in the terminal the shell keeps Ctrl+D and Ctrl+L.

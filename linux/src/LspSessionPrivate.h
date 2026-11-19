@@ -331,3 +331,10 @@ struct LspSession::FoldingState {
     guint timer = 0;
     int gen = 0;   // bumped by every question and every switch
 };
+
+// ---- JSON the editor checks itself (LspSessionJsonCheck.cpp)
+struct LspSession::JsonCheckState {
+    std::string uri;            // the file on show's, while it is checked
+    guint timer = 0;
+    uint64_t generation = 0;    // bumped by every check and every switch
+};

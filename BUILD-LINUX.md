@@ -1598,6 +1598,13 @@ that are files, databases made with the C API) on Xvfb. The details are in
   yourself, start Claude Code in two terminal tabs and a split, and see the
   dot (" ●") and the done mark (" ✓") on the right tab, Next Waiting Terminal
   landing on it, and `mutible state` listing each terminal with its own id.
+- [ ] Home, End and wrapped indentation (`linux/HANDOFF.md` item 114): in
+  an indented Python line, Home twice and back, End, Shift+Home, with a
+  real keyboard (a laptop's Fn+arrows too); on a wrapped line, End goes to
+  the row's end first. A long indented line, wrapped, goes on under its
+  first character; say how it looks as the window is resized and zoomed
+  (Ctrl+= and Ctrl+-), with editor.wrapping-indent = indent and none. A
+  package.json with a trailing comma shows a red squiggle and one problem.
 
 ### Sessions and losing work
 

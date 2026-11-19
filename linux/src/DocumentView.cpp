@@ -13,6 +13,7 @@
 #include "LargeFileView.h"
 #include "MultiEdit.h"
 #include "SemanticColors.h"
+#include "WrapIndentTags.h"
 #include "SessionLink.h"
 #include "MarkdownTasks.h"
 #include "StartupLog.h"
@@ -181,6 +182,11 @@ Document::Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<Sessi
     LongLines::attach(buffer_);
     brackets_ = std::make_unique<BracketColors>(buffer_);
     semantic_ = std::make_unique<SemanticColors>(buffer_);
+    // Wrapped lines keep their indentation (WrapIndentTags.h): on once it
+    // holds source text (wrapIndentSettingChanged, from startHighlighting).
+    wrap_ = std::make_unique<WrapIndentTags>(buffer_, [this](size_t& first, size_t& end) {
+        visibleLines(first, end);
+    });
     // An empty text until it holds something: the session's host has it
     // from the start, so typing into a new file is followed too. A held
     // one's text comes back as one insertion (attachHeld waits for it).
@@ -279,6 +285,7 @@ Document::~Document() {
     if (backup_.written) BackupStore::shared().remove(backup_.id);
     if (!detached_ && client().isOpen(id_)) client().close(id_);
     folds_.reset();
+    wrap_.reset();   // while the buffer is there to leave
     cancelLoading();
     stopWatching();
     if (taskTimer_) g_source_remove(taskTimer_);
@@ -1201,6 +1208,9 @@ void Document::restartHighlighting() {
 }
 
 void Document::startHighlighting() {
+    // A new text, kind or name, or large-file mode turned on or off: the
+    // wrap indent's tags follow (WrapIndentTags.h).
+    wrapIndentSettingChanged();
     // Highlight tags are only ever put on by a highlighter (onApplyTag keeps
     // a paste's off), so without one there are none to take off: taking
     // them off a whole large file on show cost about 25 ms a tag, on every
@@ -1361,6 +1371,12 @@ void Document::paintSemanticOnScreen() {
 
 void Document::semanticSettingChanged() {
     if (!host_->documentSettings().semanticHighlighting()) semantic_->clear();
+}
+
+void Document::wrapIndentSettingChanged() {
+    if (!wrap_) return;
+    wrap_->setOn(kind_ == Kind::Text && !largeFileFeaturesOff() &&
+                 host_->documentSettings().wrappingIndent() != WrapIndent::Mode::None);
 }
 
 void Document::bracketSettingChanged() {
