@@ -118,6 +118,14 @@ static void testMathTexIsolation() {
                  "\\catcode`\\@=11",
                  "\\scantokens{\\special{x}}",
                  "\\^^73pecial{x}",
+                 // Letters joined by what prepare() drops (round 10's
+                 // documents defect 1): \label{...} or an equation
+                 // environment between the halves of a word.
+                 "\\glo\\label{q}bal\\def\\x{1}",
+                 "\\glo\\begin{equation}bal\\def\\x{1}",
+                 "\\glo\\end{equation*}bal\\def\\x{1}",
+                 "\\catc\\label{x}ode`\\|=0 |pagecolor{red}",
+                 "\\Xe\\label{x}TeXpicfile \"/etc/x.png\"",
              }) {
             const std::string why = check(tex);
             CHECK(!why.empty());
@@ -144,6 +152,27 @@ static void testMathTexIsolation() {
         CHECK(check("\\special{x}") == "\\special is not allowed in a formula");
         CHECK(check("\\begin{special}{x}") == "\\begin{special} is not allowed in a formula");
         CHECK(check("\\begin\\x") == "\\begin needs an environment's name in braces");
+        CHECK(check("\\glo\\label{q}bal\\def\\x{1}") == "\\global is not allowed in a formula");
+        // A Greek capital or omicron that TeX spells as a Latin letter is
+        // braced, so it never joins the control word before it: the same
+        // defect's \gl, omicron, bal (\global), \catc, omicron, de
+        // (\catcode) and \Xe, Tau, eXpicfile stay an unknown word and
+        // letters.
+        for (const char *tex : {"\\gl\xce\xbf" "bal\\def\\x{1}",
+                                "\\catc\xce\xbf" "de`\\|=0 |pagecolor{red}",
+                                "\\Xe\xce\xa4" "eXpicfile \"/etc/x.png\""}) {
+            for (const bool display : {false, true}) {
+                const std::string out = MathTex::prepare(tex, display);
+                CHECK(out.find("\\global") == std::string::npos &&
+                      out.find("\\catcode") == std::string::npos &&
+                      out.find("\\XeTeX") == std::string::npos);
+                CHECK(out.find("{o}") != std::string::npos || out.find("{T}") != std::string::npos);
+            }
+        }
+        CHECK(MathTex::prepare("\\Xe\xce\xa4" "eX", false) == "\\Xe{T}eX");
+        CHECK(MathTex::prepare("\\cdot\xce\x91", false) == "\\cdot{A}");
+        CHECK(MathTex::prepare("x_\xce\xbf", false) == "x_{o}");
+        CHECK(check("\\alpha\xce\x91 + \xce\x9c").empty());
 
         // Every formula of tests/markdown/math.md still passes, unless for
         // a reason it had before.
@@ -221,6 +250,6 @@ static void testMathTexIsolation() {
         // Without the nonce the forged lines would have counted.
         CHECK(MathTex::readLog(log, 2)[1].measured);
 
-        CHECK(MathTex::kVersion == 4);   // pictures made by the old batch are not reused
+        CHECK(MathTex::kVersion == 5);   // pictures made by the old batch (bare spelled letters) are not reused
     }
 }

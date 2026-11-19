@@ -228,4 +228,24 @@ std::pair<size_t, size_t> sourceOffsetFor(const std::string& source, const std::
     return {src.at[best], src.at[best + w.size() - 1] + 1};
 }
 
+std::pair<size_t, size_t> rebaseSpan(const std::string& base, size_t start, size_t end,
+                                     const std::string& now) {
+    const size_t npos = std::string::npos;
+    if (start > end || end > base.size()) return {npos, npos};
+    if (base == now) return {start, end};
+    // The texts' common ends: the change lies between them.
+    const size_t a = base.size(), b = now.size();
+    size_t head = 0;
+    while (head < a && head < b && base[head] == now[head]) head++;
+    size_t tail = 0;
+    while (tail < a - head && tail < b - head && base[a - 1 - tail] == now[b - 1 - tail]) tail++;
+    if (end <= head) return {start, end};                               // all before the change
+    if (start >= a - tail) return {start + b - a, end + b - a};         // all after it
+    if (start == end) return {npos, npos};
+    const std::string span = base.substr(start, end - start);
+    const size_t at = now.find(span);
+    if (at == npos || now.find(span, at + 1) != npos) return {npos, npos};
+    return {at, at + span.size()};
+}
+
 }  // namespace MarkdownEdit

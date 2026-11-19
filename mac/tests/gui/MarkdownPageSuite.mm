@@ -14,8 +14,10 @@
 // margin, cut off where the page's column starts). And the page's edit
 // box (D2 on 1.6.3 and 1.6.4): what is typed in it survives a switch to
 // another app, a close other than Esc applies it, its button says Apply,
-// and with two editor groups a double-click on the other group's page
-// opens it on the first try.
+// an agent's rewrite of the file while it is open is kept (the edit lands
+// where its paragraph now is, or, that paragraph rewritten, goes to the
+// clipboard), and with two editor groups a double-click on the other
+// group's page opens it on the first try.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -594,6 +596,75 @@ MC_GUI_SUITE(markdown_page) {
         MCGuiUndoGroup(tv.undoManager, ^{ [c commitPageEdit]; });
         GCHECK([c.sourceText containsString:@"Another paragraph, kept for the save."]);
         GCHECK(!panel.edited);
+    });
+    // An agent rewrites the file while the box is open (round 10's
+    // documents defect 3, checked here as on the LaTeX page): the clean
+    // tab reads the rewrite in, and Apply puts the edit where its block is
+    // now, keeping the rewrite; when the rewrite changed that block, the
+    // edit goes to the clipboard and the rewrite stays.
+    NSString *agentDoc = [dir stringByAppendingPathComponent:@"agent.md"];
+    NSString *const agentText = @"# Notes\n\nThe first paragraph.\n\nA paragraph with a wrod.\n";
+    __block NSString *rewrite = nil;
+    MCGuiStep(@"the box open on a paragraph, an agent rewrites the file", ^{
+        MCGuiWriteFile(agentDoc, agentText);
+        GCHECK([c showFile:agentDoc]);
+        if (!c.previewMode) [c togglePreview:nil];
+        GCHECK(c.previewMode && !c.dirty);
+        NSTextView *tv = [c valueForKey:@"textView"];
+        const NSRange word = [tv.string rangeOfString:@"wrod"];
+        GCHECK(word.location != NSNotFound);
+        if (word.location == NSNotFound) return;
+        const NSRect r = [c textRectForCharacter:word.location + 1];
+        GCHECK([c editMarkdownAtCharacter:word.location + 1 point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        GCHECK_EQ_STR(EditBox(c).string, @"A paragraph with a wrod.");
+        [EditBox(c) insertText:@"word" replacementRange:[EditBox(c).string rangeOfString:@"wrod"]];
+        rewrite = @"# Notes\n\nAn agent added this line.\n\nThe first paragraph, rewritten.\n\n"
+                  @"A paragraph with a wrod.\n\nAnd a closing line.\n";
+        MCGuiWriteFile(agentDoc, rewrite);
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the clean tab reads the rewrite, the box still open", 10, ^BOOL {
+        return [c.sourceText isEqualToString:rewrite];
+    });
+    MCGuiStep(@"Apply: the edit lands in its paragraph, the agent's lines kept", ^{
+        MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
+        GCHECK(panel.edited);
+        MCGuiUndoGroup([[c valueForKey:@"textView"] undoManager], ^{
+            [panel performSelector:@selector(save:) withObject:nil];
+        });
+        MCGuiNote(@"text now: %@", c.sourceText);
+        GCHECK_EQ_STR(c.sourceText, [rewrite stringByReplacingOccurrencesOfString:@"wrod"
+                                                                       withString:@"word"]);
+        // Undone, the agent's text, not the one the box opened on.
+        [[[c valueForKey:@"textView"] undoManager] undo];
+        GCHECK_EQ_STR(c.sourceText, rewrite);
+    });
+    MCGuiStep(@"the box open again, the agent rewrites that very paragraph", ^{
+        GCHECK(!c.dirty);
+        NSTextView *tv = [c valueForKey:@"textView"];
+        const NSRange word = [tv.string rangeOfString:@"wrod"];
+        GCHECK(word.location != NSNotFound);
+        if (word.location == NSNotFound) return;
+        const NSRect r = [c textRectForCharacter:word.location + 1];
+        GCHECK([c editMarkdownAtCharacter:word.location + 1 point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        [EditBox(c) insertText:@"word" replacementRange:[EditBox(c).string rangeOfString:@"wrod"]];
+        rewrite = [rewrite stringByReplacingOccurrencesOfString:@"A paragraph with a wrod."
+                                                     withString:@"A paragraph the agent fixed."];
+        MCGuiWriteFile(agentDoc, rewrite);
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"(read in)", 10, ^BOOL { return [c.sourceText isEqualToString:rewrite]; });
+    MCGuiStep(@"Apply changes nothing: the rewrite stays, the draft is on the clipboard", ^{
+        MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
+        [panel performSelector:@selector(save:) withObject:nil];
+        GCHECK_EQ_STR(c.sourceText, rewrite);
+        GCHECK(!c.dirty);
+        GCHECK_EQ_STR([NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString],
+                      @"A paragraph with a word.");
+        NSString *note = [[c valueForKey:@"settingsLabel"] stringValue];
+        MCGuiNote(@"status: %@", note);
+        GCHECK([note containsString:@"your edit was not applied"]);
+        GCHECK([c closeTab:[c valueForKey:@"activeTab"] prompt:NO]);
     });
     // Two editor groups, a page in each: a double-click in the group
     // without the keyboard opens the box on the first try.

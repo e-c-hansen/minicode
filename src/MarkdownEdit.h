@@ -58,4 +58,18 @@ std::pair<size_t, size_t> sourceOffsetFor(const std::string& source, const std::
                                           const std::string& before = "",
                                           const std::string& after = "");
 
+// Where bytes [start, end) of `base`, the text an edit box opened on, are
+// in `now`, the text when its edit is applied (an agent, a reload from
+// disk or Cmd+Z may have changed it meanwhile): the same offsets when
+// nothing changed, or the change lies wholly after them; shifted when it
+// lies wholly before them; else the one place in `now` holding exactly
+// those bytes. Both std::string::npos when the span's own text changed,
+// is empty, or is in `now` more than once: the caller refuses the edit
+// then, rather than splice at a guess. Either way only bytes equal to the
+// ones the box showed are ever replaced, so applying never reverts what
+// someone else wrote (the Markdown page's and the LaTeX preview's boxes,
+// round 10's documents defect 3).
+std::pair<size_t, size_t> rebaseSpan(const std::string& base, size_t start, size_t end,
+                                     const std::string& now);
+
 }  // namespace MarkdownEdit

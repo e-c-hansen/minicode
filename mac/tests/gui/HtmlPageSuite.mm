@@ -6,8 +6,10 @@
 // html.scripts = on); the page never takes the keyboard by itself, even
 // from an autofocus field and a script's focus(); Shift+Cmd+V flips to the
 // source and back; a save, and a write from outside, load the page again
-// with its scroll kept; a link opens its file in a tab of its own; a page
-// with no scripts is never asked about. Open Preview to the Side puts the
+// with its scroll kept; a link opens its file in a tab of its own; a meta
+// refresh to zoommtg:// never reaches openURL:, nor one to https:// the
+// browser pane while scripts are off; a page with no scripts is never
+// asked about. Open Preview to the Side puts the
 // page beside the editable source, follows the typing before any save
 // (its stylesheet and picture still the folder's), and closes again.
 //
@@ -249,6 +251,50 @@ MC_GUI_SUITE(html_page) {
     MCGuiStep(@"a page with no scripts is not asked about; the answered line went with the open", ^{
         GCHECK(c.viewerKind == MCViewerHtml && c.previewMode);
         GCHECK(!Page(c).asking && !Page(c).noting && Page(c).questionBar.hidden);
+    });
+
+    // A page that goes somewhere by itself (round 10's documents defect
+    // 2): a meta refresh to another app's scheme opened that app with no
+    // click. Only a link the user clicks, or a form they send, is followed;
+    // a web address the page goes to by itself only while its scripts run.
+    __block NSUInteger openedBefore = 0;
+    MCGuiStep(@"a page whose meta refresh goes to zoommtg://", ^{
+        openedBefore = MCGuiOpenedURLs().count;
+        MCGuiWriteFile(F(@"refresh.html"),
+                       @"<html><head><title>Refresh</title>"
+                       @"<meta http-equiv=\"refresh\" content=\"0; url=zoommtg://zoom.us/join?confno=1\">"
+                       @"</head><body><p id=marker>refreshing</p></body></html>");
+        GCHECK([c showFile:F(@"refresh.html")]);
+    });
+    MCGuiWait(@"loads", 20, ^BOOL { return Loaded(c, @"refresh.html", 1); });
+    MCGuiWait(@"and its refresh is refused, said in the status bar", 10, ^BOOL {
+        return [[[c valueForKey:@"settingsLabel"] stringValue] containsString:@"zoommtg://"];
+    });
+    MCGuiStep(@"nothing reached openURL:, and the page is still the file", ^{
+        NSArray<NSURL *> *opened = MCGuiOpenedURLs();
+        MCGuiNote(@"opened %@; status \"%@\"", opened,
+                  [[c valueForKey:@"settingsLabel"] stringValue]);
+        GCHECK(opened.count == openedBefore);
+        for (NSURL *u in opened) GCHECK(![u.scheme.lowercaseString isEqualToString:@"zoommtg"]);
+        GCHECK([c.currentPath hasSuffix:@"/refresh.html"] && c.viewerKind == MCViewerHtml);
+        GCHECK([[[c valueForKey:@"settingsLabel"] stringValue]
+            containsString:@"mutible did not open it"]);
+    });
+    MCGuiStep(@"one to a web address, with no scripts running", ^{
+        MCGuiWriteFile(F(@"refresh-web.html"),
+                       @"<html><head><title>Web</title>"
+                       @"<meta http-equiv=\"refresh\" content=\"0; url=https://example.invalid/\">"
+                       @"</head><body><p>refreshing</p></body></html>");
+        GCHECK([c showFile:F(@"refresh-web.html")]);
+    });
+    MCGuiWait(@"is not followed either", 20, ^BOOL {
+        return Loaded(c, @"refresh-web.html", 1) &&
+               [[[c valueForKey:@"settingsLabel"] stringValue] containsString:@"example.invalid"];
+    });
+    MCGuiStep(@"(nothing opened, the page still the file)", ^{
+        GCHECK(MCGuiOpenedURLs().count == openedBefore);
+        GCHECK([c.currentPath hasSuffix:@"/refresh-web.html"]);
+        GCHECK([[[c valueForKey:@"settingsLabel"] stringValue] containsString:@"was not followed"]);
     });
 
     // ------------------------------------------------- remembered answers

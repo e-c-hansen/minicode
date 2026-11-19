@@ -68,6 +68,7 @@ static NSString *gStep;
 static NSMutableArray<NSNumber *> *gAnswers;
 static NSMutableArray<NSString *> *gAlerts;
 static NSMutableArray<NSString *> *gSheets;
+static NSMutableArray<NSURL *> *gOpenedURLs;
 static NSString *gLastInformative;
 static __weak NSWindow *gLastSheetWindow;
 static __weak NSWindow *gKeyWindow;
@@ -301,6 +302,7 @@ void MCGuiAnswerAlerts(NSArray<NSNumber *> *answers) {
 }
 NSArray<NSString *> *MCGuiAlertsShown(void) { return [gAlerts copy] ?: @[]; }
 NSArray<NSString *> *MCGuiSheetsShown(void) { return [gSheets copy] ?: @[]; }
+NSArray<NSURL *> *MCGuiOpenedURLs(void) { return [gOpenedURLs copy] ?: @[]; }
 NSString *MCGuiLastAlertInformative(void) { return gLastInformative ?: @""; }
 NSWindow *MCGuiLastSheetWindow(void) { return gLastSheetWindow; }
 
@@ -1063,7 +1065,11 @@ static void InstallSwizzles(void) {
     ReplaceClass(NSPasteboard.class, @selector(generalPasteboard), ^NSPasteboard *(id) {
         return [NSPasteboard pasteboardWithName:Env(@"MUTIBLE_PASTEBOARD") ?: @"ai.ible.mutible.guitest"];
     });
-    Replace(NSWorkspace.class, @selector(openURL:), ^BOOL(id, NSURL *) { return YES; });
+    Replace(NSWorkspace.class, @selector(openURL:), ^BOOL(id, NSURL *url) {
+        if (!gOpenedURLs) gOpenedURLs = [NSMutableArray array];
+        if (url) [gOpenedURLs addObject:url];
+        return YES;
+    });
 }
 
 // ---------------------------------------------------------------- setup

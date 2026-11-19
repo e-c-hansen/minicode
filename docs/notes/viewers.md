@@ -32,8 +32,20 @@ found through that list.
   stamp moved: from `showText:` (a toggle back, a clean tab following the
   disk) and from `recordStamp:ofTab:` (a save, Keep Mine) through
   `htmlFileMayHaveChanged`. Every main-frame navigation away from the
-  tab's own file (a link, a script, a drop) is cancelled and handed to
-  `openMarkdownLink:`; a target=_blank too. **Scripts** (the owner's call,
+  tab's own file (a link, a script, a drop) is cancelled; a link the user
+  clicked or a form they sent (`WKNavigationTypeLinkActivated`,
+  `FormSubmitted`) goes to `openMarkdownLink:`, a target=_blank too; one
+  the page started by itself (a meta refresh, a script setting location,
+  `window.open`) only when it is http(s) and the page's scripts run
+  (`MCHtmlMayFollow`), else it goes to `onRefused` and the status bar
+  names it (`htmlPageRefused:`). **Trap** (round 10's documents defect
+  2, 2026-11-19): a `<meta http-equiv="refresh">` to `zoommtg://` (any
+  app's scheme) went to `openURL:` with no click, and an https one
+  loaded in the browser pane; `html.scripts` never applied, since a
+  meta refresh is not a script. `html_page` loads both kinds and checks
+  nothing reached `openURL:` (`MCGuiOpenedURLs`, the harness records
+  it). Not done: the GTK port's `HtmlPage::started` still opens the
+  address a main-frame load the page started by itself goes to. **Scripts** (the owner's call,
   2026-11-15, against "nothing runs because a file was opened"):
   `html.scripts` (ask, on, off); with ask, a page whose text
   `FileSniff::htmlMayRunScripts` flags shows with
@@ -206,6 +218,7 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- Viewers in the editor's slot (Mac): **Trap** (round 10's documents defect 2, 2026-11-19): a `<meta http-equiv="refresh">` to `zoommtg://` (any app's scheme) went to `openURL:` with no click, and an https one loaded in the browser pane; `html.scripts` never applied, since a meta refresh is not a script.
 - CSV and TSV: **Trap (round 9)**: the grid's `validateMenuItem:` ended in `[super validateMenuItem:]`, which NSTableView does not have (it validates through `validateUserInterfaceItem:`), so validating any menu item the grid was the target of threw, AppKit dropped the key, and no menu key worked while the grid had the keyboard: Shift+Cmd+P "did nothing".
 - JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).
 - Viewers in the editor's slot (Mac): Trap: laying both panes out to size them took 1.5 s on the main thread for 50,000 lines a side; every row has one fixed height (a paragraph style), so sizes and row rects are arithmetic and layout is non-contiguous.

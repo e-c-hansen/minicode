@@ -19,7 +19,7 @@
 
 namespace MathTex {
 
-const int kVersion = 4;
+const int kVersion = 5;
 
 namespace {
 
@@ -199,7 +199,12 @@ std::string spellUnicode(const std::string& s) {
         for (bool g : groups) inText = inText || g;
         if (!tex) out += s.substr(i, n);
         else if (inText) out += std::string("\\ensuremath{") + tex + "}";
-        else out += std::string(tex) + (tex[0] == '\\' ? " " : "");
+        else if (tex[0] == '\\') out += std::string(tex) + " ";
+        // A letter braced: bare, it would join a control word before it
+        // (\gl and an omicron and bal would be \global; round 10's
+        // documents defect 1), and {A} is the same atom in math.
+        else if (isLetter(tex[0])) out += std::string("{") + tex + "}";
+        else out += tex;
         i += n;
     }
     return out;
@@ -340,7 +345,9 @@ std::string environmentRefused(const std::string& tex, size_t i, bool isEnd) {
 
 }  // namespace
 
-std::string check(const std::string& tex) {
+namespace {
+
+std::string checkText(const std::string& tex) {
     // ^^ followed by two hex digits is any character to TeX, read before
     // anything else, so ^^5c is a backslash and \^^69nput is \input. In a
     // formula it is otherwise only a double superscript, which is an error.
@@ -378,6 +385,21 @@ std::string check(const std::string& tex) {
         else if (c == '$' && depth == 0) return "a $ inside the formula";
     }
     if (depth > 0) return "a { that is never closed";
+    return "";
+}
+
+}  // namespace
+
+std::string check(const std::string& tex) {
+    if (std::string why = checkText(tex); !why.empty()) return why;
+    // What TeX is given is checked too: prepare() drops \label{...}, an
+    // equation environment's \begin and \end, \nonumber and \notag, and
+    // spells Unicode letters in TeX, so the letters either side of what it
+    // drops could join into a word the formula as written never had
+    // (\glo\label{q}bal is \global, \catc and an omicron and de is
+    // \catcode; round 10's documents defect 1).
+    for (const bool display : {false, true})
+        if (std::string why = checkText(prepare(tex, display)); !why.empty()) return why;
     return "";
 }
 
