@@ -253,6 +253,42 @@ static void testMarkdownGfm() {
         CHECK(mdText(P::parse("[^z]: N\n\n    ```\n    a\n    ```\n")).find('a') == std::string::npos);
     }
 
+    GROUP("md:list-numbers");
+    {
+        // An ordered list counts on from its first item's number, whatever
+        // the later items say (CommonMark, GitHub): "1. 3. 4. 5." reads
+        // 1, 2, 3, 4 (the owner's STATUS.md, 2026-11-18).
+        auto markers = [](const std::string &md) {
+            std::string out;
+            for (const MdRun &r : P::parse(md))
+                if (r.marker) out += r.text + "|";
+            return out;
+        };
+        CHECK(markers("1. a\n3. b\n4. c\n5. d\n") == "  1. |  2. |  3. |  4. |");
+        CHECK(markers("3. x\n4. y\n9. z\n") == "  3. |  4. |  5. |");
+        CHECK(markers("0. a\n0. b\n") == "  0. |  1. |");
+        // A loose list (blank lines between items) is still one list.
+        CHECK(markers("1. a\n\n1. b\n\n1. c\n") == "  1. |  2. |  3. |");
+        // A paragraph under an item keeps the list going; one out of it ends it.
+        CHECK(markers("1. a\n\n   more of a\n\n7. b\n") == "  1. |  2. |");
+        CHECK(markers("1. a\n\nbetween\n\n7. b\n") == "  1. |  7. |");
+        CHECK(markers("1. a\n# Heading\n4. b\n") == "  1. |  4. |");
+        // Another delimiter or a bullet starts another list.
+        CHECK(markers("1. a\n5) b\n6) c\n") == "  1. |  5) |  6) |");
+        CHECK(markers("1. a\n- b\n4. c\n") == "  1. |  \xE2\x80\xA2 |  4. |");
+        // Nested lists count on their own, and a sibling of their item ends them.
+        CHECK(markers("1. a\n   3. x\n   3. y\n1. b\n   8. z\n") ==
+              "  1. |    3. |    4. |  2. |    8. |");
+        // In a quote too; a task keeps the counted number before its box.
+        CHECK(markers("> 2. a\n> 2. b\n") == "  2. |  3. |");
+        CHECK(markers("1. [ ] a\n1. [x] b\n") == "  1. \xE2\x98\x90 |  2. \xE2\x98\x91 |");
+        // The HTML export starts the list at the first number and the
+        // browser counts on, as the page does.
+        const std::string html = MarkdownHtml::page("4. a\n1. b\n", "t");
+        CHECK(html.find("<ol start=\"4\">") != std::string::npos);
+        CHECK(html.find("start=\"1\"") == std::string::npos);
+    }
+
     GROUP("md:numbered-task");
     {
         // A task in an ordered list keeps its number before the box.

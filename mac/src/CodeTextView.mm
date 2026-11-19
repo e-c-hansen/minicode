@@ -171,26 +171,35 @@ struct Counting {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-// needsDisplay = YES asks to redraw the whole view, and NSTextView lays out
-// every glyph in a rect it is asked to redraw: clearing a file's squiggles
-// laid out all of a 25 MB file (2.5 s), after which every keystroke walked
-// every line fragment. Only what shows, and what AppKit drew ahead of the
-// scroll (the prepared rect), can need redrawing.
+// needsDisplay = YES asks to redraw the whole view, and NSTextView's
+// setNeedsDisplayInRect: lays out every glyph in the rect it is given:
+// clearing a file's squiggles laid out all of a 25 MB file (2.5 s), after
+// which every keystroke walked every line fragment. So the whole view is
+// marked without that layout (TextKit marks a new text's column the same
+// way, the document's whole height at once; only what is drawn costs).
+// It was the visible and prepared rects until 2026-11-18, and that left
+// ink: NSTextView marks itself whole this way when its inset changes (a
+// page's centered margins, as the pane widens), and the layer keeps
+// drawn tiles past those rects, whose column the new layout's marks
+// redrew while their margins kept an older page (the owner's STATUS.md:
+// a second, narrower copy of the page in the left margin, cut off where
+// the page's column starts).
 - (void)setNeedsDisplay:(BOOL)flag {
     if (!flag) { [super setNeedsDisplay:NO]; return; }
-    [self setNeedsDisplayInRect:NSUnionRect(self.visibleRect, self.preparedContentRect)];
+    [self setNeedsDisplayInRect:self.bounds avoidAdditionalLayout:YES];
 }
 
 // The whole pane drawn again: now, and once more as the turn ends, before
 // the window draws. A change marks only what it touched, in the pane as it
 // stood then: a new text marks the column its glyphs take, and a page's
 // centered inset leaves margins no glyph covers, so whatever the pane last
-// drew there (another tab's text) stayed in them. The second mark is made
-// where the pane ends up, after the tab's place is put back and any layout
-// the turn still does.
+// drew there (another tab's text, an older page) stayed in them. The whole
+// view is marked, not just what shows: tiles the layer keeps above and
+// below the pane hold the old ink too, and come back as it scrolls. The
+// second mark is made where the pane ends up, after the tab's place is put
+// back and any layout the turn still does.
 - (void)redrawWholePane {
-    [self setNeedsDisplayInRect:NSUnionRect(self.visibleRect, self.preparedContentRect)
-          avoidAdditionalLayout:YES];
+    [self setNeedsDisplayInRect:self.bounds avoidAdditionalLayout:YES];
     if (_paneRedrawScheduled) return;
     _paneRedrawScheduled = YES;
     __weak CodeTextView *weakSelf = self;
@@ -199,8 +208,7 @@ struct Counting {
         CodeTextView *me = weakSelf;
         if (!me) return;
         me->_paneRedrawScheduled = NO;
-        [me setNeedsDisplayInRect:NSUnionRect(me.visibleRect, me.preparedContentRect)
-               avoidAdditionalLayout:YES];
+        [me setNeedsDisplayInRect:me.bounds avoidAdditionalLayout:YES];
     });
     CFRunLoopWakeUp(main);
 }

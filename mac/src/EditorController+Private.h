@@ -1128,6 +1128,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)markdownWebImageArrived:(NSNotification *)note;
 - (void)showArrivedWebImagesForPath:(NSString *)path;
 - (void)renderMarkdownKeepingPlace;
+// refreshDisplay for a tab whose text changed under it (read again from
+// disk, a reload undone): a rendered page stays where it was scrolled.
+- (void)refreshDisplayKeepingPage;
 - (void)finishMarkdownPage;
 - (NSMutableAttributedString *)markdownPageFor:(NSString *)content
                                          width:(CGFloat)width

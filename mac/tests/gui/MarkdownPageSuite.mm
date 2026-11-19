@@ -3,15 +3,23 @@
 // 1.5.16, 2026-11-09). A thin strip of a table row, as scrolling redraws,
 // shows what the whole picture shows (AppKit found no glyphs in one: blank
 // bands through uneven rows), in the full preview and the one to the side;
-// inline code that wraps has its background only behind its text; and a
+// inline code that wraps has its background only behind its text; a
 // page replaced at a new zoom while scrolled down redraws the whole pane,
-// margins too (the old page's ink stayed in them).
+// margins too (the old page's ink stayed in them); and a page whose file
+// another program rewrites (in place, and by renaming over it) while it is
+// scrolled down in a wide window, with the window and the sidebar resized
+// between, stays where it was, one text view, centered at its measure,
+// all of it marked to be drawn again each time (the owner's STATUS.md on
+// 1.6.3, 2026-11-18: an older, narrower copy of the page in its left
+// margin, cut off where the page's column starts).
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
 #import "ControlServer.h"
 #import "EditorFont.h"
 #import "MarkdownSidePreview.h"
+#import "PageMeasure.h"
+#import "AppSettings.h"
 #import <objc/runtime.h>
 
 namespace {
@@ -138,6 +146,126 @@ void CheckZoomRedraw(NSTextView *tv, NSScrollView *sv, NSString *name) {
     MCEditorZoomBy(0);
 }
 
+// Marks recorded across steps (a reload lands on a later turn).
+void StartMarks(NSTextView *tv) {
+    if (gWatched) return;
+    gWatched = tv;
+    gMarked = [NSMutableArray array];
+    gMarkOriginal = method_setImplementation(
+        class_getInstanceMethod(NSView.class, @selector(setNeedsDisplayInRect:)), (IMP)MarkRecord);
+    gMarkLayoutOriginal = method_setImplementation(
+        class_getInstanceMethod(NSTextView.class,
+                                @selector(setNeedsDisplayInRect:avoidAdditionalLayout:)),
+        (IMP)MarkLayoutRecord);
+}
+NSArray<NSValue *> *StopMarks(void) {
+    if (!gWatched) return @[];
+    method_setImplementation(
+        class_getInstanceMethod(NSView.class, @selector(setNeedsDisplayInRect:)), gMarkOriginal);
+    method_setImplementation(
+        class_getInstanceMethod(NSTextView.class,
+                                @selector(setNeedsDisplayInRect:avoidAdditionalLayout:)),
+        gMarkLayoutOriginal);
+    gWatched = nil;
+    return gMarked;
+}
+
+// A long page shaped like the owner's STATUS.md: headings with their
+// rules, tables, numbered lists and paragraphs, `revision` at its end.
+NSString *StatusDoc(int revision) {
+    NSMutableString *s = [NSMutableString stringWithString:@"# Work status\n\n"];
+    for (int k = 0; k < 30; k++) {
+        [s appendFormat:@"## Section %d\n\nA paragraph about section %d, long enough to wrap "
+                         "once or twice at a narrow width but not at the page's measure.\n\n",
+                        k, k];
+        if (k % 3 == 0)
+            [s appendString:@"| Work | Who | State |\n|---|---|---|\n| a change | an agent | "
+                             "building |\n| another | the owner | waiting |\n\n"];
+        [s appendString:@"1. first\n3. second\n4. third\n\n"];
+    }
+    [s appendFormat:@"Revision %d%@.\n", revision,
+                    [@"" stringByPaddingToLength:(NSUInteger)revision withString:@"!"
+                                 startingAtIndex:0]];
+    return s;
+}
+
+// Whole-file replace, as Python's open(path, 'w') does: the same file,
+// cut to nothing, then written.
+void RewriteInPlace(NSString *path, NSString *text) {
+    NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
+    [h truncateFileAtOffset:0];
+    [h writeData:[text dataUsingEncoding:NSUTF8StringEncoding]];
+    [h closeFile];
+}
+
+// Written beside it, then renamed over it.
+void RewriteByRename(NSString *path, NSString *text) {
+    NSString *tmp = [path stringByAppendingString:@".tmp"];
+    [text writeToFile:tmp atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    rename(tmp.fileSystemRepresentation, path.fileSystemRepresentation);
+}
+
+// The pane holds one page: the scroll view's document is the editor's
+// text view, it has no subviews it did not have before, no other text
+// view shows over the editor's slot, and the page is centered at its
+// measure.
+void CheckOnePage(EditorController *c, NSUInteger subviewsBefore, NSString *when) {
+    NSTextView *tv = [c valueForKey:@"textView"];
+    NSScrollView *sv = c.editorScroll;
+    GCHECK(sv.documentView == tv && !sv.hidden);
+    GCHECK(sv.contentView.subviews.count == 1);
+    GCHECK(tv.subviews.count == subviewsBefore);
+    const NSRect slot = [sv convertRect:sv.bounds toView:nil];
+    __block NSUInteger others = 0;
+    __block void (^walk)(NSView *) = nil;
+    void (^visit)(NSView *) = ^(NSView *v) {
+        if (v.hidden || v.alphaValue < 0.01) return;
+        if (v != tv && [v isKindOfClass:NSTextView.class] && NSWidth(v.visibleRect) > 0 &&
+            NSIntersectsRect([v convertRect:v.visibleRect toView:nil], slot))
+            others++;
+        for (NSView *sub in v.subviews) walk(sub);
+    };
+    walk = visit;
+    visit(c.window.contentView);
+    walk = nil;
+    NSTextContainer *tc = tv.textContainer;
+    const double most = PageMeasure::maxTextWidth(
+        [AppSettings shared].settings.markdownMaxWidth(), MCZoomScale());
+    const CGFloat inset = PageMeasure::centeredInset(NSWidth(tv.frame), 8, most,
+                                                     tc.lineFragmentPadding);
+    const CGFloat left = tv.textContainerOrigin.x;
+    const CGFloat right = NSWidth(tv.frame) - left - tc.size.width;
+    MCGuiNote(@"%@: frame %.0f wide, inset %.1f (want %.1f), container %.0f, margins %.1f and "
+              "%.1f, %lu other text views over the slot, %lu subviews",
+              when, NSWidth(tv.frame), tv.textContainerInset.width, inset, tc.size.width, left,
+              right, (unsigned long)others, (unsigned long)tv.subviews.count);
+    GCHECK(others == 0);
+    GCHECK(fabs(tv.textContainerInset.width - inset) < 0.5);
+    GCHECK(inset > 100);   // a wide pane: the page has margins to leave ink in
+    GCHECK(fabs(left - right) < 1);
+}
+
+// Every mark since StartMarks: one of them covers the whole view, so no
+// tile the layer kept, on screen or off it, keeps the older page. The
+// view's height may have moved since (layout below the pane goes on),
+// so "whole" is its full width from its top to well past a screenful
+// below the pane; marks of what shows alone stop at the pane.
+void CheckWholeViewMarked(NSTextView *tv, NSString *when) {
+    NSArray<NSValue *> *marked = StopMarks();
+    const NSRect vis = tv.visibleRect;
+    const NSRect want = NSMakeRect(0, 0, NSWidth(tv.bounds),
+                                   MIN(NSHeight(tv.bounds), NSMaxY(vis) + NSHeight(vis)));
+    NSRect biggest = NSZeroRect;
+    for (NSValue *v in marked)
+        if (NSHeight(v.rectValue) * NSWidth(v.rectValue) > NSHeight(biggest) * NSWidth(biggest))
+            biggest = v.rectValue;
+    MCGuiNote(@"%@: %lu rects marked, the largest %@; the view %@, showing %@", when,
+              (unsigned long)marked.count, NSStringFromRect(biggest), NSStringFromRect(tv.bounds),
+              NSStringFromRect(vis));
+    GCHECK(NSMinY(vis) > 0);   // scrolled down, or this means nothing
+    GCHECK(AnyHolds(marked, want));
+}
+
 }  // namespace
 
 MC_GUI_SUITE(markdown_page) {
@@ -246,7 +374,100 @@ MC_GUI_SUITE(markdown_page) {
         MCMarkdownSidePreview *side = [c valueForKey:@"sidePreview"];
         CheckStrips(side.textView, side.scrollView, @"side preview");
     });
+    // A page another program rewrites while it is scrolled down, in a
+    // wide window, with the window and the sidebar resized between.
+    NSString *status = [dir stringByAppendingPathComponent:@"STATUS.md"];
+    __block CGFloat keptY = 0;
+    __block NSUInteger subviews = 0;
+    MCGuiStep(@"a long page, scrolled near its end, in a wide window", ^{
+        if ([c sidePreviewShowing]) [c toggleSidePreview:nil];
+        MCEditorZoomBy(0);
+        MCGuiWriteFile(status, StatusDoc(1));
+        NSRect fr = c.window.frame;
+        fr.size = NSMakeSize(2300, 1200);
+        [c.window setFrame:fr display:NO];
+        GCHECK([c showFile:status]);
+        if (!c.previewMode) [c togglePreview:nil];
+        GCHECK(c.previewMode);
+        NSTextView *tv = [c valueForKey:@"textView"];
+        GCHECK([tv.string containsString:@"Revision 1"]);
+        [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
+        NSClipView *clip = c.editorScroll.contentView;
+        keptY = NSHeight(tv.frame) - NSHeight(clip.bounds) - 300;
+        GCHECK(keptY > 2000);
+        [clip scrollToPoint:NSMakePoint(0, keptY)];
+        [c.editorScroll reflectScrolledClipView:clip];
+        subviews = tv.subviews.count;
+        CheckOnePage(c, subviews, @"before");
+        StartMarks(tv);
+        RewriteInPlace(status, StatusDoc(2));
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the page rewritten in place, read again", 5, ^BOOL {
+        return [[[c valueForKey:@"textView"] string] containsString:@"Revision 2"];
+    });
+    // Each check after a reload: the place kept, one page, all of it marked.
+    void (^afterReload)(NSString *) = ^(NSString *when) {
+        NSTextView *tv = [c valueForKey:@"textView"];
+        const CGFloat y = c.editorScroll.contentView.bounds.origin.y;
+        MCGuiNote(@"%@: scrolled to %.0f, was %.0f", when, y, keptY);
+        GCHECK(fabs(y - keptY) < 2);   // where it was, not back at the top
+        CheckOnePage(c, subviews, when);
+        CheckWholeViewMarked(tv, when);
+        MCGuiSnapshot(c.window.contentView, [@"markdown-page-" stringByAppendingString:
+            [when stringByReplacingOccurrencesOfString:@" " withString:@"-"]]);
+    };
+    MCGuiStep(@"it stayed where it was, one page, drawn again whole", ^{
+        afterReload(@"rewritten in place");
+        StartMarks([c valueForKey:@"textView"]);
+        RewriteByRename(status, StatusDoc(3));
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the page renamed over, read again", 5, ^BOOL {
+        return [[[c valueForKey:@"textView"] string] containsString:@"Revision 3"];
+    });
+    MCGuiStep(@"renamed over: the same", ^{
+        afterReload(@"renamed over");
+        // Narrower, then wide again: the page moves sideways each time.
+        NSTextView *tv = [c valueForKey:@"textView"];
+        NSRect fr = c.window.frame;
+        fr.size.width = 1300;
+        [c.window setFrame:fr display:NO];
+        [c.window layoutIfNeeded];
+        StartMarks(tv);
+        fr.size.width = 2300;
+        [c.window setFrame:fr display:NO];
+        [c.window layoutIfNeeded];
+        CheckOnePage(c, subviews, @"window widened");
+        CheckWholeViewMarked(tv, @"window widened");
+        // The sidebar narrower: the pane widens and the page recenters.
+        const CGFloat side = NSWidth(c.splitView.subviews.firstObject.frame);
+        StartMarks(tv);
+        [c.splitView setPosition:MAX(170, side - 80) ofDividerAtIndex:0];
+        [c.window layoutIfNeeded];
+        MCGuiNote(@"sidebar %.0f, now %.0f", side, NSWidth(c.splitView.subviews.firstObject.frame));
+        CheckOnePage(c, subviews, @"sidebar resized");
+        CheckWholeViewMarked(tv, @"sidebar resized");
+        [c.splitView setPosition:side ofDividerAtIndex:0];
+        // Read again after the resizes, in place once more.
+        keptY = c.editorScroll.contentView.bounds.origin.y;
+        GCHECK(keptY > 2000);
+        StartMarks(tv);
+        RewriteInPlace(status, StatusDoc(4));
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the page read again after the resizes", 5, ^BOOL {
+        return [[[c valueForKey:@"textView"] string] containsString:@"Revision 4"];
+    });
+    MCGuiStep(@"after the resizes: the same", ^{
+        afterReload(@"read after resizes");
+        // A numbered list written 1. 3. 4. counts 1, 2, 3.
+        NSTextView *tv = [c valueForKey:@"textView"];
+        GCHECK([tv.string containsString:@"\t2.\tsecond"] && [tv.string containsString:@"\t3.\tthird"]);
+        GCHECK(![tv.string containsString:@"\t4.\tthird"]);
+    });
     MCGuiStep(@"the window goes", ^{
+        StopMarks();
         MCEditorZoomBy(0);
         if ([c sidePreviewShowing]) [c toggleSidePreview:nil];
         MCGuiSetKeyWindow(nil);
