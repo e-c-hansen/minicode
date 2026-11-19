@@ -940,8 +940,8 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
 }
 
 // The branch at the status bar's left end, from the tree's git status.
-- (void)showStatusBranch:(const Git::StatusBranch &)branch {
-    if ([self.statusBranchItem showBranch:branch]) [self layoutStatusLabels];
+- (void)showStatusBranchName:(NSString *)name counts:(NSString *)counts tip:(NSString *)tip {
+    if ([self.statusBranchItem showName:name counts:counts tip:tip]) [self layoutStatusLabels];
 }
 
 // The left of the status bar: the branch, "Saved ...", then any settings

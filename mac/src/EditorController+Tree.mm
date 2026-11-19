@@ -363,7 +363,12 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         // The status bar's branch reads the same status.
         _gitColors.onBranchChange = ^{
             EditorController *s = weakSelf;
-            if (s) [s showStatusBranch:s->_gitColors.statusBranch];
+            if (!s) return;
+            const Git::StatusBranch b = s->_gitColors.statusBranch;
+            NSString *(^ns)(const std::string &) = ^NSString *(const std::string &t) {
+                return [NSString stringWithUTF8String:t.c_str()] ?: @"";
+            };
+            [s showStatusBranchName:b.shown ? ns(b.name) : nil counts:ns(b.counts) tip:ns(b.tip)];
         };
     }
     [_gitColors setRoot:path];

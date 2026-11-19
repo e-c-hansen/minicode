@@ -6,16 +6,17 @@
 // branch picker), one on the counts syncs (pull, then push). The words
 // come from the core (Git::statusBranch, GitStatus.h); the window's tree
 // colors (TreeGitColors.h) read the status they come from, so the item
-// runs no git of its own. Hidden outside a repository.
+// runs no git of its own. Hidden outside a repository. No C++ here: the
+// header reaches every file that imports EditorController+Private.h.
 #import <Cocoa/Cocoa.h>
-#include "GitStatus.h"
 
 @interface MCStatusBranchItem : NSView
 @property(nonatomic, copy) void (^onSwitchBranch)(void);
 @property(nonatomic, copy) void (^onSync)(void);
 @property(nonatomic, strong) NSColor *textColor;   // the status bar's
-// Shows `branch` (hidden when it is not shown); NO when nothing changed.
-- (BOOL)showBranch:(const Git::StatusBranch &)branch;
+// Shows Git::StatusBranch's words (hidden when `name` is empty); NO when
+// nothing changed.
+- (BOOL)showName:(NSString *)name counts:(NSString *)counts tip:(NSString *)tip;
 // Its width with the words it shows (0 when hidden).
 @property(nonatomic, readonly) CGFloat fittingWidth;
 // Tests: the two parts (the counts hidden without an upstream).

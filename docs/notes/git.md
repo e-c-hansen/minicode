@@ -361,7 +361,11 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   A root below the top level sees no .git events, so a commit made in a
   terminal there shows at the next change under the root, as the tree's
   colors do. At most a third of the bar; the name truncates, the counts
-  never. The GTK port can show the same `StatusBranch`.
+  never. The GTK port can show the same `StatusBranch`. **Header trap**:
+  `StatusBranchItem.h` takes NSStrings, not `Git::StatusBranch`, because
+  `EditorController+Private.h` imports it and every GUI suite imports
+  that; a suite's own `Git(c)` helper then clashed with `namespace Git`
+  ("reference to 'Git' is ambiguous", CI's first run).
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
   plain `cd x && git ...` lines or a script file.
@@ -371,4 +375,5 @@ setprop log.tag.MutibleGit DEBUG` on Android.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- Git panel (all three ports): **Header trap**: `StatusBranchItem.h` takes NSStrings, not `Git::StatusBranch`, because `EditorController+Private.h` imports it and every GUI suite imports that.
 - Git panel (all three ports): **Tool guard trap**: in a worktree-isolated agent session, git commands in compound or unusual forms are refused (even a filename containing "git"); use plain `cd x && git ...` lines or a script file.

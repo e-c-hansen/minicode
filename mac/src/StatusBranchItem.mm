@@ -2,13 +2,12 @@
 #import "StatusBranchItem.h"
 
 namespace {
-NSString *NS(const std::string &s) { return [NSString stringWithUTF8String:s.c_str()] ?: @""; }
 const CGFloat kGap = 8;   // between the name and the counts
 }  // namespace
 
 @implementation MCStatusBranchItem {
     NSButton *_name, *_counts;
-    Git::StatusBranch _shown;
+    NSString *_nameText, *_countsText, *_tip;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -59,23 +58,27 @@ const CGFloat kGap = 8;   // between the name and the counts
     NSColor *color = _textColor ?: [NSColor labelColor];
     NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:11],
                             NSForegroundColorAttributeName: color};
-    _name.attributedTitle = [[NSAttributedString alloc] initWithString:NS(_shown.name)
+    _name.attributedTitle = [[NSAttributedString alloc] initWithString:_nameText ?: @""
                                                             attributes:attrs];
-    _counts.attributedTitle = [[NSAttributedString alloc] initWithString:NS(_shown.counts)
+    _counts.attributedTitle = [[NSAttributedString alloc] initWithString:_countsText ?: @""
                                                               attributes:attrs];
     _name.contentTintColor = color;
-    NSString *tip = _shown.tip.empty() ? nil : NS(_shown.tip);
-    _name.toolTip = tip;
-    _counts.toolTip = tip;
-    _name.hidden = !_shown.shown;
-    _counts.hidden = !_shown.shown || _shown.counts.empty();
-    self.hidden = !_shown.shown;
+    _name.toolTip = _tip;
+    _counts.toolTip = _tip;
+    const BOOL shown = _nameText.length > 0;
+    _name.hidden = !shown;
+    _counts.hidden = !shown || _countsText.length == 0;
+    self.hidden = !shown;
     [self layoutParts];
 }
 
-- (BOOL)showBranch:(const Git::StatusBranch &)branch {
-    if (branch == _shown) return NO;
-    _shown = branch;
+static BOOL Same(NSString *a, NSString *b) { return a.length == 0 ? b.length == 0 : [a isEqualToString:b]; }
+
+- (BOOL)showName:(NSString *)name counts:(NSString *)counts tip:(NSString *)tip {
+    if (Same(name, _nameText) && Same(counts, _countsText) && Same(tip, _tip)) return NO;
+    _nameText = [name copy];
+    _countsText = [counts copy];
+    _tip = tip.length ? [tip copy] : nil;
     [self render];
     return YES;
 }

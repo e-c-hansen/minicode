@@ -16,16 +16,9 @@
 #import "GitPanel.h"
 #import "Lsp.h"
 #import "PalettePanel.h"
+#import "StatusBranchItem.h"
 #include <objc/runtime.h>
 #include <vector>
-
-// The status bar's branch item (StatusBranchItem.h, whose header brings
-// the core's Git namespace, which Git() below would clash with).
-@protocol BranchItemParts
-@property(nonatomic, readonly) NSButton *nameButton;
-@property(nonatomic, readonly) NSButton *countsButton;
-@end
-typedef NSView<BranchItemParts> BranchItem;
 
 namespace {
 MCGitPanel *Git(EditorController *c) { return [c valueForKey:@"gitPanel"]; }
@@ -413,13 +406,13 @@ MC_GUI_SUITE(git_panel) {
     });
     MCGuiWait(@"the status bar: main, level with origin/main", 15, ^BOOL {
         if (!git) return YES;
-        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        MCStatusBranchItem *b = [c valueForKey:@"statusBranchItem"];
         return !b.hidden && [b.nameButton.title isEqualToString:@"main"] &&
                [b.countsButton.title isEqualToString:@"\u21910 \u21930"] && !b.countsButton.hidden;
     });
     MCGuiStep(@"its glyph, its place, its tip", ^{
         if (!git) return;
-        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        MCStatusBranchItem *b = [c valueForKey:@"statusBranchItem"];
         GCHECK(b.nameButton.image != nil);
         GCHECK(b.superview == [c valueForKey:@"statusBar"] && NSMinX(b.frame) == 12);
         GCHECK(NSWidth(b.frame) > 0 && NSMinX(b.countsButton.frame) >= NSMaxX(b.nameButton.frame));
@@ -442,26 +435,26 @@ MC_GUI_SUITE(git_panel) {
     });
     MCGuiWait(@"main*, one to push", 15, ^BOOL {
         if (!git) return YES;
-        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        MCStatusBranchItem *b = [c valueForKey:@"statusBranchItem"];
         return [b.nameButton.title isEqualToString:@"main*"] &&
                [b.countsButton.title isEqualToString:@"\u21911 \u21930"];
     });
     MCGuiStep(@"a click on the counts syncs", ^{
         if (!git) return;
-        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        MCStatusBranchItem *b = [c valueForKey:@"statusBranchItem"];
         GCHECK([b.countsButton.toolTip containsString:@"1 commit to push to origin/main"]);
         [b.countsButton performClick:nil];
     });
     MCGuiWait(@"pushed: level again", 30, ^BOOL {
         if (!git) return YES;
-        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        MCStatusBranchItem *b = [c valueForKey:@"statusBranchItem"];
         return !Git(c).syncing && [b.countsButton.title isEqualToString:@"\u21910 \u21930"];
     });
     MCGuiStep(@"a click on the name opens Switch Branch", ^{
         if (!git) return;
         MCGuiNote(@"after the sync: %@", Git(c).lastSync);
         GCHECK(MCCommandPaletteIn(c.window) == nil);
-        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        MCStatusBranchItem *b = [c valueForKey:@"statusBranchItem"];
         [b.nameButton performClick:nil];
     });
     MCGuiWait(@"the branch picker, main in it", 10, ^BOOL {

@@ -440,7 +440,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)showStatusNote:(NSString *)note;
 - (void)updateSavedStatus;
 - (void)layoutStatusLabels;
-- (void)showStatusBranch:(const Git::StatusBranch &)branch;   // the tree's git status read it
+// The tree's git status read the branch (Git::statusBranch's words; an
+// empty name hides it).
+- (void)showStatusBranchName:(NSString *)name counts:(NSString *)counts tip:(NSString *)tip;
 - (void)flashStatus:(NSString *)message;
 - (void)endFlash;
 @end
