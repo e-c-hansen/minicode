@@ -6600,3 +6600,81 @@ active tab").
   checks), in a folder of 6,000 files.
 - **Left for a real screen**: the look of the centering and of the scroll
   jumping (no animation), and a sidebar dragged shut and open by hand.
+
+### 110. A row going keeps the tree's place; file icons by type (November 2026)
+
+The owner, on this ThinkPad: "If I delete a file in the filetree panel,
+rather than simply removing it from my current view, the view resets and I
+am brought to the top of the filetree panel, which is annoying", and
+"Almost none of the different file types I have encountered in the
+filetree panel have non-default icons, which seems like a missed
+opportunity." (`../docs/notes/tree.md`, "A row going keeps the tree's
+place (GTK)" and "Icons by kind".)
+
+- **What a user meets.** Move to Trash (the row's menu, or Delete with the
+  tree's keyboard) takes out just that row: the tree stays scrolled where
+  it was, every folder stays open, and the row after it (else the one
+  before) is selected, with the keyboard when the tree had it, so Delete
+  again trashes that one, as in VS Code. The file's tab closes and the tab
+  before it comes on show without the tree going to that file. A selected
+  file deleted or renamed on disk by something else does the same; files
+  deleted or made above the view move nothing on show; Rename to a name
+  that sorts in place keeps the scroll and selects the renamed row. File
+  rows show the icon theme's picture for their type: a Python, C, C++,
+  Rust, Go, Java, Kotlin, shell or Ruby file, Markdown, HTML, CSS, JSON,
+  YAML, TOML, XML, CSV and SQL, LaTeX, a notebook, pictures, audio, video,
+  PDF, archives, fonts, programs and libraries, office documents, a
+  Makefile, CMakeLists.txt, meson.build, a Dockerfile, LICENSE, README,
+  AUTHORS, lockfiles, git's files, dotfiles and config, patches, logs,
+  keys and translations each have their own on Yaru (77 of the core's 78
+  types draw apart from plain text, in 65 pictures). Changing the icon
+  theme changes the rows on show at once.
+- **Why it jumped.** Two causes. (1) `trashNow` closed the file's tab, the
+  editor showed the tab before it, and the tree followed that tab
+  (item 107's `TreeFollow`; before it `revealActiveInTree`), scrolling to
+  its file: for a file near the top, the top of the tree. It also cleared
+  the selection. (2) GtkListView (4.22) itself put the list at its top a
+  frame or two after the row it was anchored on went (the row last
+  clicked or focused): `gtk_list_base`'s `update_adjustments` takes 0 for
+  an anchor it cannot place. A selected file deleted on disk did it with
+  no tab involved. Found with a backtrace on the scroll's value-changed:
+  the 0 came from `gtk_adjustment_configure` in the list's size-allocate.
+- **Code.** `FileTree`: `removing(path)` (the next row selected without
+  moving the keyboard; `goingRow_`, and `afterRowsGone` moves the keyboard
+  once the row is out, else the list would anchor on that row and push the
+  rows above down by one); `onItemsChanged` (the tree model's first
+  handler: the selection and the list's row widgets are still as they
+  were) notes a selected row going (`lostAt_`, `lostPath_` from
+  `onSelectionChanged`'s `selPath_`, `lostKeys_`), and `afterRowsGone`
+  selects the row in its place when its file is gone from the disk;
+  `keepRows`, `applyKeep` and `stopKeeping` keep the first row on show
+  where it was drawn when a scroll goes to 0 within 300 ms of rows going
+  (`applyKeep` on the frame clock's "layout", connected after the window's,
+  and in `afterLayout`); a press, a key, the wheel (a scroll controller), a
+  drag's edge scroll, a reveal's scroll and a window record's scroll end
+  it. `TreeFollow::quiet`: the tabs `trashNow` closes are neither revealed
+  nor selected. `main.cpp`'s `trashNow`: `removing` before the tabs close,
+  inside `quiet`, and no `clearSelection`. Icons: the core's
+  `FileIcon::Type`, `typeOf`, `typeName`, `allTypes` (FileDetails,
+  `tree:icon-types`); `src/TreeIcons.{h,cpp}` (new): each type's names
+  from the system theme, the first `gtk_icon_theme_has_icon` finds, kept
+  per theme and forgotten on its "changed"; `FileTree::setIcon` and
+  `refreshIcons` (connected after the theme's "changed"); the listing's
+  worker sets `minicode-exec` on a regular file with no extension that
+  `access(X_OK)` allows. Folders keep the tinted folder-symbolic.
+- **Differs from the Mac**: the Mac still draws `Kind`'s SF Symbols;
+  `typeOf` is in the core for it. Its tree reloads only the folders that
+  changed and never had the jump.
+- **Checks**: the `tree_edits` suite (new: a folder of about 120 rows,
+  Move to Trash twice by the key, into the scratch world's
+  `$XDG_DATA_HOME/Trash`, checked before anything is trashed; a selected
+  file deleted on disk; rows going and coming above the view; Rename; the
+  last row) and the `tree_icons` suite (rewritten: one file of each type,
+  each row's name in its type's family and the theme's answer, then Yaru
+  where installed, the main names checked, the pictures counted, three
+  snapshots). Before the fix `tree_edits` showed the tree at 0 (was 745)
+  with nothing selected after the first trash.
+- **Left for a real screen**: the icons' look at the owner's scale and in
+  Papirus-Gruvbox (the snapshots are Yaru at 1x), and whether a one-frame
+  flash of the top can show before `applyKeep` runs (it runs after the
+  layout and before the paint, so none is expected).

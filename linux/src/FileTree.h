@@ -148,6 +148,13 @@ public:
     // space), so the context menu's actions read the row that was clicked.
     std::string selectedPath() const;
     void clearSelection();
+    // `path`'s row is about to go (Move to Trash, the file already gone from
+    // the disk, its folder's listing still to come): the row after it and
+    // the rows it holds, else the one before, is selected now, with the
+    // keyboard when the tree has it, and nothing scrolls (VS Code's rule).
+    // A selected row that goes by any other hand (deleted or renamed on
+    // disk) passes the selection on the same way when its rows go.
+    void removing(const std::string& path);
 
     // Select the row for `path`, expanding the folders above it. Folders load
     // asynchronously and a file just created appears only once the directory
@@ -195,6 +202,9 @@ public:
     // The decorator's answers changed: the rows on show ask again, nothing
     // else of them changes.
     void redecorate();
+    // The rows on show take their icons again (TreeIcons.h): run when the
+    // display's icon theme changes.
+    void refreshIcons();
 
     // The right-click menu. Its items name window actions ("win.rename"),
     // which resolve because the menu is parented inside the window.
@@ -300,6 +310,38 @@ private:
     // Keeps `row` (a reference of its own) in one of the click slots below.
     static void holdRow(GtkTreeListRow** slot, GtkTreeListRow* row);
 
+    // Rows going (removing, "rows going" in FileTree.cpp): whether the
+    // keyboard is in the tree; row `pos` selected where it is, with the
+    // keyboard when `keys`; the selected row's path kept
+    // (onSelectionChanged) and, once the row went (onItemsChanged), the row
+    // now in its place selected (afterRowsGone) when its file is gone from
+    // the disk.
+    bool hasKeyboard() const;
+    void selectInPlace(guint pos, bool keys);
+    static void onSelectionChanged(GtkSelectionModel* model, guint pos, guint n, gpointer self);
+    void afterRowsGone();
+    void forgetSelectedRow();
+    static bool rowHasItem(GtkTreeListRow* row);   // false once its entry went
+    GtkTreeListRow* goingRow_ = nullptr;   // removing's row, the keyboard to follow (a reference)
+    std::string selPath_;                  // the selected row's path
+    std::string lostPath_;                 // the selected row that went
+    guint       lostAt_ = GTK_INVALID_LIST_POSITION;   // where it went
+    bool        lostKeys_ = false;         // the tree had the keyboard then
+    guint       lostIdle_ = 0;
+    // The rows on show kept in place while rows go and come (keepRows, from
+    // onItemsChanged): the first row on show that stays, how far down the
+    // view it was drawn, and till when. applyKeep puts the scroll back after
+    // each layout (onLayout, and afterLayout); stopKeeping lets go, for any
+    // scroll the user or the tree itself asks for.
+    void keepRows(guint pos, guint removed);
+    void applyKeep();
+    void stopKeeping();
+    static void onLayout(GdkFrameClock* clock, gpointer self);
+    GtkTreeListRow* keepRow_ = nullptr;    // a reference
+    double      keepY_ = 0;
+    gint64      keepUntil_ = 0;
+    gulong      layoutId_ = 0;             // on frameClock_
+
     // Drag and drop (see "drag and drop" in FileTree.cpp).
     static GdkContentProvider* onDragPrepare(GtkDragSource* s, double x, double y,
                                              gpointer self);
@@ -400,6 +442,9 @@ private:
     std::shared_ptr<ActivityCb> activity_ = std::make_shared<ActivityCb>();
     Decorator decorator_;
     void decorate(GtkWidget* label) const;
+    // A row's icon from its label's path, folder flag and executable flag.
+    static void setIcon(GtkWidget* icon, GtkWidget* label);
+    GtkIconTheme* iconTheme_ = nullptr;   // the display's, watched for changes
     bool worktreeText(const std::string& path, std::string* text, std::string* tip) const;
     WorktreeTextCb worktreeTextCb_;
     GMenuModel* worktreeModel_ = nullptr;

@@ -83,6 +83,102 @@ static void testFileDetails() {
         CHECK(std::string(FileIcon::kindName(Kind::Database)) == "database");
     }
 
+    GROUP("tree:icon-types");
+    {
+        struct Case { const char *path; const char *type; bool exec; };
+        const Case cases[] = {
+            // source
+            {"/p/main.c", "c", false},              {"/p/main.h", "c-header", false},
+            {"/p/main.cpp", "cpp", false},          {"/p/Main.CC", "cpp", false},
+            {"/p/main.hpp", "cpp-header", false},   {"/p/App.mm", "objc", false},
+            {"/p/App.cs", "csharp", false},         {"/p/tool.py", "python", false},
+            {"/p/app.js", "javascript", false},     {"/p/app.mjs", "javascript", false},
+            {"/p/app.ts", "typescript", false},     {"/p/app.tsx", "typescript", false},
+            {"/p/lib.rs", "rust", false},           {"/p/main.go", "go", false},
+            {"/p/go.mod", "go", false},             {"/p/App.java", "java", false},
+            {"/p/App.kt", "kotlin", false},         {"/p/build.gradle.kts", "kotlin", false},
+            {"/p/App.swift", "swift", false},       {"/p/app.rb", "ruby", false},
+            {"/p/Gemfile", "ruby", false},          {"/p/index.php", "php", false},
+            {"/p/tool.pl", "perl", false},          {"/p/init.lua", "lua", false},
+            {"/p/run.sh", "shell", false},          {"/p/.zshrc", "shell", false},
+            {"/p/.bashrc", "shell", false},         {"/p/Main.hs", "haskell", false},
+            {"/p/App.scala", "scala", false},       {"/p/main.dart", "dart", false},
+            {"/p/plot.R", "r", false},              {"/p/fit.jl", "julia", false},
+            {"/p/app.ex", "elixir", false},         {"/p/app.erl", "erlang", false},
+            {"/p/build.zig", "zig", false},         {"/p/app.nim", "nim", false},
+            {"/p/app.vala", "vala", false},         {"/p/solve.f90", "fortran", false},
+            {"/p/main.ml", "ocaml", false},         {"/p/core.clj", "lisp", false},
+            {"/p/Main.qml", "qml", false},          {"/p/App.vue", "vue", false},
+            {"/p/schema.proto", "code", false},     {"/p/SConstruct", "python", false},
+            // markup and data
+            {"/p/notes.md", "markdown", false},     {"/p/index.html", "html", false},
+            {"/p/site.css", "css", false},          {"/p/site.scss", "sass", false},
+            {"/p/site.less", "less", false},        {"/p/conf.json", "json", false},
+            {"/p/ci.yml", "yaml", false},           {"/p/ci.YAML", "yaml", false},
+            {"/p/Cargo.toml", "toml", false},       {"/p/Pipfile", "toml", false},
+            {"/p/pom.xml", "xml", false},           {"/p/data.csv", "csv", false},
+            {"/p/data.tsv", "csv", false},          {"/p/q.sql", "sql", false},
+            {"/p/paper.tex", "latex", false},       {"/p/refs.bib", "latex", false},
+            {"/p/run.ipynb", "notebook", false},
+            // media, documents and binaries
+            {"/p/shot.PNG", "image", false},        {"/p/logo.svg", "svg", false},
+            {"/p/song.mp3", "audio", false},        {"/p/tune.mid", "audio", false},
+            {"/p/clip.mp4", "video", false},        {"/p/clip.mkv", "video", false},
+            {"/p/paper.pdf", "pdf", false},         {"/p/src.tar.gz", "archive", false},
+            {"/p/src.zip", "archive", false},       {"/p/app.jar", "archive", false},
+            {"/p/Inter.ttf", "font", false},        {"/p/Inter.woff2", "font", false},
+            {"/p/setup.exe", "executable", false},  {"/p/libz.so", "library", false},
+            {"/p/main.o", "library", false},        {"/p/app.sqlite", "database", false},
+            {"/p/memo.docx", "document", false},    {"/p/sheet.xlsx", "spreadsheet", false},
+            {"/p/deck.pptx", "presentation", false},{"/p/book.epub", "ebook", false},
+            // by name, and the rest
+            {"/p/Makefile", "makefile", false},     {"/p/GNUmakefile", "makefile", false},
+            {"/p/rules.mk", "makefile", false},     {"/p/justfile", "makefile", false},
+            {"/p/CMakeLists.txt", "cmake", false},  {"/p/meson.build", "meson", false},
+            {"/p/Dockerfile", "dockerfile", false}, {"/p/Dockerfile.dev", "dockerfile", false},
+            {"/p/app.dockerfile", "dockerfile", false},
+            {"/p/docker-compose.yml", "dockerfile", false},
+            {"/p/docker-compose.override.yaml", "dockerfile", false},
+            {"/p/LICENSE", "license", false},       {"/p/LICENSE.md", "license", false},
+            {"/p/LICENSE-MIT", "license", false},   {"/p/COPYING", "license", false},
+            {"/p/license_check.py", "python", false},
+            {"/p/README", "readme", false},         {"/p/README.md", "readme", false},
+            {"/p/readme.txt", "readme", false},     {"/p/readme.png", "image", false},
+            {"/p/AUTHORS", "authors", false},
+            {"/p/package-lock.json", "lockfile", false},
+            {"/p/yarn.lock", "lockfile", false},    {"/p/Cargo.lock", "lockfile", false},
+            {"/p/go.sum", "lockfile", false},       {"/p/pnpm-lock.yaml", "lockfile", false},
+            {"/p/whatever.lock", "lockfile", false},
+            {"/p/.gitignore", "git", false},        {"/p/.gitattributes", "git", false},
+            {"/p/.gitmodules", "git", false},       {"/p/.mailmap", "git", false},
+            {"/p/.env", "config", false},           {"/p/.env.local", "config", false},
+            {"/p/.editorconfig", "config", false},  {"/p/.prettierrc", "config", false},
+            {"/p/setup.cfg", "config", false},      {"/p/app.ini", "config", false},
+            {"/p/nginx.conf", "config", false},     {"/p/fix.patch", "patch", false},
+            {"/p/fix.diff", "patch", false},        {"/p/build.log", "log", false},
+            {"/p/id_ed25519.pub", "key", false},    {"/p/cert.pem", "key", false},
+            {"/p/docs.url", "bookmark", false},     {"/p/fr.po", "translation", false},
+            {"/p/notes.txt", "text", false},        {"/p/strange.qqq", "text", false},
+            {"/p/noext", "text", false},
+            // A file with no extension that can run; with one, its extension wins.
+            {"/p/mutible-guitest", "executable", true},
+            {"/p/run.sh", "shell", true},           {"/p/Makefile", "makefile", true},
+            {"/p/.envrc", "shell", true},
+        };
+        for (const Case &c : cases) {
+            const char *t = FileIcon::typeName(FileIcon::typeOf(c.path, c.exec));
+            if (std::string(t) != c.type)
+                std::printf("    %s%s: %s, wanted %s\n", c.path, c.exec ? " (x)" : "", t, c.type);
+            CHECK(std::string(t) == c.type);
+        }
+        // Every type has a name of its own, and allTypes lists each once.
+        std::set<std::string> names;
+        for (FileIcon::Type t : FileIcon::allTypes()) names.insert(FileIcon::typeName(t));
+        CHECK(names.size() == FileIcon::allTypes().size());
+        CHECK(FileIcon::allTypes().front() == FileIcon::Type::Text);
+        CHECK(FileIcon::allTypes().back() == FileIcon::Type::Translation);
+    }
+
     GROUP("tree:name");
     Options o;   // the defaults: today's order
     CHECK(o.key == Key::Name && o.ascending && o.foldersFirst);

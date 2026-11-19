@@ -50,6 +50,10 @@ public:
     void treeMaybeShown();
     // Held while a window's tabs come back (Persistence::restoreSession).
     void hold(bool on);
+    // Held while the tabs of a file that went from the tree close (Move to
+    // Trash): the tab shown next is neither revealed nor selected, so the
+    // tree keeps its scroll and the row after the one that went.
+    void quiet(bool on);
     // The settings were applied: explorer.auto-reveal turned on reveals the
     // file on show, as the Mac's treeAutoRevealSettingsApplied does.
     void settingsApplied();
@@ -59,5 +63,6 @@ private:
     Host host_;
     TreeReveal::Follower follower_;
     int held_ = 0;
+    int quiet_ = 0;
     bool on_ = false, seen_ = false;   // the setting as last applied, once it was
 };
