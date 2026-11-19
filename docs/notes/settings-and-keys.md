@@ -116,6 +116,28 @@ found through that list.
 - **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified"
   check had sent the event to the menu directly. Test such keys through
   `[window sendEvent:]` or `MCGuiSendKeyToApp`, never the menu alone.
+- **The hints' search box on Linux** (2026-11-18, `linux/src/HintsSearchBox.{h,cpp}`,
+  `linux/HANDOFF.md` item 109): the Mac's box (CLAUDE.md, "Its search box")
+  as a GtkSearchEntry at the panel's top, matched by the core's
+  `HintsSearch` with `Spelling::Words` (the port writes "Ctrl Shift H", so a
+  combination is found as a whole key or its end, and "control", "opt",
+  "return" find Ctrl, Alt, Enter; `hints:search-words`). "Without Command or
+  Control" is without Ctrl or Super there. main.cpp's key controller in the
+  window's capture phase (`onHintsKey`) hands every key press to
+  `HintsSearchBox::takeKey` while the panel shows and the palette is
+  closed: it takes the keyboard at the first key (remembering where from,
+  given back on close, the editor when a click put it there), forwards the
+  key to the entry's GtkText (`gtk_event_controller_key_forward`), and types
+  an Alt+letter's letter itself. Marks and dims are Pango attributes on the
+  label (a background, a foreground alpha), so the text and its size never
+  change. The controller, added to the window after GTK's own, runs before
+  the application's accelerators on GTK 4.22: Alt+Z reached the box and
+  left Word Wrap alone with nothing unbound (checked by taking Keys out of
+  it; the accelerators of Ctrl keys and function keys run because the box
+  lets those go). **Trap**: an input method types nothing for Alt+letter
+  (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`), so a forwarded Alt+Z was lost
+  (hints_panel's "both are the box's" failed with "s"); the box inserts
+  the letter itself.
 
 ## Traps
 
@@ -124,3 +146,4 @@ text is in place in its section.
 
 - Settings, themes and Adjust Settings: Trap: an NSTextView with `usesFontPanel` sets the shared NSColorPanel to the color under the caret when the selection moves, and the panel forwarded that to `colorPicked:`, so every pick became the text color; the editor sets `usesFontPanel = NO`.
 - Keys: the registry, keys.conf and the key monitor: **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified" check had sent the event to the menu directly.
+- Keys: the registry, keys.conf and the key monitor: **Trap** (the hints' search box on Linux): an input method types nothing for Alt+letter (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`), so a forwarded Alt+Z was lost.

@@ -71,6 +71,7 @@
 #include "FindRules.h"
 #include "PageMeasure.h"
 #include "HintsSearch.h"
+#include "TitlePath.h"
 #include "TermDrop.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
@@ -4912,6 +4913,87 @@ void testSettings() {
         // Spans come sorted by field, then place.
         m = HintsSearch::match(u"line move", line);
         CHECK(m.spans.size() == 2 && m.spans[0].start < m.spans[1].start);
+    }
+
+    GROUP("hints:search-words");
+    {
+        // The Linux port's hints write keys in words (Commands::linuxLabel).
+        using HintsSearch::Field;
+        const auto W = HintsSearch::Spelling::Words;
+        const std::vector<Field> hide = {{u"Ctrl Shift H", true}, {u"Hide these hints", false}};
+        const std::vector<Field> palette = {{u"Ctrl Shift P", true},
+                                            {u"Command palette", false}};
+        const std::vector<Field> save = {{u"Ctrl S", true}, {u"Save", false}};
+        const std::vector<Field> line = {{u"Alt Down", true}, {u"Move line down", false}};
+        const std::vector<Field> page = {{u"Ctrl Page Down", true}, {u"Next tab", false}};
+        const std::vector<Field> wrap = {{u"Alt Z", true}, {u"Word wrap   (off)", false}};
+        // Text as before: case ignored, every word, marks in their fields.
+        CHECK(HintsSearch::match(u"", save, W).matches);
+        HintsSearch::Match m = HintsSearch::match(u"SAV", save, W);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].field == 1);
+        CHECK(HintsSearch::match(u"ctrl", hide, W).matches);
+        CHECK(!HintsSearch::match(u"alt", hide, W).matches);
+        // Names find their words, in keys only.
+        m = HintsSearch::match(u"control", save, W);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].field == 0 &&
+              m.spans[0].start == 0 && m.spans[0].length == 4);
+        CHECK(HintsSearch::match(u"opt", line, W).matches);
+        CHECK(HintsSearch::match(u"Option", wrap, W).matches);
+        CHECK(HintsSearch::match(u"con", save, W).matches);   // three letters of "control"
+        CHECK(!HintsSearch::match(u"co", save, W).matches);
+        CHECK(HintsSearch::match(u"pageup", {{u"Ctrl Page Up", true}}, W).matches);
+        CHECK(HintsSearch::match(u"pagedown", page, W).matches);
+        CHECK(HintsSearch::match(u"return", {{u"Enter", true}, {u"Show the diff", false}}, W)
+                  .matches);
+        CHECK(!HintsSearch::match(u"return", {{u"Enter the text", false}}, W).matches);
+        // No glyphs: "cmd" finds no ⌘ (and no Ctrl).
+        CHECK(!HintsSearch::match(u"cmd", {{u"⌘S", true}}, W).matches);
+        CHECK(!HintsSearch::match(u"cmd", save, W).matches);
+        // Combinations, modifiers in any order, as a whole key or its end.
+        m = HintsSearch::match(u"shift+ctrl+h", hide, W);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].field == 0 &&
+              m.spans[0].start == 0 && m.spans[0].length == 12);
+        CHECK(HintsSearch::match(u"Ctrl+Shift+H", hide, W).matches);
+        CHECK(HintsSearch::match(u"control+shift+h", hide, W).matches);
+        CHECK(HintsSearch::match(u"shift+h", hide, W).matches);
+        CHECK(!HintsSearch::match(u"ctrl+h", hide, W).matches);
+        CHECK(HintsSearch::match(u"ctrl+s", save, W).matches);
+        CHECK(!HintsSearch::match(u"ctrl+s", palette, W).matches);   // not the S of Shift
+        CHECK(!HintsSearch::match(u"ctrl+shift", save, W).matches);
+        CHECK(HintsSearch::match(u"ctrl+shift", palette, W).matches);
+        CHECK(HintsSearch::match(u"opt+down", line, W).matches);
+        CHECK(HintsSearch::match(u"ctrl+pagedown", page, W).matches);
+        CHECK(!HintsSearch::match(u"ctrl+shift+h", save, W).matches);
+        CHECK(HintsSearch::wordCombination(u"shift+cmd+alt+ctrl+k") == u"ctrl alt shift cmd k");
+        CHECK(HintsSearch::wordCombination(u"ctrl++") == u"ctrl +");
+        CHECK(HintsSearch::wordCombination(u"ctrl+esc") == u"ctrl escape");
+        CHECK(HintsSearch::wordCombination(u"ctrl+ctrl+a") == u"ctrl a");
+        CHECK(HintsSearch::wordCombination(u"a+b").empty());
+        CHECK(HintsSearch::wordCombination(u"ctrl").empty());
+        CHECK(HintsSearch::match(u"ctrl+=", {{u"Ctrl =", true}}, W).matches);
+        // The Mac's spelling is unchanged by it.
+        CHECK(HintsSearch::match(u"cmd+shift+h", {{u"⇧⌘H", true}}).matches);
+        CHECK(!HintsSearch::match(u"cmd+shift+h", hide).matches);
+    }
+
+    GROUP("title:path");
+    {
+        const std::string root = "/home/u/code/app", home = "/home/u";
+        CHECK(TitlePath::shown("/home/u/code/app/src/main.cpp", root, home) == "src/main.cpp");
+        CHECK(TitlePath::shown("/home/u/code/app/a.txt", root + "/", home) == "a.txt");
+        CHECK(TitlePath::shown("/home/u/notes/todo.md", root, home) == "~/notes/todo.md");
+        CHECK(TitlePath::shown("/home/u/notes/todo.md", root, home + "/") == "~/notes/todo.md");
+        CHECK(TitlePath::shown("/tmp/x.txt", root, home) == "/tmp/x.txt");
+        // A folder whose name starts like the root's is not inside it.
+        CHECK(TitlePath::shown("/home/u/code/app2/b.txt", root, home) == "~/code/app2/b.txt");
+        CHECK(TitlePath::shown("/home/user2/c.txt", root, home) == "/home/user2/c.txt");
+        // No folder, no home, the root folder.
+        CHECK(TitlePath::shown("/home/u/d.txt", "", home) == "~/d.txt");
+        CHECK(TitlePath::shown("/home/u/d.txt", "", "") == "/home/u/d.txt");
+        CHECK(TitlePath::shown("/home/u/d.txt", "", "/") == "/home/u/d.txt");
+        CHECK(TitlePath::shown("/etc/hosts", "/", home) == "etc/hosts");
+        // The window on the home folder: from it, not "~".
+        CHECK(TitlePath::shown("/home/u/e.txt", home, home) == "e.txt");
     }
 
     GROUP("settings:keep-sorted");

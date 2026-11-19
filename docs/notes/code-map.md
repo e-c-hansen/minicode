@@ -133,7 +133,9 @@ goes here first, with tests; the GUI only displays it.
   conflict blocks, and what keeping a side or both makes of the text).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
   (the folder picker's paths, rows and completion), `HintsSearch.h`
-  (the shortcut hints' search, header only), `SymbolOutline`
+  (the shortcut hints' search, header only; the Linux port's words too),
+  `TitlePath.h` (a file's path as the GTK window's title shows it, header
+  only), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
   line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking

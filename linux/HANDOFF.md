@@ -6542,3 +6542,62 @@ The last terminal item of "Left before the default flips"
   gives it to the tab's active pane and ignores focus-ins meanwhile.
 - **Checks**: `host_splits` (HostSplitsSuite.cpp; its header says what it
   checks) and the `termdock:*` groups of `make test`.
+
+### 109. The hints panel's search box, and the file's path in the title (November 2026)
+
+The owner's two asks on the ThinkPad: "I cannot search within the help
+panel like I can on mac mutible", and the file's path in the title while
+the editor is selected.
+
+- **What a user meets.** With the shortcut hints up (Ctrl+Shift+H), a box
+  at the panel's top, "Type to search the shortcuts". Every key without
+  Ctrl or Super, save a function key and the Menu key, types into it
+  wherever the keyboard was (the editor, the tree, the terminal, a field),
+  an Alt+letter as its letter, and no command or view sees it: Alt+Z
+  types "z", it does not toggle Word Wrap. A shortcut matches when every
+  word is found in its key or its words; the places found are marked (the
+  Mac's orange behind the text) and the rest dimmed, a heading with
+  nothing found under it too, never hidden, so the list keeps its layout
+  and scrolls to the first mark. Keys go by name ("control" finds Ctrl,
+  "opt" Alt, "return" Enter) and as combinations in any order
+  ("shift+ctrl+h" finds Ctrl Shift H). Esc empties the box, then closes the
+  panel, the keyboard back where it was; Return and Tab do nothing; a
+  click puts the keyboard in the box; Ctrl keys run their commands (Ctrl+B,
+  Ctrl+Shift+H closing the panel and emptying it), F1 still opens the
+  palette, and the palette's typing stays its own. The title reads
+  "mutible — src/main.cpp" (the path from the window's folder,
+  "~/notes/todo.md" for a file in the home folder outside it, the full
+  path outside both) while the editor (its text, a viewer in its slot, its
+  tabs or find bar) has the keyboard, and "mutible — main.cpp" as before
+  while another pane has it; it follows the keyboard between panes and the
+  tab on show. The palette and the hints' box only borrow the keyboard, so
+  the title stays as it was while they have it.
+- **Code.** Core: `src/HintsSearch.h` gains `Spelling::Words` (`parse`,
+  `match` take it; `wordNames`, `wordsNamed`, `wordCombination`, and
+  `Word::whole`, found only at word boundaries, so "ctrl+s" never finds the
+  S of Ctrl Shift P); the Mac's glyph spelling is untouched.
+  `src/TitlePath.h` (`TitlePath::shown`), header only. GTK:
+  `linux/src/HintsSearchBox.{h,cpp}` (the GtkSearchEntry, `takeKey`,
+  `giveBackKeyboard`, `attributes`: Pango background and foreground-alpha
+  attributes on the label); main.cpp's `hintsRows` (was `hintsText`, the
+  rows unchanged), `hintsText` (the same layout, each `HintRow` told where
+  it landed), `showHintsText`, `hintsQueryChanged`, `setHintsShown`,
+  `onHintsKey` (a key controller in the window's capture phase);
+  `setWindowTitle` and `titleShowsPath`, run from `updateTitle` and
+  `onFocusWidget`. The panel's columns and the key names are as they were.
+- **Traps.** An input method types nothing for an Alt+letter
+  (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`): forwarded, Alt+Z was lost and the
+  box held "s" (hints_panel failed so), so the box inserts the letter
+  itself; other keys are forwarded to the entry's GtkText
+  (`gtk_event_controller_key_forward`) after the box takes the keyboard,
+  so input methods and Backspace work as in any field. `onHintsKey`, added
+  to the window after GTK's own controllers, runs before the application's
+  accelerators on GTK 4.22: with no accelerator unbound, Alt+Z still
+  reached the box and Word Wrap stayed as it was (an unbinding like
+  `updateShellKeys`'s was tried and taken out as needless); a GTK that ran
+  them first would let Alt keys' commands run while the panel shows. The
+  keyboard is given back before the panel hides, or GTK puts it wherever
+  it likes.
+- **Checks**: `hints_panel` (HintsPanelSuite.cpp) and `window_title`
+  (WindowTitleSuite.cpp), their headers saying what they check, and the
+  `hints:search-words` and `title:path` groups of `make test`.
