@@ -37,6 +37,25 @@ static void testHtmlPage() {
         CHECK(HtmlPage::withoutFragment("file:///w/a.html#end") == "file:///w/a.html");
         CHECK(HtmlPage::withoutFragment("file:///w/a.html") == "file:///w/a.html");
     }
+    GROUP("htmlpage:apps");
+    {
+        // A link a page's own script can click (a.click()) is reported as
+        // the user's; one that would open another app is asked about first.
+        for (const char *s : {"zoommtg", "smb", "mailto", "tel", "data", "about", "ZoomMtg", "x-app"})
+            CHECK(HtmlPage::opensAnotherApp(s));
+        for (const char *s : {"", "http", "https", "file", "HTTPS", "File"})
+            CHECK(!HtmlPage::opensAnotherApp(s));
+        CHECK(HtmlPage::openAppQuestion("zoom.us") == "Open in zoom.us?");
+        CHECK(HtmlPage::openAppQuestion("") == "Open in another app?");
+        CHECK(HtmlPage::openAppDetail("zoommtg://zoom.us/join?confno=1") ==
+              "The link goes to zoommtg://zoom.us/join?confno=1, outside mutible.");
+        const std::string eighty = "smb://" + std::string(74, 'x');
+        CHECK(HtmlPage::openAppDetail(eighty) == "The link goes to " + eighty + ", outside mutible.");
+        const std::string longer = "smb://" + std::string(73, 'x') + "\xC3\xA9\xC3\xA9tail";
+        CHECK(HtmlPage::openAppDetail(longer) ==
+              "The link goes to smb://" + std::string(73, 'x') + "\xE2\x80\xA6, outside mutible.");
+        CHECK(std::string(HtmlPage::kOpenApp) == "Open");
+    }
     GROUP("htmlpage:navigation");
     {
         using N = HtmlPage::Navigation;

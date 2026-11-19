@@ -271,15 +271,81 @@ static void testBackups() {
             CHECK(r.items[3].path == "/r/d.txt" && !r.items[3].inSession);
             CHECK(r.items[4].path == "/r/c.txt");
         }
-        CHECK(r.discard == std::vector<std::string>{"b2"});
+        // The older backup of b is not deleted: a draft of its own.
+        CHECK(r.conflicts.size() == 1 && r.conflicts[0].id == "b2" &&
+              r.conflicts[0].path == "/r/b.txt");
         r = plan(all, "/r", {}, pid9);
         CHECK(r.items.size() == 4);   // live.txt left to its owner
         for (auto &it : r.items) CHECK(it.path != "/r/live.txt" && !it.inSession);
         CHECK(plan(all, "/nowhere", {"/r/a.txt"}, dead).items.empty());
-        // Ties between two backups of one file: one is kept, the other goes.
+        // Ties between two backups of one file: one in the tab, the other
+        // a conflict, neither lost.
         r = plan({mk("x1", "/r/t", "/r", 1), mk("x2", "/r/t", "/r", 1)}, "/r", {}, dead);
-        CHECK(r.items.size() == 1 && r.discard.size() == 1 &&
-              r.items[0].id != r.discard[0]);
+        CHECK(r.items.size() == 1 && r.conflicts.size() == 1 &&
+              r.items[0].id != r.conflicts[0].id);
+
+        GROUP("backups:plan-windows");
+        {
+            // Round 10's workspace item 1 (probe-core/p3): two windows on
+            // one folder, a.txt unsaved in both with other text, quit with
+            // hot exit. The first window to come back took the newer
+            // backup and deleted the other, and took the second window's
+            // b.txt too. Now each window takes its own.
+            auto in = [&](std::string id, std::string path, double saved, std::string w) {
+                Entry e = mk(id, path, "/proj", saved);
+                e.window = w;
+                return e;
+            };
+            const std::string k1 = "11111111-1111-1111-1111-111111111111";
+            const std::string k2 = "22222222-2222-2222-2222-222222222222";
+            const std::vector<Entry> quit = {in("A1", "/proj/a.txt", 1, k1),
+                                             in("B2", "/proj/a.txt", 2, k2),
+                                             in("C3", "/proj/b.txt", 3, k2)};
+            // Window 1 comes back while window 2 is still to: its own a.txt,
+            // though older; window 2's backups are left for it.
+            Restore w1 = plan(quit, "/proj", {"/proj/a.txt"}, dead, k1, {k1, k2});
+            CHECK(w1.items.size() == 1 && w1.items[0].id == "A1" && w1.conflicts.empty());
+            // Window 2 then (window 1's now held, so live).
+            const IsLive held = [](const Entry &e) { return e.id == "A1"; };
+            Restore w2 = plan(quit, "/proj", {"/proj/a.txt", "/proj/b.txt"}, held, k2, {});
+            CHECK(w2.items.size() == 2 && w2.items[0].id == "B2" && w2.items[1].id == "C3" &&
+                  w2.conflicts.empty());
+            // A window not among those coming back (a launch with a folder
+            // named, the record gone) takes every backup of the folder:
+            // the newest a.txt in the tab, the other as a conflict.
+            Restore any = plan(quit, "/proj", {}, dead, "", {});
+            CHECK(any.items.size() == 2 && any.conflicts.size() == 1);
+            for (const auto &it : any.items)
+                if (it.path == "/proj/a.txt") CHECK(it.id == "B2");
+            CHECK(any.conflicts.size() == 1 && any.conflicts[0].id == "A1");
+            // Its own comes first even when another's is newer.
+            Restore own = plan(quit, "/proj", {}, dead, k1, {});
+            CHECK(own.conflicts.size() == 1 && own.conflicts[0].id == "B2");
+            for (const auto &it : own.items)
+                if (it.path == "/proj/a.txt") CHECK(it.id == "A1");
+            // Backups from before the key (no window) go to the first window.
+            Restore old = plan({in("O1", "/proj/a.txt", 1, ""), in("O2", "/proj/a.txt", 2, k2)},
+                               "/proj", {}, dead, k1, {k1, k2});
+            CHECK(old.items.size() == 1 && old.items[0].id == "O1" && old.conflicts.empty());
+            // The key survives the header; a bad one is dropped.
+            Entry e = in("id-1", "/proj/a.txt", 1, k2);
+            Entry back;
+            std::string text;
+            CHECK(decode(encode(e, "x"), &back, &text) && back.window == k2);
+            e.window = "../x";
+            CHECK(decode(encode(e, "x"), &back, &text) && back.window.empty());
+        }
+
+        GROUP("backups:draft-path");
+        {
+            std::set<std::string> there = {"/p/a (unsaved copy).txt"};
+            auto taken = [&there](const std::string &p) { return there.count(p) > 0; };
+            CHECK(draftPath("/p/a.txt", nullptr) == "/p/a (unsaved copy).txt");
+            CHECK(draftPath("/p/a.txt", taken) == "/p/a (unsaved copy 2).txt");
+            CHECK(draftPath("/p/Makefile", taken) == "/p/Makefile (unsaved copy)");
+            CHECK(draftPath("/p/.env", taken) == "/p/.env (unsaved copy)");
+            CHECK(draftPath("/p.d/x", taken) == "/p.d/x (unsaved copy)");
+        }
 
         GROUP("backups:reopen");
         std::vector<std::string> f = foldersToReopen(all, {"/r"}, dead);

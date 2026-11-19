@@ -502,6 +502,20 @@ int countProcs(const std::vector<Node>& nodes) {
     return n;
 }
 
+static int countServersIn(const std::vector<Node>& nodes) {
+    int n = 0;
+    for (const Node& node : nodes)
+        n += (node.proc.alive && !node.proc.ports.empty() ? 1 : 0) + countServersIn(node.children) +
+             countServersIn(node.exited);
+    return n;
+}
+
+int countServers(const View& view) {
+    int n = 0;
+    for (const Group& g : view.groups) n += countServersIn(g.roots) + countServersIn(g.exited);
+    return n;
+}
+
 std::string summary(uint64_t memory, int count) {
     if (count <= 0) return "No processes";
     return formatBytes(memory) + " in " + std::to_string(count) +

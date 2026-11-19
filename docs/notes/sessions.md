@@ -122,7 +122,23 @@ found through that list.
   and the review read a Windows-1252 file's blob the same way
   (`QuickDiff::readOriginal`, `encodingOfBlob`) and stage it back so.
   Replace in Folder still leaves these files alone (it writes UTF-8 and
-  UTF-16 only). The GTK editor follows the same rules (2026-11-18,
+  UTF-16 only). **UTF-8 with stray bytes** (2026-11-19, round 10's
+  workspace item 2, `encoding:utf8-stray-bytes`, `make guitest
+  SUITES=save`): bytes that are not valid UTF-8 and hold no NUL but are
+  mostly UTF-8 (at least as many valid multi-byte characters as runs of
+  stray bytes: `FolderSearch::readsAsUtf8WithStrayBytes`, the exact
+  complement of `readsAsWindows1252` among such bytes) decode as
+  `TextEncoding::Utf8Raw` (`MCTextEncodingUtf8Raw`, "utf8raw", label
+  "UTF-8, bad bytes kept"): each valid character as itself and each stray
+  byte b as U+10FE00 + b (`kStrayByteBase`, supplementary private use),
+  which `encodeText` writes back as b. Unedited or edited, the file
+  round-trips, and `canEncode` is always true, so `MCEncodingToWrite`
+  never switches it. A file already holding a character in
+  U+10FE80..U+10FEFF is never read so (it stays Windows-1252). Find in
+  Folder's whole-file read (`readFile`) uses the same decode; the large
+  streamed read still switches to Windows-1252 at the first piece that is
+  not UTF-8 (round 10's item 3, open). The review and the gutter read a
+  Utf8Raw file's blob the same way (`encodingOfBlob`, `readOriginal`). The GTK editor follows the same rules (2026-11-18,
   `linux/HANDOFF.md` item 102): `Document::readText` decodes through
   `decodeFileText` (UTF-16 and a UTF-8 mark too, which it had not
   handled: UTF-16 was "Cannot display", a UTF-8 mark sat in the buffer
@@ -366,9 +382,25 @@ found through that list.
   file never existed and still does not (`diskExisted` false: an untitled
   buffer the session's host held) comes back `untitled` (not "(deleted)",
   never auto-saved, Cmd+S makes the file).
-  `reopenFoldersWithBackups` opens a window per folder with unheld backups. The
-  newest of several wins; orphans over 30 days and temporaries over a day go
-  (`cleanUpOnce`).
+  `reopenFoldersWithBackups` opens a window per folder with unheld backups.
+  Orphans over 30 days and temporaries over a day go (`cleanUpOnce`).
+- **Backups by window** (2026-11-19, round 10's workspace item 1,
+  `backups:plan-windows`, `backups:draft-path`, `make guitest
+  SUITES=backups`): every backup names its window (`Entry::window`, the
+  header's `window`), the window's `backupKey` (`_backupKey`, a UUID
+  kept in its record, `TabSessions::Window::backupKey`, and adopted by
+  `restoreWindowRecord:`). `windowsToRestore` reserves the keys of every
+  window the launch brings back (`reserveWindowKeys:`), and `plan` (with
+  `window` and `reserved`) leaves a reserved key's backups to its window:
+  two windows on one folder with one file unsaved in both each get their
+  own. Of several backups of one file a window may take, its own newest
+  goes in the tab (else the newest) and every other is a conflict, never
+  deleted: `restoreConflictingBackups:` rewrites it under
+  `Backups::draftPath` ("a (unsaved copy).txt", `moveID:toPath:window:`,
+  never a file on disk until saved) and opens it as an untitled tab
+  (`MCTab draftOf`, its own note), or removes it when its text is the
+  file's tab's. GTK still plans with no key (all its windows share "") and
+  leaves the conflicts on disk unshown until it ports this.
 - **Quit** (Cmd+Q, the Dock, logout, restart; AppDelegate's
   `confirmQuitRestarting:`): the running-commands question stays (it is
   not about saving), then each window with unsaved tabs, under hot exit or
@@ -423,4 +455,6 @@ text is in place in its section.
 
 - Tabs, sessions and the disk (Mac): **Traps**: never move the mirror's layout manager with `replaceTextStorage:`, which carries every layout manager of the storage, the editor's too (`removeLayoutManager:` then `addLayoutManager:`); the mirror must let go of the editor's storage before its whole text is replaced (`MCSourceStorage willReplaceAll`, and `editorWillShowTab:` ...
 - Backups, hot exit and auto-save (Mac): Trap: the focus-change save and the delay's debounce shared a selector and `updateTitle` cancelled the save after a tab switch; nothing may cancel `autoSaveNow`.
+- Backups by window (round 10's item 1): `plan` kept the newest backup of a file and listed the rest to delete, and the first window back on a folder planned for the whole folder, so after hot exit one of two windows' unsaved text in one file was deleted unseen, and the first window took the other's other files. A backup is deleted only once its text is back or saved; a planner never lists any to delete, and a window takes only its own and those of no window still to come back.
+- Encodings (round 10's item 2): "not valid UTF-8" is not "not UTF-8". One stray byte made `readsAsWindows1252` read a whole UTF-8 file as Windows-1252, and the first character Windows-1252 lacks saved it as UTF-8, every character encoded twice. A new decoding rule must keep both directions byte for byte (`encoding:*` round-trips random bytes through `decodeFileText` and `encodeFileText`).
 - Backups, hot exit and auto-save (Mac): Trap: `keepUnsavedTabsForRestart` passed over a dirty tab it could not back up, which a quit without a question would have lost; `keepUnsavedTabsForNextLaunch` returns NO for it, and the window asks.

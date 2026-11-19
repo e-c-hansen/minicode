@@ -166,8 +166,10 @@ Backups::IsLive BackupStore::liveTest() {
 Backups::Restore BackupStore::planForRoot(const std::string& root,
                                           const std::vector<std::string>& sessionFiles) {
     flush();   // this process's own writes are on disk first
+    // Another backup of a file this window brings back (r.conflicts) is
+    // never deleted (round 10's workspace item 1): it waits on disk until
+    // this port shows it as a copy, as the Mac does.
     Backups::Restore r = Backups::plan(store_.list(), root, sessionFiles, liveTest());
-    for (const std::string& id : r.discard) store_.discard(id);
     std::lock_guard<std::mutex> g(lock_);
     for (const auto& item : r.items) claimed_.insert(item.id);
     return r;

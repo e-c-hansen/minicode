@@ -339,6 +339,9 @@ Decorations Decorations::fromStatus(const Status& st) {
     };
     for (const auto& [path, k] : d.files_) rollUp(path, k);
     for (const std::string& dir : d.untrackedDirs_) rollUp(dir, Decoration::Untracked);
+    d.changes_ = d.untrackedDirs_.size();
+    for (const auto& [path, k] : d.files_)
+        if (k != Decoration::Ignored) d.changes_++;
     return d;
 }
 

@@ -55,7 +55,26 @@ found through that list.
   Refused ones go to `Host::refused`, the status bar's note in the Mac's
   words (`refusedNote`); the GTK html_page checks a link spy
   (`HtmlView::linkSpy`) and `MCGuiLaunchedUris` (the harness's recorder
-  in `Editor::launchUriHook`, so no check starts another app). **Scripts** (the owner's call,
+  in `Editor::launchUriHook`, so no check starts another app).
+  **Trap** (2026-11-19, after #249): a page whose scripts run can click
+  its own link (`a.click()`) or send its own form (`form.submit()`), and
+  WebKit reports those as `LinkActivated` and `FormSubmitted`, the
+  user's, so such a page still sent `zoommtg://` (any app's scheme) to
+  `openURL:` with no click. `WKNavigationAction` has no public sign of a
+  real click (`buttonNumber` and `modifierFlags` read a left button and
+  none for `a.click()` as for a click; `_isUserInitiated` is SPI, not
+  used), so every followed link to another app
+  (`HtmlPage::opensAnotherApp`: any scheme but http, https and file)
+  asks first in a sheet naming the app (`URLForApplicationToOpenURL:`)
+  and the address (`openAppQuestion`, `openAppDetail`, `htmlpage:apps`),
+  Open the default: one question per click by hand. One sheet at a
+  time; another meanwhile is refused (`onRefused`), and its box, Refuse
+  any more from this page, refuses the rest until the page loads again,
+  so a page clicking its link in a loop cannot hold the window.
+  `html_page` checks a page's `a.click()` at load asks and, cancelled,
+  reaches no `openURL:`, and a real click (mouse down and up handed to
+  the web view) asks and opens. The GTK port can tell the two apart
+  (WebKitGTK's `webkit_navigation_action_is_user_gesture`). **Scripts** (the owner's call,
   2026-11-15, against "nothing runs because a file was opened"):
   `html.scripts` (ask, on, off); with ask, a page whose text
   `FileSniff::htmlMayRunScripts` flags shows with
@@ -229,6 +248,7 @@ Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
 - Viewers in the editor's slot (Mac): **Trap** (round 10's documents defect 2, 2026-11-19): a `<meta http-equiv="refresh">` to `zoommtg://` (any app's scheme) went to `openURL:` with no click, and an https one loaded in the browser pane; `html.scripts` never applied, since a meta refresh is not a script.
+- Viewers in the editor's slot (Mac): **Trap** (2026-11-19, after #249): a page whose scripts run can click its own link (`a.click()`) or send its own form (`form.submit()`), and WebKit reports those as `LinkActivated` and `FormSubmitted`, the user's, so such a page still sent `zoommtg://` (any app's scheme) to `openURL:` with no click.
 - HTML pages (GTK): **Trap** (the same defect, 2026-11-19): the GTK port let a page's own main-frame load run to `WEBKIT_LOAD_COMMITTED`, then loaded the file again and handed the address to the link handler (`openMarkdownLink`, which gives any scheme but http(s) and file to the desktop's handler), and loading the file again fired its refresh again, so the page went round for as long as it showed. WebKitGTK says which frame only at the response check (`webkit_response_policy_decision_is_main_frame_main_resource`); stop it there, or at `load-failed` (an unreachable address, a missing file, where the default handler would commit an error page at that address), and the page never leaves. A scheme no frame loads is refused at the policy check, before anything loads.
 - CSV and TSV: **Trap (round 9)**: the grid's `validateMenuItem:` ended in `[super validateMenuItem:]`, which NSTableView does not have (it validates through `validateUserInterfaceItem:`), so validating any menu item the grid was the target of threw, AppKit dropped the key, and no menu key worked while the grid had the keyboard: Shift+Cmd+P "did nothing".
 - JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).

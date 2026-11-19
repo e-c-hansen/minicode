@@ -12,6 +12,7 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,11 @@ struct Entry {
     int64_t ownerPid = 0;
     double ownerStart = 0;      // the owner's start time, against pid reuse
     uint64_t bytes = 0;         // the text's length, checked when it is read
+    // The window the buffer was in (TabSessions::Window::backupKey, a
+    // validId), so two windows on one folder with one file unsaved in both
+    // each get their own back; "" in backups older than this key (round 10's
+    // workspace item 1) and from writers with no windows (the session host).
+    std::string window{};
 };
 
 // "lf", "crlf", "cr", "mixed" or "none".
@@ -110,8 +116,15 @@ using IsLive = std::function<bool(const Entry &)>;
 // What a window opening `root` brings back. The session's files (in its
 // order) that have a backup, then backups of other files in that folder
 // (newest first): a crash can lose the session's last save, but never the
-// buffers. Live backups are left alone. When one file has several backups,
-// the newest comes back and the others are listed to discard.
+// buffers. Live backups are left alone, and so are those of another window
+// still to come back (`reserved`: their TabSessions::Window::backupKey,
+// `window` being this one's). When one file has several backups this
+// window may take, its own newest comes back in the file's tab (else the
+// newest), and each other is a conflict: another window's unsaved text, or
+// an older draft, which the window shows as a copy of its own
+// (draftPath). Nothing is ever listed to delete: before 2026-11-19 the
+// older ones were, and two windows' unsaved text in one file, which hot
+// exit keeps at every Quit, lost one of them at the next launch.
 struct Restore {
     struct Item {
         std::string path;
@@ -119,10 +132,19 @@ struct Restore {
         bool inSession = false;
     };
     std::vector<Item> items;
-    std::vector<std::string> discard;
+    std::vector<Item> conflicts;
 };
 Restore plan(const std::vector<Entry> &all, const std::string &root,
-             const std::vector<std::string> &sessionFiles, const IsLive &live);
+             const std::vector<std::string> &sessionFiles, const IsLive &live,
+             const std::string &window = std::string(),
+             const std::set<std::string> &reserved = std::set<std::string>());
+
+// Where a conflicting draft of `path` is shown: beside it, "a (unsaved
+// copy).txt", then "a (unsaved copy 2).txt", ..., the first `taken` (a
+// file there, or a tab already named so) does not refuse. Nothing is
+// written there until the user saves it.
+std::string draftPath(const std::string &path,
+                      const std::function<bool(const std::string &)> &taken);
 
 // Folders with backups no running window holds, newest first, leaving out
 // `openRoots`: at launch each gets a window, so its buffers come back.

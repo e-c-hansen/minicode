@@ -42,12 +42,14 @@ typedef NS_ENUM(NSInteger, MCTextEncoding) {
     MCTextEncodingUtf16LE,
     MCTextEncodingUtf16BE,
     MCTextEncodingWindows1252,   // not UTF-8, no NUL: FolderSearch::readsAsWindows1252
+    MCTextEncodingUtf8Raw,       // UTF-8 with stray bytes kept: readsAsUtf8WithStrayBytes
 };
 
 @interface MCDiskText : NSObject
 // nil: missing, unreadable, too large, binary (not UTF-8 and a NUL in
 // it), or UTF-16 that does not decode exactly (a lone surrogate, an odd
-// byte). Text not in UTF-8 is read as Windows-1252.
+// byte). Text not in UTF-8 is read as Windows-1252, or as UTF-8 with its
+// stray bytes kept when it is mostly UTF-8 (MCTextEncodingUtf8Raw).
 @property(nonatomic, copy)   NSString *text;
 // The file starts with a byte order mark: UTF-8's, or UTF-16's (every
 // UTF-16 file read as text has one; without it, it is not text here).
@@ -262,6 +264,9 @@ NSString *MCEncodingStatusLabel(MCTextEncoding encoding, BOOL bom);
 // whether one is on disk, and whether the buffer came back from one and
 // waits to be shown over the disk's text (loadActiveTab).
 @property(nonatomic, copy)   NSString *backupID;
+// A copy of another window's unsaved text in this file (the file's path),
+// brought back beside it (restoreConflictingBackups:); nil for the rest.
+@property(nonatomic, copy)   NSString *draftOf;
 @property(nonatomic, assign) uint64_t backedUpGeneration;
 @property(nonatomic, copy)   NSString *backedUpPath;
 @property(nonatomic, assign) BOOL hasBackup, restoredBackup;

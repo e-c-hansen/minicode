@@ -41,6 +41,27 @@ found through that list.
   kept side piece's shift (`toggleMarkdownDetails:atIndex:inPage:`).
   Quotes carry `quoteDepth` and, inside a list item, `quoteIndent`; a quote
   keeps its own list stack (`quoteList`), and a fence in an item its depth.
+  **Container edges** (2026-11-19, round 10's documents grade;
+  `md:quote-code`, `md:item-html`, `md:list-ends`, `md:details`): a quote
+  reads its own fenced code (`quoteFence`: a line with as many `>` holds
+  code or the closing fence, any other line ends the block with the quote;
+  the code runs carry the quote's depth and indent, so an alert's bar goes
+  round them) and its own HTML blocks of the sixth and seventh kinds
+  (`quoteHtml`, to a blank quote line); their lines stay `MdLine::Quote` of
+  the quote's edit block, so a double-click still edits the whole quote.
+  An HTML block in a list item ends at a line not indented into the item,
+  as CommonMark ends any container's HTML block (the next item's marker
+  was its text). A comment or link definition at the margin ends the lists
+  and the quote it is not inside (`endContainers`), with a gap where a list
+  ended, as GitHub shows two lists. A `<details>` left open in a list item
+  or a quote closes with it, as a browser closes it at `</li>`:
+  `Details::Open` keeps its quote group and item (`Block::item`,
+  `parentItem`) and `parse()`'s emit drops what the next block is outside
+  of. `MdRun::detailsIndex` tells two on one line apart (fold, the export,
+  the page's pieces); the Mac's state is still by tag line, so those two
+  open and close together there. `detailsAt` (its block's list levels plus
+  quotes) lets the export open it inside them (`enterAround`); `closeTo`
+  closes a `<details>` before the box it sits in.
   An ordered list counts on from its first item's number (2026-11-18,
   `md:list-numbers`, CommonMark and GitHub: "1. 3. 4." shows 1, 2, 3):
   `analyze()` keeps a `Numbering` per open list level (and per level of
@@ -48,7 +69,9 @@ found through that list.
   a block out of the level, a sibling of the enclosing item, or another
   delimiter or bullet ends. The marker run carries the counted number,
   so the GTK and Android pages follow; the HTML export already wrote
-  `<ol start>` with the first number and let the browser count.
+  `<ol start>` with the first number and let the browser count; an item
+  whose number is not its list's next starts another `<ol>` (only a list
+  something ended does that, since the parser counts on).
   Between blocks comes exactly one `"\n"`
   run with `gap` set, however many blank lines. Brackets are matched once per
   block with a stack and nesting stops at 8, so bad input stays linear.
@@ -60,7 +83,10 @@ found through that list.
   "render plainly"; `md:alerts`, `md:emoji`, `md:front-matter`,
   `markdown_preview`'s corpus step). Alerts: the quote's first line
   `[!NOTE]` (TIP, IMPORTANT, WARNING, CAUTION, any case, an outer quote
-  only) becomes its title paragraph; `analyze()` keeps the kind per quote
+  only, not in a list item, and not with nothing after the marker: `>
+  [!NOTE]` alone is a quote of the marker, `alertMarkers`) becomes its
+  title paragraph, and a lazy line right after it is the alert's text, as
+  it continues the title's paragraph on GitHub; `analyze()` keeps the kind per quote
   group and every block of the group gets `Block::alert`, stamped on
   `MdRun::alert` (the title's runs `alertTitle`); the gap runs inside take
   the block's after them, so the bar is not cut. The Mac colors the outer
@@ -74,7 +100,8 @@ found through that list.
   `MarkdownEmoji` (core, about 900 of gemoji's 1,800 names, one code point each, U+FE0F
   added where the default is text) is applied at the end of `inlineRuns`
   to text runs only (not code, math, pictures, footnote numbers, or an
-  address shown as itself), so a table measures after it; a code needs
+  address shown as itself, a `www.` address too, whose link adds
+  `http://`), so a table measures after it; a code needs
   no letter or digit outside its colons ("12:100:30" stays). Front matter
   (the parser's old rule: `---` on line 0, a `key:` on line 1, `---` or
   `...` within 200 lines) was a code block; it is a `Block::Table` of one
@@ -252,7 +279,10 @@ found through that list.
   The box opens on the double-clicked word (2026-11-15, D2's first step):
   `MarkdownEdit::sourceOffsetFor` finds the page's word in the block's
   Markdown by the 40 characters either side (letters and digits compared,
-  markup looked through, `mdedit:word`), and `MCMarkdownEditPanel
+  markup looked through, `mdedit:word`; emphasis marks, backticks and
+  backslashes are left out of both sides, since round 10 found the page's
+  "foobar" matched to a plain one rather than the clicked `foo**bar**`,
+  and nothing for `foo*bar*baz`), and `MCMarkdownEditPanel
   showText:...selection:width:font:` selects just it, is as wide as the
   page's lines, in the page's 15 points for prose, and as tall as the
   text; nothing is preselected otherwise. The LaTeX popover selects the

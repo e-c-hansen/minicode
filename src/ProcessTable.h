@@ -210,6 +210,9 @@ View buildView(const std::vector<Proc>& procs, const std::vector<Terminal>& term
 void foldExited(View& view);
 // How many processes nodes hold, their trees included ("N exited").
 int countProcs(const std::vector<Node>& nodes);
+// How many live processes in the view listen on a port, at any depth of
+// any group: the sidebar's Processes badge.
+int countServers(const View& view);
 
 // "1.8 GB in 14 processes", "34.2 MB in 1 process", "No processes".
 std::string summary(uint64_t memory, int count);
