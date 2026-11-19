@@ -4060,8 +4060,9 @@ void testSettings() {
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
-    // editor.session-web-idle-minutes, and editor.wrapping-indent.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 143);
+    // editor.session-web-idle-minutes, and editor.wrapping-indent, and
+    // workbench.sidebar-icons.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 144);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new

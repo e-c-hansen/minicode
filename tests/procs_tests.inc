@@ -406,6 +406,10 @@ static void testProcs() {
             for (int p : pids(g.roots)) std::printf("    row: %d\n", p);
         CHECK(g.roots[0].proc.alive && !g.roots[1].proc.alive);
         CHECK(g.count == 1 && g.exited.empty());   // buildView folds nothing
+        // The sidebar's badge: the running server, not the one that stopped
+        // (terminal 1's dev server listens on no port here).
+        CHECK(countServers(v) == 1);
+        if (countServers(v) != 1) std::printf("    servers %d\n", countServers(v));
         // The server that stopped is remembered as one that listened.
         CHECK(g.roots[1].proc.listened && g.roots[1].proc.ports.empty() &&
               !g.roots[2].proc.listened);

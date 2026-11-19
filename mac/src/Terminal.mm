@@ -50,6 +50,7 @@
 //     go straight to the pty. The log stream leaves alternate-screen text
 //     out, so the log is intact when the grid goes away.
 #import "Terminal.h"
+#import "HoverHint.h"
 #import "AppSettings.h"
 #import "TerminalGridView.h"
 #import "TerminalFindBar.h"
@@ -528,7 +529,7 @@ static const CFTimeInterval kSliceSeconds = 0.012;
     [self updateLinkHover];
     [_restTimer invalidate];
     _restTimer = nil;
-    if (self.toolTip) self.toolTip = nil;
+    [MCHoverHint hideInView:self];
     if (event.modifierFlags & NSEventModifierFlagCommand) return;
     __weak TerminalOutputView *weakSelf = self;
     _restTimer = [NSTimer timerWithTimeInterval:0.5 repeats:NO block:^(NSTimer *t) {
@@ -542,14 +543,14 @@ static const CFTimeInterval kSliceSeconds = 0.012;
     if (!self.window || (NSEvent.modifierFlags & NSEventModifierFlagCommand)) return;
     NSPoint p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream] fromView:nil];
     if (NSPointInRect(p, self.visibleRect) && [self linkAtPoint:p range:NULL])
-        self.toolTip = MCTerminalLinkHint;
+        [MCHoverHint showText:MCTerminalLinkHint inView:self atPointer:p];
 }
 - (void)mouseExited:(NSEvent *)event {
     [super mouseExited:event];
     [self clearLinkHover];
     [_restTimer invalidate];
     _restTimer = nil;
-    self.toolTip = nil;
+    [MCHoverHint hideInView:self];
 }
 - (void)cursorUpdate:(NSEvent *)event {
     if (_hoverRange.location != NSNotFound) [[NSCursor pointingHandCursor] set];
@@ -559,7 +560,7 @@ static const CFTimeInterval kSliceSeconds = 0.012;
 - (void)mouseDown:(NSEvent *)event {
     [_restTimer invalidate];
     _restTimer = nil;
-    self.toolTip = nil;
+    [MCHoverHint hideInView:self];
     if (event.modifierFlags & NSEventModifierFlagCommand) {
         NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
         MCTermLink *link = [self linkAtPoint:p range:NULL];

@@ -460,10 +460,19 @@ for full-screen programs. Both can be open at once.
   The log checks `characterIndexForPoint:` against the character's own rect (it
   answers past a line's end); a flagsChanged monitor catches Cmd pressed
   without moving. Without Cmd, a rest of 0.5 s on a link (a timer each
-  `mouseMoved:` re-arms, so no lookup per move) sets the tooltip to
-  "Cmd+click to open" (`showRestHint`, both modes; with a hyperlink's
+  `mouseMoved:` re-arms, so no lookup per move) shows "⌘-click to open"
+  beside the pointer (`showRestHint`, both modes; with a hyperlink's
   address on a second line), never while a program takes the mouse or a
-  selection is dragged; a move, a press, or leaving the view clears it. A URL goes to `openWebAddressFromTerminal:` (the user's
+  selection is dragged; a move, a press, a key, a scroll, or leaving the
+  view clears it. With Cmd held over a hyperlink its address shows there
+  at once. **Trap** (round 9, 2026-11-19): until then the hint was the
+  view's `toolTip`, and the checks read that property, so they passed
+  while no user ever saw it: AppKit shows a tooltip only after a move
+  inside the view once it is set, and here it was set after the pointer
+  had rested and cleared by the next move. The hint is now `MCHoverHint`
+  (HoverHint.h), a subview in the tooltip material that clicks go through;
+  the checks read `linkHintText` and the subview's frame. The link
+  hit-test is the core's (`TermLinks::find` and `at`, through `linkAt`). A URL goes to `openWebAddressFromTerminal:` (the user's
   page, pane shown quietly with no home page, keyboard kept; 0.0.0.0 and [::]
   become localhost, `TermLinks::browserAddress`).
 - **OSC 8** (grid only; the line-mode log ignores them): `TerminalScreen`
@@ -632,6 +641,7 @@ text is in place in its section.
 - The terminal: **Trap** (2026-11-18): Ctrl+C typed while ZLE reads left the old B believed until zsh's SIGINT was handled, and a command typed in that moment lost its `ESC [` to the dying line editor and ran as `[9999~read ...` (terminal_paste's flake on CI).
 - The terminal: Trap: the harness can run zsh; an agent's own shell may be refused it by the worktree guard.
 - The terminal: Trap: quote dropped paths with backslashes, never single quotes.
+- The terminal: **Trap** (round 9, 2026-11-19): until then the hint was the view's `toolTip`, and the checks read that property, so they passed while no user ever saw it.
 - The terminal: Trap: a CGColor taken from a temporary NSColor can be freed before it is retained; hold the NSColor with `objc_precise_lifetime` until then.
 - The terminal: **Trap**: the panel's `closeTerminal:` and `renameTerminal:` share their selectors with the menu's actions, so with the keyboard in a terminal the panel received Ctrl+Shift+W as `closeTerminal:(NSMenuItem *)` and closed nothing (until 2026-11-08); both take a non-terminal argument as "the active one".
 - Terminals owned by the session's host (stage 5): **The host's screen answers no queries**: `takeReplies` is thrown away, since the renderer's emulator answers DA, DSR and the rest through its input, and two answers would reach the program.

@@ -203,7 +203,9 @@ goes here first, with tests; the GUI only displays it.
 - `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
   `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
-  `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
+  `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`,
+  `HoverHint` (the link hint beside the pointer, a subview, since AppKit's
+  toolTip set after the pointer rests never shows).
 - Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownMedia`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `HtmlPage`, `CompareView`.
@@ -220,7 +222,9 @@ goes here first, with tests; the GUI only displays it.
   headless one, and each tab's document on them, editor.session-host;
   `docs/notes/session-host.md`), `SessionWindow` (a window's link, record
   and what it took from a closed window's, stage 6),
-  `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box).
+  `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box),
+  `SidebarIcons` (`MCSidebarHost`, the split view's first subview, and its
+  row of panel icons, workbench.sidebar-icons).
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
   `ClaudeHooksOffer` (the waiting dots' hooks, offered in the app),
@@ -250,7 +254,9 @@ Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
 LanguageServers, Agents (inline agent, Request a
 Change, control channel, agent work), Processes (the Processes panel's
-hooks, its state in associated objects), LargeFile (large-file mode, its
+hooks, its state in associated objects), SidebarIcons (the sidebar's row of
+panel icons: what each shows, a click's panel; no ivars, the host is the
+`sidebarHost` property), LargeFile (large-file mode, its
 status bar note, the 1 GB question), Tests (the ▶ beside each test, Run
 Test at Cursor), LineHistory (Show Line History's host), Markdown and
 MarkdownRender. Rules, so it
