@@ -1127,8 +1127,9 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
 }
 
 // --------------------------------------------------------------- bookmarks
-// Whether the page on show is in the bookmark folder, looked up off the
-// main thread (a walk of the folder; Bookmarks.h). An answer for a page no
+// Whether the page on show is bookmarked, in the window's own bookmarks or
+// the shared ones, looked up off the main thread (a walk of each folder;
+// Bookmarks.h). An answer for a page no
 // longer on show is dropped.
 - (void)bookmarksChanged {
     NSString *url = self.pageURL;
@@ -1138,7 +1139,8 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
         [self setBookmarkPath:nil];
         return;
     }
-    NSString *folder = MCBookmarksFolder();
+    // The window's folder: its own bookmarks first, then the shared ones.
+    NSString *root = self.folderForAddresses ? self.folderForAddresses() : nil;
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -1146,7 +1148,7 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
     });
     __weak BrowserView *weakSelf = self;
     dispatch_async(queue, ^{
-        NSString *path = MCBookmarkFileFor(folder, url);
+        NSString *path = MCWorkspaceBookmarkFileFor(root, url);
         dispatch_async(dispatch_get_main_queue(), ^{
             BrowserView *me = weakSelf;
             if (!me || generation != me.bookmarkLookups) return;
@@ -1177,7 +1179,10 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
 - (NSMenu *)bookmarksMenu {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Bookmarks"];
     __weak BrowserView *weakSelf = self;
-    MCAttachBookmarksMenu(menu, nil, self, ^(NSMenu *m) {
+    MCAttachWorkspaceBookmarksMenu(menu, ^NSString *{
+        BrowserView *me = weakSelf;
+        return me.folderForAddresses ? me.folderForAddresses() : nil;
+    }, self, ^(NSMenu *m) {
         BrowserView *me = weakSelf;
         if (!me) return;
         [m addItem:[NSMenuItem separatorItem]];
@@ -1185,8 +1190,6 @@ enum { kFindInPageShow = 1, kFindInPageNext = 2, kFindInPagePrevious = 3 };
                                                                : @"Bookmark This Page"
                                         action:@selector(toggleBookmark:) keyEquivalent:@""];
         save.target = me;
-        [m addItemWithTitle:@"Show Bookmarks Folder" action:@selector(showBookmarksFolder:)
-              keyEquivalent:@""];
     });
     return menu;
 }
@@ -1240,6 +1243,12 @@ static BOOL MCCommandHeld(void) {
     }
     [self showAddress:url inNewTab:MCCommandHeld()];
     [self focusPage];
+}
+
+// The toolbar book's Shared > Move to This Workspace: the window's
+// controller moves the file.
+- (void)moveBookmarkToWorkspace:(id)sender {
+    if (![self passOn:@selector(moveBookmarkToWorkspace:) from:sender]) NSBeep();
 }
 
 - (void)openBookmarkFolderFromMenu:(id)sender {

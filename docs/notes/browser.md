@@ -72,6 +72,40 @@ found through that list.
   on show (`BrowserView showAddress:inNewTab:`, Command for a new tab).
   Finder keeps sending .url files to the default browser unless the
   user picks mutible in Get Info (Info.plist only offers it, Alternate).
+- **Bookmarks per workspace** (2026-11-18, the owner's decisions;
+  `WebBookmark::places`, `lookupOrder`, `entries`, `mergedEntries`,
+  `moveDestination`, `bookmarks:workspace-*`; the Mac's
+  `MCSaveBookmarksFolder`, `MCSharedBookmarksFolder`,
+  `MCWorkspaceBookmarkFileFor`, `MCMoveBookmarkToWorkspace`,
+  `MCAttachWorkspaceBookmarksMenu`): a window on a folder saves in
+  `<folder>/.mutible/bookmarks/` (made on the first save, no .gitignore:
+  committing them is the point; the status bar says
+  ".mutible/bookmarks"). The workspace is the window's folder
+  (`rootPath`) whatever the tree's focus. `browser.bookmarks`
+  (~/Bookmarks) is the shared folder: the menu bar's Bookmarks menu (root
+  asked of the key window's controller each time it opens) and the
+  toolbar's book (root from `folderForAddresses`) list the workspace's
+  rows, then a "Shared" submenu when the shared folder has any; each
+  shared folder's submenu ends with "Move to This Workspace", a submenu of
+  its bookmarks (`moveBookmarkToWorkspace:`, the BrowserView passing it on
+  to the controller), which moves the file to the workspace's top level
+  under a free name. "Already saved" and the star look in the workspace,
+  then Shared ("Already bookmarked in Shared as ..."). The footer's Show
+  Bookmarks Folder opens `.mutible/bookmarks` in Finder
+  (`showWorkspaceBookmarksFolder:` on AppDelegate, made first) and Show
+  Shared Bookmarks Folder is the old `showBookmarksFolder:` (the browser
+  window). The browser window (its root equal to the shared folder,
+  however spelled: `MCPlaces` resolves both), no window, and Finder's and
+  `mutible https://` opens are unchanged: the shared folder alone, saving
+  to the tree's folder, no Shared part. A root inside the shared folder is
+  an ordinary workspace. The tree hides `.mutible` with the other dot
+  names until Show Hidden Files; a save or move refreshes the tree but
+  selects the file only when the tree shows it, never widening the focus
+  (`revealPath:andOpen:NO` widens the tree's focus and, for a hidden
+  path, selects the folder where the way ends).
+  The session web page shows no bookmark list, so it has nothing to
+  follow. Linux still uses the one folder until its session takes up the
+  core API.
 - **The address bar** (2026-11-15, `PageCheck::typedAddress`,
   `page:typed-address`, the `browser_tabs` suite): one line
   (`usesSingleLineMode`, not wrapping, truncated in the middle while not
@@ -101,3 +135,4 @@ Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
 - The browser pane: sessions, tabs, bookmarks, the address bar, find: Harness traps: a Command key in a focused web view goes to the page and comes back to the menus a moment later (wait for it);
+- Bookmarks per workspace: `revealPath:andOpen:NO` widens the tree's focus and, for a hidden `.mutible` path, selects the folder where the way ends; a saved bookmark is revealed only when the tree shows it, with `widen:NO`.

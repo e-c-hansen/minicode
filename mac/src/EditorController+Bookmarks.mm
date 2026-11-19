@@ -2,8 +2,12 @@
 // WebBookmark.h): a .url or .webloc file opened in this window loads in
 // the browser pane; Save Page as Bookmark (Cmd+D in the page) and Save All
 // Tabs as Bookmarks write .url files; the tree's Open All in Browser Tabs
-// opens a folder of them. The window on the bookmark folder is the browser
-// window, where the page takes the editor's side while no file is open.
+// opens a folder of them. Bookmarks are per workspace: a page is saved in
+// the window's folder's .mutible/bookmarks, and the bookmark folder
+// (~/Bookmarks) is the shared one, listed under Shared with Move to This
+// Workspace. The window on the bookmark folder is the browser window,
+// which saves in its tree's folder, and where the page takes the editor's
+// side while no file is open.
 #import "EditorController+Private.h"
 #import "Bookmarks.h"
 #import "Browser.h"
@@ -65,11 +69,13 @@ static BOOL gOpenBookmarkAsText = NO;
 
 // ---------------------------------------------------------------- saving
 // Where a bookmark is saved: in the browser window the tree's selected
-// folder (a selected file's folder), else the bookmark folder itself, made
-// if missing. nil, with a note in the status bar, when it cannot be made.
+// folder (a selected file's folder), else this workspace's
+// .mutible/bookmarks (the window's folder's, whatever the tree's focus),
+// made if missing; no .gitignore, since committing them is the point. nil,
+// with a note in the status bar, when it cannot be made.
 - (NSString *)bookmarkFolderForSaving {
     if (self.isBrowserWindow) return [self targetDirectory];
-    NSString *folder = MCBookmarksFolder();
+    NSString *folder = MCSaveBookmarksFolder(self.rootPath);
     NSString *err = nil;
     if (MCEnsureBookmarksFolder(folder, &err)) return folder;
     [self flashStatus:[NSString stringWithFormat:@"No bookmark folder: %@", err]];
@@ -82,16 +88,34 @@ static NSString *MCShortFolder(NSString *path) {
     return path.stringByAbbreviatingWithTildeInPath;
 }
 
-// A saved bookmark (or folder of them) selected in the tree when this
-// window's folder holds it.
-- (void)revealSavedBookmark:(NSString *)path {
+// `path` from this window's folder, or nil when it is outside it.
+- (NSString *)bookmarkPathFromRoot:(NSString *)path {
     NSString *root = self.rootPath.stringByResolvingSymlinksInPath;
     NSString *real = path.stringByResolvingSymlinksInPath;
-    if (![real hasPrefix:[root stringByAppendingString:@"/"]]) return;
+    if (!root.length || ![real hasPrefix:[root stringByAppendingString:@"/"]]) return nil;
+    return [real substringFromIndex:root.length + 1];
+}
+
+// Where a bookmark or folder is, for the status bar: ".mutible/bookmarks"
+// inside this window's folder, else (and in the browser window)
+// "~/Bookmarks/Reading".
+- (NSString *)bookmarkPlace:(NSString *)path {
+    if (self.isBrowserWindow) return MCShortFolder(path);
+    return [self bookmarkPathFromRoot:path] ?: MCShortFolder(path);
+}
+
+// A saved bookmark (or folder of them) selected in the tree when this
+// window's folder holds it and the tree shows it: .mutible is hidden
+// unless hidden files are shown, and the tree's focus is left as it is.
+- (void)revealSavedBookmark:(NSString *)path {
+    NSString *rel = [self bookmarkPathFromRoot:path];
+    if (!rel) return;
     [self refreshTree:nil];
-    [self revealPath:[self.rootPath stringByAppendingPathComponent:
-                                        [real substringFromIndex:root.length + 1]]
-             andOpen:NO];
+    if (!gShowHidden)
+        for (NSString *part in rel.pathComponents)
+            if ([part hasPrefix:@"."]) return;
+    [self revealPath:[self.rootPath stringByAppendingPathComponent:rel] open:NO
+                from:EditorTabs::OpenFrom::Other widen:NO];
 }
 
 - (BOOL)canSaveBrowserBookmark {
@@ -104,11 +128,18 @@ static NSString *MCShortFolder(NSString *path) {
         NSBeep();
         return;
     }
-    // A page saved once is not saved again under another number.
-    NSString *have = MCBookmarkFileFor(MCBookmarksFolder(), self.browser.pageURL);
+    // A page saved once, here or in the shared folder, is not saved again
+    // under another number.
+    NSString *have = MCWorkspaceBookmarkFileFor(self.rootPath, self.browser.pageURL);
     if (have) {
-        [self flashStatus:[NSString stringWithFormat:@"Already bookmarked as %@",
-                                                     MCShortFolder(have)]];
+        NSString *shared = MCSharedBookmarksFolder(self.rootPath);
+        const BOOL inShared =
+            shared && [have.stringByResolvingSymlinksInPath
+                          hasPrefix:[shared.stringByResolvingSymlinksInPath
+                                        stringByAppendingString:@"/"]];
+        [self flashStatus:[NSString stringWithFormat:inShared ? @"Already bookmarked in Shared as %@"
+                                                              : @"Already bookmarked as %@",
+                                                     [self bookmarkPlace:have]]];
         [self.browser bookmarksChanged];
         [self revealSavedBookmark:have];
         return;
@@ -123,7 +154,7 @@ static NSString *MCShortFolder(NSString *path) {
         return;
     }
     [self flashStatus:[NSString stringWithFormat:@"Saved “%@” in %@",
-                                                 path.lastPathComponent, MCShortFolder(folder)]];
+                                                 path.lastPathComponent, [self bookmarkPlace:folder]]];
     [self.browser bookmarksChanged];
     [self revealSavedBookmark:path];
 }
@@ -135,7 +166,7 @@ static NSString *MCShortFolder(NSString *path) {
         NSBeep();
         return;
     }
-    NSString *have = MCBookmarkFileFor(MCBookmarksFolder(), self.browser.pageURL);
+    NSString *have = MCWorkspaceBookmarkFileFor(self.rootPath, self.browser.pageURL);
     if (!have) {
         [self saveBrowserBookmark:sender];
         return;
@@ -152,9 +183,26 @@ static NSString *MCShortFolder(NSString *path) {
     [self flashStatus:[NSString stringWithFormat:@"Moved the bookmark “%@” to the Trash",
                                                  have.lastPathComponent]];
     [self.browser bookmarksChanged];
-    NSString *root = self.rootPath.stringByResolvingSymlinksInPath;
-    if ([have.stringByResolvingSymlinksInPath hasPrefix:[root stringByAppendingString:@"/"]])
-        [self refreshTree:nil];
+    if ([self bookmarkPathFromRoot:have]) [self refreshTree:nil];
+}
+
+- (void)moveBookmarkToWorkspace:(id)sender {
+    NSString *path = [sender respondsToSelector:@selector(representedObject)]
+                         ? [sender representedObject] : nil;
+    NSString *err = nil;
+    NSString *to = [path isKindOfClass:NSString.class]
+                       ? MCMoveBookmarkToWorkspace(path, self.rootPath, &err) : nil;
+    if (!to) {
+        [self flashStatus:[NSString stringWithFormat:@"The bookmark was not moved: %@",
+                                                     err ?: @"no bookmark"]];
+        NSBeep();
+        return;
+    }
+    [self flashStatus:[NSString stringWithFormat:@"Moved “%@” to %@", to.lastPathComponent,
+                                                 [self bookmarkPlace:
+                                                           to.stringByDeletingLastPathComponent]]];
+    if (self.browser) [self.browser bookmarksChanged];
+    [self revealSavedBookmark:to];
 }
 
 // The menu bar's Bookmarks menu, while the browser pane does not have the
@@ -229,7 +277,7 @@ static NSString *MCShortFolder(NSString *path) {
             firstError = err;
     }
     NSString *note = [NSString stringWithFormat:@"Saved %lu %@ in “%@”", (unsigned long)saved,
-                                                saved == 1 ? @"tab" : @"tabs", MCShortFolder(folder)];
+                                                saved == 1 ? @"tab" : @"tabs", [self bookmarkPlace:folder]];
     if (firstError) note = [note stringByAppendingFormat:@" (not all: %@)", firstError];
     [self flashStatus:note];
     [self revealSavedBookmark:folder];
