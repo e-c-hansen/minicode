@@ -28,6 +28,7 @@
 #import "TerminalGridView.h"
 #import "TerminalPanel.h"
 #import "TreeDetails.h"
+#import "WrapIndentContainer.h"
 #include "Commands.h"
 #import <Carbon/Carbon.h>
 #import <Quartz/Quartz.h>
@@ -712,24 +713,30 @@ MC_GUI_SUITE(zoomfit) {
                       [py substringWithRange:line]);
         c.textView.selectedRange = NSMakeRange(0, 0);
     });
-    MCGuiStep(@"editor.wrapping-indent = indent: one level further in", ^{
-        MCGuiSetSettings([settingsBefore stringByAppendingString:@"\neditor.wrapping-indent = indent\n"]);
-        NSArray<NSValue *> *frags = WrappedFragments(c.textView, 9);
-        const CGFloat first = GlyphX(c.textView, 13), start = GlyphX(c.textView, 9);
-        const CGFloat x = frags.count > 1 ? GlyphX(c.textView, frags[1].rangeValue.location) : -1;
-        MCGuiNote(@"indent: the text at %.2f, a continuation at %.2f", first, x);
-        GCHECK(fabs((x - first) - (first - start)) < 0.5);   // four more spaces
-    });
-    MCGuiStep(@"editor.wrapping-indent = none: at the edge", ^{
-        MCGuiSetSettings([settingsBefore stringByAppendingString:@"\neditor.wrapping-indent = none\n"]);
-        NSArray<NSValue *> *frags = WrappedFragments(c.textView, 9);
-        const CGFloat start = GlyphX(c.textView, 9);
-        GCHECK(frags.count > 1 && fabs(GlyphX(c.textView, frags[1].rangeValue.location) - start) < 0.5);
-        MCGuiSetSettings(settingsBefore);
-        frags = WrappedFragments(c.textView, 9);
-        GCHECK(frags.count > 1 &&
-               fabs(GlyphX(c.textView, frags[1].rangeValue.location) - GlyphX(c.textView, 13)) < 0.5);
-    });
+    // Each mode from the settings: a continuation `levels` of the line's
+    // indentation in (0 the edge, 1 under its text, 2 one level further).
+    void (^modeSteps)(NSString *, NSString *, CGFloat) = ^(NSString *mode, NSString *line, CGFloat levels) {
+        MCGuiStep([NSString stringWithFormat:@"editor.wrapping-indent = %@", mode], ^{
+            MCGuiSetSettings(line ? [settingsBefore stringByAppendingString:line] : settingsBefore);
+        });
+        MCGuiWait([NSString stringWithFormat:@"a continuation where %@ puts it", mode], 5, ^BOOL {
+            NSArray<NSValue *> *frags = WrappedFragments(c.textView, 9);
+            const CGFloat start = GlyphX(c.textView, 9), first = GlyphX(c.textView, 13);
+            const CGFloat x = frags.count > 1 ? GlyphX(c.textView, frags[1].rangeValue.location) : -1;
+            const CGFloat want = start + levels * (first - start);
+            const BOOL ok = fabs(x - want) < 0.5;
+            if (!ok) {
+                MCWrapIndentContainer *tc = (MCWrapIndentContainer *)c.textView.textContainer;
+                MCGuiNote(@"%@: a continuation at %.2f, wanted %.2f (the container's mode %s, "
+                          @"its indent %.2f)", mode, x, want, WrapIndent::modeName(tc.mode),
+                          [tc continuationIndentAt:13]);
+            }
+            return ok;
+        });
+    };
+    modeSteps(@"indent", @"\neditor.wrapping-indent = indent\n", 2);
+    modeSteps(@"none", @"\neditor.wrapping-indent = none\n", 0);
+    modeSteps(@"same (unset)", nil, 1);
     MCGuiStep(@"indented past half the pane's width, a line goes on at the edge", ^{
         NSTextContainer *tc = c.textView.textContainer;
         const CGFloat room = tc.size.width - 2 * tc.lineFragmentPadding;

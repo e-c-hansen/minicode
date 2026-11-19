@@ -33,7 +33,12 @@ static BOOL MCIsParagraphBreak(unichar c) { return c == '\n' || c == '\r' || c =
     if (mode == _mode) return;
     _mode = mode;
     _known = NO;
-    [self.layoutManager textContainerChangedGeometry:self];
+    // Every line laid out again with the new rects (lazily: only what is
+    // asked for next is laid out).
+    NSLayoutManager *lm = self.layoutManager;
+    [lm textContainerChangedGeometry:self];
+    if (const NSUInteger n = lm.textStorage.length)
+        [lm invalidateLayoutForCharacterRange:NSMakeRange(0, n) actualCharacterRange:NULL];
 }
 
 - (void)textDidChange { _known = NO; }
