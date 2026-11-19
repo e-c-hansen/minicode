@@ -83,7 +83,19 @@ found through that list.
   splice (`registerViewerUndoFrom:`); going back from the text to the table
   turns its NSTextView typing steps (target: the text storage) into one
   "Typing" step from `MCTab.textSessionStart`, since the table empties the
-  text view they were recorded against.
+  text view they were recorded against. **Trap (round 9)**: the grid's
+  `validateMenuItem:` ended in `[super validateMenuItem:]`, which
+  NSTableView does not have (it validates through
+  `validateUserInterfaceItem:`), so validating any menu item the grid was
+  the target of threw, AppKit dropped the key, and no menu key worked while
+  the grid had the keyboard: Shift+Cmd+P "did nothing". Before calling
+  super in a validation, check the superclass has it. `previews` now
+  validates every menu item against each viewer's keyboard and presses
+  Shift+Cmd+P and Cmd+P there (CSV table and a cell being typed into, the
+  JSON outline, SQLite's lists, a notebook, an image, a PDF, a movie, an
+  HTML page, a Markdown page, the compare view, the review and commit
+  pages). The palette closing hands the keyboard back to a page too
+  (`grantKeyboard`), which refused it before.
 - **JSON outline**: beside the text; a node selects its text with the keyboard
   kept in the outline, the caret selects its node; re-parsed 0.3 s after
   typing, the last good outline kept under an error line, dimmed and
@@ -148,5 +160,6 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- CSV and TSV: **Trap (round 9)**: the grid's `validateMenuItem:` ended in `[super validateMenuItem:]`, which NSTableView does not have (it validates through `validateUserInterfaceItem:`), so validating any menu item the grid was the target of threw, AppKit dropped the key, and no menu key worked while the grid had the keyboard: Shift+Cmd+P "did nothing".
 - JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).
 - Viewers in the editor's slot (Mac): Trap: laying both panes out to size them took 1.5 s on the main thread for 50,000 lines a side; every row has one fixed height (a paragraph style), so sizes and row rects are arithmetic and layout is non-contiguous.

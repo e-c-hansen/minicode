@@ -9,6 +9,7 @@
 #import "AppSettings.h"
 #import "TreeDetails.h"   // MCAppDefaults
 #import "Keymap.h"
+#import "Browser.h"   // MCWebView
 #include "CommandPalette.h"
 #include "FolderPicker.h"
 
@@ -1223,7 +1224,12 @@ static NSString *POneLine(NSString *s) {
             NSView *v = (NSView *)r;
             ok = v.window == w && !v.isHiddenOrHasHiddenAncestor;
         }
+        // A page (the browser's, an HTML file's) takes the keyboard only
+        // when the user hands it over, and closing the palette is that.
+        MCWebView *web = ok && [r isKindOfClass:MCWebView.class] ? (MCWebView *)r : nil;
+        web.grantKeyboard = YES;
         [w makeFirstResponder:ok ? r : nil];
+        web.grantKeyboard = NO;
         // A text field selects all its text as it takes the keyboard; put
         // the caret back where it was (the terminal's input line, say).
         if (ok && [r isKindOfClass:NSTextField.class] &&

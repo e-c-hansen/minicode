@@ -10,6 +10,7 @@
 // cancelling the one before.
 #import "Search.h"
 #import "AppSettings.h"
+#import "FileTypeIcons.h"
 #import "FindWidget.h"
 #include "FolderSearch.h"
 #include "TextFind.h"
@@ -960,7 +961,11 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
         NSString *dir = rel.stringByDeletingLastPathComponent;
         cell.detail.stringValue = dir.length ? dir : @"";
         cell.detail.textColor = _style.muted;
-        cell.imageView.image = [[NSWorkspace sharedWorkspace] iconForFile:f.path];
+        // Its type's icon, as the tree shows it (FileTypeIcons.h).
+        const FileIcon::Type type = MCFileTypeOf(f.path, NO);
+        cell.imageView.image = MCFileTypeImage(type);
+        cell.imageView.contentTintColor =
+            MCFileTypeTint(type, MCFileTypeTextIsLight(_style.widgetForeground));
         cell.badge.style = _style;
         cell.badge.text = [NSString stringWithFormat:@"%lu", (unsigned long)f.count];
         cell.badge.hidden = NO;

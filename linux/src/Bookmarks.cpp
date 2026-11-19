@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <map>
 #include <set>
 #include <climits>
 
@@ -113,24 +114,39 @@ std::vector<std::string> addressesIn(const std::string& dir) {
 
 bool hasBookmarkIn(const std::string& dir) { return !bookmarkNames(dir).empty(); }
 
-std::vector<Entry> list(const std::string& dir, size_t limit) {
-    std::vector<std::string> dirs, files;
+std::vector<WebBookmark::Name> names(const std::string& dir) {
+    std::vector<std::string> all;
     GDir* d = g_dir_open(dir.c_str(), 0, nullptr);
     if (!d) return {};
-    while (const char* n = g_dir_read_name(d)) {
-        if (n[0] == '.') continue;
-        const std::string path = dir + "/" + n;
-        if (g_file_test(path.c_str(), G_FILE_TEST_IS_DIR)) dirs.push_back(n);
-        else if (WebBookmark::isBookmarkPath(n)) files.push_back(n);
-    }
+    while (const char* n = g_dir_read_name(d)) all.push_back(n);
     g_dir_close(d);
-    std::sort(dirs.begin(), dirs.end(), nameBefore);
-    std::sort(files.begin(), files.end(), nameBefore);
-    std::vector<Entry> out;
-    for (const std::string& n : dirs) out.push_back({n, dir + "/" + n, true});
-    for (const std::string& n : files) out.push_back({n, dir + "/" + n, false});
-    if (out.size() > limit) out.resize(limit);
+    std::sort(all.begin(), all.end(), nameBefore);
+    std::vector<WebBookmark::Name> out;
+    out.reserve(all.size());
+    for (const std::string& n : all)
+        out.push_back({n, n[0] != '.' && g_file_test((dir + "/" + n).c_str(), G_FILE_TEST_IS_DIR)});
     return out;
+}
+
+std::vector<Entry> list(const std::string& dir, size_t limit) {
+    std::vector<Entry> out;
+    for (const WebBookmark::Entry& e : WebBookmark::entries(dir, names(dir), false, limit))
+        out.push_back({e.path.substr(e.path.rfind('/') + 1), e.path, e.folder});
+    return out;
+}
+
+WebBookmark::Places places(const std::string& root, const std::string& shared) {
+    const std::string r = !root.empty() && sameFolder(root, shared) ? shared : root;
+    return WebBookmark::places(r, shared);
+}
+
+bool inside(const std::string& path, const std::string& dir) {
+    if (path.empty() || dir.empty()) return false;
+    char a[PATH_MAX], b[PATH_MAX];
+    const std::string p = realpath(path.c_str(), a) ? std::string(a) : path;
+    const std::string d = realpath(dir.c_str(), b) ? std::string(b) : dir;
+    const std::string prefix = d == "/" ? d : d + "/";
+    return p.size() > prefix.size() && p.compare(0, prefix.size(), prefix) == 0;
 }
 
 namespace {
@@ -179,38 +195,112 @@ void appendItem(GMenu* m, const std::string& label, const char* action, const st
     g_object_unref(item);
 }
 
-void fill(GMenu* m, const std::string& dir, size_t* left, int depth, std::set<std::string>* visited) {
-    char real[PATH_MAX];
-    if (depth > 6 || !realpath(dir.c_str(), real) || !visited->insert(real).second) return;
-    for (const Entry& e : list(dir, *left)) {
-        if (*left == 0) return;
-        --*left;
-        if (!e.isFolder) {
-            appendItem(m, WebBookmark::menuTitle(e.name), "win.openbookmark", e.path);
-            continue;
-        }
-        GMenu* sub = g_menu_new();
-        GMenu* head = g_menu_new();
-        appendItem(head, "Open All in Tabs", "win.openbookmarkfolder", e.path);
-        g_menu_append_section(sub, nullptr, G_MENU_MODEL(head));
-        g_object_unref(head);
-        GMenu* body = g_menu_new();
-        fill(body, e.path, left, depth + 1, visited);
-        g_menu_append_section(sub, nullptr, G_MENU_MODEL(body));
-        g_object_unref(body);
-        g_menu_append_submenu(m, menuLabel(e.name).c_str(), G_MENU_MODEL(sub));
-        g_object_unref(sub);
+// One menu being built: what is left of its limit, the folders already in
+// it (symlink loops cut), and the submenu labels used. GtkPopoverMenu names
+// each submenu's page by its label and refuses a second page of the same
+// name ("duplicate child name in GtkStack"), whose button then opens the
+// first: Shared's Move to This Workspace showed Reading's bookmarks so. A
+// label met again in one menu gets zero-width spaces after it, unseen.
+struct Builder {
+    size_t left = 0;
+    std::set<std::string> visited;
+    std::map<std::string, int> labels;
+
+    void appendSubmenu(GMenu* m, const std::string& text, GMenu* sub) {
+        std::string label = menuLabel(text);
+        for (int n = labels[label]++; n > 0; n--) label += "\xE2\x80\x8B";   // U+200B
+        g_menu_append_submenu(m, label.c_str(), G_MENU_MODEL(sub));
     }
-}
+
+    // "Move to This Workspace" as the last section of `m` (a shared
+    // folder's submenu): a submenu of the bookmark files among `rows`, that
+    // folder's; nothing when it has none.
+    void appendMoveItems(GMenu* m, const std::vector<WebBookmark::Entry>& rows) {
+        GMenu* files = g_menu_new();
+        for (const WebBookmark::Entry& e : rows)
+            if (!e.folder) appendItem(files, e.title, "win.movebookmark", e.path);
+        if (g_menu_model_get_n_items(G_MENU_MODEL(files)) > 0) {
+            GMenu* tail = g_menu_new();
+            appendSubmenu(tail, "Move to This Workspace", files);
+            g_menu_append_section(m, nullptr, G_MENU_MODEL(tail));
+            g_object_unref(tail);
+        }
+        g_object_unref(files);
+    }
+
+    // One folder's rows (WebBookmark::entries) into `m`: a bookmark an
+    // item, a folder a submenu opening with Open All in Tabs and, below
+    // the shared folder, ending with Move to This Workspace.
+    void appendRows(GMenu* m, const std::vector<WebBookmark::Entry>& rows, int depth) {
+        for (const WebBookmark::Entry& e : rows) {
+            if (left == 0) return;
+            --left;
+            if (!e.folder) {
+                appendItem(m, e.title, "win.openbookmark", e.path);
+                continue;
+            }
+            GMenu* sub = g_menu_new();
+            GMenu* head = g_menu_new();
+            appendItem(head, "Open All in Tabs", "win.openbookmarkfolder", e.path);
+            g_menu_append_section(sub, nullptr, G_MENU_MODEL(head));
+            g_object_unref(head);
+            GMenu* body = g_menu_new();
+            const std::vector<WebBookmark::Entry> inner = fill(body, e.path, e.shared, depth + 1);
+            g_menu_append_section(sub, nullptr, G_MENU_MODEL(body));
+            g_object_unref(body);
+            if (e.shared) appendMoveItems(sub, inner);
+            appendSubmenu(m, e.title, sub);
+            g_object_unref(sub);
+        }
+    }
+
+    // The folder `dir`'s rows into `m`; returns them. Six levels at most.
+    std::vector<WebBookmark::Entry> fill(GMenu* m, const std::string& dir, bool shared, int depth) {
+        char real[PATH_MAX];
+        if (depth > 6 || !realpath(dir.c_str(), real) || !visited.insert(real).second) return {};
+        const std::vector<WebBookmark::Entry> rows = WebBookmark::entries(dir, names(dir), shared, left);
+        appendRows(m, rows, depth);
+        return rows;
+    }
+
+    // A top folder as already in the menu, so a link back to it is cut.
+    void enter(const std::string& dir, size_t limit) {
+        char real[PATH_MAX];
+        if (realpath(dir.c_str(), real)) visited.insert(real);
+        left = limit;
+    }
+};
 
 }  // namespace
 
-GMenu* menu(const std::string& dir, size_t limit) {
+GMenu* menu(const WebBookmark::Places& p, size_t limit) {
     GMenu* m = g_menu_new();
-    size_t left = limit;
-    std::set<std::string> visited;
-    fill(m, dir, &left, 0, &visited);
-    if (g_menu_model_get_n_items(G_MENU_MODEL(m)) == 0) g_menu_append(m, "No bookmarks", "win.nobookmarks");
+    const std::vector<WebBookmark::Entry> rows = WebBookmark::mergedEntries(
+        p, names(p.save), p.shared.empty() ? std::vector<WebBookmark::Name>() : names(p.shared), limit);
+    std::vector<WebBookmark::Entry> own, shared;
+    for (const WebBookmark::Entry& e : rows) (e.shared ? shared : own).push_back(e);
+    Builder b;
+
+    // The window's own folder's rows, as the one folder's were.
+    b.enter(p.save, limit);
+    b.appendRows(m, own, 0);
+    if (own.empty()) g_menu_append(m, "No bookmarks", "win.nobookmarks");
+
+    // Then Shared, when the shared folder has anything.
+    if (!shared.empty()) {
+        GMenu* sub = g_menu_new();
+        GMenu* body = g_menu_new();
+        b.enter(p.shared, limit);
+        b.appendRows(body, shared, 0);
+        g_menu_append_section(sub, nullptr, G_MENU_MODEL(body));
+        g_object_unref(body);
+        b.appendMoveItems(sub, shared);
+        GMenu* part = g_menu_new();
+        b.appendSubmenu(part, "Shared", sub);
+        g_menu_append_section(m, nullptr, G_MENU_MODEL(part));
+        g_object_unref(part);
+        g_object_unref(sub);
+    }
     return m;
 }
 
@@ -309,6 +399,52 @@ std::string fileFor(const std::string& dir, const std::string& url) {
     size_t seen = 0;
     std::set<std::string> visited;
     return search(dir, url, &seen, 0, &visited);
+}
+
+std::string fileFor(const WebBookmark::Places& p, const std::string& url) {
+    for (const std::string& dir : WebBookmark::lookupOrder(p)) {
+        const std::string have = fileFor(dir, url);
+        if (!have.empty()) return have;
+    }
+    return "";
+}
+
+std::string moveToWorkspace(const WebBookmark::Places& p, const std::string& file,
+                            std::string* error) {
+    auto taken = [&p](const std::string& n) { return exists(p.save + "/" + n); };
+    if (WebBookmark::moveDestination(p, file, taken).empty()) {
+        if (error) *error = "it is not one of the shared bookmarks";
+        return "";
+    }
+    if (!exists(file)) {
+        if (error) *error = "it is no longer there";
+        return "";
+    }
+    if (!ensureFolder(p.save, error)) return "";
+    // Never over a file: without G_FILE_COPY_OVERWRITE the move refuses a
+    // name taken since it was found free, and the next free one is tried.
+    // (Across file systems GIO copies and deletes.)
+    GFile* from = g_file_new_for_path(file.c_str());
+    std::string to, why = "no free name for the bookmark";
+    for (int attempt = 0; attempt < 5; attempt++) {
+        const std::string dest = WebBookmark::moveDestination(p, file, taken);
+        GFile* target = g_file_new_for_path(dest.c_str());
+        GError* err = nullptr;
+        const bool moved =
+            g_file_move(from, target, G_FILE_COPY_NOFOLLOW_SYMLINKS, nullptr, nullptr, nullptr, &err);
+        g_object_unref(target);
+        if (moved) {
+            to = dest;
+            break;
+        }
+        const bool again = err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_EXISTS);
+        why = err ? err->message : "the file could not be moved";
+        g_clear_error(&err);
+        if (!again) break;
+    }
+    g_object_unref(from);
+    if (to.empty() && error) *error = why;
+    return to;
 }
 
 std::string shortPath(const std::string& path) {

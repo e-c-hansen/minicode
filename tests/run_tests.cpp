@@ -4060,8 +4060,9 @@ void testSettings() {
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
-    // editor.session-web-idle-minutes, and terminal.mac-style-keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 143);
+    // editor.session-web-idle-minutes, and editor.wrapping-indent, and
+    // terminal.mac-style-keys.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 144);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4460,6 +4461,17 @@ void testSettings() {
         Settings ww = parseSettings("editor.word-wrap = bounded\n", &we);
         CHECK(we.size() == 1 && ww.wordWrap() &&
               we[0].message.find("on or off") != std::string::npos);
+        // Wrapped lines go on under their indentation by default, as
+        // VS Code's editor.wrappingIndent "same".
+        CHECK(parseSettings("").wrappingIndent() == WrapIndent::Mode::Same);
+        CHECK(parseSettings("editor.wrapping-indent = none\n").wrappingIndent() ==
+              WrapIndent::Mode::None);
+        CHECK(parseSettings("editor.wrapping-indent = Indent\n").wrappingIndent() ==
+              WrapIndent::Mode::Indent);
+        std::vector<SettingsError> wie;
+        Settings wi = parseSettings("editor.wrapping-indent = deep\n", &wie);
+        CHECK(wie.size() == 1 && wi.wrappingIndent() == WrapIndent::Mode::Same &&
+              wie[0].message.find("same, indent or none") != std::string::npos);
         // Auto-closing pairs: on by default, as in VS Code.
         CHECK(parseSettings("").autoClose());
         CHECK(!parseSettings("").sessionHost());
@@ -9424,6 +9436,104 @@ static void testEditorTabs() {
     CHECK((labels({"/m.c", "/x/m.c"}) == std::vector<std::string>{"m.c", "x/m.c"}));
     CHECK(labels({}).empty());
 
+    GROUP("tabs:names");
+    {   // the name, and the shortest parent folders that tell it apart
+        auto names = [](const std::vector<std::string> &paths) {
+            std::string s;
+            for (const TabName &t : tabNames(paths)) s += t.name + "|" + t.hint + " ";
+            return s;
+        };
+        CHECK((names({"/p/a.txt", "/p/b.txt"})) == std::string("a.txt| b.txt| "));
+        CHECK((names({"/w/src/app/index.ts", "/w/src/lib/index.ts", "/w/x.ts"})) ==
+                 std::string("index.ts|app index.ts|lib x.ts| "));
+        CHECK((names({"/a/x/m.c", "/b/x/m.c"})) == std::string("m.c|a/x m.c|b/x "));
+        CHECK((names({"/p/one/README.md", "", "/p/two/README.md"})) ==
+                 std::string("README.md|one | README.md|two "));
+        CHECK((names({"/p/q.md", "/p/q.md"})) == std::string("q.md| q.md| "));   // one file twice
+        CHECK((names({"/m.c", "/x/m.c"})) == std::string("m.c| m.c|x "));
+        // Three of one name: each takes only what it needs.
+        CHECK((names({"/r/a/k/i.ts", "/r/b/k/i.ts", "/r/c/i.ts"})) ==
+                 std::string("i.ts|a/k i.ts|b/k i.ts|c "));
+        CHECK(tabNames({}).empty());
+        Model::Window w;
+        w.append(1, "/p/src/main.cpp");
+        w.append(2, "/p/tests/main.cpp");
+        CHECK(w.tabNames(0).size() == 2 && w.tabNames(0)[1].name == "main.cpp" &&
+              w.tabNames(0)[1].hint == "tests");
+    }
+
+    GROUP("tabs:strip-widths");
+    {   // natural widths between the bounds, never squeezed to fit
+        const StripLayout l = layoutStrip({50, 120.2, 900}, 80, 300);
+        CHECK(l.w == (std::vector<double>{80, 121, 300}));
+        CHECK(l.x == (std::vector<double>{0, 80, 201}));
+        CHECK(l.content == 501);
+        CHECK(layoutStrip({}, 80, 300).content == 0);
+        // Fifteen tabs in a narrow strip keep their widths: the row is wider.
+        const StripLayout many = layoutStrip(std::vector<double>(15, 140), 80, 300);
+        CHECK(many.w.back() == 140 && many.content == 15 * 140);
+    }
+
+    GROUP("tabs:strip-scroll");
+    {
+        CHECK(clampScroll(-5, 1000, 400) == 0);
+        CHECK(clampScroll(900, 1000, 400) == 600);
+        CHECK(clampScroll(100, 300, 400) == 0);   // it all fits
+        // Revealing moves only as far as it must.
+        CHECK(revealScroll(0, 100, 200, 1000, 400) == 0);       // in view already
+        CHECK(revealScroll(0, 500, 650, 1000, 400) == 250);     // right edge to the view's
+        CHECK(revealScroll(300, 100, 200, 1000, 400) == 100);   // left edge to the view's
+        CHECK(revealScroll(0, 860, 1000, 1000, 400) == 600);    // the last tab, whole
+        CHECK(revealScroll(0, 100, 700, 1000, 400) == 100);     // wider than the view: its left
+        // The wheel: the larger delta, vertical too; lines scaled, points not.
+        CHECK(wheelScroll(100, -30, 2, true, 10, 1000, 400) == 130);
+        CHECK(wheelScroll(100, 0, -3, false, 10, 1000, 400) == 130);
+        CHECK(wheelScroll(100, 0, 50, true, 10, 1000, 400) == 50);
+        CHECK(wheelScroll(590, -40, 0, true, 10, 1000, 400) == 600);   // clamped
+        CHECK(wheelScroll(0, -40, 0, true, 10, 300, 400) == 0);        // nothing to scroll
+        // Dragging near an edge scrolls that way, faster nearer it.
+        CHECK(dragAutoScroll(200, 400, 24, 12) == 0);
+        CHECK(dragAutoScroll(0, 400, 24, 12) == -12);
+        CHECK(dragAutoScroll(12, 400, 24, 12) == -6);
+        CHECK(dragAutoScroll(388, 400, 24, 12) == 6);
+        CHECK(dragAutoScroll(450, 400, 24, 12) == 12);
+        CHECK(dragAutoScroll(-30, 400, 24, 12) == -12);
+        // The fades: which ends are cut off.
+        CHECK(!clipped(0, 300, 400).left && !clipped(0, 300, 400).right);
+        CHECK(!clipped(0, 1000, 400).left && clipped(0, 1000, 400).right);
+        CHECK(clipped(300, 1000, 400).left && clipped(300, 1000, 400).right);
+        CHECK(clipped(600, 1000, 400).left && !clipped(600, 1000, 400).right);
+    }
+
+    GROUP("tabs:fit-title");
+    {   // ten points a code point, the ellipsis too
+        const Measure m = [](const std::string &s) {
+            double n = 0;
+            for (unsigned char ch : s) n += (ch & 0xC0) != 0x80 ? 10 : 0;
+            return n;
+        };
+        CHECK((fitMiddle("summary.py", 100, m)) == std::string("summary.py"));
+        CHECK((fitMiddle("summary.py", 99, m)) == std::string("summ\xE2\x80\xA6y.py"));
+        CHECK((fitMiddle("summary.py", 50, m)) == std::string("su\xE2\x80\xA6py"));
+        CHECK((fitMiddle("summary.py", 10, m)) == std::string("\xE2\x80\xA6"));
+        CHECK((fitMiddle("summary.py", 9, m)) == std::string(""));
+        CHECK((fitMiddle("", 0, m)) == std::string(""));
+        // Never inside a code point.
+        CHECK((fitMiddle("\xC3\xA9t\xC3\xA9_\xC3\xA9t\xC3\xA9", 50, m)) ==
+                 std::string("\xC3\xA9t\xE2\x80\xA6t\xC3\xA9"));
+        // A name and its hint: both, the hint cut, or the name alone.
+        const TabName t{"index.ts", "src/app"};
+        auto fit = [&](double w) {
+            TabName f = fitName(t, w, 6, 30, m, m);
+            return f.name + "|" + f.hint;
+        };
+        CHECK((fit(156)) == std::string("index.ts|src/app"));
+        CHECK((fit(126)) == std::string("index.ts|sr\xE2\x80\xA6p"));
+        CHECK((fit(100)) == std::string("index.ts|"));     // under 30 left for the hint
+        CHECK((fit(60)) == std::string("ind\xE2\x80\xA6ts|"));
+        CHECK((fitName({"a.txt", ""}, 200, 6, 30, m, m).name) == std::string("a.txt"));
+    }
+
     GROUP("tabs:closed");
     {   // the newest comes back first, with what it kept
         ClosedTabs c;
@@ -11478,6 +11588,7 @@ static void testMultiCaretOccurrences() {
 #include "markdown_page_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
+#include "wrap_indent_tests.inc"
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
@@ -11532,6 +11643,7 @@ int main() {
     testSyntaxLiterals();
     testIncrementalHighlight();
     testLargeFiles();
+    testWrapIndent();
     testTermLinks();
     benchIncrementalHighlight();
     testMarkdown();

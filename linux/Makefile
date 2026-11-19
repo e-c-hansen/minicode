@@ -71,7 +71,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/TreeFollow.cpp src/T
        src/LspSessionSymbols.cpp src/LspSessionFolding.cpp \
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp src/EnvLock.cpp \
        src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/TestGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
-       src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp src/HintsSearchBox.cpp \
+       src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp src/HintsSearchBox.cpp src/HintsColumns.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/RecentList.cpp src/DockMenu.cpp src/DesktopMode.cpp src/MigrationLinux.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \

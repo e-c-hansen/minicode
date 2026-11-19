@@ -21,6 +21,7 @@ MCTreeEntry *MCTreeStat(NSString *path) {
     e.isDir = have && S_ISDIR(st.st_mode);
     const struct stat &use = have ? st : lst;
     e.size = have && S_ISREG(st.st_mode) ? (long long)st.st_size : -1;
+    e.executable = have && S_ISREG(st.st_mode) && (st.st_mode & 0111) != 0;
     e.modified = (have || haveL)
         ? (double)use.st_mtimespec.tv_sec + use.st_mtimespec.tv_nsec / 1e9 : 0;
     e.created = (have || haveL)
@@ -76,6 +77,7 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
 
 - (void)takeStat:(MCTreeEntry *)e {
     self.isLink = e.isLink;
+    self.executable = e.executable;
     self.size = e.size;
     self.modified = e.modified;
     self.created = e.created;

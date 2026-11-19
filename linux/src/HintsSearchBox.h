@@ -11,23 +11,29 @@
 // too.
 //
 // What a query finds is the core's (HintsSearch.h, Spelling::Linux, as the
-// hints write keys: "Ctrl+Shift+H", Commands::keyLabel); `attributes` marks it on the panel's
-// text and dims the rest, which stays where it was.
+// hints write keys: "Ctrl+Shift+H", Commands::keyLabel); `attributes` marks
+// it on the panel's columns (HintsColumns.h) and dims the rest, which stays
+// where it was.
 #pragma once
 
 #include <gtk/gtk.h>
 
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
-// A line of the hints panel as main.cpp writes it, and where it is in the
-// panel's text, in bytes: a heading (with the rule under it), a shortcut
-// (its key, at the line's start, then its text), or a line of text.
+// A line of the hints panel as main.cpp writes it, and where HintsColumns
+// put it: its column, and its bytes in that column's text. A heading; a
+// shortcut (its key at the line's start, then what it does, then a pane's
+// state, "open", drawn muted at its own stop); a line of text; or, as a
+// Text with no text, the blank line before the last row. A shortcut with
+// no key continues the one before it, a line under its text.
 struct HintRow {
     enum Kind { Heading, Row, Text } kind;
-    std::string key, text;
-    size_t start = 0, textAt = 0, end = 0;
+    std::string key, text, state;
+    int column = 0;
+    size_t start = 0, textAt = 0, stateAt = 0, end = 0;
 };
 
 class HintsSearchBox {
@@ -56,13 +62,15 @@ public:
     // False when it had it but cannot tell where from (a click put it there).
     bool giveBackKeyboard();
 
-    // For `query`, the marks on the panel's text laid out from `rows`:
-    // where each shortcut or line found matched (a background), and every
+    // For `query`, the marks on the hints' columns laid out from `rows`,
+    // added to `lists`, one a column (a row's `column` says which): where
+    // each shortcut or line found matched (a background), and every
     // shortcut or line not found, and a heading with nothing found under
-    // it, dimmed (a foreground alpha). Null for an empty query. New
-    // reference. `firstHit` gets the byte index of the first mark, or -1.
-    static PangoAttrList* attributes(const std::vector<HintRow>& rows, const std::string& query,
-                                     int* firstHit = nullptr);
+    // it, dimmed (a foreground alpha). False, with nothing added, for an
+    // empty query. `hits` gets each mark's column and byte index.
+    static bool attributes(const std::vector<HintRow>& rows, const std::string& query,
+                           const std::vector<PangoAttrList*>& lists,
+                           std::vector<std::pair<int, size_t>>* hits = nullptr);
 
 private:
     ~HintsSearchBox();
