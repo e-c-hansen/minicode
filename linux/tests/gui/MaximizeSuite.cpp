@@ -156,11 +156,9 @@ MC_GUI_SUITE(maximize) {
     MCGuiWait("the browser has the keyboard", 10, [] { return asBefore() && focusIn(browserPane()); });
     MCGuiStep("Ctrl+Alt+M", [] { MCGuiKey("ctrl+alt+m"); });
     MCGuiWait("the browser alone", 10, [] { return alone(browserPane()); });
-    MCGuiStep("a click on another file in the tree", [] {
-        MCGuiApp().tree->revealPath(F("max-b.txt"));
-    });
-    MCGuiWait("its row", 10, [] { return MCGuiFindLabel(MCGuiApp().tree->widget(), "max-b.txt"); });
-    MCGuiStep("clicked", [] { MCGuiClick(MCGuiFindLabel(MCGuiApp().tree->widget(), "max-b.txt")); });
+    // The row by its path, never its name (docs/notes/tree.md).
+    MCGuiBringTreeRow(F("max-b.txt"));
+    MCGuiStep("a click on another file in the tree", [] { MCGuiClick(MCGuiTreeRow(F("max-b.txt"))); });
     MCGuiWait("the file on show, everything back", 10, [] {
         return MCGuiApp().editor->currentPath() == F("max-b.txt") && asBefore();
     });

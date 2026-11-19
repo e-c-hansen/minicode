@@ -6,6 +6,7 @@
 #include "Editor.h"
 #include "FileTree.h"
 #include "ControlProtocol.h"
+#include "Search.h"
 #include "SessionLink.h"
 #include "TerminalAttention.h"
 #include "TerminalDock.h"
@@ -474,8 +475,9 @@ GtkWidget* treeLabelOf(GtkWidget* root, const std::string& path) {
 }
 }  // namespace
 
-GtkWidget* MCGuiTreeRow(const std::string& path) {
-    FileTree* tree = MCGuiApp().tree;
+GtkWidget* MCGuiTreeRow(const std::string& path) { return MCGuiTreeRow(MCGuiApp().tree, path); }
+
+GtkWidget* MCGuiTreeRow(FileTree* tree, const std::string& path) {
     return tree ? treeLabelOf(tree->widget(), path) : nullptr;
 }
 
@@ -520,6 +522,43 @@ void MCGuiHideBrowserPane() {
     MCGuiWait("the browser pane hidden", 10, [] {
         return !MCGuiApp().layout || !MCGuiApp().layout->browserShown();
     });
+}
+
+namespace {
+const char* entryText(GtkWidget* entry) { return entry ? gtk_editable_get_text(GTK_EDITABLE(entry)) : ""; }
+bool toggleOn(GtkWidget* t) { return t && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(t)); }
+
+// What a window's Find in Folder holds that a new window's does not, or "".
+std::string folderSearchChanges(const MCGuiAppWindow& a) {
+    SearchPanel* s = a.search;
+    if (!s) return "";
+    std::string out;
+    auto add = [&out](const std::string& part) { out += (out.empty() ? "" : ", ") + part; };
+    if (s->scope() != a.rootDir) add("the scope " + s->scope());
+    if (*entryText(s->includeEntry()))
+        add(std::string("files to include \"") + entryText(s->includeEntry()) + "\"");
+    if (*entryText(s->excludeEntry()))
+        add(std::string("files to exclude \"") + entryText(s->excludeEntry()) + "\"");
+    if (toggleOn(s->caseButton())) add("Match Case");
+    if (toggleOn(s->wordButton())) add("Match Whole Word");
+    if (toggleOn(s->regexButton())) add("Use Regular Expression");
+    return out;
+}
+}  // namespace
+
+void MCGuiResetFolderSearch() {
+    for (const MCGuiAppWindow& a : MCGuiAppWindows()) {
+        SearchPanel* s = a.search;
+        if (!s) continue;
+        gtk_editable_set_text(GTK_EDITABLE(s->queryEntry()), "");
+        // Only one that holds something: each change searches again 350 ms
+        // later, with whatever query is in the box by then.
+        for (GtkWidget* e : {s->includeEntry(), s->excludeEntry()})
+            if (*entryText(e)) gtk_editable_set_text(GTK_EDITABLE(e), "");
+        for (GtkWidget* t : {s->caseButton(), s->wordButton(), s->regexButton()})
+            if (toggleOn(t)) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(t), FALSE);
+        s->setScope(a.rootDir);
+    }
 }
 
 #ifdef MUTIBLE_ENABLE_TERMINAL
@@ -737,6 +776,7 @@ struct World {
     int waiting = 0;   // terminals marked waiting for the user (TerminalAttention)
     int busy = 0;      // terminals where a program other than the shell has the foreground
     std::string settings, keys;
+    std::string folderSearch;   // what Find in Folder keeps that a new window's has not
 };
 World gWorldAtStart;
 
@@ -760,6 +800,10 @@ World lookAtWorld() {
 #endif
     w.settings = MCGuiReadFile(envOr("MUTIBLE_SETTINGS"));
     w.keys = MCGuiReadFile(envOr("MUTIBLE_KEYS"));
+    for (const MCGuiAppWindow& a : all) {
+        const std::string changes = folderSearchChanges(a);
+        if (!changes.empty()) w.folderSearch += (w.folderSearch.empty() ? "" : "; ") + changes;
+    }
     return w;
 }
 
@@ -909,6 +953,18 @@ void checkWhatSuiteLeft() {
                  shortText(was.keys) + "\")",
              false);
         if (putBack) MCGuiSetKeys(was.keys);
+    }
+    // Find in Folder keeps its scope, its files to include and exclude and
+    // its options while its window is closed, and the app's Ctrl+Shift+F
+    // changes the scope only for a folder selected in the tree: preview_tabs
+    // searched replace_in_folder's rif with files to include "three.txt"
+    // and found nothing, in the soak's shuffled orders. Said, not failed,
+    // and put back as a new window has it.
+    if (!now.folderSearch.empty() && now.folderSearch != was.folderSearch) {
+        leak("left Find in Folder changed, put back: " + now.folderSearch +
+                 (was.folderSearch.empty() ? "" : " (was " + was.folderSearch + ")"),
+             false);
+        if (putBack) MCGuiResetFolderSearch();
     }
 }
 

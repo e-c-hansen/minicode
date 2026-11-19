@@ -316,11 +316,41 @@ five soak rounds without it:
   wheel was aimed at the first tab's title, which is off screen
   whenever the row is scrolled (an earlier suite left the pane
   narrower); it is aimed at the row now.
+- GTK `preview_tabs`, in all three rounds (rounds 2 and 3 replayed
+  with `MC_GUI_IN_ORDER=1` and the round's order failed as the soak
+  did): CI's
+  order runs it sixth, with the project nearly empty, and it found its
+  tree rows by name among those on screen. After 28 and 63 other
+  suites the folders they had opened in the tree held p-a.txt far
+  below the last row ("the tree lists them", then a crash on the null
+  tab its next step read); after 74, replace_in_folder had left Find in
+  Folder on rif with files to include "three.txt", so "needle" found
+  nothing ("both results"). The suite now brings each row into view and
+  finds it by path, puts Find in Folder back and scopes it to its own
+  folder; replace_in_folder, go_back and latin1_files put it back as
+  they end, and the harness says `LEFT` for a Find in Folder left
+  changed and puts it back. The other suites that found tree rows by
+  name (adjust_settings, bookmarks, bookmark_workspace, go_back,
+  maximize, tree_git_colors, the demo scenes) find them by path too,
+  and adjust_settings right-clicks the active tab's title, which the
+  strip keeps in view, not the first, which the tabs earlier suites
+  left on the folder put off the strip's left end in its new window
+  (go_back and maximize before it, in a local run).
 
 Still open from that soak:
 
-- GTK `preview_tabs`, "the tree lists them", in all three rounds; for
-  the Linux port's session.
+- GTK `preview_tabs` in rounds 1 and 3's orders, with the fixes above:
+  the second single click on a tree row (p-b) reaches no handler of the
+  tree's (a diagnostic build showed no release at all), and every click
+  after it is lost the same way; it passes alone, after the five suites
+  before it, and in a full run with seed 791492888. The likely cause,
+  not yet checked: agents runs `git init` in the shared project folder
+  and leaves it a repository, so every row is untracked and has a
+  tooltip ("Untracked (git)"), and the tooltip that comes up under the
+  pointer after the first click covers the row below it. agents should
+  put the folder back, and the harness should say when the project
+  became a repository.
+
 - Seen in one round each: Mac `organize_on_save` (an alert count off by
   one as its servers were turned off), GTK `tree_clicks`, `tab_strip`,
   `editor_keys`, `agents` and `attention` (issue #127 has each one's

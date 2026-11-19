@@ -25,10 +25,27 @@ found through that list.
   suite may count on a terminal an earlier one left. A browser pane or agent page shown or hidden in any window is
   a LEFT line too (2026-11-17, after control's agent page narrowed
   markdown_side_sync's editor), until the suites that leave one close
-  it; then it can be a LEAK. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
+  it; then it can be a LEAK. On GTK, Find in Folder's scope, files to
+  include and exclude and options are a LEFT line too (2026-11-19), put
+  back by `MCGuiResetFolderSearch`, which a suite that searched calls
+  before it ends. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
   are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
   picture of the test window (the first ten); CI keeps them as an
   artifact, a folder per half.
+- **What a suite needs, it sets up** (2026-11-19, GTK `preview_tabs`,
+  which failed in all three rounds of that day's soak). Trap: in CI's
+  order a suite runs after the same few suites every time, so it can
+  pass for months on what they happen to leave and fail in every
+  shuffled order. preview_tabs ran sixth in CI's order, with the
+  project nearly empty, and found its tree rows by name among the rows
+  on screen; after 28 to 74 other suites, the folders they had opened
+  in the tree put p-a.txt far below the tree's last row, and its Find
+  in Folder still had replace_in_folder's (or latin1_files') scope and
+  files to include, so "needle" found nothing. A suite finds a tree row
+  by its path, brought into view (`MCGuiBringTreeRow`, then
+  `MCGuiTreeRow`), and sets every part of a shared panel it relies on
+  (`MCGuiResetFolderSearch`, then its own scope) rather than counting on
+  a new window's; the LEFT lines name only what the harness looks at.
 - **Two harnesses at once** (2026-11-17, CI's halves): each process makes
   its own world, so nothing a suite touches is shared. Mac: `/tmp/mcgui-*`
   by mkdtemp, home, TMPDIR (so control sockets; `MUTIBLE_CONTROL_DIR`
@@ -148,6 +165,7 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- Verification reality (important) (the rest): **What a suite needs, it sets up**: in CI's order a suite runs after the same few suites every time, so it can pass for months on what they happen to leave and fail in every shuffled order.
 - Verification reality (important) (the rest): **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events through the window then the main menu (`MCGuiPerformMenuKey`, built from the key code; setting the unicode string made the menu refuse a matching key); tree keys through `[window ...
 - Verification reality (important) (the rest): Older traps: an arrow key event needs the function-key character (U+F701...) as `characters`, and an empty string makes `-[NSMenu performKeyEquivalent:]` throw;
 - Verification reality (important) (the rest): **Docker trap**: `open -g -a Docker` raised an administrator password prompt and the daemon never started; never start Docker unattended.

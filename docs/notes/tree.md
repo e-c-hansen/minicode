@@ -391,7 +391,12 @@ found through that list.
   (`MCGuiFindLabel`): `tree_clicks` waited for its own folder's b.txt to
   go and found rif4/b.txt, which its folder closing moved up into view
   (FLAKY on CI in both runs from the one rif4 came in, 2026-11-19, passing
-  alone; the folder had closed and stayed closed).
+  alone; the folder had closed and stayed closed). Brought into view
+  first (`MCGuiBringTreeRow`): `preview_tabs` waited for p-a.txt by name
+  and failed in every soak round of 2026-11-19, the folders earlier
+  suites had opened holding it far below the tree's last row (CI's order
+  runs it sixth, the project nearly empty). Every suite now finds tree
+  rows by path.
 
 - **A row going keeps the tree's place (GTK)** (2026-11-18, the owner: "If
   I delete a file in the filetree panel, rather than simply removing it
