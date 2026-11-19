@@ -1234,7 +1234,15 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
         const size_t a = MIN(MAX(anchor, lo), hi);
         bool got = MCFirstIn(t, query, a, toEnd, scope, o, &first, &cancelled);
         if (cancelled) return;
-        if (!got && a > lo) got = MCFirstIn(t, query, lo, a, scope, o, &first, &cancelled);
+        // Found searching from the top (the anchor there, or wrapped to
+        // it), the match is the first of all: "1 of …" at once, not
+        // "? of …" until the count reaches it (a match on a 100 MB log's
+        // last line read "? of …" for the count's whole pass).
+        bool fromTop = got && a == lo;
+        if (!got && a > lo) {
+            got = MCFirstIn(t, query, lo, a, scope, o, &first, &cancelled);
+            fromTop = got;
+        }
         if (cancelled) return;
         if (!got) {
             MCStagedNews news;
@@ -1247,6 +1255,7 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
             MCStagedNews news;
             news.hasFirst = true;
             news.first = first;
+            if (fromTop) news.firstIndex = 0;
             news.firstCpuMs = MCThreadCpuMs() - c0;
             const size_t alo = first.start > lo + kAroundUnits ? first.start - kAroundUnits : lo;
             const size_t ahi = MIN(hi, first.start + kAroundUnits);
