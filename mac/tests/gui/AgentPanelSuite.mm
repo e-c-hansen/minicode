@@ -1,8 +1,10 @@
 // AgentPanelSuite.mm — the inline agent's bar (Cmd+I, AgentPanel.mm) with a
 // stand-in for Claude Code: agent.command points at a script that prints a
-// recorded stream (tests/fixtures/claude/stream) a line at a time, slowly,
-// so the bar can be seen showing the reply before it ends. Claude Code
-// itself never runs here.
+// recorded stream (tests/fixtures/claude/stream) a line at a time, and
+// stops at a tool call and before the result until the suite has seen the
+// bar show that stage, so the bar is checked showing the reply before it
+// ends however long the main thread is kept away. Claude Code itself never
+// runs here.
 //
 //   make guitest SUITES=agent_panel
 //
@@ -37,16 +39,33 @@ void WriteAgent(NSString *script, NSString *body) {
     chmod(script.fileSystemRepresentation, 0755);
 }
 
-// Prints a stream file a line at a time: quickly, but pausing after the
-// tool call and before the result, so each stage stays up long enough to
-// be seen.
-NSString *SlowStream(NSString *file) {
+// Prints a stream file a line at a time, and stops after the message with
+// the tool call (a "tool_use" block, not the "parent_tool_use_id" every
+// line has) and before the result until the suite lets it go on (Gate):
+// each stage stays
+// up until the suite has seen it, not for a time it hopes is long enough.
+// On CI the main thread was once kept away 9 s while a stream of a few
+// seconds went by, and a stage held 1.2 s was never seen. After 30 s at a
+// gate it goes on, so a suite that failed before letting it go is not held.
+NSString *GatedStream(NSString *file, NSString *dir) {
     return [NSString stringWithFormat:
+        @"gate() {\n"
+        @"  n=0\n"
+        @"  while [ ! -e '%@/go-'\"$1\" ] && [ ! -e '%@/go-all' ] && [ $n -lt 600 ]; do\n"
+        @"    sleep 0.05; n=$((n + 1))\n"
+        @"  done\n"
+        @"}\n"
         @"while IFS= read -r line; do\n"
-        @"  case \"$line\" in '{\"type\":\"result\"'*) sleep 1.5;; esac\n"
+        @"  case \"$line\" in '{\"type\":\"result\"'*) gate result;; esac\n"
         @"  printf '%%s\\n' \"$line\"\n"
-        @"  case \"$line\" in '{\"type\":\"assistant\"'*tool_use*) sleep 1.2;; *) sleep 0.03;; esac\n"
-        @"done < '%@'", file];
+        @"  case \"$line\" in '{\"type\":\"assistant\"'*'\"type\":\"tool_use\"'*) gate tool;; *) sleep 0.03;; esac\n"
+        @"done < '%@'", dir, dir, file];
+}
+
+// Lets the stand-in go on past its gate `name` ("tool", "result", or "all"
+// for every gate of the run).
+void Gate(NSString *dir, NSString *name) {
+    MCGuiWriteFile([dir stringByAppendingPathComponent:[@"go-" stringByAppendingString:name]], @"");
 }
 
 NSString *PlainReply(NSString *reply) {
@@ -67,25 +86,41 @@ MC_GUI_SUITE(agent_panel) {
     MCAgentPanelState *s = [MCAgentPanelState new];
     s.seen = [NSMutableArray array];
     NSString *script = [MCGuiScratch() stringByAppendingPathComponent:@"agent-panel/fake-claude.sh"];
+    NSString *agentDir = script.stringByDeletingLastPathComponent;
     NSString *file = MCGuiProjectFile(@"util.py");
     NSString *original = @"def double(x):\n    return x * 2\n";
     NSString *(^disk)(void) = ^NSString *(void) {
         return [NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil];
     };
+    // Writes down what the bar says while the run works; NO once it ended.
+    BOOL (^note)(void) = ^BOOL {
+        MCAgentBar *bar = Agent(s.c).bar;
+        if (bar.mode != MCAgentBarWorking) return NO;
+        if (bar.message.length && ![s.seen.lastObject isEqualToString:bar.message])
+            [s.seen addObject:bar.message];
+        return YES;
+    };
     // Waits for the run to end, writing down what the bar said meanwhile.
     void (^waitForReply)(NSString *) = ^(NSString *what) {
-        MCGuiWait(what, 20, ^BOOL {
-            MCAgentBar *bar = Agent(s.c).bar;
-            if (bar.mode == MCAgentBarWorking) {
-                if (bar.message.length && ![s.seen.lastObject isEqualToString:bar.message])
-                    [s.seen addObject:bar.message];
-                return NO;
-            }
-            return YES;
-        });
+        MCGuiWait(what, 20, ^BOOL { return !note(); });
     };
+    // Waits for the bar to show a stage the stand-in holds at its gate (or
+    // for the run to end, which the checks after it then find), then lets
+    // the stand-in go on.
+    void (^waitForStage)(NSString *, NSString *, BOOL (^)(NSString *)) =
+        ^(NSString *what, NSString *gate, BOOL (^shows)(NSString *)) {
+            MCGuiWait(what, 20, ^BOOL {
+                return !note() || shows(Agent(s.c).bar.message);
+            });
+            MCGuiStep([@"the stand-in goes on past its gate: " stringByAppendingString:gate], ^{
+                Gate(agentDir, gate);
+            });
+        };
     void (^ask)(NSString *) = ^(NSString *request) {
         [s.seen removeAllObjects];
+        for (NSString *g in @[@"go-tool", @"go-result", @"go-all"])
+            [[NSFileManager defaultManager]
+                removeItemAtPath:[agentDir stringByAppendingPathComponent:g] error:nil];
         [s.c focusEditor:nil];
         [s.c inlineAgent:nil];
         GCHECK(Agent(s.c).shown);
@@ -93,8 +128,8 @@ MC_GUI_SUITE(agent_panel) {
         GCHECK(Agent(s.c).bar.mode == MCAgentBarWorking);
     };
 
-    MCGuiStep(@"a file, and a stand-in agent that streams an edit slowly", ^{
-        WriteAgent(script, SlowStream(Fixture(@"edit.jsonl")));
+    MCGuiStep(@"a file, and a stand-in agent that streams an edit", ^{
+        WriteAgent(script, GatedStream(Fixture(@"edit.jsonl"), agentDir));
         MCGuiSetSettings([NSString stringWithFormat:@"lsp.enabled = false\nagent.command = %@\n", script]);
         MCGuiWriteFile(file, original);
         s.c = MCGuiController();
@@ -102,6 +137,12 @@ MC_GUI_SUITE(agent_panel) {
         GCHECK([s.c showFile:file]);
         Text(s.c).selectedRange = NSMakeRange([original rangeOfString:@"return"].location, 0);
         ask(@"triple it");
+    });
+    waitForStage(@"the reply so far and the file it reads, while it runs", @"tool", ^BOOL(NSString *m) {
+        return [m hasPrefix:@"Reading util.py…"] && [m containsString:@"I'll look at"];
+    });
+    waitForStage(@"the edit, before the run ends", @"result", ^BOOL(NSString *m) {
+        return [m containsString:@"Edit 1, in place of 1 line:\n    return x * 3"];
     });
     waitForReply(@"the streamed edit");
     MCGuiStep(@"the reply showed while it was written; the edit waits", ^{
@@ -150,7 +191,10 @@ MC_GUI_SUITE(agent_panel) {
     });
 
     // Again, and Return keeps it: one undo step.
-    MCGuiStep(@"again", ^{ ask(@"triple it"); });
+    MCGuiStep(@"again, not held at the gates", ^{
+        ask(@"triple it");
+        Gate(agentDir, @"all");
+    });
     waitForReply(@"the second streamed edit");
     MCGuiStep(@"Return keeps it", ^{
         MCAgentSession *agent = Agent(s.c);
@@ -325,8 +369,11 @@ MC_GUI_SUITE(agent_panel) {
 
     // An answer, streamed.
     MCGuiStep(@"a question", ^{
-        WriteAgent(script, SlowStream(Fixture(@"answer.jsonl")));
+        WriteAgent(script, GatedStream(Fixture(@"answer.jsonl"), agentDir));
         ask(@"what does it do?");
+    });
+    waitForStage(@"the answer so far, while it runs", @"result", ^BOOL(NSString *m) {
+        return [m hasSuffix:@"\n\nIt doubles its argument."];
     });
     waitForReply(@"the answer");
     MCGuiStep(@"the answer, the file as it was", ^{
