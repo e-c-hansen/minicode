@@ -121,11 +121,18 @@ double rowY(const std::string& name) {
     return out.y;
 }
 
-void clickRow(const std::string& name) {
+// A click on a row of this suite's folder, by its path under it, brought
+// into view first: on a loaded machine the churning folder's rows coming
+// and going below a-files' left the tree scrolled past them (data.bin never
+// on show for 30 s, the churn's rows at the tree's top, #127).
+void clickRow(const std::string& rel) {
+    const std::string name = rel.substr(rel.rfind('/') + 1);
+    MCGuiBringTreeRow(at(rel), 20);
     MCGuiWait(name + " is on show", 20, [name] { return row(name) != nullptr; });
     MCGuiStep("a click on " + name, [name] { MCGuiClick(row(name)); });
 }
 
+int gLooks = 0, gScrolledBack = 0;   // the first row's wait: its looks, and those off the top
 pid_t gChurn = 0;
 guint gRowsOpen = 0;   // with the big folder open and full
 constexpr int kBigFiles = 10000;
@@ -142,6 +149,7 @@ void stopChurn() {
 
 MC_GUI_SUITE(tree_stall) {
     MCGuiStep("a folder of its own, first in the tree", [] {
+        gLooks = gScrolledBack = 0;
         MCGuiWriteFile(at("a-files/note.txt"), "a note\n");
         MCGuiWriteFile(at("big/keep/inside.txt"), "kept open\n");
         std::string bytes(4096, '\0');
@@ -160,14 +168,26 @@ MC_GUI_SUITE(tree_stall) {
                         });
     });
     // First in the tree only while the tree is at its top: an earlier suite
-    // may have left it scrolled down (a row revealed far below).
-    MCGuiStep("the tree scrolled to its top", [] {
+    // may have left it scrolled down (a row revealed far below). Put there
+    // on every look, not once: after other suites the project holds more
+    // rows than the tree shows, and the folder's row, coming in at the top
+    // after a scroll there, stayed above the pane, the rows on show kept
+    // where they were (GtkListView's anchor, FileTree's keepRows). In the
+    // soak's order with seed 791492888 it was in the tree's model, first,
+    // and never on show for 30 s, on a loaded machine (#127).
+    MCGuiStep("the stall meter starts", [] { gMeter.start(); });
+    MCGuiWait("a-tree-stall is on show, the tree at its top", 20, [] {
         GtkAdjustment* v =
             gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(MCGuiApp().tree->widget()));
-        gtk_adjustment_set_value(v, gtk_adjustment_get_lower(v));
+        if (gtk_adjustment_get_value(v) > gtk_adjustment_get_lower(v)) {
+            if (gLooks > 0 && gScrolledBack++ == 0)
+                MCGuiNote("the tree had left its top after the first look: scrolled back");
+            gtk_adjustment_set_value(v, gtk_adjustment_get_lower(v));
+        }
+        gLooks++;
+        return row("a-tree-stall") != nullptr;
     });
-    MCGuiStep("the stall meter starts", [] { gMeter.start(); });
-    clickRow("a-tree-stall");
+    MCGuiStep("a click on a-tree-stall", [] { MCGuiClick(row("a-tree-stall")); });
     MCGuiWait("its entries are listed", 20, [] { return row("a-files") && row("big") && row("churn"); });
     // The files to click sort above the churning folder, so its rows coming
     // and going never move them under the pointer.
@@ -197,11 +217,11 @@ MC_GUI_SUITE(tree_stall) {
     // A pause where time is the condition: the folder churns while open.
     MCGuiPause(2);
     MCGuiStep("", [] { checkPhase("with a churning folder open"); });
-    clickRow("note.txt");
+    clickRow("a-files/note.txt");
     MCGuiWait("the note opens", 10, [] { return MCGuiApp().editor->currentPath() == at("a-files/note.txt"); });
-    clickRow("data.bin");
+    clickRow("a-files/data.bin");
     MCGuiWait("the binary is refused", 10, [] { return MCGuiApp().editor->currentPath() == at("a-files/data.bin"); });
-    clickRow("pipe");
+    clickRow("a-files/pipe");
     MCGuiWait("the pipe is refused, never opened", 10,
               [] { return MCGuiApp().editor->currentPath() == at("a-files/pipe"); });
     MCGuiStep("a double-click on the note", [] { MCGuiDoubleClick(row("note.txt")); });
@@ -227,8 +247,8 @@ MC_GUI_SUITE(tree_stall) {
         GCHECK(rowCount() == gRowsOpen + kBigFiles + 1);
         checkPhase("opening a folder of 10,000 entries");
     });
-    clickRow("keep");
-    clickRow("inside.txt");
+    clickRow("big/keep");
+    clickRow("big/keep/inside.txt");
     MCGuiWait("it opens", 10, [] { return MCGuiApp().editor->currentPath() == at("big/keep/inside.txt"); });
     MCGuiStep("", [] {
         gRowsOpen = rowCount();
@@ -274,7 +294,7 @@ MC_GUI_SUITE(tree_stall) {
         const double keep = rowY("inside.txt"), f0 = rowY("f0"), f1 = rowY("f1"), f10 = rowY("f10");
         GCHECK(keep >= 0 && f0 > keep && f1 > f0 && f10 > f1);
     });
-    clickRow("f100");
+    clickRow("big/f100");
     MCGuiWait("a new file opens", 10, [] { return MCGuiApp().editor->currentPath() == at("big/f100"); });
     MCGuiStep("", [] { checkPhase("opening a file in it"); });
     MCGuiStep("the meter stops, and the big folder closes", [] {

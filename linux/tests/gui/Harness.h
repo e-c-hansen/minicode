@@ -234,6 +234,13 @@ void MCGuiHideBrowserPane();
 // once the window is up, then sets its own scope. A files box it empties
 // searches again 350 ms later, with the query in the box by then.
 void MCGuiResetFolderSearch();
+// Whether the project folder is a git repository (has a .git), and its
+// removal: the worktrees `git worktree list` names inside the project, then
+// .git with its branches. A suite that makes the project a repository
+// removes it before it ends (else the harness does, with a LEFT line): left
+// one, every tree row is "Untracked (git)", with a tooltip.
+bool MCGuiProjectIsRepository();
+void MCGuiRemoveProjectRepository();
 // Queues taking back what a suite typed at the newest window's shell prompt
 // and left there (Run in Terminal and Open in Terminal type a command
 // without Return): Ctrl+U sent to the shell, then, unless `typed` is empty,

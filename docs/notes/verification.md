@@ -28,7 +28,11 @@ found through that list.
   it; then it can be a LEAK. On GTK, Find in Folder's scope, files to
   include and exclude and options are a LEFT line too (2026-11-19), put
   back by `MCGuiResetFolderSearch`, which a suite that searched calls
-  before it ends. `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
+  before it ends, and so is the project folder left a git repository
+  (2026-11-19: agents' git init, worktree and branches), removed by
+  `MCGuiRemoveProjectRepository` with the worktrees git lists inside it,
+  which a suite that made it one calls before it ends.
+  `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
   are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
   picture of the test window (the first ten); CI keeps them as an
   artifact, a folder per half.
@@ -46,6 +50,23 @@ found through that list.
   `MCGuiTreeRow`), and sets every part of a shared panel it relies on
   (`MCGuiResetFolderSearch`, then its own scope) rather than counting on
   a new window's; the LEFT lines name only what the harness looks at.
+  What a suite makes in the shared project it takes away: agents left
+  the project a git repository, with a worktree under .claude, so in
+  later suites every tree row was "Untracked (git)" with a tooltip and a
+  Worktrees node sat at the tree's top; it now removes the repository,
+  the worktree and its files, and waits until the tree has neither.
+- **A tooltip takes the next click** (2026-11-19, GTK, soak #127). Trap:
+  GTK shows a widget's tooltip just below a resting pointer, as an X
+  window of its own over the app's, and XTest's pointer jumps where a
+  hand's would pass through the row first and put the tooltip away.
+  preview_tabs' click on p-a left p-a's "Untracked (git)" up over p-b,
+  and its click on p-b landed on the tooltip: the tree saw no press, and
+  every later click on a row went the same way. `MCGuiOnScreen` cannot
+  see it (it asks GTK what its own window draws there). The harness
+  hides a tooltip of the app's that X has over the point before any
+  click, press, drag or wheel goes there (`uncover` in Input.cpp), with
+  a note ("a tooltip (...) over the point to click, hidden first");
+  anything else over the point is left for the check to see.
 - **Two harnesses at once** (2026-11-17, CI's halves): each process makes
   its own world, so nothing a suite touches is shared. Mac: `/tmp/mcgui-*`
   by mkdtemp, home, TMPDIR (so control sockets; `MUTIBLE_CONTROL_DIR`
@@ -166,6 +187,7 @@ Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
 - Verification reality (important) (the rest): **What a suite needs, it sets up**: in CI's order a suite runs after the same few suites every time, so it can pass for months on what they happen to leave and fail in every shuffled order.
+- Verification reality (important) (the rest): **A tooltip takes the next click**: GTK's tooltip is an X window below a resting pointer, and XTest's pointer jumps onto it; the harness hides one over the point before pointer input goes there.
 - Verification reality (important) (the rest): **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events through the window then the main menu (`MCGuiPerformMenuKey`, built from the key code; setting the unicode string made the menu refuse a matching key); tree keys through `[window ...
 - Verification reality (important) (the rest): Older traps: an arrow key event needs the function-key character (U+F701...) as `characters`, and an empty string makes `-[NSMenu performKeyEquivalent:]` throw;
 - Verification reality (important) (the rest): **Docker trap**: `open -g -a Docker` raised an administrator password prompt and the daemon never started; never start Docker unattended.

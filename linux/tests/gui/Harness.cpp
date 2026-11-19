@@ -561,6 +561,37 @@ void MCGuiResetFolderSearch() {
     }
 }
 
+namespace {
+// What a command printed, run synchronously with no shell; "" when it failed.
+std::string commandOutput(const std::vector<std::string>& args) {
+    std::vector<char*> argv;
+    for (const std::string& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+    argv.push_back(nullptr);
+    gchar* out = nullptr;
+    gint status = 0;
+    const bool ran = g_spawn_sync(nullptr, argv.data(), nullptr,
+                                  (GSpawnFlags)(G_SPAWN_SEARCH_PATH | G_SPAWN_STDERR_TO_DEV_NULL),
+                                  nullptr, nullptr, &out, nullptr, &status, nullptr);
+    std::string text = ran && g_spawn_check_wait_status(status, nullptr) && out ? out : "";
+    g_free(out);
+    return text;
+}
+}  // namespace
+
+bool MCGuiProjectIsRepository() { return MCGuiFileExists(MCGuiProject() + "/.git"); }
+
+void MCGuiRemoveProjectRepository() {
+    char buf[PATH_MAX];
+    const std::string proj = realpath(MCGuiProject().c_str(), buf) ? buf : MCGuiProject();
+    std::istringstream in(commandOutput({"git", "-C", proj, "worktree", "list", "--porcelain"}));
+    for (std::string line; std::getline(in, line);) {
+        if (line.rfind("worktree ", 0) != 0) continue;
+        const std::string wt = line.substr(9);
+        if (wt.rfind(proj + "/", 0) == 0) commandOutput({"rm", "-rf", "--", wt});
+    }
+    commandOutput({"rm", "-rf", "--", proj + "/.git"});
+}
+
 #ifdef MUTIBLE_ENABLE_TERMINAL
 namespace {
 // Ctrl+U to a terminal's shell, as a key typed there.
@@ -777,6 +808,7 @@ struct World {
     int busy = 0;      // terminals where a program other than the shell has the foreground
     std::string settings, keys;
     std::string folderSearch;   // what Find in Folder keeps that a new window's has not
+    bool projectRepository = false;   // the project folder has a .git
 };
 World gWorldAtStart;
 
@@ -804,6 +836,7 @@ World lookAtWorld() {
         const std::string changes = folderSearchChanges(a);
         if (!changes.empty()) w.folderSearch += (w.folderSearch.empty() ? "" : "; ") + changes;
     }
+    w.projectRepository = MCGuiProjectIsRepository();
     return w;
 }
 
@@ -965,6 +998,18 @@ void checkWhatSuiteLeft() {
                  (was.folderSearch.empty() ? "" : " (was " + was.folderSearch + ")"),
              false);
         if (putBack) MCGuiResetFolderSearch();
+    }
+    // The project folder made a git repository and left one: every row of
+    // the tree is then untracked, with a tooltip ("Untracked (git)"), the
+    // Source Control panel and the gutters have a repository a later suite
+    // does not expect, and a worktree under .claude/worktrees is a node of
+    // its own at the tree's top. agents left one (git init, a worktree and
+    // its branch), and preview_tabs' clicks, after it in the soak's
+    // shuffled orders, landed on the tooltips. Said, not failed; removed
+    // with the worktrees git lists inside the project.
+    if (now.projectRepository && !was.projectRepository) {
+        leak("left the project folder a git repository, removed (its .git and the worktrees in it)", false);
+        if (putBack) MCGuiRemoveProjectRepository();
     }
 }
 
