@@ -13,7 +13,8 @@
 //     GTK port's tree, the splices that put a fresh listing in a folder's
 //     rows and when a changing folder is listed again.
 //   - FileIcon: what a click on a file opens, by its extension, for the
-//     row's icon (a picture, a film, a table, ...).
+//     row's icon (a picture, a film, a table, ...), and the finer type
+//     (Python, YAML, a lockfile, a Makefile) a tree's icon can name.
 //   - TreeFocus: Focus on Folder, the tree rooted at one folder inside the
 //     window's: the breadcrumb's parts, a saved focus checked, a focus
 //     widened to show a path, and which parts fit the bar; and Add to
@@ -323,6 +324,43 @@ const char *kindName(Kind k);   // "text", "code", "image", ... for tests
 bool isImageExtension(const std::string &ext);
 bool isVideoExtension(const std::string &ext);
 bool isAudioExtension(const std::string &ext);
+
+// What a file is, for its row's icon: finer than Kind (which is what a
+// click opens), the language or format, so a tree can show Python, Rust
+// and YAML apart. Each platform maps it to its own pictures (the GTK
+// port's linux/src/TreeIcons.cpp to the system icon theme's names; the
+// Mac still maps Kind). Decided, like Kind, from the name alone, never
+// the file's contents:
+//   - by the whole name first: Makefile, CMakeLists.txt, meson.build,
+//     Dockerfile and compose files, LICENSE and COPYING, README, AUTHORS,
+//     lockfiles (package-lock.json, Cargo.lock, go.sum, any *.lock), git's
+//     files (.gitignore, .gitattributes, .gitmodules, .mailmap, ...),
+//     Gemfile and the like, and the shells' dotfiles (.bashrc, .zshrc);
+//   - then by the extension (case ignored);
+//   - then a dotfile none of those named is Config (.env, .editorconfig,
+//     .env.local), and a file with no extension that `executable` says
+//     can run is Executable (the GTK listing asks only for those);
+//   - else Code when the highlighter has a grammar for the extension, and
+//     Text.
+enum class Type {
+    Text, Code,
+    // source
+    C, CHeader, Cpp, CppHeader, ObjC, CSharp, Python, JavaScript, TypeScript, Rust, Go,
+    Java, Kotlin, Swift, Ruby, Php, Perl, Lua, Shell, Haskell, Scala, Dart, R, Julia,
+    Elixir, Erlang, Zig, Nim, Vala, Fortran, OCaml, Lisp, Qml, Vue,
+    // markup and data
+    Markdown, Html, Css, Sass, Less, Json, Yaml, Toml, Xml, Csv, Sql, Latex, Notebook,
+    // media, documents and binaries
+    Image, Svg, Audio, Video, Pdf, Archive, Font, Executable, Library, Database,
+    Document, Spreadsheet, Presentation, Ebook,
+    // by name, and the rest
+    Makefile, CMake, Meson, Dockerfile, License, Readme, Authors, Lockfile, Git, Config,
+    Patch, Log, Key, Bookmark, Translation,
+};
+Type typeOf(const std::string &path, bool executable = false);
+const char *typeName(Type t);   // "python", "c-header", ... for tests and the GTK checks
+// Every type, in the enum's order (the GTK checks resolve each).
+const std::vector<Type> &allTypes();
 
 }  // namespace FileIcon
 

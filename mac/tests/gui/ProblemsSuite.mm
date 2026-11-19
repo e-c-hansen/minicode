@@ -5,7 +5,8 @@
 // folder), errors before warnings; the status bar counts them; Return on a
 // row opens its file at the problem; F8 steps through the file's problems,
 // wrapping, with the message at the caret; and closing a tab drops what its
-// server said about it while open.
+// server said about it while open. A JSON file no server has is checked by
+// the editor itself: its parse error is a problem like a server's.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Lsp.h"
@@ -149,5 +150,87 @@ MC_GUI_SUITE(problems) {
         if (Problems(c) && !Problems(c).hidden) [c toggleProblems:nil];
         GCHECK(!Problems(c) || Problems(c).hidden);
         MCGuiSetSettings(@"lsp.enabled = false\n");
+    });
+
+    // ---------------------------------------------- JSON, which no server has
+    // The editor checks it itself, as VS Code does (a grader's walk,
+    // 2026-11-18: the outline said "Not valid JSON" and the status bar "No
+    // problems"): a trailing comma is one error, drawn on the comma, listed
+    // and counted; taken out, it goes, and typed back it returns; JSON with
+    // comments (tsconfig.json) may have comments and trailing commas.
+    NSString *pkg = [dir stringByAppendingPathComponent:@"package.json"];
+    NSString *pkgText = @"{\n  \"name\": \"x\",\n  \"version\": \"1.0.0\",\n}\n";
+    NSString *tsconfig = [dir stringByAppendingPathComponent:@"tsconfig.json"];
+    NSString *tsText = @"// the compiler's options\n{\n  /* target */ \"target\": \"es2022\",\n"
+                       @"  \"lib\": [\"dom\",],\n}\n";
+    const NSUInteger comma = LineStart(pkgText, 2) + 20;   // after "1.0.0"
+    NSTextField *(^label)(void) = ^NSTextField * { return [c valueForKey:@"problemsLabel"]; };
+    NSArray<MCDiagnosticMark *> *(^marks)(void) = ^NSArray<MCDiagnosticMark *> * {
+        return ((CodeTextView *)Text(c)).diagnostics;
+    };
+    NSArray<MCProblem *> *(^rowsOf)(NSString *) = ^NSArray<MCProblem *> *(NSString *name) {
+        NSMutableArray<MCProblem *> *rows = [NSMutableArray array];
+        for (MCProblem *p in [Lsp(c) problemRows])
+            if (!p.heading && [p.path.lastPathComponent isEqualToString:name]) [rows addObject:p];
+        return rows;
+    };
+    MCGuiStep(@"a JSON file with a trailing comma, and no server", ^{
+        MCGuiWriteFile(pkg, pkgText);
+        MCGuiWriteFile(tsconfig, tsText);
+        GCHECK_EQ_STR([pkgText substringWithRange:NSMakeRange(comma, 1)], @",");
+        GCHECK([c showFile:pkg]);
+        [c.window makeFirstResponder:Text(c)];
+    });
+    MCGuiWait(@"one problem, and the status bar says so", 10, ^BOOL {
+        return marks().count == 1 && Lsp(c).problemErrors == 1 &&
+               [label().stringValue containsString:@"1 error"];
+    });
+    MCGuiStep(@"drawn on the comma, listed in Problems at its line", ^{
+        MCDiagnosticMark *m = marks().firstObject;
+        MCGuiNote(@"mark %@: %@; status bar: %@", m ? NSStringFromRange(m.range) : @"none",
+                  m.message, label().stringValue);
+        GCHECK(m && NSEqualRanges(m.range, NSMakeRange(comma, 1)));
+        GCHECK(m && m.severity == 1 && [m.message containsString:@"Trailing comma"]);
+        GCHECK(!label().hidden);
+        NSArray<MCProblem *> *rows = rowsOf(@"package.json");
+        GCHECK(rows.count == 1);
+        MCProblem *p = rows.firstObject;
+        GCHECK(p && p.line == 2 && p.column == 20 && p.severity == 1);
+        GCHECK_EQ_STR(p.message, @"Trailing comma");
+        GCHECK_EQ_STR(p.source, @"json");
+    });
+    MCGuiStep(@"the comma taken out", ^{
+        MCGuiUndoGroup(Text(c).undoManager, ^{
+            [Text(c) insertText:@"" replacementRange:NSMakeRange(comma, 1)];
+        });
+        GCHECK([Text(c).string containsString:@"\"1.0.0\"\n}"]);
+    });
+    MCGuiWait(@"no problems, and the status bar says so", 10, ^BOOL {
+        return marks().count == 0 && Lsp(c).problemErrors == 0 && rowsOf(@"package.json").count == 0 &&
+               [label().stringValue containsString:@"No problems"];
+    });
+    MCGuiStep(@"typed back", ^{
+        Text(c).selectedRange = NSMakeRange(comma, 0);
+        MCGuiUndoGroup(Text(c).undoManager, ^{ [Text(c) insertText:@"," replacementRange:Text(c).selectedRange]; });
+        GCHECK_EQ_STR(Text(c).string, pkgText);
+    });
+    MCGuiWait(@"the problem is back", 10, ^BOOL {
+        return marks().count == 1 && NSEqualRanges(marks().firstObject.range, NSMakeRange(comma, 1));
+    });
+    MCGuiStep(@"tsconfig.json: JSON with comments, its comments and trailing commas allowed", ^{
+        GCHECK([c showFile:tsconfig]);
+        GCHECK_EQ_STR(Text(c).string, tsText);
+    });
+    MCGuiWait(@"the status bar counts tsconfig.json's problems", 10, ^BOOL {
+        return !label().hidden && [label().stringValue containsString:@"1 error"];   // package.json's
+    });
+    // A negative check: the check of tsconfig.json runs at once, on a queue;
+    // a second is long enough for it to have answered.
+    MCGuiPause(1.0);
+    MCGuiStep(@"none for tsconfig.json; package.json's stays listed while its tab is open", ^{
+        MCGuiNote(@"marks: %lu; rows: %@", (unsigned long)marks().count, [Lsp(c) problemRows]);
+        GCHECK(marks().count == 0);
+        GCHECK(rowsOf(@"tsconfig.json").count == 0);
+        GCHECK(rowsOf(@"package.json").count == 1);
     });
 }

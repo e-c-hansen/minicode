@@ -155,6 +155,22 @@ static NSString *const kShowHiddenFilesKey = @"MCShowHiddenFiles";
     _draggedPaths = nil;
 }
 
+// Files dropped on the editor's text, from the tree or Finder, open in
+// tabs of their own, as VS Code opens them; a folder is shown in the tree.
+// The last file dropped is the one on show.
+- (BOOL)openDroppedPaths:(NSArray<NSString *> *)paths {
+    BOOL took = NO;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *p in paths) {
+        BOOL dir = NO;
+        if (![fm fileExistsAtPath:p isDirectory:&dir]) continue;
+        if (dir) [self revealPath:p andOpen:NO];
+        else [self openFileAtPath:p from:EditorTabs::OpenFrom::Other];
+        took = YES;
+    }
+    return took;
+}
+
 // What a drop would move or copy: the tree's own rows, else file URLs.
 - (NSArray<NSString *> *)droppedPaths:(id<NSDraggingInfo>)info local:(BOOL)local {
     if (local) return _draggedPaths ?: @[];

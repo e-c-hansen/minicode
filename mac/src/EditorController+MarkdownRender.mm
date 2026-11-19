@@ -92,6 +92,10 @@ static char kMCMeasureObserved;
     tv.textContainerInset = NSMakeSize(inset, tv.textContainerInset.height);
     if (tc.widthTracksTextView)
         tc.size = NSMakeSize(MAX(1, NSWidth(tv.frame) - 2 * inset), tc.size.height);
+    // The page moves sideways: all of it is drawn again, the margins too,
+    // now and where the pane ends up once a resize settles (a narrower
+    // page's ink stayed in the new margins, the owner's STATUS.md).
+    [self.textView redrawWholePane];
 }
 
 - (void)markdownViewResized:(NSNotification *)note {

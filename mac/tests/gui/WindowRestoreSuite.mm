@@ -297,7 +297,8 @@ MC_GUI_SUITE(_restore_writer) {
         GCHECK(hash.length == 40);
         [c gitReviewChanges:nil];
         GCHECK(PageTab(c, @"review") != nil);
-        [c showCommitReview:hash title:[[hash substringToIndex:7] stringByAppendingString:@" First"]];
+        [c showCommitReview:hash title:[[hash substringToIndex:7] stringByAppendingString:@" First"]
+                     preview:NO];   // kept, as Return or a double-click keeps it
         GCHECK(PageTab(c, @"commit") != nil);
         // As `mutible diff --keep src/deep/x.c` makes it: HEAD's against the disk's.
         MCComparison *cmp = [MCComparison new];

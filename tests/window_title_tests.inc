@@ -17,6 +17,10 @@ static void testWindowTitle() {
         // A folder whose name starts the same is not the folder.
         CHECK(displayPath("/Users/me/workshop/a.txt", folder, home) == "~/workshop/a.txt");
         CHECK(displayPath("/Users/me/notes/todo.md", folder, home) == "~/notes/todo.md");
+        // Nor is a home whose name starts the same; the window on home
+        // itself counts from it, not "~".
+        CHECK(displayPath("/Users/meg/a.txt", folder, home) == "/Users/meg/a.txt");
+        CHECK(displayPath("/Users/me/e.txt", home, home) == "e.txt");
         CHECK(displayPath("/Users/me", folder, home) == "~");
         CHECK(displayPath("/etc/hosts", folder, home) == "/etc/hosts");
         CHECK(displayPath("/Users/me/work", folder, home) == "work");

@@ -171,26 +171,40 @@ struct Counting {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-// needsDisplay = YES asks to redraw the whole view, and NSTextView lays out
-// every glyph in a rect it is asked to redraw: clearing a file's squiggles
-// laid out all of a 25 MB file (2.5 s), after which every keystroke walked
-// every line fragment. Only what shows, and what AppKit drew ahead of the
-// scroll (the prepared rect), can need redrawing.
+// needsDisplay = YES asks to redraw the whole view, and NSTextView's
+// setNeedsDisplayInRect: lays out every glyph in the rect it is given:
+// clearing a file's squiggles laid out all of a 25 MB file (2.5 s), after
+// which every keystroke walked every line fragment. So only what shows,
+// and what AppKit drew ahead of the scroll (the prepared rect), is marked
+// that way, laid out as before. The rest of the view is marked without
+// layout (as TextKit marks a new text's column, the document's whole
+// height at once; only what is drawn costs): NSTextView marks itself whole
+// this way when its inset changes (a page's centered margins, as the pane
+// widens), and the layer keeps drawn tiles past the visible and prepared
+// rects, whose column the new layout's marks redrew while their margins
+// kept an older page (the owner's STATUS.md, 2026-11-18: a second,
+// narrower copy of the page in the left margin, cut off where the page's
+// column starts). The layout of what shows stays: an inset that changes
+// while the page is being laid out (a scroll bar appearing) stops
+// ensureLayoutForTextContainer short, and this is what laid the screen
+// out again (markdown_preview's picture sizes).
 - (void)setNeedsDisplay:(BOOL)flag {
     if (!flag) { [super setNeedsDisplay:NO]; return; }
     [self setNeedsDisplayInRect:NSUnionRect(self.visibleRect, self.preparedContentRect)];
+    [self setNeedsDisplayInRect:self.bounds avoidAdditionalLayout:YES];
 }
 
 // The whole pane drawn again: now, and once more as the turn ends, before
 // the window draws. A change marks only what it touched, in the pane as it
 // stood then: a new text marks the column its glyphs take, and a page's
 // centered inset leaves margins no glyph covers, so whatever the pane last
-// drew there (another tab's text) stayed in them. The second mark is made
-// where the pane ends up, after the tab's place is put back and any layout
-// the turn still does.
+// drew there (another tab's text, an older page) stayed in them. The whole
+// view is marked, not just what shows: tiles the layer keeps above and
+// below the pane hold the old ink too, and come back as it scrolls. The
+// second mark is made where the pane ends up, after the tab's place is put
+// back and any layout the turn still does.
 - (void)redrawWholePane {
-    [self setNeedsDisplayInRect:NSUnionRect(self.visibleRect, self.preparedContentRect)
-          avoidAdditionalLayout:YES];
+    [self setNeedsDisplayInRect:self.bounds avoidAdditionalLayout:YES];
     if (_paneRedrawScheduled) return;
     _paneRedrawScheduled = YES;
     __weak CodeTextView *weakSelf = self;
@@ -199,8 +213,7 @@ struct Counting {
         CodeTextView *me = weakSelf;
         if (!me) return;
         me->_paneRedrawScheduled = NO;
-        [me setNeedsDisplayInRect:NSUnionRect(me.visibleRect, me.preparedContentRect)
-               avoidAdditionalLayout:YES];
+        [me setNeedsDisplayInRect:me.bounds avoidAdditionalLayout:YES];
     });
     CFRunLoopWakeUp(main);
 }
@@ -223,6 +236,71 @@ struct Counting {
     if (marks.count == 0 && _buildMarks.count == 0) return;
     _buildMarks = [marks copy];
     self.enclosingScrollView.verticalRulerView.needsDisplay = YES;
+}
+
+// ---- files dropped on the text open (onDropFiles)
+// The file paths a drag carries, unless it comes from this very view.
+- (NSArray<NSString *> *)droppedFilePaths:(id<NSDraggingInfo>)info {
+    if (!self.onDropFiles || info.draggingSource == self) return nil;
+    NSArray<NSURL *> *urls = [info.draggingPasteboard
+        readObjectsForClasses:@[NSURL.class]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *u in urls)
+        if (u.filePathURL.path.length) [paths addObject:u.filePathURL.path];
+    return paths.count ? paths : nil;
+}
+
+// The copy cursor for files, from a source that allows it (the tree and
+// Finder do), else what the source allows; none for anything else.
+- (NSDragOperation)fileDropOperation:(id<NSDraggingInfo>)info {
+    if (![self droppedFilePaths:info]) return NSDragOperationNone;
+    const NSDragOperation mask = info.draggingSourceOperationMask;
+    for (NSDragOperation op : {NSDragOperationCopy, NSDragOperationGeneric, NSDragOperationLink})
+        if (mask & op) return op;
+    return NSDragOperationNone;
+}
+
+- (NSArray<NSPasteboardType> *)acceptableDragTypes {
+    NSArray<NSPasteboardType> *types = [super acceptableDragTypes] ?: @[];
+    return [types containsObject:NSPasteboardTypeFileURL]
+               ? types : [types arrayByAddingObject:NSPasteboardTypeFileURL];
+}
+
+// A read-only view (a preview) registers no types of its own; files still
+// open from it.
+- (void)updateDragTypeRegistration {
+    [super updateDragTypeRegistration];
+    if (!self.editable) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info {
+    if ([self droppedFilePaths:info]) return [self fileDropOperation:info];
+    return [super draggingEntered:info];
+}
+
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info {
+    if ([self droppedFilePaths:info]) return [self fileDropOperation:info];
+    return [super draggingUpdated:info];
+}
+
+- (void)draggingExited:(id<NSDraggingInfo>)info {
+    if (![self droppedFilePaths:info]) [super draggingExited:info];
+}
+
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)info {
+    if ([self droppedFilePaths:info]) return [self fileDropOperation:info] != NSDragOperationNone;
+    return [super prepareForDragOperation:info];
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+    NSArray<NSString *> *paths = [self droppedFilePaths:info];
+    if (paths) return [self fileDropOperation:info] != NSDragOperationNone && self.onDropFiles(paths);
+    return [super performDragOperation:info];
+}
+
+- (void)concludeDragOperation:(id<NSDraggingInfo>)info {
+    if (![self droppedFilePaths:info]) [super concludeDragOperation:info];
 }
 
 - (BOOL)resignFirstResponder {
@@ -710,6 +788,15 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
                                                  : @selector(moveToBeginningOfDocument:))
                                        : (extend ? @selector(moveToEndOfDocumentAndModifySelection:)
                                                  : @selector(moveToEndOfDocument:))];
+        return;
+    }
+    // Home and End (Fn+Left / Right on a laptop) go to the line's start and
+    // end, Shift selecting, at every caret, as VS Code's cursorHome and
+    // cursorEnd do on the Mac; AppKit's would scroll to the document's ends
+    // and leave the caret where it was. Page Up and Down still scroll.
+    if ((event.keyCode == 115 || event.keyCode == 119) &&
+        (mods == 0 || mods == NSEventModifierFlagShift) && !self.hasMarkedText) {
+        [_multi homeOrEnd:event.keyCode == 119 extend:mods == NSEventModifierFlagShift];
         return;
     }
     // Option+Up / Down move the lines too, as in VS Code on the Mac, with or

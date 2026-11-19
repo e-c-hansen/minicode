@@ -1,6 +1,7 @@
 // EditorController+TreeDetails.mm — EditorController: the tree's sizes, dates and order.
 #import "EditorController+Private.h"
 #import "EditorController+TreeDetailsIvars.h"
+#import "FileTypeIcons.h"
 #import "RecentFolders.h"
 
 @implementation EditorController (TreeDetails)
@@ -98,14 +99,25 @@ static NSString *MCGroupedCount(long long n) {
     cell.textField.textColor = gitColor ?: text;
     cell.textField.font = rootLabel ? [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium]
                                     : [NSFont systemFontOfSize:12.5];
-    // A file's icon says what a click opens: a picture, a film, a table...
-    NSString *sym = node.isDir ? @"folder.fill" : MCTreeIconSymbol(node.path);
-    NSColor *tint = node.isDir ? Hex(0xC09553) : Hex(0x8A99A8);
+    // A file's icon says what it is (FileIcon::Type: Python, JSON, a
+    // Dockerfile, a picture), in its family's color (FileTypeIcons.mm);
+    // the images and colors are made once per type.
+    NSString *sym = nil;
+    NSColor *tint = Hex(0xC09553);
+    NSImage *icon = nil;
+    if (node.isDir) {
+        icon = MCTreeSymbolImage(@"folder.fill");
+    } else {
+        const FileIcon::Type type = MCFileTypeOf(node.path, node.executable);
+        icon = MCFileTypeImage(type);
+        tint = MCFileTypeTint(type, MCFileTypeTextIsLight(text));
+    }
     NSString *worktreeTip = nil;
     NSAttributedString *worktree = [self worktreeTitleFor:node color:text icon:&sym tint:&tint
                                                       tip:&worktreeTip];
     if (worktree) cell.textField.attributedStringValue = worktree;
-    cell.imageView.image = MCTreeSymbolImage(sym);
+    if (sym) icon = MCTreeSymbolImage(sym);
+    if (cell.imageView.image != icon) cell.imageView.image = icon;
     cell.imageView.contentTintColor = tint;
     if (worktree) {
         [cell setSize:nil saved:nil created:nil color:nil];

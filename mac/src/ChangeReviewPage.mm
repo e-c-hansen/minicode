@@ -5,6 +5,7 @@
 #import "CompareView.h"
 #import "EditorFont.h"
 #import "GitPanel.h"
+#import <ImageIO/ImageIO.h>
 #include "ChangeReview.h"
 #include "FolderSearch.h"
 #include "GitModel.h"
@@ -78,6 +79,7 @@ struct Extra {
     bool workBom = false;
     bool workRead = false;         // the work tree's file was read
     std::string workBytes;
+    std::string oldImage, newImage;   // a picture file's versions (ChangeReview::showAsImages)
 };
 
 // One read: every file and its diff, and the page laid out from them.
@@ -92,6 +94,7 @@ struct ReviewData {
     std::vector<Extra> extras;
     Page page;
     size_t fingerprint = 0;           // ChangeReview::fingerprint of the diffs
+    NSUInteger serial = 0;            // which read this is, in the order started
     std::string head;                 // HEAD's commit as status read it (uncommitted changes only)
 };
 
@@ -125,8 +128,44 @@ void EncodingOfBlob(const std::string &b, FolderSearch::TextEncoding *enc, bool 
     }
 }
 
+// A version's size as a picture, from the header ImageIO reads (its pixels
+// are not decoded here); no size when the bytes are not a picture.
+ChangeReview::ImageSide ImageSideOf(const std::string &bytes) {
+    ChangeReview::ImageSide side;
+    side.bytes = bytes.size();
+    if (bytes.empty()) return side;
+    NSData *data = [NSData dataWithBytesNoCopy:(void *)bytes.data() length:bytes.size()
+                                  freeWhenDone:NO];
+    CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
+    if (!src) return side;
+    if (CGImageSourceGetCount(src) > 0) {
+        CFDictionaryRef props = CGImageSourceCopyPropertiesAtIndex(src, 0, NULL);
+        if (props) {
+            NSDictionary *p = (__bridge NSDictionary *)props;
+            side.width = [p[(__bridge NSString *)kCGImagePropertyPixelWidth] intValue];
+            side.height = [p[(__bridge NSString *)kCGImagePropertyPixelHeight] intValue];
+            CFRelease(props);
+        }
+    }
+    CFRelease(src);
+    return side;
+}
+
+// A binary file that is a picture is shown as its versions: their sizes
+// read, and their bytes kept for the image views.
+void SeeImages(ChangeReview::File &f, Extra &x, const std::string &oldBytes,
+               const std::string &newBytes, double rowHeight) {
+    if (!f.binary || !ChangeReview::imagePath(f.path)) return;
+    const ChangeReview::ImageSide o = f.oldExists ? ImageSideOf(oldBytes) : ChangeReview::ImageSide();
+    const ChangeReview::ImageSide n = f.newExists ? ImageSideOf(newBytes) : ChangeReview::ImageSide();
+    if (!ChangeReview::showAsImages(f, o, n, rowHeight)) return;
+    if (f.oldExists) x.oldImage = oldBytes;
+    if (f.newExists) x.newImage = newBytes;
+}
+
 // Everything the page shows, read off the main thread.
-std::shared_ptr<ReviewData> ReadReview(NSString *root, const ChangeReview::Opened &opened) {
+std::shared_ptr<ReviewData> ReadReview(NSString *root, const ChangeReview::Opened &opened,
+                                       double rowHeight) {
     auto data = std::make_shared<ReviewData>();
     if (!MCGitExecutable()) {
         data->error = "git was not found, so there is nothing to review.";
@@ -282,6 +321,7 @@ std::shared_ptr<ReviewData> ReadReview(NSString *root, const ChangeReview::Opene
             f.tooLarge = true;
         if (ChangeReview::looksBinary(oldBytes) || ChangeReview::looksBinary(newBytes))
             f.binary = true;
+        SeeImages(f, x, oldBytes, newBytes, rowHeight);
         if (!f.tooLarge && !f.binary) {
             // The work tree's encoding decides how the index is read, as the
             // change bars read it; in the staged list the index's own bytes.
@@ -319,7 +359,7 @@ std::shared_ptr<ReviewData> ReadReview(NSString *root, const ChangeReview::Opene
 // main thread: its header, diff-tree's records, and their blobs in one
 // cat-file --batch.
 std::shared_ptr<ReviewData> ReadCommit(NSString *root, NSString *hash,
-                                       const ChangeReview::Opened &opened) {
+                                       const ChangeReview::Opened &opened, double rowHeight) {
     auto data = std::make_shared<ReviewData>();
     if (!MCGitExecutable()) {
         data->error = "git was not found, so the commit cannot be shown.";
@@ -387,7 +427,8 @@ std::shared_ptr<ReviewData> ReadCommit(NSString *root, NSString *hash,
                 f.tooLarge = true;
             else if (ChangeReview::looksBinary(oldBytes) || ChangeReview::looksBinary(newBytes))
                 f.binary = true;
-            else {
+            SeeImages(f, x, oldBytes, newBytes, rowHeight);
+            if (!f.tooLarge && !f.binary) {
                 FolderSearch::TextEncoding enc;
                 bool bom = false;
                 EncodingOfBlob(f.newExists ? newBytes : oldBytes, &enc, &bom);
@@ -407,7 +448,7 @@ std::shared_ptr<ReviewData> ReadCommit(NSString *root, NSString *hash,
 // the worktree's disk), its untracked files, and the old blobs in one
 // cat-file --batch.
 std::shared_ptr<ReviewData> ReadWorktree(NSString *path, NSString *mainRef,
-                                         const ChangeReview::Opened &opened) {
+                                         const ChangeReview::Opened &opened, double rowHeight) {
     auto data = std::make_shared<ReviewData>();
     if (!MCGitExecutable()) {
         data->error = "git was not found, so the worktree cannot be compared.";
@@ -493,6 +534,7 @@ std::shared_ptr<ReviewData> ReadWorktree(NSString *path, NSString *mainRef,
             if (oldBytes.size() > kMaxSideBytes || total > kMaxTotalBytes) f.tooLarge = true;
             else if (ChangeReview::looksBinary(oldBytes) || ChangeReview::looksBinary(newBytes))
                 f.binary = true;
+            SeeImages(f, x, oldBytes, newBytes, rowHeight);
             if (!f.tooLarge && !f.binary) {
                 FolderSearch::TextEncoding enc = FolderSearch::TextEncoding::Utf8;
                 bool bom = false;
@@ -949,6 +991,39 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 @end
 
 // -------------------------------------------------------- the container
+// The pictures of one binary image file, over its empty rows (RowKind::
+// Image) in the text view: a label and an image view for each version.
+@interface MCReviewImageBox : NSView
+@property(nonatomic) size_t firstRow, rowCount;
+@property(nonatomic) ChangeReview::ImageSide oldSide, newSide;
+@property(nonatomic, strong) NSArray<NSTextField *> *labels;
+@property(nonatomic, strong) NSArray<NSImageView *> *images;
+@end
+@implementation MCReviewImageBox
+- (BOOL)isFlipped { return YES; }
+// Each version at its pixel size, scaled down to its column and to
+// ChangeReview::kImageMaxHeight, the label over it.
+- (void)layoutColumns {
+    const size_t n = self.images.count;
+    if (!n) return;
+    const CGFloat gap = 24, W = NSWidth(self.bounds);
+    const CGFloat colW = MAX(40.0, (W - gap * (CGFloat)(n - 1)) / (CGFloat)n);
+    const ChangeReview::ImageSide sides[2] = {self.oldSide, self.newSide};
+    size_t k = 0;
+    for (const ChangeReview::ImageSide &side : sides) {
+        if (!side.shown || k >= n) continue;
+        const CGFloat x = (colW + gap) * (CGFloat)k;
+        self.labels[k].frame = NSMakeRect(x, 3, colW, 16);
+        CGFloat w = side.width, h = side.height;
+        const CGFloat scale = MIN(1.0, MIN(colW / MAX(w, 1.0), ChangeReview::kImageMaxHeight / MAX(h, 1.0)));
+        w = MAX(1.0, floor(w * scale));
+        h = MAX(1.0, floor(h * scale));
+        self.images[k].frame = NSMakeRect(x, ChangeReview::kImageLabelHeight, w, h);
+        k++;
+    }
+}
+@end
+
 @interface MCReviewContainer : NSView
 @property(nonatomic, weak) MCChangeReviewPage *owner;
 @end
@@ -989,6 +1064,15 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     NSScrollView *_scroll;
     MCReviewTextView *_text;
     NSTextField *_titleLabel, *_summaryLabel, *_messageLabel;
+    NSMutableArray<MCReviewImageBox *> *_imageBoxes;   // over the picture files' rows
+    // Where the eye goes after an action (ChangeReview::ActedPlace): the
+    // row it gives is put where the acted-on row was on screen, by the
+    // first read started after the action went to the queue.
+    ChangeReview::ActedPlace _acted;
+    CGFloat _actedY;
+    NSUInteger _actedFrom;
+    BOOL _actedPending;
+    NSUInteger _readsStarted;
     NSButton *_undoButton;
     BOOL _loading, _again;
     NSString *_revealKey;     // a file to scroll to once read
@@ -1179,6 +1263,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     if (x != _lastX) {
         _lastX = x;
         [_text setNeedsDisplayInRect:_text.visibleRect];
+        [self layoutImages];   // the pictures stay in sight, as the buttons do
     }
 }
 
@@ -1247,6 +1332,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     }
     _scroll.frame = NSMakeRect(0, barH, W, MAX(0, NSHeight(b) - barH));
     [self fitText];
+    [self layoutImages];
 }
 
 // The text view as wide as its longest row (or the pane) and as tall as
@@ -1272,7 +1358,11 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 }
 - (NSString *)pageKey {
     if (_worktree) return [@"worktree:" stringByAppendingString:_worktree];
-    return [(_commitMode ? @"commit:" : @"review:") stringByAppendingString:_root ?: @""];
+    if (_commitMode) return [MCChangeReviewPage commitKeyForRoot:_root hash:_commit];
+    return [@"review:" stringByAppendingString:_root ?: @""];
+}
++ (NSString *)commitKeyForRoot:(NSString *)root hash:(NSString *)hash {
+    return [NSString stringWithFormat:@"commit:%@:%@", root ?: @"", hash ?: @""];
 }
 - (NSString *)headerTitle { return _titleLabel.stringValue; }
 - (NSString *)headerDetail { return _summaryLabel.stringValue; }
@@ -1307,6 +1397,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     _closed = YES;
+    for (NSView *v in _imageBoxes) [v removeFromSuperview];
+    [_imageBoxes removeAllObjects];
     _data = nullptr;
     [_text.textStorage setAttributedString:[NSAttributedString new]];
 }
@@ -1336,11 +1428,14 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const BOOL commitMode = _commitMode;
     NSString *worktree = _worktree, *mainRef = _mainRef;
     const ChangeReview::Opened opened = _opened;
+    const double rowHeight = ReviewRowHeight();
+    const NSUInteger serial = ++_readsStarted;
     __weak MCChangeReviewPage *weakSelf = self;
     dispatch_async(_queue, ^{
-        std::shared_ptr<ReviewData> d = worktree ? ReadWorktree(worktree, mainRef, opened)
-                                        : commitMode ? ReadCommit(root, commit, opened)
-                                                     : ReadReview(root, opened);
+        std::shared_ptr<ReviewData> d = worktree ? ReadWorktree(worktree, mainRef, opened, rowHeight)
+                                        : commitMode ? ReadCommit(root, commit, opened, rowHeight)
+                                                     : ReadReview(root, opened, rowHeight);
+        d->serial = serial;
         d->fingerprint = ChangeReview::fingerprint(d->diffs);
         dispatch_async(dispatch_get_main_queue(), ^{
             MCChangeReviewPage *s = weakSelf;
@@ -1425,6 +1520,12 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const double c0 = ThreadCpuMs();
     ChangeReview::Anchor anchor;
     CGFloat offset = 0;
+    // The first read showing an action's result keeps the acted-on place
+    // (the next block where the acted-on one was) rather than the top row,
+    // which may be another file's (the walker's jump from summary.py to
+    // models.py); reads started before it keep the top row as ever.
+    const BOOL acted = _actedPending && d->serial >= _actedFrom;
+    if (acted) _actedPending = NO;
     if (_data && !_data->page.rows.empty()) {
         const NSInteger top = self.topRow;
         anchor = ChangeReview::anchorAt(_data->page, _data->diffs, (size_t)top);
@@ -1442,11 +1543,25 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         _columns = std::max(_columns, col);
     }
     [self fillText];
+    [self placeImages];
     [self updateSummary];
-    if (_revealKey || _revealTop) [self applyReveal];
-    else if (anchor.valid)
-        [self scrollRowToTop:ChangeReview::rowFor(_data->page, _data->diffs, anchor) offset:offset];
-    else if (first) [self scrollRowToTop:0 offset:0];
+    long kept = -1;
+    if (_revealKey || _revealTop) {
+        [self applyReveal];
+    } else if (acted && !_data->page.rows.empty()) {
+        kept = (long)ChangeReview::rowAfterAction(_data->page, _data->diffs, _acted);
+        [self scrollRowToTop:(size_t)kept offset:-_actedY];
+    } else if (anchor.valid) {
+        kept = (long)ChangeReview::rowFor(_data->page, _data->diffs, anchor);
+        [self scrollRowToTop:(size_t)kept offset:offset];
+    } else if (first) {
+        [self scrollRowToTop:0 offset:0];
+    }
+    // The insertion point (the page is the first responder once opened)
+    // goes with the place kept, so nothing that shows the selection takes
+    // the page back to where the old text's offset falls in the new one.
+    if (kept >= 0 && (size_t)kept < _data->page.starts.size() && _text.selectedRange.length == 0)
+        _text.selectedRange = NSMakeRange(_data->page.starts[(size_t)kept], 0);
     _text.needsDisplay = YES;
     _lastShowCpuMilliseconds = ThreadCpuMs() - c0;
     _loaded = YES;
@@ -1685,6 +1800,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         case RowKind::Added: mark = @"+ "; break;
         case RowKind::Gap: mark = @"~ "; break;
         case RowKind::Note: mark = @"! "; break;
+        case RowKind::Image: mark = @"I "; break;
         case RowKind::Context: break;
         case RowKind::Conflict:
             switch (p.rows[r].part) {
@@ -1754,6 +1870,8 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 // An action's work on the page's queue, HEAD read there first: a note about
 // the action speaks of changes on that commit, whatever the page last read.
 - (void)act:(dispatch_block_t)work {
+    // Reads started from now on run after the action on the queue.
+    _actedFrom = _readsStarted + 1;
     NSString *top = [self readKnowsHead:_data] ? NS8(_data->top) : nil;
     __weak MCChangeReviewPage *weakSelf = self;
     dispatch_async(_queue, ^{
@@ -1778,6 +1896,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 
 // After an action that ran on the queue (`ran`), or one refused at once.
 - (void)finish:(NSString *)text ok:(BOOL)ok about:(const std::vector<std::string> &)paths ran:(BOOL)ran {
+    if (!ran) _actedPending = NO;   // refused: nothing moved
     [self say:text ok:ok about:paths ran:ran];
     if (!ok) NSBeep();
     [_panel refresh];
@@ -1791,6 +1910,16 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const PageRow &pr = _data->page.rows[row];
     if (pr.file >= _data->diffs.size()) return;
     const size_t fi = pr.file;
+    switch (act) {
+    case ActStage:
+    case ActStageFile:
+    case ActMarkResolved: [self rememberActedRow:row op:Op::Stage]; break;
+    case ActUnstage:
+    case ActUnstageFile: [self rememberActedRow:row op:Op::Unstage]; break;
+    case ActDiscard:
+    case ActDiscardFile: [self rememberActedRow:row op:Op::Discard]; break;
+    default: break;
+    }
     switch (act) {
     case ActStage: [self runOp:Op::Stage file:fi block:pr.block oldLines:std::vector<int>() newLines:std::vector<int>()]; break;
     case ActUnstage: [self runOp:Op::Unstage file:fi block:pr.block oldLines:std::vector<int>() newLines:std::vector<int>()]; break;
@@ -1809,6 +1938,96 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 
 - (void)sideBySide:(size_t)fi {
     [self sideBySide:fi data:_data];
+}
+
+// The place an action on `row` acts on, and where it is on screen, for the
+// read that shows its result (show:).
+- (void)rememberActedRow:(size_t)row op:(Op)op {
+    if (!_data || row >= _data->page.rows.size()) return;
+    _acted = ChangeReview::actedPlace(_data->page, _data->diffs, row, op);
+    _actedY = NSMinY([_text rectOfRow:row]) - NSMinY(_scroll.contentView.bounds);
+    _actedFrom = _readsStarted + 1;
+    _actedPending = _acted.valid;
+}
+
+// ------------------------------------------------------------ pictures
+// An image view and its label for each version of each picture file on
+// show, made again with each read (an image decodes when first drawn).
+- (void)placeImages {
+    for (NSView *v in _imageBoxes) [v removeFromSuperview];
+    if (!_imageBoxes) _imageBoxes = [NSMutableArray array];
+    [_imageBoxes removeAllObjects];
+    if (!_data) return;
+    const Page &p = _data->page;
+    NSColor *muted = [[[AppSettings shared] text:Surface::Editor] colorWithAlphaComponent:0.6];
+    for (size_t r = 0; r < p.rows.size(); r++) {
+        if (p.rows[r].kind != RowKind::Image || (r > 0 && p.rows[r - 1].kind == RowKind::Image)) continue;
+        size_t e = r;
+        while (e < p.rows.size() && p.rows[e].kind == RowKind::Image) e++;
+        const size_t fi = p.rows[r].file;
+        if (fi >= _data->diffs.size() || fi >= _data->extras.size()) continue;
+        const ChangeReview::File &f = _data->diffs[fi].file;
+        const Extra &x = _data->extras[fi];
+        MCReviewImageBox *box = [[MCReviewImageBox alloc] initWithFrame:NSZeroRect];
+        box.firstRow = r;
+        box.rowCount = e - r;
+        box.oldSide = f.oldImage;
+        box.newSide = f.newImage;
+        NSMutableArray *labels = [NSMutableArray array], *images = [NSMutableArray array];
+        for (int side = 0; side < 2; side++) {
+            const ChangeReview::ImageSide &is = side ? f.newImage : f.oldImage;
+            const std::string &bytes = side ? x.newImage : x.oldImage;
+            if (!is.shown) continue;
+            NSTextField *label = [NSTextField labelWithString:NS8(ChangeReview::imageLabel(f, side == 1))];
+            label.font = [NSFont systemFontOfSize:11];
+            label.textColor = muted;
+            label.lineBreakMode = NSLineBreakByTruncatingTail;
+            NSImageView *iv = [[NSImageView alloc] initWithFrame:NSZeroRect];
+            iv.image = [[NSImage alloc] initWithData:[NSData dataWithBytes:bytes.data() length:bytes.size()]];
+            iv.imageScaling = NSImageScaleProportionallyUpOrDown;   // its frame is its size
+            iv.animates = YES;
+            iv.imageAlignment = NSImageAlignTopLeft;
+            iv.wantsLayer = YES;
+            iv.layer.borderWidth = 1;
+            iv.layer.borderColor = [muted colorWithAlphaComponent:0.25].CGColor;
+            iv.toolTip = label.stringValue;
+            [box addSubview:label];
+            [box addSubview:iv];
+            [labels addObject:label];
+            [images addObject:iv];
+        }
+        box.labels = labels;
+        box.images = images;
+        [_text addSubview:box];
+        [_imageBoxes addObject:box];
+    }
+    [self layoutImages];
+}
+
+// Over their rows, from the gutter to the visible right edge.
+- (void)layoutImages {
+    if (!_imageBoxes.count) return;
+    const NSRect clip = _scroll.contentView.bounds;
+    const CGFloat h = ReviewRowHeight();
+    for (MCReviewImageBox *box in _imageBoxes) {
+        const NSRect first = [_text rectOfRow:box.firstRow];
+        box.frame = NSMakeRect(NSMinX(clip) + kReviewGutter, NSMinY(first),
+                               MAX(80.0, NSWidth(clip) - kReviewGutter - 16), (CGFloat)box.rowCount * h);
+        [box layoutColumns];
+    }
+}
+
+- (NSArray<NSImageView *> *)imageViews {
+    NSMutableArray *out = [NSMutableArray array];
+    for (MCReviewImageBox *box in _imageBoxes) [out addObjectsFromArray:box.images];
+    return out;
+}
+
+- (NSArray<NSString *> *)imageLabels {
+    NSMutableArray *out = [NSMutableArray array];
+    for (MCReviewImageBox *box in _imageBoxes)
+        for (NSTextField *l in box.labels) [out addObject:l.stringValue];
+    return out;
 }
 - (void)sideBySide:(size_t)fi data:(std::shared_ptr<ReviewData>)data {
     if (!data || fi >= data->diffs.size()) return;
@@ -2262,7 +2481,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     const Page &p = _data->page;
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
     const NSRange sel = _text.selectedRange;
-    long fileOfLines = -1;
+    long fileOfLines = -1, firstLineRow = -1;
     std::vector<int> oldLines, newLines;
     if (sel.length > 0) {
         for (size_t r = 0; r < p.rows.size(); r++) {
@@ -2271,7 +2490,10 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             if (to <= sel.location || from >= NSMaxRange(sel)) continue;
             const PageRow &pr = p.rows[r];
             if (pr.kind != RowKind::Removed && pr.kind != RowKind::Added) continue;
-            if (fileOfLines < 0) fileOfLines = (long)pr.file;
+            if (fileOfLines < 0) {
+                fileOfLines = (long)pr.file;
+                firstLineRow = (long)r;
+            }
             if ((long)pr.file != fileOfLines) continue;
             if (pr.kind == RowKind::Removed) oldLines.push_back(pr.oldLine);
             else newLines.push_back(pr.newLine);
@@ -2288,15 +2510,19 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         const size_t fi = (size_t)fileOfLines;
         const Section s = data->diffs[fi].file.section;
         const std::vector<int> o = oldLines, n = newLines;
+        const size_t at = (size_t)firstLineRow;
         if (s == Section::Changes) {
             add(@"Stage Selected Lines", ^{
+                [weakSelf rememberActedRow:at op:Op::Stage];
                 [weakSelf runOp:Op::Stage file:fi block:-1 oldLines:o newLines:n data:data];
             });
             add(@"Discard Selected Lines…", ^{
+                [weakSelf rememberActedRow:at op:Op::Discard];
                 [weakSelf runOp:Op::Discard file:fi block:-1 oldLines:o newLines:n data:data];
             });
         } else if (s == Section::Staged) {
             add(@"Unstage Selected Lines", ^{
+                [weakSelf rememberActedRow:at op:Op::Unstage];
                 [weakSelf runOp:Op::Unstage file:fi block:-1 oldLines:o newLines:n data:data];
             });
         }
@@ -2309,15 +2535,19 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         const long block = pr.block;
         const Section s = data->diffs[fi].file.section;
         if (menu.numberOfItems) [menu addItem:[NSMenuItem separatorItem]];
+        const size_t at = (size_t)row;
         if (s == Section::Changes) {
             add(@"Stage Change", ^{
+                [weakSelf rememberActedRow:at op:Op::Stage];
                 [weakSelf runOp:Op::Stage file:fi block:block oldLines:none newLines:none data:data];
             });
             add(@"Discard Change…", ^{
+                [weakSelf rememberActedRow:at op:Op::Discard];
                 [weakSelf runOp:Op::Discard file:fi block:block oldLines:none newLines:none data:data];
             });
         } else if (s == Section::Staged) {
             add(@"Unstage Change", ^{
+                [weakSelf rememberActedRow:at op:Op::Unstage];
                 [weakSelf runOp:Op::Unstage file:fi block:block oldLines:none newLines:none data:data];
             });
         }

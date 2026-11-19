@@ -71,28 +71,9 @@ const NSEventModifierFlags kCtrlAltCmd =
     NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand;
 const NSEventModifierFlags kShiftCmd = NSEventModifierFlagShift | NSEventModifierFlagCommand;
 
-// A key press the way the app takes one: the key monitor first, then the
-// window's views' key equivalents, then the main menu. YES when one took it.
+// A key press the way the app takes one (Harness.h).
 BOOL PressKey(NSWindow *w, unsigned short code, NSEventModifierFlags flags) {
-    CGEventRef ce = CGEventCreateKeyboardEvent(NULL, code, true);
-    CGEventFlags g = 0;
-    if (flags & NSEventModifierFlagCommand) g |= kCGEventFlagMaskCommand;
-    if (flags & NSEventModifierFlagShift) g |= kCGEventFlagMaskShift;
-    if (flags & NSEventModifierFlagOption) g |= kCGEventFlagMaskAlternate;
-    if (flags & NSEventModifierFlagControl) g |= kCGEventFlagMaskControl;
-    CGEventSetFlags(ce, g);
-    NSEvent *made = [NSEvent eventWithCGEvent:ce];
-    CFRelease(ce);
-    // The same press, addressed to the window, for the monitor's question
-    // of what has the keyboard.
-    NSEvent *e = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
-                             modifierFlags:made.modifierFlags timestamp:0
-                              windowNumber:w.windowNumber context:nil
-                                characters:made.characters
-               charactersIgnoringModifiers:made.charactersIgnoringModifiers
-                                 isARepeat:NO keyCode:code];
-    if (MCKeymapHandleKeyDown(e)) return YES;
-    return MCGuiPerformMenuKey(w, code, flags, nil, nil);
+    return MCGuiPressKey(w, code, flags);
 }
 
 }  // namespace

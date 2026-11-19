@@ -587,6 +587,14 @@ std::string label(const std::string& id, const char* between, size_t index) {
     return index < keys.size() ? Commands::linuxLabel(keys[index], between) : std::string();
 }
 
+// As the shortcut hints draw it: the core's keyLabel, "Ctrl+Shift+P" with
+// the keys that have a symbol drawn as one ("Ctrl+⏎", "Shift+⇥", "⎋"), as
+// the Mac's panel draws its glyphs (HintsSearch finds keys in it).
+std::string hintLabel(const std::string& id, size_t index) {
+    const std::vector<Key>& keys = S().map.keysOf(id);
+    return index < keys.size() ? Commands::keyLabel(keys[index], Commands::Platform::Linux) : std::string();
+}
+
 std::string labels(const std::string& id) {
     std::string out;
     for (const Key& k : S().map.keysOf(id)) {

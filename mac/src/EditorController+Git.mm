@@ -43,14 +43,14 @@
     self.gitPanel.onShowDiff = ^(NSString *name, NSString *path, NSData *diff) {
         [weakSelf showDiffNamed:name path:path data:diff];
     };
-    self.gitPanel.onReview = ^(NSString *path, BOOL staged) {
-        [weakSelf showChangeReviewAt:path staged:staged];
+    self.gitPanel.onReview = ^(NSString *path, BOOL staged, BOOL preview) {
+        [weakSelf showChangeReviewAt:path staged:staged preview:preview];
     };
     self.gitPanel.onShowCommit = ^(NSString *title, NSData *show) {
         [weakSelf showCommitTitled:title data:show];
     };
-    self.gitPanel.onReviewCommit = ^(NSString *hash, NSString *title) {
-        [weakSelf showCommitReview:hash title:title];
+    self.gitPanel.onReviewCommit = ^(NSString *hash, NSString *title, BOOL preview) {
+        [weakSelf showCommitReview:hash title:title preview:preview];
     };
     // Autofetch only while this window has the keyboard, as VS Code's waits
     // for its window's focus.
@@ -70,15 +70,19 @@
 }
 
 // The review of every uncommitted change (ChangeReviewPage.h), one tab per
-// window, at a file (a click on its row in the panel) or from its top.
+// window, at a file (a click on its row in the panel) or from its top: in
+// the preview tab for a single click, kept for Return or a double-click.
 - (void)showChangeReviewAt:(NSString *)rel staged:(BOOL)staged {
+    [self showChangeReviewAt:rel staged:staged preview:NO];
+}
+- (void)showChangeReviewAt:(NSString *)rel staged:(BOOL)staged preview:(BOOL)preview {
     NSString *key = [@"review:" stringByAppendingString:_root.path ?: @""];
     MCChangeReviewPage *page = nil;
     for (MCTab *t in [self tabs])
         if ([t.page isKindOfClass:MCChangeReviewPage.class] && [t.page.pageKey isEqualToString:key])
             page = (MCChangeReviewPage *)t.page;
     if (!page) page = [self newChangeReviewPage];
-    [self showPage:page];
+    [self showPage:page preview:preview];
     [page revealFile:rel staged:staged];
 }
 
@@ -121,24 +125,37 @@
     return page;
 }
 
-// A commit from the graph as a readable change: one page per window, which
-// each commit shown replaces, as the diff tab did.
+// A commit from the graph as a readable change, each commit a page of its
+// own (`commit:<root>:<hash>`): a single click shows it in the preview tab
+// (a commit page there shows the new commit in its place, as the next
+// single click on a file replaces it), Return or a double-click keeps it.
 - (void)showCommitReview:(NSString *)hash title:(NSString *)title {
-    NSString *key = [@"commit:" stringByAppendingString:_root.path ?: @""];
+    [self showCommitReview:hash title:title preview:YES];
+}
+- (void)showCommitReview:(NSString *)hash title:(NSString *)title preview:(BOOL)preview {
     MCChangeReviewPage *page = nil;
     MCTab *tab = nil;
+    NSString *key = [MCChangeReviewPage commitKeyForRoot:_root.path hash:hash];
     for (MCTab *t in [self tabs])
         if ([t.page isKindOfClass:MCChangeReviewPage.class] && [t.page.pageKey isEqualToString:key]) {
             page = (MCChangeReviewPage *)t.page;
             tab = t;
         }
+    // Another commit in the preview tab: this one takes its place.
+    if (!page && preview)
+        for (MCTab *t in [self groupTabs])
+            if (t.preview && [t.page isKindOfClass:MCChangeReviewPage.class] &&
+                [((MCChangeReviewPage *)t.page).pageKind isEqualToString:@"commit"]) {
+                page = (MCChangeReviewPage *)t.page;
+                tab = t;
+            }
     if (!page) page = [self newCommitReviewPage];
     [page showCommit:hash title:title];
     if (tab) {
         tab.diffName = page.pageTitle;
         [self reloadTabStrip];
     }
-    [self showPage:page];
+    [self showPage:page preview:preview];
     [self updateTitle];
 }
 

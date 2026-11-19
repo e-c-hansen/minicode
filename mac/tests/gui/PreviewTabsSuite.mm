@@ -8,7 +8,9 @@
 // preview and keeps the preview tab it started from; a single click on a
 // Find in Folder result previews it, a double-click keeps it. The setting
 // off opens every file kept. A session keeps the preview tab as one, and
-// leaves an agent's preview tab out.
+// leaves an agent's preview tab out. A long row of tabs keeps every title
+// whole and scrolls, the tab on show scrolled into view, and two index.ts
+// files show the folders that tell them apart.
 //
 // Clicks go to the tree's mouseDown: with the click count and modifiers a
 // real mouse gives (a window never on screen gets no mouse-down through
@@ -357,11 +359,112 @@ MC_GUI_SUITE(preview_tabs) {
         MCGuiNote(@"strip %.0f high, first tab %.0f wide (was %.0f)", NSHeight(Strip(c).frame),
                   NSWidth([Strip(c) rectForTab:0]), width12);
         GCHECK(MCTabStripFont().pointSize == 20);
-        // No width check: with five tabs in the test window they share its
-        // width evenly at either size.
+        // No width check: at 20 points the row may scroll the first tab
+        // out of sight.
         MCGuiSetSettings(@"lsp.enabled = false\n");
     });
     MCGuiWait(@"back to 30 points", 10, ^BOOL { return NSHeight(Strip(c).frame) == 30; });
+
+    // ---- A long row of tabs (VS Code's tabSizing "fit"): every title
+    // whole, the row scrolling, the tab on show scrolled into view, and
+    // same-named files told apart by a dimmed folder hint.
+    NSArray<NSString *> *many = @[@"summary.py", @"models.py", @"config.json", @"settings_panel.py",
+                                  @"README.md", @"views.py", @"urls.py", @"serializers.py",
+                                  @"tasks.py", @"admin.py", @"tests_api.py", @"package.json",
+                                  @"Makefile", @"src/app/index.ts", @"src/lib/index.ts"];
+    MCGuiStep(@"fifteen files open in a narrow window", ^{
+        for (MCTab *t in [TabsOf(c) copy]) [c closeTab:t prompt:NO];
+        NSRect fr = c.window.frame;
+        fr.size.width = 720;
+        [c.window setFrame:fr display:NO];
+        for (NSString *n in many) {
+            MCGuiWriteFile(F(n), [NSString stringWithFormat:@"%@\n", n]);
+            [c openFileFromQuickOpen:F(n)];
+        }
+        GCHECK(TabsOf(c).count == many.count);
+    });
+    MCGuiStep(@"every tab shows its whole name, with no ellipsis", ^{
+        MCTabStrip *strip = Strip(c);
+        GCHECK(strip.items.count == many.count);
+        for (NSUInteger i = 0; i < strip.items.count && i < many.count; i++) {
+            NSString *shown = [strip displayedTitleForTab:(NSInteger)i];
+            NSString *want = many[i].lastPathComponent;
+            if (![shown isEqualToString:want]) MCGuiNote(@"tab %lu shows \"%@\", not %@", (unsigned long)i, shown, want);
+            GCHECK([shown isEqualToString:want]);
+            GCHECK(![shown containsString:@"\u2026"]);
+        }
+    });
+    MCGuiStep(@"the row is wider than the strip: it scrolls, the tab on show in view", ^{
+        MCTabStrip *strip = Strip(c);
+        const CGFloat W = NSWidth(strip.bounds);
+        MCGuiNote(@"strip %.0f wide, row %.0f, scrolled %.0f", W, strip.contentWidth, strip.scrollOffset);
+        GCHECK(W > 0 && strip.contentWidth > W);
+        const NSRect last = [strip rectForTab:strip.activeIndex];
+        GCHECK(strip.activeIndex == (NSInteger)many.count - 1);
+        GCHECK(!NSIsEmptyRect(last) && NSMinX(last) >= 0 && NSMaxX(last) <= W + 0.5);
+    });
+    MCGuiStep(@"Shift+Cmd+1 scrolls back to the first tab; the last is out of view", ^{
+        NSMenuItem *one = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+        one.tag = 1;
+        [c selectTabNumber:one];
+        MCTabStrip *strip = Strip(c);
+        GCHECK(strip.activeIndex == 0 && strip.scrollOffset == 0);
+        const NSRect last = [strip rectForTab:(NSInteger)many.count - 1];
+        GCHECK(NSIsEmptyRect(last) || NSMaxX(last) > NSWidth(strip.bounds));
+    });
+    MCGuiStep(@"a vertical wheel scrolls the row", ^{
+        MCTabStrip *strip = Strip(c);
+        CGEventRef cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 1, -60);
+        NSEvent *e = cg ? [NSEvent eventWithCGEvent:cg] : nil;
+        if (cg) CFRelease(cg);
+        GCHECK(e != nil);
+        if (e) [strip scrollWheel:e];
+        MCGuiNote(@"scrolled %.0f", strip.scrollOffset);
+        GCHECK(strip.scrollOffset > 0);
+        GCHECK(strip.activeIndex == 0);   // scrolling selects nothing
+    });
+    MCGuiStep(@"Shift+Cmd+9 brings the last tab fully into view", ^{
+        NSMenuItem *nine = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+        nine.tag = 9;
+        [c selectTabNumber:nine];
+        MCTabStrip *strip = Strip(c);
+        const CGFloat W = NSWidth(strip.bounds);
+        const NSRect last = [strip rectForTab:strip.activeIndex];
+        MCGuiNote(@"last tab at %.0f-%.0f of %.0f, scrolled %.0f", NSMinX(last), NSMaxX(last), W,
+                  strip.scrollOffset);
+        GCHECK(strip.activeIndex == (NSInteger)many.count - 1);
+        GCHECK(!NSIsEmptyRect(last) && NSMinX(last) >= 0 && NSMaxX(last) <= W + 0.5);
+        GCHECK(strip.scrollOffset > 0);
+    });
+    MCGuiStep(@"the two index.ts tabs show the folders that tell them apart", ^{
+        MCTabStrip *strip = Strip(c);
+        const NSInteger app = (NSInteger)many.count - 2, lib = (NSInteger)many.count - 1;
+        GCHECK_EQ_STR(strip.items[(NSUInteger)app].title, @"index.ts");
+        GCHECK_EQ_STR(strip.items[(NSUInteger)lib].title, @"index.ts");
+        GCHECK_EQ_STR(strip.items[(NSUInteger)app].hint, @"app");
+        GCHECK_EQ_STR(strip.items[(NSUInteger)lib].hint, @"lib");
+        GCHECK_EQ_STR([strip displayedHintForTab:app], @"app");
+        GCHECK_EQ_STR([strip displayedHintForTab:lib], @"lib");
+        // Names no other tab shares have none.
+        GCHECK(strip.items[0].hint.length == 0);
+    });
+    MCGuiStep(@"an unsaved change leaves the row where the user scrolled it", ^{
+        MCTabStrip *strip = Strip(c);
+        CGEventRef cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 1, 60);
+        NSEvent *e = cg ? [NSEvent eventWithCGEvent:cg] : nil;
+        if (cg) CFRelease(cg);
+        if (e) [strip scrollWheel:e];
+        const CGFloat before = strip.scrollOffset;
+        const NSRect last = [strip rectForTab:strip.activeIndex];
+        GCHECK(NSIsEmptyRect(last) || NSMaxX(last) > NSWidth(strip.bounds));   // scrolled off a little
+        NSTextView *tv = [c valueForKey:@"textView"];
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [tv insertText:@"x" replacementRange:NSMakeRange(0, 0)];
+        });
+        GCHECK(strip.items.lastObject.dirty);
+        GCHECK(strip.scrollOffset == before);
+        [tv.undoManager undo];
+    });
 
     MCGuiStep(@"tidy up: the window closes", ^{
         MCGuiSetSettings(@"lsp.enabled = false\n");

@@ -4,6 +4,7 @@
 #import "EditorController+Private.h"
 #import "EditorController+HighlightingIvars.h"
 #import "SpellMarks.h"
+#import "WrapIndentContainer.h"
 #include "SpellCheck.h"
 
 // attributesForStyle:'s indexes: the lexer's styles by TokenStyle, then
@@ -72,6 +73,11 @@ struct MCOverlay {
     // costs nothing the mode keeps (no folds, no bracket boxes, no
     // squiggles). Everything else stays contiguous, so its rects are exact.
     self.textView.layoutManager.allowsNonContiguousLayout = [self largeFileFeaturesOff];
+    // Wrapped lines under their indentation, set before the text goes in
+    // so that it is laid out once (WrapIndentContainer.h).
+    if ([self.textView.textContainer isKindOfClass:MCWrapIndentContainer.class])
+        ((MCWrapIndentContainer *)self.textView.textContainer).mode =
+            [AppSettings shared].settings.wrappingIndent();
     [self.textView.textStorage setAttributedString:attr];
     self.textView.typingAttributes = base;      // typed text stays monospaced
     self.textView.editable = YES;
@@ -135,6 +141,9 @@ struct MCOverlay {
         [tv.textStorage setAttributedString:[NSAttributedString new]];
     }
     lm.allowsNonContiguousLayout = NO;   // only a large file's source has it (displaySourceEditable)
+    // A page's own indents, not the source's (WrapIndentContainer.h).
+    if ([tv.textContainer isKindOfClass:MCWrapIndentContainer.class])
+        ((MCWrapIndentContainer *)tv.textContainer).mode = WrapIndent::Mode::None;
     tv.editable = NO;
 }
 

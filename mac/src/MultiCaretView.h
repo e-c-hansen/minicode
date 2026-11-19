@@ -38,6 +38,12 @@
 - (BOOL)doCommand:(SEL)selector;
 // Auto-closing pairs in this view (its host says what the editor shows).
 @property(nonatomic, readonly) MCAutoClose *autoClose;
+// Home and End, Shift selecting, at one caret or several, as VS Code's
+// cursorHome and cursorEnd on the Mac (MultiCaret::homeTarget, endTarget):
+// Home to the first non-blank character, then column 0; End to the line's
+// end, or with word wrap the row's end first. One caret's selection keeps
+// the anchor AppKit extends from, so Shift+arrows after go on from it.
+- (void)homeOrEnd:(BOOL)toEnd extend:(BOOL)extend;
 // Copy Line Down / Up (Cmd+Shift+Down / Up, Shift+Option+Down / Up), for
 // one caret or several.
 - (void)duplicateLinesDown:(BOOL)down;

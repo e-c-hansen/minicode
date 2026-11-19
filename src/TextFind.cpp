@@ -999,6 +999,31 @@ std::vector<Edit16> replaceAll(const std::u16string& text, const Query& query,
     return edits;
 }
 
+void dropEditsOnLines(const std::u16string& text, std::vector<Edit16>* edits,
+                      const std::set<int>& lines) {
+    if (lines.empty() || edits->empty()) return;
+    std::vector<Edit16> kept;
+    kept.reserve(edits->size());
+    std::size_t pos = 0, next = 0;
+    std::size_t end = lineEnd(text, pos, &next);
+    int number = 1;
+    for (Edit16& e : *edits) {
+        // On to the line holding the edit's start (a match never crosses
+        // a line's end; the empty line after a final break is the last).
+        while (e.start > end && next < text.size()) {
+            pos = next;
+            end = lineEnd(text, pos, &next);
+            ++number;
+        }
+        if (e.start > end && next >= text.size() && end < text.size()) {
+            pos = end = next = text.size();
+            ++number;
+        }
+        if (!lines.count(number)) kept.push_back(std::move(e));
+    }
+    *edits = std::move(kept);
+}
+
 std::u16string applyEdits(const std::u16string& text, const std::vector<Edit16>& edits) {
     std::u16string out;
     out.reserve(text.size());
@@ -1101,7 +1126,8 @@ bool findInLine(const std::string& line, const Query& query, std::size_t* byteCo
 }
 
 std::string replaceInText(const std::string& content, const Query& query,
-                          const std::string& replacement, std::size_t* count) {
+                          const std::string& replacement, std::size_t* count,
+                          const std::set<int>* skipLines) {
     std::size_t total = 0;
     std::string out;
     if (!query.usable()) {
@@ -1111,12 +1137,13 @@ std::string replaceInText(const std::string& content, const Query& query,
     out.reserve(content.size());
     const std::size_t n = content.size();
     std::size_t pos = 0;
-    while (true) {
+    for (int number = 1;; ++number) {
         std::size_t next;
         const std::size_t end = lineEnd(content, pos, &next);
         const std::string line = content.substr(pos, end - pos);
         std::size_t at = 0;
-        for (const Match& m : findAllInLine(line, query)) {
+        const bool skip = skipLines && skipLines->count(number);
+        for (const Match& m : skip ? std::vector<Match>() : findAllInLine(line, query)) {
             out.append(line, at, m.start - at);
             out += expandT(replacement, line, m, query.options());
             at = m.start + m.length;

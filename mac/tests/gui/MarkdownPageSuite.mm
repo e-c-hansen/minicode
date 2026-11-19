@@ -3,15 +3,29 @@
 // 1.5.16, 2026-11-09). A thin strip of a table row, as scrolling redraws,
 // shows what the whole picture shows (AppKit found no glyphs in one: blank
 // bands through uneven rows), in the full preview and the one to the side;
-// inline code that wraps has its background only behind its text; and a
+// inline code that wraps has its background only behind its text; a
 // page replaced at a new zoom while scrolled down redraws the whole pane,
-// margins too (the old page's ink stayed in them).
+// margins too (the old page's ink stayed in them); and a page whose file
+// another program rewrites (in place, and by renaming over it) while it is
+// scrolled down in a wide window, with the window and the sidebar resized
+// between, stays where it was, one text view, centered at its measure,
+// all of it marked to be drawn again each time (the owner's STATUS.md on
+// 1.6.3, 2026-11-18: an older, narrower copy of the page in its left
+// margin, cut off where the page's column starts). And the page's edit
+// box (D2 on 1.6.3 and 1.6.4): what is typed in it survives a switch to
+// another app, a close other than Esc applies it, its button says Apply,
+// and with two editor groups a double-click on the other group's page
+// opens it on the first try.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
 #import "ControlServer.h"
 #import "EditorFont.h"
 #import "MarkdownSidePreview.h"
+#import "PageMeasure.h"
+#import "AppSettings.h"
+#import "MarkdownEditPanel.h"
+#import "EditorMirror.h"
 #import <objc/runtime.h>
 
 namespace {
@@ -138,6 +152,160 @@ void CheckZoomRedraw(NSTextView *tv, NSScrollView *sv, NSString *name) {
     MCEditorZoomBy(0);
 }
 
+// Marks recorded across steps (a reload lands on a later turn).
+void StartMarks(NSTextView *tv) {
+    if (gWatched) return;
+    gWatched = tv;
+    gMarked = [NSMutableArray array];
+    gMarkOriginal = method_setImplementation(
+        class_getInstanceMethod(NSView.class, @selector(setNeedsDisplayInRect:)), (IMP)MarkRecord);
+    gMarkLayoutOriginal = method_setImplementation(
+        class_getInstanceMethod(NSTextView.class,
+                                @selector(setNeedsDisplayInRect:avoidAdditionalLayout:)),
+        (IMP)MarkLayoutRecord);
+}
+NSArray<NSValue *> *StopMarks(void) {
+    if (!gWatched) return @[];
+    method_setImplementation(
+        class_getInstanceMethod(NSView.class, @selector(setNeedsDisplayInRect:)), gMarkOriginal);
+    method_setImplementation(
+        class_getInstanceMethod(NSTextView.class,
+                                @selector(setNeedsDisplayInRect:avoidAdditionalLayout:)),
+        gMarkLayoutOriginal);
+    gWatched = nil;
+    return gMarked;
+}
+
+// A long page shaped like the owner's STATUS.md: headings with their
+// rules, tables, numbered lists and paragraphs, `revision` at its end.
+NSString *StatusDoc(int revision) {
+    NSMutableString *s = [NSMutableString stringWithString:@"# Work status\n\n"];
+    for (int k = 0; k < 30; k++) {
+        [s appendFormat:@"## Section %d\n\nA paragraph about section %d, long enough to wrap "
+                         "once or twice at a narrow width but not at the page's measure.\n\n",
+                        k, k];
+        if (k % 3 == 0)
+            [s appendString:@"| Work | Who | State |\n|---|---|---|\n| a change | an agent | "
+                             "building |\n| another | the owner | waiting |\n\n"];
+        [s appendString:@"1. first\n3. second\n4. third\n\n"];
+    }
+    [s appendFormat:@"Revision %d%@.\n", revision,
+                    [@"" stringByPaddingToLength:(NSUInteger)revision withString:@"!"
+                                 startingAtIndex:0]];
+    return s;
+}
+
+// Whole-file replace, as Python's open(path, 'w') does: the same file,
+// cut to nothing, then written.
+void RewriteInPlace(NSString *path, NSString *text) {
+    NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
+    [h truncateFileAtOffset:0];
+    [h writeData:[text dataUsingEncoding:NSUTF8StringEncoding]];
+    [h closeFile];
+}
+
+// Written beside it, then renamed over it.
+void RewriteByRename(NSString *path, NSString *text) {
+    NSString *tmp = [path stringByAppendingString:@".tmp"];
+    [text writeToFile:tmp atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    rename(tmp.fileSystemRepresentation, path.fileSystemRepresentation);
+}
+
+// The pane holds one page: the scroll view's document is the editor's
+// text view, it has no subviews it did not have before, no other text
+// view shows over the editor's slot, and the page is centered at its
+// measure.
+void CheckOnePage(EditorController *c, NSUInteger subviewsBefore, NSString *when) {
+    NSTextView *tv = [c valueForKey:@"textView"];
+    NSScrollView *sv = c.editorScroll;
+    GCHECK(sv.documentView == tv && !sv.hidden);
+    GCHECK(sv.contentView.subviews.count == 1);
+    GCHECK(tv.subviews.count == subviewsBefore);
+    const NSRect slot = [sv convertRect:sv.bounds toView:nil];
+    __block NSUInteger others = 0;
+    __block void (^walk)(NSView *) = nil;
+    void (^visit)(NSView *) = ^(NSView *v) {
+        if (v.hidden || v.alphaValue < 0.01) return;
+        if (v != tv && [v isKindOfClass:NSTextView.class] && NSWidth(v.visibleRect) > 0 &&
+            NSIntersectsRect([v convertRect:v.visibleRect toView:nil], slot))
+            others++;
+        for (NSView *sub in v.subviews) walk(sub);
+    };
+    walk = visit;
+    visit(c.window.contentView);
+    walk = nil;
+    NSTextContainer *tc = tv.textContainer;
+    const double most = PageMeasure::maxTextWidth(
+        [AppSettings shared].settings.markdownMaxWidth(), MCZoomScale());
+    const CGFloat inset = PageMeasure::centeredInset(NSWidth(tv.frame), 8, most,
+                                                     tc.lineFragmentPadding);
+    const CGFloat left = tv.textContainerOrigin.x;
+    const CGFloat right = NSWidth(tv.frame) - left - tc.size.width;
+    MCGuiNote(@"%@: frame %.0f wide, inset %.1f (want %.1f), container %.0f, margins %.1f and "
+              "%.1f, %lu other text views over the slot, %lu subviews",
+              when, NSWidth(tv.frame), tv.textContainerInset.width, inset, tc.size.width, left,
+              right, (unsigned long)others, (unsigned long)tv.subviews.count);
+    GCHECK(others == 0);
+    GCHECK(fabs(tv.textContainerInset.width - inset) < 0.5);
+    GCHECK(inset > 100);   // a wide pane: the page has margins to leave ink in
+    GCHECK(fabs(left - right) < 1);
+}
+
+// Every mark since StartMarks: one of them covers the whole view, so no
+// tile the layer kept, on screen or off it, keeps the older page. The
+// view's height may have moved since (layout below the pane goes on),
+// so "whole" is its full width from its top to well past a screenful
+// below the pane; marks of what shows alone stop at the pane.
+// The app going to the background and coming back, as AppKit says so.
+void SwitchAppAndBack(void) {
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc postNotificationName:NSApplicationWillResignActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationDidResignActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationWillBecomeActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationDidBecomeActiveNotification object:NSApp];
+}
+
+// A press on the page at `at` (window coordinates), as a mouse-down of
+// `clicks` clicks is handed to `view` (a window never on screen gets no
+// mouse-down through sendEvent:).
+void PressAt(NSView *view, NSPoint at, NSInteger clicks) {
+    NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:at
+                                  modifierFlags:0
+                                      timestamp:NSProcessInfo.processInfo.systemUptime
+                                   windowNumber:view.window.windowNumber context:nil
+                                    eventNumber:0 clickCount:clicks pressure:1];
+    [view mouseDown:down];
+}
+
+// Where a word of the page on show is, in window coordinates.
+NSPoint WindowPointOf(EditorController *c, NSString *word) {
+    NSTextView *tv = [c valueForKey:@"textView"];
+    const NSRange r = [tv.string rangeOfString:word];
+    if (r.location == NSNotFound) return NSMakePoint(-1, -1);
+    const NSRect box = [c textRectForCharacter:r.location + 1];
+    return [tv convertPoint:NSMakePoint(NSMidX(box), NSMidY(box)) toView:nil];
+}
+
+NSTextView *EditBox(EditorController *c) {
+    return [[c valueForKey:@"markdownEditPanel"] valueForKey:@"_editor"];
+}
+
+void CheckWholeViewMarked(NSTextView *tv, NSString *when) {
+    NSArray<NSValue *> *marked = StopMarks();
+    const NSRect vis = tv.visibleRect;
+    const NSRect want = NSMakeRect(0, 0, NSWidth(tv.bounds),
+                                   MIN(NSHeight(tv.bounds), NSMaxY(vis) + NSHeight(vis)));
+    NSRect biggest = NSZeroRect;
+    for (NSValue *v in marked)
+        if (NSHeight(v.rectValue) * NSWidth(v.rectValue) > NSHeight(biggest) * NSWidth(biggest))
+            biggest = v.rectValue;
+    MCGuiNote(@"%@: %lu rects marked, the largest %@; the view %@, showing %@", when,
+              (unsigned long)marked.count, NSStringFromRect(biggest), NSStringFromRect(tv.bounds),
+              NSStringFromRect(vis));
+    GCHECK(NSMinY(vis) > 0);   // scrolled down, or this means nothing
+    GCHECK(AnyHolds(marked, want));
+}
+
 }  // namespace
 
 MC_GUI_SUITE(markdown_page) {
@@ -246,7 +414,249 @@ MC_GUI_SUITE(markdown_page) {
         MCMarkdownSidePreview *side = [c valueForKey:@"sidePreview"];
         CheckStrips(side.textView, side.scrollView, @"side preview");
     });
+    // A page another program rewrites while it is scrolled down, in a
+    // wide window, with the window and the sidebar resized between.
+    NSString *status = [dir stringByAppendingPathComponent:@"STATUS.md"];
+    __block CGFloat keptY = 0;
+    __block NSUInteger subviews = 0;
+    MCGuiStep(@"a long page, scrolled near its end, in a wide window", ^{
+        if ([c sidePreviewShowing]) [c toggleSidePreview:nil];
+        MCEditorZoomBy(0);
+        MCGuiWriteFile(status, StatusDoc(1));
+        NSRect fr = c.window.frame;
+        fr.size = NSMakeSize(2300, 1200);
+        [c.window setFrame:fr display:NO];
+        GCHECK([c showFile:status]);
+        if (!c.previewMode) [c togglePreview:nil];
+        GCHECK(c.previewMode);
+        NSTextView *tv = [c valueForKey:@"textView"];
+        GCHECK([tv.string containsString:@"Revision 1"]);
+        [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
+        NSClipView *clip = c.editorScroll.contentView;
+        keptY = NSHeight(tv.frame) - NSHeight(clip.bounds) - 300;
+        GCHECK(keptY > 2000);
+        [clip scrollToPoint:NSMakePoint(0, keptY)];
+        [c.editorScroll reflectScrolledClipView:clip];
+        subviews = tv.subviews.count;
+        CheckOnePage(c, subviews, @"before");
+        StartMarks(tv);
+        RewriteInPlace(status, StatusDoc(2));
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the page rewritten in place, read again", 5, ^BOOL {
+        return [[[c valueForKey:@"textView"] string] containsString:@"Revision 2"];
+    });
+    // Each check after a reload: the place kept, one page, all of it marked.
+    void (^afterReload)(NSString *) = ^(NSString *when) {
+        NSTextView *tv = [c valueForKey:@"textView"];
+        const CGFloat y = c.editorScroll.contentView.bounds.origin.y;
+        MCGuiNote(@"%@: scrolled to %.0f, was %.0f", when, y, keptY);
+        GCHECK(fabs(y - keptY) < 2);   // where it was, not back at the top
+        CheckOnePage(c, subviews, when);
+        CheckWholeViewMarked(tv, when);
+        MCGuiSnapshot(c.window.contentView, [@"markdown-page-" stringByAppendingString:
+            [when stringByReplacingOccurrencesOfString:@" " withString:@"-"]]);
+    };
+    MCGuiStep(@"it stayed where it was, one page, drawn again whole", ^{
+        afterReload(@"rewritten in place");
+        StartMarks([c valueForKey:@"textView"]);
+        RewriteByRename(status, StatusDoc(3));
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the page renamed over, read again", 5, ^BOOL {
+        return [[[c valueForKey:@"textView"] string] containsString:@"Revision 3"];
+    });
+    MCGuiStep(@"renamed over: the same", ^{
+        afterReload(@"renamed over");
+        // Narrower, then wide again: the page moves sideways each time.
+        NSTextView *tv = [c valueForKey:@"textView"];
+        NSRect fr = c.window.frame;
+        fr.size.width = 1300;
+        [c.window setFrame:fr display:NO];
+        [c.window layoutIfNeeded];
+        StartMarks(tv);
+        fr.size.width = 2300;
+        [c.window setFrame:fr display:NO];
+        [c.window layoutIfNeeded];
+        CheckOnePage(c, subviews, @"window widened");
+        CheckWholeViewMarked(tv, @"window widened");
+        // The sidebar narrower: the pane widens and the page recenters.
+        const CGFloat side = NSWidth(c.splitView.subviews.firstObject.frame);
+        StartMarks(tv);
+        [c.splitView setPosition:MAX(170, side - 80) ofDividerAtIndex:0];
+        [c.window layoutIfNeeded];
+        MCGuiNote(@"sidebar %.0f, now %.0f", side, NSWidth(c.splitView.subviews.firstObject.frame));
+        CheckOnePage(c, subviews, @"sidebar resized");
+        CheckWholeViewMarked(tv, @"sidebar resized");
+        [c.splitView setPosition:side ofDividerAtIndex:0];
+        // Read again after the resizes, in place once more.
+        keptY = c.editorScroll.contentView.bounds.origin.y;
+        GCHECK(keptY > 2000);
+        StartMarks(tv);
+        RewriteInPlace(status, StatusDoc(4));
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the page read again after the resizes", 5, ^BOOL {
+        return [[[c valueForKey:@"textView"] string] containsString:@"Revision 4"];
+    });
+    MCGuiStep(@"after the resizes: the same", ^{
+        afterReload(@"read after resizes");
+        // A numbered list written 1. 3. 4. counts 1, 2, 3.
+        NSTextView *tv = [c valueForKey:@"textView"];
+        GCHECK([tv.string containsString:@"\t2.\tsecond"] && [tv.string containsString:@"\t3.\tthird"]);
+        GCHECK(![tv.string containsString:@"\t4.\tthird"]);
+    });
+    // The edit box on the page (D2 on 1.6.3 and 1.6.4): switching to
+    // another app and back closed it and lost what was typed; its button
+    // said Save but only applied the edit.
+    NSString *fix = [dir stringByAppendingPathComponent:@"fix.md"];
+    NSString *const fixText = @"A paragraph with a wrod to fix.\n\nAnother paragraph here.\n";
+    MCGuiStep(@"what is typed in the page's edit box survives a switch to another app", ^{
+        StopMarks();
+        MCGuiWriteFile(fix, fixText);
+        GCHECK([c showFile:fix]);
+        if (!c.previewMode) [c togglePreview:nil];
+        GCHECK(c.previewMode);
+        NSTextView *tv = [c valueForKey:@"textView"];
+        const NSRange word = [tv.string rangeOfString:@"wrod"];
+        GCHECK(word.location != NSNotFound);
+        if (word.location == NSNotFound) return;
+        const NSRect r = [c textRectForCharacter:word.location + 1];
+        GCHECK([c editMarkdownAtCharacter:word.location + 1
+                                    point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
+        NSPopover *pop = [panel valueForKey:@"_popover"];
+        // A transient popover closes when the app loses the keyboard.
+        MCGuiNote(@"popover behavior %ld", (long)pop.behavior);
+        GCHECK(pop.behavior == NSPopoverBehaviorSemitransient);
+        // It says what Return does: the edit goes into the document.
+        NSMutableArray<NSString *> *buttons = [NSMutableArray array];
+        for (NSView *v in pop.contentViewController.view.subviews)
+            if ([v isKindOfClass:NSButton.class]) [buttons addObject:((NSButton *)v).title];
+        NSString *label = nil;
+        for (NSView *v in pop.contentViewController.view.subviews)
+            if ([v isKindOfClass:NSTextField.class]) label = ((NSTextField *)v).stringValue;
+        MCGuiNote(@"buttons %@, title \"%@\"", buttons, label);
+        GCHECK([buttons containsObject:@"Apply"] && ![buttons containsObject:@"Save"]);
+        GCHECK([label containsString:@"Return applies"] && ![label containsString:@"saves"]);
+        NSTextView *editor = EditBox(c);
+        GCHECK_EQ_STR(editor.string, @"A paragraph with a wrod to fix.");
+        [editor insertText:@"word" replacementRange:[editor.string rangeOfString:@"wrod"]];
+        GCHECK_EQ_STR(editor.string, @"A paragraph with a word to fix.");
+        SwitchAppAndBack();
+        // Still open with the text, or applied: never lost.
+        const BOOL kept = panel.edited && [EditBox(c).string isEqualToString:
+                                                @"A paragraph with a word to fix."];
+        const BOOL applied = [c.sourceText containsString:@"a word to fix"];
+        MCGuiNote(@"after the switch: kept %d, applied %d", kept, applied);
+        GCHECK(kept || applied);
+        GCHECK(kept);   // semi-transient: AppKit leaves it open
+        // Return applies it into the document, which is then unsaved.
+        MCGuiUndoGroup([[c valueForKey:@"textView"] undoManager], ^{
+            [panel performSelector:@selector(save:) withObject:nil];
+        });
+        GCHECK([c.sourceText containsString:@"A paragraph with a word to fix."]);
+        GCHECK(!panel.edited);
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:fix encoding:NSUTF8StringEncoding error:nil], fixText);   // applied, not saved
+    });
+    MCGuiStep(@"a box closed by anything but Esc applies what was typed, one undo step", ^{
+        NSTextView *tv = [c valueForKey:@"textView"];
+        NSString *before = [c.sourceText copy];
+        const NSRange word = [tv.string rangeOfString:@"Another"];
+        GCHECK(word.location != NSNotFound);
+        if (word.location == NSNotFound) return;
+        NSRect r = [c textRectForCharacter:word.location];
+        GCHECK([c editMarkdownAtCharacter:word.location point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
+        EditBox(c).string = @"Another paragraph, changed.";
+        // AppKit closing it on its own (a click elsewhere in the window).
+        NSPopover *pop = [panel valueForKey:@"_popover"];
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [panel performSelector:@selector(popoverWillClose:)
+                        withObject:[NSNotification notificationWithName:NSPopoverWillCloseNotification
+                                                                 object:pop]];
+        });
+        GCHECK([c.sourceText containsString:@"Another paragraph, changed."]);
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(c.sourceText, before);
+        // Esc (close) drops it, as asked.
+        const NSRange again = [tv.string rangeOfString:@"Another"];
+        r = [c textRectForCharacter:again.location];
+        GCHECK([c editMarkdownAtCharacter:again.location point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        EditBox(c).string = @"Dropped on purpose.";
+        [panel close];
+        GCHECK_EQ_STR(c.sourceText, before);
+        // A save, a close or a quit asks about it with the rest
+        // (commitPageEdit): applied first.
+        r = [c textRectForCharacter:again.location];
+        GCHECK([c editMarkdownAtCharacter:again.location point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        EditBox(c).string = @"Another paragraph, kept for the save.";
+        MCGuiUndoGroup(tv.undoManager, ^{ [c commitPageEdit]; });
+        GCHECK([c.sourceText containsString:@"Another paragraph, kept for the save."]);
+        GCHECK(!panel.edited);
+    });
+    // Two editor groups, a page in each: a double-click in the group
+    // without the keyboard opens the box on the first try.
+    NSString *left = [dir stringByAppendingPathComponent:@"left.md"];
+    NSString *right = [dir stringByAppendingPathComponent:@"right.md"];
+    MCGuiStep(@"two groups: a double-click on the other group's page opens the box at once", ^{
+        MCGuiWriteFile(left, @"Left page with a wrod.\n");
+        MCGuiWriteFile(right, @"Right page with a recieve.\n");
+        [c openFileAtPath:left from:EditorTabs::OpenFrom::Other];
+        if (!c.previewMode) [c togglePreview:nil];
+        [c splitEditor:nil];   // left.md in both, the right group focused
+        GCHECK([c editorSplit] && [c focusedGroup] == 1);
+        [c openFileAtPath:right from:EditorTabs::OpenFrom::Other];
+        if (!c.previewMode) [c togglePreview:nil];
+        // Where left.md's word is on its page, in the left group.
+        [c focusFirstEditorGroup:nil];
+        GCHECK([c focusedGroup] == 0 && c.previewMode);
+        const NSPoint at = WindowPointOf(c, @"wrod");
+        [c focusSecondEditorGroup:nil];
+        GCHECK([c focusedGroup] == 1 && c.previewMode);
+        MCEditorMirror *mirror = [c valueForKey:@"mirror"];
+        GCHECK(mirror.showsPicture);   // left.md's page, as a picture
+        GCHECK(at.x >= 0);
+        if (!mirror.showsPicture || at.x < 0) return;
+        // The press arrives with two clicks (the first went to making the
+        // window key, or the group): the box opens on the word, at once.
+        [c setValue:nil forKey:@"markdownEditPanel"];
+        PressAt(mirror.pictureView, at, 2);
+        MCGuiNote(@"group %ld, box \"%@\"", (long)[c focusedGroup], EditBox(c).string);
+        GCHECK([c focusedGroup] == 0);
+        GCHECK_EQ_STR(EditBox(c).string, @"Left page with a wrod.");
+        [[c valueForKey:@"markdownEditPanel"] close];
+    });
+    MCGuiStep(@"two groups: one click, then the second, in the other group's page", ^{
+        // Where right.md's word is, in the right group.
+        [c focusSecondEditorGroup:nil];
+        const NSPoint at = WindowPointOf(c, @"recieve");
+        [c focusFirstEditorGroup:nil];
+        MCEditorMirror *mirror = [c valueForKey:@"mirror"];
+        GCHECK(mirror.showsPicture && at.x >= 0);
+        if (!mirror.showsPicture || at.x < 0) return;
+        [c setValue:nil forKey:@"markdownEditPanel"];
+        PressAt(mirror.pictureView, at, 1);   // the group takes the keyboard
+        GCHECK([c focusedGroup] == 1);
+        // The second click lands on the page itself, now under the pointer.
+        NSTextView *tv = [c valueForKey:@"textView"];
+        const NSPoint p = [tv convertPoint:at fromView:nil];
+        const NSUInteger i = [tv characterIndexForInsertionAtPoint:p];
+        const NSRange word = [tv.string rangeOfString:@"recieve"];
+        MCGuiNote(@"the second click at character %lu, the word at %@", (unsigned long)i,
+                  NSStringFromRange(word));
+        // (Only sent where it opens a box: a double-click that did not would
+        // start the text view's own tracking, waiting for a release.)
+        const BOOL onWord = c.previewMode && word.location != NSNotFound &&
+                            i >= word.location && i <= NSMaxRange(word);
+        GCHECK(onWord);
+        if (!onWord) return;
+        PressAt(tv, at, 2);
+        GCHECK_EQ_STR(EditBox(c).string, @"Right page with a recieve.");
+        [[c valueForKey:@"markdownEditPanel"] close];
+    });
     MCGuiStep(@"the window goes", ^{
+        StopMarks();
         MCEditorZoomBy(0);
         if ([c sidePreviewShowing]) [c toggleSidePreview:nil];
         MCGuiSetKeyWindow(nil);

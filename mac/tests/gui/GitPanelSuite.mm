@@ -25,6 +25,34 @@ NSInteger RowOf(EditorController *c, NSString *description) {
 BOOL Rows(EditorController *c, NSArray<NSString *> *rows) {
     return Git(c).inRepository && [[Git(c) rowDescriptions] isEqualToArray:rows];
 }
+id ActiveTab(EditorController *c) { return [c valueForKey:@"activeTab"]; }
+id ActivePage(EditorController *c) { return [ActiveTab(c) valueForKey:@"page"]; }
+BOOL ActiveIsPreview(EditorController *c) { return [[ActiveTab(c) valueForKey:@"preview"] boolValue]; }
+NSUInteger PagesOfKind(EditorController *c, NSString *kind) {
+    NSUInteger n = 0;
+    for (id t in [c valueForKey:@"tabs"])
+        if ([[[t valueForKey:@"page"] pageKind] isEqualToString:kind]) n++;
+    return n;
+}
+// A press on a row as MCGitTable's mouseDown: hands it on once tracked.
+void Click(EditorController *c, NSInteger row, BOOL graph, NSInteger count, BOOL sameRow,
+           NSEventModifierFlags modifiers = 0) {
+    [Git(c) clickedRow:row graph:graph clickCount:count sameRow:sameRow modifiers:modifiers];
+}
+// A PNG of w by h pixels, every pixel gray.
+NSData *PngOf(NSInteger w, NSInteger h) {
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:NULL pixelsWide:w pixelsHigh:h bitsPerSample:8 samplesPerPixel:4
+                        hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+                     bytesPerRow:0 bitsPerPixel:0];
+    memset(rep.bitmapData, 0x80, (size_t)rep.bytesPerRow * (size_t)h);
+    return [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+}
+NSString *SizeLabel(NSString *side, NSInteger w, NSInteger h, NSData *png) {
+    NSString *size = [NSString stringWithFormat:@"%ld \u00D7 %ld pixels, %lu bytes", (long)w, (long)h,
+                                                (unsigned long)png.length];
+    return side ? [NSString stringWithFormat:@"%@: %@", side, size] : size;
+}
 }  // namespace
 
 MC_GUI_SUITE(git_panel) {
@@ -65,6 +93,52 @@ MC_GUI_SUITE(git_panel) {
     });
     MCGuiWait(@"the changes listed", 15, ^BOOL {
         return !git || Rows(c, @[@"# Changes  3", @"W M a.txt", @"W D b.txt", @"W U c.txt"]);
+    });
+    // A single click opens the changes in the preview tab, as the tree
+    // opens a file and VS Code's list does; arrows only move the selection.
+    MCGuiStep(@"a single click on a.txt opens its changes in the preview tab", ^{
+        if (!git) return;
+        Click(c, RowOf(c, @"W M a.txt"), NO, 1, NO);
+        MCChangeReviewPage *p = ActivePage(c);
+        GCHECK([p isKindOfClass:MCChangeReviewPage.class] && [p.pageKind isEqualToString:@"review"]);
+        GCHECK(ActiveIsPreview(c));
+        // The keyboard stays in the list, as after a click in the tree.
+        GCHECK(c.window.firstResponder != p.textView);
+    });
+    MCGuiWait(@"the review read", 15, ^BOOL {
+        return !git || ([ActivePage(c) isKindOfClass:MCChangeReviewPage.class] && [ActivePage(c) loaded]);
+    });
+    MCGuiStep(@"a quick click on b.txt (counted as a second click) shows b.txt in the same tab", ^{
+        if (!git) return;
+        id tab = ActiveTab(c);
+        const NSUInteger tabs = [[c valueForKey:@"tabs"] count];
+        Click(c, RowOf(c, @"W D b.txt"), NO, 2, NO);
+        GCHECK(ActiveTab(c) == tab && ActiveIsPreview(c));
+        GCHECK([[c valueForKey:@"tabs"] count] == tabs);
+        GCHECK(PagesOfKind(c, @"review") == 1);
+        // Arrows move the selection and open nothing.
+        NSTableView *list = [Git(c) valueForKey:@"table"];
+        [c.window makeFirstResponder:list];
+        [list selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)RowOf(c, @"W M a.txt")]
+          byExtendingSelection:NO];
+        NSEvent *down = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                                    modifierFlags:0 timestamp:0 windowNumber:c.window.windowNumber
+                                          context:nil characters:@"\uF701"
+                      charactersIgnoringModifiers:@"\uF701" isARepeat:NO keyCode:125];
+        [list keyDown:down];
+        GCHECK(list.selectedRow == RowOf(c, @"W D b.txt"));
+        GCHECK(ActiveTab(c) == tab && [[c valueForKey:@"tabs"] count] == tabs);
+        // A Command click chooses rows and opens nothing either.
+        Click(c, RowOf(c, @"W U c.txt"), NO, 1, NO, NSEventModifierFlagCommand);
+        GCHECK(ActiveTab(c) == tab && [[c valueForKey:@"tabs"] count] == tabs);
+    });
+    MCGuiStep(@"a double-click keeps the tab", ^{
+        if (!git) return;
+        Click(c, RowOf(c, @"W D b.txt"), NO, 1, NO);
+        Click(c, RowOf(c, @"W D b.txt"), NO, 2, YES);
+        GCHECK([ActivePage(c) isKindOfClass:MCChangeReviewPage.class]);
+        GCHECK(!ActiveIsPreview(c));
+        GCHECK(PagesOfKind(c, @"review") == 1);
     });
     MCGuiStep(@"stage a.txt and c.txt", ^{
         if (!git) return;
@@ -172,8 +246,10 @@ MC_GUI_SUITE(git_panel) {
         GCHECK(NSMinY(graph.frame) >= NSMaxY(summary.frame));
         [panel setFrameSize:was];
         [panel resizeSubviewsWithOldSize:NSMakeSize(200, was.height)];
-        // The new commit from the graph: the review page, not git show text.
-        [panel showCommitAtRow:0];
+        // The new commit from the graph, by a single click: the review
+        // page, not git show text, in the preview tab.
+        Click(c, 0, YES, 1, NO);
+        GCHECK(ActiveIsPreview(c));
     });
     MCGuiWait(@"the commit's page", 15, ^BOOL {
         if (!git) return YES;
@@ -199,22 +275,31 @@ MC_GUI_SUITE(git_panel) {
         GCHECK(NSIsEmptyRect([p buttonRect:@"Open" row:header]));
         GCHECK(NSIsEmptyRect([p buttonRect:@"Stage" row:[p rowOfBlock:0]]));
         GCHECK(NSIsEmptyRect([p buttonRect:@"Discard" row:[p rowOfBlock:0]]));
-        // The first commit replaces it in the same tab.
-        [Git(c) showCommitAtRow:1];
+        // A single click on the first commit replaces it in the same tab.
+        Click(c, 1, YES, 1, NO);
     });
     MCGuiWait(@"the first commit in its place", 15, ^BOOL {
         if (!git) return YES;
         MCChangeReviewPage *p = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
         return [p isKindOfClass:MCChangeReviewPage.class] && [p.headerTitle isEqualToString:@"first"];
     });
-    MCGuiStep(@"a root commit: every file new; one commit tab", ^{
+    MCGuiStep(@"a root commit: every file new; one commit tab, the preview", ^{
         if (!git) return;
         MCChangeReviewPage *p = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
         GCHECK([p.rowDescriptions containsObject:@"F a.txt  (new)  +2"]);
-        NSUInteger commitTabs = 0;
-        for (id t in [c valueForKey:@"tabs"])
-            if ([[[t valueForKey:@"page"] pageKind] isEqualToString:@"commit"]) commitTabs++;
-        GCHECK(commitTabs == 1);
+        GCHECK(PagesOfKind(c, @"commit") == 1);
+        GCHECK(ActiveIsPreview(c));
+        // A double-click keeps it; the next single click opens another
+        // commit in a new preview tab, and the kept one stays.
+        Click(c, 1, YES, 2, YES);
+        GCHECK(!ActiveIsPreview(c));
+        Click(c, 0, YES, 1, NO);
+        GCHECK(ActiveIsPreview(c));
+        GCHECK(PagesOfKind(c, @"commit") == 2);
+        // Return keeps it too.
+        [Git(c) showCommitAtRow:0];
+        GCHECK(!ActiveIsPreview(c));
+        GCHECK(PagesOfKind(c, @"commit") == 2);
     });
     MCGuiAsync(@"git agrees: the body kept, b.txt still in HEAD", 15, ^(MCGuiDone done) {
         if (!git) { done(); return; }
@@ -226,6 +311,79 @@ MC_GUI_SUITE(git_panel) {
             GCHECK([out containsString:@"b.txt"] && [out containsString:@"c.txt"]);
             done();
         });
+    });
+    // Pictures: a PNG made 4 by 3, then changed to 8 by 6, committed; the
+    // commit shows the two side by side, Before and After, with their sizes.
+    __block NSData *small = nil, *large = nil, *added = nil;
+    MCGuiStep(@"a PNG committed, then changed and committed again", ^{
+        if (!git) return;
+        small = PngOf(4, 3);
+        large = PngOf(8, 6);
+        NSString *png = [repo stringByAppendingPathComponent:@"pic.png"];
+        GCHECK([small writeToFile:png atomically:YES]);
+        GCHECK(MCGitRunSync(repo, @[@"add", @"pic.png"]).ok);
+        GCHECK(MCGitRunSync(repo, @[@"commit", @"-qm", @"a picture"]).ok);
+        GCHECK([large writeToFile:png atomically:YES]);
+        GCHECK(MCGitRunSync(repo, @[@"commit", @"-qam", @"a larger picture"]).ok);
+        [Git(c) refresh];
+    });
+    MCGuiWait(@"the graph shows it", 15, ^BOOL {
+        return !git || [[Git(c) graphDescriptions].firstObject containsString:@"a larger picture"];
+    });
+    MCGuiStep(@"a click on it", ^{
+        if (!git) return;
+        Click(c, 0, YES, 1, NO);
+    });
+    MCGuiWait(@"the commit's page, its pictures on show", 15, ^BOOL {
+        if (!git) return YES;
+        MCChangeReviewPage *p = ActivePage(c);
+        return [p isKindOfClass:MCChangeReviewPage.class] &&
+               [p.headerTitle isEqualToString:@"a larger picture"] && p.imageViews.count > 0;
+    });
+    MCGuiStep(@"two image views, Before and After, with their sizes", ^{
+        if (!git) return;
+        MCChangeReviewPage *p = ActivePage(c);
+        NSArray<NSImageView *> *views = p.imageViews;
+        MCGuiNote(@"pictures: %@; rows %@", p.imageLabels, p.rowDescriptions);
+        GCHECK(views.count == 2);
+        GCHECK([p.imageLabels isEqualToArray:(@[SizeLabel(@"Before", 4, 3, small),
+                                                SizeLabel(@"After", 8, 6, large)])]);
+        GCHECK(![p.rowDescriptions containsObject:@"! A binary file: its bytes are not shown."]);
+        if (views.count == 2) {
+            NSBitmapImageRep *before = (NSBitmapImageRep *)views[0].image.representations.firstObject;
+            NSBitmapImageRep *after = (NSBitmapImageRep *)views[1].image.representations.firstObject;
+            GCHECK(before.pixelsWide == 4 && before.pixelsHigh == 3);
+            GCHECK(after.pixelsWide == 8 && after.pixelsHigh == 6);
+            // At their pixel sizes, side by side, over the file's rows.
+            MCGuiNote(@"frames %@ %@", NSStringFromRect(views[0].frame), NSStringFromRect(views[1].frame));
+            GCHECK(NSWidth(views[0].frame) == 4 && NSHeight(views[0].frame) == 3);
+            GCHECK(NSWidth(views[1].frame) == 8 && NSHeight(views[1].frame) == 6);
+            const NSRect a = [views[0] convertRect:views[0].bounds toView:p.textView];
+            const NSRect b = [views[1] convertRect:views[1].bounds toView:p.textView];
+            GCHECK(NSMinX(b) > NSMaxX(a) && NSMinY(a) == NSMinY(b));
+            const NSInteger header = (NSInteger)[p.rowDescriptions indexOfObject:@"F pic.png"];
+            GCHECK(header >= 0 && NSMinY(a) >= NSMaxY([p rectOfRow:header]));
+        }
+        MCGuiSnapshot(p.pageView, @"git-commit-picture");
+        // A new picture among the uncommitted changes: shown alone.
+        added = PngOf(5, 2);
+        GCHECK([added writeToFile:[repo stringByAppendingPathComponent:@"new.png"] atomically:YES]);
+        [c gitReviewChanges:nil];
+    });
+    MCGuiWait(@"the review shows new.png's picture", 15, ^BOOL {
+        if (!git) return YES;
+        MCChangeReviewPage *p = ActivePage(c);
+        return [p isKindOfClass:MCChangeReviewPage.class] && [p.pageKind isEqualToString:@"review"] &&
+               [p rowOfFile:@"new.png" staged:NO] >= 0 && p.imageViews.count == 1;
+    });
+    MCGuiStep(@"one picture, its size alone", ^{
+        if (!git) return;
+        MCChangeReviewPage *p = ActivePage(c);
+        MCGuiNote(@"new picture: %@", p.imageLabels);
+        GCHECK([p.imageLabels isEqualToArray:@[SizeLabel(nil, 5, 2, added)]]);
+        // Staged whole, as any binary file.
+        const NSInteger header = [p rowOfFile:@"new.png" staged:NO];
+        GCHECK(!NSIsEmptyRect([p buttonRect:@"Stage File" row:header]));
     });
     MCGuiStep(@"the window closes", ^{
         if (!git) return;
@@ -1385,6 +1543,62 @@ MC_GUI_SUITE(git_review) {
                   p.lastShowCpuMilliseconds);
         GCHECK_TIME(p.lastShowCpuMilliseconds, 1500, @"the review with 50,000 changed lines shown");
         GCHECK(p.rowDescriptions.count > 100000);
+    });
+    // The place after Stage on a page taller than the pane: m1.txt's one
+    // long block, z2.txt's two blocks, then zz3.txt's long block below.
+    // Stage on z2.txt's first block puts its second block where the first
+    // was on screen, though a staged list now stands above everything (the
+    // walker's page jumped from summary.py up to models.py).
+    __block CGFloat pressedY = 0;
+    GitShell(@"big.txt as committed; m1.txt, z2.txt and zz3.txt changed", [NSString
+        stringWithFormat:@"set -e; cd '%@'; %@ checkout -q -- big.txt; "
+                          "seq 1 150 | sed 's/^/m /' > m1.txt; seq 1 80 | sed 's/^/z /' > z2.txt; "
+                          "seq 1 100 | sed 's/^/zz /' > zz3.txt; %@ add m1.txt z2.txt zz3.txt; "
+                          "%@ commit -qm three; seq 1 150 | sed 's/^/M /' > m1.txt; "
+                          "seq 1 80 | sed 's/^/z /' | sed -e 's/^z 2$/z TWO/' -e 's/^z 30$/z THIRTY/' > z2.txt; "
+                          "seq 1 100 | sed 's/^/ZZ /' > zz3.txt",
+                          repo, G, G, G]);
+    MCGuiStep(@"read again", ^{
+        loads = Review(c).loads;
+        [Review(c) reload];
+    });
+    MCGuiWait(@"three files, four blocks", 30, ^BOOL {
+        MCChangeReviewPage *p = Review(c);
+        return p.loads > loads && [p rowOfFile:@"z2.txt" staged:NO] >= 0 &&
+               [p rowOfFile:@"big.txt" staged:NO] < 0 && p.blockCount == 4;
+    });
+    MCGuiStep(@"z2.txt's first block in the middle of the pane; Stage on it", ^{
+        MCChangeReviewPage *p = Review(c);
+        const NSInteger block = FirstBlockAfter(p, [p rowOfFile:@"z2.txt" staged:NO]);
+        GCHECK(block >= 0);
+        NSClipView *clip = p.scrollView.contentView;
+        MCGuiNote(@"page %.0f tall, pane %.0f", NSHeight(p.textView.frame), NSHeight(clip.bounds));
+        GCHECK(NSHeight(p.textView.frame) > 2 * NSHeight(clip.bounds));
+        [clip scrollToPoint:NSMakePoint(0, NSMinY([p rectOfRow:block]) - floor(NSHeight(clip.bounds) / 2))];
+        [p.scrollView reflectScrolledClipView:clip];
+        pressedY = NSMinY([p rectOfRow:block]) - NSMinY(clip.bounds);
+        GCHECK(RowShows(p, block));
+        actions = 0;
+        loads = p.loads;
+        GCHECK(PressButton(p, @"Stage", block));
+    });
+    MCGuiWait(@"staged, and read again", 15, ^BOOL {
+        MCChangeReviewPage *p = Review(c);
+        return actions == 1 && p.loads > loads && [p rowOfFile:@"z2.txt" staged:YES] >= 0;
+    });
+    MCGuiStep(@"z2.txt's other block where the staged one was, z2.txt still in sight", ^{
+        MCChangeReviewPage *p = Review(c);
+        const NSInteger header = [p rowOfFile:@"z2.txt" staged:NO];
+        const NSInteger next = FirstBlockAfter(p, header);
+        const CGFloat y = NSMinY([p rectOfRow:next]) - NSMinY(p.scrollView.contentView.bounds);
+        MCGuiNote(@"after Stage: z2.txt's next block at %.0f (pressed at %.0f), top row %ld: %@",
+                  y, pressedY, (long)p.topRow, p.rowDescriptions[(NSUInteger)MAX(0L, (long)p.topRow)]);
+        GCHECK(header >= 0 && next > header);
+        GCHECK([p.rowDescriptions[(NSUInteger)next] isEqualToString:@"- z 30"]);
+        GCHECK(fabs(y - pressedY) <= 1);
+        GCHECK(RowShows(p, next));
+        // Not m1.txt's rows, nor the staged list at the top.
+        GCHECK(p.topRow > [p rowOfFile:@"m1.txt" staged:NO]);
     });
     MCGuiStep(@"the window closes; the real Trash back", ^{
         UseScratchTrash(NO);

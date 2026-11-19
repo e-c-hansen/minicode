@@ -349,6 +349,7 @@ static const NSTimeInterval kHoverDelay = 0.4, kHoverGrace = 0.3;
 }
 
 - (BOOL)hoverVisible { return _hover.visible; }
+- (NSWindow *)hoverWindow { return _hover.visible ? _hover.window : nil; }
 
 // What the diagnostics say at a character, in the box at the caret (F8's
 // step, Lsp+Diagnostics.mm), until the caret moves.

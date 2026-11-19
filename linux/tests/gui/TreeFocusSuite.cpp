@@ -1004,11 +1004,19 @@ MC_GUI_SUITE(tree_focus) {
                RowsFromMiddle(Tree(), F("z_big/f02000.txt")) <= 1;
     });
     MCGuiStep("the whole folder again", [] { GCHECK(Tree()->setFocus("")); });
-    MCGuiWait("its rows", 10, [] { return TopRows(Tree()) == "a_big m_deep z_big readme.txt"; });
+    // The folders open before the focus open again from an idle as their
+    // rows come (FileTree::tryExpand), after the top rows are in: closed
+    // before that idle, m_deep was not open yet, and it and its folders
+    // opened after the close (1 run in 5 beside hints_panel).
+    MCGuiWait("its rows, the folders open before open again", 10, [] {
+        return TopRows(Tree()) == "a_big m_deep z_big readme.txt" && Expanded(Tree(), F("a_big")) &&
+               Expanded(Tree(), F("z_big")) && Expanded(Tree(), F("m_deep/a/b/c/d/e"));
+    });
 
     MCGuiStep("explorer.auto-reveal = off, m_deep closed, near.txt's tab", [] {
         MCGuiSetSettings(gSettingsBefore + "\nexplorer.auto-reveal = off\n");
         SetExpanded(Tree(), F("m_deep"), false);
+        GCHECK(!Expanded(Tree(), F("m_deep")) && !HasRow(Tree(), F(kNear)));   // a real close
         Win().editor->focusActiveDocument();
         Activate(F(kNear));
     });

@@ -104,8 +104,24 @@ found through that list.
   (`revealPath:andOpen:NO` widens the tree's focus and, for a hidden
   path, selects the folder where the way ends).
   The session web page shows no bookmark list, so it has nothing to
-  follow. Linux still uses the one folder until its session takes up the
-  core API.
+  follow. **Linux** (2026-11-18, `linux/HANDOFF.md` item 112, the
+  `bookmark_workspace` suite) does the same with the same core calls:
+  `Bookmarks::places` (the root taken as the shared folder when
+  `sameFolder` says so), `Bookmarks::menu(Places)` (the workspace's rows,
+  "No bookmarks" when none, then a "Shared" submenu whose folder and
+  each folder in it end with a "Move to This Workspace" submenu,
+  `win.movebookmark`), `Bookmarks::fileFor(Places, url)` and
+  `Bookmarks::moveToWorkspace` (GIO's move without overwrite, the next
+  free name on a clash). GtkPopoverMenu names a submenu's page by its
+  label and opens the first of two alike, so Shared > Reading > Move to
+  This Workspace showed Shared's own list: a label met again in one menu
+  gets zero-width spaces after it. The menu bar's Bookmarks menu is one GMenu for
+  every window, so it is filled for GTK's active window and again when
+  another comes to the front; the palette's rows are "Bookmarks > Name"
+  and "Bookmarks > Shared > Name". It never had the Mac's Show Bookmarks
+  Folder footer, and has none now. The tree already hid every dot name
+  until Show Hidden Files (Ctrl+Shift+.), and a save selects nothing in
+  it.
 - **The address bar** (2026-11-15, `PageCheck::typedAddress`,
   `page:typed-address`, the `browser_tabs` suite): one line
   (`usesSingleLineMode`, not wrapping, truncated in the middle while not
@@ -136,3 +152,4 @@ text is in place in its section.
 
 - The browser pane: sessions, tabs, bookmarks, the address bar, find: Harness traps: a Command key in a focused web view goes to the page and comes back to the menus a moment later (wait for it);
 - Bookmarks per workspace: `revealPath:andOpen:NO` widens the tree's focus and, for a hidden `.mutible` path, selects the folder where the way ends; a saved bookmark is revealed only when the tree shows it, with `widen:NO`.
+- Bookmarks per workspace (Linux): GtkPopoverMenu names a submenu's page by its label and opens the first of two alike, so Shared > Reading > Move to This Workspace showed Shared's own list: a label met again in one menu gets zero-width spaces after it.

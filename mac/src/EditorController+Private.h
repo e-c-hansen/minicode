@@ -492,6 +492,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSView *)outlineView:(NSOutlineView *)ov
      viewForTableColumn:(NSTableColumn *)col
                    item:(id)item;
+// Files dropped on the editor's text open in tabs; folders show in the tree.
+- (BOOL)openDroppedPaths:(NSArray<NSString *> *)paths;
 - (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)ov
                pasteboardWriterForItem:(id)item;
 - (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
@@ -1099,6 +1101,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSTextView *)notesTextView;
 - (id)notesActiveTab;
 - (void)showPage:(id<MCEditorPage>)page;
+- (MCTab *)showPage:(id<MCEditorPage>)page preview:(BOOL)preview;
 - (void)closePageOf:(MCTab *)t;
 - (void)agentWorktreesChanged;
 - (BOOL)agentWorktreesOnShow;
@@ -1122,6 +1125,11 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSInteger)markdownSourceLineNear:(NSUInteger)i;
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point;
 - (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point;
+// A double-click at `at` (window coordinates) on whichever page is under it,
+// the full page or the one beside the source: the block editor opens, as the
+// page's own double-click opens it. For a double-click that began in the
+// other editor group (otherGroupPressed:).
+- (BOOL)editPageAtWindowPoint:(NSPoint)at;
 - (BOOL)editMarkdownIn:(NSTextView *)page atCharacter:(NSUInteger)index point:(NSPoint)point;
 - (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side;
 - (void)applySidePreviewEdit:(NSString *)source;
@@ -1145,6 +1153,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)markdownWebImageArrived:(NSNotification *)note;
 - (void)showArrivedWebImagesForPath:(NSString *)path;
 - (void)renderMarkdownKeepingPlace;
+// refreshDisplay for a tab whose text changed under it (read again from
+// disk, a reload undone): a rendered page stays where it was scrolled.
+- (void)refreshDisplayKeepingPage;
 - (void)finishMarkdownPage;
 - (NSMutableAttributedString *)markdownPageFor:(NSString *)content
                                          width:(CGFloat)width

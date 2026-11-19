@@ -664,13 +664,22 @@ static NSUInteger MCLineStart(NSString *text, int line) {
 // A page in the editor's slot (EditorPage.h), in a tab of its own; a page
 // with the same key as one already open selects that tab instead.
 - (void)showPage:(id<MCEditorPage>)page {
-    if (!page) return;
+    [self showPage:page preview:NO];
+}
+
+// The same in the group's preview tab when `preview` (a single click in
+// Source Control, as the tree opens a file: it replaces the old preview
+// tab, the keyboard stays where it was), else kept and given the keyboard;
+// a kept open of a page in the preview tab keeps that tab.
+- (MCTab *)showPage:(id<MCEditorPage>)page preview:(BOOL)preview {
+    if (!page) return nil;
     for (MCTab *t in [self tabs])
         if (t.page && [t.page.pageKey isEqualToString:page.pageKey]) {
             [self revealEditor];
+            if (!preview && t.preview) [self keepPreviewTab:t];
             [self activateTab:t];
-            [self focusActiveDocument];
-            return;
+            if (!preview) [self focusActiveDocument];
+            return t;
         }
     [self revealEditor];
     MCTab *tab = [MCTab new];
@@ -678,9 +687,16 @@ static NSUInteger MCLineStart(NSString *text, int line) {
     tab.isDiff = YES;
     tab.page = page;
     tab.diffName = page.pageTitle;
+    if (preview && [self previewSettings].enabled) {
+        MCTab *old = [self groupAddTab:tab preview:Model::Preview::User passOver:nil];
+        [self activateTab:tab];
+        [self letGoOfReplacedTab:old];
+        return tab;
+    }
     [self insertTab:tab];
     [self activateTab:tab];
-    [self focusActiveDocument];
+    if (!preview) [self focusActiveDocument];
+    return tab;
 }
 
 - (void)closePageOf:(MCTab *)t {

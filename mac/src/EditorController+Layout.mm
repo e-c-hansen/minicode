@@ -2,6 +2,7 @@
 #import "EditorController+Private.h"
 #import "EditorConflicts.h"
 #import "EditorController+LayoutIvars.h"
+#import "WrapIndentContainer.h"
 #import "PageZoom.h"
 #import "ProcessesPanel.h"
 
@@ -77,9 +78,14 @@
     self.outline.floatsGroupRows = NO;
     self.outline.menu = [self buildTreeContextMenu];
     // Drag and drop: rows move into folders; files from Finder are copied in,
-    // and rows dragged out to Finder or the terminal are copies.
+    // and rows dragged out to Finder are copies. Inside the app a row may
+    // move (onto the tree's own folders) or copy: the terminal types its
+    // path and the editor opens it, and both take only a copy (a mask of
+    // Move alone had the terminal refuse every row dropped on it).
     [self.outline registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
-    [self.outline setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
+    [self.outline setDraggingSourceOperationMask:NSDragOperationMove | NSDragOperationCopy |
+                                                 NSDragOperationGeneric
+                                        forLocal:YES];
     [self.outline setDraggingSourceOperationMask:NSDragOperationCopy forLocal:NO];
     treeScroll.documentView = self.outline;
 
@@ -99,8 +105,10 @@
     // Its layout manager answers clicks beside inlay hints' gaps.
     NSLayoutManager *layout = [MCGapLayoutManager new];
     [_sourceStorage addLayoutManager:layout];
+    // It starts a wrapped line's continuation under the line's indentation
+    // (editor.wrapping-indent, WrapIndentContainer.h).
     NSTextContainer *textBox =
-        [[NSTextContainer alloc] initWithSize:NSMakeSize(NSWidth(frame), CGFLOAT_MAX)];
+        [[MCWrapIndentContainer alloc] initWithSize:NSMakeSize(NSWidth(frame), CGFLOAT_MAX)];
     [layout addTextContainer:textBox];
     self.textView = [[CodeTextView alloc] initWithFrame:frame textContainer:textBox];
     self.textView.editable = YES;
@@ -166,6 +174,9 @@
         return [weakSelf editMarkdownAtCharacter:index point:point];
     };
     self.textView.onBlur = ^{ [weakSelf autoSaveOnFocusChange]; };
+    self.textView.onDropFiles = ^BOOL(NSArray<NSString *> *paths) {
+        return [weakSelf openDroppedPaths:paths];
+    };
     self.textView.multiCarets.onNote = ^(NSString *note) { [weakSelf showStatusNote:note]; };
     self.textView.multiCarets.autoClose.host = self;
     self.lsp.onStatus =^(NSString *text, NSColor *dot) {

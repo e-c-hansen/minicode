@@ -96,8 +96,11 @@ NSString *SideText(NSString *path, NSString *rev) {
     tab.loaded = YES;
     tab.isDiff = YES;
     if (p.kind == "review" || p.kind == "commit") {
-        // One of each per window: a second in the record is left out.
-        NSString *key = [(p.kind == "review" ? @"review:" : @"commit:") stringByAppendingString:_root.path ?: @""];
+        // One review per window and one page per commit: a second in the
+        // record is left out.
+        NSString *key = p.kind == "review"
+            ? [@"review:" stringByAppendingString:_root.path ?: @""]
+            : [MCChangeReviewPage commitKeyForRoot:_root.path hash:NS(p.ref)];
         for (MCTab *t in [self tabs])
             if ([t.page.pageKey isEqualToString:key]) return nil;
         MCChangeReviewPage *page = p.kind == "review" ? [self newChangeReviewPage] : [self newCommitReviewPage];

@@ -622,6 +622,130 @@ static NSUInteger MCIndexAcross(NSLayoutManager *lm, NSTextContainer *tc, NSPoin
     [self setCarets:MultiCaret::move(TextOf(_tv.string), _carets, m, extend)];
 }
 
+// ---- Home and End
+
+// The row of the screen a character is on, as MultiCaret::Row: its line
+// fragment's characters, or the whole line where there is no TextKit 1
+// layout to ask (a caret at a fragment's start is on that fragment). The
+// layout must reach the character's line.
+static MultiCaret::Row MCRowAt(NSTextView *tv, NSUInteger p) {
+    if (MCUsesTextKit2(tv) || !tv.layoutManager || !tv.textContainer) return {};
+    NSString *text = tv.string;
+    const NSUInteger n = text.length;
+    if (n == 0) return {};
+    if (p >= n) {
+        const unichar last = [text characterAtIndex:n - 1];
+        if (last == '\n' || last == '\r') return {};   // the empty last line
+        p = n - 1;
+    }
+    NSLayoutManager *lm = tv.layoutManager;
+    NSRange frag;
+    [lm lineFragmentRectForGlyphAtIndex:[lm glyphIndexForCharacterAtIndex:p] effectiveRange:&frag];
+    if (frag.location == NSNotFound) return {};
+    const NSRange chars = [lm characterRangeForGlyphRange:frag actualGlyphRange:NULL];
+    return {chars.location, NSMaxRange(chars)};
+}
+
+// The end of the view's one selection that Shift moves (its head). AppKit
+// keeps which it is to itself, so a step with Shift one way and back the
+// other, which leaves the selection as it was, shows which end moved.
+- (NSUInteger)soleHead {
+    NSTextView *tv = _tv;
+    const NSRange r0 = tv.selectedRange;
+    if (r0.length == 0) return r0.location;
+    NSUInteger head;
+    _applying = YES;
+    if (NSMaxRange(r0) < tv.string.length) {
+        [tv moveRightAndModifySelection:nil];
+        head = NSMaxRange(tv.selectedRange) != NSMaxRange(r0) ? NSMaxRange(r0) : r0.location;
+        [tv moveLeftAndModifySelection:nil];
+    } else {
+        [tv moveLeftAndModifySelection:nil];
+        // At the text's end: the head moved left unless it is the start
+        // (and the start cannot move left when it is the text's start).
+        const BOOL moved = !NSEqualRanges(tv.selectedRange, r0);
+        head = !moved || tv.selectedRange.location != r0.location ? r0.location : NSMaxRange(r0);
+        if (moved) [tv moveRightAndModifySelection:nil];
+    }
+    if (!NSEqualRanges(tv.selectedRange, r0)) [tv setSelectedRange:r0];
+    _applying = NO;
+    return head;
+}
+
+// One caret's head taken to `t` with Shift, keeping `anchor`: by AppKit's
+// own moves, so AppKit's idea of the anchor stays right for the Shift+arrows
+// after (a selection set outright extends from its start). The line's ends
+// in one move, anything else a character at a time from the nearer of the
+// head and the line's start (a row's ends are on the head's row, the first
+// non-blank character past the indentation). Set outright if that fails.
+- (void)extendSoleFrom:(NSUInteger)head anchor:(NSUInteger)anchor to:(NSUInteger)t {
+    NSTextView *tv = _tv;
+    NSString *text = tv.string;
+    // Past the anchor, AppKit's paragraph moves stretch the selection's far
+    // end instead of crossing over ({10, 5} with the anchor at 15 became
+    // {10, 15}): start from an empty selection at the anchor, which AppKit
+    // then extends from either way.
+    if ((head < anchor && t > anchor) || (head > anchor && t < anchor)) {
+        [tv setSelectedRange:NSMakeRange(anchor, 0)];
+        head = anchor;
+    }
+    NSUInteger s = 0, e = 0;
+    [text getLineStart:&s end:NULL contentsEnd:&e forRange:NSMakeRange(MIN(head, text.length), 0)];
+    auto headNow = [&]() {
+        const NSRange r = tv.selectedRange;
+        return r.location == anchor ? NSMaxRange(r) : r.location;
+    };
+    if (t == e) {
+        [tv moveToEndOfParagraphAndModifySelection:nil];
+    } else {
+        const NSUInteger fromStart = t >= s ? t - s : NSUIntegerMax;
+        const NSUInteger fromHead = t > head ? t - head : head - t;
+        if (t == s || fromStart < fromHead) [tv moveToBeginningOfParagraphAndModifySelection:nil];
+        for (int steps = 0; steps < 4096; steps++) {
+            const NSUInteger h = headNow();
+            if (h == t) break;
+            if (h < t) [tv moveRightAndModifySelection:nil];
+            else [tv moveLeftAndModifySelection:nil];
+            if (headNow() == h) break;   // stuck
+        }
+    }
+    if (headNow() != t) {
+        [tv setSelectedRange:NSMakeRange(MIN(anchor, t), anchor > t ? anchor - t : t - anchor)];
+        [tv scrollRangeToVisible:NSMakeRange(t, 0)];
+    }
+}
+
+- (void)homeOrEnd:(BOOL)toEnd extend:(BOOL)extend {
+    NSTextView *tv = _tv;
+    _goalX.clear();
+    const MultiCaret::Text text = TextOf(tv.string);
+    const BOOL laidOut = !MCUsesTextKit2(tv) && tv.layoutManager && tv.textContainer;
+    if (self.active) {
+        NSUInteger furthest = 0;
+        for (const Caret &c : _carets) furthest = MAX(furthest, c.head);
+        if (laidOut) MCLayOutPast(tv.layoutManager, tv.textContainer, tv.string, furthest);
+        std::vector<MultiCaret::Row> rows;
+        rows.reserve(_carets.size());
+        for (const Caret &c : _carets) rows.push_back(MCRowAt(tv, c.head));
+        [self setCarets:toEnd ? MultiCaret::endCarets(text, _carets, rows, extend)
+                              : MultiCaret::homeCarets(text, _carets, rows, extend)];
+        return;
+    }
+    const NSRange r0 = tv.selectedRange;
+    const NSUInteger head = [self soleHead];
+    const NSUInteger anchor = r0.length && head == r0.location ? NSMaxRange(r0) : r0.location;
+    if (laidOut) MCLayOutPast(tv.layoutManager, tv.textContainer, tv.string, head);
+    const MultiCaret::Row row = MCRowAt(tv, head);
+    const NSUInteger t = toEnd ? MultiCaret::endTarget(text, head, row)
+                               : MultiCaret::homeTarget(text, head, row);
+    if (extend) {
+        [self extendSoleFrom:head anchor:anchor to:t];
+        return;
+    }
+    [tv setSelectedRange:NSMakeRange(t, 0) affinity:NSSelectionAffinityDownstream stillSelecting:NO];
+    [tv scrollRangeToVisible:NSMakeRange(t, 0)];
+}
+
 // Empty carets stretched by a move, then everything selected deleted.
 - (void)deleteBy:(MultiCaret::Move)m {
     _goalX.clear();

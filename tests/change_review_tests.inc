@@ -299,6 +299,153 @@ static void testChangeReview() {
         CHECK(s.rows[rowFor(s, staged, a)].newLine == 8);
     }
 
+    GROUP("review:acted-place");
+    {
+        // Stage on the first of g.txt's two blocks: the second takes its
+        // place, though a staged list now stands above.
+        FileDiff f1 = diffFile(file("a\n", "b\n"), "");
+        auto lines = [](int n, std::initializer_list<std::pair<int, const char *>> changes) {
+            std::string t;
+            for (int i = 1; i <= n; i++) {
+                std::string line = std::to_string(i);
+                for (const auto &c : changes)
+                    if (c.first == i) line = c.second;
+                t += line + "\n";
+            }
+            return t;
+        };
+        const std::string base = lines(30, {});
+        const std::string edited = lines(30, {{2, "X"}, {20, "Y"}});
+        File g = file(base.c_str(), edited.c_str());
+        g.path = "g.txt";
+        File h = file("p\n", "q\n");
+        h.path = "h.txt";
+        std::vector<FileDiff> before = {f1, diffFile(g, ""), diffFile(h, "")};
+        Page p = layout(before, {});
+        const long gHeader = fileRow(p, before, "W:g.txt");
+        size_t firstBlock = 0;
+        for (size_t r : p.blockRows)
+            if ((long)r > gHeader) { firstBlock = r; break; }
+        ActedPlace a = actedPlace(p, before, firstBlock, Op::Stage);
+        CHECK(a.valid && a.fileKey == "W:g.txt" && a.newSide && a.line == 1);
+        CHECK((a.after == std::vector<std::string>{"W:h.txt"}));
+        CHECK((a.before == std::vector<std::string>{"W:src/f.txt"}));
+        // After: g.txt's line 2 is in the index; the staged list above.
+        File gs = file(base.c_str(), lines(30, {{2, "X"}}).c_str(), Section::Staged);
+        gs.path = "g.txt";
+        File gw = file(lines(30, {{2, "X"}}).c_str(), edited.c_str());
+        gw.path = "g.txt";
+        std::vector<FileDiff> after = {diffFile(gs, ""), f1, diffFile(gw, ""), diffFile(h, "")};
+        Page q = layout(after, {});
+        const size_t r = rowAfterAction(q, after, a);
+        CHECK(q.rows[r].blockStart && q.rows[r].kind == RowKind::Removed && q.rows[r].oldLine == 19);
+        CHECK(after[q.rows[r].file].file.key() == "W:g.txt");
+        // Its last block staged too: the eye goes to what followed (h.txt).
+        File gs2 = file(base.c_str(), edited.c_str(), Section::Staged);
+        gs2.path = "g.txt";
+        std::vector<FileDiff> allStaged = {diffFile(gs2, ""), f1, diffFile(h, "")};
+        Page s = layout(allStaged, {});
+        ActedPlace last = actedPlace(q, after, r, Op::Stage);
+        const size_t r2 = rowAfterAction(s, allStaged, last);
+        CHECK(s.rows[r2].kind == RowKind::File && allStaged[s.rows[r2].file].file.key() == "W:h.txt");
+        // A refused action changed nothing: the same block again.
+        CHECK(rowAfterAction(q, after, last) == r);
+        // Discard counts in the index's lines, which it leaves alone.
+        ActedPlace d = actedPlace(p, before, firstBlock, Op::Discard);
+        CHECK(!d.newSide && d.line == 1);
+        File gd = file(base.c_str(), lines(30, {{20, "Y"}}).c_str());
+        gd.path = "g.txt";
+        std::vector<FileDiff> discarded = {f1, diffFile(gd, ""), diffFile(h, "")};
+        Page t = layout(discarded, {});
+        const size_t r3 = rowAfterAction(t, discarded, d);
+        CHECK(t.rows[r3].blockStart && t.rows[r3].oldLine == 19);
+        // A whole file staged from its header: the next file in its place;
+        // the last file gone, the one before it.
+        ActedPlace whole = actedPlace(p, before, (size_t)gHeader, Op::Stage);
+        CHECK(whole.line == -1);
+        std::vector<FileDiff> wholeStaged = {diffFile(gs2, ""), f1, diffFile(h, "")};
+        Page w = layout(wholeStaged, {});
+        CHECK(wholeStaged[w.rows[rowAfterAction(w, wholeStaged, whole)].file].file.key() == "W:h.txt");
+        ActedPlace lastFile = actedPlace(p, before, (size_t)fileRow(p, before, "W:h.txt"), Op::Discard);
+        std::vector<FileDiff> noH = {f1, diffFile(g, "")};
+        Page n = layout(noH, {});
+        CHECK(noH[n.rows[rowAfterAction(n, noH, lastFile)].file].file.key() == "W:g.txt");
+        CHECK(rowAfterAction(Page(), {}, a) == 0);
+    }
+    {
+        // A block of removed lines only: its place is the line after it.
+        File g = file("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n",
+                      "1\n3\n4\n5\n6\n7\n8\n9\n10\n11\nB\n12\n");
+        std::vector<FileDiff> before = {diffFile(g, "")};
+        Page p = layout(before, {});
+        CHECK(p.blockRows.size() == 2);
+        ActedPlace a = actedPlace(p, before, p.blockRows[0], Op::Stage);
+        CHECK(a.line == 1);   // "3", new line 1
+        File g2 = file("1\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n",
+                       "1\n3\n4\n5\n6\n7\n8\n9\n10\n11\nB\n12\n");
+        std::vector<FileDiff> after = {diffFile(g2, "")};
+        Page q = layout(after, {});
+        const size_t r = rowAfterAction(q, after, a);
+        CHECK(q.rows[r].blockStart && q.rows[r].newLine == 10);
+    }
+
+    GROUP("review:images");
+    {
+        File f;
+        f.path = "art/logo.PNG";
+        f.section = Section::Plain;   // a commit's: no section row
+        f.binary = true;
+        CHECK(imagePath(f.path) && imagePath("a.webp") && imagePath("x/y.jpeg"));
+        CHECK(!imagePath("icon.svg") && !imagePath("data.bin") && !imagePath("png") &&
+              !imagePath("dir.png/file"));
+        // A modified picture: both versions, side by side.
+        ImageSide o{false, 4, 3, 75}, n{false, 8, 600, 2048};
+        CHECK(showAsImages(f, o, n, 16));
+        CHECK(f.image && f.oldImage.shown && f.newImage.shown);
+        CHECK(imageLabel(f, false) == "Before: 4 \xC3\x97 3 pixels, 75 bytes");
+        CHECK(imageLabel(f, true) == "After: 8 \xC3\x97 600 pixels, 2.0 KB");
+        CHECK(imageHeight(f.oldImage) == 3 && imageHeight(f.newImage) == kImageMaxHeight);
+        CHECK(f.imageRows == (size_t)std::ceil((kImageLabelHeight + kImageMaxHeight + 8) / 16));
+        // Laid out as its header and empty rows for the pictures, no note.
+        std::vector<FileDiff> files = {diffFile(f, "png")};
+        Page p = layout(files, {});
+        CHECK(p.rows.size() == 1 + f.imageRows);
+        CHECK(p.rows[0].kind == RowKind::File);
+        for (size_t r = 1; r < p.rows.size(); r++) CHECK(p.rows[r].kind == RowKind::Image);
+        CHECK(s8(p.text).find("binary") == std::string::npos);
+        // Still whole only: a picture is staged as a file.
+        CHECK(wholeOnlyReason(files[0].file) == "is a binary file");
+        // A new picture: one version, no Before or After.
+        File added;
+        added.path = "new.gif";
+        added.binary = true;
+        added.oldExists = false;
+        CHECK(showAsImages(added, ImageSide(), ImageSide{false, 1, 1, 1}, 16));
+        CHECK(!added.oldImage.shown && added.newImage.shown);
+        CHECK(imageLabel(added, true) == "1 \xC3\x97 1 pixels, 1 byte");
+        CHECK(imageLabel(added, false).empty());
+        CHECK(added.imageRows >= 2);
+        // Not pictures: bytes that did not read as one, too many pixels,
+        // not binary, too large, or another kind of file.
+        File bad = f;
+        bad.image = false;
+        CHECK(!showAsImages(bad, ImageSide(), n, 16));
+        CHECK(!showAsImages(bad, o, ImageSide{false, 100000, 100000, 10}, 16));
+        File text = bad;
+        text.binary = false;
+        CHECK(!showAsImages(text, o, n, 16));
+        File large = bad;
+        large.tooLarge = true;
+        CHECK(!showAsImages(large, o, n, 16));
+        File other = bad;
+        other.path = "a.zip";
+        CHECK(!showAsImages(other, o, n, 16));
+        std::vector<FileDiff> plain = {diffFile(other, "")};
+        CHECK(s8(layout(plain, {}).text).find("A binary file: its bytes are not shown.") != std::string::npos);
+        CHECK(byteText(0) == "0 bytes" && byteText(1023) == "1023 bytes" &&
+              byteText(1536) == "1.5 KB" && byteText(3u << 20) == "3.0 MB");
+    }
+
     GROUP("review:counts");
     {
         // One file with a staged change and another not: in both lists,

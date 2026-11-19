@@ -205,6 +205,27 @@ found through that list.
   (a preview) always wraps. Not wrapping, the text view is horizontally
   resizable and `PanelScrollView tile` keeps it at least the pane's width.
   The compare view never wraps (its rows stay level), and a CSV table scrolls.
+  **Wrapped lines keep their indentation** (2026-11-18, round 9;
+  `editor.wrapping-indent` same, indent, none; `WrapIndentContainer.{h,mm}`,
+  core `WrapIndent.h`, `wrap-indent:*`): the editor's text container (and
+  the split group's mirror) answers each line fragment's rect, and for a
+  line that does not start a paragraph it answers a rect set in by the
+  paragraph's leading spaces and tabs, measured in the paragraph's font with
+  its paragraph style's tab stops, so the typesetter breaks the line inside
+  it. No attribute is stored, so the text, undo, copies and the carets are
+  untouched. The container still says it is a simple rectangle: **trap**,
+  a container that says otherwise loses non-contiguous layout (laying out
+  near the end of 100,000 lines took 3 s, not 3 ms), and TextKit asks a
+  simple one for every line's rect anyway. It reads a paragraph once (its
+  bounds and indent are kept until the next edit, which the layout
+  manager's `processEditing...` reports), set before the source goes in
+  (`displaySourceEditable`) and turned off before a page does
+  (`makeEditorReadOnly`; a Markdown page has its own indents), so neither
+  lays out twice. Past half the line's room it falls back to none, as VS
+  Code does. zoomfit checks the x of each continuation against the first
+  non-blank glyph, the three modes, the fallback, a click and a copy, and
+  the CPU of a space typed into a wrapped line's indentation in 20,000
+  lines.
 - **Maximize Pane** (Ctrl+Cmd+M; VS Code's is a Cmd+K chord): `_maximizedPane`
   in relayoutRightArea shows only that pane; showing or focusing another
   (`leaveMaximizedPaneFor:`) ends it.
@@ -256,8 +277,11 @@ found through that list.
 - **Trap: anything that lays out all of a large text stays.** Two did on
   every open after a file with diagnostics or a preview: `needsDisplay =
   YES` on the text view, which NSTextView answers by laying out every glyph
-  of its bounds (CodeTextView's `setNeedsDisplay:` now redraws only the
-  visible and prepared rects; clearing squiggles took 2.5 s at 25 MB), and
+  of its bounds (CodeTextView's `setNeedsDisplay:` marks only the visible
+  and prepared rects that way, and since 2026-11-18 the bounds too with
+  `avoidAdditionalLayout:YES`, which lays out nothing: tiles past them
+  kept an older page's ink, see the Markdown notes; clearing
+  squiggles took 2.5 s at 25 MB), and
   the gutter appearing after the text went in, which narrows the view and
   lays out all of it for its height (`displaySourceEditable` shows the
   gutter over an empty storage first for a text over 1 MB). Check with
@@ -343,6 +367,25 @@ found through that list.
   keys from the find field and commit box. Cmd+Delete deletes to the line's
   start (the tree takes it as Move to Trash in its own `keyDown:`; as a menu
   key it trashed the tree's selection from the editor).
+- **Home and End** (2026-11-18, a grader's walk: End scrolled, AppKit's
+  binding, so "End, Left Left" typed a line up): VS Code's cursorHome and
+  cursorEnd, taken by key code in CodeTextView's `keyDown:` (plain and
+  Shift; Cmd is the file's ends above; Page Up and Down still scroll),
+  `MCMultiCarets homeOrEnd:extend:`, core `MultiCaret::homeTarget`,
+  `endTarget`, `homeCarets`, `endCarets` (`multicaret:home-end`, `make
+  guitest SUITES=editor_keys`). Home: first non-blank, then column 0 (an
+  all-blank line: column 0); End: the line's end. With word wrap a row is
+  the line fragment (`MCRowAt`; a caret at a fragment's start is on it):
+  End goes to the row's end first, which for a row that wraps is before
+  its last character (the space it broke at), so the caret is drawn at
+  that row's edge and needs no upstream affinity, then the line's end; Home
+  on a later row to its start first. One caret's head is not public in
+  AppKit: `soleHead` steps Shift+Right and back (Shift+Left at the text's
+  end) and sees which end moved. With Shift the head is carried by
+  AppKit's own moves (paragraph start or end, then single steps from the
+  nearer of head and line start, `extendSoleFrom:`), since a selection set
+  outright makes AppKit extend from its start: Shift+Home then Shift+Right
+  must give a character back.
 - **Words** (2026-11-08; a double-click on `arr` in `arr.size` took both,
   AppKit's UAX 29 words keeping a period between letters): in source text
   every word rule is `MultiCaret`'s `charClass`, VS Code's default
@@ -498,7 +541,9 @@ text is in place in its section.
 - The editor's text view (Mac): **Trap: a Markdown page's text blocks outlive it** (2026-11-07).
 - The editor's text view (Mac): Traps: NSScrollView lays a ruler out as a content inset of a clip view that still spans the width, so `PanelScrollView tile` subtracts the insets; never change `ruleThickness` inside a storage edit (tile asked for text that was gone and threw), so it changes on the next run-loop turn.
 - The editor's text view (Mac): **Trap: word wrap stays as set**, unlike VS Code: a TextKit view that does not wrap lays out all of its text in `sizeToFit` to learn its width (5.5 s for 25 MB, nine tenths of it there).
-- The editor's text view (Mac): **Trap: anything that lays out all of a large text stays.** Two did on every open after a file with diagnostics or a preview: `needsDisplay = YES` on the text view, which NSTextView answers by laying out every glyph of its bounds (CodeTextView's `setNeedsDisplay:` now redraws only the visible and prepared rects; clearing ...
+- The editor's text view (Mac): Word wrap, wrapped lines keep their indentation: **trap**, a container that says otherwise loses non-contiguous layout (laying out near the end of 100,000 lines took 3 s, not 3 ms), and TextKit asks a simple one for every line's rect anyway.
+- The editor's text view (Mac): **Trap: anything that lays out all of a large text stays.** Two did on every open after a file with diagnostics or a preview: `needsDisplay = YES` on the text view, which NSTextView answers by laying out every glyph of its bounds (CodeTextView's `setNeedsDisplay:` marks only the visible and prepared rects that way, and since 2026-11-18 the bounds too with `avoidAdditionalLayout:YES`, which lays out nothing: tiles past them kept an older page's ink, see the Markdown notes; clearing ...
 - Folding (Mac): Trap: one region at a time was quadratic (6 s and 18 s for Fold All and Unfold All of 50,000); they go in as one sorted merge and one invalidation (`collapseAll`).
 - Several carets and line commands (Mac): **Trap (2026-11-06)**: the window server counts clicks by time alone (HIDClickSpace is (0,0)), so a second click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView.
+- Several carets and line commands (Mac): Trap: AppKit's selection affinity is not the selection's direction (Shift+End to a wrapped paragraph's end left it upstream), and a selection set with `setSelectedRange:` extends from its start whatever affinity it is given; keep AppKit's anchor by moving with its own `...AndModifySelection:` methods (`extendSoleFrom:`). Those paragraph moves never cross the anchor: from {10, 5} with the anchor at 15, moveToEndOfParagraphAndModifySelection: gave {10, 15}, so a move past the anchor starts from an empty selection there (CI's editor_keys caught it).
 - Several carets and line commands (Mac): GUI trap: a simulated key press that changes nothing, wrapped in `MCGuiUndoGroup`, leaves an empty undo group on top that a real key press never opens.

@@ -4,8 +4,11 @@
 
 @interface MCMarkdownEditPanel : NSObject
 // Shows `text` (the block's Markdown) for editing, pointing at `rect` in
-// `view`. Return or Save calls `commit` with the new text; Shift+Return types
-// a newline; Escape, Cancel or a click elsewhere drop the edit. With
+// `view`. Return or Apply calls `commit` with the new text (into the
+// document, not to disk); Shift+Return types a newline; Escape or Cancel
+// drop the edit. Switching to another app leaves the box open with its
+// text; a click elsewhere in the window, or anything else that closes it,
+// applies what was typed (one undo step), so a draft is never lost. With
 // `addItem` set, an "Add item" button asks for a new list entry's text and
 // hands it over instead.
 - (void)showText:(NSString *)text
@@ -33,7 +36,13 @@
             font:(NSFont *)font
           commit:(void (^)(NSString *text))commit
          addItem:(void (^)(NSString *text))addItem;
+// Closes it, dropping the draft (Escape and Cancel).
 - (void)close;
+// Applies the draft if it was changed, then closes: the tab is leaving, or
+// another block is about to be opened.
+- (void)commitEditing;
+// Whether the box holds text changed from what it opened with.
+@property(nonatomic, readonly) BOOL edited;
 @property(nonatomic, readonly) BOOL shown;
 // Where the box last pointed, in its view, and how wide its content is.
 @property(nonatomic, readonly) NSRect anchor;

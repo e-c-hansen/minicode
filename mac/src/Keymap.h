@@ -65,6 +65,11 @@ void MCKeymapInstall(void);
 // From the key monitor, for a key down in an editor window: YES when it
 // ran a command (or sent the key where it belongs) and the event is done.
 BOOL MCKeymapHandleKeyDown(NSEvent *e);
+// From the key monitor, for a key down in a window an editor window owns
+// (Find in Folder, TODOs): runs the key's command only when it is Global
+// (Ctrl+` and Ctrl+Shift+` for the terminal), which no menu item matches;
+// every other key goes on to the window and the menus as before.
+BOOL MCKeymapHandleGlobalKeyDown(NSEvent *e);
 // Is the event's key bound to any command (Cmd+., which is also cancel)?
 BOOL MCKeymapEventIsBound(NSEvent *e);
 

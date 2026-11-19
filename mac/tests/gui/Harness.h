@@ -156,6 +156,9 @@ NSString *MCGuiBuildDir(void);              // build/, where guitest and mutible
 EditorController *MCGuiController(void);    // the newest editor window's controller
 NSArray<EditorController *> *MCGuiControllers(void);
 void MCGuiSetKeyWindow(NSWindow *window);   // what keyWindow reports (nil: the newest)
+// The last window the app asked to make key since MCGuiSetKeyWindow (the
+// harness keeps keyWindow as set; this says what the app wanted), or nil.
+NSWindow *MCGuiWindowMadeKey(void);
 // Answers for the next alerts (NSAlertFirstButtonReturn and so on), in order.
 void MCGuiAnswerAlerts(NSArray<NSNumber *> *answers);
 NSArray<NSString *> *MCGuiAlertsShown(void); // their message texts, so far
@@ -200,6 +203,10 @@ BOOL MCGuiPerformMenuKey(NSWindow *window, unsigned short keyCode, NSEventModifi
 // see it first).
 void MCGuiSendKeyToApp(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags,
                        NSString *chars, NSString *charsIgnoringModifiers);
+// A key press the way the app takes one: the key monitor first
+// (MCKeymapHandleKeyDown), then the window's views' key equivalents, then
+// the main menu, with a CGEvent-made event. YES when one took it.
+BOOL MCGuiPressKey(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags);
 // Runs `block` as one undo group of its own, as a key press would be.
 void MCGuiUndoGroup(NSUndoManager *undo, void (^block)(void));
 

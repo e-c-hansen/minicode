@@ -40,12 +40,9 @@ extern NSNotificationName const MCTreeDetailsDidChangeNotification;
 TreeSort::Options MCTreeSortForRoot(NSString *root);
 void MCSetTreeSortForRoot(NSString *root, const TreeSort::Options &options);
 
-// A file row's icon says what a click opens (FileIcon::kindOf): the SF
-// Symbol for its kind (photo, film, waveform, doc.richtext, tablecells,
-// book, cylinder, doc.zipper, globe, bookmark, the code brackets, or
-// doc.text), and a symbol's image, made once per name. A symbol this
-// macOS lacks (cylinder before macOS 12) is doc.text's image instead.
-NSString *MCTreeIconSymbol(NSString *path);
+// A symbol's image for the tree's folders and worktree rows, made once per
+// name; a symbol this macOS lacks is doc.text's image instead. A file
+// row's icon is its type's (FileTypeIcons.h).
 NSImage *MCTreeSymbolImage(NSString *name);
 
 // "4 KB", "1.2 MB": NSByteCountFormatter's file style, as Finder shows sizes.
