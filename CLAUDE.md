@@ -123,7 +123,8 @@ a trap.
   (FAIL, FATAL, sanitizer reports, compiler errors) plus SLOW, NEAR and
   LEAK lines at the top of the run's page and on the PR; the runner
   images are named (`macos-26`, `ubuntu-26.04`), never `latest`; a newer
-  push cancels a PR's older run.
+  push cancels a PR's older run, and every push to main gets a run of
+  its own (since 2026-11-19, `docs/ci.md`).
   How CI is made quick (ccache, two harness processes, `GUI_ALONE`,
   `GUI_SECOND_HALF`): `docs/notes/build.md`. `scripts/ci-local.sh` runs on the Mac
   what CI runs, without Docker (`--quick` before a push: core tests,

@@ -26,15 +26,20 @@ NSString *Disk(NSString *path) {
 }
 SearchPanel *Panel(EditorController *c) { return [c valueForKey:@"searchPanel"]; }
 NSArray *Hits(EditorController *c) { return [Panel(c) valueForKey:@"hits"]; }
-// A plain key down for the window, as the window hands it to its first
-// responder (an offscreen window is never AppKit's key window, so
-// [NSApp sendEvent:] would not reach it).
+// A plain key down for the window, handed to its first responder as the
+// window does with a key that has no modifiers. Not [NSApp sendEvent:]: an
+// offscreen window is never AppKit's key window, so it would not reach it.
+// Not [w sendEvent:] either: once the window has been closed, as the
+// search suite closes the Search window this one reuses when it runs
+// first, it is never ordered in again offscreen and drops every key sent
+// to it (the soak's "the search Return ran" in every shuffled order).
 void Press(NSWindow *w, unsigned short code, NSString *chars) {
     NSEvent *e = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0
                                  timestamp:NSProcessInfo.processInfo.systemUptime
                               windowNumber:w.windowNumber context:nil characters:chars
                charactersIgnoringModifiers:chars isARepeat:NO keyCode:code];
-    [w sendEvent:e];
+    GCHECK(w.firstResponder != nil);
+    [w.firstResponder keyDown:e];
 }
 }  // namespace
 
