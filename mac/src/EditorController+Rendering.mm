@@ -764,6 +764,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         return t.sourceText;
     };
     [self wireLatexInputsOf:view];
+    [self wireSessionTypesetOf:view];   // its pages on the window's page in a browser
     [self.rightArea addSubview:view];
 }
 

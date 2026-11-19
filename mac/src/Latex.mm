@@ -446,6 +446,8 @@ static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSStrin
     BOOL _editSettled;
     BOOL _forwardQuiet;          // the waiting forward search only keeps its line in view
     BOOL _forwardPlaced;         // a forward search placed this document's page
+    NSString *_typesetFailure;   // why the last typeset failed (nil: it worked, or none ended)
+    BOOL _compileDue;            // a typeset is scheduled (the typing debounce)
 }
 
 // Enough history for a working session without holding a whole file's worth of
@@ -590,7 +592,22 @@ static const CGFloat kStatusHeight = 26;
     [NSObject cancelPreviousPerformRequestsWithTarget:self
                                              selector:@selector(compileNow)
                                                object:nil];
+    _compileDue = YES;
     [self performSelector:@selector(compileNow) withObject:nil afterDelay:0.6];
+}
+
+// ------------------------------------------------- the session's page (R3)
+
+- (BOOL)typesetting { return self.compiling || self.compileQueued || _compileDue; }
+- (NSData *)typesetPdf { return _pdfData; }
+- (NSString *)typesetFailure { return _typesetFailure; }
+
+// A typeset began (both nil), worked (`pdf`) or failed (`error`): kept for
+// a page that asks later, and told to one that listens.
+- (void)announceTypeset:(NSData *)pdf error:(NSString *)error {
+    if (error) _typesetFailure = [error copy];
+    else if (pdf) _typesetFailure = nil;
+    if (self.onTypeset) self.onTypeset(self.texPath, pdf, error);
 }
 
 // Apply an edit produced by LatexDoc and tell the window about it.
@@ -742,9 +759,15 @@ static const CGFloat kStatusHeight = 26;
     [NSObject cancelPreviousPerformRequestsWithTarget:self
                                              selector:@selector(compileNow)
                                                object:nil];
+    _compileDue = NO;
     if (_stopped) return;
     NSString *tool = MCTectonicPath();
-    if (!tool) { [self showTectonicMissing]; return; }
+    if (!tool) {
+        [self showTectonicMissing];
+        [self announceTypeset:nil error:@"tectonic is not installed. The LaTeX preview in the mutible "
+                                        "window offers to download it."];
+        return;
+    }
     if (self.compiling) { self.compileQueued = YES; return; }
 
     static dispatch_once_t sweepOnce;
@@ -764,6 +787,9 @@ static const CGFloat kStatusHeight = 26;
                            @"copy next to your file:\n%@", err.localizedDescription]];
         [self answerPdfWaiters:@"The preview copy could not be written next to "
                                 "the file, so the document was not typeset."];
+        [self announceTypeset:nil error:[NSString stringWithFormat:@"The preview copy could not be "
+                                                                    @"written next to the file: %@",
+                                                                    err.localizedDescription]];
         return;
     }
 
@@ -772,6 +798,7 @@ static const CGFloat kStatusHeight = 26;
     NSUInteger gen = ++self.generation;
     std::string compiledSrc = _src;
     [self setStatus:@"Typesetting…" busy:YES];
+    [self announceTypeset:nil error:nil];
 
     NSTask *task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:tool];
@@ -865,9 +892,11 @@ static const CGFloat kStatusHeight = 26;
             if (ok) {
                 [me keepPdf:pdfData source:compiledSrc];
                 [me showDocument:doc syncTex:sync];
+                [me announceTypeset:pdfData error:nil];
             } else {
                 me->_forwardLine = 0;   // no page to show it on
                 [me showFailure:log.length ? log : @"tectonic did not run." problems:problems];
+                [me announceTypeset:nil error:log.length ? log : @"tectonic did not run."];
             }
             if (me.compileQueued) [me compileNow];
             else [me answerPdfWaiters:ok ? nil : @"The document did not typeset. "
