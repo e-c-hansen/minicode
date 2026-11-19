@@ -11,9 +11,9 @@
 // too.
 //
 // What a query finds is the core's (HintsSearch.h, Spelling::Linux, as the
-// hints write keys: "Ctrl+Shift+H", Commands::keyLabel); `attributes` marks
-// it on the panel's columns (HintsColumns.h) and dims the rest, which stays
-// where it was.
+// hints write keys: "Ctrl ⇧ H", Commands::keyLabel); HintsColumns moves it
+// first (HintsSearch::bubbleMatches) and `attributes` marks it on the
+// panel's columns and dims the rest, moved after it.
 #pragma once
 
 #include <gtk/gtk.h>
@@ -28,12 +28,15 @@
 // shortcut (its key at the line's start, then what it does, then a pane's
 // state, "open", drawn muted at its own stop); a line of text; or, as a
 // Text with no text, the blank line before the last row. A shortcut with
-// no key continues the one before it, a line under its text.
+// no key continues the one before it, a line under its text. While the box
+// holds a query, `rest` marks a row of the rest, laid out after what the
+// query found and drawn dimmed (a heading can then be there twice).
 struct HintRow {
     enum Kind { Heading, Row, Text } kind;
     std::string key, text, state;
     int column = 0;
     size_t start = 0, textAt = 0, stateAt = 0, end = 0;
+    bool rest = false;
 };
 
 class HintsSearchBox {
@@ -64,13 +67,17 @@ public:
 
     // For `query`, the marks on the hints' columns laid out from `rows`,
     // added to `lists`, one a column (a row's `column` says which): where
-    // each shortcut or line found matched (a background), and every
-    // shortcut or line not found, and a heading with nothing found under
-    // it, dimmed (a foreground alpha). False, with nothing added, for an
-    // empty query. `hits` gets each mark's column and byte index.
+    // each shortcut or line found matched (a background), and every row of
+    // the rest, every shortcut or line not found, and a heading with
+    // nothing found under it, dimmed (a foreground alpha). False, with
+    // nothing added, for an empty query. `hits` gets each mark's column and
+    // byte index.
     static bool attributes(const std::vector<HintRow>& rows, const std::string& query,
                            const std::vector<PangoAttrList*>& lists,
                            std::vector<std::pair<int, size_t>>* hits = nullptr);
+    // Which of `rows` `query` finds (a shortcut or a line of text; never a
+    // heading or the blank line); empty for an empty query.
+    static std::vector<bool> found(const std::vector<HintRow>& rows, const std::string& query);
 
 private:
     ~HintsSearchBox();

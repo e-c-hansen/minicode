@@ -239,13 +239,33 @@ std::string glyphs(const Key& k) {
     return s + n;
 }
 
+const char* const kLinuxKeyJoin = " ";
+
+std::string modifiersLabel(unsigned mods, Platform p) {
+    if (p == Platform::Mac) {
+        std::string s;
+        if (mods & Ctrl) s += "⌃";
+        if (mods & Alt) s += "⌥";
+        if (mods & Shift) s += "⇧";
+        if (mods & Cmd) s += "⌘";
+        return s;
+    }
+    std::string s;
+    auto add = [&s](const char* part) {
+        if (!s.empty()) s += kLinuxKeyJoin;
+        s += part;
+    };
+    if (mods & Ctrl) add("Ctrl");
+    if (mods & Alt) add("Alt");
+    if (mods & Shift) add("⇧");
+    if (mods & Cmd) add("Super");
+    return s;
+}
+
 std::string keyLabel(const Key& k, Platform p) {
     if (p == Platform::Mac) return glyphs(k);
-    std::string s;
-    if (k.mods & Ctrl) s += "Ctrl+";
-    if (k.mods & Alt) s += "Alt+";
-    if (k.mods & Shift) s += "Shift+";
-    if (k.mods & Cmd) s += "Cmd+";
+    std::string s = modifiersLabel(k.mods, p);
+    if (!s.empty()) s += kLinuxKeyJoin;
     const std::string& n = k.name;
     static const struct { const char* name; const char* label; } kLabels[] = {
         {"up", "↑"}, {"down", "↓"}, {"left", "←"}, {"right", "→"}, {"home", "Home"},
