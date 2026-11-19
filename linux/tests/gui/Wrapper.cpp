@@ -322,13 +322,15 @@ bool makeWorld(const std::string& root, const std::string& shortRoot) {
         if (!makeDir(shortRoot + "/" + d)) return false;
     writeText(root + "/zdot/.zshrc", "HISTFILE=$ZDOTDIR/.zsh_history\nPS1='%% '\n");
     writeText(root + "/settings.conf", "lsp.enabled = false\n");
-    // A session bus with nothing to activate. Under the standard one, the
+    // A session bus with nothing to activate, its socket in the world's
+    // short folder (removed with it: in /tmp, every run that ended without
+    // the daemon's own cleanup left a dbus-* socket there). Under the standard one, the
     // first look at a portal or the accessibility bus starts
     // xdg-desktop-portal and at-spi inside the run: seconds of CPU, a page of
     // warnings, and processes whose backends are the user's desktop's.
     writeText(root + "/dbus.conf",
               "<busconfig><type>session</type><keep_umask/>"
-              "<listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth>"
+              "<listen>unix:dir=" + shortRoot + "/run</listen><auth>EXTERNAL</auth>"
               "<policy context=\"default\"><allow send_destination=\"*\" eavesdrop=\"true\"/>"
               "<allow eavesdrop=\"true\"/><allow own=\"*\"/></policy></busconfig>\n");
     std::string big;
