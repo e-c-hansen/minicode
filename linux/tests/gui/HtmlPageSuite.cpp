@@ -13,15 +13,25 @@
 // window.open to zoommtg:// without a click open nothing and leave the page
 // as it is, the refused ones named in the status bar; a meta refresh to a
 // web address is followed only while scripts run; a real click on a link,
-// and on a target=_blank one, still opens its file.
+// and on a target=_blank one, still opens its file. A link to another app
+// (the Mac's #254, HtmlPage::follow): a page's script clicking its own
+// smb:// link, and sending its own form to mailto:, is refused with no
+// question and named in the status bar; a real click on a zoommtg:// link
+// asks, naming the app and the address in the Mac's words, Cancel opens
+// nothing and Open hands it to the desktop's handler; a real click on an
+// https link asks nothing; a Markdown preview's zoommtg:// link goes to the
+// desktop's handler unasked, as before.
 //
 // Only local pages (file://), nothing off this machine: every address the
 // page hands the link handler is recorded (HtmlView::linkSpy) and only a
-// file reaches it, the desktop's handler is the harness's recorder
-// (MCGuiLaunchedUris), and the web address is https://127.0.0.1:2/, where
-// nothing listens (not port 9: WebKit never navigates to a port on the
-// fetch standard's bad-ports list, so a refresh there does nothing at all).
-// Page state is read in the view's own script world.
+// file or an app's address reaches it, the desktop's handler is the
+// harness's recorder (MCGuiLaunchedUris, so no app starts), and the web
+// address is https://127.0.0.1:2/, where nothing listens (not port 9:
+// WebKit never navigates to a port on the fetch standard's bad-ports list,
+// so a refresh there does nothing at all). The app the question names is a
+// desktop file the suite writes in the scratch world's data folder, with
+// its own default in the scratch config's mimeapps.list. Page state is read
+// in the view's own script world.
 #include "Harness.h"
 
 #include "AppSettings.h"
@@ -29,6 +39,8 @@
 #include "Editor.h"
 #include "WindowLayout.h"
 #include "HtmlView.h"
+
+#include <glib/gstdio.h>
 
 #include <string>
 
@@ -86,14 +98,16 @@ size_t gDocs = 0;
 bool gBrowserBefore = false;   // another suite may have left the pane shown
 std::string gWasSettings;
 
-// Every address the page handed the link handler (HtmlView::linkSpy); only a
-// local file goes on to it, so nothing leaves this machine. And how many
-// there were, and how many the desktop's handler got, before a step.
+// Every address the page handed the link handler (HtmlView::linkSpy); a web
+// address goes no further, so nothing leaves this machine, while a local
+// file opens and an app's address reaches the desktop's handler, which is
+// the harness's recorder. And how many there were, and how many the
+// desktop's handler got, before a step.
 std::vector<std::string> gOpened;
 size_t gOpenedBefore = 0, gLaunchedBefore = 0;
 bool spy(const std::string& url) {
     gOpened.push_back(url);
-    return url.rfind("file:", 0) == 0;
+    return url.rfind("http:", 0) != 0 && url.rfind("https:", 0) != 0;
 }
 void countBefore() {
     gOpenedBefore = gOpened.size();
@@ -127,6 +141,54 @@ bool laidOut() {
 size_t gLaunchedAtStart = 0;
 const char* const kNotOpened = " by itself; mutible did not open it";
 const char* const kNotFollowed = " by itself; with its scripts off, it was not followed";
+
+// The app the question names: a desktop file in the scratch world's data
+// folder for zoommtg:, the default in the scratch config's mimeapps.list
+// (put back as it was at the end). Nothing runs it: the desktop's handler
+// is the harness's recorder.
+const char* const kApp = "Zoom Check";
+const char* const kAppLink = "zoommtg://example";
+std::string appFile() { return std::string(g_get_user_data_dir()) + "/applications/mutible-check-zoom.desktop"; }
+std::string mimeApps() { return std::string(g_get_user_config_dir()) + "/mimeapps.list"; }
+bool gHadMimeApps = false;
+std::string gWasMimeApps;
+
+// The question over the window, when it is up: the newest toplevel that is
+// not the app's window.
+GtkWidget* question() {
+    GtkWindow* top = MCGuiTopWindow();
+    return top && top != GTK_WINDOW(MCGuiApp().window) ? GTK_WIDGET(top) : nullptr;
+}
+bool noQuestion() { return !page()->askingToOpen() && !question(); }
+double leftOf(GtkWidget* w, GtkWidget* in) {
+    graphene_rect_t r;
+    return w && gtk_widget_compute_bounds(w, in, &r) ? r.origin.x : -1;
+}
+
+// Where a Markdown page's text `word` is, in its view's coordinates.
+double gWordX = 0, gWordY = 0;
+bool wordAt(const std::string& word, double* x, double* y) {
+    GtkTextBuffer* b = ed()->active() ? ed()->active()->page() : nullptr;
+    if (!b) return false;
+    GtkTextIter s, e;
+    gtk_text_buffer_get_bounds(b, &s, &e);
+    char* raw = gtk_text_buffer_get_text(b, &s, &e, TRUE);
+    const std::string t = raw ? raw : "";
+    g_free(raw);
+    const size_t at = t.find(word);
+    if (at == std::string::npos) return false;
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(b, &it, (int)g_utf8_pointer_to_offset(t.c_str(), t.c_str() + at));
+    GdkRectangle r;
+    GtkTextView* tv = GTK_TEXT_VIEW(ed()->textView());
+    gtk_text_view_get_iter_location(tv, &it, &r);
+    if (r.height <= 0) return false;
+    int wx = 0, wy = 0;
+    gtk_text_view_buffer_to_window_coords(tv, GTK_TEXT_WINDOW_WIDGET, r.x, r.y, &wx, &wy);
+    *x = wx + 3;
+    *y = wy + r.height / 2.0;
+    return true;
+}
 
 }  // namespace
 
@@ -444,6 +506,52 @@ MC_GUI_SUITE(html_page) {
         GCHECK(!has(statusText(), "zoommtg://y") || has(statusText(), kNotOpened));
     });
 
+    // ------------------------- a script's own click, to another app (#254)
+    // A page whose scripts run can click its own link (a.click()) and send
+    // its own form (form.submit()), and WebKit reports those as a link
+    // clicked and a form sent, like the user's: the Mac asks about every
+    // one, GTK tells them apart (is_user_gesture) and refuses the script's
+    // with no question (HtmlPage::follow).
+    MCGuiStep("a page whose script clicks its own smb:// link at load", [] {
+        MCGuiWriteFile(F("script-click.html"),
+                       "<a href='smb://x'>share</a><p id=out>not run</p>"
+                       "<script>document.querySelector('a').click();"
+                       "document.getElementById('out').textContent = 'clicked';</script>");
+        countBefore();
+        gSeen.clear();
+        MCGuiOpenFileKept(F("script-click.html"));
+    });
+    MCGuiWait("is refused, named in the status bar", 20, [] {
+        return loaded(1, "script-click.html") && has(statusText(), "smb://x");
+    });
+    MCGuiStep("no question, nothing opened, though the script ran", [] {
+        GCHECK(page()->runsScripts());
+        GCHECK(noQuestion());
+        nothingOpened("script-click.html");
+        GCHECK_EQ_STR(statusText(), std::string("The page tried to open smb://x") + kNotOpened);
+        read("document.getElementById('out').textContent");
+    });
+    MCGuiWait("the page answers", 10, [] { return !gSeen.empty(); });
+    MCGuiStep("(its script clicked)", [] { GCHECK_EQ_STR(gSeen, "clicked"); });
+
+    MCGuiStep("a page whose script sends its own form to mailto:", [] {
+        MCGuiWriteFile(F("script-form.html"),
+                       "<form action='mailto:someone@example.com' method=get>"
+                       "<input name=subject value=hello></form>"
+                       "<script>document.forms[0].submit();</script>");
+        countBefore();
+        MCGuiOpenFileKept(F("script-form.html"));
+    });
+    MCGuiWait("is refused the same way", 20, [] {
+        return loaded(1, "script-form.html") && has(statusText(), "mailto:someone@example.com");
+    });
+    MCGuiStep("(no question, nothing opened)", [] {
+        GCHECK(noQuestion());
+        nothingOpened("script-form.html");
+        GCHECK(statusText().rfind("The page tried to open mailto:someone@example.com", 0) == 0);
+        GCHECK(has(statusText(), kNotOpened));
+    });
+
     // ----------------------------------------------- the user's own click
     MCGuiStep("a page of links, clicked for real", [] {
         MCGuiWriteFile(F("clicked.html"), "<p>the clicked link's page</p>");
@@ -469,7 +577,8 @@ MC_GUI_SUITE(html_page) {
         Document* d = ed()->active();
         return d && has(d->path(), "/clicked.html") && d->showsPage() && loaded(1, "clicked.html");
     });
-    MCGuiStep("through the link handler", [] {
+    MCGuiStep("through the link handler, with no question", [] {
+        GCHECK(noQuestion());
         GCHECK(gOpened.size() == gOpenedBefore + 1 && has(gOpened.back(), "/clicked.html"));
         GCHECK(ed()->documents().size() == gDocs + 2);
         MCGuiOpenFileKept(F("links.html"));
@@ -489,10 +598,127 @@ MC_GUI_SUITE(html_page) {
                loaded(1, "blank-target.html");
     });
     MCGuiStep("through the link handler, and the desktop's handler never got anything", [] {
+        GCHECK(noQuestion());
         GCHECK(gOpened.size() == gOpenedBefore + 1 && has(gOpened.back(), "/blank-target.html"));
         GCHECK(MCGuiLaunchedUris().size() == gLaunchedAtStart);
         GCHECK(MCGuiApp().layout->browserShown() == gBrowserBefore);
+    });
+
+    // ------------------------------- the user's own click, to another app
+    MCGuiStep("an app for zoommtg: in the scratch world", [] {
+        gHadMimeApps = MCGuiFileExists(mimeApps());
+        gWasMimeApps = gHadMimeApps ? MCGuiReadFile(mimeApps()) : "";
+        MCGuiWriteFile(appFile(), std::string("[Desktop Entry]\nType=Application\nName=") + kApp +
+                                      "\nExec=/bin/false %u\nNoDisplay=true\n"
+                                      "MimeType=x-scheme-handler/zoommtg;\n");
+        MCGuiWriteFile(mimeApps(), gWasMimeApps + "\n[Default Applications]\n"
+                                                  "x-scheme-handler/zoommtg=mutible-check-zoom.desktop\n");
+    });
+    MCGuiWait("the desktop knows it", 20, [] { return HtmlView::appFor(kAppLink) == kApp; });
+    MCGuiStep("a page with a zoommtg:// link and an https one, clicked for real", [] {
+        MCGuiWriteFile(F("app-link.html"),
+                       std::string("<body style='margin:0'>"
+                                   "<a id=app href='") + kAppLink +
+                           "' style='display:block;width:400px;height:60px'>join</a>"
+                           "<a id=blank href='https://127.0.0.1:2/clicked'"
+                           " style='display:block;width:400px;height:60px'>web</a></body>");
+        MCGuiOpenFileKept(F("app-link.html"));
+        gSeen.clear();
+    });
+    MCGuiWait("laid out", 20, [] {
+        if (!loaded(1, "app-link.html")) return false;
+        return laidOut();
+    });
+    MCGuiStep("a click on the zoommtg:// link", [] {
+        countBefore();
+        MCGuiClick(GTK_WIDGET(page()->webView()), 60, 30);
+    });
+    MCGuiWait("asks first, naming the app and the address", 10, [] {
+        return page()->askingToOpen() && question() &&
+               MCGuiFindLabel(question(), HtmlPage::openAppQuestion(kApp));
+    });
+    MCGuiStep("the Mac's words and buttons, Open then Cancel; nothing opened yet", [] {
+        GtkWidget* q = question();
+        GCHECK_EQ_STR(HtmlPage::openAppQuestion(kApp), "Open in Zoom Check?");
+        GCHECK(MCGuiFindLabel(q, HtmlPage::openAppDetail(kAppLink)) != nullptr);
+        GCHECK_EQ_STR(HtmlPage::openAppDetail(kAppLink), "The link goes to zoommtg://example, outside mutible.");
+        GtkWidget* open = MCGuiFindButton(q, HtmlPage::kOpenApp);
+        GtkWidget* cancel = MCGuiFindButton(q, "Cancel");
+        GCHECK(open && cancel);
+        GCHECK(leftOf(open, q) >= 0 && leftOf(open, q) < leftOf(cancel, q));
+        GCHECK(gtk_window_get_transient_for(GTK_WINDOW(q)) == GTK_WINDOW(MCGuiApp().window));
+        nothingOpened("app-link.html");
+    });
+    MCGuiClickWhenReady("Cancel", [] { return question() ? MCGuiFindButton(question(), "Cancel") : nullptr; });
+    MCGuiWait("the question is gone", 10, noQuestion);
+    // Time is the condition: an open on its way after Cancel has had its turn.
+    MCGuiPause(0.3);
+    MCGuiStep("Cancel opened nothing", [] {
+        nothingOpened("app-link.html");
+        // No window manager: the X focus stays on the question that closed.
+        MCGuiFocusKeyWindow();
+    });
+    MCGuiStep("clicked again", [] {
+        countBefore();
+        MCGuiClick(GTK_WIDGET(page()->webView()), 60, 30);
+    });
+    MCGuiWait("asks again", 10, [] {
+        return page()->askingToOpen() && question() &&
+               MCGuiFindLabel(question(), HtmlPage::openAppQuestion(kApp));
+    });
+    MCGuiClickWhenReady("Open", [] { return question() ? MCGuiFindButton(question(), HtmlPage::kOpenApp) : nullptr; });
+    MCGuiWait("Open hands the address to the desktop's handler (the recorder)", 10, [] {
+        return MCGuiLaunchedUris().size() > gLaunchedBefore;
+    });
+    MCGuiStep("that address once, through the link handler, the page still the file", [] {
+        MCGuiNote("launched %s", MCGuiLaunchedUris().back().c_str());
+        GCHECK(noQuestion());
+        GCHECK(MCGuiLaunchedUris().size() == gLaunchedBefore + 1);
+        GCHECK_EQ_STR(MCGuiLaunchedUris().back(), kAppLink);
+        GCHECK(gOpened.size() == gOpenedBefore + 1);
+        GCHECK_EQ_STR(gOpened.back(), kAppLink);
+        GCHECK(has(ed()->active()->path(), "/app-link.html") && ed()->active()->showsPage());
+        GCHECK(has(pageUri(), "app-link.html"));
+        MCGuiFocusKeyWindow();
+    });
+    MCGuiStep("a click on the https link", [] {
+        countBefore();
+        MCGuiClick(GTK_WIDGET(page()->webView()), 60, 90);
+    });
+    MCGuiWait("goes to the link handler, as before", 10, [] { return gOpened.size() > gOpenedBefore; });
+    MCGuiStep("with no question, and nothing to the desktop's handler", [] {
+        GCHECK(noQuestion());
+        GCHECK(gOpened.size() == gOpenedBefore + 1);
+        GCHECK_EQ_STR(gOpened.back(), "https://127.0.0.1:2/clicked");
+        GCHECK(MCGuiLaunchedUris().size() == gLaunchedBefore);
         page()->linkSpy = nullptr;
+    });
+
+    // A Markdown preview's link is not the HTML page's: one to zoommtg://
+    // still goes to the desktop's handler with no question (unchanged).
+    MCGuiStep("a Markdown file with a zoommtg:// link", [] {
+        MCGuiWriteFile(F("app-link.md"), "Before.\n\n[join](zoommtg://example/md)\n");
+        MCGuiOpenFileKept(F("app-link.md"));
+    });
+    MCGuiWait("its preview, laid out", 20, [] {
+        return ed()->active() && ed()->active()->path() == F("app-link.md") && ed()->inPreview() &&
+               wordAt("join", &gWordX, &gWordY);
+    });
+    MCGuiStep("a click on the link", [] {
+        countBefore();
+        MCGuiClick(ed()->textView(), gWordX, gWordY);
+    });
+    MCGuiWait("goes to the desktop's handler", 10, [] { return MCGuiLaunchedUris().size() > gLaunchedBefore; });
+    MCGuiStep("unasked, as before", [] {
+        GCHECK(!question());
+        GCHECK_EQ_STR(MCGuiLaunchedUris().back(), "zoommtg://example/md");
+        GCHECK(MCGuiLaunchedUris().size() == gLaunchedBefore + 1);
+    });
+
+    MCGuiStep("(the scratch world's app and settings put back)", [] {
+        if (gHadMimeApps) MCGuiWriteFile(mimeApps(), gWasMimeApps);
+        else g_remove(mimeApps().c_str());
+        g_remove(appFile().c_str());
         ed()->closeAllTabs();
         MCGuiSetSettings(gWasSettings);
     });
