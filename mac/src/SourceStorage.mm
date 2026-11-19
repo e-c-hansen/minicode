@@ -1,5 +1,6 @@
 // SourceStorage.mm — see SourceStorage.h.
 #import "SourceStorage.h"
+#import "WrapIndentContainer.h"
 #include <vector>
 #include "InlayHints.h"
 #include "MultiCaret.h"
@@ -633,6 +634,9 @@ static BOOL SameStyle(id a, id b) { return a == b || [a isEqual:b]; }
                       changeInLength:(NSInteger)delta
                     invalidatedRange:(NSRange)invalidatedCharRange {
     if (editMask & NSTextStorageEditedCharacters) _tableRowsKnown = NO;
+    // A wrapped line's indent is read from its paragraph's text and font.
+    for (NSTextContainer *tc in self.textContainers)
+        if ([tc isKindOfClass:MCWrapIndentContainer.class]) [(MCWrapIndentContainer *)tc textDidChange];
     // The room follows an edit before its line; one reaching past the
     // line's start takes it (its owner puts it back where it belongs).
     if ((editMask & NSTextStorageEditedCharacters) && _roomLocation != NSNotFound) {
