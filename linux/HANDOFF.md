@@ -6618,31 +6618,35 @@ the editor is selected.
   nothing found under it too, never hidden, so the list keeps its layout
   and scrolls to the first mark. Keys go by name ("control" finds Ctrl,
   "opt" Alt, "return" Enter) and as combinations in any order
-  ("shift+ctrl+h" finds Ctrl Shift H). Esc empties the box, then closes the
+  ("shift+ctrl+h" finds Ctrl+Shift+H). Esc empties the box, then closes the
   panel, the keyboard back where it was; Return and Tab do nothing; a
   click puts the keyboard in the box; Ctrl keys run their commands (Ctrl+B,
   Ctrl+Shift+H closing the panel and emptying it), F1 still opens the
-  palette, and the palette's typing stays its own. The title reads
-  "mutible — src/main.cpp" (the path from the window's folder,
-  "~/notes/todo.md" for a file in the home folder outside it, the full
-  path outside both) while the editor (its text, a viewer in its slot, its
-  tabs or find bar) has the keyboard, and "mutible — main.cpp" as before
-  while another pane has it; it follows the keyboard between panes and the
-  tab on show. The palette and the hints' box only borrow the keyboard, so
-  the title stays as it was while they have it.
-- **Code.** Core: `src/HintsSearch.h` gains `Spelling::Words` (`parse`,
-  `match` take it; `wordNames`, `wordsNamed`, `wordCombination`, and
-  `Word::whole`, found only at word boundaries, so "ctrl+s" never finds the
-  S of Ctrl Shift P); the Mac's glyph spelling is untouched.
-  `src/TitlePath.h` (`TitlePath::shown`), header only. GTK:
+  palette, and the palette's typing stays its own. The keys are drawn as
+  the core's `Commands::keyLabel(key, Platform::Linux)` draws them
+  ("Ctrl+Shift+P", "Ctrl+⏎", "⎋"; `Keys::hintLabel`), the Mac's work
+  (12d7a32c). The title follows the core's rule, the Mac's too
+  (`src/WindowTitle.h`, #200): "src/main.cpp — mutible" (the path from the
+  window's folder, "~/notes/todo.md" for a file in the home folder outside
+  it, the full path outside both, "● " in front while unsaved, the folder's
+  name with no tab) while a document pane (the editor, the tree, any pane
+  but the terminal and the browser) has the keyboard, and the terminal's
+  or the page's own title while one of those has it; it follows the
+  keyboard between panes and the tab on show. The palette and the hints'
+  box only borrow the keyboard, so the title stays as it was while they
+  have it.
+- **Code.** Core: none of its own; the search is `HintsSearch` with
+  `Spelling::Linux` and the title `WindowTitle::title`, both the Mac
+  session's. GTK:
   `linux/src/HintsSearchBox.{h,cpp}` (the GtkSearchEntry, `takeKey`,
   `giveBackKeyboard`, `attributes`: Pango background and foreground-alpha
   attributes on the label); main.cpp's `hintsRows` (was `hintsText`, the
   rows unchanged), `hintsText` (the same layout, each `HintRow` told where
   it landed), `showHintsText`, `hintsQueryChanged`, `setHintsShown`,
   `onHintsKey` (a key controller in the window's capture phase);
-  `setWindowTitle` and `titleShowsPath`, run from `updateTitle` and
-  `onFocusWidget`. The panel's columns and the key names are as they were.
+  `setWindowTitle` and `titleFocus`, run from `updateTitle` and
+  `onFocusWidget`; `Keys::hintLabel`. The panel's columns are as they were
+  (PageMeasure::layoutHints on GTK is next).
 - **Traps.** An input method types nothing for an Alt+letter
   (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`): forwarded, Alt+Z was lost and the
   box held "s" (hints_panel failed so), so the box inserts the letter
@@ -6657,5 +6661,5 @@ the editor is selected.
   keyboard is given back before the panel hides, or GTK puts it wherever
   it likes.
 - **Checks**: `hints_panel` (HintsPanelSuite.cpp) and `window_title`
-  (WindowTitleSuite.cpp), their headers saying what they check, and the
-  `hints:search-words` and `title:path` groups of `make test`.
+  (WindowTitleSuite.cpp), their headers saying what they check; the
+  core's `hints:*` and `window-title:*` groups of `make test`.
