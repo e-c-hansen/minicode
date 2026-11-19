@@ -1631,9 +1631,11 @@ the browser shows them with its own viewers.
   was checked is what is read), at most `kMaxReadBytes` (4 MB) a read, on
   the host's thread. `length` 0 gives the size alone.
 - **HTTP, not the socket.** `<img>`, `<video>` and the PDF viewer need an
-  address, and video needs Range. `/file/TOKEN/PATH`: the token is the
-  path's first name, not the query, so an HTML page's relative pictures
-  and style sheets resolve to addresses that carry it (`answer()` gives
+  address, and video needs Range. `/v/ID/file/PATH` (it was
+  `/file/TOKEN/PATH` until the credential's cookie, 2026-11-18; above,
+  "Links, credentials and the Mac's question"): the browser sends the
+  cookie with each, so an HTML page's relative pictures and style sheets
+  are served too (`answer()` gives
   `Answer::File` with the path decoded by `pathDecode`: '+' kept, a NUL
   refused; the Host and Origin checks come first, as for the page). The
   server needs a page's socket open (the session is attached only then):
@@ -1693,8 +1695,8 @@ the browser shows them with its own viewers.
   `mcSessionView.file()` says what shows, for the GUI check. A kind the
   browser cannot show (database, archive, bookmark) says it opens in the
   window, as before.
-- **Not done in this slice**: SQLite, notebooks, the LaTeX preview, and
-  git and review pages; the window's viewer tabs (a picture's tab) are
+- **Not done in this slice**: SQLite and notebooks (the second slice,
+  below), the LaTeX preview, and git and review pages; the window's viewer tabs (a picture's tab) are
   still not reported to the page (the Mac reports only tabs with a
   document on the host), so the page shows a picture only from its tree,
   and does not follow the window to one.
@@ -1717,7 +1719,7 @@ sandboxed, PDF not, a 5 MB video whole (three pieces) and in four
 ranges with a 416, the tree's views, a CSV's rows over the socket and
 two refusals, and 503 again once the page has gone; the page's CSP.
 GUI: `session_browser` clicks a PNG in the editable page's tree (the
-page shows it in a tab of its own at the token's /file/ address, decoded
+page shows it in a tab of its own at the view's /file/ address, decoded
 at its real width, and the window opens it) and a CSV (the page's table
 has the core's rows, and the window opens it); then a PNG in the
 read-only page's tree (its own tab, the window opening nothing, its ×
@@ -1727,6 +1729,101 @@ whose script did not run, an HTML page with its relative style sheet and
 picture and its script not run, Chrome's PDF viewer in the frame, the
 table, a WAV's duration read and a page fetch of a range answered 206.
 The look in Safari, video seeking, and a phone need the owner's eyes.
+
+### Notebooks, databases and Markdown in the page (R3, second slice)
+
+What the core can render without the Mac: a notebook, a SQLite database,
+and (already there) a Markdown file's page.
+
+- **Read here, not through the host.** `notebook {path}` and `db {path,
+  table, offset}` (any page: neither changes anything) are answered by
+  `Web::notebookJson` and `Web::databaseJson` (`src/SessionWebViewers.cpp`),
+  which read from `Options::folder` as `readfile` does: SQLite needs a
+  path, not bytes, and a notebook may be past the host read's 4 MB.
+  Both go through `openLocalFile`, the checks `localFileJson` made, now
+  shared: `confinedPath`, no dotfile name unless the tree shows them,
+  `O_NONBLOCK` and `fstat` as a regular file (a FIFO refused, never
+  blocked on). `fileType` names `notebook` (.ipynb) and `database`
+  (.sqlite, .sqlite3, .db, .db3) with no mime, so `/file/` serves neither
+  as bytes (404) and the tree's entries carry the `view`.
+- **A notebook** (at most `kMaxNotebookBytes`, 32 MB) is
+  `Notebook::parse`, `toMarkdown` and `MarkdownHtml::page`, the window's
+  own preview's Markdown: every text escaped, pictures data: images (SVG
+  base64'd, so it is an `<img>` and runs nothing), links only relative,
+  #, http, https and mailto, made valid UTF-8 (`SqliteRead::validUtf8`)
+  because a WebSocket text frame that is not ends the connection.
+  `MarkdownHtml` now writes a fence's label (the rest of its info string)
+  as `<div class="code-label">` above the block, so Jupyter's "In [3]" and
+  "Out [3]" show as in the window (Export as HTML gains it too; the
+  corpus golden has the one CSS line). The page puts it in an `<iframe
+  sandbox="" srcdoc>` with the palette's Markdown CSS (`withPalette`, as
+  the Markdown frame; redrawn on `palette`): no scripts, an opaque origin,
+  and the parent's CSP inherited (data: pictures only, nothing fetched).
+- **A database** (`src/SqliteRead.{h,cpp}`, the core's one use of the
+  system libsqlite3, now linked by the tests and `mutible-cli`; Linux
+  already linked it): the header's 16 magic bytes checked first (a text
+  file named .db is not opened), then `sqlite3_open_v2` at the file's
+  `realpath` with `SQLITE_OPEN_READONLY | SQLITE_OPEN_URI`
+  (`SQLITE_OPEN_NOFOLLOW` where defined) and `file:...?mode=ro`; a WAL
+  database with no `-shm` or no `-wal` beside it (its writers closed)
+  opens with `&immutable=1` at once, since a read-only connection makes
+  them where the folder lets it (SQLite 3.22 on; the Mac's viewer tries
+  `mode=ro` first and falls back on failure), `PRAGMA query_only`, the defensive flag,
+  `TRUSTED_SCHEMA` off, no extensions, `SQLITE_LIMIT_ATTACHED` 0,
+  `SQLITE_LIMIT_LENGTH` 16 MB (one row cannot take the memory), a 250 ms
+  busy timeout, and an authorizer allowing only READ, SELECT, FUNCTION and
+  RECURSIVE. The only statements are the schema's list and `SELECT * FROM
+  "name" LIMIT ? OFFSET ?` for a name the schema listed (quoted, compared
+  exactly; nothing of the page's becomes SQL). A progress handler stops
+  each call at 2 s (`kTimeLimit`): a recursive view, a huge OFFSET. The
+  connection is opened per request and closed at once, so no lock is held
+  between reads; a writer waits at most one statement. A page is
+  `kDbPageRows` (100) rows or about 4 MB of text; a text cell cut at 2,000
+  bytes comes as {text, bytes}, a blob as {blob: size}, NULL as null.
+- **The page**: `drawNotebook` and `drawDb` in `#fileview`, a viewer tab
+  of the page's own like a picture (no "Open in a new tab": there is no
+  address). The database bar has a `<select>` of tables and views
+  (option values and text set as properties), "Rows 1–100, more after",
+  Previous, Next and a Read-only label; the rows a `<table>` with a
+  sticky header of the column names. Every name and cell goes in by
+  `textContent`, so markup in a table or column name is text.
+- **Markdown** was already the page (`MarkdownHtml::page` in the sandboxed
+  `#md` frame) with `#modebtn` flipping to the lines; its label is now
+  Show Source on a page that cannot edit (Edit Source stays for one that
+  can), Show Page going back.
+- **Not here**: the LaTeX preview (needs tectonic) and git and review
+  pages (the Mac's views); no query box (the Mac's viewer has one).
+
+#### Checks
+
+`sessionweb:viewers`: `fileType` for the new kinds, `SqliteRead`'s pieces
+(the header, WAL, `quoteName`, `uriFor`, `validUtf8` over good, cut,
+surrogate and overlong bytes), a Latin-1 CSV's cell made valid; a
+notebook rendered (heading, emphasis, In and Out labels, the picture);
+a hostile notebook (script in Markdown, code, stream, error and HTML
+outputs, a picture's data leaving its attribute, an SVG with onload and
+script, javascript: and an iframe) with no `<script`, `<iframe`,
+`onerror="`, `onload` or `javascript:` left and the page valid UTF-8;
+nine notebook refusals (links and paths out, a dotfile, a folder,
+missing, another kind) with nothing of the outside file sent, and 32 MB
+refused; a database with hostile table and column names (`<script>`,
+quotes) as text, NULL, blobs, a cut cell, bytes not UTF-8, reals; paging
+over 250 rows; four names not in the schema refused (an injection
+among them); a recursive view stopped at a 200 ms deadline in bounded
+CPU; the byte cap; the file's bytes, mtime and the folder's names
+unchanged; a writer mid-transaction not blocked (it commits after the
+read); a WAL database closed (opened immutable, no -wal or -shm made) and
+live; nine database refusals; then over the wire with a headless host.
+GUI: `session_browser`, on the read-only page, clicks a hostile notebook
+(the sandboxed frame's html has no `<script` and `window.pwned` stays
+undefined), a hostile database (its names and cells as text), picks
+another table, presses Next, and checks the file's bytes unchanged; and
+a Markdown file's Show Source and Show Page. Checked by hand in headless
+Chrome over CDP against `mutible host --web` (not committed): both
+notebooks drawn, the hostile one running nothing; the database's tables,
+cells, paging, and a recursive view stopped after 2 s; Show Source; the
+database bar at 390 px; the file's hash unchanged. The look in Safari and
+on a phone needs the owner's eyes.
 
 ### The window's browser tabs in the page (R4)
 
@@ -1894,6 +1991,6 @@ panes and the ×s needs the owner's eyes.
 - The tree does not follow the disk by itself: the host watches nothing
   yet. Stage 7's watching should send the page a folder's listing when it
   changes. A headless host's page cannot open text files (no window
-  decides tabs); it shows pictures, PDFs, media, HTML and tables (R3).
-  SQLite, notebooks, LaTeX and git pages in the page are R3's later
+  decides tabs); it shows pictures, PDFs, media, HTML, tables, notebooks
+  and databases (R3). LaTeX and git pages in the page are R3's later
   slices.

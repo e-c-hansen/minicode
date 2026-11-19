@@ -88,7 +88,9 @@ goes here first, with tests; the GUI only displays it.
   `hostserver:*`; docs/notes/session-host.md), and `SessionFiles` (stage
   7's first read: `FsRead` lists one folder of the session's, confined to
   it by `confinedPath`, with the apps' trees' dotfile, order and ignore
-  rules, for the browser's tree; `host:fs-list`), and `SessionWebAccess`
+  rules, for the browser's tree; `host:fs-list`), `SessionWebViewers`
+  (what the browser's page renders itself: a notebook as a page, a SQLite
+  database's tables and rows; `sessionweb:viewers`), and `SessionWebAccess`
   (who may use the browser's view: single-use links, the credential's
   cookie, idle expiry, the app's question before a new browser and its
   rate limit; `sessionweb:access*`). The wire
@@ -158,6 +160,8 @@ goes here first, with tests; the GUI only displays it.
   status line, undo, the log);
   `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
 - Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`,
+  `SqliteRead` (a SQLite database read-only, with a deadline: tables and a
+  page of rows; the system libsqlite3, the one library the core links),
   `WebBookmark` (web bookmarks as .url and .webloc files: reading, writing,
   names, which addresses may open).
 

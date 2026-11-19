@@ -9,6 +9,7 @@
 #include "SessionFiles.h"
 #include "SessionServer.h"
 #include "Settings.h"
+#include "SqliteRead.h"
 #include "Text.h"
 
 #include <algorithm>
@@ -460,19 +461,17 @@ bool windowOpen(const Json& record) {
     return !record["tabs"]["detached"].asBool();
 }
 
-Json localFileJson(const std::string& folder, const std::string& rel, bool hidden) {
-    Json j = Json::object();
-    j.set("t", Json("filetext"));
-    j.set("path", Json(rel));
-    auto refuse = [&](const std::string& why) {
-        j.set("error", Json(why));
-        return j;
+int openLocalFile(const std::string& folder, const std::string& rel, bool hidden, std::string* abs,
+                  std::uint64_t* size, std::string* why) {
+    auto refuse = [&](const std::string& text) {
+        if (why) *why = text;
+        return -1;
     };
     const std::string name = baseName(rel);
-    std::string abs, why;
+    std::string reason;
     if (folder.empty()) return refuse("This session has no folder to read in.");
-    if (!confinedPath(folder, rel, &abs, &why))
-        return refuse("That file is not one of this session's folder's: " + why + ".");
+    if (!confinedPath(folder, rel, abs, &reason))
+        return refuse("That file is not one of this session's folder's: " + reason + ".");
     // Dotfiles only where the tree shows them.
     if (!hidden) {
         std::size_t at = 0;
@@ -486,19 +485,36 @@ Json localFileJson(const std::string& folder, const std::string& rel, bool hidde
     }
     // Opened without following a last link out (confinedPath held the
     // real path inside), and never blocking on a FIFO: a regular file only.
-    const int fd = ::open(abs.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    const int fd = ::open(abs->c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) return refuse(name + " could not be read: " + std::strerror(errno) + ".");
     struct stat st;
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
         ::close(fd);
         return refuse(name + " is not a file.");
     }
-    if ((std::uint64_t)st.st_size > kMaxLocalFileBytes) {
+    if (size) *size = (std::uint64_t)st.st_size;
+    return fd;
+}
+
+Json localFileJson(const std::string& folder, const std::string& rel, bool hidden) {
+    Json j = Json::object();
+    j.set("t", Json("filetext"));
+    j.set("path", Json(rel));
+    auto refuse = [&](const std::string& why) {
+        j.set("error", Json(why));
+        return j;
+    };
+    const std::string name = baseName(rel);
+    std::string abs, why;
+    std::uint64_t size = 0;
+    const int fd = openLocalFile(folder, rel, hidden, &abs, &size, &why);
+    if (fd < 0) return refuse(why);
+    if (size > kMaxLocalFileBytes) {
         ::close(fd);
         return refuse(name + " is too large to show on this page; it opens in the mutible window.");
     }
     std::string bytes;
-    bytes.reserve((std::size_t)st.st_size);
+    bytes.reserve((std::size_t)size);
     char buf[65536];
     for (;;) {
         const ssize_t n = ::read(fd, buf, sizeof buf);
@@ -705,6 +721,10 @@ FileType fileType(const std::string& path) {
         {"htm", {"html", "text/html; charset=utf-8"}},
         {"xhtml", {"html", "application/xhtml+xml"}},
         {"csv", {"table", ""}},                {"tsv", {"table", ""}},
+        // Rendered here and sent over the socket, never served as bytes.
+        {"ipynb", {"notebook", ""}},
+        {"sqlite", {"database", ""}},          {"sqlite3", {"database", ""}},
+        {"db", {"database", ""}},              {"db3", {"database", ""}},
         // An HTML page's own style sheets; never shown alone.
         {"css", {"", "text/css; charset=utf-8"}},
     };
@@ -824,7 +844,10 @@ Json tableJson(const std::string& path, const std::string& bytes, bool complete)
             break;
         }
         Json row = Json::array();
-        for (std::size_t c = 0; c < n; c++) row.push(Json(cutUtf8(d.cell(r, c), kMaxCellBytes)));
+        // Valid UTF-8 (a Latin-1 file's bytes as U+FFFD): a WebSocket
+        // text frame that is not ends the page's connection.
+        for (std::size_t c = 0; c < n; c++)
+            row.push(Json(SqliteRead::validUtf8(cutUtf8(d.cell(r, c), kMaxCellBytes))));
         cells += n;
         columns = std::max(columns, n);
         rows.push(std::move(row));
@@ -1715,6 +1738,19 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     if (t == "list") return onList(c, j);
     if (t == "readfile") return onReadFile(c, j);
     if (t == "file") return onFile(c, j);
+    // A notebook and a database, rendered here from the folder (R3's
+    // second slice); a database is opened read-only and cannot change.
+    if (t == "notebook") {
+        if (j["path"].isString())
+            sendJson(c, notebookJson(opt_.folder, j["path"].asString(), opt_.showHidden));
+        return;
+    }
+    if (t == "db") {
+        if (j["path"].isString())
+            sendJson(c, databaseJson(opt_.folder, j["path"].asString(), opt_.showHidden,
+                                     j["table"].asString(), j["offset"].asInt()));
+        return;
+    }
     // The rest changes the session or the window: only from a page that
     // may (each says so to one that only reads).
     if (t == "open") onOpen(c, j);

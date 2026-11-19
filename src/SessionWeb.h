@@ -36,7 +36,10 @@
 // off. A Range request is answered with that part (206), as audio and
 // video seek and PDF viewers read.
 // A CSV or TSV comes over the socket instead, as rows parsed by the core's
-// Csv (`file` -> `table`).
+// Csv (`file` -> `table`); so do a Jupyter notebook, as Notebook's Markdown
+// rendered by MarkdownHtml for a frame sandboxed with no scripts
+// (`notebook`), and a SQLite database's tables and a page of rows, opened
+// read-only by SqliteRead (`db`).
 //
 // Access (SessionWebAccess.h): every address is under the view's own path,
 // /v/ID/. A link, http://127.0.0.1:PORT/v/ID/?t=TOKEN with a random token
@@ -136,6 +139,9 @@
 //   closing {doc, ok, why}: a tab a page asked the window to close
 //   table   {path, columns, rows, truncated, size | error}: a CSV or TSV
 //           file as rows of cells (tableJson), for a `file`
+//   notebook {path, html | error}: a notebook as a page (notebookJson)
+//   db      {path, tables, moreTables, table, columns, rows, offset, more
+//           | error}: a database's tables and a page of rows (databaseJson)
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
 //   alive   {}: someone is using the page (sent at most once a minute
@@ -147,6 +153,9 @@
 //           which changes nothing in the window (any page)
 //   file    {path}: a CSV or TSV file of the folder as a table, read by the
 //           host (any page)
+//   notebook {path}: a notebook of the folder as a page (any page)
+//   db      {path, table, offset}: a database's tables and rows from
+//           `offset` of `table` (any page; nothing in it can change)
 // and, only when editable:
 //   open    {path, keep}: a file the tree's row names, opened as a tab in
 //           the window (Options::open); a page that only reads is refused
@@ -269,10 +278,11 @@ extern const char* const kWaitingText;
 // How the page shows a file, by its name's extension (any case): `view`
 // "image" (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, SVG), "pdf", "audio" (MP3,
 // M4A, AAC, WAV, Ogg, Opus, FLAC), "video" (MP4, M4V, MOV, WebM, OGV),
-// "html" (.html, .htm, .xhtml) or "table" (.csv, .tsv), "" for anything
-// else (text opens as a tab). `mime` is the Content-Type it is served
-// with over HTTP ("" for a table, which comes over the socket, and for
-// anything not served); a style sheet is served (for an HTML page's own)
+// "html" (.html, .htm, .xhtml), "table" (.csv, .tsv), "notebook" (.ipynb)
+// or "database" (.sqlite, .sqlite3, .db, .db3), "" for anything else (text
+// opens as a tab). `mime` is the Content-Type it is served
+// with over HTTP ("" for a table, a notebook and a database, which come
+// over the socket, and for anything not served); a style sheet is served (for an HTML page's own)
 // with no view. `maxBytes`: the most a whole response may be (0 for none:
 // audio and video are served a range at a time as the browser seeks).
 // `sandbox`: served with a sandbox CSP (all but PDF).
@@ -357,6 +367,35 @@ bool windowOpen(const Json& record);
 // first 8 KB).
 constexpr std::size_t kMaxLocalFileBytes = 8u << 20;
 Json localFileJson(const std::string& folder, const std::string& rel, bool hidden);
+// The checks localFileJson makes before it reads, for the page's other
+// readers: `rel` held inside `folder` (confinedPath), no dotfile name
+// unless `hidden`, opened O_NONBLOCK and fstat'ed as a regular file. The
+// open descriptor (the caller closes it), `abs` the path spelled under the
+// folder, `size` the file's; -1 with `why`, a sentence for the page.
+int openLocalFile(const std::string& folder, const std::string& rel, bool hidden,
+                  std::string* abs, std::uint64_t* size, std::string* why);
+
+// ---- what the page renders itself (R3, second slice): read here, from
+// the folder the server serves, as readfile is, and confined the same way
+// (openLocalFile).
+// A Jupyter notebook as a page: {t: "notebook", path, html} (Notebook's
+// Markdown through MarkdownHtml: cells, outputs as text, pictures as
+// data: images, every text escaped, valid UTF-8), drawn in a frame
+// sandboxed with no scripts, or {t: "notebook", path, error}. At most
+// kMaxNotebookBytes.
+constexpr std::size_t kMaxNotebookBytes = 32u << 20;
+Json notebookJson(const std::string& folder, const std::string& rel, bool hidden);
+// A SQLite database (SqliteRead, read-only, each read stopped at its
+// deadline): {t: "db", path, tables: [{name, type}], moreTables, table,
+// columns, rows, offset, more} for `table` ("" the first) from row
+// `offset`, at most kDbPageRows rows and about kDbPageBytes of text. A
+// cell is a string (text, an integer or a real as SQLite spells it), null,
+// {blob: bytes} or, cut at SqliteRead::kMaxCellBytes, {text, bytes}. Or
+// {t: "db", path, error} (and the tables, when only the rows failed).
+constexpr std::size_t kDbPageRows = 100;
+constexpr std::size_t kDbPageBytes = std::size_t(4) << 20;
+Json databaseJson(const std::string& folder, const std::string& rel, bool hidden,
+                  const std::string& table, std::int64_t offset);
 
 // An address a page may frame, or ask the window to open: http or https
 // (any case), a host, no user name or password before it, no space or
