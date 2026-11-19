@@ -521,8 +521,12 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
     else if (w.sidebar == "agents" && !self.agentsVisible) [self toggleAgents:nil];
     else if (w.sidebar == "processes" && !self.processesVisible) [self toggleProcesses:nil];
     [self setSidebarWidth:w.sidebarWidth hidden:w.sidebarHidden];
-    // Fresh shells in the folders the terminals were in, split as they were.
-    if (!w.terminals.empty() && !self.terminalPanel) {
+    // Fresh shells in the folders the terminals were in, split as they were;
+    // unless the window took its host's terminals, whose record says how
+    // they sat (finishSessionAttach).
+    if ([self sessionHoldsTerminals]) {
+        if (w.terminalHeight >= 80) self.terminalHeight = w.terminalHeight;
+    } else if (!w.terminals.empty() && !self.terminalPanel) {
         const TabSessions::TerminalTab first = TabSessions::sanitize(w.terminals[0]);
         NSString *dir = @(first.columns[0][0].cwd.c_str());
         BOOL isDir = NO;

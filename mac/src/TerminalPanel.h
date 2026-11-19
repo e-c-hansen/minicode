@@ -33,6 +33,11 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
 @property(nonatomic, copy) void (^onOpenLink)(MCTermLink *link);
 // The last terminal was closed. The panel is empty and should go.
 @property(nonatomic, copy) void (^onEmpty)(void);
+// The dock changed in a way its record on the session's host keeps
+// (sessionDock): a tab added, closed, moved or shown, a split, a pane
+// closed or given the keyboard, a share moved from the keyboard, or a bar's
+// drag ended (not each step of it). Told after the change.
+@property(nonatomic, copy) void (^onChanged)(void);
 // A passing note for the status bar (a queued command dropped by a close).
 @property(nonatomic, copy) void (^onNote)(NSString *note);
 // A bar across the panel under its strip, above the terminals (the offer
@@ -147,6 +152,27 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
 // the rest of the panes and tabs, then `selected` shown.
 - (void)restoreSessionTabs:(const std::vector<TabSessions::TerminalTab> &)tabs
                   selected:(NSInteger)selected;
+@end
+
+namespace Shared {
+struct TermDock;   // TermDockRecord.h
+}
+// The dock as the window's record on the session's host keeps it
+// (TermDockRecord.h, "termLayout"; docs/notes/session-host.md, "Terminal
+// splits in the record"): each tab's columns as host terminal ids (0 for a
+// terminal not on a host, which the record leaves out), its shares, its
+// active pane, and the tab on show. While a bar is dragged its tab's shares
+// are the ones from before the drag, so the record moves once, as the drag
+// ends.
+@interface MCTerminalPanel (HostDock)
+- (void)sessionDock:(Shared::TermDock *)out;
+// Builds `dock`'s tabs (Shared::termDockFrom's) after the panel's own: each
+// terminal made in TermDock::order(), so the panel's sessionPlace hands the
+// held terminals out in that order. With `fresh`, the panel was just made
+// and its one terminal is the first tab's first pane. The record's tab on
+// show is shown, with each tab's active pane; the keyboard stays where it
+// was.
+- (void)restoreHostDock:(const Shared::TermDock &)dock fresh:(BOOL)fresh;
 @end
 #endif
 

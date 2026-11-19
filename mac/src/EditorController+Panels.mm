@@ -32,6 +32,7 @@
         [weakSelf openTerminalLink:link];
     };
     self.terminalPanel.onEmpty = ^{ [weakSelf terminalPanelEmptied]; };
+    self.terminalPanel.onChanged = ^{ [weakSelf sessionDockChanged]; };
     self.terminalPanel.onNote = ^(NSString *note) { [weakSelf showStatusNote:note]; };
     self.terminalPanel.onShowInProcesses = ^(TerminalView *t, pid_t job) {
         [weakSelf showProcessesForTerminal:t job:job];

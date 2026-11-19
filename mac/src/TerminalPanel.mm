@@ -7,6 +7,7 @@
 #import "TerminalGridView.h"
 #include "EditorTabs.h"
 #include "TerminalLayout.h"
+#include "TermDockRecord.h"
 
 @class MCTerminalStripButtons;
 
@@ -149,6 +150,15 @@ static const int kResizeCells = 4;
     // window, the panel and every shell in it alive until the app quit.
     __weak NSWindow *_observedWindow;
     BOOL _askingClose;                            // a close question's sheet is up
+    // A bar being dragged: its tab, and that tab's shares from before the
+    // drag, which the host's record keeps until the drag ends.
+    __weak MCTerminalTab *_dragTab;
+    TerminalLayout::Layout _dragLayout;
+}
+
+// Something the host's record keeps changed (onChanged).
+- (void)changed {
+    if (_onChanged) _onChanged();
 }
 
 - (instancetype)initWithDirectory:(NSString *)dir {
@@ -320,6 +330,7 @@ static const int kResizeCells = 4;
     if (focused && focused != tab.active) {
         tab.active = focused;
         [self layoutPanes];
+        [self changed];
     }
     return tab.active;
 }
@@ -336,6 +347,7 @@ static const int kResizeCells = 4;
     [_tabs addObject:[[MCTerminalTab alloc] initWith:t]];
     [self selectTab:_tabs.count - 1];
     [t focusInput];
+    [self changed];
     return t;
 }
 
@@ -397,6 +409,7 @@ static const int kResizeCells = 4;
     tab.active = t;
     [self layoutPanes];
     [t focusInput];
+    [self changed];
     return t;
 }
 
@@ -404,6 +417,10 @@ static const int kResizeCells = 4;
 - (void)splitBar:(MCTerminalSplitBar *)bar draggedTo:(CGFloat)p {
     if (_selected < 0) return;
     MCTerminalTab *tab = _tabs[_selected];
+    if (_dragTab != tab) {   // the drag's first step: the record keeps these till it ends
+        _dragTab = tab;
+        _dragLayout = tab->layout;
+    }
     NSSize area = [self paneArea];
     BOOL moved = NO;
     if (bar.row < 0)
@@ -415,6 +432,13 @@ static const int kResizeCells = 4;
                                              area.height - p, area.height, kPaneGap,
                                              [MCTerminalPanel minPaneHeight]);
     if (moved) [self layoutPanes];
+}
+
+// The bar let go: the record takes the shares the drag left.
+- (void)splitBarDragEnded {
+    if (!_dragTab) return;
+    _dragTab = nil;
+    [self changed];
 }
 
 - (BOOL)resizeActivePane:(MCPaneDirection)direction {
@@ -437,7 +461,10 @@ static const int kResizeCells = 4;
         // as VS Code resizes the panel across its terminals' direction.
         return self.onResizeDock((towardEnd ? -1 : 1) * kResizeCells * cell.height);
     }
-    if (moved) [self layoutPanes];
+    if (moved) {
+        [self layoutPanes];
+        [self changed];
+    }
     return moved;
 }
 
@@ -453,6 +480,7 @@ static const int kResizeCells = 4;
     _selected = (NSInteger)tab;
     [self layoutPanes];
     if (hadFocus) [self focusActive];
+    [self changed];
 }
 
 - (void)selectTerminal:(TerminalView *)terminal {
@@ -461,6 +489,7 @@ static const int kResizeCells = 4;
         _tabs[i].active = terminal;
         _selected = (NSInteger)i;
         [self layoutPanes];
+        [self changed];
         return;
     }
 }
@@ -485,6 +514,7 @@ static const int kResizeCells = 4;
     [_tabs insertObject:moving atIndex:to];
     _selected = shown ? (NSInteger)[_tabs indexOfObject:shown] : -1;
     [self layoutPanes];
+    [self changed];
     return YES;
 }
 
@@ -793,11 +823,13 @@ NSAlert *MCClosingRunningAlert(NSArray<NSString *> *commands, NSString *question
 - (void)finishClose:(BOOL)hadFocus {
     if (_tabs.count == 0) {
         [self layoutPanes];
+        [self changed];
         if (self.onEmpty) self.onEmpty();
         return;
     }
     [self layoutPanes];
     if (hadFocus) [self focusActive];
+    [self changed];
 }
 
 // ------------------------------------------------------------------ layout
@@ -866,6 +898,7 @@ NSAlert *MCClosingRunningAlert(NSArray<NSString *> *commands, NSString *question
         __weak MCTerminalPanel *weakSelf = self;
         __weak MCTerminalSplitBar *weakBar = bar;
         bar.onDrag = ^(CGFloat p) { [weakSelf splitBar:weakBar draggedTo:p]; };
+        bar.onDragEnd = ^{ [weakSelf splitBarDragEnded]; };
         [self addSubview:bar positioned:NSWindowBelow relativeTo:_activeMark];
         [_bars addObject:bar];
     }
@@ -1045,6 +1078,74 @@ NSAlert *MCClosingRunningAlert(NSArray<NSString *> *commands, NSString *question
     if (_tabs.count == 0) return;
     [self selectTab:(NSUInteger)MAX(0, MIN(selected, (NSInteger)_tabs.count - 1))];
     [self reloadStrip];
+}
+
+@end
+
+// ------------------------------------------------- the host's record
+
+@implementation MCTerminalPanel (HostDock)
+
+- (void)sessionDock:(Shared::TermDock *)out {
+    Shared::TermDock &d = *out;
+    d = Shared::TermDock();
+    for (MCTerminalTab *tab in _tabs) {
+        Shared::TermDock::Tab t;
+        for (NSArray<TerminalView *> *column in tab.columns) {
+            std::vector<std::uint64_t> ids;
+            for (TerminalView *v in column) ids.push_back(v.sessionTerminal);
+            t.columns.push_back(std::move(ids));
+        }
+        t.layout = tab == _dragTab ? _dragLayout : tab->layout;
+        NSUInteger c = 0, r = 0;
+        if ([tab find:tab.active column:&c row:&r]) {
+            t.activeColumn = (int)c;
+            t.activeRow = (int)r;
+        }
+        d.tabs.push_back(std::move(t));
+    }
+    d.activeTab = (int)MAX(0, _selected);
+}
+
+- (void)restoreHostDock:(const Shared::TermDock &)dock fresh:(BOOL)fresh {
+    const NSUInteger before = fresh ? 0 : _tabs.count;
+    NSUInteger made = 0;
+    for (size_t i = 0; i < dock.tabs.size(); i++) {
+        const Shared::TermDock::Tab &t = dock.tabs[i];
+        if (t.columns.empty() || t.columns[0].empty()) continue;   // termDockFrom gives none
+        MCTerminalTab *tab = nil;
+        // The panel's own first terminal took the first held one.
+        if (made == 0 && fresh && _tabs.count == 1 && [_tabs[0] all].count == 1) {
+            tab = _tabs[0];
+        } else {
+            tab = [[MCTerminalTab alloc] initWith:[self makeTerminal]];
+            [_tabs addObject:tab];
+        }
+        made++;
+        for (size_t c = 0; c < t.columns.size(); c++) {
+            if (c > 0) [tab.columns addObject:[NSMutableArray array]];
+            for (size_t r = (c == 0 ? 1 : 0); r < t.columns[c].size(); r++)
+                [tab.columns[c] addObject:[self makeTerminal]];
+        }
+        // termDockFrom's shares match its panes; equal ones if not.
+        bool match = t.layout.columns.size() == t.columns.size() && t.layout.rows.size() == t.columns.size();
+        for (size_t c = 0; match && c < t.columns.size(); c++) match = t.layout.rows[c].size() == t.columns[c].size();
+        if (match) {
+            tab->layout = t.layout;
+        } else {
+            tab->layout.columns = TerminalLayout::even(t.columns.size());
+            tab->layout.rows.clear();
+            for (const auto &column : t.columns) tab->layout.rows.push_back(TerminalLayout::even(column.size()));
+        }
+        const NSUInteger ac = (NSUInteger)MAX(0, t.activeColumn), ar = (NSUInteger)MAX(0, t.activeRow);
+        tab.active = ac < tab.columns.count && ar < tab.columns[ac].count ? tab.columns[ac][ar]
+                                                                          : tab.columns[0][0];
+    }
+    if (_tabs.count == 0) return;
+    if (made) [self selectTab:MIN(before + (NSUInteger)MAX(0, dock.activeTab), _tabs.count - 1)];
+    else [self layoutPanes];
+    [self reloadStrip];
+    [self changed];
 }
 
 @end

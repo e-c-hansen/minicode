@@ -780,7 +780,8 @@ The host-side items left before the default can flip (2026-11-18).
 A window's record keeps how its dock's terminals sit, so the folder's
 next window puts split panes back as splits (linux/HANDOFF.md item 106).
 `src/TermDockRecord.{h,cpp}` (core, `Shared::TermDock`) writes and reads
-it for both apps; GTK does both, **the Mac's session should** (below).
+it for both apps; both do (the Mac's half below, "The Mac's terminal
+splits").
 
 - **The field.** `"termLayout"` in the record's tabs (the WindowTabs
   json), beside `"terms"`, which stays the flat list it was (an app
@@ -857,12 +858,37 @@ it for both apps; GTK does both, **the Mac's session should** (below).
   the dock was shown and a tab picked). `TerminalDock::activate` now
   ignores focus-ins while it switches and gives the keyboard, when the
   dock had it, to the tab's active pane.
-- **For the Mac's session:** `MCSessionWindow`'s record adds
-  `termLayout` from each panel tab's `columns` and `layout` (`Shared::
-  termLayoutJson`, ids as in its `terms`), and its reattach builds the
-  panel's tabs from `termDockFrom` rather than one tab each (the panel's
-  split code already keeps `TerminalLayout::Layout` per tab). The
-  window's `terms` and the held terminals' order stay as they are.
+- **The Mac's terminal splits** (2026-11-18; with `editor.session-host`
+  on or headless, the default unchanged):
+  - **Writing.** `MCSessionWindow`'s record sets `termLayout` from its
+    `termDock` block (`MCTerminalPanel sessionDock:`: each tab's columns as
+    `sessionTerminal` ids, 0 for one not on a host, its layout and active
+    pane, the tab on show) through `Shared::termLayoutJson`, beside `terms`
+    (the panel's terminals tab by tab, so the same order). The record still
+    goes with the half second's report, and at once on a dock change: the
+    panel's `onChanged` (a tab added, closed, moved or shown, a split, a
+    pane closed or given the keyboard, a keyboard resize, a bar's drag
+    ended) calls `sessionDockChanged`, which asks `reportSoon` (one report
+    on the main queue's next turn). **A drag is written once**: while a
+    bar is dragged its tab's shares in `sessionDock:` are the ones from
+    before the drag, so a report mid-drag sends nothing new, and the
+    drag's end (`DragBar onDragEnd`, on mouse up) sends the new ones. The
+    detach sends it once more, as before.
+  - **Reading.** `takeHeld` makes `heldDock`
+    (`Shared::termDockFrom(Held::tabs, the held terminals' ids)`) and puts
+    the held terminals in its `order()`, so `nextTermPlace` gives each pane
+    the panel makes its terminal. `finishSessionAttach` shows the dock (its
+    first terminal takes the first) and calls `restoreHostDock:fresh:`,
+    which makes the rest of each tab's panes column by column, top to
+    bottom, sets the shares and each tab's active pane, and shows the
+    record's tab on show; the keyboard stays where it was. A panel that
+    was there already (Open Folder) keeps its own tabs first.
+  - **A window brought back at launch** that takes held terminals builds
+    its dock from the record, not from the window list
+    (`restoreWindowLayout` asks `sessionHoldsTerminals` and keeps only the
+    dock's height): the host's terminals are the ones running, and the
+    record says where they sat. Names given with Rename Terminal are in
+    neither record's layout yet.
 - **Checks**: `make test`'s `termdock:*` (tests/term_dock_record_tests.inc:
   the exact shape, a record without the layout, terminals gone from the
   middle, top or a whole column with the neighbours and active pane
@@ -871,11 +897,19 @@ it for both apps; GTK does both, **the Mac's session should** (below).
   over a headless host, split right then down with boundaries moved and a
   second tab, a plain detach, back the same; a shell killed while
   detached, its pane left out; the record rewritten without the layout,
-  a tab each).
+  a tab each). On the Mac, `make guitest SUITES=host_reattach`'s splits
+  part (HostReattachSuite.mm's header): with the process's host, a tab
+  split right then down in the new column with both bars dragged (the
+  host's record keeps the old shares mid-drag and takes the new ones at
+  mouse up), the top right pane active and a second tab on show, back the
+  same after close and reopen (ids, columns, shares within 0.01 and laid
+  out so, active pane and tab); then the record rewritten in GTK's shape
+  from JSON text, with another arrangement and a pane naming a terminal
+  that is not there, back as that arrangement with the pane gone, its
+  share given to its neighbour and the active pane moved to the one below.
 
 **Left before the default flips:** the browser's view lists a closed
-window's record among the windows;
-the Mac's half of the terminal splits in the record (above).
+window's record among the windows.
 
 ### The Mac reattaches (stage 6, step 2)
 

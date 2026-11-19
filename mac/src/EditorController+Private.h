@@ -716,6 +716,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (MCSessionWindow *)sessionWindow;
 - (MCSessionLinkRef *)sessionLinkForTab:(MCTab *)t;
 - (MCSessionTermPlace *)sessionTerminalPlace;
+- (void)sessionDockChanged;
+- (BOOL)sessionHoldsTerminals;
 - (void)attachSessionHeld;
 - (void)finishSessionAttach;
 - (void)sessionFolderChanged;

@@ -18,6 +18,8 @@
 // neighboring views, or they take the clicks.
 @interface DragBar : NSView
 @property(nonatomic, copy) void (^onDrag)(CGFloat inSuperview);
+// The button let go after a press on the bar (a drag's end), once.
+@property(nonatomic, copy) void (^onDragEnd)(void);
 @property(nonatomic) BOOL vertical;   // a boundary between left and right
 @end
 static const CGFloat kDragBarHeight = 12;
