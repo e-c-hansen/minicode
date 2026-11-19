@@ -16,8 +16,13 @@
 // menu item or the key monitor takes them first; a Command arrow, which an
 // offscreen text view never interprets, goes in as the selector AppKit's
 // key bindings make of it (see Press).
+//
+// Home and End go to the line's start (its first non-blank character,
+// then column 0) and end, Shift selecting, at every caret, and with word
+// wrap to the row's end first, as VS Code's cursorHome and cursorEnd.
 #import "Harness.h"
 #import "EditorController.h"
+#import "EditorFont.h"
 #import "Keymap.h"
 #import "Lsp.h"
 #import "MultiCaretView.h"
@@ -252,6 +257,144 @@ MC_GUI_SUITE(editor_keys) {
         GCHECK_EQ_STR(tv.string, text);
         GCHECK(![[c valueForKey:@"dirty"] boolValue]);
     });
+    // ------------------------------------------------------- Home and End
+    // VS Code's Mac keys (a grader's walk, 2026-11-18: Ctrl+G 18, End, Left
+    // Left typed on line 17, AppKit's End having scrolled instead): Home to
+    // the first non-blank character, then column 0; End to the line's end;
+    // Shift selecting, from the same anchor as the Shift+arrows after.
+    NSString *home = MCGuiProjectFile(@"home.py");
+    // "def f():\n" is 0..8; "    return a + b" 9..24 (return at 13, its
+    // break at 25); "    pass" 26..33 (pass at 30, break at 34).
+    NSString *homeText = @"def f():\n    return a + b\n    pass\n";
+    MCGuiStep(@"End goes to the line's end, Home to its first non-blank, then column 0", ^{
+        MCGuiWriteFile(home, homeText);
+        GCHECK([c showFile:home]);
+        tv = Editor(c);
+        [c.window makeFirstResponder:tv];
+        GCHECK_EQ_STR(tv.string, homeText);
+        tv.selectedRange = NSMakeRange(15, 0);
+        GCHECK(Press(c.window, tv, kVK_End, 0));
+        GCHECK_EQ_STR(Sel(tv), @"{25, 0}");
+        GCHECK(Press(c.window, tv, kVK_Home, 0));
+        GCHECK_EQ_STR(Sel(tv), @"{13, 0}");
+        GCHECK(Press(c.window, tv, kVK_Home, 0));
+        GCHECK_EQ_STR(Sel(tv), @"{9, 0}");
+        GCHECK(Press(c.window, tv, kVK_Home, 0));
+        GCHECK_EQ_STR(Sel(tv), @"{13, 0}");
+        // The walk: from the line's start, End then Left twice stays on
+        // the line.
+        tv.selectedRange = NSMakeRange(9, 0);
+        GCHECK(Press(c.window, tv, kVK_End, 0));
+        GCHECK(Press(c.window, tv, kVK_LeftArrow, 0));
+        GCHECK(Press(c.window, tv, kVK_LeftArrow, 0));
+        GCHECK_EQ_STR(Sel(tv), @"{23, 0}");
+        GCHECK_EQ_STR(tv.string, homeText);
+        GCHECK(![[c valueForKey:@"dirty"] boolValue]);
+    });
+    MCGuiStep(@"Shift+End and Shift+Home select, keeping the anchor", ^{
+        tv.selectedRange = NSMakeRange(15, 0);
+        GCHECK(Press(c.window, tv, kVK_End, NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), @"{15, 10}");
+        tv.selectedRange = NSMakeRange(15, 0);
+        GCHECK(Press(c.window, tv, kVK_Home, NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), @"{13, 2}");
+        GCHECK(Press(c.window, tv, kVK_Home, NSEventModifierFlagShift));   // column 0
+        GCHECK_EQ_STR(Sel(tv), @"{9, 6}");
+        // AppKit still extends from 15: Shift+Right takes a character back.
+        GCHECK(Press(c.window, tv, kVK_RightArrow, NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), @"{10, 5}");
+        // And Shift+End from there goes past the anchor to the line's end.
+        GCHECK(Press(c.window, tv, kVK_End, NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), @"{15, 10}");
+        GCHECK(Press(c.window, tv, kVK_LeftArrow, NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), @"{15, 9}");
+        GCHECK_EQ_STR(tv.string, homeText);
+    });
+    MCGuiStep(@"Cmd+Home and Cmd+End go to the file's start and end, Shift selecting", ^{
+        tv.selectedRange = NSMakeRange(15, 0);
+        GCHECK(Press(c.window, tv, kVK_End, NSEventModifierFlagCommand));
+        GCHECK_EQ_STR(Sel(tv), NSStringFromRange(NSMakeRange(homeText.length, 0)));
+        GCHECK(Press(c.window, tv, kVK_Home, NSEventModifierFlagCommand));
+        GCHECK_EQ_STR(Sel(tv), @"{0, 0}");
+        tv.selectedRange = NSMakeRange(15, 0);
+        GCHECK(Press(c.window, tv, kVK_Home, NSEventModifierFlagCommand | NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), @"{0, 15}");
+        tv.selectedRange = NSMakeRange(15, 0);
+        GCHECK(Press(c.window, tv, kVK_End, NSEventModifierFlagCommand | NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), NSStringFromRange(NSMakeRange(15, homeText.length - 15)));
+    });
+    MCGuiStep(@"with several carets each moves, and Shift selects at each", ^{
+        NSArray *two = @[[NSValue valueWithRange:NSMakeRange(15, 0)],
+                         [NSValue valueWithRange:NSMakeRange(32, 0)]];
+        [tv.multiCarets setCaretRanges:two];
+        GCHECK(Press(c.window, tv, kVK_End, 0));
+        GCHECK(tv.multiCarets.active);
+        GCHECK_EQ_STR(Sel(tv), @"{25, 0} {34, 0}");
+        GCHECK(Press(c.window, tv, kVK_Home, 0));
+        GCHECK_EQ_STR(Sel(tv), @"{13, 0} {30, 0}");
+        GCHECK(Press(c.window, tv, kVK_Home, 0));
+        GCHECK_EQ_STR(Sel(tv), @"{9, 0} {26, 0}");
+        [tv.multiCarets setCaretRanges:two];
+        GCHECK(Press(c.window, tv, kVK_End, NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), @"{15, 10} {32, 2}");
+        [tv.multiCarets setCaretRanges:two];
+        GCHECK(Press(c.window, tv, kVK_Home, NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), @"{13, 2} {30, 2}");
+        GCHECK_EQ_STR(tv.string, homeText);
+        [tv.multiCarets clear];
+        tv.selectedRange = NSMakeRange(0, 0);
+    });
+    MCGuiStep(@"a wrapped line: End to the row's end first, Home to the row's start", ^{
+        GCHECK(MCEditorWordWrap());
+        NSMutableString *line = [NSMutableString string];
+        while (line.length < 600) [line appendString:@"word "];
+        [line appendString:@"end"];
+        NSString *wrapped = [NSString stringWithFormat:@"x\n%@\ny\n", line];
+        NSString *wrapFile = MCGuiProjectFile(@"wrapped.txt");
+        MCGuiWriteFile(wrapFile, wrapped);
+        GCHECK([c showFile:wrapFile]);
+        tv = Editor(c);
+        [c.window makeFirstResponder:tv];
+        GCHECK_EQ_STR(tv.string, wrapped);
+        const NSUInteger s = 2, e = 2 + line.length;
+        NSLayoutManager *lm = tv.layoutManager;
+        [lm ensureLayoutForTextContainer:tv.textContainer];
+        NSRange g0, g1;
+        [lm lineFragmentRectForGlyphAtIndex:[lm glyphIndexForCharacterAtIndex:s] effectiveRange:&g0];
+        const NSRange row0 = [lm characterRangeForGlyphRange:g0 actualGlyphRange:NULL];
+        [lm lineFragmentRectForGlyphAtIndex:NSMaxRange(g0) effectiveRange:&g1];
+        const NSRange row1 = [lm characterRangeForGlyphRange:g1 actualGlyphRange:NULL];
+        GCHECK_EQ_STR(NSStringFromRange(NSMakeRange(row0.location, 0)), @"{2, 0}");
+        if (NSMaxRange(row0) >= e) MCGuiNote(@"the line did not wrap: rows %@ %@, line end %lu",
+                                             NSStringFromRange(row0), NSStringFromRange(row1),
+                                             (unsigned long)e);
+        GCHECK(NSMaxRange(row0) < e && row1.location == NSMaxRange(row0));
+        // End: the first row's end, before the space it broke at, then the
+        // line's end.
+        tv.selectedRange = NSMakeRange(s + 3, 0);
+        GCHECK(Press(c.window, tv, kVK_End, 0));
+        GCHECK_EQ_STR(Sel(tv), NSStringFromRange(NSMakeRange(NSMaxRange(row0) - 1, 0)));
+        GCHECK(Press(c.window, tv, kVK_End, 0));
+        GCHECK_EQ_STR(Sel(tv), NSStringFromRange(NSMakeRange(e, 0)));
+        // Home on the second row: its start, then the line's start.
+        tv.selectedRange = NSMakeRange(row1.location + 3, 0);
+        GCHECK(Press(c.window, tv, kVK_Home, 0));
+        GCHECK_EQ_STR(Sel(tv), NSStringFromRange(NSMakeRange(row1.location, 0)));
+        GCHECK(Press(c.window, tv, kVK_Home, 0));
+        GCHECK_EQ_STR(Sel(tv), NSStringFromRange(NSMakeRange(s, 0)));
+        // Shift+End on the second row selects to that row's end.
+        tv.selectedRange = NSMakeRange(row1.location + 3, 0);
+        GCHECK(Press(c.window, tv, kVK_End, NSEventModifierFlagShift));
+        GCHECK_EQ_STR(Sel(tv), NSStringFromRange(NSMakeRange(row1.location + 3,
+                                                             NSMaxRange(row1) - 1 - row1.location - 3)));
+        GCHECK_EQ_STR(tv.string, wrapped);
+        // Back to the Python file for the steps after.
+        GCHECK([c showFile:py]);
+        tv = Editor(c);
+        [c.window makeFirstResponder:tv];
+        GCHECK_EQ_STR(tv.string, text);
+        tv.selectedRange = NSMakeRange(0, 0);
+    });
     // ------------------------------------------------------------ paste
     // No smart copy and paste: a word pasted over another after a dot is
     // just that word (AppKit's default made "n = arr. arr").
@@ -273,7 +416,10 @@ MC_GUI_SUITE(editor_keys) {
         GCHECK_EQ_STR(MCKeymapGlyphs(@"cursorBottomSelect"), @"⇧⌘↓");
         GCHECK_EQ_STR(MCKeymapGlyphs(@"editor.action.moveLinesDownAction"), @"⌥↓");
         GCHECK_EQ_STR(MCKeymapGlyphs(@"editor.action.copyLinesUpAction"), @"⌥⇧↑");
+        GCHECK_EQ_STR(MCKeymapGlyphs(@"cursorHome"), @"↖");
+        GCHECK_EQ_STR(MCKeymapGlyphs(@"cursorEndSelect"), @"⇧↘");
         NSAttributedString *hints = [c valueForKey:@"hintsText"];
         GCHECK([hints.string containsString:@"Start of the file"]);
+        GCHECK([hints.string containsString:@"Start of the line"]);
     });
 }

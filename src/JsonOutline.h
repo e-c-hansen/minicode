@@ -53,6 +53,30 @@ Outline parse(const std::string &text, size_t maxNodes = 2000000, bool jsonc = f
 // files in a .vscode or .devcontainer folder.
 bool allowsComments(const std::string &path);
 
+// Whether the editor checks a file as JSON while it is edited, by its
+// name: .json, .jsonc, .geojson, .har, .webmanifest and .code-workspace
+// (not .jsonl or .ndjson, a value a line).
+bool checksAsJson(const std::string &path);
+
+// A parse error as the editor marks it: where its squiggle goes, in
+// zero-based lines and UTF-16 columns (LSP's positions, NSString's units),
+// and what it says.
+struct Problem {
+    size_t line = 0, column = 0, endLine = 0, endColumn = 0;
+    std::string message;
+};
+
+// The problems of a JSON text, for the editor's squiggles and Problems when
+// no language server checks the file: none when it parses (with `jsonc`,
+// comments and trailing commas allowed) or holds no value at all (an empty
+// file is no error, as in VS Code), else its first error. As VS Code says
+// them: a trailing comma is "Trailing comma" on the comma, a comment in
+// strict JSON "Comments are not permitted in JSON" over the comment, and
+// any other error the parser's message over the token it stopped at
+// (empty at a line's end or the text's).
+std::vector<Problem> problems(const std::string &text, bool jsonc);
+std::vector<Problem> problems(const Outline &parsed, const std::string &text);
+
 // The deepest node whose value (or member, key included) holds the UTF-16
 // offset, or -1.
 long nodeAt16(const Outline &o, size_t offset16);
