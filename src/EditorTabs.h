@@ -59,12 +59,76 @@ Session restorable(const Session &saved,
 // "tests/main.cpp"). An empty path (a tab that holds no file) gets "".
 std::vector<std::string> labels(const std::vector<std::string> &paths);
 
+// The same split in two, as VS Code draws a tab: the file's name, and the
+// hint drawn dimmed after it, the shortest run of parent folders that tells
+// files of one name apart ("index.ts" with "app" beside "index.ts" with
+// "lib"; "x/src" beside "y/src" when the nearest folder is shared too). The
+// hint is "" when the name alone is enough, and for a tab with no file.
+struct TabName {
+    std::string name, hint;
+};
+std::vector<TabName> tabNames(const std::vector<std::string> &paths);
+
 // Dragging tab `from` along a row of tabs `widths` wide, laid end to end
 // from 0: where it goes when let go with the pointer at `x` (the same
 // coordinates), as an index in the row after the move. Each other tab whose
 // middle is left of the pointer comes before it. `from` itself when out of
 // range.
 int dropIndex(const std::vector<double> &widths, int from, double x);
+
+// ---- The strip's widths and scrolling (VS Code's tabSizing "fit")
+// Every strip of tabs on the Mac (the editor's, the split group's, the
+// terminals' and the browser's) lays its tabs out by these. A tab keeps its
+// natural width (its title, its padding and its close button) between
+// `minWidth` and `maxWidth`, and tabs are never squeezed to fit: a row wider
+// than its strip scrolls instead, so titles stay whole.
+struct StripLayout {
+    std::vector<double> x, w;   // each tab's left edge and width, from 0
+    double content = 0;         // the whole row's width
+};
+StripLayout layoutStrip(const std::vector<double> &natural, double minWidth, double maxWidth);
+
+// How far the row is scrolled left, kept between 0 and content - view (0
+// when it all fits).
+double clampScroll(double scroll, double content, double view);
+
+// The scroll nearest `scroll` that shows the tab at [left, right) whole: the
+// row moves only as far as it must, and a tab wider than the view shows its
+// left edge. Clamped.
+double revealScroll(double scroll, double left, double right, double content, double view);
+
+// A scroll wheel or a trackpad over the strip: the larger of the two deltas
+// (so a plain vertical wheel scrolls the row too), scaled by `lineStep` for
+// a wheel's lines (not `precise`, a trackpad's points). Content moves with
+// the fingers: a positive delta scrolls toward the row's start. Clamped.
+double wheelScroll(double scroll, double dx, double dy, bool precise, double lineStep,
+                   double content, double view);
+
+// While a tab is dragged with the pointer at `x` in a strip `view` wide:
+// how far to scroll the row each tick, negative within `edge` of the left
+// end, positive within `edge` of the right, up to `maxStep` at the very
+// edge (and past it), 0 in between.
+double dragAutoScroll(double x, double view, double edge, double maxStep);
+
+// How much of the row is cut off at each end, for the fades that say so.
+struct Clipped {
+    bool left = false, right = false;
+};
+Clipped clipped(double scroll, double content, double view);
+
+// A title fitted to `width`: whole when it fits, else cut in the middle
+// with an ellipsis ("very_lo…name.py"), the most of it that fits (by code
+// points, never inside one); "" when not even the ellipsis fits.
+// `measure` gives a string's drawn width.
+using Measure = std::function<double(const std::string &)>;
+std::string fitMiddle(const std::string &text, double width, const Measure &measure);
+
+// A name and its hint (TabName) in `width`, `gap` apart: both whole when
+// they fit; else the name whole and the hint cut to the room left, when
+// that shows at least `minHint` of it; else the name alone, cut to fit if
+// it must. `measureHint` measures the hint (its own font).
+TabName fitName(const TabName &t, double width, double gap, double minHint,
+                const Measure &measureName, const Measure &measureHint);
 
 // ---- Reopen Closed Tab
 // What a closed tab leaves behind, so it can come back where it was: its
@@ -286,6 +350,8 @@ public:
     std::uint64_t lastUsed(DocId id) const;
     // The labels of a group's tabs (EditorTabs::labels over their paths).
     std::vector<std::string> labels(int group) const;
+    // The same as names and hints (EditorTabs::tabNames).
+    std::vector<EditorTabs::TabName> tabNames(int group) const;
 
     // ---- opening
     // What an open of `path` from `from` does before anything is read: it

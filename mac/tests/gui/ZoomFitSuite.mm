@@ -7,7 +7,9 @@
 // to Fit Width, Fit Page and the zoom remembered per site; Maximize Pane;
 // the editor never scrolling sideways while it wraps (beside the browser,
 // with the line numbers and the ruler, zoomed, in a Markdown preview and a
-// diff), and Option+Z and editor.word-wrap turning wrapping off.
+// diff), Option+Z and editor.word-wrap turning wrapping off, and a wrapped
+// line going on under its indentation (editor.wrapping-indent), whatever
+// is typed into that indentation in a 20,000-line file.
 //
 // Only local pages (file://). Keys are CGEvent-made, through [NSApp
 // sendEvent:] (the key monitor, the window's views, then the menus), and a
@@ -26,6 +28,7 @@
 #import "TerminalGridView.h"
 #import "TerminalPanel.h"
 #import "TreeDetails.h"
+#import "WrapIndentContainer.h"
 #include "Commands.h"
 #import <Carbon/Carbon.h>
 #import <Quartz/Quartz.h>
@@ -156,6 +159,31 @@ BOOL PageFitsAcross(PDFView *v, NSScrollView *sv) {
 
 NSMenuItem *ItemFor(SEL action) {
     return [[NSMenuItem alloc] initWithTitle:@"" action:action keyEquivalent:@""];
+}
+
+// The line fragments (character ranges) of the line holding character
+// `index`, laid out first.
+NSArray<NSValue *> *WrappedFragments(NSTextView *tv, NSUInteger index) {
+    NSLayoutManager *lm = tv.layoutManager;
+    const NSRange line = [tv.string lineRangeForRange:NSMakeRange(index, 0)];
+    [lm ensureLayoutForCharacterRange:line];
+    const NSRange glyphs = [lm glyphRangeForCharacterRange:line actualCharacterRange:NULL];
+    NSMutableArray<NSValue *> *out = [NSMutableArray array];
+    [lm enumerateLineFragmentsForGlyphRange:glyphs
+                                 usingBlock:^(NSRect, NSRect, NSTextContainer *, NSRange g, BOOL *) {
+        [out addObject:[NSValue valueWithRange:[lm characterRangeForGlyphRange:g
+                                                              actualGlyphRange:NULL]]];
+    }];
+    return out;
+}
+
+// Where character `index`'s glyph is drawn across the text view.
+CGFloat GlyphX(NSTextView *tv, NSUInteger index) {
+    NSLayoutManager *lm = tv.layoutManager;
+    [lm ensureLayoutForCharacterRange:NSMakeRange(index, 1)];
+    const NSUInteger g = [lm glyphIndexForCharacterAtIndex:index];
+    const NSRect frag = [lm lineFragmentRectForGlyphAtIndex:g effectiveRange:NULL];
+    return tv.textContainerOrigin.x + NSMinX(frag) + [lm locationForGlyphAtIndex:g].x;
 }
 
 }  // namespace
@@ -636,6 +664,125 @@ MC_GUI_SUITE(zoomfit) {
         MCGuiSetSettings(settingsBefore);
         GCHECK(MCEditorWordWrap() && !c.textView.horizontallyResizable);
         GCHECK(FitsAcross(c.editorScroll));
+    });
+    // ------------------------------------------- wrapped lines' indentation
+    // editor.wrapping-indent (WrapIndentContainer.h): a wrapped line goes on
+    // under its first non-blank character (same, the default), one level
+    // further in (indent), or at the edge (none, and past half the width).
+    NSString *body = [@"" stringByPaddingToLength:500 withString:@"alpha + beta * " startingAtIndex:0];
+    NSString *py = [NSString stringWithFormat:@"def f():\n    total = %@1\n    return total\n", body];
+    MCGuiStep(@"a wrapped Python line goes on under its indentation", ^{
+        MCGuiWriteFile(F(@"wrap.py"), py);
+        GCHECK([c showFile:F(@"wrap.py")]);
+        [c.window makeFirstResponder:c.textView];
+        GCHECK(MCEditorWordWrap() && c.textView.editable);
+        NSArray<NSValue *> *frags = WrappedFragments(c.textView, 9);
+        GCHECK(frags.count >= 3);
+        const CGFloat first = GlyphX(c.textView, 13);   // the t of "total"
+        const CGFloat start = GlyphX(c.textView, 9);    // the line's first space
+        MCGuiNote(@"line at %.2f, its text at %.2f; continuations at %@", start, first, frags);
+        for (NSUInteger i = 1; i < frags.count; i++)
+            GCHECK(fabs(GlyphX(c.textView, frags[i].rangeValue.location) - first) < 0.5);
+        GCHECK(first - start > 20);   // four spaces in: not the edge
+        MCGuiSnapshot(c.window.contentView, @"zoomfit-wrapping-indent");
+    });
+    MCGuiStep(@"the text, the carets and a copy are as they were", ^{
+        GCHECK([c.textView.string isEqualToString:py]);
+        NSArray<NSValue *> *frags = WrappedFragments(c.textView, 9);
+        const NSUInteger second = frags.count > 1 ? frags[1].rangeValue.location : 0;
+        // A click at the continuation's left edge puts the caret at its
+        // first character, and a click in the indent's room before it too.
+        NSLayoutManager *lm = c.textView.layoutManager;
+        const NSRect frag = [lm lineFragmentRectForGlyphAtIndex:[lm glyphIndexForCharacterAtIndex:second]
+                                                 effectiveRange:NULL];
+        const NSPoint o = c.textView.textContainerOrigin;
+        const CGFloat y = o.y + NSMidY(frag);
+        const NSUInteger at =
+            [c.textView characterIndexForInsertionAtPoint:NSMakePoint(GlyphX(c.textView, second) + 1, y)];
+        const NSUInteger before = [c.textView characterIndexForInsertionAtPoint:NSMakePoint(o.x + 6, y)];
+        GCHECK(NSMinX(frag) > 20);   // the fragment itself starts in, not only its text
+        MCGuiNote(@"continuation at %lu: a click there gives %lu, in the room before it %lu",
+                  (unsigned long)second, (unsigned long)at, (unsigned long)before);
+        GCHECK(at == second && before == second);
+        // Copied whole, the line is its text: no indent comes along.
+        const NSRange line = NSMakeRange(9, [py rangeOfString:@"1\n"].location + 1 - 9);
+        c.textView.selectedRange = line;
+        [NSPasteboard.generalPasteboard clearContents];
+        [c.textView copy:nil];
+        GCHECK_EQ_STR([NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString],
+                      [py substringWithRange:line]);
+        c.textView.selectedRange = NSMakeRange(0, 0);
+    });
+    // Each mode from the settings: a continuation `levels` of the line's
+    // indentation in (0 the edge, 1 under its text, 2 one level further).
+    void (^modeSteps)(NSString *, NSString *, CGFloat) = ^(NSString *mode, NSString *line, CGFloat levels) {
+        MCGuiStep([NSString stringWithFormat:@"editor.wrapping-indent = %@", mode], ^{
+            MCGuiSetSettings(line ? [settingsBefore stringByAppendingString:line] : settingsBefore);
+        });
+        MCGuiWait([NSString stringWithFormat:@"a continuation where %@ puts it", mode], 5, ^BOOL {
+            NSArray<NSValue *> *frags = WrappedFragments(c.textView, 9);
+            const CGFloat start = GlyphX(c.textView, 9), first = GlyphX(c.textView, 13);
+            const CGFloat x = frags.count > 1 ? GlyphX(c.textView, frags[1].rangeValue.location) : -1;
+            const CGFloat want = start + levels * (first - start);
+            const BOOL ok = fabs(x - want) < 0.5;
+            if (!ok) {
+                MCWrapIndentContainer *tc = (MCWrapIndentContainer *)c.textView.textContainer;
+                MCGuiNote(@"%@: a continuation at %.2f, wanted %.2f (the container's mode %s, "
+                          @"its indent %.2f)", mode, x, want, WrapIndent::modeName(tc.mode),
+                          [tc continuationIndentAt:13]);
+            }
+            return ok;
+        });
+    };
+    modeSteps(@"indent", @"\neditor.wrapping-indent = indent\n", 2);
+    modeSteps(@"none", @"\neditor.wrapping-indent = none\n", 0);
+    modeSteps(@"same (unset)", nil, 1);
+    MCGuiStep(@"indented past half the pane's width, a line goes on at the edge", ^{
+        NSTextContainer *tc = c.textView.textContainer;
+        const CGFloat room = tc.size.width - 2 * tc.lineFragmentPadding;
+        const CGFloat space = GlyphX(c.textView, 10) - GlyphX(c.textView, 9);
+        const NSUInteger deep = (NSUInteger)ceil((room / 2 + 3 * space) / MAX(space, 1));
+        NSString *pad = [@"" stringByPaddingToLength:deep withString:@" " startingAtIndex:0];
+        NSString *text = [NSString stringWithFormat:@"x = 1\n%@y = %@1\n", pad, body];
+        MCGuiWriteFile(F(@"deep.py"), text);
+        GCHECK([c showFile:F(@"deep.py")]);
+        NSArray<NSValue *> *frags = WrappedFragments(c.textView, 6);
+        MCGuiNote(@"%lu spaces in a room of %.1f: %@", (unsigned long)deep, room, frags);
+        GCHECK(frags.count > 1 &&
+               fabs(GlyphX(c.textView, frags[1].rangeValue.location) - GlyphX(c.textView, 6)) < 0.5);
+    });
+    // Typing in a line's indentation lays out its paragraph again with the
+    // new indent; the paragraph is read once per edit, not per line.
+    MCGuiStep(@"typing spaces into a wrapped line's indentation in 20,000 lines", ^{
+        NSMutableString *big = [NSMutableString string];
+        for (int i = 0; i < 20000; i++)
+            [big appendFormat:@"    value_%d = compute(alpha, beta, gamma, delta) + other_value * factor_%d\n", i, i];
+        MCGuiWriteFile(F(@"big.py"), big);
+        GCHECK([c showFile:F(@"big.py")]);
+        [c.window makeFirstResponder:c.textView];
+        NSString *s = c.textView.string;
+        NSRange mid = [s lineRangeForRange:NSMakeRange(s.length / 2, 0)];
+        [c.textView scrollRangeToVisible:mid];
+        const CGFloat x0 = GlyphX(c.textView, WrappedFragments(c.textView, mid.location).lastObject.rangeValue.location);
+        const CGFloat space = GlyphX(c.textView, mid.location + 1) - GlyphX(c.textView, mid.location);
+        const double c0 = MCGuiThreadCpuMs();
+        for (int i = 0; i < 8; i++) {
+            c.textView.selectedRange = NSMakeRange(mid.location, 0);
+            [c.textView insertText:@" " replacementRange:c.textView.selectedRange];
+            [c.textView.layoutManager ensureLayoutForCharacterRange:
+                NSMakeRange(mid.location, mid.length + i + 1)];
+        }
+        const double ms = MCGuiThreadCpuMs() - c0;
+        NSArray<NSValue *> *frags = WrappedFragments(c.textView, mid.location);
+        const CGFloat x1 = GlyphX(c.textView, frags.lastObject.rangeValue.location);
+        MCGuiNote(@"8 spaces typed: %.1f ms of CPU; the continuation from %.2f to %.2f (a space %.2f)",
+                  ms, x0, x1, space);
+        GCHECK(frags.count > 1 && fabs((x1 - x0) - 8 * space) < 0.5);
+        GCHECK_TIME(ms / 8, 25, @"a space typed into a wrapped line's indentation, 20,000 lines");
+        // Back as it was, so closing the window asks nothing.
+        while (c.textView.undoManager.canUndo) [c.textView.undoManager undo];
+        GCHECK([c.textView.string isEqualToString:big]);
+        if (c.dirty) [c saveCurrentFile:nil];
     });
     MCGuiStep(@"Option+Z in the terminal is the terminal's", ^{
         [c focusTerminal:nil];

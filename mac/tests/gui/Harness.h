@@ -200,6 +200,10 @@ BOOL MCGuiPerformMenuKey(NSWindow *window, unsigned short keyCode, NSEventModifi
 // see it first).
 void MCGuiSendKeyToApp(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags,
                        NSString *chars, NSString *charsIgnoringModifiers);
+// A key press the way the app takes one: the key monitor first
+// (MCKeymapHandleKeyDown), then the window's views' key equivalents, then
+// the main menu, with a CGEvent-made event. YES when one took it.
+BOOL MCGuiPressKey(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags);
 // Runs `block` as one undo group of its own, as a key press would be.
 void MCGuiUndoGroup(NSUndoManager *undo, void (^block)(void));
 

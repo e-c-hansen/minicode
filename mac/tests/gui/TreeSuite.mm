@@ -8,14 +8,18 @@
 // row into a folder and refuses a folder into itself or below itself, and
 // copies a file from Finder in; Sort By size and date order the rows; the
 // size column shows each file's size; hidden files come and go; a file's
-// icon says what a click opens (a picture, a film, a table, a database,
-// code, text), a folder's stays a folder; the names use the sidebar's width
-// after a new file's refresh, with the name column left out of step first.
+// icon is its type's (FileIcon::Type: Python, JSON, a Dockerfile, a
+// picture, a README), the one image made for that type, in its family's
+// color, a folder's stays a folder; the names use the sidebar's width
+// after a new file's refresh, with the name column left out of step first;
+// 5,000 rows of many types are made and drawn page by page, each with its
+// type's one image, in about the time 5,000 plain text rows take.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
 #import "AppSettings.h"
 #import "TreeDetails.h"
+#import "FileTypeIcons.h"
 #include <sys/time.h>
 
 namespace {
@@ -135,12 +139,16 @@ MC_GUI_SUITE(tree) {
         MCGuiWriteFile(file(@"src/a.txt"), @"alpha\n");
         MCGuiWriteFile(file(@"src/b.txt"), @"bravo\n");
         MCGuiWriteFile(file(@"src/deep/d.txt"), @"delta\n");
-        MCGuiWriteFile(file(@"docs/readme.md"), @"# docs\n");
+        MCGuiWriteFile(file(@"docs/README.md"), @"# docs\n");
         // One file of each of a few kinds, for the icons (the tree reads
         // only their names).
         for (NSString *name in @[@"shot.png", @"clip.mp4", @"table.csv", @"app.sqlite",
-                                 @"main.cpp", @"page.html"])
+                                 @"main.cpp", @"page.html", @"tool.py", @"package.json",
+                                 @"Dockerfile", @"run", @"notes"])
             MCGuiWriteFile(file([@"docs" stringByAppendingPathComponent:name]), @"x");
+        // A file with no extension that can run is an executable.
+        [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions: @0755}
+                                         ofItemAtPath:file(@"docs/run") error:nil];
         MCGuiWriteFile(file(@".gitignore"), @"build/\n");
         MCGuiWriteFile(file(@"small.txt"), @"s\n");
         MCGuiWriteFile(file(@"medium.txt"), [@"" stringByPaddingToLength:3000 withString:@"m" startingAtIndex:0]);
@@ -169,7 +177,7 @@ MC_GUI_SUITE(tree) {
         [c.outline expandItem:ItemAt(c, src)];
         [c.outline expandItem:ItemAt(c, deep)];
         [c.outline expandItem:ItemAt(c, docs)];
-        GCHECK(RowOf(c, file(@"src/deep/d.txt")) >= 0 && RowOf(c, file(@"docs/readme.md")) >= 0);
+        GCHECK(RowOf(c, file(@"src/deep/d.txt")) >= 0 && RowOf(c, file(@"docs/README.md")) >= 0);
         GCHECK([RowNames(c, nil) isEqualToArray:(@[@"docs", @"src", @"large.txt", @"medium.txt",
                                                    @"small.txt"])]);
     });
@@ -213,24 +221,42 @@ MC_GUI_SUITE(tree) {
     MCGuiWaitQuiet(@"the commit's last status runs out first", 1.0, 20, ^NSInteger {
         return (NSInteger)[c treeGitRuns];
     });
-    MCGuiStep(@"each file's icon says what a click opens; folders stay folders", ^{
+    MCGuiStep(@"each file's icon is its type's one image, in its family's color", ^{
         NSDictionary<NSString *, NSString *> *want = @{
-            @"docs/shot.png": @"photo", @"docs/clip.mp4": @"film",
-            @"docs/table.csv": @"tablecells", @"docs/app.sqlite": @"cylinder",
-            @"docs/main.cpp": @"chevron.left.forwardslash.chevron.right",
-            @"docs/page.html": @"globe", @"docs/readme.md": @"doc.text",
+            @"docs/tool.py": @"python", @"docs/package.json": @"json",
+            @"docs/Dockerfile": @"dockerfile", @"docs/shot.png": @"image",
+            @"docs/README.md": @"readme", @"docs/clip.mp4": @"video",
+            @"docs/table.csv": @"csv", @"docs/app.sqlite": @"database",
+            @"docs/main.cpp": @"cpp", @"docs/page.html": @"html",
+            @"docs/run": @"executable", @"docs/notes": @"text",
         };
+        const BOOL dark = MCFileTypeTextIsLight([[AppSettings shared] text:Surface::Sidebar]);
         for (NSString *rel in want) {
             MCTreeCell *cell = CellAt(c, file(rel));
             GCHECK(cell != nil);
-            GCHECK_EQ_STR(MCTreeIconSymbol(file(rel)), want[rel]);
-            const BOOL same = cell.imageView.image == MCTreeSymbolImage(want[rel]);
-            if (!same) MCGuiNote(@"%@ shows %@", rel, cell.imageView.image);
-            GCHECK(same);
+            NSImage *image = cell.imageView.image;
+            GCHECK_EQ_STR(image.accessibilityDescription, want[rel]);
+            FileItem *item = ItemAt(c, file(rel));
+            const FileIcon::Type type = MCFileTypeOf(file(rel), item.executable);
+            GCHECK(image == MCFileTypeImage(type));
+            const BOOL tinted = SameColor(cell.imageView.contentTintColor, MCFileTypeTint(type, dark));
+            if (!tinted) MCGuiNote(@"%@ tinted %@", rel, cell.imageView.contentTintColor);
+            GCHECK(tinted);
         }
-        // Each kind its own picture (cylinder is a macOS 12 symbol).
-        GCHECK(MCTreeSymbolImage(@"photo") != MCTreeSymbolImage(@"film"));
-        GCHECK(MCTreeSymbolImage(@"tablecells") != MCTreeSymbolImage(@"doc.text"));
+        // Every type has its image, named for it and made once; a light
+        // tree takes deeper colors than a dark one.
+        NSMutableSet<NSString *> *names = [NSMutableSet set];
+        for (FileIcon::Type t : FileIcon::allTypes()) {
+            NSImage *image = MCFileTypeImage(t);
+            GCHECK(image != nil && image == MCFileTypeImage(t));
+            GCHECK_EQ_STR(image.accessibilityDescription, @(FileIcon::typeName(t)));
+            [names addObject:image.accessibilityDescription ?: @""];
+        }
+        GCHECK(names.count == FileIcon::allTypes().size());
+        GCHECK(!SameColor(MCFileTypeTint(FileIcon::Type::Python, YES),
+                          MCFileTypeTint(FileIcon::Type::Python, NO)));
+        GCHECK(!SameColor(MCFileTypeTint(FileIcon::Type::Python, dark),
+                          MCFileTypeTint(FileIcon::Type::JavaScript, dark)));
         GCHECK(CellAt(c, docs).imageView.image == MCTreeSymbolImage(@"folder.fill"));
         // A symbol this macOS lacks falls back to the page.
         GCHECK(MCTreeSymbolImage(@"no.such.symbol.here") == MCTreeSymbolImage(@"doc.text"));
@@ -505,6 +531,82 @@ MC_GUI_SUITE(tree) {
         MCGuiNote(@"sidebar %.0f, cell to %.0f", now, cellRight);
         GCHECK(cellRight <= now + 1 && cellRight >= now - 40);
         [c.splitView setPosition:side ofDividerAtIndex:0];
+    });
+
+    // --- 5,000 rows of many types, made and drawn page by page: each row
+    // takes its type's one image (none made per row), and the tree costs
+    // about what 5,000 plain text rows (one icon) cost in the same run, so
+    // the bound follows the machine (CI's runner took 6 s of CPU for each).
+    NSString *many = [repo stringByAppendingPathComponent:@"many"];
+    NSString *plain = [repo stringByAppendingPathComponent:@"plain"];
+    MCGuiStep(@"5,000 files of twenty types in many/, 5,000 text files in plain/", ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray<NSString *> *exts = @[@"py", @"js", @"ts", @"json", @"md", @"png", @"mp4", @"cpp",
+                                      @"h", @"rs", @"go", @"sh", @"yml", @"toml", @"csv", @"pdf",
+                                      @"zip", @"txt", @"lock", @"swift"];
+        for (NSString *dir in @[many, plain]) {
+            [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+            for (int i = 0; i < 5000; i++) {
+                NSString *ext = dir == many ? exts[(NSUInteger)i % exts.count] : @"txt";
+                NSString *name = [NSString stringWithFormat:@"f%04d.%@", i, ext];
+                [fm createFileAtPath:[dir stringByAppendingPathComponent:name] contents:nil
+                          attributes:nil];
+            }
+        }
+    });
+    MCGuiWait(@"many/ and plain/ show", 15, ^BOOL {
+        return RowOf(c, many) >= 0 && RowOf(c, plain) >= 0;
+    });
+    // Opens `folder`, makes the rows on show page by page (each cell
+    // configured) and draws them; returns the CPU time of that, and checks
+    // (untimed) that every row on show has its type's one image.
+    double (^drawAll)(NSString *) = ^double(NSString *folder) {
+        [c.outline expandItem:ItemAt(c, folder)];
+        const NSInteger rows = c.outline.numberOfRows;
+        NSClipView *clip = c.sidebarScroll.contentView;
+        const CGFloat page = MAX(NSHeight(clip.bounds), 100);
+        const CGFloat total = NSHeight(c.outline.frame);
+        NSBitmapImageRep *rep = [c.outline bitmapImageRepForCachingDisplayInRect:clip.documentVisibleRect];
+        __block NSUInteger checked = 0, wrong = 0, pages = 0;
+        auto drawPage = ^(CGFloat y) {
+            [c.outline scrollPoint:NSMakePoint(0, y)];
+            const NSRect visible = clip.documentVisibleRect;
+            const NSRange range = [c.outline rowsInRect:visible];
+            for (NSUInteger r = range.location; r < NSMaxRange(range); r++)
+                [c.outline rowViewAtRow:(NSInteger)r makeIfNecessary:YES];
+            [c.outline cacheDisplayInRect:visible toBitmapImageRep:rep];
+            pages++;
+        };
+        drawPage(0);   // warm: the first page also makes the reused cells
+        double cpu = 0;
+        for (CGFloat y = 0; y < total; y += page) {
+            const double c0 = MCGuiThreadCpuMs();
+            drawPage(y);
+            cpu += MCGuiThreadCpuMs() - c0;
+            const NSRange range = [c.outline rowsInRect:clip.documentVisibleRect];
+            for (NSUInteger r = range.location; r < NSMaxRange(range); r++) {
+                FileItem *item = [c.outline itemAtRow:(NSInteger)r];
+                MCTreeCell *cell = [c.outline viewAtColumn:0 row:(NSInteger)r makeIfNecessary:NO];
+                if (!item || item.isDir || ![cell isKindOfClass:MCTreeCell.class]) continue;
+                checked++;
+                if (cell.imageView.image != MCFileTypeImage(MCFileTypeOf(item.path, item.executable)))
+                    wrong++;
+            }
+        }
+        MCGuiNote(@"%@: %ld rows, %lu pages of %.0f points: %.0f ms of CPU; %lu rows checked, %lu wrong",
+                  folder.lastPathComponent, (long)rows, (unsigned long)pages, page, cpu,
+                  (unsigned long)checked, (unsigned long)wrong);
+        GCHECK(rows >= 5000);
+        GCHECK(checked >= 5000);
+        GCHECK(wrong == 0);
+        [c.outline collapseItem:ItemAt(c, folder)];
+        [c.outline scrollPoint:NSZeroPoint];
+        return cpu;
+    };
+    MCGuiStep(@"every page of 5,000 typed rows costs about what 5,000 text rows do", ^{
+        const double text = drawAll(plain);
+        const double typed = drawAll(many);
+        GCHECK_TIME(typed, 1.25 * text + 250, @"making and drawing every page of a 5,000-row tree");
     });
 
     MCGuiStep(@"close the window", ^{

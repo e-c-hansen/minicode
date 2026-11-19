@@ -8,6 +8,8 @@
 #import "EditorFont.h"
 #import "Latex.h"
 #import "PageZoom.h"
+#import "WrapIndentContainer.h"
+#import "AppSettings.h"
 
 @implementation EditorController (ZoomFit)
 
@@ -93,6 +95,7 @@
     [self applyMarkdownMeasure];   // a page's inset, or the source's own
     const BOOL wrap = MCEditorWordWrap() || !tv.editable;
     NSTextContainer *tc = tv.textContainer;
+    [self applyWrappingIndent];
     if (wrap == !tv.horizontallyResizable && tc.widthTracksTextView == wrap) return;
     NSScrollView *sv = self.editorScroll;
     if (wrap) {
@@ -111,6 +114,18 @@
         [tv sizeToFit];
     }
     [sv reflectScrolledClipView:sv.contentView];
+}
+
+// Where a wrapped line goes on (editor.wrapping-indent): under its
+// indentation in source, never in a page or a viewer's text, which have
+// indents of their own. displaySourceEditable sets it before the source
+// goes in and makeEditorReadOnly takes it off before a page does, so the
+// change lays nothing out twice; here it follows the settings.
+- (void)applyWrappingIndent {
+    NSTextView *tv = self.textView;
+    if (![tv.textContainer isKindOfClass:MCWrapIndentContainer.class]) return;
+    ((MCWrapIndentContainer *)tv.textContainer).mode =
+        tv.editable ? [AppSettings shared].settings.wrappingIndent() : WrapIndent::Mode::None;
 }
 
 // ---------------------------------------------------------- the menu

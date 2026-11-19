@@ -116,7 +116,8 @@ goes here first, with tests; the GUI only displays it.
   buffer), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
   UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
-  header only), `SpellCheck` (which words of a file are prose for the
+  header only), `WrapIndent.h` (where a wrapped line goes on,
+  editor.wrapping-indent, header only), `SpellCheck` (which words of a file are prose for the
   spell checker).
 - Language servers: `LspClient.h` over nine files (see "LSP": protocol,
   results, WorkspaceEdits, diagnostics with versions, completion edits,
@@ -174,7 +175,8 @@ goes here first, with tests; the GUI only displays it.
 - `EditorController.{h,mm}` and its categories (below); `EditorTab` (`MCTab`),
   `EditorPanes` (`PanelHost`, `DragBar`, `PanelScrollView`), `FileTree`
   (`FileItem`, `ClickOutline`, `gShowHidden`), `EditorPage.h`.
-- The editor: `SourceStorage` (`MCSourceStorage`), `CodeTextView.mm`, `Gutter`,
+- The editor: `SourceStorage` (`MCSourceStorage`), `WrapIndentContainer` (the
+  text container that sets a wrapped line's continuation in), `CodeTextView.mm`, `Gutter`,
   `FoldView`, `SpellMarks` (spell checking's marks and menu items),
   `EditorFont`, `EditorFind`, `FindWidget` (the find bar's and
   Find in Folder's colors, icon buttons and inputs), `MultiCaretView`, `EditingCommands`
@@ -210,7 +212,8 @@ goes here first, with tests; the GUI only displays it.
   reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `ChangeReviewPage` (every uncommitted change in
   one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
-  in the editor), `TreeDetails`, `TreeFocusBar` (the focused tree's
+  in the editor), `TreeDetails`, `FileTypeIcons` (a file's icon and
+  color by its `FileIcon::Type`, for the tree and Find in Folder), `TreeFocusBar` (the focused tree's
   breadcrumb row, or its label row for several folders),
   `FormatRunner`, `BackupStore`, `SessionStore` (sessions.json),
   `SessionLink` (the session's hosts, the process's and each folder's

@@ -1,6 +1,8 @@
 // EditorMirror.mm — see EditorMirror.h.
 #import "SourceStorage.h"
 #import "EditorMirror.h"
+#import "WrapIndentContainer.h"
+#import "AppSettings.h"
 #include "LineIndex.h"
 #include <vector>
 
@@ -236,7 +238,8 @@ static const NSUInteger kMirrorMinDigits = 3;
         // It reads no far positions: only what it shows is laid out.
         _layout.allowsNonContiguousLayout = YES;
         [_own addLayoutManager:_layout];
-        _box = [[NSTextContainer alloc] initWithSize:NSMakeSize(NSWidth(frame), CGFLOAT_MAX)];
+        // Wrapped lines under their indentation, as in the editor.
+        _box = [[MCWrapIndentContainer alloc] initWithSize:NSMakeSize(NSWidth(frame), CGFLOAT_MAX)];
         [_layout addTextContainer:_box];
         _tv = [[MCMirrorTextView alloc] initWithFrame:frame textContainer:_box];
         _tv.editable = NO;
@@ -293,7 +296,11 @@ static const NSUInteger kMirrorMinDigits = 3;
     _scrollView.rulersVisible = _lineNumbers && !picture;
 }
 
+// What it shows as text is always source (the editor's storage, or a
+// tab's own text), so wrapped lines go on under their indentation.
 - (void)setWraps:(BOOL)wraps {
+    if ([_box isKindOfClass:MCWrapIndentContainer.class])
+        ((MCWrapIndentContainer *)_box).mode = [AppSettings shared].settings.wrappingIndent();
     if (wraps) {
         _tv.horizontallyResizable = NO;
         _box.widthTracksTextView = YES;

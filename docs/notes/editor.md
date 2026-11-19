@@ -205,6 +205,27 @@ found through that list.
   (a preview) always wraps. Not wrapping, the text view is horizontally
   resizable and `PanelScrollView tile` keeps it at least the pane's width.
   The compare view never wraps (its rows stay level), and a CSV table scrolls.
+  **Wrapped lines keep their indentation** (2026-11-18, round 9;
+  `editor.wrapping-indent` same, indent, none; `WrapIndentContainer.{h,mm}`,
+  core `WrapIndent.h`, `wrap-indent:*`): the editor's text container (and
+  the split group's mirror) answers each line fragment's rect, and for a
+  line that does not start a paragraph it answers a rect set in by the
+  paragraph's leading spaces and tabs, measured in the paragraph's font with
+  its paragraph style's tab stops, so the typesetter breaks the line inside
+  it. No attribute is stored, so the text, undo, copies and the carets are
+  untouched. The container still says it is a simple rectangle: **trap**,
+  a container that says otherwise loses non-contiguous layout (laying out
+  near the end of 100,000 lines took 3 s, not 3 ms), and TextKit asks a
+  simple one for every line's rect anyway. It reads a paragraph once (its
+  bounds and indent are kept until the next edit, which the layout
+  manager's `processEditing...` reports), set before the source goes in
+  (`displaySourceEditable`) and turned off before a page does
+  (`makeEditorReadOnly`; a Markdown page has its own indents), so neither
+  lays out twice. Past half the line's room it falls back to none, as VS
+  Code does. zoomfit checks the x of each continuation against the first
+  non-blank glyph, the three modes, the fallback, a click and a copy, and
+  the CPU of a space typed into a wrapped line's indentation in 20,000
+  lines.
 - **Maximize Pane** (Ctrl+Cmd+M; VS Code's is a Cmd+K chord): `_maximizedPane`
   in relayoutRightArea shows only that pane; showing or focusing another
   (`leaveMaximizedPaneFor:`) ends it.
@@ -501,6 +522,7 @@ text is in place in its section.
 - The editor's text view (Mac): **Trap: a Markdown page's text blocks outlive it** (2026-11-07).
 - The editor's text view (Mac): Traps: NSScrollView lays a ruler out as a content inset of a clip view that still spans the width, so `PanelScrollView tile` subtracts the insets; never change `ruleThickness` inside a storage edit (tile asked for text that was gone and threw), so it changes on the next run-loop turn.
 - The editor's text view (Mac): **Trap: word wrap stays as set**, unlike VS Code: a TextKit view that does not wrap lays out all of its text in `sizeToFit` to learn its width (5.5 s for 25 MB, nine tenths of it there).
+- The editor's text view (Mac): Word wrap, wrapped lines keep their indentation: **trap**, a container that says otherwise loses non-contiguous layout (laying out near the end of 100,000 lines took 3 s, not 3 ms), and TextKit asks a simple one for every line's rect anyway.
 - The editor's text view (Mac): **Trap: anything that lays out all of a large text stays.** Two did on every open after a file with diagnostics or a preview: `needsDisplay = YES` on the text view, which NSTextView answers by laying out every glyph of its bounds (CodeTextView's `setNeedsDisplay:` marks only the visible and prepared rects that way, and since 2026-11-18 the bounds too with `avoidAdditionalLayout:YES`, which lays out nothing: tiles past them kept an older page's ink, see the Markdown notes; clearing ...
 - Folding (Mac): Trap: one region at a time was quadratic (6 s and 18 s for Fold All and Unfold All of 50,000); they go in as one sorted merge and one invalidation (`collapseAll`).
 - Several carets and line commands (Mac): **Trap (2026-11-06)**: the window server counts clicks by time alone (HIDClickSpace is (0,0)), so a second click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView.
