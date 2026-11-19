@@ -83,7 +83,9 @@ found through that list.
   to main as it is ready (`MCStagedNews`, merged into `_matches`): the
   lines on screen (`visibleCharacters`, no layout); the first match from
   the anchor, wrapping, selected at once with ±16K units of marks
-  ("1 of …", or "? of …" until the matches before it are counted); then
+  ("1 of …" when it was found searching from the top, the anchor there or
+  wrapped to it, so it is the first of all; else "? of …" until the
+  matches before it are counted); then
   every match counted from the top, kMatchLimit kept for the marks, parts
   sent every 100 ms; the count shown is exact ("1 of 3000000"), the tooltip
   saying only 20,000 are highlighted. Find Next while counting, or past the
@@ -259,6 +261,7 @@ text is in place in its section.
 - Find and replace (Mac): Traps: libc++ and libstdc++ each break JavaScript's repetition rules in places (groups unset per repetition, empty repetitions not counting), libc++ finds no `\b` at a line's end once a search starts past 0, and libc++ throws error_complexity (a silent "no match") on short exponential patterns rather than hanging, while ...
 - Find and replace (Mac): Trap: CALayer copies `shadowPath`, so release the path you made, never the one the getter returns (that crashed in the next CA commit).
 - The find bar in a large file: NSString gives no public way to the bytes it holds: `CFStringGetCStringPtr` returns NULL, for every encoding, for a string made with `initWithBytesNoCopy:` in ASCII (checked on macOS 27), so the reader hangs the bytes on the string (`MCSetHeldAsciiBytes`, an associated NSData that does not free them) and the find bar reads them while the string is the file's.
+- The find bar in a large file: the first match found from the top read "? of …" until the count's pass reached it, and large_file's "1 of " check passed only when the whole count (a few tens of ms for one match in 100 MB) ended before the harness polled; on main after #249 it lost that race twice. A match found from the top is the first of all, so its index (0) is sent with it (`fromTop` in `searchInStages`), and the label is "1 of …" at once.
 - The find bar in a large file: the old marks stayed because nothing redrew between a query's change and its results; drawing already skipped stale results, so the fix is to redraw at once and to draw only matches for the query and text as they are now (`_shownGen`, `_shownVersion`).
 - Find in Folder's keys: the Search window floats over the editor window and stays key, so a command run from it through AppDelegate's `[self current]` changed the editor window's panes (Toggle Terminal showed the terminal and called `focusInput`) while every key typed after still went to Search: a walker's `python3 -m pytest -q` and Return landed in the replace field, where Return was Replace All, and a file was rewritten. A command that shows a pane must make the editor window key (`currentForPane:`), Return in a field of that window must never write files, and Dismiss must reach Replace All, which re-plans the whole folder and had ignored the rows taken out of the results.
 - A GTK search under the keyboard: a search clears the list at once (`clearResults`) and its rows come later from the worker, and the row that had the keyboard goes with its row; when a frame falls between the two, GTK's deferred focus move finds the list empty and leaves the window no focus at all, so the next key did nothing and a Down only put the keyboard back on the first row (GtkListView's arrows, from no focused row, start at its focus position, which the new rows reset to 0).
