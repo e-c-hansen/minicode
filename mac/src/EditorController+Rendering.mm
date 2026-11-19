@@ -17,7 +17,9 @@ static void *kMediaItemContext = &kMediaItemContext;
                         change:(NSDictionary *)change context:(void *)context {
     if (object == self.window && [keyPath isEqualToString:@"title"])
         self.titleLabel.stringValue = self.window.title ?: @"";
-    else if (context == kMediaItemContext) {
+    else if ([self windowTitleObserved:keyPath of:object context:context]) {
+        // who has the keyboard changed: EditorController+WindowTitle.mm
+    } else if (context == kMediaItemContext) {
         // AVFoundation may report from another thread.
         AVPlayerItem *item = object;
         dispatch_async(dispatch_get_main_queue(), ^{ [self mediaItemChanged:item]; });
@@ -555,7 +557,6 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         [self relayoutRightArea];
         [self.lsp documentOpened:nil];
         [self updateTitle];
-        [self setStatus:path];
         return;
     }
     NSString *ext = path.pathExtension.lowercaseString;
@@ -897,11 +898,6 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     [self applyMarkdownMeasure];   // a page's centered inset goes with it
     self.showingMessage = YES;
     _activeTab.message = msg;   // shown again when the tab comes back
-}
-
-- (void)setStatus:(NSString *)path {
-    self.window.title = [NSString stringWithFormat:@"mutible — %@",
-                         path.lastPathComponent];
 }
 
 @end

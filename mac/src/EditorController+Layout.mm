@@ -263,6 +263,7 @@
     [self updateDetailsTimer];
     [self.window addObserver:self forKeyPath:@"title"
                      options:NSKeyValueObservingOptionInitial context:NULL];
+    [self windowTitleStartObservingFocus];
     [self showEmptyState];
     [self.window makeKeyAndOrderFront:nil];
     [self.outline reloadData];
@@ -950,55 +951,9 @@ static const CGFloat kDividerGrabSlop = 5;
     if (self.hintsVisible) [self updateHints];
 }
 
-// m:ss, or h:mm:ss from an hour up.
-static NSString *MCFormatDuration(double seconds) {
-    long t = (long)llround(seconds);
-    long h = t / 3600, m = (t / 60) % 60, s = t % 60;
-    return h > 0 ? [NSString stringWithFormat:@"%ld:%02ld:%02ld", h, m, s]
-                 : [NSString stringWithFormat:@"%ld:%02ld", m, s];
-}
-
 - (void)updateTitle {
     [self updateLargeFileNote];
-    // With no file open, the folder's name.
-    NSString *name = self.currentPath.lastPathComponent ?: _root.path.lastPathComponent;
-    if (!name.length) name = @"mutible";
-    if (_activeTab.gone) name = [name stringByAppendingString:@" (deleted)"];
-    if (self.isDiff)
-        name = _activeTab.page ? (_activeTab.page.pageTitle ?: @"")
-             : _activeTab.comparison ? (_activeTab.comparison.title ?: @"Diff")
-             : self.diffIsCommit ? self.diffName
-                                 : [NSString stringWithFormat:@"%@ (diff)", self.diffName];
-    NSString *flag = self.dirty ? @"● " : @"";
-    NSString *mode = (self.canTogglePreview && self.previewMode) ? @"  [Preview]" : @"";
-    if (self.isImage)
-        mode = [NSString stringWithFormat:@"  %.0f × %.0f",
-                self.imagePixels.width, self.imagePixels.height];
-    if (self.isPDF) {
-        NSUInteger n = self.pdfView.document.pageCount;
-        mode = n == 1 ? @"  1 page"
-                      : [NSString stringWithFormat:@"  %lu pages", (unsigned long)n];
-    }
-    if (self.isMedia) {
-        // Video: pixel size as shown (rotation applied), then the duration.
-        // Audio has no picture, so only the duration.
-        NSMutableString *m = [NSMutableString string];
-        NSSize px = self.mediaPixels;
-        if (px.width > 0 && px.height > 0)
-            [m appendFormat:@"  %.0f × %.0f", px.width, px.height];
-        if (self.mediaSeconds >= 0)
-            [m appendFormat:@"  %@", MCFormatDuration(self.mediaSeconds)];
-        mode = m;
-    }
-    // A Markdown file with tasks: how many are done.
-    if (self.isMarkdown && self.currentPath && !self.isDiff) {
-        NSString *src = self.textView.editable ? self.textView.string : self.sourceText;
-        MarkdownTasks::Counts c = MarkdownTasks::count(Utf8String(src ?: @""));
-        if (c.total > 0)
-            mode = [mode stringByAppendingFormat:@"  %d of %d done", c.done, c.total];
-    }
-    self.window.title = [NSString stringWithFormat:@"%@%@ — mutible%@",
-                         flag, name, mode];
+    [self refreshWindowTitle];   // EditorController+WindowTitle.mm
     // The close button's dot: unsaved changes in any tab.
     self.window.documentEdited = [self hasUnsavedChanges];
     [self reloadTabStrip];   // the dots on the tabs

@@ -254,6 +254,7 @@ static const int kResizeCells = 4;
     self.strip.items = items;
     self.strip.activeIndex = _selected;
     self.strip.needsDisplay = YES;
+    if (_onTitlesChanged) _onTitlesChanged();
 }
 
 // ------------------------------------------------------------ the terminals

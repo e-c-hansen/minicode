@@ -55,6 +55,7 @@ static Model::Session &MCTabWindows() {
     [self stopMedia];
     [self stopWatching];
     [self.window removeObserver:self forKeyPath:@"title"];
+    [self windowTitleStopObservingFocus];
     MCTabWindows().removeWindow(_winId);
     _win = nullptr;
 }
