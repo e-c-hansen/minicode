@@ -15,6 +15,7 @@
 #import "FileTree.h"   // gShowHidden, for Show Hidden Files' checkmark
 #import "ChangePanel.h"
 #import "PalettePanel.h"
+#import "ThemePickerPanel.h"
 #import "BackupStore.h"
 #import "EditorFont.h"
 #import "IdeLinkServer.h"
@@ -783,6 +784,7 @@ static BOOL MCWindowTabAction(SEL a) {
     }
     if (item.action == @selector(showContextMenu:))
         return (NSApp.keyWindow ?: NSApp.mainWindow) != nil;
+    if (item.action == @selector(selectColorTheme:)) return [self current] != nil;
     if (item.action == @selector(showSessionInBrowser:) ||
         item.action == @selector(copySessionBrowserLink:))
         return [self current] != nil;
@@ -893,6 +895,12 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)goToLinePrompt:(id)sender     { (void)sender; [self showPaletteWithText:@":"]; }
 - (void)goToSymbolInFile:(id)sender   { (void)sender; [self showPaletteWithText:@"@"]; }
 - (void)goToSymbolInWorkspace:(id)sender { (void)sender; [self showPaletteWithText:@"#"]; }
+// Preferences: Color Theme (ThemePickerPanel.h), over the window in front.
+- (void)selectColorTheme:(id)sender {
+    (void)sender;
+    EditorController *c = [self current];
+    if (c) MCShowThemePicker(c.window);
+}
 - (void)navigateBack:(id)sender       { [[self current] navigateBack:sender]; }
 - (void)navigateForward:(id)sender    { [[self current] navigateForward:sender]; }
 // App-wide, so it works from any window.

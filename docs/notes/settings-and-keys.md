@@ -54,6 +54,35 @@ found through that list.
   popovers that force DarkAqua and inline hex are unchanged.
   `selectedTextAttributes` is only a background, since after a switch AppKit
   drew selected text in its own color.
+- **The theme picker** (2026-11-18, the owner's decision: settings stay a
+  text file, and only themes get a picker that previews;
+  `ThemePicker.{h,cpp}`, `themepick:*`, `ThemePickerPanel.{h,mm}`, checked
+  in `config_writes`). VS Code's Preferences: Color Theme,
+  `workbench.action.selectTheme`, on Ctrl+Cmd+T (VS Code's Cmd+K Cmd+T, as
+  a Cmd+K chord is Control+Command and its second key in mutible), View >
+  Theme > Choose Theme… (the submenu's first item, nil target, so the app
+  delegate's `selectColorTheme:`), and the palette by that name. It is an
+  `MCPalettePick` with `preview`, `cancel` and `initialIndex`
+  (`PalettePanel.h`): the rows are `ThemePicker::rows()` (dark then light,
+  each by title, "dark themes" and "light themes" at the right of each
+  group's first row), the theme in use selected. `ThemePicker::Session`
+  decides: each row the list comes to (arrows, typing, the pointer over a
+  row through the table's tracking area) is previewed once; Return gives
+  the id to write ("" for the set theme: nothing written), which goes
+  through `MCChooseTheme`, so the write keeps the file byte for byte
+  apart from the theme line (`Settings::withTheme`), asks about the
+  file's own colors, and is refused while a tab holds the file unsaved;
+  then the preview ends, so a refused or cancelled write shows the set
+  theme again. Esc, a click outside, the keyboard leaving, or the palette
+  going with its window ends the preview, nothing written. The preview
+  is `AppSettings previewTheme:` (`Settings::setTheme` over the parsed
+  file, kept across a reload, so the file's own colors still win), posted
+  as a settings change only when the theme on show changes; every window
+  and the palette itself (`settingsChanged:`, keeping the shown row
+  selected) follow. A preview step is bound at 100 ms of main-thread CPU
+  with three tabs open. There is no pair of themes that follows the
+  system's appearance (VS Code's window.autoDetectColorScheme); if one
+  comes, the picker should write the theme for the appearance in use.
 - **mutible's own writes** to settings.conf and keys.conf (a theme, the IDE
   link toggle, the first file of either) go through `MCWriteConfigFile`
   (AppSettings.h, over `FolderSearch::writeFileAtomically`), never

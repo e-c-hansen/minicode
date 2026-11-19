@@ -279,6 +279,8 @@ theme = light-modern
 
 Any color the file sets of its own wins over the theme's, so you can take a theme and change the few colors you would rather have. When you pick a theme and the file already sets colors, mutible asks whether to comment those lines out so the whole theme shows; they stay in the file to switch back on. A light theme gives the window light scroll bars, fields and menus too.
 
+On the Mac, to see the themes before you pick one, press <kbd>⌃⌘T</kbd> (VS Code's Preferences: Color Theme, which is <kbd>⌘K</kbd> <kbd>⌘T</kbd> there; mutible has no two-key shortcuts), or choose View > Theme > Choose Theme…, or type "choose theme" into the command palette. The palette lists the themes, the dark ones and then the light ones, with the one in use selected. As you move through the list with <kbd>↑</kbd> and <kbd>↓</kbd>, type to narrow it, or rest the pointer on a row, that theme shows at once in every window: the editor, the file tree, the terminals, the pages, and the palette itself. <kbd>⏎</kbd> keeps it and writes the theme line into the settings file as View > Theme does, leaving the rest of the file, comments included, as it was. <kbd>⎋</kbd>, or a click outside the palette, puts back the theme you had and leaves the file untouched.
+
 You don't have to find the right line yourself. Right-click the file tree, the editor, the Markdown preview, the tabs, the terminal, the browser, the status bar, the source control panel, or on the Mac the title bar, and choose Adjust Settings at the bottom of the menu. The settings file opens with that part's keys in view and briefly highlighted, its first value selected; a settings file older than some of those keys gets their commented-out defaults added at its end. View > Adjust Settings lists the same parts.
 
 ![Picking new colors for the file tree, the editor and the status bar](demos/settings.gif)
@@ -491,6 +493,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Add the next place the selected text occurs to the selection, or select the word at the cursor | <kbd>⌘D</kbd> | <kbd>Ctrl+D</kbd> |  |
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | <kbd>⌘I</kbd> | <kbd>Ctrl+I</kbd> (edits in the editor so far) |  |
 | Browse the file tree and open the selected file | <kbd>↑</kbd>, <kbd>↓</kbd>, <kbd>⏎</kbd> | <kbd>Up</kbd>, <kbd>Down</kbd>, <kbd>Enter</kbd>; <kbd>Left</kbd> and <kbd>Right</kbd> close and open folders |  |
+| Choose a color theme, each one showing as you move through the list | <kbd>⌃⌘T</kbd> |  |  |
 | Clear the terminal's last command and its output, as Terminal.app's Clear to Previous Mark does; again for the one before | <kbd>⌘L</kbd> in the terminal (Select Line in the editor) |  |  |
 | Clear the terminal, its scrollback included | <kbd>⌘K</kbd> | Clear Terminal in the Terminal menu or the command palette, which clears the screen and keeps the scrollback; it has no key, since the key it would take is the shell's kill-line |  |
 | Close an agent's note (`mutible open --note`) in the editor | <kbd>⎋</kbd>, or its × |  |  |

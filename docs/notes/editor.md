@@ -480,6 +480,14 @@ found through that list.
   Folder… now asks about unsaved tabs after the choice (`switchToFolder:`),
   so a cancelled pick asks nothing. A pick or the folder picker skips the
   menu walk the palette makes for commands.
+- **Pick lists that preview** (2026-11-18, the theme picker,
+  `docs/notes/settings-and-keys.md`): an `MCPalettePick` with `preview`
+  shows each row the selection comes to (arrows, typing, `hoverRow:` from
+  the table's mouse-moved tracking area), once per row (`_pickShown`);
+  with empty text the `initialIndex` row is selected, and the row on show
+  stays selected while it matches. `cancel` runs on every close without a
+  choice (`ran` unset), and from `dealloc` if the palette went with its
+  window. The overlay recolors on a settings change while open.
 - Go Back and Forward (Ctrl+-, Ctrl+Shift+-): `MCNavigator` over `NavHistory`
   (places within ten lines are one entry; a new jump drops what lay ahead; 50
   entries; entries follow renames and leave with deleted files). Recorded: tab

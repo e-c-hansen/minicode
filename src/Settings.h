@@ -196,6 +196,10 @@ public:
 
     // The theme the file picks (dark-modern when it names none).
     const Theme& theme() const { return *theme_; }
+    // Shows another theme without the file naming it (the theme picker's
+    // preview, ThemePicker.h): every color the theme gives changes, and the
+    // colors the file sets still win. `t` must be one of themes().
+    void setTheme(const Theme& t) { theme_ = &t; }
     // Whether the editor's background, as resolved, is dark: the window's
     // own controls (scroll bars, menus in it, text fields) follow this.
     bool isDark() const;

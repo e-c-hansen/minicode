@@ -671,6 +671,12 @@ const std::vector<Command>& all() {
          "togglePlayback:", 0, 0, nullptr},
         {"editor.action.showContextMenu", "Show Context Menu", "View",
          "shift+f10 ctrl+enter contextmenu", A, "showContextMenu:", 0, Global, nullptr},
+        // VS Code's Preferences: Color Theme, Cmd+K Cmd+T. mutible has no
+        // chords: a Cmd+K chord is Control+Command and its second key, as
+        // Open Preview to the Side's is. The themes preview as the list
+        // moves (ThemePicker.h); the menu item is View > Theme's first.
+        {"workbench.action.selectTheme", "Choose Theme…", "View > Theme", "ctrl+cmd+t", A,
+         "selectColorTheme:", 0, 0, nullptr},
 
         // ---- Terminal
         {"workbench.action.terminal.new", "New Terminal", "Terminal", "ctrl+shift+`", A,
