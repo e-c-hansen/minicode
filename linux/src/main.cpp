@@ -831,6 +831,43 @@ static bool isBrowserWindow(App* app) {
     return !app->rootDir.empty() && Bookmarks::sameFolder(app->rootDir, bookmarksFolder());
 }
 
+static App* appForWindow(GtkWindow* w);
+
+// Bookmarks per workspace (the Mac's #206): the window's folders
+// (WebBookmark::places), its folder's .mutible/bookmarks to save in and
+// list first, whatever the tree's focus, and the bookmark folder as Shared;
+// in the browser window and with no window, the bookmark folder alone.
+static WebBookmark::Places bookmarkPlaces(App* app) {
+    return Bookmarks::places(app && !app->dead ? app->rootDir : std::string(), bookmarksFolder());
+}
+
+// The window the menu bar's Bookmarks menu is filled for: GTK's active
+// window (the one focused last), else the newest open one.
+static App* bookmarksMenuWindow() {
+    App* a = appForWindow(gtk_application_get_active_window(g.gapp));
+    if (a && !a->dead) return a;
+    for (auto it = g.windows.rbegin(); it != g.windows.rend(); ++it)
+        if (!(*it)->dead) return *it;
+    return nullptr;
+}
+
+// Where a bookmark or a folder of them is, for the status bar:
+// ".mutible/bookmarks" for one inside the window's folder, else
+// "~/Bookmarks/Reading" (and always in the browser window).
+static std::string bookmarkPlace(App* app, const std::string& path) {
+    if (!isBrowserWindow(app) && Bookmarks::inside(path, app->rootDir)) {
+        char* real = realpath(path.c_str(), nullptr);
+        char* root = realpath(app->rootDir.c_str(), nullptr);
+        std::string rel;
+        if (real && root && std::strncmp(real, root, std::strlen(root)) == 0)
+            rel = real + std::strlen(root) + (std::strcmp(root, "/") == 0 ? 0 : 1);
+        free(real);
+        free(root);
+        if (!rel.empty()) return rel;
+    }
+    return Bookmarks::shortPath(path);
+}
+
 // The addresses shown in the window's browser pane, the pane made visible
 // with the keyboard where it was; the page gets it when asked for (or when
 // what had it is hidden now). In the browser window the page has the whole
@@ -934,12 +971,18 @@ static void scheduleBookmarkRefresh() {
     }, nullptr);
 }
 
-// A watch on the bookmark folder and the folders below it (three levels, a
-// hundred at most), made again when that set changes.
+// A watch on the bookmark folder, each window's .mutible/bookmarks and the
+// folders below them (three levels, a hundred at most), made again when
+// that set changes (a first save makes a workspace's folder).
 static void watchBookmarkFolders() {
     std::vector<std::string> dirs;
-    const std::string root = bookmarksFolder();
-    std::vector<std::pair<std::string, int>> todo = {{root, 0}};
+    std::vector<std::pair<std::string, int>> todo = {{bookmarksFolder(), 0}};
+    for (App* a : g.windows) {
+        const std::string own = bookmarkPlaces(a).save;
+        if (std::find_if(todo.begin(), todo.end(), [&own](const auto& t) { return t.first == own; }) ==
+            todo.end())
+            todo.push_back({own, 0});
+    }
     while (!todo.empty() && dirs.size() < 100) {
         const auto [dir, depth] = todo.back();
         todo.pop_back();
@@ -971,7 +1014,10 @@ static void watchBookmarkFolders() {
     }
 }
 
-// The menu bar's Bookmarks menu: Bookmark This Page, then the folder.
+// The menu bar's Bookmarks menu: Bookmark This Page, then the bookmarks of
+// the window in front (its workspace's, then Shared). It is one menu for
+// every window, so it is filled again when another window comes to the
+// front.
 static void fillBookmarksMenu() {
     if (!g.bookmarksMenu) return;
     g_menu_remove_all(g.bookmarksMenu);
@@ -979,7 +1025,7 @@ static void fillBookmarksMenu() {
     g_menu_append(top, "Bookmark This Page", "win.savebookmark");
     g_menu_append_section(g.bookmarksMenu, nullptr, G_MENU_MODEL(top));
     g_object_unref(top);
-    GMenu* list = Bookmarks::menu(bookmarksFolder());
+    GMenu* list = Bookmarks::menu(bookmarkPlaces(bookmarksMenuWindow()));
     g_menu_append_section(g.bookmarksMenu, nullptr, G_MENU_MODEL(list));
     g_object_unref(list);
 }
@@ -1034,8 +1080,26 @@ static void act_open_bookmark_folder(GSimpleAction*, GVariant* param, gpointer u
     showWebAddresses(app, urls, true);
 }
 
+// Shared > Move to This Workspace: the shared bookmark (the item's target)
+// moved into this window's .mutible/bookmarks, under a free name.
+static void act_move_bookmark(GSimpleAction*, GVariant* param, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!param || app->dead) return;
+    std::string err;
+    const std::string to =
+        Bookmarks::moveToWorkspace(bookmarkPlaces(app), g_variant_get_string(param, nullptr), &err);
+    if (to.empty()) {
+        flashStatus(app, "The bookmark was not moved: " + err);
+        gtk_widget_error_bell(app->window);
+        return;
+    }
+    flashStatus(app, "Moved “" + baseName(to) + "” to " +
+                         bookmarkPlace(app, to.substr(0, to.rfind('/'))));
+    refreshBookmarkUi();
+}
+
 // The star: a page not bookmarked is saved; the filled star moves its
-// bookmark to the Trash.
+// bookmark (this workspace's, else the shared one) to the Trash.
 static void starClicked(App* app, const std::string& url, bool bookmarked) {
     if (app->dead) return;
     if (!bookmarked) {
@@ -1043,7 +1107,7 @@ static void starClicked(App* app, const std::string& url, bool bookmarked) {
         scheduleBookmarkRefresh();
         return;
     }
-    const std::string file = Bookmarks::fileFor(bookmarksFolder(), url);
+    const std::string file = Bookmarks::fileFor(bookmarkPlaces(app), url);
     std::string err;
     if (file.empty()) {
         flashStatus(app, "That page is not bookmarked");
@@ -1055,11 +1119,17 @@ static void starClicked(App* app, const std::string& url, bool bookmarked) {
     refreshBookmarkUi();
 }
 
-// The palette's rows, "Bookmarks > Folder/Name", read now.
-static std::vector<PalettePanel::Context::BookmarkRow> paletteBookmarks() {
+// The palette's rows, as the window's Bookmarks menu has them and read now:
+// "Bookmarks > Folder/Name" for the workspace's, "Bookmarks > Shared >
+// Folder/Name" for the shared folder's.
+static std::vector<PalettePanel::Context::BookmarkRow> paletteBookmarks(App* app) {
     std::vector<PalettePanel::Context::BookmarkRow> out;
-    for (const Bookmarks::Found& f : Bookmarks::all(bookmarksFolder(), 3000))
+    const WebBookmark::Places p = bookmarkPlaces(app);
+    for (const Bookmarks::Found& f : Bookmarks::all(p.save, 3000))
         out.push_back({"Bookmarks > " + f.menuPath, f.path});
+    if (!p.shared.empty())
+        for (const Bookmarks::Found& f : Bookmarks::all(p.shared, 3000))
+            out.push_back({"Bookmarks > Shared > " + f.menuPath, f.path});
     return out;
 }
 
@@ -1107,6 +1177,7 @@ static void openFolder(App* app, const std::string& dir) {
         buildHeldTerminals(app, false);
     }
     app->nav->clear();   // Go Back's places were the old folder's
+    scheduleBookmarkRefresh();   // the new folder's bookmarks, its star
     // After the tabs close, so no old file is reopened under the new root.
     if (app->lsp) app->lsp->setRoot(dir);   // servers belong to a folder
 #ifdef MUTIBLE_ENABLE_TERMINAL
@@ -1770,11 +1841,12 @@ static void act_new_browser_tab(GSimpleAction*, GVariant*, gpointer userp) {
 // ---- Saving pages as bookmarks (PARITY.md 4.8; the Mac's saveBrowserBookmark:)
 #ifdef MUTIBLE_ENABLE_BROWSER
 // Where a bookmark is saved: in the window rooted at the bookmark folder the
-// tree's selected folder (a selected file's folder), else the bookmark
-// folder itself, made when missing. "" with a note in the status bar when it
-// cannot be made.
+// tree's selected folder (a selected file's folder), else this workspace's
+// .mutible/bookmarks (the window's folder's, whatever the tree's focus),
+// made when missing; no .gitignore, since committing them is the point. ""
+// with a note in the status bar when it cannot be made.
 static std::string bookmarkFolderForSaving(App* app) {
-    const std::string folder = bookmarksFolder();
+    const std::string folder = bookmarkPlaces(app).save;
     if (isBrowserWindow(app)) {
         std::string sel = app->tree->selectedDir();
         if (sel.empty()) {
@@ -1795,10 +1867,14 @@ static void act_save_bookmark(GSimpleAction*, GVariant*, gpointer userp) {
     const std::string url = app->browser->tabUrl(app->browser->activeTab());
     const std::string title = app->browser->tabTitle(app->browser->activeTab());
     if (!WebBookmark::isWebAddress(url)) return;
-    // A page saved once is not saved again under another number.
-    const std::string have = Bookmarks::fileFor(bookmarksFolder(), url);
+    // A page saved once, here or in the shared folder, is not saved again
+    // under another number.
+    const WebBookmark::Places places = bookmarkPlaces(app);
+    const std::string have = Bookmarks::fileFor(places, url);
     if (!have.empty()) {
-        flashStatus(app, "Already bookmarked as " + Bookmarks::shortPath(have));
+        const bool shared = Bookmarks::inside(have, places.shared);
+        flashStatus(app, (shared ? "Already bookmarked in Shared as " : "Already bookmarked as ") +
+                             bookmarkPlace(app, have));
         return;
     }
     const std::string folder = bookmarkFolderForSaving(app);
@@ -1810,7 +1886,7 @@ static void act_save_bookmark(GSimpleAction*, GVariant*, gpointer userp) {
         return;
     }
     flashStatus(app, "Saved \u201c" + path.substr(path.rfind('/') + 1) + "\u201d in " +
-                         Bookmarks::shortPath(folder));
+                         bookmarkPlace(app, folder));
     scheduleBookmarkRefresh();
 }
 
@@ -1838,7 +1914,7 @@ static void act_save_browser_tabs(GSimpleAction*, GVariant*, gpointer userp) {
         return;
     }
     std::string note = "Saved " + std::to_string(saved) + (saved == 1 ? " tab" : " tabs") +
-                       " in \u201c" + Bookmarks::shortPath(folder) + "\u201d";
+                       " in \u201c" + bookmarkPlace(app, folder) + "\u201d";
     if (!err.empty()) note += " (not all: " + err + ")";
     flashStatus(app, note);
     scheduleBookmarkRefresh();
@@ -3538,7 +3614,9 @@ static void showPalette(App* app, const char* text) {
     ctx.openWorkspaceSymbol = [app](const Lsp::Symbol& symbol) {
         if (!app->dead && app->lsp) app->lsp->revealSymbol(symbol);
     };
-    ctx.bookmarks = [] { return paletteBookmarks(); };
+    ctx.bookmarks = [app] {
+        return app->dead ? std::vector<PalettePanel::Context::BookmarkRow>() : paletteBookmarks(app);
+    };
     app->palette->show(text, ctx);
 }
 
@@ -5077,13 +5155,13 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->browser->onChanged = [app] {
         if (!app->dead && app->persist) app->persist->changed(nullptr);
     };
-    app->browser->isBookmarked = [](const std::string& url) {
-        return !Bookmarks::fileFor(bookmarksFolder(), url).empty();
+    app->browser->isBookmarked = [app](const std::string& url) {
+        return !app->dead && !Bookmarks::fileFor(bookmarkPlaces(app), url).empty();
     };
     app->browser->onStar = [app](const std::string& url, bool bookmarked) {
         starClicked(app, url, bookmarked);
     };
-    app->browser->bookMenu = [] { return Bookmarks::menu(bookmarksFolder()); };
+    app->browser->bookMenu = [app] { return Bookmarks::menu(bookmarkPlaces(app)); };
     browserPane = app->browser->widget();
     StartupLog::mark("window: browser");
 #endif
@@ -5420,7 +5498,8 @@ static App* newWindow(const std::string& root, const std::string& file,
     addAction(app, "savebrowsertabs", G_CALLBACK(act_save_browser_tabs));
     const std::vector<std::pair<const char*, GCallback>> bookmarkActions = {
         {"openbookmark", G_CALLBACK(act_open_bookmark)},
-        {"openbookmarkfolder", G_CALLBACK(act_open_bookmark_folder)}};
+        {"openbookmarkfolder", G_CALLBACK(act_open_bookmark_folder)},
+        {"movebookmark", G_CALLBACK(act_move_bookmark)}};
     for (const auto& [name, cb] : bookmarkActions) {
         GSimpleAction* a = g_simple_action_new(name, G_VARIANT_TYPE_STRING);
         g_signal_connect(a, "activate", cb, app);

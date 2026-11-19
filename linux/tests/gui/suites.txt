@@ -103,6 +103,7 @@ MarkdownSideEditSuite.cpp
 BookmarkSaveSuite.cpp
 BookmarksSuite.cpp
 BookmarkMenuSuite.cpp
+BookmarkWorkspaceSuite.cpp
 RecentFoldersSuite.cpp
 DemoSuite.cpp
 UndoHistorySuite.cpp

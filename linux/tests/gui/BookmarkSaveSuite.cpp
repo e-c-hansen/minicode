@@ -1,10 +1,12 @@
 // BookmarkSaveSuite.cpp — saving pages as bookmarks (`./build/mutible-guitest
 // bookmark_save`, PARITY.md 4.8, second part; the Mac's bookmarks suite).
-// Pages come from a server inside this process on 127.0.0.1 and the
-// bookmark folder is a scratch one, so nothing leaves this machine and
-// nothing lands in the real ~/Bookmarks.
+// Pages come from a server inside this process on 127.0.0.1, and the page
+// is saved in the scratch project's .mutible/bookmarks (bookmarks per
+// workspace, HANDOFF item 111) with a scratch shared folder, so nothing
+// leaves this machine and nothing lands in the real ~/Bookmarks.
 //   - Ctrl+D with the page focused writes a .url named for the page's
-//     title, holding its address;
+//     title, holding its address, in the workspace's folder (the shared
+//     folder untouched);
 //   - a second one writes nothing and says where the bookmark is;
 //   - a page with a taken title gets a number, and never replaces a file;
 //   - Ctrl+D in the editor is still Add Next Occurrence and saves nothing;
@@ -18,6 +20,9 @@
 #include "WebBookmark.h"
 #include "WindowLayout.h"
 
+#include <ftw.h>
+#include <glib/gstdio.h>
+
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -28,7 +33,17 @@ namespace {
 
 GSocketService* gServer = nullptr;
 int gPort = 0;
-std::string gFolder;
+std::string gFolder, gShared;   // the project's .mutible/bookmarks, browser.bookmarks
+
+// The project's .mutible, which this suite made, removed: only inside the
+// scratch world.
+void removeWorkspaceBookmarks() {
+    const std::string dir = MCGuiProject() + "/.mutible", root = MCGuiScratch() + "/";
+    GCHECK(dir.compare(0, root.size(), root) == 0);
+    if (dir.compare(0, root.size(), root) != 0) return;
+    nftw(dir.c_str(), [](const char* p, const struct stat*, int, struct FTW*) { return g_remove(p); }, 16,
+         FTW_DEPTH | FTW_PHYS);
+}
 
 gboolean onIncoming(GThreadedSocketService*, GSocketConnection* conn, GObject*, gpointer) {
     GInputStream* in = g_io_stream_get_input_stream(G_IO_STREAM(conn));
@@ -83,8 +98,11 @@ void focusPage() { gtk_widget_grab_focus(browser()->webView()); }
 
 MC_GUI_SUITE(bookmark_save) {
     MCGuiStep("a scratch bookmark folder, a server, the pane", [] {
-        gFolder = MCGuiScratch() + "/bookmark-save";
-        MCGuiSetSettings("lsp.enabled = false\nbrowser.bookmarks = " + gFolder + "\n");
+        gShared = MCGuiScratch() + "/bookmark-save";
+        gFolder = MCGuiProject() + "/.mutible/bookmarks";
+        removeWorkspaceBookmarks();   // none left by an earlier suite
+        GCHECK(!MCGuiFileExists(gFolder));
+        MCGuiSetSettings("lsp.enabled = false\nbrowser.bookmarks = " + gShared + "\n");
         GCHECK(browser() != nullptr);
         if (!browser()) return;
         gServer = g_threaded_socket_service_new(4);
@@ -112,6 +130,8 @@ MC_GUI_SUITE(bookmark_save) {
         GCHECK_EQ_STR(addressOf(gFolder + "/Alpha.url"), url("/one"));
         GCHECK(names(gFolder).size() == 1);
         GCHECK(has(statusText(), "Saved") && has(statusText(), "Alpha.url"));
+        GCHECK(has(statusText(), "in .mutible/bookmarks"));
+        GCHECK(!MCGuiFileExists(gShared + "/Alpha.url"));
     });
     MCGuiStep("Ctrl+D again on the same page", [] {
         focusPage();
@@ -195,7 +215,9 @@ MC_GUI_SUITE(bookmark_save) {
         GCHECK(got == want);
         GCHECK(has(statusText(), "Saved 3 tabs"));
     });
-    MCGuiStep("the server is stopped", [] {
+    MCGuiStep("the server is stopped, the workspace's bookmarks removed", [] {
+        GCHECK(!MCGuiFileExists(gShared));   // nothing went to the shared folder
+        removeWorkspaceBookmarks();
         if (gServer) g_socket_service_stop(gServer);
         if (gServer) g_object_unref(gServer);
         gServer = nullptr;

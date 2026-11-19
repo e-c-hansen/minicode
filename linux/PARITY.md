@@ -1569,6 +1569,8 @@ These may run in parallel.
   Save Page as Bookmark on Ctrl+D (D14) and Save All Tabs (65), and the
   toolbar's star, the book, the Bookmarks menu and the palette's rows (66).
   Checked by the `bookmarks`, `bookmark_save` and `bookmark_menu` suites.
+  Bookmarks per workspace (the Mac's #206: `.mutible/bookmarks`, Shared,
+  Move to This Workspace) are item 111, checked by `bookmark_workspace`.
 - [x] **4.9 Focus on Folder.** `TreeFocus` (core, `FileDetails.h`,
   `tree:focus`) and `TabSessions::Session.treeFocus`. Added to the Mac on
   2026-11-17, after this file was written: "Focus on Folder" in

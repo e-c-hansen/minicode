@@ -6663,3 +6663,66 @@ the editor is selected.
 - **Checks**: `hints_panel` (HintsPanelSuite.cpp) and `window_title`
   (WindowTitleSuite.cpp), their headers saying what they check; the
   core's `hints:*` and `window-title:*` groups of `make test`.
+
+### 111. Browser bookmarks per workspace (November 2026)
+
+The owner's request, the Mac's #206 brought to GTK with the same core
+calls (`WebBookmark::workspaceFolder`, `places`, `lookupOrder`, `entries`,
+`mergedEntries`, `moveDestination`; none of their logic copied).
+
+- **What a user meets.** In a window on a folder, Bookmark This Page
+  (Ctrl+D with the page focused, the star, File > Save Page as Bookmark)
+  writes to `<folder>/.mutible/bookmarks/`, made on the first save, no
+  .gitignore written; the status bar says "Saved “Alpha.url” in
+  .mutible/bookmarks". The window's folder is the workspace whatever the
+  tree's focus. The book and the menu bar's Bookmarks menu list that
+  folder's bookmarks first ("No bookmarks" when it has none), then a
+  "Shared" submenu with ~/Bookmarks (`browser.bookmarks`) when it has
+  any; the shared folder and each folder in it end with "Move to This
+  Workspace", a submenu of its bookmarks, which moves the file to the
+  workspace's top level, a number added when the name is taken. "Already
+  bookmarked" and the star look in the workspace, then Shared ("Already
+  bookmarked in Shared as ~/Bookmarks/..."); the filled star trashes the
+  workspace's file before a shared one. The palette's rows are
+  "Bookmarks > Name" and "Bookmarks > Shared > Name". Another folder's
+  window lists its own. The window on ~/Bookmarks (`mutible https://...`)
+  is as before: that folder alone, saving in its tree's folder, no Shared
+  part; opening a .url file (the tree, the file manager) is unchanged. The
+  tree hides `.mutible` as every dot name until Show Hidden Files.
+- **Code.** `linux/src/Bookmarks.{h,cpp}`: `places` (the root taken as
+  the shared folder when `sameFolder`, as the Mac's `MCPlaces`), `names`
+  (a folder's names in the tree's order, for `WebBookmark::entries`;
+  `list` and the menus now go through the core), `inside`,
+  `menu(Places)`, `fileFor(Places, url)` (`lookupOrder`) and
+  `moveToWorkspace` (`g_file_move` without overwrite, so never over a
+  file, the next free name on `G_IO_ERROR_EXISTS`; GIO copies across file
+  systems). main.cpp: `bookmarkPlaces`, `bookmarksMenuWindow`,
+  `bookmarkPlace` (the status bar's ".mutible/bookmarks"),
+  `act_move_bookmark` (`win.movebookmark`), the star, the book, the save
+  actions and the palette rows on the window's places, the watches on
+  each window's folder too, and a refresh when a window is re-rooted.
+- **Traps.** GtkPopoverMenu names each submenu's page by its label: a
+  second submenu of the same label in one menu is refused ("While adding
+  page: duplicate child name in GtkStack") and its button opens the
+  first, so Shared > Reading > Move to This Workspace showed Shared's own
+  list (the check fails so with the fix taken out). `Bookmarks::menu`
+  puts zero-width spaces after a label met again in the menu (`Builder::
+  appendSubmenu`), which also covers two folders of one name, a case the
+  one-folder menu had too; the checks read labels with them dropped. The
+  menu bar's Bookmarks menu is one GMenu for the whole application (GTK's
+  menubar model), not one a window: it is filled for
+  `gtk_application_get_active_window` and again on every window's
+  `notify::is-active`, so the check waits for it to follow the window
+  given the X focus.
+- **Checks**: `bookmark_workspace` (BookmarkWorkspaceSuite.cpp: saving
+  in A, the tree hiding `.mutible`, the book and the menu bar's menu with
+  Shared and its Move to This Workspace items, "already bookmarked"
+  preferring the workspace, a move by clicks through the book's pages and
+  one onto a taken name, B listing
+  none of A's, the menu following the window in front, and the window on
+  ~/Bookmarks keeping the one folder; the shared folder is the scratch
+  home's ~/Bookmarks, checked to be under `MCGuiScratch()` before
+  anything is written). `bookmark_save` and `bookmark_menu` now save in
+  and list the scratch project's `.mutible/bookmarks` and remove it at
+  their end; `bookmark_menu` checks the palette's Shared row. The core's
+  `bookmarks:workspace-*` groups of `make test` are the Mac's.
