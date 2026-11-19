@@ -1770,7 +1770,13 @@ MC_GUI_SUITE(worktree_review) {
         MCGuiWriteFile([wt stringByAppendingPathComponent:@"n.txt"], @"newer\n");
         [page() reload];
     });
-    MCGuiWait(@"the worktree read again", 15, ^BOOL { return page().loads > loads; });
+    // The read that shows n.txt's new text, not merely a later read: one
+    // started before the write (the apply's own git commands in the
+    // worktree wake its watcher) can land first and still show the old
+    // changes (CI on main, 2026-11-19).
+    MCGuiWait(@"the worktree read again, n.txt's change on show", 15, ^BOOL {
+        return page().loads > loads && [page().rowDescriptions containsObject:@"+ newer"];
+    });
     MCGuiStep(@"the agent worked on: Apply to Main… is back, the old result gone", ^{
         MCChangeReviewPage *p = page();
         NSButton *apply = [p valueForKey:@"applyButton"];
@@ -1798,6 +1804,11 @@ MC_GUI_SUITE(worktree_review) {
         [p applyToMain];
     });
     MCGuiWait(@"refused", 20, ^BOOL { return actions == 1; });
+    // The refusal stays over the read that shows late.txt, which it asks
+    // the user to look over (it went with that read: CI on main).
+    MCGuiWait(@"the page shows late.txt", 15, ^BOOL {
+        return [page().rowDescriptions containsObject:@"F late.txt  (new)  +1"];
+    });
     MCGuiStep(@"it names late.txt; main has none of it", ^{
         NSArray *shown = MCGuiAlertsShown();
         MCGuiNote(@"asked %@; refusal: %@", [shown subarrayWithRange:NSMakeRange(alerts, shown.count - alerts)],
