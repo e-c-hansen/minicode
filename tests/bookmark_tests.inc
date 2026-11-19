@@ -179,4 +179,91 @@ void testWebBookmarks() {
         CHECK(menuTitle(".url") == ".url");
         CHECK(menuTitle("Tabs 2026-11-12 14.03") == "Tabs 2026-11-12 14.03");
     }
+
+    GROUP("bookmarks:workspace-places");
+    {
+        CHECK(std::string(kWorkspaceFolder) == ".mutible/bookmarks");
+        CHECK(workspaceFolder("/Users/me/proj") == "/Users/me/proj/.mutible/bookmarks");
+        CHECK(workspaceFolder("/Users/me/proj/") == "/Users/me/proj/.mutible/bookmarks");
+        CHECK(workspaceFolder("/") == "/.mutible/bookmarks");
+        CHECK(workspaceFolder("") == "");
+
+        // A window on a folder: its own bookmarks, then the shared ones.
+        Places p = places("/Users/me/proj", "/Users/me/Bookmarks");
+        CHECK(p.save == "/Users/me/proj/.mutible/bookmarks");
+        CHECK(p.shared == "/Users/me/Bookmarks");
+        CHECK((lookupOrder(p) ==
+               std::vector<std::string>{"/Users/me/proj/.mutible/bookmarks", "/Users/me/Bookmarks"}));
+        // The home folder's window has its own too; the shared folder is
+        // still listed apart.
+        p = places("/Users/me", "/Users/me/Bookmarks");
+        CHECK(p.save == "/Users/me/.mutible/bookmarks");
+        CHECK(p.shared == "/Users/me/Bookmarks");
+
+        // The browser window (the window on the shared folder) and no
+        // window at all work on the shared folder alone.
+        p = places("/Users/me/Bookmarks/", "/Users/me/Bookmarks");
+        CHECK(p.save == "/Users/me/Bookmarks");
+        CHECK(p.shared.empty());
+        CHECK((lookupOrder(p) == std::vector<std::string>{"/Users/me/Bookmarks"}));
+        p = places("", "/Users/me/Bookmarks");
+        CHECK(p.save == "/Users/me/Bookmarks" && p.shared.empty());
+        CHECK(lookupOrder(Places{}).empty());
+    }
+
+    GROUP("bookmarks:workspace-entries");
+    {
+        const std::vector<Name> names = {{"B.url", false},   {"Reading", true}, {".hidden", true},
+                                         {"notes.txt", false}, {"a.webloc", false},
+                                         {".x.url", false},  {"Archive", true}};
+        std::vector<Entry> e = entries("/w/", names, false);
+        CHECK(e.size() == 4);
+        CHECK(e[0].folder && e[0].title == "Reading" && e[0].path == "/w/Reading");
+        CHECK(e[1].folder && e[1].title == "Archive");   // folders first, in the order given
+        CHECK(!e[2].folder && e[2].title == "B" && e[2].path == "/w/B.url");
+        CHECK(e[3].title == "a");
+        CHECK(!e[0].shared);
+        CHECK(entries("/w", names, false, 3).size() == 3);
+        CHECK(entries("/w", names, false, 0).empty());
+
+        // The merged list: the workspace's, then the shared folder's.
+        const Places p = places("/proj", "/home/Bookmarks");
+        std::vector<Entry> m = mergedEntries(p, {{"Docs.url", false}},
+                                             {{"Old.url", false}, {"Work", true}});
+        CHECK(m.size() == 3);
+        CHECK(m[0].path == "/proj/.mutible/bookmarks/Docs.url" && !m[0].shared);
+        CHECK(m[1].path == "/home/Bookmarks/Work" && m[1].shared && m[1].folder);
+        CHECK(m[2].path == "/home/Bookmarks/Old.url" && m[2].shared);
+        // In the browser window there is no Shared part.
+        m = mergedEntries(places("/home/Bookmarks", "/home/Bookmarks"), {{"Old.url", false}},
+                          {{"Old.url", false}});
+        CHECK(m.size() == 1 && !m[0].shared && m[0].path == "/home/Bookmarks/Old.url");
+        // Nothing in either.
+        CHECK(mergedEntries(p, {}, {}).empty());
+    }
+
+    GROUP("bookmarks:workspace-move");
+    {
+        const Places p = places("/proj", "/home/Bookmarks");
+        auto none = [](const std::string &) { return false; };
+        CHECK(moveDestination(p, "/home/Bookmarks/Old.url", none) ==
+              "/proj/.mutible/bookmarks/Old.url");
+        // From a folder in the shared one: into the workspace's own top.
+        CHECK(moveDestination(p, "/home/Bookmarks/Work/Wiki.webloc", none) ==
+              "/proj/.mutible/bookmarks/Wiki.webloc");
+        // A name taken gets a number.
+        auto taken = [](const std::string &n) { return n == "Old.url"; };
+        CHECK(moveDestination(p, "/home/Bookmarks/Old.url", taken) ==
+              "/proj/.mutible/bookmarks/Old 2.url");
+        // Only bookmark files below the shared folder move.
+        CHECK(moveDestination(p, "/home/Bookmarks/notes.txt", none).empty());
+        CHECK(moveDestination(p, "/home/Bookmarks", none).empty());
+        CHECK(moveDestination(p, "/home/BookmarksX/Old.url", none).empty());
+        CHECK(moveDestination(p, "/proj/.mutible/bookmarks/Docs.url", none).empty());
+        CHECK(moveDestination(p, "/home/Bookmarks/../x/Old.url", none).empty());
+        CHECK(moveDestination(p, "/home/Bookmarks//Old.url", none).empty());
+        // The browser window has nowhere to move to.
+        CHECK(moveDestination(places("/home/Bookmarks", "/home/Bookmarks"),
+                              "/home/Bookmarks/Old.url", none).empty());
+    }
 }

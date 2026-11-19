@@ -735,6 +735,25 @@ static BOOL MCWindowTabAction(SEL a) {
     if (urls.count) [self openWebAddressesInBrowserWindow:urls];
     else NSBeep();
 }
+// Move to This Workspace (the Shared submenu): the window in front's.
+- (void)moveBookmarkToWorkspace:(id)sender {
+    if ([self current]) [[self current] moveBookmarkToWorkspace:sender];
+    else NSBeep();
+}
+// The workspace's bookmark folder (.mutible/bookmarks, the item's
+// representedObject) in Finder, made first, to organize as any folder: it
+// is hidden in the tree unless hidden files are shown.
+- (void)showWorkspaceBookmarksFolder:(id)sender {
+    NSString *folder = [sender respondsToSelector:@selector(representedObject)]
+                           ? [sender representedObject] : nil;
+    NSString *err = nil;
+    if (![folder isKindOfClass:NSString.class] || !MCEnsureBookmarksFolder(folder, &err)) {
+        NSBeep();
+        if (err) NSLog(@"mutible: no bookmark folder (%@): %@", folder, err);
+        return;
+    }
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:folder isDirectory:YES]];
+}
 // The window on the bookmark folder, brought to the front (made, with the
 // folder, when there is none).
 - (void)showBookmarksFolder:(id)sender {
@@ -2112,18 +2131,19 @@ static void BuildMenu(void) {
     [navMenu addItem:prevStop];
     navItem.submenu = navMenu;
 
-    // Bookmarks: the bookmark folder (browser.bookmarks, ~/Bookmarks) as a
-    // menu, filled as it opens (Bookmarks.h), so the palette finds each
-    // bookmark too. A bookmark loads in the window's browser; with the
-    // browser's keyboard the pane answers itself.
+    // Bookmarks: the window in front's bookmarks (its folder's
+    // .mutible/bookmarks, then the bookmark folder, browser.bookmarks,
+    // under Shared) as a menu, filled as it opens (Bookmarks.h), so the
+    // palette finds each bookmark too. A bookmark loads in the window's
+    // browser; with the browser's keyboard the pane answers itself.
     NSMenuItem *bookmarksItem = [[NSMenuItem alloc] init];
     [menubar addItem:bookmarksItem];
     NSMenu *bookmarksMenu = [[NSMenu alloc] initWithTitle:@"Bookmarks"];
-    MCAttachBookmarksMenu(bookmarksMenu, nil, nil, ^(NSMenu *m) {
+    MCAttachWorkspaceBookmarksMenu(bookmarksMenu, ^NSString *{
+        return [(AppDelegate *)NSApp.delegate current].rootPath;
+    }, nil, ^(NSMenu *m) {
         [m addItem:[NSMenuItem separatorItem]];
         [m addItemWithTitle:@"Bookmark This Page" action:@selector(saveBrowserBookmark:)
-              keyEquivalent:@""];
-        [m addItemWithTitle:@"Show Bookmarks Folder" action:@selector(showBookmarksFolder:)
               keyEquivalent:@""];
     });
     bookmarksItem.submenu = bookmarksMenu;
