@@ -322,13 +322,18 @@ void Editor::refreshMirror() {
         return;
     }
     const std::vector<Document*> other = documentsOf(win_->tabs(win_->other()));
-    const std::vector<std::string> names = win_->labels(win_->other());
+    const std::vector<EditorTabs::TabName> names = win_->tabNames(win_->other());
     std::vector<TabStrip::Item> items;
     int on = -1;
     for (size_t i = 0; i < other.size() && i < names.size(); i++) {
         const Document* t = other[i];
         TabStrip::Item it;
-        it.title = t->kind() == Document::Kind::Diff ? t->diffTitle() : names[i];
+        if (t->kind() == Document::Kind::Diff) {
+            it.title = t->diffTitle();
+        } else {
+            it.title = names[i].name;
+            it.hint = names[i].hint;
+        }
         if (it.title.empty()) it.title = baseName(t->path());
         it.tooltip = t->path().empty() ? it.title : t->path();
         it.dirty = t->dirty();
