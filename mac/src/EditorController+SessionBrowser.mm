@@ -164,6 +164,11 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     };
 }
 
+// The folder changed on disk: a page showing Source Control reads again.
+- (void)sessionFolderChangedOnDisk {
+    [self.sessionBrowser gitChanged];
+}
+
 // A page shows a LaTeX document: what this window's own preview of it has
 // (never typeset again for the page), else a typeset of the server's own
 // preview, from the tab's text when the window has the file open, else

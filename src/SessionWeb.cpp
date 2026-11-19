@@ -8,6 +8,7 @@
 #include "MarkdownHtml.h"
 #include "SessionFiles.h"
 #include "SessionServer.h"
+#include "SessionWebGit.h"
 #include "Settings.h"
 #include "SqliteRead.h"
 #include "Text.h"
@@ -939,6 +940,14 @@ Json paletteJson(const Settings& s) {
     p.set("ruler", Json(hexColor(s.rulerColor())));
     // The tree's rows the ignore files ignore, as the apps' trees color them.
     p.set("treeIgnored", Json(hexColor(s.treeGitColor(TreeGitColor::Ignored))));
+    // Source Control's status letters, in the tree's git colors.
+    Json git = Json::object();
+    git.set("modified", Json(hexColor(s.treeGitColor(TreeGitColor::Modified))));
+    git.set("added", Json(hexColor(s.treeGitColor(TreeGitColor::Added))));
+    git.set("untracked", Json(hexColor(s.treeGitColor(TreeGitColor::Untracked))));
+    git.set("deleted", Json(hexColor(s.treeGitColor(TreeGitColor::Deleted))));
+    git.set("conflict", Json(hexColor(s.treeGitColor(TreeGitColor::Conflict))));
+    p.set("git", std::move(git));
     Json rulers = Json::array();
     for (int c : s.rulers()) rulers.push(Json(c));
     p.set("rulers", std::move(rulers));
@@ -1305,6 +1314,10 @@ struct Server::Conn {
     // version it was last sent.
     std::string latexAsked, latexRel, latexKey;
     std::uint64_t latexSent = 0;
+    // Source Control: it watches the folder's changes (`git`), asked for a
+    // read whose answer it has not had, and the read's version last sent.
+    bool gitWatch = false, gitAsked = false;
+    std::uint64_t gitSent = 0;
 };
 
 struct Server::Session : Client::Listener, Client::TermListener {
@@ -1399,6 +1412,8 @@ Server::Server() {
 }
 
 Server::~Server() {
+    // First, so a read still under way never wakes a pipe that is closed.
+    git_.reset();
     detach();
     for (auto& c : conns_)
         if (c->fd >= 0) ::close(c->fd);
@@ -1780,6 +1795,9 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     // A LaTeX document's typeset (R3's third slice): any page, since the
     // app typesets from a copy and changes nothing of the user's.
     if (t == "latex") return onLatex(c, j);
+    // Source Control (R3's fourth slice): git only reads, so any page.
+    if (t == "git") return onGit(c, j);
+    if (t == "review") return onReview(c, j);
     // The rest changes the session or the window: only from a page that
     // may (each says so to one that only reads).
     if (t == "open") onOpen(c, j);
@@ -2380,6 +2398,109 @@ void Server::typesetFailed(const std::string& path, const std::string& error) {
     if (typesets_.failed(path, error)) wake();
 }
 
+// ---- Source Control (R3's fourth slice, SessionWebGit.h)
+
+void Server::gitChanged() {
+    gitDirty_ = true;
+    wake();
+}
+
+void Server::askGit() {
+    if (!git_) {
+        ChangeReview::GitRunner run;
+        if (opt_.git) {
+            auto git = opt_.git;
+            run = [git](const std::string& dir, const std::vector<std::string>& args, const std::string& input) {
+                ChangeReview::GitOut o;
+                int status = -1;
+                o.ok = git(dir, args, input, &o.out, &o.err, &status);
+                o.status = status;
+                return o;
+            };
+        } else {
+            run = [](const std::string& dir, const std::vector<std::string>& args, const std::string& input) {
+                return runGit(dir, args, input);
+            };
+        }
+        git_ = std::make_unique<GitReads>(opt_.folder, opt_.showHidden, std::move(run), [this] { wake(); });
+    }
+    lastGitAsk_ = Clock::now();
+    git_->ask();
+}
+
+void Server::onGit(Conn& c, const Json& j) {
+    c.gitWatch = j["watch"].asBool(true);
+    if (!c.gitWatch) {
+        c.gitAsked = false;
+        return;
+    }
+    c.gitAsked = true;
+    askGit();
+}
+
+void Server::onReview(Conn& c, const Json& j) {
+    const GitReads::Latest l = git_ ? git_->latest() : GitReads::Latest();
+    if (!l.read) {
+        // Nothing read yet: the page asks again when the list comes.
+        Json m = Json::object();
+        m.set("t", Json("review"));
+        m.set("version", Json((int64_t)0));
+        m.set("pending", Json(true));
+        sendJson(c, m);
+        if (!git_) askGit();
+        return;
+    }
+    if (j["file"].isString()) {
+        const std::string key = j["file"].asString();
+        Json m = Json::object();
+        m.set("t", Json("reviewfile"));
+        m.set("version", Json((int64_t)l.version));
+        for (const ChangeReview::FileDiff& d : l.read->diffs)
+            if (d.file.key() == key) {
+                Json ids = Json::object();
+                ids.set(key, j["opened"]);
+                const ChangeReview::Opened opened = openedFrom(ids);
+                auto it = opened.find(key);
+                m.set("file", reviewFileJson(d, it == opened.end() ? std::set<int>() : it->second,
+                                             j["side"].asBool()));
+                return sendJson(c, m);
+            }
+        m.set("key", Json(key));
+        m.set("gone", Json(true));
+        return sendJson(c, m);
+    }
+    sendJson(c, reviewJson(*l.read, l.version, openedFrom(j["opened"]), sideFrom(j["side"])));
+}
+
+void Server::takeGit() {
+    if (!git_) {
+        gitDirty_ = false;   // nobody has asked for Source Control yet
+        return;
+    }
+    bool watched = false;
+    for (auto& c : conns_)
+        if (c->welcomed && c->gitWatch) watched = true;
+    if (gitDirty_) {
+        if (!watched) gitDirty_ = false;   // the next page to watch reads anew
+        else if (msSince(lastGitAsk_) >= 1000) {
+            gitDirty_ = false;
+            askGit();
+        }
+    }
+    const GitReads::Latest l = git_->latest();
+    if (l.finished == gitFinished_) return;
+    gitFinished_ = l.finished;
+    if (!l.read) return;
+    std::string text;
+    for (auto& c : conns_) {
+        if (!c->welcomed || !c->gitWatch || (!c->gitAsked && c->gitSent == l.version)) continue;
+        if (text.empty()) text = gitStatusJson(*l.read, l.version).dump();
+        sendText(*c, text);
+        c->gitAsked = false;
+        c->gitSent = l.version;
+    }
+}
+
 void Server::onOpen(Conn& c, const Json& j) {
     if (!session_ || !j["path"].isString()) return;
     const std::string rel = j["path"].asString();
@@ -2805,6 +2926,8 @@ bool Server::run() {
             timeout = (int)std::max(0LL, std::min<long long>(timeout, toLook));
             if (session_->pending) timeout = std::min(timeout, 30);
         }
+        // A change on disk waits out the second since the last read.
+        if (gitDirty_ && git_ && session_) timeout = (int)std::max(0LL, std::min<long long>(timeout, 1001 - msSince(lastGitAsk_)));
         polls.clear();
         polls.push_back(pollfd{wake_[0], POLLIN, 0});
         polls.push_back(pollfd{listen_, POLLIN, 0});
@@ -2840,6 +2963,7 @@ bool Server::run() {
             takeReads();
             pumpFiles();
             sendTypesets();
+            takeGit();
             if (session_->closed) {
                 Json e = Json::object();
                 e.set("t", Json("ended"));

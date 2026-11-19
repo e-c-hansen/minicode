@@ -48,12 +48,19 @@
 // reaches the page as a new PDF at a new address; a document the window
 // does not have open, clicked in the page's tree, is typeset by the
 // server's own preview, the window opening nothing and no file left
-// beside it.
+// beside it. Source Control (R3's fourth slice): the folder made a
+// repository with changes, the read-only page's Source Control lists them
+// as the window's does, a file clicked shows the review page of the
+// changes in a tab of the page's own (removed and added lines, the changed
+// words marked, syntax colors, no Stage or Discard anywhere), Side by Side
+// and an unchanged stretch opened; an agent's edit on disk reaches the page
+// with no reload (the window's FSEvents), and the repository is as it was.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 #import "EditorController.h"
 #import "EditorController+Private.h"
 #import "EditorTab.h"
+#import "GitPanel.h"   // MCGitExecutable, MCGitRunSync
 #import "SessionBrowser.h"
 #import "SessionLink.h"
 #import "Terminal.h"
@@ -346,6 +353,8 @@ NSString *const kRead =
     @" mode: document.getElementById('modebtn').classList.contains('hidden') ? '' : document.getElementById('modebtn').textContent,"
     @" typeset: window.mcSessionView ? window.mcSessionView.typeset() : null,"
     @" fetched: window.__typesetFetch || null,"
+    @" scm: window.mcSessionView ? window.mcSessionView.git() : null,"
+    @" review: window.mcSessionView ? window.mcSessionView.review() : null,"
     @" mdShown: !document.getElementById('md').classList.contains('hidden')})";
 
 // Script run in the page (a click on its controls), its failure noted.
@@ -1353,6 +1362,148 @@ MC_GUI_SUITE(session_browser) {
         Read();
         return [gSeen[@"local"] isEqualToString:@""] && ![SeenTypeset()[@"shown"] boolValue] &&
                ![gSeen[@"tabs"] containsString:@"solo.tex"] && ![gSeen[@"tabs"] containsString:@"paper.tex"];
+    });
+    // Source Control in the page (R3's fourth slice): the folder becomes a
+    // repository with changes; the read-only page lists them and shows
+    // their review, and follows an agent's edit with no reload.
+    NSString *revPath = [dir stringByAppendingPathComponent:@"review_me.py"];
+    __block NSString *git = nil;
+    __block NSString *headBefore = nil, *stagedBefore = nil;
+    NSString *(^revLines)(NSString *, NSString *) = ^NSString *(NSString *second, NSString *last) {
+        NSMutableString *t = [NSMutableString string];
+        for (int i = 1; i <= 40; i++) {
+            if (i == 2) [t appendFormat:@"%@\n", second];
+            else if (i == 39) [t appendFormat:@"%@\n", last];
+            else [t appendFormat:@"value_%d = compute(%d)\n", i, i];
+        }
+        return t;
+    };
+    MCGuiStep(@"files to commit", ^{
+        git = MCGitExecutable();
+        if (!git) MCGuiNote(@"no git here: the Source Control checks are skipped");
+        MCGuiWriteFile(revPath, revLines(@"value_2 = compute(2)", @"value_39 = compute(39)"));
+        MCGuiWriteFile([dir stringByAppendingPathComponent:@"staged.txt"], @"one\n");
+    });
+    MCGuiAsync(@"git init, add, commit", 30, ^(MCGuiDone done) {
+        if (!git) { done(); return; }
+        NSString *sh = [NSString stringWithFormat:
+            @"cd '%@' && '%@' init -q && '%@' add -A && '%@' -c commit.gpgsign=false commit -qm first && "
+            @"printf 'two\\n' > staged.txt && '%@' add staged.txt && printf 'fresh\\n' > fresh.txt",
+            dir, git, git, git, git];
+        MCGuiRunProcess(@[@"/bin/sh", @"-c", sh], nil, ^(int st, NSString *, NSString *err) {
+            GCHECK(st == 0);
+            if (st) MCGuiNote(@"git: %@", err);
+            done();
+        });
+    });
+    MCGuiStep(@"a change of two lines far apart; Source Control in the page's sidebar", ^{
+        if (!git) return;
+        MCGuiWriteFile(revPath, revLines(@"value_2 = compute(2) + offset", @"value_39 = compute(39) * 2"));
+        headBefore = [[NSString alloc] initWithData:MCGitRunSync(dir, @[@"rev-parse", @"HEAD"]).output
+                                           encoding:NSUTF8StringEncoding];
+        stagedBefore = [[NSString alloc] initWithData:MCGitRunSync(dir, @[@"diff", @"--cached", @"--name-only"]).output
+                                             encoding:NSUTF8StringEncoding];
+        GCHECK_EQ_STR(stagedBefore, @"staged.txt\n");
+        Eval(@"(() => { document.getElementById('scmbtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"the page lists the changes, staged first, as the window's Source Control does", 30, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSArray *rows = [gSeen[@"scm"] isKindOfClass:NSDictionary.class] ? gSeen[@"scm"][@"rows"] : nil;
+        return [rows containsObject:@"M staged.txt"] && [rows containsObject:@"M review_me.py"] &&
+               [rows containsObject:@"U fresh.txt"] && [rows.firstObject isEqualToString:@"M staged.txt"];
+    });
+    MCGuiStep(@"review_me.py clicked in the list", ^{
+        if (!git) return;
+        MCGuiNote(@"source control: %@", gSeen[@"scm"]);
+        GCHECK([gSeen[@"scm"][@"mode"] boolValue]);
+        Eval(@"(() => { const r = [...document.querySelectorAll('#gitlist .row')]"
+             @".find(x => x.dataset.path === 'review_me.py'); if (r) r.click(); return !!r; })()");
+    });
+    // The review_me.py file of the review on show, or nil.
+    NSDictionary *(^revFile)(void) = ^NSDictionary *{
+        NSDictionary *rv = [gSeen[@"review"] isKindOfClass:NSDictionary.class] ? gSeen[@"review"] : nil;
+        for (NSDictionary *f in rv[@"files"])
+            if ([f[@"head"] hasPrefix:@"review_me.py"]) return f;
+        return nil;
+    };
+    BOOL (^rowsHave)(NSDictionary *, NSString *) = ^BOOL(NSDictionary *f, NSString *text) {
+        for (NSString *r in f[@"rows"])
+            if ([r containsString:text]) return YES;
+        return NO;
+    };
+    MCGuiWait(@"the review shows in a tab of the page's own, at that file", 30, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *f = revFile();
+        return [gSeen[@"review"][@"shown"] boolValue] && [gSeen[@"local"] isEqualToString:@"/changes"] &&
+               rowsHave(f, @"value_2 = compute(2) + offset") && rowsHave(f, @"value_39 = compute(39) * 2");
+    });
+    MCGuiStep(@"removed and added lines, the words marked, colored, read only; then Side by Side", ^{
+        if (!git) return;
+        NSDictionary *rv = gSeen[@"review"], *f = revFile();
+        MCGuiNote(@"review_me.py: %@", f[@"rows"]);
+        GCHECK([gSeen[@"tabs"] containsString:@"+Changes"]);
+        GCHECK(rowsHave(f, @"r|2||value_2 = compute(2)"));
+        GCHECK(rowsHave(f, @"a||2|value_2 = compute(2) + offset"));
+        GCHECK(rowsHave(f, @"gap|"));   // the unchanged middle folded
+        GCHECK([rv[@"words"] intValue] >= 2 && [rv[@"colored"] intValue] > 0);
+        // Only Side by Side: nothing on the page stages, discards or commits.
+        GCHECK([[NSSet setWithArray:rv[@"buttons"]] isEqual:[NSSet setWithObject:@"Side by Side"]]);
+        GCHECK([gC tabs].count == tabsBefore);   // the window opened nothing
+        Eval(@"(() => { const f = [...document.querySelectorAll('#review .rfile')]"
+             @".find(x => x.querySelector('.rpath').textContent.startsWith('review_me.py'));"
+             @" const b = f && f.querySelector('.rhead button'); if (b) b.click(); return !!b; })()");
+    });
+    MCGuiWait(@"the file side by side, its changed pair on one row", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *f = revFile();
+        return [f[@"side"] boolValue] && rowsHave(f, @"sm|2|value_2 = compute(2)|2|value_2 = compute(2) + offset");
+    });
+    __block NSUInteger rowsFolded = 0;
+    MCGuiStep(@"the unchanged stretch clicked open", ^{
+        if (!git) return;
+        rowsFolded = [revFile()[@"rows"] count];
+        Eval(@"(() => { const f = [...document.querySelectorAll('#review .rfile')]"
+             @".find(x => x.querySelector('.rpath').textContent.startsWith('review_me.py'));"
+             @" const g = f && f.querySelector('tr.gap'); if (g) g.click(); return !!g; })()");
+    });
+    MCGuiWait(@"every line shows, still side by side", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *f = revFile();
+        return [f[@"side"] boolValue] && !rowsHave(f, @"gap|") && [f[@"rows"] count] > rowsFolded &&
+               rowsHave(f, @"value_20 = compute(20)");
+    });
+    MCGuiStep(@"an agent edits the file on disk; nobody presses anything", ^{
+        if (!git) return;
+        MCGuiWriteFile(revPath, revLines(@"value_2 = compute(2) + offset", @"value_39 = AGENT_EDIT(39)"));
+    });
+    MCGuiWait(@"the page's review follows, keeping its side by side and its open stretch", 30, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *f = revFile();
+        return rowsHave(f, @"AGENT_EDIT") && [f[@"side"] boolValue] && !rowsHave(f, @"gap|");
+    });
+    MCGuiStep(@"the repository as it was; the review closed and the tree back", ^{
+        if (!git) return;
+        NSString *head = [[NSString alloc] initWithData:MCGitRunSync(dir, @[@"rev-parse", @"HEAD"]).output
+                                               encoding:NSUTF8StringEncoding];
+        NSString *staged = [[NSString alloc] initWithData:MCGitRunSync(dir, @[@"diff", @"--cached", @"--name-only"]).output
+                                                 encoding:NSUTF8StringEncoding];
+        GCHECK_EQ_STR(head, headBefore);
+        GCHECK_EQ_STR(staged, stagedBefore);
+        GCHECK([[NSString stringWithContentsOfFile:revPath encoding:NSUTF8StringEncoding error:nil]
+            containsString:@"AGENT_EDIT"]);
+        CloseTab(@"Changes");
+        Eval(@"(() => { document.getElementById('filesbtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"back to the window's tab and the tree", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:@"+Changes"] &&
+               ![gSeen[@"scm"][@"mode"] boolValue] && [gSeen[@"tree"] containsString:@"review_me.py"];
     });
     MCGuiStep(@"the window closes, and the server with it", ^{
         GCHECK([gC tabs].count == tabsBefore);

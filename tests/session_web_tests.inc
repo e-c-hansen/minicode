@@ -18,6 +18,7 @@
 
 #include "IdeLink.h"
 #include "SessionWeb.h"
+#include "SessionWebGit.h"
 #include "SqliteRead.h"
 
 namespace {
@@ -4041,4 +4042,317 @@ static void testSessionWebAccess() {
         web.stop();
         webThread.join();
     }
+}
+
+// Source Control in the page (R3's fourth slice, SessionWebGit.h): git run
+// with the core's fixed arguments, the folder's uncommitted changes held to
+// the folder, the list and the review as the page gets them, and the whole
+// over the wire, read only. Against a real git; skipped without one.
+static void testSessionWebGit() {
+    GROUP("sessionweb:git");
+    if (std::system("git --version >/dev/null 2>&1") != 0) return;
+    const std::string root = Shared::resolveFolder(scratchFolder()), elsewhere = scratchFolder();
+    auto shq = [](const std::string& s) {
+        std::string o = "'";
+        for (char c : s) o += c == '\'' ? std::string("'\\''") : std::string(1, c);
+        return o + "'";
+    };
+    auto sh = [&](const std::string& c) { return std::system(("cd " + shq(root) + " && " + c).c_str()) == 0; };
+    auto lines = [](int n, const std::string& tag) {
+        std::string t;
+        for (int i = 1; i <= n; i++) t += "value_" + std::to_string(i) + " = " + tag + "(" + std::to_string(i) + ")\n";
+        return t;
+    };
+    ::mkdir((root + "/sub").c_str(), 0755);
+    writeText(root + "/a.py", lines(30, "f"));
+    writeText(root + "/b.txt", "bee\n");
+    writeText(root + "/sub/c.txt", "sea\n");
+    writeText(root + "/.hidden.txt", "hid\n");
+    writeText(root + "/long.txt", std::string(5000, 'x') + "\n");
+    writeText(root + "/gone.txt", "going\n");
+    CHECK(sh("git init -q . && git config user.email a@b && git config user.name n && "
+             "git config commit.gpgsign false && git add -A && git commit -q -m one"));
+    // Two changes far apart in a.py (a gap between), one a changed line;
+    // b.txt changed and staged; sub/c.txt changed; a new file; a dotfile;
+    // a long line; a deleted file; an untracked link to a secret outside.
+    std::string a = lines(30, "f");
+    a.replace(a.find("value_2 = f(2)"), 14, "value_2 = g(2)");
+    a.replace(a.find("value_28 = f(28)"), 16, "value_28 = f(28) + 1");
+    writeText(root + "/a.py", a);
+    writeText(root + "/b.txt", "bee two\n");
+    CHECK(sh("git add b.txt"));
+    writeText(root + "/sub/c.txt", "sea two\n");
+    writeText(root + "/n.txt", "new\n");
+    writeText(root + "/.hidden.txt", "hid two\n");
+    writeText(root + "/long.txt", std::string(4999, 'x') + "y\n");
+    ::unlink((root + "/gone.txt").c_str());
+    writeText(elsewhere + "/secret.txt", "SECRET\n");
+    CHECK(::symlink((elsewhere + "/secret.txt").c_str(), (root + "/leak.txt").c_str()) == 0);
+    auto statusNow = [&] { return Web::runGit(root, {"status", "--porcelain=v1", "-z"}, "").out; };
+    const std::string statusBefore = statusNow(), indexBefore = fileBytes(root + "/.git/index");
+
+    // The runner: output, a failure's status, stdin, a folder that is not
+    // a repository.
+    {
+        ChangeReview::GitOut o = Web::runGit(root, {"rev-parse", "--show-toplevel"}, "");
+        CHECK(o.ok && o.status == 0 && o.out.find(root) != std::string::npos);
+        o = Web::runGit(root, {"rev-parse", "--verify", "no-such-ref"}, "");
+        CHECK(!o.ok && o.status > 0 && !o.err.empty());
+        o = Web::runGit(root, {"hash-object", "--stdin"}, "hello\n");
+        CHECK(o.ok && o.out == "ce013625030ba8dba906f756967f9e9ca394464a\n");
+        o = Web::runGit(elsewhere, {"rev-parse", "--show-toplevel"}, "");
+        CHECK(!o.ok);
+    }
+    const ChangeReview::GitRunner run = [](const std::string& dir, const std::vector<std::string>& args,
+                                           const std::string& input) { return Web::runGit(dir, args, input); };
+    auto keys = [](const ChangeReview::Read& r) {
+        std::string k;
+        for (const ChangeReview::FileDiff& d : r.diffs) k += (k.empty() ? "" : ",") + d.file.key();
+        return k;
+    };
+    ChangeReview::Read r = ChangeReview::readUncommitted(root, run);
+    Web::confineReview(r, root, false);
+    std::printf("  sessionweb review: %zu changed files read for the page\n", r.diffs.size());
+    {
+        const std::string k = keys(r);
+        if (k.find("leak.txt") == std::string::npos) std::printf("  sessionweb:git: %s\n", k.c_str());
+        CHECK(r.error.empty() && !r.branchText.empty());
+        CHECK(k.find("b.txt") != std::string::npos && k.find("a.py") != std::string::npos);
+        CHECK(k.find("sub/c.txt") != std::string::npos && k.find("n.txt") != std::string::npos);
+        CHECK(k.find("gone.txt") != std::string::npos && k.find("leak.txt") != std::string::npos);
+        CHECK(k.find(".hidden.txt") == std::string::npos);   // a dotfile, as the tree hides it
+        CHECK(r.diffs.size() == r.extras.size());
+        for (const ChangeReview::FileDiff& d : r.diffs)
+            if (d.file.path == "leak.txt") CHECK(d.file.symlink && d.file.newText.empty() && d.rows.empty());
+    }
+    {
+        ChangeReview::Read h = ChangeReview::readUncommitted(root, run);
+        Web::confineReview(h, root, true);
+        CHECK(keys(h).find(".hidden.txt") != std::string::npos);
+        // A folder below the top level: only what is under it.
+        ChangeReview::Read s = ChangeReview::readUncommitted(root + "/sub", run);
+        Web::confineReview(s, root + "/sub", false);
+        CHECK(s.diffs.size() == 1 && s.extras.size() == 1 && s.diffs[0].file.path == "sub/c.txt");
+        // Not a repository.
+        ChangeReview::Read none = ChangeReview::readUncommitted(elsewhere, run);
+        Web::confineReview(none, elsewhere, false);
+        CHECK(!none.error.empty() && none.diffs.empty());
+        const Json j = Web::gitStatusJson(none, 1);
+        CHECK(j["error"].asString() == none.error && j["files"].size() == 0);
+    }
+    // The list.
+    {
+        const Json j = Web::gitStatusJson(r, 3);
+        CHECK(j["t"].asString() == "git" && j["version"].asInt() == 3 && j["files"].size() == r.diffs.size());
+        CHECK(j["files"][0]["section"].asString() == "staged" && j["files"][0]["path"].asString() == "b.txt");
+        CHECK(j["files"][0]["letter"].asString() == "M");
+        bool sawNew = false, sawDeleted = false;
+        for (const Json& f : j["files"].elements()) {
+            if (f["path"].asString() == "n.txt") sawNew = f["letter"].asString() == "U";
+            if (f["path"].asString() == "gone.txt") sawDeleted = f["letter"].asString() == "D";
+        }
+        CHECK(sawNew && sawDeleted);
+        CHECK(j.dump().find("SECRET") == std::string::npos);
+    }
+    // The review: a.py's blocks with removed and added lines, the changed
+    // words marked, its syntax colored, the unchanged middle folded.
+    std::string aKey;
+    for (const ChangeReview::FileDiff& d : r.diffs)
+        if (d.file.path == "a.py") aKey = d.file.key();
+    auto fileOf = [](const Json& review, const std::string& key) {
+        for (const Json& f : review["files"].elements())
+            if (f["key"].asString() == key) return f;
+        return Json();
+    };
+    auto kinds = [](const Json& f) {
+        std::string k;
+        for (const Json& row : f["rows"].elements()) k += row[0].asString();
+        return k;
+    };
+    {
+        const Json review = Web::reviewJson(r, 3, {}, {});
+        CHECK(review["t"].asString() == "review" && review["files"].size() == r.diffs.size());
+        CHECK(review.dump().find("SECRET") == std::string::npos);
+        const Json f = fileOf(review, aKey);
+        const std::string k = kinds(f);
+        CHECK(f["canSide"].asBool() && !f["side"].asBool());
+        if (k.find("ra") == std::string::npos || k.find('g') == std::string::npos)
+            std::printf("  sessionweb:git: a.py rows %s\n", k.c_str());
+        CHECK(k.find("ra") != std::string::npos && k.find('g') != std::string::npos);
+        int gap = -1;
+        bool words = false, colored = false, numbered = false;
+        for (const Json& row : f["rows"].elements()) {
+            const std::string kind = row[0].asString();
+            if (kind == "g") gap = (int)row[1].asInt();
+            if ((kind == "r" || kind == "a") && row[5].size()) words = true;
+            if (kind != "g" && kind != "n" && row[4].size()) colored = true;
+            if (kind == "a" && row[3].asString() == "value_2 = g(2)" && row[2].asInt() == 2) numbered = true;
+        }
+        CHECK(words && colored && numbered && gap > 0);
+        // The gap opened: every line of the file shows.
+        ChangeReview::Opened opened;
+        opened[aKey].insert(gap);
+        const Json all = fileOf(Web::reviewJson(r, 3, opened, {}), aKey);
+        CHECK(kinds(all).find('g') == std::string::npos && all["rows"].size() > f["rows"].size());
+        CHECK(Web::reviewFileJson(r.diffs[0], {}, false)["key"].asString() == r.diffs[0].file.key());
+        // Side by side: pairs, the changed pair's words on both sides, the
+        // same gap folded.
+        const Json side = fileOf(Web::reviewJson(r, 3, {}, {aKey}), aKey);
+        CHECK(side["side"].asBool());
+        bool pair = false, sideGap = false;
+        for (const Json& row : side["rows"].elements()) {
+            if (row[0].asString() == "g") sideGap = row[1].asInt() == gap;
+            if (row[0].asString() == "s" && row[1].asString() == "m" && row[8].size() && row[9].size() &&
+                row[4].asString() == "value_2 = f(2)" && row[5].asString() == "value_2 = g(2)")
+                pair = true;
+        }
+        CHECK(pair && sideGap);
+        // A long line is cut, and with it its colors; a link's note and no
+        // text; a deleted file's removed line.
+        for (const ChangeReview::FileDiff& d : r.diffs) {
+            if (d.file.path == "long.txt") {
+                const Json lf = Web::reviewFileJson(d, {}, false);
+                bool cut = false;
+                for (const Json& row : lf["rows"].elements())
+                    if (row[0].asString() == "a")
+                        cut = QuickDiff::fromUtf8(row[3].asString()).size() == Web::kReviewRowChars + 1;
+                CHECK(cut);
+            }
+            if (d.file.path == "leak.txt") {
+                const Json lf = Web::reviewFileJson(d, {}, true);
+                CHECK(!lf["canSide"].asBool() && kinds(lf) == "n");
+            }
+            if (d.file.path == "gone.txt") CHECK(kinds(Web::reviewFileJson(d, {}, false)) == "r");
+        }
+        // Past the budget, files come as their headers, to ask for alone.
+        const Json small = Web::reviewJson(r, 3, {}, {}, 1);
+        CHECK(small["files"].size() == r.diffs.size() && small["files"][0].has("rows"));
+        CHECK(small["files"][1]["more"].asBool() && !small["files"][1].has("rows"));
+    }
+    // What a page may say, capped.
+    {
+        Json o = Json::object();
+        Json ids = Json::array();
+        for (int i = 0; i < 5000; i++) ids.push(Json(i));
+        ids.push(Json(-3));
+        ids.push(Json("x"));
+        o.set("k", ids);
+        const ChangeReview::Opened got = Web::openedFrom(o);
+        CHECK(got.at("k").size() == Web::kMaxOpenedGaps && !got.at("k").count(-3));
+        CHECK(Web::openedFrom(Json("x")).empty() && Web::sideFrom(Json::object()).empty());
+        Json side = Json::array();
+        side.push(Json("a"));
+        side.push(Json(3));
+        CHECK(Web::sideFrom(side) == std::set<std::string>{"a"});
+    }
+    // The reads: on a thread, a new version only for something new, the
+    // wake called, none once gone.
+    {
+        std::atomic<int> woke{0};
+        auto reads = std::make_unique<Web::GitReads>(root, false, run, [&] { woke++; });
+        CHECK(!reads->latest().read);
+        reads->ask();
+        CHECK(waitUntil([&] { return reads->latest().finished == 1; }, 20000));
+        Web::GitReads::Latest l = reads->latest();
+        CHECK(l.read && l.version == 1 && woke == 1 && keys(*l.read) == keys(r));
+        reads->ask();
+        CHECK(waitUntil([&] { return reads->latest().finished == 2; }, 20000));
+        CHECK(reads->latest().version == 1);   // the same changes: nothing new
+        writeText(root + "/n.txt", "new two\n");
+        reads->ask();
+        CHECK(waitUntil([&] { return reads->latest().finished == 3; }, 20000));
+        CHECK(reads->latest().version == 2 && woke == 3);
+        reads->ask();
+        reads.reset();   // gone mid-read: never waits, never wakes
+        const int before = woke;
+        ::usleep(500 * 1000);
+        CHECK(woke == before);
+    }
+
+    // Over the wire: a headless host serving the folder; the page asks.
+    Shared::HostServer host;
+    Shared::HostOptions ho;
+    ho.folder = root;
+    ho.socketDir = scratchFolder() + "/s";
+    ho.idleMs = 60000;
+    std::string error;
+    CHECK(host.start(ho, &error) == Shared::HostServer::Start::Ok);
+    std::thread hostThread([&] { host.run(); });
+    Web::Server web;
+    Web::Options o;
+    o.hostSocket = host.socketPath();
+    o.folder = root;
+    o.pollMs = 100;
+    CHECK(web.start(o, &error));
+    std::thread webThread([&] { web.run(); });
+    PageClient p;
+    CHECK(p.enter(web));
+    CHECK(p.upgrade(web.port(), web.base() + "ws"));
+    Json state;
+    std::vector<Json> gits, reviews, files;
+    std::string all;
+    auto take = [&](const Json& m) {
+        const std::string t = m["t"].asString();
+        if (t == "state") state = m;
+        if (t == "git" || t == "review" || t == "reviewfile") all += m.dump();
+        if (t == "git") gits.push_back(m);
+        if (t == "review") reviews.push_back(m);
+        if (t == "reviewfile") files.push_back(m);
+    };
+    CHECK(p.pump(take, [&] { return state.isObject(); }));
+    // A review before any read: pending, and a read starts.
+    p.sendText("{\"t\":\"review\"}");
+    CHECK(p.pump(take, [&] { return !reviews.empty(); }));
+    CHECK(reviews.back()["pending"].asBool());
+    p.sendText("{\"t\":\"git\"}");
+    CHECK(p.pump(take, [&] { return !gits.empty(); }, 20000));
+    const std::int64_t firstVersion = gits.empty() ? 0 : gits.back()["version"].asInt();
+    CHECK(!gits.empty() && gits.back()["files"].size() == r.diffs.size() && firstVersion >= 1);
+    reviews.clear();
+    {
+        Json side = Json::array();
+        side.push(Json(aKey));
+        p.sendText(Json::object().set("t", Json("review")).set("side", side).dump());
+    }
+    CHECK(p.pump(take, [&] { return !reviews.empty(); }));
+    CHECK(!reviews.empty() && reviews.back()["files"].size() == r.diffs.size() &&
+          fileOf(reviews.back(), aKey)["side"].asBool());
+    // One file; a key that is no file's; nonsense, answered as the whole
+    // review.
+    reviews.clear();
+    p.sendText(Json::object().set("t", Json("review")).set("file", Json(aKey)).set("side", Json(false)).dump());
+    p.sendText("{\"t\":\"review\",\"file\":\"../../etc/passwd\",\"opened\":[1,2]}");
+    p.sendText("{\"t\":\"review\",\"file\":7,\"opened\":\"x\",\"side\":{}}");
+    CHECK(p.pump(take, [&] { return files.size() == 2 && reviews.size() == 1; }));
+    CHECK(files.size() == 2 && files[0]["file"]["key"].asString() == aKey && !files[0]["file"]["side"].asBool());
+    CHECK(files.size() == 2 && files[1]["gone"].asBool() && !files[1].has("file"));
+    // A change on disk, said by the app: the page that watches hears of it.
+    gits.clear();
+    writeText(root + "/sub/c.txt", "sea three\n");
+    web.gitChanged();
+    CHECK(p.pump(take, [&] { return !gits.empty(); }, 20000));
+    CHECK(!gits.empty() && gits.back()["version"].asInt() > firstVersion);
+    // No longer watching: a change says nothing.
+    p.sendText("{\"t\":\"git\",\"watch\":false}");
+    gits.clear();
+    writeText(root + "/sub/c.txt", "sea four\n");
+    web.gitChanged();
+    CHECK(!p.pump(take, [&] { return !gits.empty(); }, 1800));
+    CHECK(all.find("SECRET") == std::string::npos);
+    p.close();
+    CHECK(waitUntil([&] { return web.browsers() == 0; }));
+    web.stop();
+    webThread.join();
+    host.stop();
+    hostThread.join();
+    // git changed nothing: the status and the index as they were, once
+    // this test's own writes are put back.
+    writeText(root + "/sub/c.txt", "sea two\n");
+    writeText(root + "/n.txt", "new\n");
+    CHECK(statusNow() == statusBefore);
+    CHECK(fileBytes(root + "/.git/index") == indexBefore);
+    // The page asks, and draws what it gets with textContent.
+    CHECK(Web::pageHtml().find("t: \"git\", watch: true") != std::string::npos);
+    CHECK(Web::pageHtml().find("id=\"gitlist\"") != std::string::npos);
+    CHECK(Web::pageHtml().find("innerHTML") == std::string::npos);
 }
