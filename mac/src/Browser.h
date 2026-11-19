@@ -62,6 +62,9 @@
 - (void)closeTab:(NSUInteger)index;
 - (BOOL)moveTab:(NSUInteger)from to:(NSUInteger)to;
 @property(nonatomic, copy) void (^onEmpty)(void);
+// The strip was drawn again: a page's title may have changed (the window's
+// title follows the page's while the browser has the keyboard).
+@property(nonatomic, copy) void (^onTitlesChanged)(void);
 // What the strip shows, and each tab's address and full page title (""
 // before the page has one).
 - (NSArray<NSString *> *)tabTitles;

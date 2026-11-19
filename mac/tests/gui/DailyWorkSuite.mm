@@ -6,7 +6,9 @@
 // line to a Python REPL in a terminal tab of its own and reuses it; a new
 // terminal activates the folder's .venv only once it is allowed, with
 // VIRTUAL_ENV, PATH, the prompt and deactivate; Save As, Save All, Close
-// Other Tabs and Option+Cmd+Right; the recent folders and Ctrl+R; F1.
+// Other Tabs and Option+Cmd+Right; the window's title (the file's path from
+// the folder, the terminal's title while it has the keyboard, ~ outside the
+// folder); the recent folders and Ctrl+R; F1.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Keymap.h"
@@ -258,6 +260,58 @@ MC_GUI_SUITE(daily_work) {
         GCHECK(MenuKey(c, 17, kOptCmd));
         GCHECK([c recentTabPaths].count == 1);
         GCHECK_EQ_STR(Path(c), now);
+    });
+
+    // ---- The window's title (WindowTitle.h): the file's path from the
+    // window's folder while the editor has the keyboard, the terminal's
+    // title while it has it, ~ for a file outside the folder.
+    __block TerminalView *titleTerm = nil;
+    NSString *nested = [dir stringByAppendingPathComponent:@"nested/deeper/title.txt"];
+    NSString *beside = [dir stringByAppendingPathComponent:@"beside.txt"];
+    NSString *outside = [NSHomeDirectory() stringByAppendingPathComponent:@"outside-title.txt"];
+    NSString *nestedTitle = @"daily/nested/deeper/title.txt — mutible";
+    MCGuiStep(@"the title is the file's path from the window's folder", ^{
+        MCGuiWriteFile(nested, @"n\n");
+        MCGuiWriteFile(beside, @"b\n");
+        GCHECK([c showFile:nested]);
+        Caret(c, 0);
+        MCGuiNote(@"title: %@ (folder %@)", c.window.title, c.rootPath);
+        GCHECK_EQ_STR(c.window.title, nestedTitle);
+        // The proxy icon and Cmd+click on the title: the file.
+        GCHECK_EQ_STR(c.window.representedURL.lastPathComponent, @"title.txt");
+    });
+    MCGuiStep(@"another tab shows its path, and back again", ^{
+        GCHECK([c showFile:beside]);
+        Caret(c, 0);
+        GCHECK_EQ_STR(c.window.title, @"daily/beside.txt — mutible");
+        GCHECK(MenuKey(c, 123, kOptCmd));   // the tab before
+        GCHECK_EQ_STR(Path(c), nested);
+        GCHECK_EQ_STR(c.window.title, nestedTitle);
+    });
+    MCGuiStep(@"the terminal takes the keyboard", ^{
+        [c newTerminal:nil];
+        titleTerm = Panel(c).activeTerminal;
+        NSResponder *fr = c.window.firstResponder;
+        GCHECK([fr isKindOfClass:NSView.class] && [(NSView *)fr isDescendantOf:Panel(c)]);
+    });
+    MCGuiWait(@"the window's title is the terminal's", 10, ^BOOL {
+        return titleTerm.title.length &&
+               [c.window.title isEqualToString:[titleTerm.title stringByAppendingString:@" — mutible"]];
+    });
+    MCGuiStep(@"back in the editor, the file's path again", ^{
+        MCGuiNote(@"with the terminal: %@", c.window.title);
+        GCHECK(c.window.representedURL == nil);
+        Caret(c, 0);
+        GCHECK_EQ_STR(c.window.title, nestedTitle);
+        GCHECK_EQ_STR(c.window.representedURL.lastPathComponent, @"title.txt");
+        GCHECK([Panel(c) closeTerminal:titleTerm]);
+    });
+    MCGuiStep(@"a file outside the folder shows ~ for home", ^{
+        MCGuiWriteFile(outside, @"o\n");
+        GCHECK([c showFile:outside]);
+        Caret(c, 0);
+        MCGuiNote(@"title: %@", c.window.title);
+        GCHECK_EQ_STR(c.window.title, @"~/outside-title.txt — mutible");
     });
 
     // ---- Open Recent and F1
