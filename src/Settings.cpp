@@ -1910,7 +1910,7 @@ const char* Settings::defaultFileText() {
 # exit, or Ctrl+D at an empty prompt, closes the terminal (the dock goes
 # with the last one). off leaves it saying Process exited until Return
 # starts a new shell. A shell that was killed or crashed always stays, with
-# the signal, until Return (macOS).
+# the signal, until Return.
 # terminal.close-on-exit = on
 # Pasting several lines asks first: auto when the program running has not
 # said it takes pasted lines as text (zsh's prompt does; cat and an older

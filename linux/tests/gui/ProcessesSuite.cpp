@@ -11,6 +11,10 @@
 //   - Stop (ProcessMonitor::stop) ends it by SIGTERM; a sleep that ignores
 //     SIGTERM is ended by the SIGKILL 3 s later; neither the shell nor
 //     mutible is ever a target;
+//   - a job detached with `( job & )` in a terminal of its own, the
+//     subreaper's before any look, is under that terminal by its session,
+//     and an orphan once `exit` closes the terminal, never "not started
+//     here" (the Mac's round 9, A4);
 //   - a look's CPU time on the sampling thread is bounded with the thread
 //     CPU clock (never wall time), and a folder no window shows is answered
 //     for, with no window opened.
@@ -25,9 +29,11 @@
 #include "TerminalDock.h"
 
 #include <gio/gio.h>
+#include <glib/gstdio.h>
 #include <vte/vte.h>
 
 #include <csignal>
+#include <cstdio>
 #include <ctime>
 #include <fstream>
 #include <memory>
@@ -159,6 +165,8 @@ int gTerminals = 0;
 MCGuiAppWindow gFirst;       // the window with the panel
 int gOrphanPid = 0;
 GtkWindow* gSecond = nullptr;
+Terminal* gDetachTerm = nullptr;   // the terminal the detached job started in
+int gDetachId = 0, gDetachShell = 0, gDetachedPid = 0;
 
 int pidWithCommand(int window, const std::string& what) {
     const std::string folder = [] {
@@ -490,6 +498,63 @@ MC_GUI_SUITE(processes) {
             done();
         });
     });
+    // ---- a job detached in a terminal of its own (the Mac's round 9, A4):
+    // the subreaper's before any look saw it under the shell, so only its
+    // session (the pty's, led by the terminal's shell) says that terminal
+    // started it; `exit` then closes the terminal (terminal.close-on-exit)
+    // and the job is an orphan of this window, never "not started here".
+    // runLine makes the terminal (the dock may be hidden) and waits for its
+    // shell's prompt.
+    MCGuiStep("a terminal of its own runs ( job & ): its parent gone at once", [] {
+        gDetachTerm = MCGuiApp().termDock->newTerminal();
+        gDetachId = gDetachTerm->controlId();
+        gDetachedPid = 0;
+        g_remove(MCGuiProjectFile("detached.pid").c_str());
+        gDetachTerm->runLine("( (trap '' HUP; exec sleep 623) </dev/null >/dev/null 2>&1 & echo $! > '" +
+                                 MCGuiProjectFile("detached.pid") + "' )",
+                             [](const std::string& why) { GCHECK_EQ_STR(why, ""); });
+    });
+    MCGuiWait("its pid", 30, [] {
+        const std::string s = MCGuiReadFile(MCGuiProjectFile("detached.pid"));
+        gDetachedPid = s.find('\n') != std::string::npos ? atoi(s.c_str()) : 0;
+        return gDetachedPid > 0 && alive(gDetachedPid);
+    });
+    MCGuiStep("its parent is not the shell, its session is the shell's", [] {
+        gDetachShell = gDetachTerm->shellPid();
+        std::ifstream in("/proc/" + std::to_string(gDetachedPid) + "/stat");
+        std::string line;
+        std::getline(in, line);
+        const size_t close = line.rfind(')');
+        int ppid = 0, pgid = 0, sid = 0;
+        char state = 0;
+        if (close != std::string::npos)
+            sscanf(line.c_str() + close + 1, " %c %d %d %d", &state, &ppid, &pgid, &sid);
+        MCGuiNote("detached job %d: parent %d, session %d, the shell %d", gDetachedPid, ppid, sid,
+                  gDetachShell);
+        GCHECK(ppid > 0 && ppid != gDetachShell);
+        GCHECK(sid == gDetachShell);
+    });
+    MCGuiWait("the panel has it under that terminal, not under not started here", 30, [] {
+        ProcessesPanel::RowInfo r;
+        std::string group;
+        return panelRow(gFirst.procs, gDetachedPid, &r, &group) && group == "terminal" &&
+               r.terminal == gDetachId;
+    });
+    MCGuiStep("exit in that terminal", [] {
+        gDetachTerm->runLine("exit", [](const std::string& why) { GCHECK_EQ_STR(why, ""); });
+    });
+    MCGuiWait("exit closes the terminal", 15, [] { return MCGuiApp().termDock->indexOf(gDetachTerm) < 0; });
+    MCGuiWait("the job is an orphan of this window", 30, [] {
+        gDetachTerm = nullptr;
+        std::string group;
+        return panelRow(gFirst.procs, gDetachedPid, nullptr, &group) && group == "orphans";
+    });
+    MCGuiStep("it lives; this suite ends it", [] {
+        GCHECK(alive(gDetachedPid));
+        if (gDetachedPid > 1) kill(gDetachedPid, SIGKILL);
+    });
+    MCGuiWait("it ends", 10, [] { return !alive(gDetachedPid); });
+
     MCGuiStep("Toggle Processes again gives the tree back and sampling slows", [] {
         g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "toggleprocesses", nullptr);
         GCHECK(!MCGuiApp().procsShown && !ProcessMonitor::shared().panelShown());

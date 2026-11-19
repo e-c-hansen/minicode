@@ -153,6 +153,18 @@ public:
     // The shell's pid (the host's child), 0 while there is none (PARITY.md 3.8).
     int shellPid() const { return shellPid_ > 0 ? (int)shellPid_ : 0; }
 
+    // The shell's end (the Mac's onShellExit; src/TerminalExit.h decides
+    // from the host's wait status). `exit`, or Ctrl+D at an empty prompt,
+    // with terminal.close-on-exit on: the owner closes this terminal
+    // (TerminalDock does, unasked; the last one hides the dock), told on a
+    // later turn of the main loop than the host's word, and not when a
+    // shell started again meanwhile. Without it, with the setting off, for
+    // a shell killed by a signal, or one that ended before its first
+    // prompt, the terminal says so and waits for Return to start a new
+    // shell (`waitingForReturn`); Run in Terminal and runLine start one too.
+    std::function<void(Terminal*)> onShellExit;
+    bool waitingForReturn() const { return awaitReturn_; }
+
     // Waiting for you (PARITY.md 3.6). The terminal's id is the control
     // channel's (`mutible state`); the shell gets it as MUTIBLE_TERMINAL_ID
     // beside MUTIBLE_PID, set before the shell starts (an id given after the
@@ -297,12 +309,19 @@ private:
     void spawnShell();
     void applyTheme();
     void applyColors(const Settings& s);
-    void feedNotice(const std::string& text);
+    void feedNotice(const std::string& text, bool error = false);
 
-    // The shell is restarted in place when it exits, so Ctrl+D does not leave a
-    // dead panel behind. lastSpawn_/rapidExits_ break the loop a shell that
-    // cannot start would otherwise spin in.
-    void shellExited(const std::string& error);
+    // The host's TermExited: `status` is the shell's wait status (-1
+    // unknown), `error` why it never started. TerminalExit::decide says
+    // whether the terminal closes (onShellExit, a turn later: exitIdle_)
+    // or waits for Return (awaitReturn_, the note fed to VTE). A shell
+    // that ends before its first prompt waits for Return, so a broken
+    // startup file neither closes a new terminal nor loops.
+    void shellExited(int status, const std::string& error);
+    void startAgain();          // a new shell where one ended
+    guint exitIdle_ = 0;
+    bool awaitReturn_ = false;
+    bool seenPrompt_ = false;   // this shell reported a prompt (or was attached running)
 
     // The host's side: what it sends about this terminal's shell.
     struct HostListener : Shared::Client::TermListener {
@@ -401,7 +420,6 @@ private:
     bool       topKnown_ = false;
     std::vector<GObject*> handlers_;   // objects with signals of ours to take off
     gint64      lastSpawn_ = 0;    // g_get_monotonic_time of the last spawn
-    int         rapidExits_ = 0;   // consecutive exits inside a second
     GdkRGBA     palette_[16];
     std::unique_ptr<Settings> settings_;   // the app's last, for a terminal made later
     // setFontSize's, for a terminal made later.
