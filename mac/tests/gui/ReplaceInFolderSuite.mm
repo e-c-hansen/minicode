@@ -26,6 +26,16 @@ NSString *Disk(NSString *path) {
 }
 SearchPanel *Panel(EditorController *c) { return [c valueForKey:@"searchPanel"]; }
 NSArray *Hits(EditorController *c) { return [Panel(c) valueForKey:@"hits"]; }
+// A plain key down for the window, as the window hands it to its first
+// responder (an offscreen window is never AppKit's key window, so
+// [NSApp sendEvent:] would not reach it).
+void Press(NSWindow *w, unsigned short code, NSString *chars) {
+    NSEvent *e = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0
+                                 timestamp:NSProcessInfo.processInfo.systemUptime
+                              windowNumber:w.windowNumber context:nil characters:chars
+               charactersIgnoringModifiers:chars isARepeat:NO keyCode:code];
+    [w sendEvent:e];
+}
 }  // namespace
 
 MC_GUI_SUITE(replace_in_folder) {
@@ -333,21 +343,27 @@ MC_GUI_SUITE(replace_in_folder) {
         [p.window makeFirstResponder:p.replaceField];
         GCHECK(p.window.firstResponder == p.replaceField.currentEditor);
         asked = MCGuiAlertsShown().count;
+        // The query changed but not yet searched: Return's search shows it.
+        p.field.stringValue = @"cat a";
         // No answer queued: were Return still Replace All, the unanswered
         // question would take Replace and the files would change.
-        MCGuiSendKeyToApp(p.window, 36 /* Return */, 0, @"\r", @"\r");
+        Press(p.window, 36 /* Return */, @"\r");
     });
-    MCGuiWait(@"the search Return ran", 10, ^BOOL { return !Panel(c).busy && Hits(c).count == 3; });
+    MCGuiWait(@"the search Return ran", 10, ^BOOL { return !Panel(c).busy && Hits(c).count == 1; });
     MCGuiStep(@"the files as they were", ^{
         MCGuiNote(@"alerts: %@; status: %@", MCGuiAlertsShown(), Panel(c).status.stringValue);
         GCHECK(MCGuiAlertsShown().count == asked);
         GCHECK_EQ_STR(Disk(k1), @"cat a\ncat b\n");
         GCHECK_EQ_STR(Disk(k2), @"cat c\n");
         GCHECK_EQ_STR(Panel(c).replaceField.stringValue, @"dog");
-        // Option+Cmd+Return asks as the button does; Cancel.
+        Panel(c).field.stringValue = @"cat";
+        [Panel(c) runSearch:nil];
+    });
+    MCGuiWait(@"three rows again", 10, ^BOOL { return !Panel(c).busy && Hits(c).count == 3; });
+    MCGuiStep(@"Option+Cmd+Return asks as the button does; Cancel", ^{
         MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
-        MCGuiSendKeyToApp(Panel(c).window, 36,
-                          NSEventModifierFlagCommand | NSEventModifierFlagOption, @"\r", @"\r");
+        GCHECK(MCGuiPerformMenuKey(Panel(c).window, 36,
+                                   NSEventModifierFlagCommand | NSEventModifierFlagOption, nil, nil));
     });
     MCGuiWait(@"asked", 10, ^BOOL { return !Panel(c).busy && MCGuiAlertsShown().count == asked + 1; });
     MCGuiStep(@"Cancel: nothing written; then a row dismissed", ^{
@@ -374,8 +390,8 @@ MC_GUI_SUITE(replace_in_folder) {
         GCHECK(Hits(c).count == 2 && Panel(c).dismissedCount == 1);
         MCGuiNote(@"after the dismiss: %@", Panel(c).status.stringValue);
         MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
-        MCGuiSendKeyToApp(Panel(c).window, 36,
-                          NSEventModifierFlagCommand | NSEventModifierFlagOption, @"\r", @"\r");
+        GCHECK(MCGuiPerformMenuKey(Panel(c).window, 36,
+                                   NSEventModifierFlagCommand | NSEventModifierFlagOption, nil, nil));
     });
     MCGuiWait(@"replaced, but the dismissed row", 10, ^BOOL {
         return !Panel(c).busy && [Disk(k2) isEqualToString:@"dog c\n"];
@@ -415,8 +431,10 @@ MC_GUI_SUITE(replace_in_folder) {
             [sent appendData:d];
             if (forward) forward(d);
         };
-        MCGuiSendKeyToApp(c.window, 16 /* y */, 0, @"y", @"y");
-        MCGuiSendKeyToApp(c.window, 51 /* Delete */, 0, @"\x7f", @"\x7f");
+        // To the window the app made key, which hands keys to its first
+        // responder.
+        Press(c.window, 16 /* y */, @"y");
+        Press(c.window, 51 /* Delete */, @"\x7f");
         g.onInput = forward;
         NSString *got = [[NSString alloc] initWithData:sent encoding:NSUTF8StringEncoding];
         MCGuiNote(@"the shell got %lu bytes: %@", (unsigned long)sent.length, got);
