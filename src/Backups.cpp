@@ -98,6 +98,7 @@ std::string encode(const Entry &e, const std::string &text) {
     line("disk-inode", std::to_string(e.diskInode));
     line("encoding", e.encoding);
     if (!e.fileEncoding.empty()) line("file-encoding", e.fileEncoding);
+    if (!e.window.empty()) line("window", e.window);
     line("line-endings", lineEndingsOf(text));
     line("saved", num(e.saved));
     line("owner-pid", std::to_string(e.ownerPid));
@@ -142,6 +143,7 @@ bool decodeHeader(const std::string &data, Entry *e, size_t *textStart) {
         else if (k == "disk-inode") out.diskInode = std::strtoull(v.c_str(), &stop, 10);
         else if (k == "encoding") out.encoding = v;
         else if (k == "file-encoding") out.fileEncoding = v;
+        else if (k == "window") out.window = validId(v) ? v : std::string();
         else if (k == "line-endings") out.lineEndings = v;
         else if (k == "saved") out.saved = std::strtod(v.c_str(), &stop);
         else if (k == "owner-pid") out.ownerPid = std::strtoll(v.c_str(), &stop, 10);
@@ -353,37 +355,68 @@ int Store::sweepDebris(double now, double maxAge, double badAge) const {
 
 // ------------------------------------------------------------- decisions
 Restore plan(const std::vector<Entry> &all, const std::string &root,
-             const std::vector<std::string> &sessionFiles, const IsLive &live) {
+             const std::vector<std::string> &sessionFiles, const IsLive &live,
+             const std::string &window, const std::set<std::string> &reserved) {
     Restore r;
-    // The newest backup of each file in this folder; older ones go.
-    std::map<std::string, const Entry *> newest;
+    // The folder's backups this window may take: its own, and those of no
+    // window still to come back (an older backup, a window not restored).
+    std::map<std::string, std::vector<const Entry *>> byPath;
     for (const Entry &e : all) {
         if (e.root != root || live(e)) continue;
-        auto it = newest.find(e.path);
-        if (it == newest.end()) { newest[e.path] = &e; continue; }
-        const Entry *&have = it->second;
-        if (e.saved > have->saved || (e.saved == have->saved && e.id > have->id)) {
-            r.discard.push_back(have->id);
-            have = &e;
-        } else {
-            r.discard.push_back(e.id);
-        }
+        if (!e.window.empty() && e.window != window && reserved.count(e.window)) continue;
+        byPath[e.path].push_back(&e);
+    }
+    // Of several for one file, this window's own newest goes in the tab,
+    // else the newest; every other is a draft of its own, never deleted.
+    std::map<std::string, const Entry *> chosen;
+    auto better = [&window](const Entry *a, const Entry *b) {
+        const bool ownA = !window.empty() && a->window == window;
+        const bool ownB = !window.empty() && b->window == window;
+        if (ownA != ownB) return ownA;
+        if (a->saved != b->saved) return a->saved > b->saved;
+        return a->id > b->id;
+    };
+    for (auto &kv : byPath) {
+        std::vector<const Entry *> &v = kv.second;
+        std::sort(v.begin(), v.end(), better);
+        chosen[kv.first] = v.front();
+        for (size_t i = 1; i < v.size(); i++) r.conflicts.push_back({kv.first, v[i]->id, false});
     }
     std::set<std::string> taken;
     for (const std::string &f : sessionFiles) {
-        auto it = newest.find(f);
-        if (it == newest.end() || taken.count(f)) continue;
+        auto it = chosen.find(f);
+        if (it == chosen.end() || taken.count(f)) continue;
         taken.insert(f);
         r.items.push_back({f, it->second->id, true});
     }
     std::vector<const Entry *> rest;
-    for (const auto &kv : newest)
+    for (const auto &kv : chosen)
         if (!taken.count(kv.first)) rest.push_back(kv.second);
     std::sort(rest.begin(), rest.end(), [](const Entry *a, const Entry *b) {
         return a->saved != b->saved ? a->saved > b->saved : a->path < b->path;
     });
     for (const Entry *e : rest) r.items.push_back({e->path, e->id, false});
     return r;
+}
+
+std::string draftPath(const std::string &path,
+                      const std::function<bool(const std::string &)> &taken) {
+    const size_t slash = path.rfind('/');
+    const std::string dir = slash == std::string::npos ? "" : path.substr(0, slash + 1);
+    const std::string name = path.substr(dir.size());
+    // "a.txt" -> "a (unsaved copy).txt"; a name with no extension, or a
+    // dot file, takes it at the end.
+    const size_t dot = name.rfind('.');
+    const bool ext = dot != std::string::npos && dot > 0;
+    const std::string stem = ext ? name.substr(0, dot) : name;
+    const std::string tail = ext ? name.substr(dot) : "";
+    for (int n = 1; n < 10000; n++) {
+        const std::string mark =
+            n == 1 ? " (unsaved copy)" : " (unsaved copy " + std::to_string(n) + ")";
+        const std::string p = dir + stem + mark + tail;
+        if (!taken || !taken(p)) return p;
+    }
+    return dir + stem + " (unsaved copy " + newId() + ")" + tail;
 }
 
 std::vector<std::string> foldersToReopen(const std::vector<Entry> &all,

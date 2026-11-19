@@ -69,11 +69,16 @@ NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e);
 // Cmd went down or up, or the pointer moved: redo the link under it.
 - (void)updateLinkHover;
 // The pointer has rested (about half a second, from mouseMoved:) without
-// Cmd: over an address or a path, the tooltip says "Cmd+click to open"
-// (with a hyperlink's address), as VS Code's "Follow link (cmd + click)".
-// None while a program takes the mouse or a selection is being dragged.
+// Cmd: over an address or a path, a small tooltip beside the pointer says
+// "⌘-click to open" (with a hyperlink's address), as VS Code's "Follow link
+// (cmd + click)" (HoverHint.h: AppKit's toolTip, set once the pointer
+// rests, never showed). With Cmd held over a hyperlink, its address shows
+// there at once. None while a program takes the mouse or a selection is
+// being dragged; a move, a press, a key, a scroll or leaving hides it.
 - (void)showRestHint;
-extern NSString *const MCTerminalLinkHint;   // "Cmd+click to open"
+extern NSString *const MCTerminalLinkHint;   // "⌘-click to open"
+// The hint on show, nil when none (the GUI checks).
+@property(nonatomic, readonly, copy) NSString *linkHintText;
 
 + (NSFont *)cellFont;
 // Size of one cell, and the margin around the grid.

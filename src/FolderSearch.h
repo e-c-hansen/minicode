@@ -418,9 +418,10 @@ void dropRepeatedContext(std::vector<FolderSearchMatch>& rows);
 bool lineAt(const std::string& content, int line, std::string* out);
 
 // How a text file's bytes are written: UTF-8, UTF-16 with its byte order
-// mark (FF FE little-endian, FE FF big-endian), or Windows-1252 (a file
-// that is not UTF-8: readsAsWindows1252).
-enum class TextEncoding { Utf8, Utf16LE, Utf16BE, Windows1252 };
+// mark (FF FE little-endian, FE FF big-endian), Windows-1252 (a file that
+// is not UTF-8: readsAsWindows1252), or UTF-8 with stray bytes kept as they
+// were (a UTF-8 file with a few bytes that are not: readsAsUtf8WithStrayBytes).
+enum class TextEncoding { Utf8, Utf16LE, Utf16BE, Windows1252, Utf8Raw };
 
 // UTF-16 text that starts with its byte order mark, as ripgrep (and so VS
 // Code's search) reads it: into *utf8 without the mark, *encoding saying
@@ -447,6 +448,26 @@ std::string decodeWindows1252(std::string_view bytes);
 // order mark is the caller's to take first.
 bool readsAsWindows1252(std::string_view bytes);
 
+// UTF-8 with stray bytes (2026-11-19, round 10's workspace item 2): bytes
+// that are not valid UTF-8 and hold no NUL, but are mostly UTF-8: at
+// least as many valid multi-byte characters as runs of bytes that are not
+// UTF-8 (a Latin-1 byte pasted into a UTF-8 file, a file cut short in the
+// middle of a character). Such a file was read whole as Windows-1252,
+// showing every character of it as two ("naÃ¯ve"), and a save after a
+// character Windows-1252 lacks wrote that as UTF-8: every character
+// encoded twice. Now it is UTF-8 (TextEncoding::Utf8Raw): each valid
+// character as itself and each stray byte b as the private-use character
+// U+10FE00 + b (kStrayByteBase), which encodeText writes back as that
+// byte, so the file round-trips byte for byte whether or not it was
+// edited, and no valid character is ever written in another form. A file
+// already holding such a character is never read so (it would come back
+// as a byte): it stays Windows-1252. readsAsWindows1252 is false for
+// every file this is true for, and the other way.
+bool readsAsUtf8WithStrayBytes(std::string_view bytes);
+constexpr char32_t kStrayByteBase = 0x10FE00;
+// The text such a file reads as (valid UTF-8 out, whatever comes in).
+std::string decodeUtf8WithStrayBytes(std::string_view bytes);
+
 // UTF-8 text as Windows-1252 bytes, into *out when given. A character
 // Windows-1252 has no byte for (an arrow, an emoji, CJK) is written as
 // '?', and makes it false, with *unheld that first character (UTF-8).
@@ -459,12 +480,14 @@ bool encodeWindows1252(std::string_view utf8, std::string* out, std::string* unh
 bool canEncode(const std::string& utf8, TextEncoding encoding, std::string* unheld = nullptr);
 
 // The status bar's name for an encoding, VS Code's: "UTF-8", "UTF-8 with
-// BOM", "UTF-16 LE", "UTF-16 BE", "Windows-1252".
+// BOM", "UTF-16 LE", "UTF-16 BE", "Windows-1252"; and "UTF-8, bad bytes
+// kept" for Utf8Raw, which VS Code has no name for.
 const char* encodingLabel(TextEncoding encoding, bool bom);
 
 // UTF-8 text written in `encoding`: as it is for Utf8; UTF-16 with its
 // byte order mark first (an invalid byte becomes U+FFFD); Windows-1252 by
-// encodeWindows1252 (a character it lacks becomes '?': check canEncode).
+// encodeWindows1252 (a character it lacks becomes '?': check canEncode);
+// Utf8Raw as UTF-8 with each U+10FE80..U+10FEFF written as its stray byte.
 std::string encodeText(const std::string& utf8, TextEncoding encoding);
 
 // A file's bytes as the editor's text, and back (the Mac's tabs: MCTab
@@ -472,7 +495,8 @@ std::string encodeText(const std::string& utf8, TextEncoding encoding);
 // (decodeUtf16, strict); a lone surrogate or an odd byte makes it false,
 // and such a file is not opened as text. Bytes that readsAsWindows1252
 // (not UTF-8, no NUL) are decoded from Windows-1252 (since 2026-11-18;
-// they had been left to Quick Look). Anything else is taken as UTF-8, a
+// they had been left to Quick Look), and bytes that
+// readsAsUtf8WithStrayBytes as Utf8Raw. Anything else is taken as UTF-8, a
 // UTF-8 byte order mark taken off; invalid UTF-8 with a NUL comes back as
 // it is, for the caller's decoder to refuse. *bom says a mark was there.
 // In place, so a large UTF-8 file is not copied. encodeFileText with the
@@ -482,7 +506,8 @@ std::string encodeText(const std::string& utf8, TextEncoding encoding);
 bool decodeFileText(std::string* bytes, TextEncoding* encoding, bool* bom);
 std::string encodeFileText(const std::string& utf8, TextEncoding encoding, bool bom);
 // VS Code's names for them ("utf8", "utf8bom", "utf16le", "utf16be",
-// "windows1252"), as a backup records them; parseEncodingName is false
+// "windows1252"; "utf8raw" is mutible's), as a backup records them;
+// parseEncodingName is false
 // for any other name.
 const char* encodingName(TextEncoding encoding, bool bom);
 bool parseEncodingName(const std::string& name, TextEncoding* encoding, bool* bom);

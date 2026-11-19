@@ -453,6 +453,14 @@ TerminalTab sanitize(TerminalTab t) {
 
 namespace {
 
+// A backup key as Backups::validId has it (letters, digits and '-').
+bool validKey(const std::string &k) {
+    if (k.empty() || k.size() > 64) return false;
+    for (char c : k)
+        if (!std::isalnum((unsigned char)c) && c != '-') return false;
+    return true;
+}
+
 Json encodeWindowList(const std::vector<Window> &windows) {
     Json list = Json::array();
     for (const Window &w : windows) {
@@ -481,6 +489,7 @@ Json encodeWindowList(const std::vector<Window> &windows) {
         o.set("expanded", expanded);
         if (!w.selected.empty()) o.set("selected", w.selected);
         o.set("treeScroll", w.treeScroll);
+        if (!w.backupKey.empty()) o.set("backupKey", w.backupKey);
         if (w.ownerPid > 0) {
             o.set("ownerPid", Json((double)w.ownerPid));
             o.set("ownerStart", w.ownerStart);
@@ -538,6 +547,8 @@ std::vector<Window> decodeWindowList(const Json &list) {
         w.selected = o["selected"].isString() ? o["selected"].asString() : "";
         const double ts = o["treeScroll"].asNumber(0);
         w.treeScroll = std::isfinite(ts) && ts > 0 && ts < 1e9 ? ts : 0;
+        if (o["backupKey"].isString() && validKey(o["backupKey"].asString()))
+            w.backupKey = o["backupKey"].asString();
         const double pid = o["ownerPid"].asNumber(0), start = o["ownerStart"].asNumber(0),
                      saved = o["saved"].asNumber(0);
         if (std::isfinite(pid) && pid > 0 && pid < 1e9 && std::isfinite(start) && start > 0 &&

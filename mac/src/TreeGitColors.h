@@ -31,4 +31,7 @@
 // folder is in a repository.
 @property(nonatomic, readonly) NSUInteger runs;
 @property(nonatomic, readonly) BOOL inRepository;
+// How many paths the last status found changed (Git::Decorations'
+// changeCount), 0 outside a repository and before the first status.
+@property(nonatomic, readonly) NSUInteger changeCount;
 @end

@@ -891,15 +891,103 @@ static void testFolderSearchParallel() {
                            : static_cast<char>(1 + rng() % 255);
             }
             if (isValidUtf8(b)) continue;
-            ++legacy;
             std::string t = b;
             TextEncoding e = TextEncoding::Utf8;
             bool bom = false;
-            CHECK(decodeFileText(&t, &e, &bom) && e == TextEncoding::Windows1252);
-            CHECK(t == decodeWindows1252(b) && isValidUtf8(t));
+            CHECK(decodeFileText(&t, &e, &bom));
+            // One rule or the other, never both (a few random files hold
+            // more valid characters than stray bytes: UTF-8, bytes kept).
+            CHECK(readsAsWindows1252(b) != readsAsUtf8WithStrayBytes(b));
+            if (readsAsWindows1252(b)) {
+                ++legacy;
+                CHECK(e == TextEncoding::Windows1252 && t == decodeWindows1252(b));
+            } else {
+                CHECK(e == TextEncoding::Utf8Raw && t == decodeUtf8WithStrayBytes(b));
+            }
+            CHECK(isValidUtf8(t));
             CHECK(encodeFileText(t, e, bom) == b);
         }
         CHECK(legacy > 1000);
+    }
+
+    GROUP("encoding:utf8-stray-bytes");
+    {
+        // Round 10's workspace item 2: a UTF-8 file with one stray byte
+        // (a Latin-1 no-break space) opened wholly as Windows-1252
+        // ("na\u00c3\u00afve"), and typing an arrow then saved it as UTF-8,
+        // every character encoded twice (C3 AF became C3 83 C2 AF).
+        const std::string file = "na\xC3\xAFve caf\xC3\xA9\nline two\n\xA0 later\n";
+        CHECK(readsAsUtf8WithStrayBytes(file) && !readsAsWindows1252(file));
+        std::string t = file;
+        TextEncoding e = TextEncoding::Utf8;
+        bool bom = true;
+        CHECK(decodeFileText(&t, &e, &bom));
+        CHECK(e == TextEncoding::Utf8Raw && !bom);
+        // Valid characters are themselves; the stray byte is U+10FEA0.
+        CHECK(t == "na\xC3\xAFve caf\xC3\xA9\nline two\n\xF4\x8F\xBA\xA0 later\n");
+        CHECK(isValidUtf8(t));
+        // Unedited: byte for byte.
+        CHECK(encodeFileText(t, e, bom) == file);
+        // Edited with a character Windows-1252 lacks: still UTF-8, never
+        // encoded twice, the stray byte kept.
+        CHECK(canEncode(t + "\xE2\x86\x92", e));
+        CHECK(encodeFileText("\xE2\x86\x92" + t, e, bom) == "\xE2\x86\x92" + file);
+        CHECK(encodeText(t, e).find("\xC3\x83") == std::string::npos);
+        CHECK(std::string(encodingLabel(e, bom)) == "UTF-8, bad bytes kept");
+        CHECK(std::string(encodingName(e, bom)) == "utf8raw");
+        TextEncoding e2 = TextEncoding::Utf8;
+        bool bom2 = true;
+        CHECK(parseEncodingName("utf8raw", &e2, &bom2) && e2 == TextEncoding::Utf8Raw && !bom2);
+        // The core's document saves it back the same way, edited or not.
+        {
+            Model::Document d;
+            CHECK(d.load(file, FolderSearch::FileStamp()));
+            CHECK(d.encoding() == TextEncoding::Utf8Raw);
+            std::string bytes, why;
+            CHECK(d.bytesToWrite(&bytes, &why) && bytes == file);
+            d.replace(0, 0, u"\u2192");
+            CHECK(d.bytesToWrite(&bytes, &why) && bytes == "\xE2\x86\x92" + file);
+        }
+        // A file cut short in the middle of a character: the two bytes
+        // left of an arrow are kept as they were.
+        const std::string cut = "caf\xC3\xA9 \xE2\x86";
+        CHECK(readsAsUtf8WithStrayBytes(cut));
+        t = cut;
+        CHECK(decodeFileText(&t, &e, &bom) && e == TextEncoding::Utf8Raw);
+        CHECK(t.compare(0, 6, "caf\xC3\xA9 ") == 0 && encodeFileText(t, e, bom) == cut);
+        // Mostly Latin-1 stays Windows-1252: more stray runs than characters.
+        const std::string latin = "caf\xE9 na\xEFve \xC3\xA9t\xE9";
+        CHECK(readsAsWindows1252(latin) && !readsAsUtf8WithStrayBytes(latin));
+        // A NUL still marks it binary.
+        CHECK(!readsAsUtf8WithStrayBytes(std::string("caf\xC3\xA9\xA0\0", 7)));
+        // A file already holding a character in the escapes' range would
+        // write it back as a byte: never read so.
+        const std::string clash = "caf\xC3\xA9 \xF4\x8F\xBA\xA0 \xA0";
+        CHECK(!readsAsUtf8WithStrayBytes(clash) && readsAsWindows1252(clash));
+        // Every stray byte, among valid characters, round-trips.
+        std::string every;
+        for (int c = 0x80; c < 0x100; ++c) {
+            every += "\xC3\xA9\xE2\x82\xAC";
+            every += static_cast<char>(c);
+            every += 'x';
+        }
+        CHECK(!isValidUtf8(every) && readsAsUtf8WithStrayBytes(every));
+        t = every;
+        CHECK(decodeFileText(&t, &e, &bom) && e == TextEncoding::Utf8Raw && isValidUtf8(t));
+        CHECK(encodeFileText(t, e, bom) == every);
+        // Find in Folder reads it as the editor shows it: "na\u00efve" is
+        // found before the stray byte (it found none: round 10's item 3).
+        {
+            const fsys::path dir = fsys::temp_directory_path() /
+                                   ("mutible-stray-test-" + std::to_string(::getpid()));
+            std::error_code ec;
+            fsys::remove_all(dir, ec);
+            fsys::create_directories(dir, ec);
+            writeFile(dir / "a.txt", file);
+            const FolderSearchResult res = search(dir.string(), "na\xC3\xAFve");
+            CHECK(res.filesMatched == 1 && res.totalMatches == 1);
+            fsys::remove_all(dir, ec);
+        }
     }
 
     GROUP("search:stream");
