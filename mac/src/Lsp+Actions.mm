@@ -111,7 +111,10 @@
     __weak LspSession *weakSelf = self;
     _rename.onCommit = ^(NSString *name) { [weakSelf commitRename:name gen:gen]; };
     [_rename showWithName:placeholder ?: [_tv.string substringWithRange:range]
-           relativeToRect:rect ofView:_tv];
+           relativeToRect:rect ofView:_tv font:_tv.font];
+    // The box sits over the name, so the hint VS Code shows under it goes
+    // to the status bar.
+    if (_rename.visible) [self flash:@"Return to rename, Esc to cancel"];
 }
 
 - (void)commitRename:(NSString *)name gen:(int)gen {
@@ -204,10 +207,11 @@ static NSFont *PickerMono(void) {
     std::vector<Lsp::Location> where;
     NSInteger select = -1;
     NSUInteger caret = _tv.selectedRange.location;
+    MCFindStyle *style = PopupStyle();
     NSDictionary *muted = @{NSFontAttributeName: PickerMono(),
-                            NSForegroundColorAttributeName: LHex(0x9D9D9D)};
+                            NSForegroundColorAttributeName: style.muted};
     NSDictionary *plain = @{NSFontAttributeName: PickerMono(),
-                            NSForegroundColorAttributeName: LHex(0xD4D4D4)};
+                            NSForegroundColorAttributeName: style.widgetForeground};
     NSString *rootReal = RealPath(_root);
     size_t total = 0;
     for (const Lsp::ReferenceFile &f : files) {
@@ -225,13 +229,13 @@ static NSFont *PickerMono(void) {
         NSMutableAttributedString *h = [[NSMutableAttributedString alloc]
             initWithString:[NSString stringWithFormat:@" %@", path.lastPathComponent]
                 attributes:@{NSFontAttributeName: [NSFont boldSystemFontOfSize:12],
-                             NSForegroundColorAttributeName: LHex(0xE5E5E5)}];
+                             NSForegroundColorAttributeName: style.widgetForeground}];
         NSString *tail = [NSString stringWithFormat:@"  %@%@%zu", folder,
                                                     folder.length ? @"  " : @"",
                                                     f.ranges.size()];
         [h appendAttributedString:[[NSAttributedString alloc]
             initWithString:tail attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                                             NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
+                                             NSForegroundColorAttributeName: style.muted}]];
         [headers addIndex:rows.count];
         [rows addObject:h];
         where.push_back(Lsp::Location());
@@ -260,9 +264,9 @@ static NSFont *PickerMono(void) {
             if (b > a && a >= indent) {
                 NSRange hl = NSMakeRange(start + a - indent, b - a);
                 if (NSMaxRange(hl) <= row.length)
-                    [row addAttributes:@{NSBackgroundColorAttributeName:
-                                             [LHex(0x4EA1F7) colorWithAlphaComponent:0.35],
-                                         NSForegroundColorAttributeName: LHex(0xFFFFFF)}
+                    // VS Code's peek view match: the theme's find match
+                    // highlight behind the name, the text left as it is.
+                    [row addAttributes:@{NSBackgroundColorAttributeName: style.matchHighlight}
                                  range:hl];
             }
             // The reference under the caret starts selected.
@@ -538,11 +542,12 @@ static NSString *ActionKindName(const std::string &kind) {
     if (error) { NSBeep(); [self note:error]; return; }
     if (actions.empty()) { [self note:@"No quick fixes"]; return; }
     NSMutableArray<NSAttributedString *> *rows = [NSMutableArray array];
+    MCFindStyle *style = PopupStyle();
     for (const Lsp::CodeAction &a : actions) {
         NSMutableAttributedString *row = [[NSMutableAttributedString alloc]
             initWithString:[NSString stringWithFormat:@" %@", NS(a.title)]
                 attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5],
-                             NSForegroundColorAttributeName: LHex(0xD4D4D4)}];
+                             NSForegroundColorAttributeName: style.widgetForeground}];
         NSString *kind = ActionKindName(a.kind);
         if (a.preferred) kind = kind.length ? [kind stringByAppendingString:@", preferred"]
                                             : @"preferred";
@@ -555,7 +560,7 @@ static NSString *ActionKindName(const std::string &kind) {
             [row appendAttributedString:[[NSAttributedString alloc]
                 initWithString:[@"   " stringByAppendingString:kind]
                     attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                                 NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
+                                 NSForegroundColorAttributeName: style.muted}]];
         [rows addObject:row];
     }
     _actions = actions;

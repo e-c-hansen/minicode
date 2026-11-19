@@ -8,9 +8,22 @@
 // handleCommand:), so a click elsewhere or typing simply closes it.
 //
 // MCRenameBox, the field Rename Symbol asks for the new name in: a small
-// panel under the name with it selected, which has the keyboard while it
-// shows; Return renames, Esc or a click elsewhere cancels.
+// panel over the name itself, as VS Code's inline rename input, in the
+// editor's font with the old name selected, so the line below stays in
+// view; it has the keyboard while it shows; Return renames, Esc or a
+// click elsewhere cancels.
+//
+// Both, like the popups in LspPopups.h, take the theme's widget colors
+// (MCFindStyle, FindWidget.h) each time they show.
 #import <Cocoa/Cocoa.h>
+
+// A row of the popups' lists whose selection is drawn in `selectionColor`
+// (the theme's list selection), the same whether or not its window has the
+// keyboard (it never does: the editor keeps it), with the row's text left
+// in its own colors.
+@interface MCPopupRowView : NSTableRowView
+@property(nonatomic, strong) NSColor *selectionColor;
+@end
 
 @interface MCPickerPopup : NSObject
 // A row chosen with Return or a click.
@@ -44,7 +57,10 @@
 @property(nonatomic, copy) void (^onClose)(void);
 @property(nonatomic, readonly) NSTextField *field;
 @property(nonatomic, readonly) BOOL visible;
-- (void)showWithName:(NSString *)name relativeToRect:(NSRect)rect ofView:(NSView *)view;
+// Over `rect` (the name, in `view`'s coordinates), the field's text in
+// `font` (the editor's) at the name's place.
+- (void)showWithName:(NSString *)name relativeToRect:(NSRect)rect ofView:(NSView *)view
+                font:(NSFont *)font;
 - (void)close;
 // The box's content, for pictures in tests.
 - (NSView *)contentView;

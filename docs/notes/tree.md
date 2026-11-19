@@ -17,7 +17,22 @@ found through that list.
   insert rows above it (a click on main.go once opened helper.go). Drag and drop moves rows into folders
   (`validateDrop:` retargets onto a folder; into itself, a descendant or where
   it is refused), copies files from Finder in and rows out; a clash is reported
-  after the drop (Finder waits on a modal during it). `pathMovedFrom:to:` moves
+  after the drop (Finder waits on a modal during it). **Rows dragged
+  inside the app** (2026-11-18, the grading walker on 1.6.3): the
+  within-app mask is Move, Copy and Generic, so the tree's own folders
+  take a move and the terminal (which types the path) and the editor's
+  text (`CodeTextView onDropFiles`, `openDroppedPaths:`: files open in
+  kept tabs, folders are revealed) take a copy; to Finder it stays Copy.
+  `dragBegan` is set in ClickOutline's `beginDraggingSessionWithItems:`
+  override, which the tracking calls before it returns, and when the
+  tracking returns on a drag event, not only in the delegate's
+  `willBeginAtPoint:`. Checked in terminal_paste: mouse events posted to
+  the outline's own tracking, the session's items and mask caught at
+  `beginDraggingSessionWithItems:` (the window is never on screen), then
+  dropped on the grid and the text view. Trap: a within-app mask of Move
+  alone had the terminal refuse every row (it takes only Copy, Generic or
+  Link), and #187's check never saw it because its fake drag offered
+  every operation; a drop check names the real source's mask. `pathMovedFrom:to:` moves
   tabs, the LaTeX path and a preview's relative pictures. F2 renames,
   Cmd+Delete trashes (the registry's `Tree` commands, run by the key monitor),
   Space previews with Quick Look. Show Hidden Files (`gShowHidden`) is one
@@ -300,5 +315,6 @@ text is in place in its section.
 
 - The file tree (Mac): Trap: NSTableCellView moves its textField to the cell's width without a layout pass, so `MCTreeCell` places its fields again in `viewWillDraw`.
 - The file tree (Mac): Trap: `NSTableViewLastColumnOnlyAutoresizingStyle` moves the column only by the change in the outline's frame, so a width lost once stayed lost and a reload cut every name off; `fitTreeColumn` fits it after each reload and frame change.
+- The file tree (Mac): Trap: a within-app mask of Move alone had the terminal refuse every row (it takes only Copy, Generic or Link), and #187's check never saw it because its fake drag offered every operation; a drop check names the real source's mask.
 - The file tree (Mac): Trap: the tree following the active tab must not scroll for the row a click in the tree opens (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`).
 - The file tree (GTK): Trap: a row's place is only right after the layout that holds the rows just put in, which comes after a frame's tick callbacks and may come after a low-priority idle, so `centerRow` reads it in the frame clock's after-paint, where no listing can have moved the rows since.

@@ -225,6 +225,71 @@ struct Counting {
     self.enclosingScrollView.verticalRulerView.needsDisplay = YES;
 }
 
+// ---- files dropped on the text open (onDropFiles)
+// The file paths a drag carries, unless it comes from this very view.
+- (NSArray<NSString *> *)droppedFilePaths:(id<NSDraggingInfo>)info {
+    if (!self.onDropFiles || info.draggingSource == self) return nil;
+    NSArray<NSURL *> *urls = [info.draggingPasteboard
+        readObjectsForClasses:@[NSURL.class]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *u in urls)
+        if (u.filePathURL.path.length) [paths addObject:u.filePathURL.path];
+    return paths.count ? paths : nil;
+}
+
+// The copy cursor for files, from a source that allows it (the tree and
+// Finder do), else what the source allows; none for anything else.
+- (NSDragOperation)fileDropOperation:(id<NSDraggingInfo>)info {
+    if (![self droppedFilePaths:info]) return NSDragOperationNone;
+    const NSDragOperation mask = info.draggingSourceOperationMask;
+    for (NSDragOperation op : {NSDragOperationCopy, NSDragOperationGeneric, NSDragOperationLink})
+        if (mask & op) return op;
+    return NSDragOperationNone;
+}
+
+- (NSArray<NSPasteboardType> *)acceptableDragTypes {
+    NSArray<NSPasteboardType> *types = [super acceptableDragTypes] ?: @[];
+    return [types containsObject:NSPasteboardTypeFileURL]
+               ? types : [types arrayByAddingObject:NSPasteboardTypeFileURL];
+}
+
+// A read-only view (a preview) registers no types of its own; files still
+// open from it.
+- (void)updateDragTypeRegistration {
+    [super updateDragTypeRegistration];
+    if (!self.editable) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info {
+    if ([self droppedFilePaths:info]) return [self fileDropOperation:info];
+    return [super draggingEntered:info];
+}
+
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info {
+    if ([self droppedFilePaths:info]) return [self fileDropOperation:info];
+    return [super draggingUpdated:info];
+}
+
+- (void)draggingExited:(id<NSDraggingInfo>)info {
+    if (![self droppedFilePaths:info]) [super draggingExited:info];
+}
+
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)info {
+    if ([self droppedFilePaths:info]) return [self fileDropOperation:info] != NSDragOperationNone;
+    return [super prepareForDragOperation:info];
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+    NSArray<NSString *> *paths = [self droppedFilePaths:info];
+    if (paths) return [self fileDropOperation:info] != NSDragOperationNone && self.onDropFiles(paths);
+    return [super performDragOperation:info];
+}
+
+- (void)concludeDragOperation:(id<NSDraggingInfo>)info {
+    if (![self droppedFilePaths:info]) [super concludeDragOperation:info];
+}
+
 - (BOOL)resignFirstResponder {
     BOOL ok = [super resignFirstResponder];
     if (ok && _multi.active) self.needsDisplay = YES;   // carets dimmed

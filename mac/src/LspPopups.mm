@@ -21,14 +21,26 @@ static MCCompletionPanel *MakePopupPanel(NSRect frame) {
                     backing:NSBackingStoreBuffered defer:YES];
     p.hasShadow = YES;
     p.releasedWhenClosed = NO;
-    p.backgroundColor = LHex(0x252526);
-    p.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     p.becomesKeyOnlyIfNeeded = YES;
     return p;
 }
 
+// The theme's widget colors (PopupStyle) on a popup's window, its bordered
+// view and its list, at each showing: the theme may have changed since.
+static void StylePopup(NSPanel *panel, NSView *bordered, NSTableView *table) {
+    MCFindStyle *style = PopupStyle();
+    panel.backgroundColor = style.widgetBackground;
+    panel.appearance = style.appearance;
+    bordered.wantsLayer = YES;
+    bordered.layer.borderWidth = 1;
+    bordered.layer.borderColor = style.widgetEdge.CGColor;
+    table.backgroundColor = style.widgetBackground;
+}
+
 @implementation MCCompletionPopup {
     MCCompletionPanel *_panel, *_docPanel;
+    NSScrollView *_scroll;
+    MCFindStyle *_style;   // the theme's colors, as of the last showing
     NSTableView *_table;
     NSTextView *_docView;
     NSScrollView *_docScroll;
@@ -46,15 +58,14 @@ static CGFloat DocMaxHeight(void) { return Zoomed(320); }
 static const NSInteger kMaxRows = 10;
 
 - (void)build {
+    _style = PopupStyle();
     _panel = MakePopupPanel(NSMakeRect(0, 0, PopupWidth(), 100));
     NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:_panel.contentView.bounds];
     scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     scroll.hasVerticalScroller = YES;
     scroll.autohidesScrollers = YES;
     scroll.drawsBackground = NO;
-    scroll.wantsLayer = YES;
-    scroll.layer.borderWidth = 1;
-    scroll.layer.borderColor = LHex(0x454545).CGColor;
+    _scroll = scroll;
 
     _table = [[NSTableView alloc] initWithFrame:scroll.bounds];
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"item"];
@@ -64,7 +75,6 @@ static const NSInteger kMaxRows = 10;
     _table.headerView = nil;
     _table.rowHeight = RowHeight();
     _table.intercellSpacing = NSMakeSize(0, 0);
-    _table.backgroundColor = LHex(0x252526);
     _table.style = NSTableViewStylePlain;
     _table.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
     _table.dataSource = self;
@@ -74,6 +84,7 @@ static const NSInteger kMaxRows = 10;
     _table.refusesFirstResponder = YES;
     scroll.documentView = _table;
     [_panel.contentView addSubview:scroll];
+    StylePopup(_panel, scroll, _table);
 }
 
 - (void)buildDoc {
@@ -83,9 +94,7 @@ static const NSInteger kMaxRows = 10;
     _docScroll.hasVerticalScroller = YES;
     _docScroll.autohidesScrollers = YES;
     _docScroll.drawsBackground = NO;
-    _docScroll.wantsLayer = YES;
-    _docScroll.layer.borderWidth = 1;
-    _docScroll.layer.borderColor = LHex(0x454545).CGColor;
+    StylePopup(_docPanel, _docScroll, nil);
     _docView = [[NSTextView alloc] initWithFrame:_docScroll.bounds];
     _docView.editable = NO;
     _docView.selectable = NO;
@@ -148,15 +157,26 @@ static const NSInteger kMaxRows = 10;
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
         initWithString:[@" " stringByAppendingString:_labels[(NSUInteger)row]]
             attributes:@{NSFontAttributeName: mono,
-                         NSForegroundColorAttributeName: LHex(0xD4D4D4)}];
+                         NSForegroundColorAttributeName: _style.widgetForeground}];
     NSString *detail = (NSUInteger)row < _details.count ? _details[(NSUInteger)row] : @"";
     if (detail.length)
         [s appendAttributedString:[[NSAttributedString alloc]
             initWithString:[@"   " stringByAppendingString:detail]
                 attributes:@{NSFontAttributeName: mono,
-                             NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
+                             NSForegroundColorAttributeName: _style.muted}]];
     f.attributedStringValue = s;
     return f;
+}
+
+- (NSTableRowView *)tableView:(NSTableView *)tv rowViewForRow:(NSInteger)row {
+    (void)row;
+    MCPopupRowView *v = [tv makeViewWithIdentifier:@"popupRow" owner:self];
+    if (!v) {
+        v = [MCPopupRowView new];
+        v.identifier = @"popupRow";
+    }
+    v.selectionColor = _style.selection;
+    return v;
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification *)note {
@@ -171,10 +191,13 @@ static const NSInteger kMaxRows = 10;
 }
 
 - (NSRect)frame { return _panel.frame; }
+- (NSWindow *)window { return _panel; }
 
 - (void)showLabels:(NSArray<NSString *> *)labels details:(NSArray<NSString *> *)details
                select:(NSInteger)select atScreenRect:(NSRect)caret parent:(NSWindow *)parent {
     if (!_panel) [self build];
+    _style = PopupStyle();
+    StylePopup(_panel, _scroll, _table);
     _labels = [labels copy];
     _details = [details copy];
     // The zoom may have changed since the list was last shown.
@@ -221,6 +244,7 @@ static const NSInteger kMaxRows = 10;
 - (void)showDoc:(NSAttributedString *)doc {
     if (!doc.length || !_visible) { [self hideDoc]; return; }
     if (!_docPanel) [self buildDoc];
+    StylePopup(_docPanel, _docScroll, nil);
     [_docPanel setContentSize:NSMakeSize(DocWidth(), DocMaxHeight())];
     [_docView.textStorage setAttributedString:doc];
     NSLayoutManager *lm = _docView.layoutManager;
@@ -325,9 +349,7 @@ static const CGFloat kHoverMinWidth = 60;
     _scroll.hasVerticalScroller = YES;
     _scroll.autohidesScrollers = YES;
     _scroll.drawsBackground = NO;
-    _scroll.wantsLayer = YES;
-    _scroll.layer.borderWidth = 1;
-    _scroll.layer.borderColor = LHex(0x454545).CGColor;
+    StylePopup(_panel, _scroll, nil);
     _view = [[NSTextView alloc] initWithFrame:_scroll.bounds];
     _view.editable = NO;
     _view.selectable = NO;
@@ -342,9 +364,11 @@ static const CGFloat kHoverMinWidth = 60;
 }
 
 - (NSRect)frame { return _visible ? _panel.frame : NSZeroRect; }
+- (NSWindow *)window { return _panel; }
 
 - (void)show:(NSAttributedString *)text atScreenRect:(NSRect)line parent:(NSWindow *)parent {
     if (!_panel) [self build];
+    StylePopup(_panel, _scroll, nil);
     // Laid out at the widest first, then narrowed to the longest line, so a
     // one-line answer gets a small box.
     [_panel setContentSize:NSMakeSize(kHoverMaxWidth, kHoverMaxHeight)];
@@ -394,17 +418,16 @@ static const CGFloat kHoverMinWidth = 60;
 }
 static const CGFloat kSignatureMaxWidth = 600;
 
+- (NSWindow *)window { return _panel; }
+
 - (void)show:(NSAttributedString *)text atScreenRect:(NSRect)caret parent:(NSWindow *)parent {
     if (!_panel) {
         _panel = MakePopupPanel(NSMakeRect(0, 0, 200, 24));
-        NSView *box = _panel.contentView;
-        box.wantsLayer = YES;
-        box.layer.borderWidth = 1;
-        box.layer.borderColor = LHex(0x454545).CGColor;
         _label = [NSTextField wrappingLabelWithString:@""];
         _label.selectable = NO;
-        [box addSubview:_label];
+        [_panel.contentView addSubview:_label];
     }
+    StylePopup(_panel, _panel.contentView, nil);
     _label.attributedStringValue = text;
     NSSize fit = [_label sizeThatFits:NSMakeSize(kSignatureMaxWidth, CGFLOAT_MAX)];
     fit.width = MIN(ceil(fit.width), kSignatureMaxWidth);

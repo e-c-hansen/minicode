@@ -64,7 +64,9 @@ container (PanelHost, laid out by hand in layoutContainer)
   iconFailed), the ANSI
   palette in `TermColor::rgb()`; `linux/src/Palette.h` mirrors the defaults.
   The find bar and Find in Folder take a palette per theme
-  (`FindWidget.mm`, `PaletteFor`), not keys of their own.
+  (`FindWidget.mm`, `PaletteFor`), not keys of their own, and so do the
+  language server's popups by the caret (`PopupStyle`, LspShared.h;
+  `docs/notes/lsp.md`), read at each showing.
 - The window always uses `NSWindowStyleMaskFullSizeContentView`;
   `layoutContainer` keeps the split below the title bar with
   `contentLayoutRect`, empty before the window is shown, so `titlebarHeight`

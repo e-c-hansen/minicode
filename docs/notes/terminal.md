@@ -333,7 +333,10 @@ for full-screen programs. Both can be open at once.
   Refused (no copy cursor) while the paste question is up. Checked in
   terminal_paste (a scratch pasteboard and a fake NSDraggingInfo; zsh
   reads the paths back) and needs a real drag from Finder into Claude
-  Code by eye. Trap: quote dropped paths with backslashes, never single
+  Code by eye. A row from the file tree comes with the tree's within-app
+  mask (Move, Copy and Generic since 2026-11-18; Move alone was refused
+  here), which terminal_paste now drives from mouse events posted to the
+  outline (`docs/notes/tree.md`). Trap: quote dropped paths with backslashes, never single
   quotes. Claude Code 2.1.327 reads a pasted path by trimming it,
   taking off one outer pair of quotes and then every backslash before a
   character, and splits several at a space before "/" (or a quote and
