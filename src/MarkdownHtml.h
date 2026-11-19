@@ -7,7 +7,8 @@
 // them keep their places, tables are tables with their columns' alignment,
 // footnotes are a numbered list at the end with links both ways, task boxes
 // are disabled checkboxes, a fenced block's language is its code element's
-// class (language-python), and math is its TeX between \( \) or \[ \], for a
+// class (language-python) and the rest of its info string (a notebook's
+// "In [3]") a small line above it, and math is its TeX between \( \) or \[ \], for a
 // page that loads MathJax or KaTeX to typeset (none is loaded: the page
 // fetches nothing). Pictures keep their addresses as written when those are
 // relative, https or data:image; any other address shows the alt text.

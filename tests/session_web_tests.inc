@@ -13,8 +13,12 @@
 #include <netinet/in.h>
 #include <poll.h>
 
+#include <sqlite3.h>
+#include <sys/stat.h>
+
 #include "IdeLink.h"
 #include "SessionWeb.h"
+#include "SqliteRead.h"
 
 namespace {
 
@@ -396,6 +400,34 @@ Web::Request request(const std::string& text) { return Web::readRequest(text); }
 void writeText(const std::string& path, const std::string& text) {
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     f << text;
+}
+
+// Runs `sql` on a database made (or opened) for writing at `path`.
+bool sqlExec(const std::string& path, const std::string& sql) {
+    sqlite3* db = nullptr;
+    bool ok = sqlite3_open(path.c_str(), &db) == SQLITE_OK &&
+              sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+    if (!ok && db) std::printf("  sqlExec: %s\n", sqlite3_errmsg(db));
+    sqlite3_close(db);
+    return ok;
+}
+
+// A file's bytes, for "nothing changed".
+std::string fileBytes(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+// The names in a folder, sorted, for "nothing was made beside it".
+std::vector<std::string> namesIn(const std::string& dir) {
+    std::vector<std::string> out;
+    if (DIR* d = ::opendir(dir.c_str())) {
+        while (dirent* e = ::readdir(d))
+            if (std::strcmp(e->d_name, ".") && std::strcmp(e->d_name, "..")) out.push_back(e->d_name);
+        ::closedir(d);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 std::string getWith(const std::string& target, const std::string& extra = "") {
@@ -2061,7 +2093,7 @@ static void testSessionWeb() {
         CHECK(Web::fileType("data.csv").view == "table" && Web::fileType("data.csv").mime.empty());
         CHECK(Web::fileType("data.TSV").view == "table");
         CHECK(Web::fileType("site.css").view.empty() && Web::fileType("site.css").mime == "text/css; charset=utf-8");
-        for (const char* text : {"main.py", "notes.txt", "Makefile", ".png", "a.js", "x.sqlite", "a.ts"})
+        for (const char* text : {"main.py", "notes.txt", "Makefile", ".png", "a.js", "x.sqlite3x", "a.ts"})
             CHECK(Web::fileType(text).view.empty() && Web::fileType(text).mime.empty());
         CHECK(Web::fileType("big.png").maxBytes == std::uint64_t(64) << 20);
         CHECK(Web::fileTarget("ab12", "docs/My Shot+1.png") == "/file/ab12/docs/My%20Shot%2B1.png");
@@ -2339,6 +2371,326 @@ static void testSessionWeb() {
         CHECK(pageAnswer.response.find("img-src data: 'self'; media-src 'self';") != std::string::npos);
         CHECK(pageAnswer.response.find("frame-src 'self' http: https:;") != std::string::npos);
         CHECK(Web::pageHtml().find("id=\"fileview\"") != std::string::npos);
+    }
+
+    // What the page renders itself (R3's second slice): a notebook as a
+    // page, a SQLite database's tables and rows, read-only; hostile cells,
+    // tables and columns escaped or carried as text, never as markup.
+    GROUP("sessionweb:viewers");
+    {
+        CHECK(Web::fileType("lab/Analysis.IPYNB").view == "notebook" && Web::fileType("a.ipynb").mime.empty());
+        for (const char* db : {"app.sqlite", "app.sqlite3", "cache.db", "x.DB3"})
+            CHECK(Web::fileType(db).view == "database" && Web::fileType(db).mime.empty());
+        // Served as bytes never: the /file/ route has no type for them.
+        CHECK(Web::answer(Web::readRequest(getWith("/file/tok/a.ipynb")), "tok", "").kind == Web::Answer::File);
+
+        // SqliteRead's pieces.
+        CHECK(SqliteRead::isDatabaseHeader(std::string("SQLite format 3\0rest", 20)));
+        CHECK(!SqliteRead::isDatabaseHeader("SQLite format 3") && !SqliteRead::isDatabaseHeader("hello"));
+        std::string wal("SQLite format 3\0\x10\0\x02\x02", 20);
+        CHECK(SqliteRead::isWalHeader(wal));
+        wal[18] = 1;
+        CHECK(!SqliteRead::isWalHeader(wal));
+        CHECK(SqliteRead::quoteName("plain") == "\"plain\"");
+        CHECK(SqliteRead::quoteName("a\"b\"\"c") == "\"a\"\"b\"\"\"\"c\"");
+        CHECK(SqliteRead::uriFor("/tmp/my db?#%.sqlite", false) == "file:/tmp/my%20db%3F%23%25.sqlite?mode=ro");
+        CHECK(SqliteRead::uriFor("/a/caf\xc3\xa9.db", true) == "file:/a/caf%C3%A9.db?mode=ro&immutable=1");
+        CHECK(SqliteRead::validUtf8("ok \xc3\xa9 \xe2\x82\xac \xf0\x9f\x98\x80") == "ok \xc3\xa9 \xe2\x82\xac \xf0\x9f\x98\x80");
+        CHECK(SqliteRead::validUtf8("a\xff" "b") == "a\xef\xbf\xbd" "b");
+        CHECK(SqliteRead::validUtf8("\xc3") == "\xef\xbf\xbd");                 // cut short
+        CHECK(SqliteRead::validUtf8("\xed\xa0\x80") == "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd");   // a surrogate
+        CHECK(SqliteRead::validUtf8("\xc0\xaf") == "\xef\xbf\xbd\xef\xbf\xbd");  // overlong
+        CHECK(SqliteRead::cutUtf8("ab\xc3\xa9", 3) == "ab" && SqliteRead::cutUtf8("abc", 5) == "abc");
+        // A Latin-1 CSV's rows are valid UTF-8 for the socket's text frames.
+        CHECK(Web::tableJson("a.csv", "name\ncaf\xe9\n", true)["rows"][1][0].asString() == "caf\xef\xbf\xbd");
+
+        const std::string root = scratchFolder(), elsewhere = scratchFolder();
+
+        // ---- notebooks
+        writeText(root + "/good.ipynb", R"NB({"nbformat": 4, "nbformat_minor": 5,
+ "metadata": {"kernelspec": {"language": "python"}},
+ "cells": [
+  {"cell_type": "markdown", "metadata": {}, "source": ["# Results\n", "Some *text*."]},
+  {"cell_type": "code", "execution_count": 3, "metadata": {}, "source": ["1 + 2"],
+   "outputs": [{"output_type": "execute_result", "execution_count": 3, "metadata": {},
+                "data": {"text/plain": ["3"]}},
+               {"output_type": "display_data", "metadata": {},
+                "data": {"image/png": ["iVBORw0KGgo="], "text/plain": ["<Figure>"]}}]}]})NB");
+        Json nb = Web::notebookJson(root, "good.ipynb", false);
+        const std::string page = nb["html"].asString();
+        if (nb.has("error")) std::printf("  sessionweb:viewers: %s\n", nb["error"].asString().c_str());
+        CHECK(nb["t"].asString() == "notebook" && nb["path"].asString() == "good.ipynb" && !nb.has("error"));
+        CHECK(nb["cells"].asInt() == 2);
+        CHECK(page.find("<h1 id=\"results\">Results</h1>") != std::string::npos);
+        CHECK(page.find("<em>text</em>") != std::string::npos);
+        CHECK(page.find("<div class=\"code-label\">In [3]</div>") != std::string::npos);
+        CHECK(page.find("<code class=\"language-python\">1 + 2") != std::string::npos);
+        CHECK(page.find("<div class=\"code-label\">Out [3]</div>") != std::string::npos);
+        CHECK(page.find("<code class=\"language-output\">3") != std::string::npos);
+        CHECK(page.find("<img src=\"data:image/png;base64,iVBORw0KGgo=\" alt=\"output\">") != std::string::npos);
+        CHECK(page.find("<script") == std::string::npos);
+
+        // Hostile cells: markup in Markdown, code, text and HTML outputs, a
+        // picture whose data tries to leave its attribute, an SVG with a
+        // script, a javascript: link, and bytes that are not UTF-8.
+        writeText(root + "/hostile.ipynb", std::string(R"NB({"nbformat": 4, "nbformat_minor": 5, "metadata": {},
+ "cells": [
+  {"cell_type": "markdown", "metadata": {}, "source": ["# Hi <script>window.pwned=1</script>\n",
+     "<img src=x onerror=\"window.pwned=2\">\n\n[link](javascript:window.pwned=3) and <iframe src=\"https://evil.example\"></iframe> caf)NB") +
+                                  "\xe9" + R"NB("]},
+  {"cell_type": "code", "execution_count": 1, "metadata": {},
+   "source": ["print('</code></pre><script>window.pwned=4</script>')"],
+   "outputs": [
+    {"output_type": "stream", "name": "stdout", "text": ["</pre><script>window.pwned=5</script>\n"]},
+    {"output_type": "error", "ename": "E", "evalue": "<b onmouseover=x>", "traceback": ["\u001b[31m<script>window.pwned=6</script>\u001b[0m"]},
+    {"output_type": "display_data", "metadata": {}, "data": {"text/html": ["<script>window.pwned=7</script><b>bold</b>"]}},
+    {"output_type": "display_data", "metadata": {}, "data": {"image/png": ["AAAA\" onerror=\"window.pwned=8"]}},
+    {"output_type": "display_data", "metadata": {}, "data": {"image/svg+xml": ["<svg onload='window.pwned=9'><script>window.pwned=10</script></svg>"]}}]}]})NB");
+        nb = Web::notebookJson(root, "hostile.ipynb", false);
+        const std::string bad = nb["html"].asString();
+        CHECK(!nb.has("error") && !bad.empty());
+        CHECK(bad.find("<script") == std::string::npos && bad.find("<iframe") == std::string::npos);
+        CHECK(bad.find("onerror=\"") == std::string::npos && bad.find("onload") == std::string::npos);
+        CHECK(bad.find("onmouseover=") == std::string::npos || bad.find("&lt;b onmouseover=x&gt;") != std::string::npos);
+        CHECK(bad.find("javascript:") == std::string::npos);
+        CHECK(bad.find("&lt;/code&gt;&lt;/pre&gt;&lt;script&gt;window.pwned=4") != std::string::npos);
+        CHECK(bad.find("&lt;/pre&gt;&lt;script&gt;window.pwned=5") != std::string::npos);
+        CHECK(bad.find("base64,AAAA&quot;onerror=&quot;window.pwned=8\"") != std::string::npos);
+        CHECK(bad.find("\xe9") == std::string::npos && bad.find("caf\xef\xbf\xbd") != std::string::npos);
+        // The SVG is a data: picture (an <img> runs no script), base64'd.
+        CHECK(bad.find("<img src=\"data:image/svg+xml;base64,") != std::string::npos);
+        // Every byte of the page is valid UTF-8, so it can go in a text frame.
+        CHECK(SqliteRead::validUtf8(bad) == bad);
+
+        // Refusals: not a notebook, outside the folder, a dotfile, a folder,
+        // too large, missing, and another kind of file.
+        writeText(root + "/broken.ipynb", "{not json");
+        nb = Web::notebookJson(root, "broken.ipynb", false);
+        CHECK(nb.has("error") && !nb.has("html") &&
+              nb["error"].asString().find("cannot be read as a notebook") != std::string::npos);
+        writeText(elsewhere + "/secret.ipynb", "{\"cells\": [{\"cell_type\": \"markdown\", \"source\": \"SECRET\"}]}");
+        CHECK(::symlink(elsewhere.c_str(), (root + "/away").c_str()) == 0);
+        CHECK(::symlink((elsewhere + "/secret.ipynb").c_str(), (root + "/link.ipynb").c_str()) == 0);
+        ::mkdir((root + "/.hidden").c_str(), 0755);
+        writeText(root + "/.hidden/n.ipynb", "{\"cells\": []}");
+        ::mkdir((root + "/dir.ipynb").c_str(), 0755);
+        for (const char* path : {"away/secret.ipynb", "link.ipynb", "../secret.ipynb", "/etc/passwd.ipynb",
+                                 ".hidden/n.ipynb", "dir.ipynb", "missing.ipynb", "notes.txt", ""}) {
+            const Json r = Web::notebookJson(root, path, false);
+            if (!r.has("error") || r.has("html") || r.dump().find("SECRET") != std::string::npos)
+                std::printf("  sessionweb:viewers: notebook %s: %s\n", path, r.dump().substr(0, 200).c_str());
+            CHECK(r.has("error") && !r.has("html") && r.dump().find("SECRET") == std::string::npos);
+        }
+        CHECK(!Web::notebookJson(root, ".hidden/n.ipynb", true).has("error"));   // where the tree shows dotfiles
+        {
+            const int fd = ::open((root + "/huge.ipynb").c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+            CHECK(fd >= 0 && ::ftruncate(fd, (off_t)Web::kMaxNotebookBytes + 1) == 0);
+            ::close(fd);
+            const Json r = Web::notebookJson(root, "huge.ipynb", false);
+            CHECK(r["error"].asString().find("too large") != std::string::npos);
+        }
+
+        // ---- databases
+        const std::string dbPath = root + "/app.sqlite";
+        std::string many = "INSERT INTO items(n, name) VALUES ";
+        for (int i = 1; i <= 250; i++) many += (i > 1 ? "," : "") + std::string("(") + std::to_string(i) + ", 'item " + std::to_string(i) + "')";
+        CHECK(sqlExec(dbPath,
+                      "CREATE TABLE items(n INTEGER, name TEXT);" + many + ";"
+                      "CREATE TABLE \"<script>window.pwned=1</script>\"(\"\"\"><img src=x onerror=window.pwned=2>\" TEXT, "
+                      "  \"plain\" TEXT, b BLOB, r REAL);"
+                      "INSERT INTO \"<script>window.pwned=1</script>\" VALUES "
+                      "  ('<img src=x onerror=window.pwned=3>', NULL, x'00ff10', 2.5),"
+                      "  (CAST(x'6361668e' AS TEXT), printf('%.3000c', 'y'), zeroblob(5000), -1e300);"
+                      "CREATE TABLE \"a\"\"b\"(x);"
+                      "INSERT INTO \"a\"\"b\" VALUES (1);"
+                      "CREATE VIEW big AS SELECT name FROM items WHERE n > 245;"
+                      "CREATE VIEW forever AS WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) "
+                      "  SELECT x FROM c;"));
+        const std::string before = fileBytes(dbPath);
+        struct stat st0;
+        ::stat(dbPath.c_str(), &st0);
+        const std::vector<std::string> namesBefore = namesIn(root);
+
+        Json db = Web::databaseJson(root, "app.sqlite", false, "", 0);
+        if (db.has("error")) std::printf("  sessionweb:viewers: %s\n", db["error"].asString().c_str());
+        CHECK(db["t"].asString() == "db" && !db.has("error"));
+        std::vector<std::string> names;
+        for (const Json& t : db["tables"].elements()) names.push_back(t["name"].asString() + ":" + t["type"].asString());
+        // Tables by name, then views.
+        CHECK((names == std::vector<std::string>{"<script>window.pwned=1</script>:table", "a\"b:table",
+                                                 "items:table", "big:view", "forever:view"}));
+        // The first table shown when none is asked for.
+        CHECK(db["table"].asString() == "<script>window.pwned=1</script>" && db["offset"].asInt() == 0);
+        CHECK(db["columns"].size() == 4);
+        CHECK(db["columns"][0].asString() == "\"><img src=x onerror=window.pwned=2>");
+        const Json& rows = db["rows"];
+        CHECK(rows.size() == 2 && !db["more"].asBool());
+        CHECK(rows[0][0].asString() == "<img src=x onerror=window.pwned=3>");   // text, for textContent
+        CHECK(rows[0][1].isNull() && rows[0][2]["blob"].asInt() == 3 && rows[0][3].asString() == "2.5");
+        CHECK(rows[1][0].asString() == "caf\xef\xbf\xbd");                      // not UTF-8: U+FFFD
+        CHECK(rows[1][1]["bytes"].asInt() == 3000 && rows[1][1]["text"].asString().size() == SqliteRead::kMaxCellBytes);
+        CHECK(rows[1][2]["blob"].asInt() == 5000 && rows[1][3].asString() == "-1.0e+300");
+        // Through JSON as the page gets it, markup stays inside strings.
+        Json back;
+        CHECK(Json::parse(db.dump(), back) && back["columns"][0].asString() == db["columns"][0].asString());
+
+        // Paging: 100 rows at a time, the last page short.
+        db = Web::databaseJson(root, "app.sqlite", false, "items", 0);
+        CHECK(db["rows"].size() == Web::kDbPageRows && db["more"].asBool());
+        CHECK(db["rows"][0][0].asString() == "1" && db["rows"][99][1].asString() == "item 100");
+        db = Web::databaseJson(root, "app.sqlite", false, "items", 200);
+        CHECK(db["rows"].size() == 50 && !db["more"].asBool() && db["rows"][0][0].asString() == "201");
+        db = Web::databaseJson(root, "app.sqlite", false, "items", 1000);
+        CHECK(db["rows"].size() == 0 && !db["more"].asBool() && !db.has("error"));
+        db = Web::databaseJson(root, "app.sqlite", false, "items", -5);
+        CHECK(db["offset"].asInt() == 0 && db["rows"][0][0].asString() == "1");
+        db = Web::databaseJson(root, "app.sqlite", false, "a\"b", 0);
+        CHECK(db["rows"].size() == 1 && db["rows"][0][0].asString() == "1");
+        db = Web::databaseJson(root, "app.sqlite", false, "big", 0);
+        CHECK(db["rows"].size() == 5 && db["rows"][0][0].asString() == "item 246");
+        // Only a table or view the schema names; never SQL of the page's.
+        for (const char* t : {"nope", "items; DROP TABLE items", "items\" WHERE 1; --", "sqlite_master"}) {
+            db = Web::databaseJson(root, "app.sqlite", false, t, 0);
+            CHECK(db.has("error") && !db.has("rows") && db["tables"].size() == 5);
+        }
+        // A view that never ends stops at the deadline (a short one here).
+        {
+            SqliteRead::Database d;
+            std::string why;
+            char real[PATH_MAX];
+            CHECK(::realpath(dbPath.c_str(), real) != nullptr && d.open(real, &why));
+            d.setTimeLimit(std::chrono::milliseconds(200));
+            SqliteRead::Page pg;
+            const double c0 = cpuMs();
+            CHECK(!d.rows("forever", 0, 100, &pg, &why) || pg.rows.size() == 100);
+            // LIMIT bounds it before the deadline; an OFFSET this far does not.
+            CHECK(!d.rows("forever", 4000000000000LL, 100, &pg, &why));
+            CHECK(why.find("took longer than 200 ms") != std::string::npos);
+            CHECK_TIME(cpuMs() - c0, 1500);
+            // The byte cap: a page stops once its text passes it.
+            CHECK(d.rows("items", 0, 100, &pg, &why, 20) && pg.rows.size() == 3 && pg.more);
+        }
+        // Read-only: the file, its time and the folder are as they were.
+        CHECK(fileBytes(dbPath) == before);
+        struct stat st1;
+        ::stat(dbPath.c_str(), &st1);
+        CHECK(st1.st_mtime == st0.st_mtime && st1.st_size == st0.st_size);
+        CHECK(namesIn(root) == namesBefore);
+
+        // A live writer, mid-transaction: the page reads what was committed,
+        // and the writer commits after it (no lock held between reads).
+        {
+            sqlite3* w = nullptr;
+            CHECK(sqlite3_open(dbPath.c_str(), &w) == SQLITE_OK);
+            CHECK(sqlite3_exec(w, "BEGIN IMMEDIATE; INSERT INTO items VALUES (999, 'uncommitted');", nullptr, nullptr, nullptr) == SQLITE_OK);
+            db = Web::databaseJson(root, "app.sqlite", false, "items", 200);
+            CHECK(!db.has("error") && db["rows"].size() == 50);
+            CHECK(sqlite3_exec(w, "COMMIT;", nullptr, nullptr, nullptr) == SQLITE_OK);
+            sqlite3_close(w);
+            db = Web::databaseJson(root, "app.sqlite", false, "items", 200);
+            CHECK(db["rows"].size() == 51 && db["rows"][50][1].asString() == "uncommitted");
+        }
+        // WAL: open with its -wal beside it, a writer's connection open; and
+        // closed (no -wal or -shm), opened immutable without making them.
+        {
+            const std::string walPath = root + "/wal.db";
+            CHECK(sqlExec(walPath, "PRAGMA journal_mode=WAL; CREATE TABLE t(x); INSERT INTO t VALUES (7);"));
+            // As a closed WAL database is left (the Mac's SQLite keeps an
+            // empty -wal and the -shm; others remove them).
+            ::unlink((walPath + "-wal").c_str());
+            ::unlink((walPath + "-shm").c_str());
+            const std::vector<std::string> walBefore = namesIn(root);
+            db = Web::databaseJson(root, "wal.db", false, "", 0);
+            if (db.has("error")) std::printf("  sessionweb:viewers: wal: %s\n", db["error"].asString().c_str());
+            CHECK(!db.has("error") && db["rows"][0][0].asString() == "7");
+            CHECK(namesIn(root) == walBefore);
+            sqlite3* w = nullptr;
+            CHECK(sqlite3_open(walPath.c_str(), &w) == SQLITE_OK);
+            CHECK(sqlite3_exec(w, "INSERT INTO t VALUES (8);", nullptr, nullptr, nullptr) == SQLITE_OK);
+            CHECK(::access((walPath + "-wal").c_str(), F_OK) == 0);
+            db = Web::databaseJson(root, "wal.db", false, "t", 0);
+            if (db.has("error")) std::printf("  sessionweb:viewers: live wal: %s\n", db["error"].asString().c_str());
+            CHECK(!db.has("error") && db["rows"].size() == 2 && db["rows"][1][0].asString() == "8");
+            sqlite3_close(w);
+        }
+        // Refusals: not a database, empty, outside the folder, a dotfile, a
+        // FIFO (never blocked on), a folder, missing, another kind.
+        writeText(root + "/notes.db", "just text, not SQLite\n");
+        writeText(root + "/empty.db", "");
+        CHECK(::symlink(dbPath.c_str(), (root + "/inside.db").c_str()) == 0);
+        CHECK(sqlExec(elsewhere + "/secret.db", "CREATE TABLE secret(x); INSERT INTO secret VALUES ('SECRET');"));
+        CHECK(::symlink((elsewhere + "/secret.db").c_str(), (root + "/out.db").c_str()) == 0);
+        CHECK(::mkfifo((root + "/pipe.db").c_str(), 0644) == 0);
+        CHECK(sqlExec(root + "/.hidden/h.db", "CREATE TABLE h(x);"));
+        db = Web::databaseJson(root, "notes.db", false, "", 0);
+        CHECK(db["error"].asString().find("not a SQLite database") != std::string::npos);
+        CHECK(Web::databaseJson(root, "empty.db", false, "", 0)["error"].asString().find("empty") != std::string::npos);
+        CHECK(!Web::databaseJson(root, "inside.db", false, "items", 0).has("error"));   // a link inside
+        for (const char* path : {"away/secret.db", "out.db", "../secret.db", "pipe.db", ".hidden/h.db",
+                                 "dir.ipynb", "missing.db", "good.ipynb", "/etc/x.db"}) {
+            const Json r = Web::databaseJson(root, path, false, "", 0);
+            if (!r.has("error") || r.has("rows") || r.dump().find("SECRET") != std::string::npos)
+                std::printf("  sessionweb:viewers: db %s: %s\n", path, r.dump().substr(0, 200).c_str());
+            CHECK(r.has("error") && !r.has("rows") && !r.has("tables") && r.dump().find("SECRET") == std::string::npos);
+        }
+        CHECK(!Web::databaseJson(root, ".hidden/h.db", true, "", 0).has("error"));
+
+        // Over the wire: a headless host serving that folder; the tree says
+        // how each shows, and a read-only page asks for them.
+        Shared::HostServer host;
+        Shared::HostOptions ho;
+        ho.folder = root;
+        ho.socketDir = scratchFolder() + "/s";
+        ho.idleMs = 60000;
+        std::string error;
+        CHECK(host.start(ho, &error) == Shared::HostServer::Start::Ok);
+        std::thread hostThread([&] { host.run(); });
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = host.socketPath();
+        o.folder = root;
+        o.pollMs = 100;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        const int port = web.port();
+        {
+            PageClient c;
+            const std::string r = c.exchange(port, "GET /file/" + web.token() + "/good.ipynb HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            CHECK(r.compare(0, 12, "HTTP/1.1 404") == 0 || r.compare(0, 12, "HTTP/1.1 503") == 0);
+        }
+        PageClient p;
+        CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+        Json state;
+        std::map<std::string, Json> trees, nbs, dbs;
+        auto take = [&](const Json& m) {
+            const std::string ty = m["t"].asString();
+            if (ty == "state") state = m;
+            else if (ty == "tree") trees[m["path"].asString()] = m;
+            else if (ty == "notebook") nbs[m["path"].asString()] = m;
+            else if (ty == "db") dbs[m["path"].asString() + "|" + m["table"].asString()] = m;
+        };
+        CHECK(p.pump(take, [&] { return state.isObject(); }));
+        p.sendText("{\"t\":\"list\",\"path\":\"\"}");
+        CHECK(p.pump(take, [&] { return trees.count(""); }));
+        std::map<std::string, std::string> views;
+        for (const Json& e : trees[""]["entries"].elements()) views[e["name"].asString()] = e["view"].asString();
+        CHECK(views["good.ipynb"] == "notebook" && views["app.sqlite"] == "database" && views["wal.db"] == "database");
+        p.sendText("{\"t\":\"notebook\",\"path\":\"hostile.ipynb\"}");
+        p.sendText("{\"t\":\"notebook\",\"path\":\"away/secret.ipynb\"}");
+        CHECK(p.pump(take, [&] { return nbs.size() == 2; }));
+        CHECK(nbs["hostile.ipynb"]["html"].asString() == bad);
+        CHECK(nbs["away/secret.ipynb"].has("error") && !nbs["away/secret.ipynb"].has("html"));
+        p.sendText("{\"t\":\"db\",\"path\":\"app.sqlite\",\"table\":\"items\",\"offset\":100}");
+        p.sendText("{\"t\":\"db\",\"path\":\"out.db\"}");
+        CHECK(p.pump(take, [&] { return dbs.count("app.sqlite|items") && dbs.count("out.db|"); }));
+        CHECK(dbs["app.sqlite|items"]["rows"][0][0].asString() == "101" && dbs["app.sqlite|items"]["more"].asBool());
+        CHECK(dbs["out.db|"].has("error") && !dbs["out.db|"].has("rows"));
+        p.close();
+        CHECK(waitUntil([&] { return web.browsers() == 0; }));
+        web.stop();
+        webThread.join();
+        host.stop();
+        hostThread.join();
     }
 
     // The window's browser pane (R4): its tabs as the window reports them,

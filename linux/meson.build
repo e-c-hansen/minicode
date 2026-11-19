@@ -51,6 +51,8 @@ core_sources = [
   # A browser's read-only view of a host (`mutible host --web`, stage 6b).
   core_dir / 'SessionWeb.cpp',
   core_dir / 'SessionWebPage.cpp',
+  core_dir / 'SessionWebViewers.cpp',
+  core_dir / 'SqliteRead.cpp',
   core_dir / 'SessionFiles.cpp',
   # The terminals' ptys belong to the host too (stage 5): a pty per shell,
   # and a headless screen with scrollback fed its bytes, whose marks give
