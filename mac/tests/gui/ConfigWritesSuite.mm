@@ -249,7 +249,9 @@ MC_GUI_SUITE(config_writes) {
     MCGuiStep(@"View > Theme > Choose Theme…: down twice and Return", ^{
         if (Settings::colorOverrides(pickerFile.UTF8String ?: "") > 0)
             MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
-        NSMenu *view = [NSApp.mainMenu itemWithTitle:@"View"].submenu;
+        NSMenu *view = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            if ([top.submenu.title isEqualToString:@"View"]) view = top.submenu;
         NSMenuItem *choose = [[view itemWithTitle:@"Theme"].submenu itemWithTitle:@"Choose Theme…"];
         GCHECK(choose != nil);
         if (!choose) return;
