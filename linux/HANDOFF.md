@@ -6597,7 +6597,13 @@ active tab").
   wholly into view by itself, so a click on a row cut by the edge nudges
   it in by the part cut off (the follower adds nothing; never centered).
 - **Checks**: the `tree_focus` suite's last part (its header says what it
-  checks), in a folder of 6,000 files.
+  checks), in a folder of 6,000 files. Its auto-reveal-off step was flaky
+  (1 run in 5 beside `hints_panel`, 2026-11-19): it closed m_deep once
+  Show Whole Folder's top rows were in, before the idle that opens the
+  folders open before the focus (`FileTree::tryExpand`) had opened it, so
+  the close did nothing and m_deep opened after it, down to near.txt. The
+  step now waits for those folders to be open and checks the close; the
+  product was right (`../docs/notes/tree.md`, the trap).
 - **Left for a real screen**: the look of the centering and of the scroll
   jumping (no animation), and a sidebar dragged shut and open by hand.
 
