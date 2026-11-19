@@ -230,11 +230,57 @@ std::string defaultFileText(Platform p);
 // as their Ctrl key (Ctrl+Shift+G as Ctrl+G, and Ctrl+Shift+Space as
 // Ctrl+Space). Does `k`, one of `c`'s keys, go to the
 // terminal rather than run `c` there? Says nothing of whether `c` applies
-// in the terminal at all (appliesIn).
-bool linuxTerminalTakes(const Command& c, const Key& k);
+// in the terminal at all (appliesIn). With `macStyle`
+// (terminal.mac-style-keys, below) no key with Ctrl goes to the terminal
+// but VTE's copy and paste.
+bool linuxTerminalTakes(const Command& c, const Key& k, bool macStyle = false);
 // VTE's copy and paste: no command has them while the terminal has the
 // keyboard, whatever keys.conf says.
 bool linuxTerminalOwnKey(const Key& k);
+
+// ---- Mac-style keys in the terminal (terminal.mac-style-keys, Linux only)
+// A Mac-style remapper (Toshy, Kinto) gives a PC keyboard the Mac's keys:
+// the key beside the space bar, where the Mac has Cmd, arrives as Ctrl,
+// and the physical Ctrl as Super. With the setting on, while the terminal
+// has the keyboard, they do what they do in the Mac's Terminal: Ctrl keys
+// are mutible's, as Cmd keys are there (linuxTerminalTakes with macStyle
+// leaves every Ctrl key to its command), and Super keys are the program's
+// Ctrl keys. What a key no command took does then:
+enum class MacStyleAction {
+    Pass,        // on to VTE, as with the setting off
+    Drop,        // nothing: a Ctrl key no command has never reaches the program
+    Copy,        // Ctrl+C: the terminal's selection to the clipboard
+    Paste,       // Ctrl+V: the clipboard to the program, as VTE pastes
+    SelectAll,   // Ctrl+A: the whole terminal selected
+    Send,        // Super: `bytes` to the program, what Ctrl with the key sends
+};
+struct MacStyleRoute {
+    MacStyleAction action = MacStyleAction::Pass;
+    std::string bytes;   // Send's
+};
+// `mods`: Ctrl, Alt and Shift held (Mod; Cmd is not used); `super`: Super
+// held; `ch`: the character the key types with them, Shift applied as
+// GDK's keyval has it ('W' for Shift+W, '@' for Shift+2, '_' for Shift+-),
+// 0 for a key that types none (arrows, F keys, Return, Tab, Escape,
+// Backspace, Delete), which is left to VTE either way.
+//   - Super (Shift and Alt or not, Ctrl not) with a character that has a
+//     control byte sends that byte: Super+W ^W, Super+C ^C, Super+[ Esc,
+//     Super+Space and Super+Shift+2 NUL, Super+Shift+- ^_. Shift changes
+//     nothing a terminal sends for a letter, and Alt is for the keys
+//     Toshy sends as Super+Alt so that its own keymap and GNOME leave them
+//     alone (Super+Alt+K ^K, Super+Alt+L ^L). Super with any other key
+//     passes.
+//   - Ctrl (Super not) with a character: Ctrl+C copies, Ctrl+V pastes,
+//     Ctrl+A selects all, VTE's own Ctrl+Shift+C and Ctrl+Shift+V pass, and
+//     the rest is dropped (with Shift or Alt too).
+//   - Anything else passes: Alt alone (Meta), plain keys, Ctrl with a key
+//     that types nothing (Ctrl+Left, Ctrl+Backspace).
+MacStyleRoute linuxMacStyleKey(unsigned mods, bool super, char32_t ch);
+// The byte a terminal sends for Ctrl with the key that types `ch` (Shift
+// applied), as VTE sends it: a letter's control code (^A 0x01 to ^Z 0x1A,
+// either case), Space, @ and 2 NUL, [ { and 3 Esc, \ | and 4 0x1C, ] } and
+// 5 0x1D, ^ ~ and 6 0x1E, _ - / and 7 0x1F, 8 and ? DEL; -1 for any other.
+int terminalControlByte(char32_t ch);
 // GTK's accelerator strings for a key (gtk_accelerator_parse): "<Ctrl>s",
 // "<Ctrl><Shift>p". Shift with a digit or punctuation is the character it
 // types on a US layout ("<Ctrl>greater" for ctrl+shift+.), since GTK matches

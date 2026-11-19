@@ -239,6 +239,7 @@ struct State {
     std::vector<std::string> errors;
     GFileMonitor* monitor = nullptr;
     Place place;
+    bool macStyle = false;   // terminal.mac-style-keys
     bool applied = false;
     std::vector<GtkShortcutController*> trees;   // addTreeKeys's, while they live
 };
@@ -361,7 +362,7 @@ bool bound(const Command& c, const Key& k) {
     const State& s = S();
     if (s.place.terminal) {
         if (!Commands::appliesIn(c.when, When::Terminal)) return false;
-        return !Commands::linuxTerminalTakes(c, k);
+        return !Commands::linuxTerminalTakes(c, k, s.macStyle);
     }
     if (c.when == When::Terminal) return false;
     // A page's zoom only in a page, and the editor's zoom (anywhere but a
@@ -453,6 +454,15 @@ void setPlace(const Place& place) {
     s.place = place;
     applyAccels();
 }
+
+void setTerminalMacStyle(bool on) {
+    State& s = S();
+    if (s.macStyle == on) return;
+    s.macStyle = on;
+    if (s.applied) applyAccels();
+}
+
+bool terminalMacStyle() { return S().macStyle; }
 
 bool within(GtkWidget* focus, GtkWidget* area) {
     for (GtkWidget* w = focus; w; w = gtk_widget_get_parent(w)) {
