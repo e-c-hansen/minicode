@@ -127,8 +127,12 @@ found through that list.
   others by their image's description, that each is its type's one image
   in its type's color, and draws all 5,000 rows of a folder of twenty
   types page by page (`rowViewAtRow:makeIfNecessary:` and
-  `cacheDisplayInRect:`) under a CPU bound, every row checked for its
-  type's image.
+  `cacheDisplayInRect:`), every row checked for its type's image, its
+  CPU time bounded by 1.25 times that of 5,000 plain .txt rows drawn the
+  same way in the same step (plus 250 ms): CI's runner took about 6 s of
+  CPU for either, nearly all of it the rows and their names, not the
+  icons (a tinted icon draws in about 0.06 ms on an M-series Mac, a
+  drawn label no slower than a symbol).
 - **Columns** (`MCTreeColumns` bitmask, `toggleTreeColumn:`): size, saved and
   created (`st_birthtimespec`) on their own keys, the rightmost dropped first
   on a narrow row; switching one on widens a narrow sidebar

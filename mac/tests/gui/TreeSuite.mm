@@ -12,8 +12,8 @@
 // picture, a README), the one image made for that type, in its family's
 // color, a folder's stays a folder; the names use the sidebar's width
 // after a new file's refresh, with the name column left out of step first;
-// 5,000 rows of many types are made and drawn page by page in a bounded
-// time, each with its type's one image.
+// 5,000 rows of many types are made and drawn page by page, each with its
+// type's one image, in about the time 5,000 plain text rows take.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -534,31 +534,40 @@ MC_GUI_SUITE(tree) {
     });
 
     // --- 5,000 rows of many types, made and drawn page by page: each row
-    // takes its type's one image (none made per row), in a bounded time.
+    // takes its type's one image (none made per row), and the tree costs
+    // about what 5,000 plain text rows (one icon) cost in the same run, so
+    // the bound follows the machine (CI's runner took 6 s of CPU for each).
     NSString *many = [repo stringByAppendingPathComponent:@"many"];
-    MCGuiStep(@"5,000 files of twenty types in many/", ^{
+    NSString *plain = [repo stringByAppendingPathComponent:@"plain"];
+    MCGuiStep(@"5,000 files of twenty types in many/, 5,000 text files in plain/", ^{
         NSFileManager *fm = [NSFileManager defaultManager];
-        [fm createDirectoryAtPath:many withIntermediateDirectories:YES attributes:nil error:nil];
         NSArray<NSString *> *exts = @[@"py", @"js", @"ts", @"json", @"md", @"png", @"mp4", @"cpp",
                                       @"h", @"rs", @"go", @"sh", @"yml", @"toml", @"csv", @"pdf",
                                       @"zip", @"txt", @"lock", @"swift"];
-        for (int i = 0; i < 5000; i++) {
-            NSString *name = [NSString stringWithFormat:@"f%04d.%@", i, exts[(NSUInteger)i % exts.count]];
-            [fm createFileAtPath:[many stringByAppendingPathComponent:name] contents:nil attributes:nil];
+        for (NSString *dir in @[many, plain]) {
+            [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+            for (int i = 0; i < 5000; i++) {
+                NSString *ext = dir == many ? exts[(NSUInteger)i % exts.count] : @"txt";
+                NSString *name = [NSString stringWithFormat:@"f%04d.%@", i, ext];
+                [fm createFileAtPath:[dir stringByAppendingPathComponent:name] contents:nil
+                          attributes:nil];
+            }
         }
     });
-    MCGuiWait(@"many/ shows", 15, ^BOOL { return RowOf(c, many) >= 0; });
-    MCGuiStep(@"open many/, and draw every page of the tree", ^{
-        [c.outline expandItem:ItemAt(c, many)];
+    MCGuiWait(@"many/ and plain/ show", 15, ^BOOL {
+        return RowOf(c, many) >= 0 && RowOf(c, plain) >= 0;
+    });
+    // Opens `folder`, makes the rows on show page by page (each cell
+    // configured) and draws them; returns the CPU time of that, and checks
+    // (untimed) that every row on show has its type's one image.
+    double (^drawAll)(NSString *) = ^double(NSString *folder) {
+        [c.outline expandItem:ItemAt(c, folder)];
         const NSInteger rows = c.outline.numberOfRows;
-        MCGuiNote(@"%ld rows", (long)rows);
-        GCHECK(rows >= 5000);
         NSClipView *clip = c.sidebarScroll.contentView;
         const CGFloat page = MAX(NSHeight(clip.bounds), 100);
         const CGFloat total = NSHeight(c.outline.frame);
         NSBitmapImageRep *rep = [c.outline bitmapImageRepForCachingDisplayInRect:clip.documentVisibleRect];
         __block NSUInteger checked = 0, wrong = 0, pages = 0;
-        // Makes the rows on show (each cell configured) and draws them.
         auto drawPage = ^(CGFloat y) {
             [c.outline scrollPoint:NSMakePoint(0, y)];
             const NSRect visible = clip.documentVisibleRect;
@@ -574,7 +583,6 @@ MC_GUI_SUITE(tree) {
             const double c0 = MCGuiThreadCpuMs();
             drawPage(y);
             cpu += MCGuiThreadCpuMs() - c0;
-            // Not timed: every row on show has its type's one image.
             const NSRange range = [c.outline rowsInRect:clip.documentVisibleRect];
             for (NSUInteger r = range.location; r < NSMaxRange(range); r++) {
                 FileItem *item = [c.outline itemAtRow:(NSInteger)r];
@@ -585,13 +593,20 @@ MC_GUI_SUITE(tree) {
                     wrong++;
             }
         }
-        MCGuiNote(@"%lu pages of %.0f points: %.0f ms of CPU; %lu rows checked, %lu wrong",
-                  (unsigned long)pages, page, cpu, (unsigned long)checked, (unsigned long)wrong);
+        MCGuiNote(@"%@: %ld rows, %lu pages of %.0f points: %.0f ms of CPU; %lu rows checked, %lu wrong",
+                  folder.lastPathComponent, (long)rows, (unsigned long)pages, page, cpu,
+                  (unsigned long)checked, (unsigned long)wrong);
+        GCHECK(rows >= 5000);
         GCHECK(checked >= 5000);
         GCHECK(wrong == 0);
-        GCHECK_TIME(cpu, 3000, @"making and drawing every page of a 5,000-row tree");
-        [c.outline collapseItem:ItemAt(c, many)];
+        [c.outline collapseItem:ItemAt(c, folder)];
         [c.outline scrollPoint:NSZeroPoint];
+        return cpu;
+    };
+    MCGuiStep(@"every page of 5,000 typed rows costs about what 5,000 text rows do", ^{
+        const double text = drawAll(plain);
+        const double typed = drawAll(many);
+        GCHECK_TIME(typed, 1.25 * text + 250, @"making and drawing every page of a 5,000-row tree");
     });
 
     MCGuiStep(@"close the window", ^{
