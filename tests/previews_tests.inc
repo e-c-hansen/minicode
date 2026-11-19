@@ -298,6 +298,32 @@ static void testCsv() {
         CHECK(t.cell(0, 1) == "b, c");
         CHECK(Document::parse("", ',').rows() == 0);
     }
+    GROUP("csv:header");
+    {
+        using Csv::isNumberOrDate;
+        for (const char *yes : {"42", "-3.5", "1,234", "$9.99", "12%", "6.02e23", " 7 ",
+                                "2026-11-19", "2026-11-19T10:00:00Z", "11/19/2026", "19.11.2026",
+                                "10:30", "\xE2\x82\xAC" "5"})
+            CHECK(isNumberOrDate(yes));
+        for (const char *no : {"", "name", "1a", "e5", "-", ",5", "Q3", "v1", "N/A", "12 apples"})
+            CHECK(!isNumberOrDate(no));
+        auto header = [](const char *text) {
+            return Csv::looksLikeHeader(Document::parse(text, ','));
+        };
+        CHECK(header("name,age\nAda,36\nAlan,41\n"));
+        CHECK(header("when,what\n2026-01-02,x\n2026-01-03,y\n"));
+        CHECK(header("city,pop,area\nOslo,709000,454\nBergen,,465\n"));   // empty cells skipped
+        CHECK(!header("Ada,36\nAlan,41\n"));                // the first row is data
+        CHECK(!header("a,b\nc,d\n"));                       // text alone: not guessed
+        CHECK(!header("name,\nAda,36\n"));                  // an empty header field
+        CHECK(!header("year,2024\nx,1\n"));                 // a number in the first row
+        CHECK(!header("name,age\n"));                        // nothing under it
+        CHECK(!header(""));
+        // Mostly numbers is enough: one stray text value in five.
+        CHECK(header("n\n1\n2\n3\nfour\n5\n"));
+        CHECK(!header("n\n1\ntwo\nthree\n4\n"));
+    }
+
     GROUP("csv:round-trip");
     {
         const char *cases[] = {

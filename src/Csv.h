@@ -29,6 +29,21 @@ namespace Csv {
 // fields, the same number on each line counting most. Comma when none does.
 char detectDelimiter(const std::string &text);
 
+class Document;
+
+// Whether a field reads as a number ("42", "-3.5", "1,234", "$9.99", "12%",
+// "6.02e23") or a date or time ("2026-11-19", "2026-11-19T10:00:00Z",
+// "11/19/2026", "19.11.2026", "10:30"), after trimming spaces.
+bool isNumberOrDate(const std::string &field);
+
+// Whether the table's first row looks like a header, for a viewer to show
+// as column names: it has a row under it, none of its fields is empty or
+// a number or a date, and at least one column below it holds mostly
+// numbers or dates (four in five of its filled cells, among the first 200
+// rows). A table of text alone is not guessed at; a viewer lets the reader
+// say.
+bool looksLikeHeader(const Document &doc);
+
 class Document {
 public:
     Document() = default;

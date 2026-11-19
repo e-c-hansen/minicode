@@ -35,7 +35,7 @@ LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
             -framework CoreMedia -framework Carbon -lz -lsqlite3
 
 # The pure-C++ core, testable on its own (no frameworks, no Objective-C).
-CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.cpp \
+CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/MarkdownEmoji.cpp src/TerminalStream.cpp \
             src/TerminalScreen.cpp \
             src/Settings.cpp src/RunFile.cpp src/Runnables.cpp src/LineComments.cpp \
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/InlayHints.cpp \
@@ -77,7 +77,7 @@ SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.
             src/SessionProtocol.cpp src/Ot.cpp src/HostPty.cpp src/TerminalScreen.cpp \
             src/TerminalStream.cpp src/Document.cpp src/UndoHistory.cpp src/Text.cpp \
             src/EditSpans.cpp src/FolderSearch.cpp src/EditorTabs.cpp src/TextFind.cpp \
-            src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp \
+            src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp src/MarkdownEmoji.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebAccess.cpp src/IdeLink.cpp src/MarkdownHtml.cpp \
             src/SyntaxHighlighter.cpp src/Settings.cpp src/AutoIndent.cpp src/LineComments.cpp \
             src/SessionFiles.cpp src/FileDetails.cpp src/FileSniff.cpp src/Backups.cpp src/SavePlan.cpp src/Csv.cpp \

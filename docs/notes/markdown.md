@@ -56,6 +56,36 @@ found through that list.
   so the preview and a double-click agree. Tests: `md:*` (GFM's in
   `tests/markdown_gfm_tests.inc`), `tests/markdown/corpus.md`, and the
   `markdown_preview` GUI suite.
+- **GitHub's alerts, emoji and front matter** (2026-11-19, round 9's
+  "render plainly"; `md:alerts`, `md:emoji`, `md:front-matter`,
+  `markdown_preview`'s corpus step). Alerts: the quote's first line
+  `[!NOTE]` (TIP, IMPORTANT, WARNING, CAUTION, any case, an outer quote
+  only) becomes its title paragraph; `analyze()` keeps the kind per quote
+  group and every block of the group gets `Block::alert`, stamped on
+  `MdRun::alert` (the title's runs `alertTitle`); the gap runs inside take
+  the block's after them, so the bar is not cut. The Mac colors the outer
+  bar by kind (`MCAlertColor`, GitHub's light and dark shades), sets the
+  title in it after an SF Symbol tinted to it (`MCAlertIcon`), the text in
+  the body color, and marks the runs `kMarkdownAlert` with the kind's
+  name; a quote block remembers its kind (`kMCAlertKey`) so two quotes
+  never share a bar. MarkdownHtml writes GitHub's markup
+  (`markdown-alert markdown-alert-<kind>`, `markdown-alert-title` with a
+  small inline SVG) and both shades in its stylesheet. Emoji:
+  `MarkdownEmoji` (core, about 900 of gemoji's 1,800 names, one code point each, U+FE0F
+  added where the default is text) is applied at the end of `inlineRuns`
+  to text runs only (not code, math, pictures, footnote numbers, or an
+  address shown as itself), so a table measures after it; a code needs
+  no letter or digit outside its colons ("12:100:30" stays). Front matter
+  (the parser's old rule: `---` on line 0, a `key:` on line 1, `---` or
+  `...` within 200 lines) was a code block; it is a `Block::Table` of one
+  row of keys over one of values (`frontMatterRows`: lists, nested maps and
+  block scalars joined in the cell, quotes dropped, punctuation but `( )`
+  escaped, since `\(` opens math), its runs `frontMatter`. Its lines stay
+  `MdLine::Code` of one edit block, so a double-click edits the YAML as
+  code: the Mac leaves `kMarkdownTableCell` off that table, and the
+  corpus's editable check reads its line, not a cell. Linux and Android
+  show the table and the emoji as they are, and an alert as a quote with a
+  bold title until they read `alert`.
 - **Export as HTML…** (File menu, no key; 2026-11-08): `MarkdownHtml` (core,
   `md:html-export`) writes a standalone page from the same runs: GitHub's
   heading anchors, lists rebuilt from `listDepth`/`quoteIndent`/`quoteDepth`

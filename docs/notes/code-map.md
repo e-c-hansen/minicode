@@ -12,7 +12,8 @@ No dependencies and no I/O unless noted, so the ports can use it. New logic
 goes here first, with tests; the GUI only displays it.
 
 - `SyntaxHighlighter` (about 200 grammars, `IncrementalHighlighter`),
-  `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEdit`
+  `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEmoji`
+  (GitHub's common emoji shortcodes, for the parser), `MarkdownEdit`
   (the block behind a preview click), `MarkdownPage` (a page in pieces, and
   which survive an edit), `MarkdownHtml` (Export as HTML's page), `MarkdownTasks` (task lists), `MathTex`
   (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),

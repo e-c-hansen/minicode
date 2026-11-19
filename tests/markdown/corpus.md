@@ -149,6 +149,9 @@ Lazy continuation joins the paragraph above.
 > [!WARNING]
 > Another kind.
 
+Emoji shortcodes as GitHub draws them: :tada:, :white_check_mark:, and :+1:;
+an unknown one, :not_an_emoji:, stays as written, and so does `:tada:` in code.
+
 ## Code blocks
 
 ```python

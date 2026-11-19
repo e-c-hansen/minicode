@@ -9,6 +9,33 @@
 
 static const NSUInteger kSampleRows = 200;   // rows measured for column widths
 static NSString *const kNumberColumn = @"#";
+// The files whose first row the reader said is, or is not, a header: path
+// to YES or NO, in the user's defaults, the oldest dropped past kMaxChoices.
+static NSString *const kHeaderChoices = @"MCCsvFirstRowIsHeader";
+static NSString *const kHeaderChoiceOrder = @"MCCsvFirstRowIsHeaderOrder";
+static const NSUInteger kMaxChoices = 500;
+
+static NSNumber *StoredHeaderChoice(NSString *path) {
+    if (!path.length) return nil;
+    id v = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kHeaderChoices][path];
+    return [v isKindOfClass:NSNumber.class] ? v : nil;
+}
+
+static void StoreHeaderChoice(NSString *path, BOOL header) {
+    if (!path.length) return;
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    NSMutableDictionary *choices = [([d dictionaryForKey:kHeaderChoices] ?: @{}) mutableCopy];
+    NSMutableArray *order = [([d arrayForKey:kHeaderChoiceOrder] ?: @[]) mutableCopy];
+    [order removeObject:path];
+    [order addObject:path];
+    choices[path] = @(header);
+    while (order.count > kMaxChoices) {
+        [choices removeObjectForKey:order.firstObject];
+        [order removeObjectAtIndex:0];
+    }
+    [d setObject:choices forKey:kHeaderChoices];
+    [d setObject:order forKey:kHeaderChoiceOrder];
+}
 
 static NSString *Str(const std::string &s) {
     NSString *n = [[NSString alloc] initWithBytes:s.data() length:s.size()
@@ -103,6 +130,7 @@ static NSString *ColumnName(NSUInteger i) {
     NSString *_path;
     NSString *_lastText;       // the text shown, to know an echo of our own edit
     BOOL _editable;
+    BOOL _header;              // the first row shows as the columns' names
     unsigned long long _fileBytes;
 }
 
@@ -169,6 +197,31 @@ static NSString *ColumnName(NSUInteger i) {
 
 - (NSTableView *)table { return _table; }
 - (BOOL)editable { return _editable; }
+- (BOOL)firstRowIsHeader { return _header; }
+
+- (void)setFirstRowIsHeader:(BOOL)on {
+    StoreHeaderChoice(_path, on);
+    if (on == _header) return;
+    [self commitEditing];
+    // The same record stays selected and the rows where they were.
+    const NSInteger selected = _table.selectedRow >= 0 ? _table.selectedRow + [self headerRows] : -1;
+    _header = on;
+    [self rebuild];
+    const NSInteger row = selected - (NSInteger)[self headerRows];
+    if (row >= 0 && row < _table.numberOfRows)
+        [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
+            byExtendingSelection:NO];
+}
+
+// The rows above the grid's first: 1 when the first row is the header.
+- (NSUInteger)headerRows { return _header && _doc.rows() > 0 ? 1 : 0; }
+
+// What a newly shown file's first row is: as the reader said for it, else
+// the core's guess.
+- (void)chooseHeaderFor:(NSString *)path {
+    NSNumber *stored = StoredHeaderChoice(path);
+    _header = stored ? stored.boolValue : Csv::looksLikeHeader(_doc);
+}
 - (NSUInteger)rowCount { return _doc.rows(); }
 - (NSUInteger)columnCount { return _doc.columns(); }
 - (BOOL)truncated { return _doc.truncated(); }
@@ -192,6 +245,7 @@ static NSString *ColumnName(NSUInteger i) {
     const std::string bytes = Std(text ?: @"");
     const char delim = tsv ? '\t' : Csv::detectDelimiter(bytes);
     _doc = Csv::Document::parse(bytes, delim);
+    if (!same) [self chooseHeaderFor:path];
     _path = [path copy];
     _lastText = text;
     _editable = YES;
@@ -222,6 +276,7 @@ static NSString *ColumnName(NSUInteger i) {
     const std::string bytes((const char *)data.bytes, data.length);
     const char delim = tsv ? '\t' : Csv::detectDelimiter(bytes);
     _doc = Csv::Document::parse(bytes, delim, maxRows, data.length >= _fileBytes);
+    [self chooseHeaderFor:path];
     _path = [path copy];
     _lastText = nil;
     _editable = NO;
@@ -267,9 +322,15 @@ static NSString *ColumnName(NSUInteger i) {
                                          rows, size, cols, by];
         return;
     }
+    NSString *under = @"";
+    if ([self headerRows]) {
+        rows = [f stringFromNumber:@(_doc.rows() - 1)];
+        under = @" under a header";
+    }
     _info.stringValue = [NSString stringWithFormat:
-        @"%@ %@, %@ %@, %@ separated    ⇧⌘V shows the text",
-        rows, _doc.rows() == 1 ? @"row" : @"rows", cols, _doc.columns() == 1 ? @"column" : @"columns", by];
+        @"%@ %@%@, %@ %@, %@ separated    ⇧⌘V shows the text",
+        rows, [rows isEqualToString:@"1"] ? @"row" : @"rows", under, cols,
+        _doc.columns() == 1 ? @"column" : @"columns", by];
 }
 
 // Columns to match the document: a row number column, then one per field.
@@ -294,13 +355,22 @@ static NSString *ColumnName(NSUInteger i) {
         NSTableColumn *col = _table.tableColumns[i];
         if (i == 0) {
             col.title = @"";
+            col.headerToolTip = nil;
             col.editable = NO;
             NSString *most = [NSString stringWithFormat:@"%lu", (unsigned long)_doc.rows()];
             col.width = MAX(28, charW * most.length + 12);
             ((NSTextFieldCell *)col.dataCell).alignment = NSTextAlignmentRight;
             continue;
         }
-        col.title = ColumnName(i - 1);
+        // The header's field names the column, bold; A, B, C without one.
+        NSString *name = [self headerRows] ? Str(_doc.cell(0, i - 1)) : @"";
+        name = [name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        col.title = name.length ? name : ColumnName(i - 1);
+        col.headerCell.font = name.length ? [NSFont systemFontOfSize:NSFont.smallSystemFontSize
+                                                               weight:NSFontWeightBold]
+                                          : [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+        col.headerToolTip = name.length ? [NSString stringWithFormat:@"Column %@", ColumnName(i - 1)]
+                                        : nil;
         col.editable = _editable;
         // As wide as the widest of the first rows, within reason.
         size_t widest = 3;
@@ -318,18 +388,24 @@ static NSString *ColumnName(NSUInteger i) {
 }
 
 // ------------------------------------------------------------ data source
-- (NSInteger)numberOfRowsInTableView:(NSTableView *)tv { return (NSInteger)_doc.rows(); }
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tv {
+    return (NSInteger)(_doc.rows() - [self headerRows]);
+}
 
+// The grid's rows are the file's under the header; the number column
+// gives the file's row, so a record keeps its number either way.
 - (id)tableView:(NSTableView *)tv objectValueForTableColumn:(NSTableColumn *)col row:(NSInteger)row {
-    if ([col.identifier isEqualToString:kNumberColumn]) return @(row + 1).stringValue;
-    return Str(_doc.cell((size_t)row, (size_t)col.identifier.integerValue));
+    const size_t r = (size_t)row + [self headerRows];
+    if ([col.identifier isEqualToString:kNumberColumn]) return @(r + 1).stringValue;
+    return Str(_doc.cell(r, (size_t)col.identifier.integerValue));
 }
 
 - (void)tableView:(NSTableView *)tv setObjectValue:(id)value forTableColumn:(NSTableColumn *)col
               row:(NSInteger)row {
     if ([col.identifier isEqualToString:kNumberColumn] || row < 0) return;
     NSString *s = [value isKindOfClass:NSString.class] ? value : [value description];
-    [self setCell:s ?: @"" row:(NSUInteger)row column:(NSUInteger)col.identifier.integerValue];
+    [self setCell:s ?: @"" row:(NSUInteger)row + [self headerRows]
+           column:(NSUInteger)col.identifier.integerValue];
 }
 
 - (BOOL)tableView:(NSTableView *)tv shouldEditTableColumn:(NSTableColumn *)col row:(NSInteger)row {
@@ -342,8 +418,8 @@ static NSString *ColumnName(NSUInteger i) {
     AppSettings *cfg = [AppSettings shared];
     const BOOL number = [col.identifier isEqualToString:kNumberColumn];
     c.textColor = number ? [NSColor colorWithWhite:0.55 alpha:1] : [cfg text:Surface::Editor];
-    // The first row is usually the header: bold, as a spreadsheet's.
-    c.font = row == 0 && !number
+    // A first row not shown as the header is still bold, as a spreadsheet's.
+    c.font = row == 0 && !number && ![self headerRows]
         ? MCMonoFont(12, NSFontWeightSemibold)
         : MCMonoFont(12, NSFontWeightRegular);
 }
@@ -383,7 +459,9 @@ static NSString *ColumnName(NSUInteger i) {
 // ------------------------------------------------------------ the menu
 - (NSMenu *)menuForRow:(NSInteger)row column:(NSInteger)column {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Table"];
-    const NSInteger r = row >= 0 ? row : _table.selectedRow;
+    // The items carry the file's rows.
+    const NSInteger shown = row >= 0 ? row : _table.selectedRow;
+    const NSInteger r = shown >= 0 ? shown + (NSInteger)[self headerRows] : -1;
     const NSInteger c = column > 0 ? column - 1 : _table.activeColumn - 1;
     if (_editable) {
         if (r >= 0) {
@@ -399,6 +477,13 @@ static NSString *ColumnName(NSUInteger i) {
         if (c >= 0 && (NSUInteger)c < _doc.columns())
             [self add:@"Delete Column" to:menu action:@selector(menuDeleteColumn:) row:r column:c];
     }
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *header = [[NSMenuItem alloc] initWithTitle:@"First Row Is Header"
+                                                    action:@selector(menuToggleHeader:)
+                                             keyEquivalent:@""];
+    header.target = self;
+    header.state = _header ? NSControlStateValueOn : NSControlStateValueOff;
+    [menu addItem:header];
     MCAddAdjustSettingsItem(menu, @"editor", self);
     return menu;
 }
@@ -416,9 +501,11 @@ static NSInteger ColumnOf(NSMenuItem *i) { return [[i.representedObject lastObje
 
 - (void)menuEditCell:(NSMenuItem *)i {
     const NSInteger c = MAX(0, ColumnOf(i)) + 1;
-    if (c < _table.numberOfColumns && RowOf(i) >= 0)
-        [_table editColumn:c row:RowOf(i) withEvent:nil select:YES];
+    const NSInteger row = RowOf(i) - (NSInteger)[self headerRows];
+    if (c < _table.numberOfColumns && row >= 0 && row < _table.numberOfRows)
+        [_table editColumn:c row:row withEvent:nil select:YES];
 }
+- (void)menuToggleHeader:(NSMenuItem *)i { self.firstRowIsHeader = !_header; }
 - (void)menuInsertRowAbove:(NSMenuItem *)i { [self insertRowAt:(NSUInteger)MAX(0, RowOf(i))]; }
 - (void)menuInsertRowBelow:(NSMenuItem *)i {
     [self insertRowAt:RowOf(i) >= 0 ? (NSUInteger)RowOf(i) + 1 : _doc.rows()];
@@ -430,5 +517,7 @@ static NSInteger ColumnOf(NSMenuItem *i) { return [[i.representedObject lastObje
 }
 - (void)menuDeleteColumn:(NSMenuItem *)i { [self deleteColumnAt:(NSUInteger)ColumnOf(i)]; }
 
-- (BOOL)validateMenuItem:(NSMenuItem *)item { return _editable || item.action == nil; }
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    return _editable || item.action == nil || item.action == @selector(menuToggleHeader:);
+}
 @end

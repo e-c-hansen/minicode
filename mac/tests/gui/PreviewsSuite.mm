@@ -590,12 +590,46 @@ static void CsvSteps(void) {
         MCGuiWriteFile(Fixture(@"crlf.csv"), @"a;b\r\n\"x; y\";2\r\n");
         MCGuiWriteFile(Fixture(@"cols.tsv"), @"k\tv\nalpha\tone, two\n");
     });
+    MCGuiStep(@"a CSV's header row names the columns, bold, above the rows", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:Fixture(@"people.csv")]);
+        GCHECK_EQ_STR(ActiveKind(c), @"table");
+        MCCsvTableView *t = Csv(c);
+        // "id" over 1, 2, 3: the first row is guessed to be the header.
+        GCHECK(t.firstRowIsHeader);
+        GCHECK(t.table.headerView != nil);   // the scroll view keeps it in view
+        GCHECK(t.table.numberOfRows == 3 && t.rowCount == 4);
+        GCHECK_EQ_STR(t.table.tableColumns[1].title, @"id");
+        GCHECK_EQ_STR(t.table.tableColumns[2].title, @"name");
+        GCHECK_EQ_STR(t.table.tableColumns[2].headerToolTip, @"Column B");
+        NSFont *bold = t.table.tableColumns[2].headerCell.font;
+        GCHECK(bold.fontDescriptor.symbolicTraits & NSFontDescriptorTraitBold);
+        // The grid's first row is the file's second, numbered 2.
+        id<NSTableViewDataSource> ds = t.table.dataSource;
+        GCHECK_EQ_STR([ds tableView:t.table objectValueForTableColumn:t.table.tableColumns[2] row:0],
+                      @"Smith, J");
+        GCHECK_EQ_STR([ds tableView:t.table objectValueForTableColumn:t.table.tableColumns[0] row:0],
+                      @"2");
+        GCHECK([t.infoText hasPrefix:@"3 rows under a header, 3 columns, comma separated"]);
+        MCGuiSnapshot(c.window.contentView, @"previews-csv-header");
+        // The right click menu's First Row Is Header turns it off.
+        NSMenuItem *item = [[t menuForRow:0 column:1] itemWithTitle:@"First Row Is Header"];
+        GCHECK(item != nil && item.state == NSControlStateValueOn);
+        GCHECK([(id<NSMenuItemValidation>)t validateMenuItem:item]);
+        [NSApp sendAction:item.action to:item.target from:item];
+        GCHECK(!t.firstRowIsHeader);
+        GCHECK(item.state == NSControlStateValueOn);   // the menu is built anew each time
+        GCHECK([[t menuForRow:0 column:1] itemWithTitle:@"First Row Is Header"].state ==
+               NSControlStateValueOff);
+        GCHECK(!Dirty(c));   // the file is not touched
+    });
     MCGuiStep(@"a CSV opens as a table, the text view hidden", ^{
         EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"people.csv")]);
         GCHECK_EQ_STR(ActiveKind(c), @"table");
         MCCsvTableView *t = Csv(c);
         GCHECK(t != nil && !t.hidden);
+        GCHECK(!t.firstRowIsHeader);   // as the reader left it
         GCHECK(EditorScroll(c).hidden);
         GCHECK(t.editable);
         GCHECK(t.rowCount == 4 && t.columnCount == 3);
@@ -720,6 +754,7 @@ static void CsvSteps(void) {
         GCHECK([c showFile:Fixture(@"people.csv")]);
         GCHECK_EQ_STR(ActiveKind(c), @"table");
         GCHECK_EQ_STR([Csv(c) cellAtRow:0 column:0], @"key");
+        GCHECK(!Csv(c).firstRowIsHeader);   // remembered for the file
         GCHECK(Dirty(c));
         [c saveCurrentFile:nil];
         GCHECK([Text(Fixture(@"people.csv")) hasPrefix:@"key,name,notes\n"]);
@@ -753,8 +788,10 @@ static void CsvSteps(void) {
         EditorController *c = MCGuiController();
         GCHECK([c showFile:Fixture(@"crlf.csv")]);
         MCCsvTableView *t = Csv(c);
+        // "a;b" over a number is a header: the file's row 1 is the grid's 0.
+        GCHECK(t.firstRowIsHeader);
         [c.window makeFirstResponder:t.table];
-        [t.table editColumn:2 row:1 withEvent:nil select:YES];
+        [t.table editColumn:2 row:0 withEvent:nil select:YES];
         GCHECK(t.table.currentEditor != nil);
         t.table.currentEditor.string = @"TYPED";
         // A script sorts the rows: another record now sits on row 1.

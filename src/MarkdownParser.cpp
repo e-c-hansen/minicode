@@ -18,7 +18,10 @@
 // reference links and images, <autolinks> and bare web addresses, hard
 // breaks, a little inline HTML (<br>, <img>, <b>, <a href>, <kbd>...;
 // other tags and comments are dropped, their text kept), and footnote
-// references. An HTML block's text is read as HTML: tags and entities only.
+// references, and GitHub's emoji shortcodes (":tada:", MarkdownEmoji) in
+// text outside code and math. An HTML block's text is read as HTML: tags
+// and entities only. Front matter is a table of its keys and values, as on
+// GitHub, and an alert's quote carries its kind (MdRun::alert).
 //
 // Math is read before any other inline rule, as GitHub and pandoc read it:
 // $...$ (the opening $ not followed by a space, the closing one neither
@@ -28,6 +31,7 @@
 // \]) ending one, or a ```math fence. Nothing inside math is escaped,
 // emphasised or linked.
 #include "MarkdownParser.h"
+#include "MarkdownEmoji.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -1315,6 +1319,7 @@ private:
 void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdRun& base,
                 const Context& ctx, std::vector<MdRun>& out, bool html = false) {
     if (lines.empty()) return;
+    const size_t outStart = out.size();
     std::string text;
     std::vector<size_t> starts;
     for (size_t k = 0; k < lines.size(); k++) {
@@ -1551,6 +1556,15 @@ void inlineRuns(const std::vector<std::pair<std::string, int>>& lines, const MdR
         out.push_back(std::move(r));
         mergeable = canMerge;
     }
+    // GitHub's emoji shortcodes (":tada:"), in text only: never in code,
+    // math, a picture's alt text or an address shown as its own link text.
+    for (size_t k = outStart; k < out.size(); k++) {
+        MdRun& r = out[k];
+        if (r.code || r.math || r.image || r.media || r.footnote || r.hardBreak ||
+            (r.link && r.text == r.url))
+            continue;
+        if (r.text.find(':') != std::string::npos) r.text = MarkdownEmoji::replace(r.text);
+    }
 }
 
 // ------------------------------------------------------------ tables
@@ -1709,6 +1723,8 @@ struct Block {
     bool pre = false;            // an HTML block shown as preformatted (<pre>)
     int note = -1;               // part of this footnote definition (Doc::notes)
     bool title = false;          // an alert's title: bold
+    int alert = 0;               // in an alert (MdRun::alert)
+    bool frontMatter = false;    // the table of the file's YAML front matter
     bool blankBefore = false;    // a blank line separates it from the block before
     std::vector<std::pair<std::string, int>> text;   // content lines
     std::vector<std::pair<std::string, int>> code;   // a code block's lines
@@ -2043,15 +2059,73 @@ std::string htmlText(const std::string& line) {
     return out;
 }
 
-// "> [!NOTE]": the alert's title, or "".
-std::string alertTitle(const std::string& content) {
+// "> [!NOTE]": the alert's kind (MdRun::alert), or 0.
+int alertKind(const std::string& content) {
     const std::string t = lowerAscii(trim(content));
-    if (t == "[!note]") return "Note";
-    if (t == "[!tip]") return "Tip";
-    if (t == "[!important]") return "Important";
-    if (t == "[!warning]") return "Warning";
-    if (t == "[!caution]") return "Caution";
-    return "";
+    if (t == "[!note]") return 1;
+    if (t == "[!tip]") return 2;
+    if (t == "[!important]") return 3;
+    if (t == "[!warning]") return 4;
+    if (t == "[!caution]") return 5;
+    return 0;
+}
+
+// What an alert's title says.
+const char* alertTitle(int kind) {
+    static const char* const kTitles[] = {"", "Note", "Tip", "Important", "Warning", "Caution"};
+    return kind >= 1 && kind <= 5 ? kTitles[kind] : "";
+}
+
+// YAML front matter's lines (between the "---" lines) as GitHub's table
+// shows them: each top-level "key: value" a column, a nested value (list
+// items, an indented mapping, a | or > block) joined into its key's cell.
+// Quotes around a value go; comments and blank lines are skipped. The
+// cells are Markdown to the table's inline pass, so their punctuation is
+// escaped: a value shows as written.
+void frontMatterRows(const std::vector<std::string>& raw, size_t from, size_t to,
+                     std::vector<std::string>& keys, std::vector<std::string>& values) {
+    auto unquote = [](std::string v) {
+        if (v.size() >= 2 && (v[0] == '"' || v[0] == '\'') && v.back() == v[0])
+            v = v.substr(1, v.size() - 2);
+        return v;
+    };
+    std::vector<bool> block;   // the value is a | or > block scalar
+    for (size_t q = from; q < to; q++) {
+        const std::string& line = raw[q];
+        const std::string t = trim(line);
+        if (t.empty() || t[0] == '#') continue;
+        const bool top = line[0] != ' ' && line[0] != '\t' && t.rfind("- ", 0) != 0 && t != "-";
+        size_t colon = top ? line.find(':') : std::string::npos;
+        while (colon != std::string::npos && colon + 1 < line.size() && line[colon + 1] != ' ' &&
+               line[colon + 1] != '\t')
+            colon = line.find(':', colon + 1);
+        if (top && colon != std::string::npos && colon > 0) {
+            keys.push_back(unquote(trim(line.substr(0, colon))));
+            std::string v = trim(line.substr(colon + 1));
+            const bool scalar = !v.empty() && (v[0] == '|' || v[0] == '>') &&
+                                v.find_first_not_of("|>+-0123456789") == std::string::npos;
+            block.push_back(scalar);
+            values.push_back(scalar ? "" : unquote(v));
+            continue;
+        }
+        if (keys.empty()) continue;
+        std::string item = t;
+        if (item == "-") continue;
+        if (item.rfind("- ", 0) == 0) item = trim(item.substr(2));
+        std::string& v = values.back();
+        if (!v.empty()) v += block.back() ? " " : ", ";
+        v += block.back() ? item : unquote(item);
+    }
+    for (std::vector<std::string>* cells : {&keys, &values})
+        for (std::string& c : *cells) {
+            std::string e;
+            for (char ch : c) {
+                // Not ( ): "\\(" opens inline math.
+                if (isAsciiPunct(ch) && ch != '(' && ch != ')') e += '\\';
+                e += ch;
+            }
+            c = e;
+        }
 }
 
 const char* bulletFor(int depth) {
@@ -2102,6 +2176,7 @@ Doc analyze(const std::string& md) {
     size_t codeIndent = 4;         // the columns its lines lose (8 in a footnote)
     std::vector<size_t> codeBlanks;
     int quoteGroup = -1, quoteEdit = -1;
+    std::map<int, int> alerts;     // the alert (MdRun::alert) each quote group is
     bool quoteFirst = false;
     int quoteOuter = 0;            // the list levels the quote being read sits in
     std::vector<Level> quoteList;  // its list items, by indentation past the "> "
@@ -2145,7 +2220,7 @@ Doc analyze(const std::string& md) {
     };
 
     size_t start = 0;
-    // Front matter: "---", YAML keys, "---" (or "..."), shown as code.
+    // Front matter: "---", YAML keys, "---" (or "...").
     if (n > 2 && trim(raw[0]) == "---") {
         const std::string& k = raw[1];
         size_t c = 0;
@@ -2155,11 +2230,17 @@ Doc analyze(const std::string& md) {
             for (size_t j = 1; j < n && j < 200; j++) {
                 const std::string t = trim(raw[j]);
                 if (t != "---" && t != "...") continue;
-                Block& b = newBlock(Block::Code, 0);
+                // A table, as GitHub shows it; a double-click edits the
+                // lines between the fences as a code block.
+                Block& b = newBlock(Block::Table, 1);
                 b.last = (int)j;
+                b.frontMatter = true;
+                std::vector<std::string> keys, values;
+                frontMatterRows(raw, 1, j, keys, values);
+                b.rows = {keys, values};
+                b.aligns.assign(keys.size(), Align::Left);
                 const int id = editIds++;
                 for (size_t q = 1; q < j; q++) {
-                    b.code.push_back({raw[q], (int)q});
                     d.lines[q].kind = MdLine::Code;
                     d.lines[q].block = id;
                     d.lines[q].start = d.lines[q].lineStart;
@@ -2583,12 +2664,13 @@ Doc analyze(const std::string& md) {
                 qb.edit = quoteEdit;
                 return qb;
             };
-            const std::string title = firstLine ? alertTitle(ct) : "";
+            const int alert = firstLine && depth == 1 ? alertKind(ct) : 0;
             ListMarker m;
-            if (!title.empty()) {
+            if (alert) {
                 Block& qb = quoted(Block::Para);
                 qb.title = true;
-                qb.text.push_back({title, (int)i});
+                qb.text.push_back({alertTitle(alert), (int)i});
+                alerts[quoteGroup] = alert;
                 open = -1;
             } else if (parseAtx(ct, level, a, b)) {
                 settleQuoteList();
@@ -2730,6 +2812,10 @@ Doc analyze(const std::string& md) {
         L.block = p.edit;
         open = (int)d.blocks.size() - 1;
     }
+    // Every block of an alert's quote is in the alert.
+    if (!alerts.empty())
+        for (Block& b : d.blocks)
+            if (b.quote && alerts.count(b.quoteGroup)) b.alert = alerts[b.quoteGroup];
     return d;
 }
 
@@ -2870,6 +2956,14 @@ void emitBlock(const Block& b, const Context& ctx, int& tables, std::vector<MdRu
         emitTable(b.rows, b.aligns, ++tables, b.first, ctx, out);
         break;
     }
+    if (b.alert || b.frontMatter)
+        for (size_t k = start; k < out.size(); k++) {
+            if (b.alert && out[k].quote) {
+                out[k].alert = b.alert;
+                out[k].alertTitle = b.title;
+            }
+            out[k].frontMatter = b.frontMatter;
+        }
     // A block that opens or closes no <details> is all inside the ones
     // open around it.
     if (ctx.details && ctx.details->changes == before)
@@ -2931,6 +3025,7 @@ std::vector<MdRun> MarkdownParser::parse(const std::string& markdown) {
             if (g.quote) {
                 g.quoteDepth = std::max(1, std::min(prev.quoteDepth, b.quoteDepth));
                 g.quoteIndent = b.quoteIndent;
+                g.alert = b.alert;   // inside an alert, its bar goes on through
             }
             out.push_back(std::move(g));
         }
@@ -3166,6 +3261,11 @@ std::string MarkdownParser::anchor(const std::string& headingText) {
         out += encodeUtf8(c);
     }
     return out;
+}
+
+const char* MarkdownParser::alertName(int alert) {
+    static const char* const kNames[] = {"", "note", "tip", "important", "warning", "caution"};
+    return alert >= 1 && alert <= 5 ? kNames[alert] : "";
 }
 
 int MarkdownParser::mediaKind(const std::string& src) {

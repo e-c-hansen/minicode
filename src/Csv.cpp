@@ -286,4 +286,92 @@ std::string Document::serialize() const {
     return out;
 }
 
+namespace {
+
+std::string trimmed(const std::string &s) {
+    size_t a = 0, b = s.size();
+    while (a < b && (s[a] == ' ' || s[a] == '\t')) a++;
+    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r')) b--;
+    return s.substr(a, b - a);
+}
+
+bool digit(char c) { return c >= '0' && c <= '9'; }
+
+bool isNumber(const std::string &s) {
+    size_t i = 0;
+    if (i < s.size() && (s[i] == '+' || s[i] == '-')) i++;
+    // A currency sign: $, or the UTF-8 for €, £ and ¥.
+    if (i < s.size() && s[i] == '$') i++;
+    else if (s.compare(i, 3, "\xE2\x82\xAC") == 0) i += 3;
+    else if (s.compare(i, 2, "\xC2\xA3") == 0 || s.compare(i, 2, "\xC2\xA5") == 0) i += 2;
+    if (i < s.size() && (s[i] == '+' || s[i] == '-')) i++;
+    size_t digits = 0;
+    while (i < s.size() && (digit(s[i]) || (s[i] == ',' && digits > 0))) {
+        if (digit(s[i])) digits++;
+        i++;
+    }
+    if (i < s.size() && s[i] == '.') {
+        i++;
+        while (i < s.size() && digit(s[i])) { digits++; i++; }
+    }
+    if (digits == 0) return false;
+    if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+        size_t j = i + 1;
+        if (j < s.size() && (s[j] == '+' || s[j] == '-')) j++;
+        size_t exp = 0;
+        while (j < s.size() && digit(s[j])) { exp++; j++; }
+        if (exp) i = j;
+    }
+    if (i < s.size() && s[i] == '%') i++;
+    return i == s.size();
+}
+
+// Digits, separators and the few letters of times and zones.
+bool isDate(const std::string &s) {
+    size_t digits = 0, seps = 0, i = 0;
+    for (; i < s.size(); i++) {
+        const char c = s[i];
+        if (digit(c)) digits++;
+        else if (c == '-' || c == '/' || c == '.' || c == ':') seps++;
+        else if (c == 'T' || c == ' ' || c == 'Z' || c == '+') continue;
+        else return false;
+    }
+    if (digits < 3 || seps < 1) return false;
+    // A date is d-m-y in some order with two separators of one kind; a
+    // time is h:mm.
+    const bool time = s.find(':') != std::string::npos;
+    const bool date = s.find_first_of("-/.") != std::string::npos && seps >= 2;
+    return time || date;
+}
+
+}  // namespace
+
+bool isNumberOrDate(const std::string &field) {
+    const std::string s = trimmed(field);
+    if (s.empty()) return false;
+    return isNumber(s) || isDate(s);
+}
+
+bool looksLikeHeader(const Document &doc) {
+    const size_t rows = doc.rows(), cols = doc.columns();
+    if (rows < 2 || cols == 0) return false;
+    for (size_t c = 0; c < doc.fieldsInRow(0); c++) {
+        const std::string h = trimmed(doc.cell(0, c));
+        if (h.empty() || isNumberOrDate(h)) return false;
+    }
+    if (doc.fieldsInRow(0) == 0) return false;
+    const size_t last = std::min(rows, (size_t)201);
+    for (size_t c = 0; c < doc.fieldsInRow(0); c++) {
+        size_t filled = 0, typed = 0;
+        for (size_t r = 1; r < last; r++) {
+            const std::string v = trimmed(doc.cell(r, c));
+            if (v.empty()) continue;
+            filled++;
+            if (isNumberOrDate(v)) typed++;
+        }
+        if (filled > 0 && typed * 5 >= filled * 4) return true;
+    }
+    return false;
+}
+
 }  // namespace Csv

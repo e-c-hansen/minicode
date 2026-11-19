@@ -165,6 +165,7 @@ struct Box {
     enum Kind { List, Item, Quote } kind;
     bool ordered = false;
     char delim = 0;   // an ordered list's "." or ")": another one starts another list
+    int alert = 0;    // a quote that is one of GitHub's alerts (MdRun::alert)
 };
 
 std::vector<Box> pathFor(const MdRun& r) {
@@ -176,7 +177,7 @@ std::vector<Box> pathFor(const MdRun& r) {
         path.push_back({Box::List, false});
         path.push_back({Box::Item, false});
     }
-    for (int k = 0; k < depth; k++) path.push_back({Box::Quote, false});
+    for (int k = 0; k < depth; k++) path.push_back({Box::Quote, false, 0, k == 0 ? r.alert : 0});
     for (int k = 0; k < levels; k++) {
         path.push_back({Box::List, false});
         path.push_back({Box::Item, false});
@@ -189,6 +190,31 @@ std::vector<Box> pathFor(const MdRun& r) {
         if (d != std::string::npos) list.delim = r.text[d];
     }
     return path;
+}
+
+// An alert's icon: a small inline SVG drawn in the title's color, after
+// GitHub's (an i in a circle, a light bulb, a speech bubble, a triangle
+// and an octagon with an exclamation mark).
+std::string alertIcon(int alert) {
+    static const char* const kShapes[] = {
+        "",
+        "<circle cx=\"8\" cy=\"8\" r=\"6.25\"/><path d=\"M8 7.25v3.5\"/>"
+        "<circle cx=\"8\" cy=\"4.9\" r=\".6\" fill=\"currentColor\"/>",
+        "<path d=\"M8 1.75a4.25 4.25 0 0 0-2.4 7.76c.4.28.65.72.65 1.2v.79h3.5v-.79c0-.48.25-.92"
+        ".65-1.2A4.25 4.25 0 0 0 8 1.75z\"/><path d=\"M6.5 14.25h3\"/>",
+        "<path d=\"M2.75 2.25h10.5c.41 0 .75.34.75.75v7.5c0 .41-.34.75-.75.75H8.5l-3 2.5v-2.5H2.75"
+        "a.75.75 0 0 1-.75-.75V3c0-.41.34-.75.75-.75z\"/><path d=\"M8 4.75v2.75\"/>"
+        "<circle cx=\"8\" cy=\"9.4\" r=\".6\" fill=\"currentColor\"/>",
+        "<path d=\"M8 1.75l6.5 12H1.5z\"/><path d=\"M8 6v3.5\"/>"
+        "<circle cx=\"8\" cy=\"11.6\" r=\".6\" fill=\"currentColor\"/>",
+        "<path d=\"M5.4 1.75h5.2l3.65 3.65v5.2l-3.65 3.65H5.4L1.75 10.6V5.4z\"/>"
+        "<path d=\"M8 4.75v3.75\"/><circle cx=\"8\" cy=\"10.75\" r=\".6\" fill=\"currentColor\"/>",
+    };
+    if (alert < 1 || alert > 5) return "";
+    return std::string("<svg class=\"octicon\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" "
+                       "aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" "
+                       "stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\">") +
+           kShapes[alert] + "</svg>";
 }
 
 class Writer {
@@ -279,7 +305,7 @@ private:
             const Box b = open_.back();
             open_.pop_back();
             if (b.kind == Box::Item) out_ += "</li>\n";
-            else if (b.kind == Box::Quote) out_ += "</blockquote>\n";
+            else if (b.kind == Box::Quote) out_ += b.alert ? "</div>\n" : "</blockquote>\n";
             else out_ += b.ordered ? "</ol>\n" : "</ul>\n";
         }
     }
@@ -302,7 +328,7 @@ private:
         while (keep < open_.size() && keep < path.size()) {
             const Box& a = open_[keep];
             const Box& b = path[keep];
-            if (a.kind != b.kind) break;
+            if (a.kind != b.kind || a.alert != b.alert) break;
             const bool last = newItem && keep + 2 >= path.size();
             if (last && b.kind == Box::Item) break;                       // a new item
             if (last && b.kind == Box::List && (a.ordered != b.ordered || a.delim != b.delim))
@@ -313,7 +339,11 @@ private:
         for (size_t k = keep; k < path.size(); k++) {
             Box b = path[k];
             if (b.kind == Box::Quote) {
-                out_ += "<blockquote>\n";
+                if (b.alert)   // GitHub's markup for an alert
+                    out_ += std::string("<div class=\"markdown-alert markdown-alert-") +
+                            MarkdownParser::alertName(b.alert) + "\">\n";
+                else
+                    out_ += "<blockquote>\n";
             } else if (b.kind == Box::List) {
                 const bool fresh = newItem && k + 2 == path.size();
                 if (b.ordered) {
@@ -374,6 +404,12 @@ private:
             out_ += "<h" + h + (id.empty() ? "" : " id=\"" + escape(id) + "\"") + ">";
             inline_(from, to);
             out_ += "</h" + h + ">\n";
+            return;
+        }
+        if (r.alertTitle && r.alert) {   // the alert's icon and title, as GitHub writes them
+            out_ += std::string("<p class=\"markdown-alert-title\">") + alertIcon(r.alert);
+            inline_(from, to);
+            out_ += "</p>\n";
             return;
         }
         if (r.math == 2 && to == from + 1) {   // display math on a line of its own
@@ -490,7 +526,7 @@ private:
         }
         static const char* const kAlign[3] = {"", " style=\"text-align: center\"",
                                               " style=\"text-align: right\""};
-        out_ += "<table>\n";
+        out_ += runs_[from].frontMatter ? "<table class=\"front-matter\">\n" : "<table>\n";
         for (int row = 0; row < rows; row++) {
             if (row == 0) out_ += "<thead>\n";
             if (row == 1) out_ += "<tbody>\n";
@@ -537,6 +573,22 @@ const char* const kStyle =
     ".task-list-item input { margin: 0 .3em .25em -1.4em; vertical-align: middle; }\n"
     ".footnotes { font-size: 85%; color: #59636e; }\n"
     ".math.display { display: block; text-align: center; margin: 0 0 16px; }\n"
+    ".markdown-alert { margin: 0 0 16px; padding: .5em 1em; border-left: .25em solid #d1d9e0; }\n"
+    ".markdown-alert > :last-child { margin-bottom: 0; }\n"
+    ".markdown-alert-title { display: flex; align-items: center; gap: .5em; font-weight: 500;"
+    " line-height: 1; }\n"
+    ".markdown-alert-title .octicon { flex: none; }\n"
+    ".markdown-alert-note { border-left-color: #0969da; }\n"
+    ".markdown-alert-note .markdown-alert-title { color: #0969da; }\n"
+    ".markdown-alert-tip { border-left-color: #1a7f37; }\n"
+    ".markdown-alert-tip .markdown-alert-title { color: #1a7f37; }\n"
+    ".markdown-alert-important { border-left-color: #8250df; }\n"
+    ".markdown-alert-important .markdown-alert-title { color: #8250df; }\n"
+    ".markdown-alert-warning { border-left-color: #9a6700; }\n"
+    ".markdown-alert-warning .markdown-alert-title { color: #9a6700; }\n"
+    ".markdown-alert-caution { border-left-color: #d1242f; }\n"
+    ".markdown-alert-caution .markdown-alert-title { color: #d1242f; }\n"
+    ".front-matter th, .front-matter td { font-size: 85%; }\n"
     "@media (prefers-color-scheme: dark) {\n"
     "  body { background: #0d1117; color: #f0f6fc; }\n"
     "  h1, h2, th, td, hr { border-color: #3d444d; }\n"
@@ -545,6 +597,16 @@ const char* const kStyle =
     "  pre, th { background: #151b23; }\n"
     "  blockquote { color: #9198a1; border-left-color: #3d444d; }\n"
     "  .footnotes { color: #9198a1; }\n"
+    "  .markdown-alert-note { border-left-color: #4493f8; }\n"
+    "  .markdown-alert-note .markdown-alert-title { color: #4493f8; }\n"
+    "  .markdown-alert-tip { border-left-color: #3fb950; }\n"
+    "  .markdown-alert-tip .markdown-alert-title { color: #3fb950; }\n"
+    "  .markdown-alert-important { border-left-color: #ab7df8; }\n"
+    "  .markdown-alert-important .markdown-alert-title { color: #ab7df8; }\n"
+    "  .markdown-alert-warning { border-left-color: #d29922; }\n"
+    "  .markdown-alert-warning .markdown-alert-title { color: #d29922; }\n"
+    "  .markdown-alert-caution { border-left-color: #f85149; }\n"
+    "  .markdown-alert-caution .markdown-alert-title { color: #f85149; }\n"
     "}\n";
 
 }  // namespace

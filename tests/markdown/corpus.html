@@ -28,6 +28,21 @@ img, video { max-width: 100%; }
 .task-list-item input { margin: 0 .3em .25em -1.4em; vertical-align: middle; }
 .footnotes { font-size: 85%; color: #59636e; }
 .math.display { display: block; text-align: center; margin: 0 0 16px; }
+.markdown-alert { margin: 0 0 16px; padding: .5em 1em; border-left: .25em solid #d1d9e0; }
+.markdown-alert > :last-child { margin-bottom: 0; }
+.markdown-alert-title { display: flex; align-items: center; gap: .5em; font-weight: 500; line-height: 1; }
+.markdown-alert-title .octicon { flex: none; }
+.markdown-alert-note { border-left-color: #0969da; }
+.markdown-alert-note .markdown-alert-title { color: #0969da; }
+.markdown-alert-tip { border-left-color: #1a7f37; }
+.markdown-alert-tip .markdown-alert-title { color: #1a7f37; }
+.markdown-alert-important { border-left-color: #8250df; }
+.markdown-alert-important .markdown-alert-title { color: #8250df; }
+.markdown-alert-warning { border-left-color: #9a6700; }
+.markdown-alert-warning .markdown-alert-title { color: #9a6700; }
+.markdown-alert-caution { border-left-color: #d1242f; }
+.markdown-alert-caution .markdown-alert-title { color: #d1242f; }
+.front-matter th, .front-matter td { font-size: 85%; }
 @media (prefers-color-scheme: dark) {
   body { background: #0d1117; color: #f0f6fc; }
   h1, h2, th, td, hr { border-color: #3d444d; }
@@ -36,14 +51,29 @@ img, video { max-width: 100%; }
   pre, th { background: #151b23; }
   blockquote { color: #9198a1; border-left-color: #3d444d; }
   .footnotes { color: #9198a1; }
+  .markdown-alert-note { border-left-color: #4493f8; }
+  .markdown-alert-note .markdown-alert-title { color: #4493f8; }
+  .markdown-alert-tip { border-left-color: #3fb950; }
+  .markdown-alert-tip .markdown-alert-title { color: #3fb950; }
+  .markdown-alert-important { border-left-color: #ab7df8; }
+  .markdown-alert-important .markdown-alert-title { color: #ab7df8; }
+  .markdown-alert-warning { border-left-color: #d29922; }
+  .markdown-alert-warning .markdown-alert-title { color: #d29922; }
+  .markdown-alert-caution { border-left-color: #f85149; }
+  .markdown-alert-caution .markdown-alert-title { color: #f85149; }
 }
 </style>
 </head>
 <body>
 <article class="markdown-body">
-<pre><code>title: Markdown corpus
-purpose: every construct the preview draws, for tests and for eyes
-</code></pre>
+<table class="front-matter">
+<thead>
+<tr><th>title</th><th>purpose</th></tr>
+</thead>
+<tbody>
+<tr><td>Markdown corpus</td><td>every construct the preview draws, for tests and for eyes</td></tr>
+</tbody>
+</table>
 <h1 id="markdown-corpus">Markdown corpus</h1>
 <p>Open this file in Mutible and compare the preview with GitHub's rendering of the same file. <code>tests/run_tests.cpp</code> parses it too, and checks what it can without a screen. Each section names what it exercises.</p>
 <h2 id="spacing-between-blocks">Spacing between blocks</h2>
@@ -154,14 +184,15 @@ After a br tag.</p>
 </blockquote>
 </li>
 </ol>
-<blockquote>
-<p><strong>Note</strong></p>
+<div class="markdown-alert markdown-alert-note">
+<p class="markdown-alert-title"><svg class="octicon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M8 7.25v3.5"/><circle cx="8" cy="4.9" r=".6" fill="currentColor"/></svg><strong>Note</strong></p>
 <p>An alert, as GitHub writes them.</p>
-</blockquote>
-<blockquote>
-<p><strong>Warning</strong></p>
+</div>
+<div class="markdown-alert markdown-alert-warning">
+<p class="markdown-alert-title"><svg class="octicon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.75l6.5 12H1.5z"/><path d="M8 6v3.5"/><circle cx="8" cy="11.6" r=".6" fill="currentColor"/></svg><strong>Warning</strong></p>
 <p>Another kind.</p>
-</blockquote>
+</div>
+<p>Emoji shortcodes as GitHub draws them: 🎉, ✅, and 👍; an unknown one, :not_an_emoji:, stays as written, and so does <code>:tada:</code> in code.</p>
 <h2 id="code-blocks">Code blocks</h2>
 <pre><code class="language-python">def f(x_1, x_2):
     return x_1 * x_2   # stars and underscores stay
