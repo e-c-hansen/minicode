@@ -46,6 +46,17 @@ found through that list.
   media paused (macOS 12; macOS 11 drops it), so it comes back scrolled
   where it was. Cmd+1 and the toggle give it the keyboard through
   `MCFileViewers focusInWindow:` (`grantKeyboard`); nothing else does.
+  **Beside the source** (Control+Command+V, 2026-11-19,
+  `EditorController+PageSide.mm`): a second `MCHtmlPage`, the window's
+  (`_sideHtml`), shows the buffer (`showText:path:`), again 0.4 s after
+  typing stops (`pageSideSourceChanged`), keeping the scroll as a reload
+  does. When the text is what the disk holds it loads the file
+  (`loadFileURL:allowingReadAccessToURL:`, the window's folder); else
+  `loadHTMLString:baseURL:` with the file's URL, which WebKit lets read
+  the file's folder, so relative stylesheets and pictures still load (the
+  navigation is the tab's own file, so the policy allows it). Scripts
+  follow the same rule and answers. The GUI check is html_page's last
+  steps; Linux has no side page for HTML.
   The GTK port shows .html as its page too (`linux/src/HtmlView.cpp`, the
   rules in `src/HtmlPage.{h,cpp}`, `linux/HANDOFF.md` item 83); this file's
   .mm keeps its own copy of those rules.

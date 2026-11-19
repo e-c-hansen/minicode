@@ -9,19 +9,31 @@
 // the window or the zoom goes back, and a heading (or a line of text) is
 // never a column's last line; every column's lines line up.
 //
+// Keys (the owner's, 2026-11-19): Ctrl, Alt and Super in words, each in
+// its own colour from the theme (Dark Modern's, then Light Modern's after
+// a theme change), Shift as ⇧, thin spaces between the parts ("Ctrl ⇧ P"),
+// no "Shift" word and no "+" in any key, and no glyph the fonts lack.
+//
 // The search box: with the panel up (Ctrl+Shift+H) a letter and an
 // Alt+letter (Word Wrap's Alt+Z) type into the box, never the editor or a
 // command, the keyboard taken from the editor at the first; what the box
-// finds is marked and the rest dimmed (a heading with nothing found under
-// it too), keys found by name and as combinations in any order
-// ("shift+ctrl+h", "control"), the columns, their text and the panel's
-// size unchanged, the highest mark scrolled into sight; Backspace edits
-// the box; a Ctrl key (Ctrl+B) still runs its command and a function key
+// finds comes first, at the top of the first column under its sections'
+// headings (only those with a match, in their order), marked, and the rest
+// after it, dimmed, the panel no smaller, the list scrolled to its top;
+// keys are found by name and as combinations in any order ("shift+ctrl+h",
+// "control"); a keystroke that finds the same rows lays nothing out again
+// (and a relayout's CPU time is bounded); nothing found dims everything in
+// place; Backspace edits the box; a Ctrl key (Ctrl+B) still runs its command and a function key
 // (F1) is still the palette's, whose typing stays its own; Esc clears the
-// box, then closes the panel, the keyboard back in the editor; a click
+// box, then closes the panel, the keyboard back in the editor, the list
+// exactly as it was before the search; a click
 // puts the keyboard in the box, and Ctrl+Shift+H closes the panel and
 // empties it.
 #include "Harness.h"
+
+#include "Commands.h"
+#include "HintsSearchBox.h"
+#include "ThemeCss.h"
 
 #include "Editor.h"
 #include "HintsColumns.h"
@@ -169,9 +181,119 @@ Geometry geometry() {
     return g;
 }
 Geometry gBefore;
+std::vector<HintRow> gPlainRows;   // the list without a query
+int gLayouts = 0;
+std::string gSettings;   // the settings file as the suite found it
 bool gWrap = false;
 int gWideColumns = 0, gColumns1400 = 0;
 int gWidth0 = 0, gHeight0 = 0;
+
+// The key a thin space parts (Commands::kLinuxKeyJoin): K("Ctrl", "⇧", "P").
+std::string K(std::initializer_list<const char*> parts) {
+    std::string s;
+    for (const char* p : parts) s += (s.empty() ? "" : Commands::kLinuxKeyJoin) + std::string(p);
+    return s;
+}
+
+uint32_t rgbOf(const Rgba& c) { return (uint32_t)(c.r << 16 | c.g << 8 | c.b); }
+
+// The foreground colour drawn at byte `at` of a column (the last such
+// attribute over it, as Pango draws it).
+uint32_t colorAt(int column, size_t at) {
+    uint32_t rgb = 0xFFFFFFFF;
+    PangoLayout* layout = cols()->layout(column);
+    PangoAttrList* list = layout ? pango_layout_get_attributes(layout) : nullptr;
+    if (!list) return rgb;
+    PangoAttrIterator* it = pango_attr_list_get_iterator(list);
+    do {
+        int from = 0, to = 0;
+        pango_attr_iterator_range(it, &from, &to);
+        if ((size_t)from <= at && at < (size_t)to) {
+            if (auto* a = (PangoAttrColor*)pango_attr_iterator_get(it, PANGO_ATTR_FOREGROUND))
+                rgb = (uint32_t)((a->color.red >> 8) << 16 | (a->color.green >> 8) << 8 |
+                                 (a->color.blue >> 8));
+            break;
+        }
+    } while (pango_attr_iterator_next(it));
+    pango_attr_iterator_destroy(it);
+    return rgb;
+}
+
+// Where `word` first starts a key's part in the columns' keys: column and
+// byte, or {-1, 0}.
+std::pair<int, size_t> keyWord(const std::string& word) {
+    for (const HintRow& r : cols()->rows()) {
+        if (r.kind != HintRow::Row || r.column < 0) continue;
+        const size_t at = r.key.find(word);
+        if (at != std::string::npos) return {r.column, r.start + at};
+    }
+    return {-1, 0};
+}
+
+// Whether a column's bytes [from, to) are all drawn dimmed.
+bool dimmedRange(int column, size_t from, size_t to) {
+    for (auto [a, b] : ranges(column, PANGO_ATTR_FOREGROUND_ALPHA))
+        if (a <= from && to <= b) return true;
+    return false;
+}
+
+// The headings, in order, of the sections in which `query` finds a row of
+// the list without a query.
+std::vector<std::string> headingsFound(const std::string& query) {
+    const std::vector<bool> f = HintsSearchBox::found(gPlainRows, query);
+    std::vector<std::string> out;
+    std::string heading;
+    bool added = false;
+    for (size_t i = 0; i < gPlainRows.size(); ++i) {
+        if (gPlainRows[i].kind == HintRow::Heading) {
+            heading = gPlainRows[i].text;
+            added = false;
+        } else if (gPlainRows[i].kind == HintRow::Text && gPlainRows[i].text.empty()) {
+            heading.clear();   // the blank line before "Hide these hints" heads no heading
+            added = false;
+        } else if (i < f.size() && f[i] && !added && !heading.empty()) {
+            out.push_back(heading);
+            added = true;
+        }
+    }
+    return out;
+}
+
+// The list as laid out for the query: what was found first, in their
+// sections, then the rest. Checks that every row not of the rest comes
+// before every row of the rest, that the first part's headings are
+// `headings`, that every row found is marked and every row of the rest
+// dimmed, and that the first part starts the first column; notes the
+// first part.
+void checkFirst(const std::string& query) {
+    const std::vector<HintRow>& rows = cols()->rows();
+    std::vector<std::string> heads, first;
+    bool inRest = false, ordered = true;
+    size_t restRows = 0, restDimmed = 0;
+    for (const HintRow& r : rows) {
+        if (r.rest) inRest = true;
+        else if (inRest) ordered = false;
+        const bool blank = r.kind == HintRow::Text && r.text.empty();
+        if (!r.rest && r.kind == HintRow::Heading) heads.push_back(r.text);
+        if (!r.rest && !blank) first.push_back(r.kind == HintRow::Row ? r.key + "\t" + r.text : r.text);
+        if (r.rest && !blank) {
+            ++restRows;
+            if (dimmedRange(r.column, r.start, r.end)) ++restDimmed;
+        }
+    }
+    MCGuiNote("first for \"%s\": %s", query.c_str(), joined(first).c_str());
+    MCGuiNote("then %zu rows of the rest, %zu of them dimmed", restRows, restDimmed);
+    GCHECK(ordered);
+    GCHECK(!first.empty());
+    GCHECK(restRows > 20 && restDimmed == restRows);
+    const std::vector<std::string> want = headingsFound(query);
+    if (heads != want) MCGuiNote("headings %s, expected %s", joined(heads).c_str(), joined(want).c_str());
+    GCHECK(heads == want);
+    // The first part starts the first column, at its top.
+    if (GCHECK(!rows.empty())) {
+        GCHECK(rows[0].column == 0 && rows[0].start == 0 && !rows[0].rest);
+    }
+}
 
 // Types `text` into the box from empty, by keys, and waits until it holds it.
 void typeInBox(const std::string& text) {
@@ -290,10 +412,94 @@ MC_GUI_SUITE(hints_panel) {
         GCHECK(!scrolls());
         GCHECK(!cols()->wraps());
         // Tab stops, not spaces: a key, a tab, what it does.
-        GCHECK(hintsText().find("Ctrl+Shift+P\tCommand palette") != std::string::npos);
+        GCHECK(hintsText().find(K({"Ctrl", "⇧", "P"}) + "\tCommand palette") != std::string::npos);
         GCHECK(hintsText().find("   (") == std::string::npos);
         // A pane's state at a stop of its own.
         GCHECK(hintsText().find("Git panel\thidden") != std::string::npos);
+    });
+    MCGuiStep("the keys: Ctrl, Alt and Super words in colours of their own, ⇧, thin spaces", [] {
+        const std::string t = hintsText();
+        GCHECK(t.find(K({"Ctrl", "⇧", "H"}) + "\tHide these hints") != std::string::npos);
+        GCHECK(t.find(K({"Alt", "Z"}) + "\t") != std::string::npos);
+        GCHECK(t.find(K({"⇧", "⇥"})) != std::string::npos);
+        // No "Shift" word and no "+" in any key.
+        size_t keys = 0, ctrl = 0, alt = 0;
+        for (const HintRow& r : cols()->rows()) {
+            if (r.kind != HintRow::Row || r.key.empty()) continue;
+            ++keys;
+            if (r.key.find("Shift") != std::string::npos || r.key.find('+') != std::string::npos)
+                MCGuiNote("key \"%s\" for %s", r.key.c_str(), r.text.c_str());
+            GCHECK(r.key.find("Shift") == std::string::npos);
+            GCHECK(r.key.find('+') == std::string::npos);
+            if (r.key.find("Ctrl") != std::string::npos) ++ctrl;
+            if (r.key.find("Alt") != std::string::npos) ++alt;
+        }
+        MCGuiNote("%zu keys, %zu with Ctrl, %zu with Alt", keys, ctrl, alt);
+        GCHECK(keys > 60 && ctrl > 30 && alt > 5);
+        // Every glyph drawn is in a font (⇧ ⏎ ⇥ ⎋ ⌫ ⌦ and the arrows).
+        for (int c = 0; c < columns(); ++c) {
+            const int unknown = pango_layout_get_unknown_glyphs_count(cols()->layout(c));
+            if (unknown) MCGuiNote("column %d draws %d unknown glyphs", c, unknown);
+            GCHECK(unknown == 0);
+        }
+        // Each modifier its own colour, the same everywhere; the rest of a key blue.
+        const theme::HintsModifierColors want = theme::hintsModifierColors(Settings::parse(""));
+        GCHECK(rgbOf(cols()->modifierColors().ctrl) == rgbOf(want.ctrl));
+        const auto [cc, ca] = keyWord("Ctrl");
+        const auto [ac, aa] = keyWord("Alt");
+        const auto [sc, sa] = keyWord("⇧");
+        if (GCHECK(cc >= 0 && ac >= 0 && sc >= 0)) {
+            MCGuiNote("Ctrl #%06X, Alt #%06X, ⇧ #%06X", colorAt(cc, ca), colorAt(ac, aa),
+                      colorAt(sc, sa));
+            GCHECK(colorAt(cc, ca) == rgbOf(want.ctrl));
+            GCHECK(colorAt(ac, aa) == rgbOf(want.alt));
+            GCHECK(colorAt(sc, sa) == theme::kHintsKeyColor);
+        }
+        size_t seen = 0, same = 0;
+        for (const HintRow& r : cols()->rows()) {
+            if (r.kind != HintRow::Row) continue;
+            for (size_t at = r.key.find("Ctrl"); at != std::string::npos;
+                 at = r.key.find("Ctrl", at + 4)) {
+                ++seen;
+                if (colorAt(r.column, r.start + at) == rgbOf(want.ctrl)) ++same;
+            }
+        }
+        GCHECK(seen > 30 && same == seen);
+        MCGuiSnapshot(GTK_WIDGET(win()), "hints_keys_dark");
+    });
+    MCGuiStep("Light Modern", [] {
+        gchar* text = nullptr;
+        if (g_file_get_contents(g_getenv("MUTIBLE_SETTINGS"), &text, nullptr, nullptr)) gSettings = text;
+        g_free(text);
+        MCGuiSetSettings("theme = light-modern\n" + gSettings);
+    });
+    MCGuiWait("the keys take its colours", 10, [] {
+        const theme::HintsModifierColors want =
+            theme::hintsModifierColors(Settings::parse("theme = light-modern\n"));
+        const auto [cc, ca] = keyWord("Ctrl");
+        return cc >= 0 && colorAt(cc, ca) == rgbOf(want.ctrl);
+    });
+    MCGuiStep("each its own, readable on the panel", [] {
+        const theme::HintsModifierColors want =
+            theme::hintsModifierColors(Settings::parse("theme = light-modern\n"));
+        const auto [cc, ca] = keyWord("Ctrl");
+        const auto [ac, aa] = keyWord("Alt");
+        const Rgba bg = Rgba::hex(theme::kHintsBackground);
+        MCGuiNote("Light Modern: Ctrl #%06X (%.1f:1), Alt #%06X (%.1f:1), Super #%06X (%.1f:1)",
+                  rgbOf(want.ctrl), theme::contrast(want.ctrl, bg), rgbOf(want.alt),
+                  theme::contrast(want.alt, bg), rgbOf(want.super), theme::contrast(want.super, bg));
+        GCHECK(colorAt(ac, aa) == rgbOf(want.alt));
+        GCHECK(rgbOf(want.ctrl) != rgbOf(theme::hintsModifierColors(Settings::parse("")).ctrl));
+        GCHECK(theme::contrast(want.ctrl, bg) >= 4.5 && theme::contrast(want.alt, bg) >= 4.5);
+        (void)cc;
+        (void)ca;
+        MCGuiSnapshot(GTK_WIDGET(win()), "hints_keys_light");
+        MCGuiSetSettings(gSettings);
+    });
+    MCGuiWait("Dark Modern's again", 10, [] {
+        const auto [cc, ca] = keyWord("Ctrl");
+        return cc >= 0 &&
+               colorAt(cc, ca) == rgbOf(theme::hintsModifierColors(Settings::parse("")).ctrl);
     });
     resize(1400, 900);
     MCGuiWait("fewer columns", 10, [] { return columns() < gWideColumns && settled(); });
@@ -376,6 +582,7 @@ MC_GUI_SUITE(hints_panel) {
         // Nothing marked or dimmed with the box empty.
         GCHECK(found().empty() && dimmedCount() == 0);
         gBefore = geometry();
+        gPlainRows = cols()->rows();
         gWrap = Zoom::wordWrap();
         GCHECK_EQ_STR(Keys::label("editor.action.toggleWordWrap", "+"), "Alt+Z");
     });
@@ -395,50 +602,108 @@ MC_GUI_SUITE(hints_panel) {
         GCHECK(shown());
     });
 
-    // ---- marks and dims, the layout kept
+    // ---- what the box finds first, the rest after it dimmed
     typeInBox("save");
-    MCGuiStep("what the box finds is marked, the rest dimmed, nothing moved", [] {
+    MCGuiWait("laid out for it", 5, settled);
+    MCGuiStep("what the box finds comes first, marked, under its sections' headings", [] {
         const std::vector<std::string> f = found();
         MCGuiNote("found for save: %s", joined(f).c_str());
         GCHECK(f.size() >= 2);   // Save, Save all
         for (const std::string& s : f) GCHECK(g_ascii_strcasecmp(s.c_str(), "save") == 0);
+        // Its matches are in two sections, whose headings both lead.
+        GCHECK(headingsFound("save").size() >= 2);
+        checkFirst("save");
+        // The Save rows at the top of the first column, under the first heading.
+        const std::vector<HintRow>& rows = cols()->rows();
+        if (GCHECK(rows.size() > 2)) {
+            GCHECK(rows[0].kind == HintRow::Heading && rows[0].text == "Keyboard Shortcuts");
+            GCHECK(rows[1].kind == HintRow::Row && rows[1].text == "Save" && rows[1].column == 0);
+            GCHECK(cols()->lineTop(0, (int)rows[1].start) == cols()->lineHeight());
+        }
         GCHECK(!dimmed("Save all"));
         GCHECK(dimmed("Find in file"));
         GCHECK(dimmed("Windows\n"));             // a heading with nothing found under it
         GCHECK(dimmed("Git panel\thidden"));      // a row with its state
         GCHECK(!dimmed("Keyboard Shortcuts"));   // Save is under it
         GCHECK(!dimmed("Tabs\n"));               // Save all is
+        // The list at its top, the first mark in sight; the panel no smaller.
+        GCHECK(scrolled() == 0);
         GCHECK(firstMarkInSight());
-    });
-    MCGuiPause(0.3);   // a negative check: the marks' redraw moves nothing
-    MCGuiStep("the panel's text, size and place are as they were", [] {
         const Geometry now = geometry();
-        MCGuiNote("%d columns, panel %dx%d, text %dx%d at %.0f,%.0f (before: %d columns, "
-                  "%dx%d, %dx%d at %.0f,%.0f)",
-                  now.columns, now.panelW, now.panelH, now.areaW, now.areaH, now.areaX, now.areaY,
-                  gBefore.columns, gBefore.panelW, gBefore.panelH, gBefore.areaW, gBefore.areaH,
-                  gBefore.areaX, gBefore.areaY);
-        GCHECK(now.text == gBefore.text);
-        GCHECK(now == gBefore);
+        MCGuiNote("%d columns, panel %dx%d, text %dx%d (before: %d columns, %dx%d, %dx%d)",
+                  now.columns, now.panelW, now.panelH, now.areaW, now.areaH, gBefore.columns,
+                  gBefore.panelW, gBefore.panelH, gBefore.areaW, gBefore.areaH);
+        GCHECK(now.columns <= gBefore.columns);
+        GCHECK(now.panelW >= gBefore.panelW && now.panelH >= gBefore.panelH);
+        MCGuiSnapshot(GTK_WIDGET(win()), "hints_search_save");
+        gLayouts = cols()->layouts();
+    });
+    MCGuiStep("a space typed: the same rows found", [] { MCGuiType(" "); });
+    MCGuiWait("the box holds \"save \"", 10, [] { return query() == "save "; });
+    MCGuiStep("so nothing is laid out again; Backspace", [] {
+        MCGuiNote("layouts: %d, then %d", gLayouts, cols()->layouts());
+        GCHECK(cols()->layouts() == gLayouts);
+        GCHECK(foundHas("Save"));
+        MCGuiKey("backspace");
+    });
+    MCGuiWait("the box holds \"save\"", 10, [] { return query() == "save"; });
+    MCGuiStep("still none; what a relayout and a mark cost on this thread", [] {
+        GCHECK(cols()->layouts() == gLayouts);
+        // A query that finds other rows lays the list out again; one that
+        // finds the same only marks. CPU time, the median of five each (the
+        // worst of five was one preemption away from failing under load: a
+        // mark at 12 ms against 5 to 6 quietly), and a mark compared with
+        // the relayouts measured beside it, as the room for CI's machine.
+        std::vector<double> relayouts, markings;
+        for (int i = 0; i < 5; ++i) {
+            double c0 = MCGuiThreadCpuMs();
+            cols()->mark("control");
+            relayouts.push_back(MCGuiThreadCpuMs() - c0);
+            c0 = MCGuiThreadCpuMs();
+            cols()->mark("control ");
+            markings.push_back(MCGuiThreadCpuMs() - c0);
+            c0 = MCGuiThreadCpuMs();
+            cols()->mark("save");
+            relayouts.push_back(MCGuiThreadCpuMs() - c0);
+        }
+        auto median = [](std::vector<double> v) {
+            std::sort(v.begin(), v.end());
+            return v[v.size() / 2];
+        };
+        const double relayout = median(relayouts), marks = median(markings);
+        MCGuiNote("a relayout %.2f ms of CPU, a mark alone %.2f ms (medians; %d layouts)", relayout,
+                  marks, cols()->layouts() - gLayouts);
+        GCHECK(cols()->layouts() - gLayouts == 10);
+        // The relative check is the one that holds: on this ThinkPad both
+        // medians grew 2.5 times under other builds' load (a relayout 11.6
+        // to 27.5 ms, a mark 6.2 to 15.6) while a mark stayed 0.5 to 0.7 of
+        // a relayout. The bounds only catch a gross regression (two frames).
+        GCHECK(marks < relayout);   // marking alone is the cheaper path
+        GCHECK_TIME(relayout, 50, "a keystroke that finds other rows");
+        GCHECK_TIME(marks, 32, "a keystroke that finds the same rows");
     });
     typeInBox("shift+ctrl+h");
-    MCGuiStep("a combination finds its key, its modifiers in any order", [] {
+    MCGuiWait("laid out for it", 5, settled);
+    MCGuiStep("a combination finds its key, its modifiers in any order, at the top", [] {
         MCGuiNote("found for shift+ctrl+h: %s", joined(found()).c_str());
-        GCHECK(foundHas("Ctrl+Shift+H"));   // as Commands::keyLabel draws it
+        GCHECK(foundHas(K({"Ctrl", "⇧", "H"})));   // as Commands::keyLabel draws it
         GCHECK(!dimmed("Hide these hints"));
         GCHECK(dimmed("New file"));
-        // Its row is near the end: the list scrolled to it.
+        checkFirst("shift+ctrl+h");
+        // Its row was near the end; now it is at the top, and so is the list.
         MCGuiNote("scrolled to %.0f of %.0f", scrolled(), gtk_adjustment_get_upper(vadj()));
-        GCHECK(scrolled() > 0 && firstMarkInSight());
-        GCHECK(geometry() == gBefore);
+        GCHECK(scrolled() == 0 && firstMarkInSight());
     });
     typeInBox("control");
+    MCGuiWait("laid out for it", 5, settled);
     MCGuiStep("a key's name finds it", [] {
         GCHECK(foundHas("Ctrl"));
         GCHECK(!dimmed("Save all"));
+        checkFirst("control");
     });
     typeInBox("zzqx");
-    MCGuiStep("nothing found: everything dims, the text stays", [] {
+    MCGuiWait("laid out as before", 5, [] { return settled() && geometry() == gBefore; });
+    MCGuiStep("nothing found: everything dims in place, the text as it was", [] {
         MCGuiNote("dimmed: %zu", dimmedCount());
         GCHECK(found().empty() && dimmedCount() > 20);
         GCHECK(scrolled() == 0);   // back to the top
@@ -449,16 +714,13 @@ MC_GUI_SUITE(hints_panel) {
     typeInBox("quit");
     MCGuiStep("Backspace", [] { MCGuiKey("backspace"); });
     MCGuiWait("edits the box", 10, [] { return query() == "qui"; });
-    MCGuiStep("and the marks follow", [] {
-        const Geometry now = geometry();
-        if (!(now == gBefore))
-            MCGuiNote("%d columns, panel %dx%d, text %dx%d at %.0f,%.0f, same text %d", now.columns,
-                      now.panelW, now.panelH, now.areaW, now.areaH, now.areaX, now.areaY,
-                      now.text == gBefore.text);
+    MCGuiWait("laid out for it", 5, settled);
+    MCGuiStep("and what it finds follows", [] {
         GCHECK(foundHas("Qui"));
         GCHECK(!dimmed("Quit"));
         GCHECK(dimmed("Save all"));
-        GCHECK(geometry() == gBefore);
+        checkFirst("qui");
+        GCHECK(scrolled() == 0);
         MCGuiSnapshot(GTK_WIDGET(win()), "hints_search_qui");
     });
 
@@ -497,9 +759,17 @@ MC_GUI_SUITE(hints_panel) {
     MCGuiWait("the editor has it", 5, editorHasKeyboard);
     MCGuiStep("Esc", [] { MCGuiKey("escape"); });
     MCGuiWait("clears the box", 10, [] { return query().empty(); });
-    MCGuiStep("the panel stays, unmarked", [] {
+    MCGuiWait("the list exactly as it was before the search", 5,
+              [] { return settled() && geometry() == gBefore; });
+    MCGuiStep("the panel stays, unmarked, as it was", [] {
         GCHECK(shown());
         GCHECK(found().empty() && dimmedCount() == 0);
+        GCHECK(hintsText() == gBefore.text);
+        GCHECK(geometry() == gBefore);
+        GCHECK(scrolled() == 0);
+        bool none = true;
+        for (const HintRow& r : cols()->rows()) none = none && !r.rest;
+        GCHECK(none);
         MCGuiKey("escape");
     });
     MCGuiWait("a second Esc closes the panel", 10, [] { return !shown(); });

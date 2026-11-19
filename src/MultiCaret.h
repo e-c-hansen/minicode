@@ -210,8 +210,10 @@ Edit pasteLinesAbove(const Text& text, const std::vector<Caret>& carets,
 
 // The word at p: the run of word characters (letters, digits, _ and anything
 // past ASCII) holding p or touching it on either side, selected from its
-// start to its end. An empty caret at p when no word is there.
-Caret wordAt(const std::u16string& text, size_t p);
+// start to its end. An empty caret at p when no word is there. Over a
+// reader, only the word and a character either side are read (the find
+// bar's seed in a 260 MB log copied all of it).
+Caret wordAt(const Text& text, size_t p);
 
 // What a double-click at p selects, as VS Code's word selection does
 // (WordOperations.word, entering word selection): a run of word characters

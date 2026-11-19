@@ -150,8 +150,13 @@ found through that list.
   Links (`openMarkdownLink:`): `#heading` by GitHub's anchor
   (`MarkdownParser::anchor`, as on Linux and Android), web addresses in the browser, paths relative to the
   file through `openTerminalLink:` (`#L12` works).
-- **The preview to the side** (Ctrl+Cmd+V, `markdown.showPreviewToSide`, a
-  `markdown` language command; 2026-11-07): `MarkdownSidePreview.{h,mm}` is
+- **The preview to the side** (Ctrl+Cmd+V, `markdown.showPreviewToSide`;
+  2026-11-07; no longer a `markdown` language command since 2026-11-19,
+  when LaTeX and HTML files got a page to the side too, in
+  `EditorController+PageSide.mm` (latex.md, viewers.md); the item is off
+  for any other file, in the controller's and the app delegate's
+  `validateMenuItem:` alike, since round 9 found it on and doing nothing
+  for an HTML file): `MarkdownSidePreview.{h,mm}` is
   the window's pane (its own read-only TextKit 1 view, the bar, its share,
   the 0.3 s re-render timer); `MCTab sidePreview` says whether a tab wants
   it (in the session as `sidePreview` paths). **At scale** (2026-11-08):
@@ -241,7 +246,7 @@ found through that list.
   Offscreen the popover never shows, so `markdown_page` checks the
   behavior, posts the app's resign and become-active notifications, and
   calls `popoverWillClose:` by hand.
-  **GTK** (2026-11-19, linux/HANDOFF.md item 119, `edit_boxes`): the
+  **GTK** (2026-11-19, linux/HANDOFF.md item 120, `edit_boxes`): the
   block editor says "Enter applies, Shift+Enter for a new line" and has
   Apply; it is not autohide (`PopoverKeep.h`: an autohide popover closes
   on an app switch, on X11 because the click on the other program is its

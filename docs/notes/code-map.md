@@ -113,7 +113,8 @@ goes here first, with tests; the GUI only displays it.
   `AutoIndent` (with `ScanCache`), `KeepSorted`, `MultiCaret` (carets and line
   commands), `AutoClose` (auto-closing pairs), `Snippet` (LSP snippets:
   parse, expand, the tab stops through edits), `LineIndex` (line starts, a gap
-  buffer), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
+  buffer), `PieceTable` (a text as pieces of an original and of its
+  edits: large-file mode's storage), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
   UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
   header only), `WrapIndent.h` (where a wrapped line goes on,
@@ -175,7 +176,9 @@ goes here first, with tests; the GUI only displays it.
 - `EditorController.{h,mm}` and its categories (below); `EditorTab` (`MCTab`),
   `EditorPanes` (`PanelHost`, `DragBar`, `PanelScrollView`), `FileTree`
   (`FileItem`, `ClickOutline`, `gShowHidden`), `EditorPage.h`.
-- The editor: `SourceStorage` (`MCSourceStorage`), `WrapIndentContainer` (the
+- The editor: `SourceStorage` (`MCSourceStorage`), `PieceString` (a large
+  file's text held once: `MCPieceString`, its snapshots, and the attributed
+  string over it), `WrapIndentContainer` (the
   text container that sets a wrapped line's continuation in), `CodeTextView.mm`, `Gutter`,
   `FoldView`, `SpellMarks` (spell checking's marks and menu items),
   `EditorFont`, `EditorFind`, `FindWidget` (the find bar's and
@@ -207,7 +210,9 @@ goes here first, with tests; the GUI only displays it.
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
 - Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownMedia`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
-  `HtmlPage`, `CompareView`.
+  `HtmlPage`, `CompareView`, `MarkdownSidePreview` (Markdown's page beside
+  its source), `PageSidePane` (the split for a LaTeX or HTML page beside
+  its source).
 - `EditorMirror` (the split editor's group without the keyboard).
 - `Browser` (with `MCKeyboardWindow`), `Bookmarks` (the bookmark folder,
   reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
@@ -246,7 +251,8 @@ goes here first, with tests; the GUI only displays it.
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
 Tabs (tabs, closed tabs, saving), Session (the session host's hooks), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
-files changed outside), TreeFocus (Focus on Folder and Add to Focus), TreeReveal (the tree following the active tab), WindowTitle (the window's title and representedURL, by who has the keyboard), Rendering (what the editor's slot shows), Highlighting,
+files changed outside), PageTabs (the review, commit and comparison tabs
+as sessions keep them, made again on restore), TreeFocus (Focus on Folder and Add to Focus), TreeReveal (the tree following the active tab), WindowTitle (the window's title and representedURL, by who has the keyboard), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
 LanguageServers, Agents (inline agent, Request a
@@ -254,7 +260,9 @@ Change, control channel, agent work), Processes (the Processes panel's
 hooks, its state in associated objects), LargeFile (large-file mode, its
 status bar note, the 1 GB question), Tests (the ▶ beside each test, Run
 Test at Cursor), LineHistory (Show Line History's host), Markdown and
-MarkdownRender. Rules, so it
+MarkdownRender, LatexInputs (a LaTeX document's \input files, as its
+preview edits them), and PageSide (Open Preview to the Side for LaTeX and
+HTML files, over `PageSidePane`). Rules, so it
 stays warning-free:
 
 - `EditorController+Private.h` holds the class extension (ivars in its ivar

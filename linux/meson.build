@@ -139,6 +139,7 @@ core_sources = [
   core_dir / 'WebBookmark.cpp',
   # The gutter's line index, and the change bars it moves with the lines.
   core_dir / 'LineIndex.cpp',
+  core_dir / 'PieceTable.cpp',
   core_dir / 'QuickDiff.cpp',
   core_dir / 'SideBySide.cpp',
   core_dir / 'LineDiff.cpp',

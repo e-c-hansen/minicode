@@ -134,3 +134,4 @@ TerminalExitSuite.cpp
 TreeDragsSuite.cpp
 LspPopupsSuite.cpp
 EditBoxesSuite.cpp
+GitPanelSuite.cpp

@@ -131,11 +131,13 @@ static const NSUInteger kMinDigits = 3;
 }
 
 // ---- the index, and the width it asks for
+// Read a block at a time: a UTF-16 copy of a 260 MB log was 520 MB, and
+// macOS keeps a freed block that large in the process's footprint.
 - (void)reindex {
     NSString *s = _tv.textStorage.string;
-    std::vector<unichar> buf(s.length);
-    if (s.length) [s getCharacters:buf.data() range:NSMakeRange(0, s.length)];
-    _index.reset(reinterpret_cast<const char16_t *>(buf.data()), buf.size());
+    _index.reset(s.length, [s](size_t start, size_t n, char16_t *out) {
+        [s getCharacters:reinterpret_cast<unichar *>(out) range:NSMakeRange(start, n)];
+    });
 }
 
 - (void)updateThickness {
@@ -156,9 +158,11 @@ static const NSUInteger kMinDigits = 3;
     const NSRange er = ts.editedRange;
     const NSInteger delta = ts.changeInLength;
     const NSUInteger oldLen = (NSUInteger)((NSInteger)er.length - delta);
+    // Out of step (never expected), or more than a megabyte of new text (a
+    // whole new text: another tab's): indexed afresh, never copied whole.
     if (er.location + oldLen > _index.length() ||
-        _index.length() + er.length - oldLen != ts.length) {
-        [self reindex];   // out of step (never expected): start again
+        _index.length() + er.length - oldLen != ts.length || er.length > (1u << 20)) {
+        [self reindex];
         _bars.clear();
         _tests.clear();
     } else {

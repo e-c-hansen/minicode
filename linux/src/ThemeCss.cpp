@@ -1,7 +1,10 @@
 // ThemeCss.cpp — see ThemeCss.h.
 #include "ThemeCss.h"
+#include <algorithm>
+#include <cmath>
 #include "FindRules.h"
 #include <cstdio>
+#include <vector>
 
 namespace theme {
 
@@ -19,6 +22,87 @@ std::string cssColor(const Rgba& c) {
 // VS Code's editor.selectionBackground in Dark+ and in Light+, by the
 // theme's darkness as drawn (View > Theme, PARITY.md 2.11).
 Rgba editorSelection(const Settings& s) { return Rgba::hex(s.isDark() ? 0x264F78 : 0xADD6FF); }
+
+namespace {
+
+double linear(uint8_t v) {
+    const double c = v / 255.0;
+    return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+}
+
+double luminance(const Rgba& c) {
+    return 0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b);
+}
+
+// Hue in degrees and saturation (HSV's), of an opaque colour.
+void hueOf(const Rgba& c, double* hue, double* saturation) {
+    const int mx = std::max({c.r, c.g, c.b}), mn = std::min({c.r, c.g, c.b});
+    const double d = mx - mn;
+    *saturation = mx == 0 ? 0 : d / mx;
+    double h = 0;
+    if (d > 0) {
+        if (mx == c.r) h = std::fmod((c.g - c.b) / d, 6.0);
+        else if (mx == c.g) h = (c.b - c.r) / d + 2;
+        else h = (c.r - c.g) / d + 4;
+    }
+    h *= 60;
+    *hue = h < 0 ? h + 360 : h;
+}
+
+// `c` mixed toward white until it reads at 4.5:1 on `bg`.
+Rgba readableOn(Rgba c, const Rgba& bg) {
+    const Rgba from = c;
+    for (int step = 1; step <= 50 && contrast(c, bg) < 4.5; ++step) {
+        const double t = step / 50.0;
+        c.r = (uint8_t)std::lround(from.r + (255 - from.r) * t);
+        c.g = (uint8_t)std::lround(from.g + (255 - from.g) * t);
+        c.b = (uint8_t)std::lround(from.b + (255 - from.b) * t);
+    }
+    c.a = 1;
+    return c;
+}
+
+}  // namespace
+
+double contrast(const Rgba& a, const Rgba& b) {
+    const double la = luminance(a), lb = luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
+
+bool distinct(const Rgba& a, const Rgba& b) {
+    const double rm = (a.r + b.r) / 2.0;
+    const double dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
+    const double redmean =
+        std::sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db);
+    double ha, sa, hb, sb;
+    hueOf(a, &ha, &sa);
+    hueOf(b, &hb, &sb);
+    if (sa >= 0.2 && sb >= 0.2) {
+        const double apart = std::fabs(ha - hb);
+        return std::min(apart, 360 - apart) >= 30 && redmean >= 40;
+    }
+    return redmean >= 100;
+}
+
+HintsModifierColors hintsModifierColors(const Settings& s) {
+    const Rgba bg = Rgba::hex(kHintsBackground), key = Rgba::hex(kHintsKeyColor);
+    std::vector<Rgba> taken;
+    auto offer = [&](const Rgba& c) {
+        if (taken.size() == 3) return;
+        const Rgba r = readableOn(c, bg);
+        if (!distinct(r, key)) return;
+        for (const Rgba& t : taken)
+            if (!distinct(r, t)) return;
+        taken.push_back(r);
+    };
+    for (TokenStyle t : {TokenStyle::Keyword, TokenStyle::String, TokenStyle::Preprocessor,
+                         TokenStyle::Function, TokenStyle::Type, TokenStyle::Number,
+                         TokenStyle::Escape, TokenStyle::Tag, TokenStyle::Attribute})
+        offer(s.syntax(t));
+    for (uint32_t c : {0xCE9178u, 0xC586C0u, 0xDCDCAAu}) offer(Rgba::hex(c));
+    while (taken.size() < 3) taken.push_back(Rgba::hex(0xDCDCAA));
+    return {taken[0], taken[1], taken[2]};
+}
 
 std::string stylesheet(const Settings& s) {
     auto bg = [&](Surface x) { return cssColor(s.background(x)); };

@@ -79,6 +79,17 @@ found through that list.
   the app's objects (the old one-line clang build had lost frameworks).
   Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices down a
   page; a one-character `selectionForRange:`'s bounds do not.
+- **The edit box keeps its draft** (2026-11-19, as #223 made the
+  Markdown page's: markdown.md, "The box keeps its draft"): the popover
+  is semi-transient, so an app switch leaves it open; `cancelEdit:` (Esc,
+  Cancel) is the one way to drop the text; `commitEdit:` (Return, Apply)
+  and AppKit closing it any other way (`popoverWillClose:`, unless
+  `_editSettled`) apply it through `applyEditText:`; a second double-click
+  applies the open box first; the tab leaving (`stashActiveTab`), Cmd+S,
+  closing a tab or the window, and quitting do too (`commitPendingEdit`
+  through the controller's `commitPageEdit`). The button says Apply.
+  `latex` checks it offscreen (posted resign and become-active
+  notifications, `popoverWillClose:` by hand).
 - **Edits are byte splices** of the span's own LaTeX (nothing escaped or
   re-serialized), marked dirty, saved only by Cmd+S, undone through
   `LatexView`'s own snapshot stack (50) via `undo:`/`redo:`.
@@ -115,6 +126,55 @@ found through that list.
   document is a `% !TEX root = ...` comment's (`LatexLog::rootComment`),
   else, for a file with no `\documentclass`, the open tab whose preview's
   typeset read it (`typesetReadFile:`); its tab is shown.
+- **Inverse search, the page to the source** (2026-11-19, round 9's D4:
+  "Cmd-click on the page does nothing"): Command-click on the page
+  (`MCPdfView mouseDown:`, before PDFView's own selection starts) or
+  Show in Source at the top of its context menu (`menuForEvent:`) calls
+  `showSourceForPage:point:`. It places the click as a double-click does
+  (`spanForPage:point:file:source:hits:`, shared with
+  `openEditorForPage:point:`, so `\input` files count), finds the clicked
+  word in the span's LaTeX (`MarkdownEdit::sourceOffsetFor`, as the edit
+  box selects it) and hands `onShowSource(path, line, column)` the word's
+  line and composed-character column (path nil for the document); with no
+  span, SyncTeX's first `textHitsAtPoint` line (refused for TeX's own
+  files). The controller's `latexShowSource:line:column:` opens an input
+  file's tab and calls `goToLine:column:` (one Go Back step; it leaves the
+  full preview and lights the line). The bar says "⌘-click to show it in
+  the source". Lines are the typeset text's (`_src`): beside the source
+  with unsaved typing they may be a little off; Linux has none of this.
+- **Shift+Cmd+V keeps the place** (2026-11-19): from the page,
+  `togglePreview:` asks `sourceLineOnScreen` (core
+  `SyncTexIndex::topLineInRange`, `synctex:top-line`: the document's
+  line whose words' glue, kerns and math are highest in the shown part
+  of the first visible page that has any, the leftmost of a row; a line
+  of text's own box only when no word is there) and puts that line at
+  the source's top, unless `sourceLineIsOnScreen:` says the caret's own
+  line is on show, which then comes back as it was. To the page,
+  `keepSourceLineInView:` runs a quiet forward search (`_forwardQuiet`:
+  no light, no status, no move when any of the line's boxes is on show),
+  after the typeset under way when the page is not the text's;
+  `_forwardPlaced` keeps the first document's top-of-page placing from
+  undoing it.
+- **The page beside the source** (Control+Command+V, 2026-11-19,
+  `EditorController+PageSide.mm`, `PageSidePane.{h,mm}`): the tab's own
+  `LatexView`, framed at the right of the source by `layoutPageSideIn:`
+  (after relayoutRightArea framed it for the editor's slot, so its
+  frame wins); the source keeps the keyboard. It typesets on save
+  (`pageSideSaved:` from `saveTab:`) and when it opens or its tab shows
+  (`refreshPageSide`, as the full preview does on show), never on typing.
+  A double-click on a page older than the buffer (`bufferText`, answered
+  only while the page is beside the source) typesets the buffer and edits
+  nothing (`catchUpWithBuffer`); an edit goes into the source as one undo
+  step (`latexDidEditSource:` through `putBackText:inTab:actionName:`),
+  and the view passes `undo:`/`redo:` up the chain (`respondsToSelector:`)
+  so Cmd+Z there is the source's (the controller's `undo:` uses the
+  tab's undo manager). `latexIsShowing` now means the full preview only.
+  The caret's line is kept in view (`pageSideSelectionChanged`, 0.25 s,
+  `keepSourceLineInView:`), and Option+Cmd+J lights it there without
+  leaving the source. Command-click there moves the caret. Trap:
+  `latexIsShowing` (undo routing, focus on a tab's showing) must stay the
+  full preview only, or Cmd+Z beside the page steps the preview's own
+  stack instead of the text's.
 - **Problems on lines**: `LatexLog` reads tectonic's `error: file:line:
   message` summary (TeX's `! ...` blocks with `l.N` and the open-file
   parentheses only when no summary placed anything); the sibling's name is
@@ -151,3 +211,4 @@ text is in place in its section.
 
 - LaTeX preview (read before touching it): Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices down a page; a one-character `selectionForRange:`'s bounds do not.
 - LaTeX preview (read before touching it): Trap: a synthetic `NSEvent` for Shift+Cmd+S with "s" matched Save and wrote the file, with "S" nothing;
+- LaTeX preview (read before touching it): Trap: `latexIsShowing` (undo routing, focus on a tab's showing) must stay the full preview only, or Cmd+Z beside the page steps the preview's own stack instead of the text's.

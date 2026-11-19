@@ -38,7 +38,7 @@ code" lists them), `LspServer.mm`, `LspPopups.mm` and `CodeTextView.mm` own
 processes and UI; the GTK port has `linux/src/Lsp.cpp` over the same core.
 GTK trap: a popover parented to a `GtkTextView` must be unparented before the
 view is disposed (on `unrealize`), or dispose loops forever.
-GTK's popups (2026-11-19, linux/HANDOFF.md item 119, the Mac's #212 and
+GTK's popups (2026-11-19, linux/HANDOFF.md item 120, the Mac's #212 and
 #223): the hover box, the completion list, the signature hint, the
 references and quick fix lists and the rename box take their colors from
 `ThemeCss.cpp` (FindRules::palette, the find bar's: editorWidget.* for the

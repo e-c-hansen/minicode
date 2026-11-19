@@ -1268,8 +1268,13 @@ its server comes first here (2.0).
   Side and Open, Undo Discard at its top; `git_review` presses them. A
   conflict's Keep Current, Keep Incoming and Keep Both, in the editor and
   on the review page, with Mark Resolved, are done (`HANDOFF.md` item 95,
-  `git_conflicts`). Left to do: F7, the right click on selected lines, the
-  commit page. A worktree's page with Apply to Main is done (`HANDOFF.md`
+  `git_conflicts`). The Mac's #217 is done (`HANDOFF.md` item 118,
+  `git_panel`, `git_review`): a file row's single click opens the page at
+  that file in the preview tab, a double-click or Return keeps it, Open as
+  git Diff shows the raw diff; the page keeps its place after an action;
+  binary pictures show Before and After. Left to do: F7, the right click on
+  selected lines, the commit page (and its preview tab), animated GIFs on
+  the page. A worktree's page with Apply to Main is done (`HANDOFF.md`
   item 85): the tree's Compare with Main opens the review page in its
   worktree mode.
 - [x] **2.10 Change bars and the tree's git colors.** `QuickDiff`,

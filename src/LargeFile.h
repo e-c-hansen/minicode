@@ -23,8 +23,9 @@
 //     quick (an 82 MB log was on screen in 0.7 s, scrolled and searched
 //     without a stall), so a question there only stood in the way; it
 //     asked past 50 MB until 2026-11-16. Past 1 GB the read holds the main
-//     thread for several seconds and the window takes about six times the
-//     file's size in memory (547 MB with the 82 MB log), which is worth a
+//     thread for several seconds and takes at least the file's size in
+//     memory (about six times it until 2026-11-19, when the Mac began
+//     holding a large text once: PieceString.h), which is worth a
 //     question. The GTK port keeps asking past 50 MB (below).
 //   - Lines over 20,000 units are never lexed (kMaxTokenizationLineLength in
 //     SyntaxHighlighter.h, VS Code's editor.maxTokenizationLineLength).

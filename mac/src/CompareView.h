@@ -25,6 +25,13 @@
 @property(nonatomic, copy) NSString *path;
 // The name whose extension picks the syntax colors; path's when not set.
 @property(nonatomic, copy) NSString *fileName;
+// How it is made again when its tab comes back with its window or folder
+// (TabSessions::ComparedSide, EditorController+PageTabs.mm): each side's
+// file (absolute) and revision: "" for the file on disk, ":" for the
+// index, else a git revision (a missing file reads as empty). Left nil
+// when it cannot be (an agent's proposed change, a conflict's two sides, a
+// worktree's), and its tab then does not come back.
+@property(nonatomic, copy) NSString *leftPath, *leftRev, *rightPath, *rightRev;
 // How many rows differ: changed, removed and added lines.
 @property(nonatomic, readonly) NSUInteger changedRows;
 // How many runs of changes (hunks) there are.

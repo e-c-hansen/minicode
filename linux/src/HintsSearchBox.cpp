@@ -179,6 +179,47 @@ bool HintsSearchBox::giveBackKeyboard() {
     return false;
 }
 
+namespace {
+
+// A field searched, its UTF-16 units' bytes, and where it starts.
+struct Place {
+    std::vector<size_t> at;
+    size_t base = 0;
+};
+
+// `r`'s fields as HintsSearch reads them (its key, what it does, its
+// state), and where each is in the row's column.
+std::vector<HintsSearch::Field> fieldsOf(const HintRow& r, std::vector<Place>* places) {
+    std::vector<HintsSearch::Field> fields;
+    auto add = [&](const std::string& s, bool isKey, size_t base) {
+        places->push_back({{}, base});
+        fields.push_back({utf16(s, &places->back().at), isKey});
+    };
+    if (r.kind == HintRow::Row) add(r.key, true, r.start);
+    add(r.text, false, r.textAt);
+    if (r.kind == HintRow::Row && !r.state.empty()) add(r.state, false, r.stateAt);
+    return fields;
+}
+
+bool searched(const HintRow& r) {
+    return r.kind != HintRow::Heading && !(r.kind == HintRow::Text && r.text.empty());
+}
+
+}  // namespace
+
+std::vector<bool> HintsSearchBox::found(const std::vector<HintRow>& rows, const std::string& query) {
+    const std::vector<HintsSearch::Word> words =
+        HintsSearch::parse(utf16(query, nullptr), HintsSearch::Spelling::Linux);
+    if (words.empty()) return {};
+    std::vector<bool> out(rows.size(), false);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (!searched(rows[i])) continue;
+        std::vector<Place> places;
+        out[i] = HintsSearch::match(words, fieldsOf(rows[i], &places)).matches;
+    }
+    return out;
+}
+
 bool HintsSearchBox::attributes(const std::vector<HintRow>& rows, const std::string& query,
                                 const std::vector<PangoAttrList*>& lists,
                                 std::vector<std::pair<int, size_t>>* hits) {
@@ -190,26 +231,18 @@ bool HintsSearchBox::attributes(const std::vector<HintRow>& rows, const std::str
         return r.column >= 0 && (size_t)r.column < lists.size() ? lists[(size_t)r.column] : nullptr;
     };
     std::vector<bool> found(rows.size(), false);
-    // A field searched, its UTF-16 units' bytes, and where it starts.
-    struct Place {
-        std::vector<size_t> at;
-        size_t base = 0;
-    };
     for (size_t i = 0; i < rows.size(); ++i) {
         const HintRow& r = rows[i];
         PangoAttrList* list = listOf(r);
-        if (!list || r.kind == HintRow::Heading) continue;
-        if (r.kind == HintRow::Text && r.text.empty()) continue;   // a blank line
-        std::vector<HintsSearch::Field> fields;
+        if (!list) continue;
+        // The rest, moved after what was found: dimmed whole, headings too.
+        if (r.rest) {
+            if (!(r.kind == HintRow::Text && r.text.empty())) addDim(list, r.start, r.end);
+            continue;
+        }
+        if (!searched(r)) continue;
         std::vector<Place> places;
-        auto add = [&](const std::string& s, bool isKey, size_t base) {
-            places.push_back({{}, base});
-            fields.push_back({utf16(s, &places.back().at), isKey});
-        };
-        if (r.kind == HintRow::Row) add(r.key, true, r.start);
-        add(r.text, false, r.textAt);
-        if (r.kind == HintRow::Row && !r.state.empty()) add(r.state, false, r.stateAt);
-        const HintsSearch::Match m = HintsSearch::match(words, fields);
+        const HintsSearch::Match m = HintsSearch::match(words, fieldsOf(r, &places));
         if (!m.matches) {
             addDim(list, r.start, r.end);
             continue;
@@ -226,7 +259,7 @@ bool HintsSearchBox::attributes(const std::vector<HintRow>& rows, const std::str
     }
     // A heading dims when nothing under it was found.
     for (size_t i = 0; i < rows.size(); ++i) {
-        if (rows[i].kind != HintRow::Heading) continue;
+        if (rows[i].kind != HintRow::Heading || rows[i].rest) continue;
         bool lit = false;
         for (size_t j = i + 1; j < rows.size() && rows[j].kind != HintRow::Heading; ++j)
             lit = lit || found[j];

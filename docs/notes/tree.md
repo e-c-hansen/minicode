@@ -384,6 +384,14 @@ found through that list.
   the close did nothing and the folder and its folders opened after it
   (`tree_focus`'s auto-reveal-off step failed so, 1 run in 5 beside
   `hints_panel`, 2026-11-19).
+  Trap (GTK checks): the tree following the tab leaves open the folders
+  earlier suites opened files from (Find in Folder's results open
+  `replace_in_folder`'s rif4, which holds a.txt to d.txt), so a check finds
+  a tree row by its path (`MCGuiTreeRow`), never by its name
+  (`MCGuiFindLabel`): `tree_clicks` waited for its own folder's b.txt to
+  go and found rif4/b.txt, which its folder closing moved up into view
+  (FLAKY on CI in both runs from the one rif4 came in, 2026-11-19, passing
+  alone; the folder had closed and stayed closed).
 
 - **A row going keeps the tree's place (GTK)** (2026-11-18, the owner: "If
   I delete a file in the filetree panel, rather than simply removing it
@@ -423,7 +431,7 @@ found through that list.
   tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or
   the tree goes to the next tab's file.
 - **Rows dragged out of the tree on GTK** (2026-11-19, linux/HANDOFF.md
-  item 119, the Mac's #212): the row's GdkFileList (Move and Copy) dropped
+  item 120, the Mac's #212): the row's GdkFileList (Move and Copy) dropped
   on the terminal types its path as the Mac's does (`Terminal::dropped`,
   TermDrop::paths, as a paste; VTE's GTK 4 build takes no drops), and on
   the editor's text opens the file in a tab of its own, a folder shown in
@@ -444,5 +452,6 @@ text is in place in its section.
 - The file tree (Mac): Trap: the tree following the active tab must not scroll for the row a click in the tree opens (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`).
 - The file tree (GTK): Trap: a row's place is only right after the layout that holds the rows just put in, which comes after a frame's tick callbacks and may come after a low-priority idle, so `centerRow` reads it in the frame clock's after-paint, where no listing can have moved the rows since.
 - The file tree (GTK): Trap: a focus changed (Show Whole Folder, a breadcrumb, Add to Focus), hidden files shown or a window's record open the folders that were open from an idle as their rows come (`tryExpand`, from `onItemsChanged`), after the rows are in, so a check that closes one of those folders first waits for it to be open.
+- The file tree (GTK): Trap (GTK checks): the tree following the tab leaves open the folders earlier suites opened files from (Find in Folder's results open `replace_in_folder`'s rif4, which holds a.txt to d.txt), so a check finds a tree row by its path (`MCGuiTreeRow`), never by its name (`MCGuiFindLabel`).
 - The file tree (GTK): Trap: a name the icon theme lacks draws GTK's missing-image picture (no fallback by dropping parts of the name), so every name is checked with `gtk_icon_theme_has_icon` and each type's list ends with text-x-generic.
 - The file tree (GTK): Trap: GtkListView puts the list at its top a frame or two after the row it is anchored on goes, so `keepRows` undoes a scroll gone to 0 after rows go, and the keyboard moves to the next row only once the row is out; and the tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or the tree goes to the next tab's file.

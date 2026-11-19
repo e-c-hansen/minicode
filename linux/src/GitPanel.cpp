@@ -4,11 +4,14 @@
 // view GitDiffView.cpp.
 #include "GitPanel.h"
 
+#include "EditorTabs.h"
+
 #include <limits.h>
 #include <stdlib.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <ctime>
 
 #define GIT_LOG_DOMAIN "mutible-git"
@@ -494,10 +497,10 @@ void GitPanel::build() {
     g_signal_connect(gkeys, "key-pressed", G_CALLBACK(onGraphKey), this);
     gtk_widget_add_controller(graphList_, gkeys);
 
-    // A click shows the diff or the commit, as the Mac's mouseDown does; the
-    // rows' own handling (bubble phase, so first) has selected it by then.
-    // Only a single click, released on the row it was pressed on; a Ctrl or
-    // Shift click chooses rows without showing a diff, as in VS Code.
+    // A click opens the file's review or shows the commit, as the Mac's
+    // mouseDown and clickedRow:graph:... do; the rows' own handling (bubble
+    // phase, so first) has selected it by then. Only a click released on
+    // the row it was pressed on; clickedRow decides the rest.
     for (GtkWidget* view : {list_, graphList_}) {
         GtkGesture* click = gtk_gesture_click_new();
         gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
@@ -512,26 +515,17 @@ void GitPanel::build() {
             GtkWidget* v = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(g));
             const int pressed = self->pressRow_;
             self->pressRow_ = -1;
-            if (n != 1 || pressed < 0 || rowAt(v, x, y) != pressed) return;
-            if (v == self->list_) {
-                if (!self->fileRow(pressed)) return;
-                const GdkModifierType mods =
-                    gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
-                if (mods & GDK_SHIFT_MASK) {
-                    // The list chose the range; the keyboard is at its end.
-                    self->cursor_ = pressed;
-                    return;
-                }
-                if (mods & GDK_CONTROL_MASK) {
-                    self->cursor_ = self->anchor_ = pressed;
-                    return;
-                }
-                self->cursor_ = self->anchor_ = pressed;
-                self->showDiff(pressed);
-            } else {
-                self->selectGraphRow(pressed, true);
-                self->showCommit(pressed);
-            }
+            if (pressed < 0 || rowAt(v, x, y) != pressed) return;
+            // GTK's own count can be reset by a slow first click (the review
+            // opening); ClickCount adds the presses' event times, as the tree.
+            ClickCount& clicks = v == self->list_ ? self->listClicks_ : self->graphClicks_;
+            const int count = clicks.press(g, (const void*)(intptr_t)(pressed + 1), n, x, y);
+            const bool sameRow = self->lastClickView_ == v && self->lastClickRow_ == pressed;
+            self->lastClickView_ = v;
+            self->lastClickRow_ = pressed;
+            const GdkModifierType mods =
+                gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(g));
+            self->clickedRow(pressed, v == self->graphList_, count, sameRow, mods);
         }), this);
         gtk_widget_add_controller(view, GTK_EVENT_CONTROLLER(click));
     }
@@ -851,7 +845,46 @@ void GitPanel::applySnapshot(const GitUi::Snapshot& s) {
 
 // ----------------------------------------------------------- the review
 void GitPanel::reviewChanges() {
-    if (onReview) onReview();
+    if (onReview) onReview("", false, false);
+}
+
+void GitPanel::reviewRow(int row, bool preview) {
+    const GitUi::Row* r = fileRow(row);
+    if (!r) return;
+    if (onReview) onReview(r->path, r->staged, preview);
+    else showDiff(row);
+}
+
+// The tree's rules (EditorTabs::treeClick): the first click opens in the
+// preview tab, the second of a double-click on the same row keeps it; a
+// third and later click of a run does nothing more.
+void GitPanel::clickedRow(int row, bool graph, int count, bool sameRow, GdkModifierType mods) {
+    if (row < 0 || count < 1 || count > 2) return;
+    if (!graph) {
+        if (!fileRow(row)) return;
+        if (mods & GDK_SHIFT_MASK) {
+            // The list chose the range; the keyboard is at its end.
+            cursor_ = row;
+            return;
+        }
+        if (mods & GDK_CONTROL_MASK) {
+            cursor_ = anchor_ = row;
+            return;
+        }
+        cursor_ = anchor_ = row;
+    } else if (mods & (GDK_SHIFT_MASK | GDK_CONTROL_MASK)) {
+        return;
+    }
+    const EditorTabs::OpenFrom from = EditorTabs::treeClick(count, sameRow, false);
+    // The second click of a pair on another row is a first click of its own.
+    if (count == 2 && from != EditorTabs::OpenFrom::TreeDoubleClick) count = 1;
+    const bool preview = from == EditorTabs::OpenFrom::TreeClick;
+    if (graph) {
+        selectGraphRow(row, true);
+        if (count == 1) showCommit(row);   // one diff tab: a double-click adds nothing
+        return;
+    }
+    reviewRow(row, preview);
 }
 
 void GitPanel::setReviewOpen(bool open) {
@@ -1206,7 +1239,7 @@ gboolean GitPanel::onListKey(GtkEventControllerKey*, guint key, guint, GdkModifi
         else self->showPanelMenu(at.x, at.y);
         return TRUE;
     }
-    if (isEnter(key) && !shift) { self->showDiff(sel); return TRUE; }
+    if (isEnter(key) && !shift) { self->reviewRow(sel, false); return TRUE; }
     if (key == GDK_KEY_space && !shift) { self->toggleStage(sel); return TRUE; }
     if (key == GDK_KEY_ISO_Left_Tab || (key == GDK_KEY_Tab && shift)) {
         self->focusMessage();
