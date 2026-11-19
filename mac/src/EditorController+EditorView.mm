@@ -211,6 +211,7 @@
 }
 
 - (void)textViewDidChangeSelection:(NSNotification *)note {
+    if (note.object == self.textView) [self pageSideSelectionChanged];   // the LaTeX page follows
     if (note.object != self.textView || _bracketMatchQueued) return;
     // Once the edit or the selection settles (typing changes both).
     _bracketMatchQueued = YES;
@@ -340,6 +341,7 @@
         [self performSelector:@selector(updateTitle) withObject:nil afterDelay:0.3];
         [self sidePreviewSourceChanged];   // the page beside it, once typing pauses
     }
+    [self pageSideSourceChanged];   // an HTML page beside it, once typing pauses
     [self flushHighlighting];   // recolor the lines this change touched
     MCIndentDidChange(self.textView, self.currentPath);
 }

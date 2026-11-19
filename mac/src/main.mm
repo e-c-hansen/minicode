@@ -772,6 +772,10 @@ static BOOL MCWindowTabAction(SEL a) {
 }
 - (void)showLineInPDF:(id)sender   { [[self current] showLineInPDF:sender]; }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+    // Only for a file with a page to put beside its source (Markdown,
+    // LaTeX, HTML): the item never does nothing.
+    if (item.action == @selector(toggleSidePreview:))
+        return [self keyWindowIsEditor] && [self current].canToggleSidePreview;
     if (MCEditorOnlyAction(item.action)) return [self keyWindowIsEditor];
     if (item.action == @selector(toggleTreeColumn:)) {
         item.state = MCTreeColumnShown((MCTreeColumns)item.tag) ? NSControlStateValueOn
@@ -1471,7 +1475,7 @@ static void BuildMenu(void) {
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:toggle];
     // Control+Command+V, for VS Code's Cmd+K V chord: the page beside the
-    // source of a Markdown file, which keeps the keyboard.
+    // source of a Markdown, LaTeX or HTML file, which keeps the keyboard.
     NSMenuItem *side =
         [[NSMenuItem alloc] initWithTitle:@"Open Preview to the Side"
                                    action:@selector(toggleSidePreview:)
