@@ -143,15 +143,27 @@ struct Error {
 // Whose keys (see "platforms" below).
 enum class Platform { Mac, Linux };
 
-// A key as the shortcut hints show it, in symbols where a key has one. The
-// Mac's is glyphs(): "⇧⌘P", "⌥⌘↓", "⌘⏎". Linux's names its modifiers in
-// words, in the order GTK and VS Code write them, joined by "+", and draws
-// the keys that have a symbol as the Mac does: "Ctrl+Shift+P",
-// "Ctrl+Shift+⏎", "Alt+↑", "Shift+⇥", "⎋", "Ctrl+⌫"; Home, End, Page Up,
-// Page Down, Space, Menu, and the keypad keep their names, which read more
-// plainly there than ↖ ↘ ⇞ ⇟. Menus draw their own keys; this is for the
-// hints panels (HintsSearch.h finds keys in it by name on either platform).
+// A key as the shortcut hints show it, each system's own way. The Mac's is
+// glyphs(), Apple's symbols with nothing between them: "⇧⌘P", "⌥⌘↓", "⌘⏎".
+// Linux's (2026-11-19, the owner's) keeps the words a PC keyboard prints
+// for Ctrl, Alt and Super (the Key's Cmd), which the GTK panel draws each
+// in a colour of its own, and the symbols most PC keyboards print for the
+// rest: Shift ⇧, Enter ⏎, Tab ⇥, Esc ⎋, Backspace ⌫, Delete ⌦ and the
+// arrows; Home, End, Page Up, Page Down, Space, Menu and the keypad's keys
+// ("Keypad 0") stay words. The modifiers come in the order GTK and VS Code
+// write them (Ctrl, Alt, Shift, Super), and a thin space (U+2009,
+// kLinuxKeyJoin) stands between the parts: "Ctrl ⇧ P", "Ctrl ⏎", "Alt Z",
+// "⇧ ⇥", "⎋", "Ctrl Alt ⇧ Page Down" (thin spaces there). Menus, the
+// palette and the status bar keep their own spellings (linuxLabel on
+// Linux); this is for the hints panels (HintsSearch.h finds keys in it by
+// name on either platform).
 std::string keyLabel(const Key& k, Platform p);
+// What stands between the parts of a key in keyLabel's Linux spelling: a
+// thin space, in UTF-8.
+extern const char* const kLinuxKeyJoin;
+// The modifiers alone, as keyLabel draws them, for a hint written by hand:
+// "⌃⇧" on the Mac, "Ctrl ⇧" on Linux (a thin space between, none after).
+std::string modifiersLabel(unsigned mods, Platform p);
 
 // The keys in effect: every command's, in order (the first is the one a
 // menu shows; a user's keys come before the defaults).

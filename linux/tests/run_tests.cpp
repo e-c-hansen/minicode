@@ -284,6 +284,44 @@ void testThemeCss() {
     CHECK(theme::cssColor(Rgba::hex(0, 0.0625)) == "rgba(0,0,0,0.063)");
     CHECK(theme::cssColor(Rgba::hex(0, 0.25 * (128 / 255.0))) == "rgba(0,0,0,0.125)");
 
+    GROUP("theme:hints-modifiers");
+    {
+        // Ctrl, Alt and Super in the hints' keys: three colours of the
+        // theme's, each readable on the panel's dark background, apart from
+        // the keys' blue and from each other, on every theme.
+        const Rgba bg = Rgba::hex(theme::kHintsBackground), key = Rgba::hex(theme::kHintsKeyColor);
+        auto hex = [](const Rgba& c) { return (uint32_t)(c.r << 16 | c.g << 8 | c.b); };
+        for (const Theme& t : Settings::themes()) {
+            const theme::HintsModifierColors m =
+                theme::hintsModifierColors(Settings::parse(std::string("theme = ") + t.id + "\n"));
+            for (const Rgba& c : {m.ctrl, m.alt, m.super}) {
+                CHECK(theme::contrast(c, bg) >= 4.5);
+                CHECK(theme::distinct(c, key));
+            }
+            CHECK(theme::distinct(m.ctrl, m.alt));
+            CHECK(theme::distinct(m.ctrl, m.super));
+            CHECK(theme::distinct(m.alt, m.super));
+            std::printf("  hints modifiers on %s: Ctrl #%06X (%.1f:1), Alt #%06X (%.1f:1), "
+                        "Super #%06X (%.1f:1)\n",
+                        t.id, hex(m.ctrl), theme::contrast(m.ctrl, bg), hex(m.alt),
+                        theme::contrast(m.alt, bg), hex(m.super), theme::contrast(m.super, bg));
+        }
+        // Dark Modern's keyword blue is too near the keys' own, so its
+        // string, control keyword and function colours.
+        const theme::HintsModifierColors dm = theme::hintsModifierColors(Settings::parse(""));
+        CHECK(hex(dm.ctrl) == 0xCE9178 && hex(dm.alt) == 0xC586C0 && hex(dm.super) == 0xDCDCAA);
+        // A light theme's colours are lightened, not taken as they are.
+        const theme::HintsModifierColors lm =
+            theme::hintsModifierColors(Settings::parse("theme = light-modern\n"));
+        CHECK(hex(lm.ctrl) != 0xA31515 && lm.ctrl.r > lm.ctrl.g && lm.ctrl.r > lm.ctrl.b);
+        // A colour set in the settings file is followed.
+        const theme::HintsModifierColors own =
+            theme::hintsModifierColors(Settings::parse("syntax.keyword = #E5C07B\n"));
+        CHECK(hex(own.ctrl) == 0xE5C07B);
+        CHECK(theme::contrast(Rgba::hex(0xFFFFFF), Rgba::hex(0)) > 20.9);
+        CHECK(!theme::distinct(Rgba::hex(0x569CD6), key));
+    }
+
     GROUP("theme:defaults");
     const std::string d = theme::stylesheet(Settings::parse(""));
     // Dark Modern's, the theme when none is named.

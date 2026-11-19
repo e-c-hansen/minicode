@@ -3769,6 +3769,18 @@ static std::vector<HintRow> hintsRows(App* app) {
         if (key.empty() && index > 0) return;
         plain(key.empty() ? "—" : key, what);
     };
+    // A key written here rather than a command's, spelled as the core spells
+    // the commands' (Commands::keyLabel: "Ctrl ⇧ C", "⏎", thin spaces).
+    auto keyed = [](const char* spec) {
+        Commands::Key k;
+        Commands::parseKey(spec, &k);
+        return Commands::keyLabel(k, Commands::Platform::Linux);
+    };
+    // Modifiers with a mouse action or a word: "Alt click".
+    auto with = [](unsigned mods, const std::string& what) {
+        return Commands::modifiersLabel(mods, Commands::Platform::Linux) +
+               Commands::kLinuxKeyJoin + what;
+    };
     // A pane's row, its state ("open") drawn muted at a stop of its own.
     auto pane = [&](const char* id, const std::string& what, const std::string& state) {
         const std::string key = Keys::hintLabel(id, 0);
@@ -3798,7 +3810,7 @@ static std::vector<HintRow> hintsRows(App* app) {
     row("editor.unfold", "Unfold it");
     row("editor.foldAll", "Fold all");
     row("editor.unfoldAll", "Unfold all");
-    plain("Tab, Shift Tab", "Indent, outdent lines");
+    plain(keyed("tab") + ", " + keyed("shift+tab"), "Indent, outdent lines");
     row("editor.action.formatDocument", "Format document (or the selected lines)");
     row("mutible.sortLines", "Sort lines");
     row("mutible.sortKeepSortedBlocks", "Sort keep-sorted blocks");
@@ -3815,9 +3827,9 @@ static std::vector<HintRow> hintsRows(App* app) {
     row("editor.action.selectHighlights", "Select all occurrences");
     row("editor.action.insertCursorBelow", "Add a cursor below");
     row("editor.action.insertCursorAbove", "Add a cursor above");
-    plain("Alt click", "Add or remove a cursor");
-    plain("Shift Alt drag", "A column (or a middle-button drag)");
-    plain("Escape", "Back to one cursor");
+    plain(with(Commands::Alt, "click"), "Add or remove a cursor");
+    plain(with(Commands::Alt | Commands::Shift, "drag"), "A column (or a middle-button drag)");
+    plain(keyed("escape"), "Back to one cursor");
     row("expandLineSelection", "Select line");
     row("editor.action.deleteLines", "Delete line");
     row("editor.action.moveLinesDownAction", "Move line down");
@@ -3896,11 +3908,11 @@ static std::vector<HintRow> hintsRows(App* app) {
 #endif
     pane("workbench.view.scm", "Git panel", app->gitShown ? "open" : "hidden");
     if (app->gitShown) {
-        plain("Enter", "Show the diff or commit");
-        plain("Space", "Stage or unstage");
+        plain(keyed("enter"), "Show the diff or commit");
+        plain(keyed("space"), "Stage or unstage");
         // Ctrl+Enter to commit is written in the message box itself.
-        plain("Tab", "Changes, graph, message");
-        plain("Ctrl or Shift click", "Choose several files");
+        plain(keyed("tab"), "Changes, graph, message");
+        plain(with(Commands::Ctrl, "or") + " " + with(Commands::Shift, "click"), "Choose several files");
         plain("Right click", "Push, pull, stage all, discard, stash");
     }
     if (app->editor->isMarkdown()) {
@@ -3933,21 +3945,21 @@ static std::vector<HintRow> hintsRows(App* app) {
         // terminal.mac-style-keys: a remapper's Cmd is Ctrl, its Ctrl Super.
         text("Ctrl keys are shortcuts, as Cmd keys on a");
         text("Mac. Super keys go to the program as Ctrl:");
-        plain("Super C", "Ctrl C, interrupt");
-        plain("Super W", "Ctrl W, delete a word");
-        plain("Super Alt K", "Ctrl K, as Super K");
-        plain("Ctrl C", "Copy");
-        plain("Ctrl V", "Paste");
-        plain("Ctrl A", "Select all");
-        plain("Ctrl W", "Close the terminal");
-        plain("Ctrl click", "Open a file:line or URL");
+        plain(keyed("cmd+c"), "Ctrl C, interrupt");
+        plain(keyed("cmd+w"), "Ctrl W, delete a word");
+        plain(keyed("alt+cmd+k"), "Ctrl K, as Super K");
+        plain(keyed("ctrl+c"), "Copy");
+        plain(keyed("ctrl+v"), "Paste");
+        plain(keyed("ctrl+a"), "Select all");
+        plain(keyed("ctrl+w"), "Close the terminal");
+        plain(with(Commands::Ctrl, "click"), "Open a file:line or URL");
     } else {
         text("Plain Ctrl keys go to the program (Ctrl C,");
         text("Ctrl W, Ctrl H...). These still work:");
-        plain("Ctrl Shift C", "Copy");
-        plain("Ctrl Shift V", "Paste");
-        plain("Ctrl click", "Open a file:line or URL");
-        plain("Ctrl Shift …", "Ctrl Shift shortcuts, but");
+        plain(keyed("ctrl+shift+c"), "Copy");
+        plain(keyed("ctrl+shift+v"), "Paste");
+        plain(with(Commands::Ctrl, "click"), "Open a file:line or URL");
+        plain(with(Commands::Ctrl | Commands::Shift, "…"), "Ctrl Shift shortcuts, but");
         plain("", "G and Space (the shell's), and:");
         // The commands that keep a plain Ctrl key there (Global on Linux).
         for (const Keys::Action& a : Keys::actions()) {
@@ -3980,11 +3992,13 @@ static double hintsRoom(App* app) {
 }
 
 // The rows laid out for the window's width at the editor's zoom, in as
-// many columns as fit (HintsColumns.h), marked for the search box's query:
-// what it finds marked, the rest dimmed, nothing moved.
+// many columns as fit (HintsColumns.h), the modifier words in the theme's
+// colours, and for the search box's query what it finds first, marked,
+// the rest after it dimmed.
 static void showHintsText(App* app) {
     std::vector<HintRow> rows = hintsRows(app);
     app->hintsRoom = hintsRoom(app);
+    app->hintsColumns->setModifierColors(theme::hintsModifierColors(g.settings->settings()));
     // The desktop's size at the editor's zoom, to the half point (the Mac's
     // 12 * MCZoomScale, rounded so).
     const double scale = Zoom::previewScale();
@@ -3992,23 +4006,15 @@ static void showHintsText(App* app) {
                             scale, app->hintsSearch ? app->hintsSearch->query() : std::string());
 }
 
-// The query changed: the marks again, the layout as it was, the highest
-// mark scrolled into sight (the top with none), as the Mac's
-// hintsQueryChanged.
+// The query changed: what it finds moved first, marked, and the rest after
+// it dimmed (laid out again only when what it finds changed), the list
+// scrolled to its top, where the matches are; an empty query puts the
+// list back as it was.
 static void hintsQueryChanged(App* app) {
     if (app->dead || !app->hintsPanel || !gtk_widget_get_visible(app->hintsPanel)) return;
-    const double top =
-        app->hintsColumns->mark(app->hintsSearch ? app->hintsSearch->query() : std::string());
-    GtkAdjustment* adj =
-        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app->hintsScroll));
-    if (top < 0) {
-        gtk_adjustment_set_value(adj, 0);
-        return;
-    }
-    const double bottom = top + app->hintsColumns->lineHeight();
-    const double value = gtk_adjustment_get_value(adj), page = gtk_adjustment_get_page_size(adj);
-    if (top < value || bottom > value + page)
-        gtk_adjustment_set_value(adj, std::max(0.0, std::round(top - page / 3)));
+    app->hintsColumns->mark(app->hintsSearch ? app->hintsSearch->query() : std::string());
+    gtk_adjustment_set_value(
+        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app->hintsScroll)), 0);
 }
 
 // The panel shown or hidden. Hidden, its box empties and gives the keyboard

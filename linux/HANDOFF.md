@@ -7523,3 +7523,89 @@ whose stat parse now carries the session id, so it follows the core.
   Ctrl+W, mac-style, closed the window; the next wait read a null dock and
   the run crashed. The step now presses Ctrl+W only while the terminal
   has the keyboard.
+
+### 118. The hints' keys in colour, and what the search finds first (November 2026)
+
+The owner's two decisions about the shortcut hints (2026-11-19). The
+first changed twice on the way: Apple's symbols for every modifier
+(⌃⌥⇧❖) were asked for, then ISO/IEC 9995-7's PC symbols (⎈ ⎇ ⇱ ⇲), and
+then, as the owner had never seen ⎈ or ⎇, the words a PC keyboard prints
+for Ctrl, Alt and Super, each in a colour of its own, with ⇧ for Shift.
+
+- **What a user meets.** Ctrl+Shift+H shows its keys as "Ctrl ⇧ P",
+  "Ctrl ⏎", "Alt Z", "⇧ ⇥", "⎋", "Ctrl Alt ⇧ Page Down": Ctrl, Alt and
+  Super are words, each in a colour of its own the same all through the
+  panel (on Dark Modern Ctrl orange #CE9178, Alt pink #C586C0, Super
+  yellow #DCDCAA), the rest of a key in the keys' blue; Shift is ⇧, Enter,
+  Tab, Esc, Backspace, Delete and the arrows ⏎ ⇥ ⎋ ⌫ ⌦ ↑ ↓ ← →; Home,
+  End, Page Up, Page Down, Space and Menu are words; a thin space parts
+  the pieces of a key, half a monospace cell (4 pixels at 10 points), and
+  no "+". The
+  colours come from the theme's syntax colours and follow a theme change
+  at once (View > Theme, or the settings file). The palette, the menus,
+  tooltips and the status bar keep "Ctrl+Shift+P". With a query in the
+  search box, what it finds moves to the top of the first column, under
+  its sections' headings (only those with a match, in their order), still
+  marked, and everything else follows, dimmed: a heading whose rows all
+  moved is not repeated below, "Hide these hints" comes with the blank
+  line above it rather than under the last heading. The panel keeps its
+  columns and never shrinks while searching, the list scrolls to its top,
+  and emptying the box (Backspace or Esc) puts the list back exactly as it
+  was. A query that finds nothing dims everything in place. Searching by
+  name: "ctrl", "control", "cmd" and "command" find Ctrl; "alt", "opt" and
+  "option" Alt; "super", "win" and "meta" Super; "shift" ⇧; "return" and
+  "enter" ⏎; and "shift+ctrl+h" finds Ctrl ⇧ H in any order.
+- **Code.** Core: `Commands::keyLabel(k, Platform::Linux)` (the new
+  spelling, the Mac's untouched), `Commands::modifiersLabel` and
+  `Commands::kLinuxKeyJoin` (new); `HintsSearch`'s Linux spelling
+  (`linuxKeyNames`, `keyNames(Spelling)`, `glyphsNamed(w, Spelling)`,
+  combinations joined by thin spaces) and the new
+  `HintsSearch::bubbleMatches(items)` with `Item` and `Bubbled`, written
+  for the Mac to adopt (its header says how). GTK: `ThemeCss.h`'s
+  `hintsModifierColors(settings)`, `contrast`, `distinct`,
+  `kHintsBackground` and `kHintsKeyColor`; `HintsColumns` keeps the rows
+  it was given and lays them out in `orderFor(query)`'s order (`layOut`),
+  `mark(query)` laying out again only when that order changed,
+  `keyAttributes` (the spaces at half the keys' size, the modifier words
+  in their colours), `setModifierColors`, `layouts()`; `HintRow::rest`;
+  `HintsSearchBox::found` and `attributes` (the rest dimmed whole);
+  main.cpp's `showHintsText` (the colours on every layout),
+  `hintsQueryChanged` (the top, always), and `hintsRows`' keys written by
+  hand (`keyed`, `with`: "Alt click", "Ctrl or ⇧ click", "⇥, ⇧ ⇥").
+- **Traps.** A monospace font gives a thin space (U+2009) a whole cell, 8
+  pixels in DejaVu Sans Mono at 10 points, where Ubuntu Sans gives it 2,
+  and drawn in the desktop's font the first snapshot ran "Ctrl Alt S"
+  together; a key's spaces are drawn, and measured, at half the keys'
+  size, 4 pixels. The
+  panel's background is #252526 on every theme, so a light theme's syntax
+  colours (keyword #0000FF) are lightened toward white to 4.5:1 there.
+  DejaVu Sans Mono lacks ⎇ (Pango fell back to DejaVu Sans), one more
+  reason the words won.
+- **Not done.** The Mac still dims in place; it adopts `bubbleMatches`
+  in its own change, with CLAUDE.md's hints sentence. The panel itself
+  stays dark on a light theme, as the Mac's.
+- **Checks.** `hints_panel` (HintsPanelSuite.cpp, its header saying what
+  it checks): the keys' spelling (no "Shift" and no "+" in 113 keys, "Ctrl
+  ⇧ P", "Alt Z", "⇧ ⇥"), no glyph missing from the fonts
+  (`pango_layout_get_unknown_glyphs_count`), Ctrl, Alt and ⇧ in their
+  colours in every key, Light Modern's colours after a theme change and
+  Dark Modern's back; "save" putting Save at the top of the first column
+  under KEYBOARD SHORTCUTS, then TABS with Save all, then 124 rows of the
+  rest, every one dimmed; "shift+ctrl+h", "control" and "qui" likewise
+  (their first parts' headings those of the sections found in, in
+  order); a space typed laying nothing out again; the list at its top
+  after each query; nothing found dimming in place; Esc restoring the
+  list exactly (text, columns, sizes, place). `keys` reads the new
+  spellings. The core's `hints:key-labels`, `hints:search` and the new
+  `hints:bubble`; linux's `make test` adds `theme:hints-modifiers` (every
+  theme's three colours at 4.5:1 or better, apart from the blue and each
+  other).
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7, other agents
+  building): `hints_panel`, `keys`, `terminal_keys`, `window_title` and
+  `palette` 1,507 checks, none failed, in 11.9 s. A keystroke that finds
+  other rows lays the list out again in 10.4 to 11.5 ms of CPU (bound 25),
+  one that finds the same rows marks them in 5.2 to 5.8 ms (bound 8),
+  each under a frame. `make test` 196,374 passed and 2 failed that touch
+  none of this, under a load of 12: `usage:scanner`'s CPU bound (464 of
+  400 ms) and `sessionweb:files`' video body; linux's `make test` 435
+  passed; `meson test --no-suite gui` passed.
