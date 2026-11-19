@@ -45,7 +45,7 @@ MC_GUI_SUITE(git_hunks) {
     MCGuiWait("f.txt changed", 15, [] {
         return Rows({"# Changes  1", "W M f.txt"}) && RowWidget("W M f.txt");
     });
-    ClickRow("W M f.txt");   // its diff
+    RawDiff("W M f.txt");
     MCGuiWait("two hunks, each with Stage Hunk and Discard Hunk", 10, [] { return LinkCount() == 4; });
     MCGuiStep("the links read as they say; a click on the second's Stage Hunk", [] {
         GCHECK_EQ_STR(LinkText(0), "Stage Hunk");
@@ -73,7 +73,7 @@ MC_GUI_SUITE(git_hunks) {
         GCHECK(Diff()->text().find("+k2") == std::string::npos &&
                Diff()->text().find("+B") != std::string::npos);
     });
-    ClickRow("S M f.txt");
+    RawDiff("S M f.txt");
     MCGuiWait("the staged diff, with Unstage Hunk", 10, [] {
         return LinkCount() == 1 && Diff()->links()[0].op == GitUi::HunkOp::Unstage;
     });
@@ -119,7 +119,7 @@ MC_GUI_SUITE(git_hunks) {
         GCHECK_EQ_STR(Panel()->errorLine(), "Unstaged the selected lines of f.txt.");
         GCHECK_EQ_STR(MCGuiReadFile(In("f.txt")), kBoth);
     });
-    ClickRow("W M f.txt");
+    RawDiff("W M f.txt");
     MCGuiWait("two hunks again (B, and k2)", 10, [] {
         return LinkCount() == 4 && Diff()->text().find("+k2") != std::string::npos;
     });
@@ -169,7 +169,7 @@ MC_GUI_SUITE(git_hunks) {
     });
 
     // ------------------------------------------- the menu from the keyboard
-    ClickRow("S M f.txt");   // the staged diff
+    RawDiff("S M f.txt");   // the staged diff
     MCGuiWait("its two hunks", 10, [] { return LinkCount() == 2; });
     MCGuiStep("a click on a line of the second hunk", [] {
         double x = 0, y = 0;

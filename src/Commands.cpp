@@ -535,8 +535,10 @@ const std::vector<Command>& all() {
          0, nullptr},
         // VS Code's Cmd+K V. mutible has no chords: a Cmd+K chord is
         // Control+Command and its second key, as the folding keys are.
+        // Markdown's, LaTeX's and HTML's page beside the source; the menu
+        // item is off for any other file.
         {"markdown.showPreviewToSide", "Open Preview to the Side", "View", "ctrl+cmd+v", E,
-         "toggleSidePreview:", 0, 0, nullptr, "markdown"},
+         "toggleSidePreview:", 0, 0, nullptr},
         // LaTeX Workshop's latex-workshop.synctex (SyncTeX from Cursor).
         {"latex-workshop.synctex", "Show Line in PDF", "View", "alt+cmd+j", A, "showLineInPDF:", 0,
          0, nullptr},

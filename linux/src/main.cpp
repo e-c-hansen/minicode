@@ -3065,7 +3065,10 @@ static void showDiffInEditor(App* app, const std::string& title, const std::stri
 }
 
 // The review of every uncommitted change (ChangeReviewPage.h), one tab per
-// window (the Mac's showChangeReviewAt:): shown again when it is open.
+// window (the Mac's showChangeReviewAt:staged:preview:): shown again when it
+// is open, at a file (its path from the top level) or from its top (""); in
+// the preview tab for a single click in Source Control, the keyboard left in
+// the list, else kept and given the keyboard.
 static ChangeReviewPage* reviewPageOf(App* app) {
     for (Document* d : app->editor->documents())
         if (d->editorPage())
@@ -3074,12 +3077,13 @@ static ChangeReviewPage* reviewPageOf(App* app) {
     return nullptr;
 }
 
-static void showChangeReview(App* app) {
+static void showChangeReview(App* app, const std::string& rel, bool staged, bool preview) {
     if (app->dead || !app->git) return;
     if (ChangeReviewPage* open = reviewPageOf(app)) {
         app->editor->showPage(std::shared_ptr<EditorPage>(
-            std::shared_ptr<EditorPage>(), open));   // found by its key, the same page
-        open->reload();
+            std::shared_ptr<EditorPage>(), open), preview);   // found by its key, the same page
+        if (!preview) app->editor->focusActiveDocument();
+        open->revealFile(rel, staged);   // reads again
         return;
     }
     auto page = std::make_shared<ChangeReviewPage>(app->git, app->rootDir);
@@ -3103,7 +3107,9 @@ static void showChangeReview(App* app) {
         return incoming ? st.mergeIncomingColor() : st.mergeCurrentColor();
     };
     page->applySettings();
-    app->editor->showPage(page);
+    app->editor->showPage(page, preview);
+    if (!preview) app->editor->focusActiveDocument();
+    page->revealFile(rel, staged);
 }
 
 // The ▶ beside each test (TestGutter.h), made with the window as the Mac's
@@ -3174,7 +3180,9 @@ static void makeGitPanel(App* app) {
     app->git->fileOnShow = [app] {
         return app->dead || app->editor->isDiff() ? std::string() : app->editor->currentPath();
     };
-    app->git->onReview = [app] { showChangeReview(app); };
+    app->git->onReview = [app](const std::string& rel, bool staged, bool preview) {
+        showChangeReview(app, rel, staged, preview);
+    };
     app->git->installActions(G_ACTION_MAP(app->window));
     app->editor->onDiffViewMade = [app](GitDiffView* view) {
         if (!app->dead && app->git) app->git->attachDiffView(view);
@@ -3393,7 +3401,7 @@ static void compareWorktree(App* app) {
         };
         if (inside(app->rootDir, mainPath) && !inside(app->rootDir, path)) {
             if (!app->gitShown) act_toggle_git(nullptr, nullptr, app);
-            showChangeReview(app);
+            showChangeReview(app, "", false, false);
         } else {
             newWindow(mainPath, "");
         }

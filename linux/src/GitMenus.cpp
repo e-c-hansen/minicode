@@ -1,6 +1,7 @@
 // GitMenus.cpp — the Source Control panel's right click menus and the
 // window's commands, in one place (PARITY.md 2.9): a file row's menu (Open
-// File, Open Changes, Stage or Unstage, Discard, Reveal in File Tree; with
+// File, Open Changes (the review at the file), Open as git Diff (the raw
+// diff with its hunk links), Stage or Unstage, Discard, Reveal in File Tree; with
 // several rows chosen, what acts on all of them, with their count), and the
 // panel's own (Pull, Push, Fetch and Sync; Commit and Amend and Undo Last
 // Commit; Stage All, Unstage All and Undo Discard; Stash and Pop Stash;
@@ -58,7 +59,7 @@ const char* const kWindowActions[] = {
 };
 
 const char* const kMenuActions[] = {
-    "openfile", "openchanges", "togglestage", "stage", "unstage", "discard", "reveal",
+    "openfile", "openchanges", "opendiff", "togglestage", "stage", "unstage", "discard", "reveal",
     "pull", "push", "fetch", "sync", "amend", "undocommit", "stageall", "unstageall",
     "undodiscard", "stash", "popstash", "switchbranch",
 };
@@ -88,6 +89,8 @@ void GitPanel::onMenuAction(GSimpleAction* a, GVariant*, gpointer selfp) {
     if (name == "openfile") {
         if (r && self->onOpenFile) self->onOpenFile(self->inRoot(self->topLevel_ + "/" + r->path));
     } else if (name == "openchanges") {
+        self->reviewRow(row, false);
+    } else if (name == "opendiff") {
         self->showDiff(row);
     } else if (name == "togglestage") {
         self->toggleStage(row);
@@ -238,6 +241,7 @@ void GitPanel::showRowMenu(int row, double x, double y) {
         GMenu* own = g_menu_new();
         append(own, "Open File", "openfile");
         append(own, "Open Changes", "openchanges");
+        append(own, "Open as git Diff", "opendiff");
         append(own, r->staged ? "Unstage Changes" : "Stage Changes", "togglestage");
         if (!r->staged) {
             discardLabel = r->untracked ? "Discard (Move to Trash)…" : "Discard Changes…";

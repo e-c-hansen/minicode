@@ -314,10 +314,23 @@ static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSStrin
 
 @interface MCPdfView : PDFView
 @property(nonatomic, copy) void (^onActivate)(PDFPage *page, NSPoint pt);
+// Command-click, or Show in Source in the menu: the source behind a point.
+@property(nonatomic, copy) BOOL (^onShowSource)(PDFPage *page, NSPoint pt);
 @end
 
 @implementation MCPdfView
 - (void)mouseDown:(NSEvent *)event {
+    // Command-click, TeXShop's and LaTeX Workshop's inverse search: the
+    // source line behind the point, and no selection begun.
+    if ((event.modifierFlags & NSEventModifierFlagCommand) && event.clickCount == 1 &&
+        self.onShowSource) {
+        NSPoint inView = [self convertPoint:event.locationInWindow fromView:nil];
+        PDFPage *page = [self pageForPoint:inView nearest:YES];
+        if (page) {
+            self.onShowSource(page, [self convertPoint:inView toPage:page]);
+            return;
+        }
+    }
     [super mouseDown:event];
     if (event.clickCount != 2 || !self.onActivate) return;
     NSPoint inView = [self convertPoint:event.locationInWindow fromView:nil];
@@ -325,8 +338,27 @@ static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSStrin
     if (!page) return;
     self.onActivate(page, [self convertPoint:inView toPage:page]);
 }
-// PDFView keeps its own menu; ours would only get in the way.
-- (NSMenu *)menuForEvent:(NSEvent *)event { return [super menuForEvent:event]; }
+// PDFView's own menu, with Show in Source first when the point is on a page.
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    NSMenu *menu = [super menuForEvent:event] ?: [[NSMenu alloc] initWithTitle:@""];
+    if (!self.onShowSource) return menu;
+    NSPoint inView = [self convertPoint:event.locationInWindow fromView:nil];
+    PDFPage *page = [self pageForPoint:inView nearest:NO];
+    if (!page) return menu;
+    NSMenuItem *show = [[NSMenuItem alloc] initWithTitle:@"Show in Source"
+                                                  action:@selector(showSourceFromMenu:)
+                                           keyEquivalent:@""];
+    show.target = self;
+    show.representedObject = @[page, [NSValue valueWithPoint:[self convertPoint:inView toPage:page]]];
+    [menu insertItem:show atIndex:0];
+    if (menu.numberOfItems > 1) [menu insertItem:[NSMenuItem separatorItem] atIndex:1];
+    return menu;
+}
+- (void)showSourceFromMenu:(NSMenuItem *)item {
+    NSArray *where = item.representedObject;
+    if (where.count == 2 && self.onShowSource)
+        self.onShowSource(where[0], [where[1] pointValue]);
+}
 @end
 
 // A text view that commits on Return and cancels on Escape, so a quick field
@@ -399,6 +431,14 @@ static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSStrin
     std::map<std::string, std::pair<std::string, LatexDoc>> _inputDocs;
     NSString *_editingFile;      // the \input file the popover edits (nil: the document)
     std::string _editingSrc;     // and its text when the box opened
+    // The text the edit box opened with, and whether its draft was dealt
+    // with (applied, or dropped by Esc or Cancel): a box closed any other
+    // way (a click elsewhere in the window) applies what was typed
+    // (popoverWillClose:), as the Markdown page's box does.
+    NSString *_editOriginal;
+    BOOL _editSettled;
+    BOOL _forwardQuiet;          // the waiting forward search only keeps its line in view
+    BOOL _forwardPlaced;         // a forward search placed this document's page
 }
 
 // Enough history for a working session without holding a whole file's worth of
@@ -424,6 +464,9 @@ static const CGFloat kStatusHeight = 26;
     __weak LatexView *weakSelf = self;
     self.pdf.onActivate = ^(PDFPage *page, NSPoint pt) {
         [weakSelf openEditorForPage:page point:pt];
+    };
+    self.pdf.onShowSource = ^BOOL(PDFPage *page, NSPoint pt) {
+        return [weakSelf showSourceForPage:page point:pt];
     };
     [self addSubview:self.pdf];
 
@@ -581,6 +624,15 @@ static const CGFloat kStatusHeight = 26;
 // window controller forwards it when something else does.
 - (void)undo:(id)sender { [self undoEdit]; }
 - (void)redo:(id)sender { [self redoEdit]; }
+
+// Beside the source (bufferText answers), Cmd+Z is the source's: the page
+// passes undo and redo on up the responder chain.
+- (BOOL)respondsToSelector:(SEL)sel {
+    if ((sel == @selector(undo:) || sel == @selector(redo:)) && self.bufferText &&
+        self.bufferText())
+        return NO;
+    return [super respondsToSelector:sel];
+}
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     if (item.action == @selector(undo:)) return [self canUndoEdit];
@@ -798,6 +850,7 @@ static const CGFloat kStatusHeight = 26;
 
 - (void)showDocument:(PDFDocument *)doc syncTex:(const std::string &)sync {
     _synctex = SyncTexIndex::parse(sync);
+    _forwardPlaced = NO;
 
     // Keep the reader where they were: same page, same scroll offset.
     PDFDestination *was = self.pdf.currentDestination;
@@ -821,7 +874,8 @@ static const CGFloat kStatusHeight = 26;
             LatexView *me = weakSelf;
             // A forward search waiting for this typeset has put its line
             // in view since: that place wins.
-            if (me && me.pdf.document == doc && !me->_forwardMarks) [me showFirstPageTop];
+            if (me && me.pdf.document == doc && !me->_forwardMarks && !me->_forwardPlaced)
+                [me showFirstPageTop];
         });
     }
     if (hadDoc && pageIndex < doc.pageCount) {
@@ -866,7 +920,7 @@ static const CGFloat kStatusHeight = 26;
     if (self.inputUnsaved)
         for (NSString *f in [self inputFiles])
             if (self.inputUnsaved(f)) [unsaved addObject:f.lastPathComponent];
-    NSString *tail = @"double-click text to edit it";
+    NSString *tail = @"double-click text to edit it, \u2318-click to show it in the source";
     if (unsaved.count == 1)
         tail = [NSString stringWithFormat:@"%@ has unsaved changes: save to see them in the PDF",
                                           unsaved[0]];
@@ -907,6 +961,7 @@ static const CGFloat kStatusHeight = 26;
 
 - (void)revealSourceLine:(NSInteger)line inFile:(NSString *)path {
     _forwardLine = MAX(1, line);
+    _forwardQuiet = NO;
     _forwardFile = [path isEqualToString:self.texPath] ? nil : [path copy];
     if (_showingWarnings) [self toggleWarnings:nil];
     // The page on show is the text's: go now. Otherwise the typeset under
@@ -924,10 +979,28 @@ static const CGFloat kStatusHeight = 26;
     _forwardPage = nil;
 }
 
+- (void)keepSourceLineInView:(NSInteger)line {
+    if (line <= 0) return;
+    if (_forwardLine > 0 && !_forwardQuiet) return;   // a search asked for goes first
+    _forwardLine = line;
+    _forwardFile = nil;
+    _forwardQuiet = YES;
+    // The page on show is the text's: now. Otherwise when the typeset under
+    // way, or the one an edit scheduled, ends (showDocument).
+    if (!self.compiling && _pdfSrc == _src && self.pdf.document && !self.pdf.isHidden)
+        [self runForwardSearch];
+}
+
 - (void)runForwardSearch {
     const NSInteger line = _forwardLine;
+    const BOOL quiet = _forwardQuiet;
     _forwardLine = 0;
+    _forwardQuiet = NO;
     if (line <= 0) return;
+    if (quiet) {
+        [self keepLineInView:line];
+        return;
+    }
     [self clearForwardMarks];
     if (!_synctex.valid()) {
         [self setStatus:@"No SyncTeX data, so the page for that line is not known" busy:NO];
@@ -993,6 +1066,69 @@ static const CGFloat kStatusHeight = 26;
         LatexView *me = weakSelf;
         if (me && me->_forwardMarks == shown) [me clearForwardMarks];
     });
+}
+
+// The quiet forward search: the page goes to the document's line only when
+// none of what it put there is on show, with no light and no status.
+- (void)keepLineInView:(NSInteger)line {
+    PDFDocument *doc = self.pdf.document;
+    const int tag = [self mainTag];
+    if (!doc || self.pdf.isHidden || tag == 0) return;
+    const std::vector<SyncTexBox> boxes = _synctex.boxesForLine(tag, (int)line);
+    if (boxes.empty() || boxes[0].page < 1 || (NSUInteger)boxes[0].page > doc.pageCount) return;
+    PDFPage *page = [doc pageAtIndex:(NSUInteger)boxes[0].page - 1];
+    const NSRect media = [page boundsForBox:kPDFDisplayBoxMediaBox];
+    NSRect all = NSZeroRect;
+    BOOL seen = NO;
+    for (const SyncTexBox &b : boxes) {
+        const NSRect r = NSMakeRect(b.x, media.size.height - b.y - b.height, b.width, b.height);
+        all = NSIsEmptyRect(all) ? r : NSUnionRect(all, r);
+        seen = seen || NSIntersectsRect([self.pdf convertRect:r fromPage:page], self.pdf.bounds);
+    }
+    _forwardPlaced = YES;
+    if (seen) return;
+    [self.pdf goToRect:NSInsetRect(all, 0, -24) onPage:page];
+}
+
+- (int)mainTag {
+    return _synctex.valid() ? _synctex.tagForPath(Utf8([self scratchTexPath])) : 0;
+}
+
+- (NSInteger)sourceLineOnScreen {
+    PDFView *pdf = self.pdf;
+    PDFDocument *doc = pdf.document;
+    const int tag = [self mainTag];
+    if (!doc || pdf.isHidden || self.isHidden || tag == 0) return 0;
+    NSArray<PDFPage *> *pages = [pdf.visiblePages sortedArrayUsingComparator:^NSComparisonResult(
+        PDFPage *a, PDFPage *b) {
+        const NSUInteger ia = [doc indexForPage:a], ib = [doc indexForPage:b];
+        return ia < ib ? NSOrderedAscending : ia > ib ? NSOrderedDescending : NSOrderedSame;
+    }];
+    for (PDFPage *page in pages) {
+        // What of this page shows, as SyncTeX measures it: down from its top.
+        const NSRect media = [page boundsForBox:kPDFDisplayBoxMediaBox];
+        const NSRect shown = [pdf convertRect:pdf.bounds toPage:page];
+        const double top = MAX(0.0, media.size.height - NSMaxY(shown));
+        const double bottom = media.size.height - NSMinY(shown);
+        if (bottom <= top) continue;
+        const int line = _synctex.topLineInRange((int)[doc indexForPage:page] + 1, top, bottom, tag);
+        if (line > 0) return line;
+    }
+    return 0;
+}
+
+- (BOOL)sourceLineIsOnScreen:(NSInteger)line {
+    PDFDocument *doc = self.pdf.document;
+    const int tag = [self mainTag];
+    if (!doc || self.pdf.isHidden || tag == 0 || line <= 0) return NO;
+    for (const SyncTexBox &b : _synctex.boxesForLine(tag, (int)line)) {
+        if (b.page < 1 || (NSUInteger)b.page > doc.pageCount) continue;
+        PDFPage *page = [doc pageAtIndex:(NSUInteger)b.page - 1];
+        const NSRect media = [page boundsForBox:kPDFDisplayBoxMediaBox];
+        const NSRect r = NSMakeRect(b.x, media.size.height - b.y - b.height, b.width, b.height);
+        if (NSIntersectsRect([self.pdf convertRect:r fromPage:page], self.pdf.bounds)) return YES;
+    }
+    return NO;
 }
 
 // SyncTeX's input tag for an \input file of the document, read against
@@ -1359,18 +1495,18 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     return nullptr;
 }
 
-- (void)openEditorForPage:(PDFPage *)page point:(NSPoint)pagePoint {
-    if (!_synctex.valid()) {
-        [self setStatus:@"No SyncTeX data, so the preview cannot be edited"
-                   busy:NO];
-        return;
-    }
-    NSRect bounds = [page boundsForBox:kPDFDisplayBoxMediaBox];
-    int pageNumber = (int)[self.pdf.document indexForPage:page] + 1;
-    const int mainTag = _synctex.tagForPath(Utf8([self scratchTexPath]));
-    std::vector<SyncTexHit> hits;
-    // The document's own text, or an \input file's: whichever the boxes
-    // under the point name first that can place the click.
+// The span under a point: the document's own text, or an \input file's,
+// whichever the boxes under the point name first that can place it.
+// *fileOut is nil for the document, else the file, with *srcOut its text.
+- (const LatexSpan *)spanForPage:(PDFPage *)page
+                           point:(NSPoint)pagePoint
+                            file:(NSString **)fileOut
+                          source:(std::string *)srcOut
+                            hits:(std::vector<SyncTexHit> *)hits {
+    *fileOut = nil;
+    srcOut->clear();
+    const int pageNumber = (int)[self.pdf.document indexForPage:page] + 1;
+    const int mainTag = [self mainTag];
     std::map<int, std::pair<NSString *, std::string>> files;
     int tag = 0;
     const LatexSpan *span = MCLatexSpanAtPointInFiles(
@@ -1384,18 +1520,110 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
             if (d) files[t] = {file, src};
             return d;
         },
-        &tag, &hits);
+        &tag, hits);
     if (span && tag != mainTag) {
         auto it = files.find(tag);
-        if (it == files.end()) span = nullptr;
-        else {
-            _editingFile = it->second.first;
-            _editingSrc = it->second.second;
-        }
-    } else {
-        _editingFile = nil;
-        _editingSrc.clear();
+        if (it == files.end()) return nullptr;
+        *fileOut = it->second.first;
+        *srcOut = it->second.second;
     }
+    return span;
+}
+
+// The page beside the source typesets only when the file is saved: a
+// double-click on a page older than the buffer would name text that has
+// moved, so the buffer is typeset first and nothing is edited.
+- (BOOL)catchUpWithBuffer {
+    NSString *now = self.bufferText ? self.bufferText() : nil;
+    if (!now) return NO;
+    const std::string text = Utf8(now);
+    if (text == _pdfSrc && text == _src) return NO;
+    if (text != _src) {
+        _src = text;
+        _doc = LatexDoc::parse(_src);
+    }
+    if (!self.compiling) [self compileNow];
+    else self.compileQueued = YES;
+    [self setStatus:@"The page was older than your text, so it is being typeset again; "
+                    @"double-click once it is up to date"
+               busy:YES];
+    return YES;
+}
+
+- (BOOL)showSourceForPage:(PDFPage *)page point:(NSPoint)pagePoint {
+    if (!page || !self.pdf.document || !_synctex.valid()) {
+        [self setStatus:@"No SyncTeX data, so the source of that place is not known" busy:NO];
+        return NO;
+    }
+    NSString *file = nil;
+    std::string fileSrc;
+    std::vector<SyncTexHit> hits;
+    NSInteger line = 0, column = 0;
+    const LatexSpan *span = [self spanForPage:page point:pagePoint file:&file source:&fileSrc
+                                         hits:&hits];
+    const std::string &src = file ? fileSrc : _src;
+    if (span && span->start <= span->end && span->end <= src.size()) {
+        // The clicked word in the span's LaTeX, as the edit box finds it;
+        // the span's start when it is not there.
+        size_t at = span->start;
+        NSString *before = @"", *after = @"";
+        NSString *clicked = MCLatexClickedWord(page, pagePoint, &before, &after);
+        if (clicked) {
+            const std::string body = src.substr(span->start, span->end - span->start);
+            const auto w = MarkdownEdit::sourceOffsetFor(body, Utf8(clicked), Utf8(before),
+                                                         Utf8(after));
+            if (w.first != std::string::npos) at = span->start + w.first;
+        }
+        const size_t lineStart = at == 0 ? 0 : src.rfind('\n', at - 1) == std::string::npos
+                                                   ? 0 : src.rfind('\n', at - 1) + 1;
+        line = 1 + (NSInteger)std::count(src.begin(), src.begin() + (long)lineStart, '\n');
+        NSString *head = [[NSString alloc] initWithBytes:src.data() + lineStart
+                                                  length:at - lineStart
+                                                encoding:NSUTF8StringEncoding];
+        __block NSInteger characters = 0;
+        [head enumerateSubstringsInRange:NSMakeRange(0, head.length)
+                                 options:NSStringEnumerationByComposedCharacterSequences |
+                                         NSStringEnumerationSubstringNotRequired
+                              usingBlock:^(NSString *, NSRange, NSRange, BOOL *) {
+            characters++;
+        }];
+        column = head ? characters + 1 : 0;
+    } else {
+        // No word placed: SyncTeX's line for the point alone.
+        const NSRect media = [page boundsForBox:kPDFDisplayBoxMediaBox];
+        const int pageNumber = (int)[self.pdf.document indexForPage:page] + 1;
+        hits = _synctex.textHitsAtPoint(pageNumber, pagePoint.x, media.size.height - pagePoint.y, 4);
+        if (!hits.empty()) {
+            line = hits[0].line;
+            file = hits[0].tag == [self mainTag] ? nil : [self inputFileForTag:hits[0].tag];
+            if (hits[0].tag != [self mainTag] && !file) line = 0;   // TeX's own files
+        }
+    }
+    if (line <= 0) {
+        [self setStatus:@"That is not text Mutible can trace back to the source" busy:NO];
+        return NO;
+    }
+    if (self.onShowSource) self.onShowSource(file, line, column);
+    return YES;
+}
+
+- (void)openEditorForPage:(PDFPage *)page point:(NSPoint)pagePoint {
+    if (!_synctex.valid()) {
+        [self setStatus:@"No SyncTeX data, so the preview cannot be edited"
+                   busy:NO];
+        return;
+    }
+    // A box still open with an edit in it goes in first.
+    if ([self editPending]) [self commitEdit:nil];
+    if ([self catchUpWithBuffer]) return;
+    NSRect bounds = [page boundsForBox:kPDFDisplayBoxMediaBox];
+    std::vector<SyncTexHit> hits;
+    NSString *file = nil;
+    std::string fileSrc;
+    const LatexSpan *span = [self spanForPage:page point:pagePoint file:&file source:&fileSrc
+                                         hits:&hits];
+    _editingFile = span ? file : nil;
+    _editingSrc = span && file ? fileSrc : std::string();
     if (!span) {
         [self setStatus:@"That is not text Mutible can trace back to the source"
                    busy:NO];
@@ -1507,9 +1735,11 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
 
     __weak LatexView *weakSelf = self;
     editor.onCommit = ^{ [weakSelf commitEdit:nil]; };
-    editor.onCancel = ^{ [weakSelf.popover performClose:nil]; };
+    editor.onCancel = ^{ [weakSelf cancelEdit:nil]; };
 
-    NSButton *save = [NSButton buttonWithTitle:@"Save"
+    // Apply, not Save: the edit goes into the document, which Cmd+S (or
+    // auto-save) then writes, as typing in the source would.
+    NSButton *save = [NSButton buttonWithTitle:@"Apply"
                                         target:self
                                         action:@selector(commitEdit:)];
     save.bezelStyle = NSBezelStyleRounded;
@@ -1541,11 +1771,17 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     NSViewController *vc = [[NSViewController alloc] init];
     vc.view = content;
 
+    _editSettled = YES;   // the box this one replaces: its draft was dealt with
     [self.popover performClose:nil];
     self.popover = [[NSPopover alloc] init];
     self.popover.contentViewController = vc;
-    self.popover.behavior = NSPopoverBehaviorTransient;
+    // Semi-transient: a click elsewhere in the window closes it, but
+    // switching to another app and back does not (transient did, and what
+    // was typed went with it).
+    self.popover.behavior = NSPopoverBehaviorSemitransient;
     self.popover.delegate = self;
+    _editOriginal = [text copy] ?: @"";
+    _editSettled = NO;
     [self.popover showRelativeToRect:rect ofView:self
                        preferredEdge:NSRectEdgeMaxY];
     [self.window makeFirstResponder:editor];
@@ -1558,8 +1794,20 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     [editor scrollRangeToVisible:editor.selectedRange];
 }
 
+// Esc and Cancel: the one way to drop what was typed.
 - (void)cancelEdit:(id)sender {
+    _editSettled = YES;
     [self.popover performClose:nil];
+}
+
+- (BOOL)editPending {
+    return self.editText && !_editSettled && self.popover &&
+           ![self.editText.string isEqualToString:_editOriginal ?: @""];
+}
+
+- (void)commitPendingEdit {
+    if ([self editPending]) [self commitEdit:nil];
+    else if (self.popover.shown) [self cancelEdit:nil];
 }
 
 - (void)startAddItem:(id)sender {
@@ -1576,8 +1824,25 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
 - (void)commitEdit:(id)sender {
     if (!_editingValid || !self.editText) return;
     std::string text = Utf8(self.editText.string ?: @"");
-    BOOL adding = _addingItem;
+    _editSettled = YES;
     [self.popover performClose:nil];
+    [self applyEditText:text];
+}
+
+// AppKit closing the box on its own (a click elsewhere in the window, the
+// window closing): what was typed is applied, one undoable edit, never
+// dropped unseen. Esc, Cancel, Apply and a box replacing this one have
+// settled it first.
+- (void)popoverWillClose:(NSNotification *)note {
+    if (note.object != self.popover || _editSettled) return;
+    const BOOL edited = [self editPending];
+    std::string text = Utf8(self.editText.string ?: @"");
+    _editSettled = YES;
+    if (edited && _editingValid) [self applyEditText:text];
+}
+
+- (void)applyEditText:(const std::string &)text {
+    BOOL adding = _addingItem;
     _editingValid = NO;
 
     if (_editingFile) {

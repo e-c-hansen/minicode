@@ -131,3 +131,4 @@ HintsPanelSuite.cpp
 WindowTitleSuite.cpp
 EditorKeysSuite.cpp
 TerminalExitSuite.cpp
+GitPanelSuite.cpp

@@ -43,7 +43,24 @@ std::string extensionOf(const std::string& path) {
     return e;
 }
 
-Read readUncommitted(const std::string& root, const GitRunner& run) {
+bool seeImages(File& f, Extra& x, const std::string& oldBytes, const std::string& newBytes,
+               const ImageReading& images) {
+    if (!images.size || !f.binary || !imagePath(f.path)) return false;
+    auto read = [&](bool exists, const std::string& bytes) {
+        ImageSide s;
+        if (!exists) return s;
+        if (!bytes.empty()) s = images.size(bytes);
+        s.bytes = bytes.size();
+        return s;
+    };
+    if (!showAsImages(f, read(f.oldExists, oldBytes), read(f.newExists, newBytes), images.rowHeight))
+        return false;
+    if (f.oldExists) x.oldImage = oldBytes;
+    if (f.newExists) x.newImage = newBytes;
+    return true;
+}
+
+Read readUncommitted(const std::string& root, const GitRunner& run, const ImageReading& images) {
     Read data;
     GitOut r = run(root, GitUi::topLevelArgs(), "");
     std::string top, gitDir;
@@ -192,6 +209,7 @@ Read readUncommitted(const std::string& root, const GitRunner& run) {
             total > kMaxTotalBytes)
             f.tooLarge = true;
         if (looksBinary(oldBytes) || looksBinary(newBytes)) f.binary = true;
+        seeImages(f, x, oldBytes, newBytes, images);
         if (!f.tooLarge && !f.binary) {
             // The work tree's encoding decides how the index is read, as the
             // change bars read it; in the staged list the index's own bytes.
@@ -273,7 +291,7 @@ std::string discardText(const Read& r, size_t fi, const std::u16string& text, co
 
 // ------------------------------------------------ a worktree against main
 WorktreeRead readWorktree(const std::string& path, const std::string& mainRef,
-                          const GitRunner& run) {
+                          const GitRunner& run, const ImageReading& images) {
     WorktreeRead w;
     Read& data = w.read;
     GitOut r = run(path, GitUi::topLevelArgs(), "");
@@ -352,6 +370,7 @@ WorktreeRead readWorktree(const std::string& path, const std::string& mainRef,
             total += oldBytes.size() + newBytes.size();
             if (oldBytes.size() > kMaxSideBytes || total > kMaxTotalBytes) f.tooLarge = true;
             else if (looksBinary(oldBytes) || looksBinary(newBytes)) f.binary = true;
+            seeImages(f, x, oldBytes, newBytes, images);
             if (!f.tooLarge && !f.binary) {
                 FolderSearch::TextEncoding enc = FolderSearch::TextEncoding::Utf8;
                 bool bom = false;
