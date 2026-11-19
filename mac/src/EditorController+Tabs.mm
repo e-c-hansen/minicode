@@ -502,8 +502,10 @@ static NSString *const kKeepUnsavedDetail = @"Keep Unsaved leaves your changes u
     [self saveBeforeLeavingFormatSave];   // Cmd+S is never lost to a tab switch
     NSTextView *tv = self.textView;
     [self.markdownEditPanel commitEditing];   // a page edit typed goes into this tab, not lost
+    [t.latex commitPendingEdit];              // the LaTeX page's too
     MCMarkdownMediaStopAll(self.window);   // a Markdown page's video or audio stops with its tab
     [self sidePreviewTabWillLeave:t];   // the page beside the source: where it was
+    [self pageSideTabWillLeave:t];      // a LaTeX or HTML tab's
     [_viewers commitEditing];   // a CSV cell typed into lands in this tab's file
     // A color pick saves the settings file a moment later (colorPicked:);
     // that save belongs to this tab, so it happens now, not in the next one.
@@ -1172,6 +1174,7 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
         [self.lsp documentSavedAtPath:t.currentPath text:text];
     }
     [self latexFileSaved:t];   // previews that read it from disk typeset again
+    [self pageSideSaved:t];    // the LaTeX page beside the source typesets the save
     [self updateTitle];
     return YES;
 }

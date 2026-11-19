@@ -21,6 +21,7 @@
 // other, never both.
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <vector>
 
 class LineIndex {
@@ -29,6 +30,11 @@ public:
 
     // Index a whole text.
     void reset(const char16_t* text, size_t length);
+    // The same, read a block at a time (`read(start, n, out)` puts units
+    // [start, start + n) in out), so a large text is never copied whole
+    // to be indexed: a 260 MB log's UTF-16 copy was 520 MB.
+    using Reader = std::function<void(size_t start, size_t n, char16_t* out)>;
+    void reset(size_t length, const Reader& read);
 
     // The units [pos, pos + oldLen) were replaced by `newLen` units, which are
     // `inserted` (the new text of that range, newLen units long). `before`

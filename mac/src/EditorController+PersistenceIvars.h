@@ -15,5 +15,8 @@
     // from restoreWindowRecord: until showWindow has put it all back.
     NSString *_windowRecord;
     NSRect _frameBeforeFullScreen;         // the frame to keep while in full screen
+    // Quitting kept the unsaved tabs' backups for the next launch
+    // (keepUnsavedTabsForNextLaunch), so terminating leaves them.
+    BOOL _unsavedKeptForNextLaunch;
 }
 @end

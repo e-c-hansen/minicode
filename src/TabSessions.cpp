@@ -2,7 +2,9 @@
 #include "TabSessions.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstring>
 #include <set>
 
 #include "Json.h"
@@ -61,6 +63,65 @@ bool decodeTab(const Json &j, Tab *out) {
     return true;
 }
 
+Json encodeSide(const ComparedSide &c) {
+    Json o = Json::object();
+    o.set("path", c.path);
+    if (!c.rev.empty()) o.set("rev", c.rev);
+    if (!c.label.empty()) o.set("label", c.label);
+    return o;
+}
+
+bool decodeSide(const Json &o, ComparedSide *out) {
+    if (!o.isObject() || !o["path"].isString()) return false;
+    ComparedSide c;
+    c.path = o["path"].asString();
+    c.rev = o["rev"].isString() ? o["rev"].asString() : "";
+    c.label = o["label"].isString() ? o["label"].asString() : "";
+    if (c.path.empty() || c.path[0] != '/' || !isComparedRev(c.rev)) return false;
+    *out = c;
+    return true;
+}
+
+Json encodePage(const PageTab &p) {
+    Json o = Json::object();
+    o.set("kind", p.kind);
+    o.set("at", p.at);
+    if (!p.ref.empty()) o.set("ref", p.ref);
+    if (!p.title.empty()) o.set("title", p.title);
+    if (p.kind == "compare") {
+        if (!p.fileName.empty()) o.set("fileName", p.fileName);
+        o.set("left", encodeSide(p.left));
+        o.set("right", encodeSide(p.right));
+    }
+    return o;
+}
+
+bool decodePage(const Json &o, PageTab *out) {
+    if (!o.isObject() || !o["kind"].isString()) return false;
+    PageTab p;
+    p.kind = o["kind"].asString();
+    if (!isPageKind(p.kind)) return false;
+    long at = 0;
+    if (readCount(o["at"], &at) && at < 100000) p.at = (int)at;
+    p.ref = o["ref"].isString() ? o["ref"].asString() : "";
+    p.title = o["title"].isString() ? o["title"].asString() : "";
+    if (p.kind == "commit") {
+        // A commit's hash: hex digits only, never anything git could take
+        // for an option.
+        if (p.ref.size() < 4 || p.ref.size() > 64) return false;
+        for (char c : p.ref)
+            if (!std::isxdigit((unsigned char)c)) return false;
+    } else {
+        p.ref.clear();
+    }
+    if (p.kind == "compare") {
+        p.fileName = o["fileName"].isString() ? o["fileName"].asString() : "";
+        if (!decodeSide(o["left"], &p.left) || !decodeSide(o["right"], &p.right)) return false;
+    }
+    *out = p;
+    return true;
+}
+
 // An index into `count` tabs, or -1.
 int readIndex(const Json &j, size_t count) {
     if (!j.isNumber()) return -1;
@@ -109,6 +170,12 @@ Json encodeSession(const Session &s) {
         Json focus = Json::array();
         for (const std::string &f : s.treeFocus) focus.push(Json(f));
         e.set("treeFocus", focus);
+    }
+    if (!s.pages.empty()) {
+        Json pages = Json::array();
+        for (const PageTab &p : s.pages) pages.push(encodePage(p));
+        e.set("pages", pages);
+        if (s.activePage >= 0) e.set("activePage", s.activePage);
     }
     return e;
 }
@@ -176,6 +243,16 @@ bool decodeSession(const Json &e, Session *out) {
         s.split = !s.groups.groups[0].empty() && !s.groups.groups[1].empty();
         if (!s.split) s.groups = EditorTabs::GroupsSession();
     }
+    if (e["pages"].isArray()) {
+        std::vector<int> keptPage;
+        for (const Json &j : e["pages"].elements()) {
+            PageTab p;
+            keptPage.push_back(decodePage(j, &p) ? (int)s.pages.size() : -1);
+            if (keptPage.back() >= 0) s.pages.push_back(p);
+        }
+        const int ap = readIndex(e["activePage"], keptPage.size());
+        s.activePage = ap >= 0 ? keptPage[(size_t)ap] : -1;
+    }
     *out = s;
     return true;
 }
@@ -195,10 +272,22 @@ Sessions decode(const std::string &text) {
     for (const auto &kv : root.items()) {
         Session s;
         if (kv.first.empty() || kv.first == kWindowsKey || !decodeSession(kv.second, &s)) continue;
-        if (s.tabs.empty() && s.browser.empty() && s.treeFocus.empty()) continue;
+        if (s.tabs.empty() && s.pages.empty() && s.browser.empty() && s.treeFocus.empty()) continue;
         out[kv.first] = s;
     }
     return out;
+}
+
+bool isPageKind(const std::string &kind) {
+    return kind == "review" || kind == "commit" || kind == "compare";
+}
+
+bool isComparedRev(const std::string &rev) {
+    if (rev.empty() || rev == ":") return true;
+    if (rev.size() > 200 || rev[0] == '-' || rev[0] == '.' || rev[0] == '/') return false;
+    for (char c : rev)
+        if (c == '\0' || (!std::isalnum((unsigned char)c) && !std::strchr("._/~^-", c))) return false;
+    return rev.find("..") == std::string::npos;
 }
 
 Session merged(const Session &mine, const std::vector<Session> &others) {
@@ -213,11 +302,12 @@ Session merged(const Session &mine, const std::vector<Session> &others) {
 
 void put(Sessions &all, const std::string &key, Session s, double now, size_t max) {
     if (key.empty() || key == kWindowsKey) return;
-    if (s.tabs.empty() && s.browser.empty() && s.treeFocus.empty()) {
+    if (s.tabs.empty() && s.pages.empty() && s.browser.empty() && s.treeFocus.empty()) {
         all.erase(key);
         return;
     }
     if (s.active >= (int)s.tabs.size()) s.active = -1;
+    if (s.activePage >= (int)s.pages.size()) s.activePage = -1;
     if (s.preview >= (int)s.tabs.size()) s.preview = -1;
     s.used = now;
     all[key] = s;
@@ -532,6 +622,18 @@ std::vector<Window> toRestore(const std::vector<Window> &stored, const Process &
     for (const Window &w : stored)
         if (!heldElsewhere(w, me, running, context)) out.push_back(w);
     return out;
+}
+
+int toReopen(const std::vector<Window> &stored, const std::string &root, const Process &me,
+             IsRunning running, void *context) {
+    if (root.empty()) return -1;
+    for (size_t i = 0; i < stored.size(); i++) {
+        const Window &w = stored[i];
+        if (w.root != root || heldElsewhere(w, me, running, context)) continue;
+        if (w.ownerPid > 0 && sameProcess(w.ownerPid, w.ownerStart, me)) continue;
+        return (int)i;
+    }
+    return -1;
 }
 
 Frame fitFrame(const Frame &saved, const std::vector<Frame> &screens, double minW, double minH) {

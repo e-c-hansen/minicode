@@ -45,6 +45,34 @@
 // (not the document itself), so a forward search from it lands here.
 - (BOOL)typesetReadFile:(NSString *)path;
 
+// Inverse search, the page to the source (SyncTeX, as TeXShop and LaTeX
+// Workshop do it): Command-click on the page, or Show in Source in its
+// context menu, calls onShowSource with the place behind the point: `path`
+// nil for the document itself, else the \input file's; `line` 1-based;
+// `column` 1-based in that line at the clicked word when it is found in
+// the source, else 0 (the line's start). The words are matched as a
+// double-click matches them; SyncTeX's line alone when they are not.
+@property(nonatomic, copy) void (^onShowSource)(NSString *path, NSInteger line, NSInteger column);
+// The same for a point on a page (page space), as the click does it; NO
+// when there is no SyncTeX or nothing under the point.
+- (BOOL)showSourceForPage:(PDFPage *)page point:(NSPoint)pagePoint;
+// The document's line highest in the part of the page on show (1-based),
+// for Shift+Cmd+V from the page; 0 when no typeset page shows.
+- (NSInteger)sourceLineOnScreen;
+// Whether line `line` of the document put something in the part of the
+// page on show.
+- (BOOL)sourceLineIsOnScreen:(NSInteger)line;
+// The page to line `line` of the document, quietly (no light, no status),
+// and only when none of it is on show; after the typeset under way when
+// the page is not the text's yet. Shift+Cmd+V to the page, and the page
+// beside the source following its caret.
+- (void)keepSourceLineInView:(NSInteger)line;
+// The buffer as it is now, while the page sits beside the source and
+// typesets only when saved (nil otherwise): a double-click on a page older
+// than it typesets it first and edits nothing, since the page's places
+// name text that has moved.
+@property(nonatomic, copy) NSString *(^bufferText)(void);
+
 // This preview's own output folder and hidden sibling: each preview has
 // both to itself (LatexScratch::Owner), so two windows on one file never
 // share a copy or a PDF.
@@ -94,6 +122,13 @@
 - (void)pdfForPath:(NSString *)texPath source:(NSString *)source
         completion:(void (^)(NSData *pdf, NSString *error))done;
 - (void)applySettings;
+// The page's edit box (a double-click): Return or Apply puts the edit in
+// the document, never on disk; Esc or Cancel drop it; switching apps
+// leaves the box open, and anything else that closes it applies what was
+// typed (one undo step). editPending says it holds a change; commitPending
+// applies it (or closes an unchanged box): the tab leaving, Cmd+S, a close.
+@property(nonatomic, readonly) BOOL editPending;
+- (void)commitPendingEdit;
 // The PDF on show (PageZoom.h zooms it with Cmd+=, Cmd+- and Cmd+0).
 - (PDFView *)latexPDFView;
 @end

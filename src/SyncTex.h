@@ -81,6 +81,14 @@ public:
     // carries the line its paragraph ended on.
     std::vector<SyncTexBox> boxesForLine(int tag, int line, int *foundLine = nullptr) const;
 
+    // The page to the source (Shift+Cmd+V from the typeset page): the line
+    // of input `tag` whose words are highest on `page` between `top` and
+    // `bottom` (points from the page's top), read from the glue, kerns and
+    // math TeX set them with, as textHitsAtPoint reads a click; a line of
+    // text's own box only when no word of that input is there (a display,
+    // a picture). The leftmost of a row; 0 when the input put nothing there.
+    int topLineInRange(int page, double top, double bottom, int tag) const;
+
 private:
     struct Record {
         char type = 'h';

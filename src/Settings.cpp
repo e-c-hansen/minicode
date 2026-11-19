@@ -987,6 +987,15 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.autoSaveDelay_ = (int)ms;
                return true;),
+        MC_KEY("files.hot-exit", Word, false,
+               const std::string w = lower(v);
+               if (w == "off" || w == "false" || w == "none") s.hotExit_ = HotExit::Off;
+               else if (w == "on-exit" || w == "on" || w == "true") s.hotExit_ = HotExit::OnExit;
+               else {
+                   e = "'" + v + "' is not on-exit or off";
+                   return false;
+               }
+               return true;),
         MC_KEY("editor.ruler", Word, false,
                // A column, a list of them without spaces (80,120), or off.
                const std::string w = lower(v);
@@ -1864,6 +1873,12 @@ const char* Settings::defaultFileText() {
 # saving it by hand asks what to do.
 # editor.auto-save = off
 # editor.auto-save-delay = 1000
+# Quitting with unsaved changes (macOS): on-exit quits without asking and
+# keeps them, so every window comes back at the next launch with its unsaved
+# tabs still unsaved, as VS Code's files.hotExit onExit; off asks whether to
+# save them, and Don't Save throws them away. Closing a tab or a window asks
+# either way.
+# files.hot-exit = on-exit
 # Change bars beside the line numbers for a file git tracks (macOS), as VS
 # Code's: lines added, lines changed, and where lines were deleted, against
 # the version git has staged for it (else the last commit's). A click on one
