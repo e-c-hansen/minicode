@@ -210,7 +210,8 @@ goes here first, with tests; the GUI only displays it.
   reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `ChangeReviewPage` (every uncommitted change in
   one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
-  in the editor), `TreeDetails`, `TreeFocusBar` (the focused tree's
+  in the editor), `TreeDetails`, `FileTypeIcons` (a file's icon and
+  color by its `FileIcon::Type`, for the tree and Find in Folder), `TreeFocusBar` (the focused tree's
   breadcrumb row, or its label row for several folders),
   `FormatRunner`, `BackupStore`, `SessionStore` (sessions.json),
   `SessionLink` (the session's hosts, the process's and each folder's

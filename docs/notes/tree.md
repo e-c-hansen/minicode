@@ -57,13 +57,13 @@ found through that list.
   Main…, see "The review view") and Open in New Window. A window on `/` or
   the home folder indexes no sessions
   (`AgentView::indexesFolder`): every transcript on the Mac is inside them.
-- **Icons by kind** (2026-11-15): `FileIcon::kindOf` (FileDetails, by
-  extension only, `tree:icons`; the image, video and audio tables there
-  are the ones `isImagePath:`/`isMediaPath:` read) picks the row's SF
-  Symbol (`MCTreeIconSymbol`, TreeDetails.mm), each image made once
-  (`MCTreeSymbolImage`, which falls back to doc.text for a symbol the
-  system lacks: cylinder is macOS 12). Folders and worktree rows keep
-  theirs; the git colors tint the name, not the icon. **Icons by type**
+- **Icons by kind** (2026-11-15, replaced on the Mac by types
+  2026-11-18): `FileIcon::kindOf` (FileDetails, by extension only,
+  `tree:icons`; the image, video and audio tables there are the ones
+  `isImagePath:`/`isMediaPath:` read) still says what a click opens.
+  `MCTreeSymbolImage` (TreeDetails.mm) makes the folders' and worktree
+  rows' symbols once each and falls back to doc.text for a symbol the
+  system lacks. The git colors tint the name, never the icon. **Icons by type**
   (2026-11-18, the owner on the GTK port: "almost none of the different
   file types ... have non-default icons"; `linux/HANDOFF.md` item 109):
   the core's `FileIcon::typeOf` (FileDetails, `tree:icon-types`) is finer
@@ -93,11 +93,42 @@ found through that list.
   configure. The GTK listing asks `access(X_OK)` of a regular file with no
   extension only (on its worker thread: `minicode-exec` on the GFileInfo),
   so a listing still reads no other file's details; a chmod +x shows when
-  the row is listed anew. The Mac still maps `Kind`; `typeOf` is there for
-  it. Trap (GTK): a name the icon theme lacks draws GTK's missing-image
+  the row is listed anew. Trap (GTK): a name the icon theme lacks draws GTK's missing-image
   picture (no fallback by dropping parts of the name), so every name is
   checked with `gtk_icon_theme_has_icon` and each type's list ends with
   text-x-generic.
+- **The Mac's icons by type** (2026-11-18, `FileTypeIcons.{h,mm}`, the
+  `tree` suite): `MCFileTypeOf` (the core's `typeOf`, with the row's
+  `executable`: `MCTreeStat` notes a regular file's execute bit, as the
+  GTK listing does), `MCFileTypeImage` and `MCFileTypeTint`. Each type in
+  `kLooks` is an SF Symbol, a space-separated list tried in order (so a
+  symbol newer than macOS 11, such as cylinder or cup.and.saucer, falls
+  back to the next, and no `@available` is needed), or, for a language SF
+  Symbols has no picture of, its short name drawn in the bold rounded
+  system face ("py", "JS", "C++", "M↓", "TeX"; three letters set tighter,
+  fitted to 16 points, centered on the letters), as Seti does. Every image
+  is a template tinted by the image view's `contentTintColor`: one muted
+  color per family (blue Python, C, TypeScript and Markdown; yellow
+  JavaScript, JSON and keys; green shells, tables and patches; orange
+  Rust, Swift, HTML, Makefile; and so on), at full strength on a dark
+  tree and at 72% on a light one (`MCFileTypeTextIsLight` of the
+  sidebar's text color decides, so a translucent sidebar follows its
+  theme too); the yellow keeps 3:1 on near-white. Images and colors are
+  made once per type and kept in vectors indexed by the type: a row
+  only looks them up, and `configureTreeCell:` sets the image only when it
+  changed. Each image's `accessibilityDescription` is the type's
+  `typeName` ("python", "json", "dockerfile"), which the checks compare.
+  Folders keep folder.fill (the GTK port gives special folders nothing
+  of their own either), worktree rows their branch. Find in Folder's
+  file rows use the same images and colors (they showed Finder's icon,
+  `iconForFile:`, made per row); the tabs, Quick Open and the review page
+  show no file icons. The `tree` suite checks a .py, package.json,
+  Dockerfile, .png, README.md, an executable with no extension and the
+  others by their image's description, that each is its type's one image
+  in its type's color, and draws all 5,000 rows of a folder of twenty
+  types page by page (`rowViewAtRow:makeIfNecessary:` and
+  `cacheDisplayInRect:`) under a CPU bound, every row checked for its
+  type's image.
 - **Columns** (`MCTreeColumns` bitmask, `toggleTreeColumn:`): size, saved and
   created (`st_birthtimespec`) on their own keys, the rightmost dropped first
   on a narrow row; switching one on widens a narrow sidebar
