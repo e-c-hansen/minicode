@@ -6603,7 +6603,14 @@ active tab").
   folders open before the focus (`FileTree::tryExpand`) had opened it, so
   the close did nothing and m_deep opened after it, down to near.txt. The
   step now waits for those folders to be open and checks the close; the
-  product was right (`../docs/notes/tree.md`, the trap).
+  product was right (`../docs/notes/tree.md`, the trap). `tree_clicks` went
+  FLAKY in both CI runs from #232 on (2026-11-19, "timed out: closed",
+  passing alone; 5 of 5 local runs in CI's order failed): its folder closed and stayed closed (a probe on the row's
+  `expanded` saw one change, no reveal ran), but its wait found b.txt by
+  name, and the tree, following Find in Folder's results, had opened
+  `replace_in_folder`'s new rif4, whose b.txt the closing moved into view.
+  The suite finds every row by its path now (`MCGuiTreeRow`); the product
+  was right (the trap in `../docs/notes/tree.md`).
 - **Left for a real screen**: the look of the centering and of the scroll
   jumping (no animation), and a sidebar dragged shut and open by hand.
 
@@ -7374,6 +7381,21 @@ Enter, no Dismiss at all, and a search window no accelerator reached.
 - **Needs the owner's eyes:** the × on hover, the right click menu's look,
   and the click-then-arrows feel with a real window manager, which keeps
   the transient search window over the editor's.
+- **A FLAKY line, then a fix (2026-11-19).** CI printed `FLAKY
+  [replace_in_folder] ... the second row`: a search remade the rows while
+  the keyboard was in them, and a frame before its results left the search
+  window no focus at all, so the first Down only put the keyboard back on
+  row 0 (`docs/notes/find.md`'s trap). Alt+C from the results lost it the
+  same way on most runs. `runSearch` now holds the keyboard on the
+  window's box while the list is empty and `giveKeyboardBack` gives it to
+  the new first row. The suite empties the query before `setScope`, whose
+  search of the same query had passed the wait for six rows while the
+  typed one came 0.35 s later, after Enter; it waits for
+  `searchedQuery()`, and checks a search and Alt+C from the third row
+  (the keyboard on the new first row, Down to the second). Before: 3 of 30
+  runs failed on one core shared with two busy loops, and every run with a
+  50 ms sleep in the worker; the new checks failed without the fix with or
+  without the sleep. After: 30 of 30 under the same load.
 
 ### 117. `exit` closes the terminal; a detached job is its terminal's (November 2026)
 

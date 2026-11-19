@@ -187,6 +187,52 @@ static void testLatexForwardAndLog() {
         CHECK(b.size() == 1 && !b.empty() && Near(b[0].width, 10));
     }
 
+    GROUP("synctex:top-line");
+    {
+        // Shift+Cmd+V from the page: the document's line whose words are
+        // highest in what is on show, on the committed fixture. Its words'
+        // glue says the line, never the line of text's own box (which
+        // names where the paragraph ended), and the leftmost of a row wins
+        // (the row ending "heron" also holds the chapter's first kern).
+        const std::string fx = ReadFixture("tests/latex/fixtures/main.synctex");
+        if (fx.empty()) {
+            std::printf("    (skipped: run from the repository root for tests/latex)\n");
+        } else {
+            SyncTexIndex idx = SyncTexIndex::parse(fx);
+            struct Case { int page; double top, bottom; int tag, line; };
+            for (const Case &c : {Case{1, 0, 1000, 1, 3},      // the section heading
+                                  Case{1, 140, 1000, 1, 4},    // below it: the walrus
+                                  Case{1, 160, 1000, 1, 6},    // below that: the heron
+                                  Case{1, 0, 150, 1, 3},
+                                  Case{1, 0, 1000, 7, 2},      // the chapter's own lines
+                                  Case{1, 175, 1000, 7, 2},
+                                  Case{1, 210, 1000, 7, 3},
+                                  Case{2, 0, 1000, 1, 9},
+                                  Case{1, 140, 150, 1, 0},     // nothing of it there
+                                  Case{1, 0, 1000, 5, 0},      // an input with no text
+                                  Case{9, 0, 1000, 1, 0}}) {   // no such page
+                const int got = idx.topLineInRange(c.page, c.top, c.bottom, c.tag);
+                if (got != c.line)
+                    std::printf("    page %d, %g to %g, tag %d: line %d, not %d\n", c.page,
+                                c.top, c.bottom, c.tag, got, c.line);
+                CHECK(got == c.line);
+            }
+            // Forward and back agree: a line's box on the page reads that line again.
+            for (int line : {4, 6}) {
+                const std::vector<SyncTexBox> b = idx.boxesForLine(1, line);
+                CHECK(!b.empty() && idx.topLineInRange(b[0].page, b[0].y, b[0].y + b[0].height,
+                                                       1) == line);
+            }
+        }
+        // A display with no words: the line of text's box stands in.
+        SyncTexIndex d = SyncTexIndex::parse(
+            "SyncTeX Version:1\nInput:1:/tmp/a.tex\nUnit:1\nContent:\n{1\n"
+            "(1,7:0,6553600:6553600,655360,0\n)\n}1\n");
+        CHECK(d.topLineInRange(1, 0, 200, 1) == 7);
+        CHECK(d.topLineInRange(1, 0, 80, 1) == 0);   // its top is at 90
+        CHECK(SyncTexIndex::parse("").topLineInRange(1, 0, 1000, 1) == 0);
+    }
+
     GROUP("latexlog:summary");
     struct Case {
         const char *name, *file;

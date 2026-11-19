@@ -148,6 +148,7 @@ public:
     bool replaceShown() const { return replaceShown_; }
     const std::vector<FolderSearchMatch>& matches() const { return hits_; }
     bool searching() const { return searching_; }
+    const std::string& searchedQuery() const { return lastQuery_; }   // what the list is for
     bool replacing() const { return replacing_; }
     std::string statusText() const;
 
@@ -203,6 +204,8 @@ private:
     guint selectedRow() const;
     void openRow(guint pos, bool kept);
     void focusFirstResult();
+    GtkWidget* keyboardHolder() const;   // the window's box, which holds it meanwhile
+    void giveKeyboardBack();             // after a search's rows, to the first one
     static void onSetup(GtkSignalListItemFactory* f, GObject* item, gpointer self);
     static void onBind(GtkSignalListItemFactory* f, GObject* item, gpointer self);
     static void worker(GTask* task, gpointer source, gpointer data, GCancellable* c);
@@ -244,6 +247,7 @@ private:
     std::string lastQuery_;                 // the query the current list is for
     unsigned    generation_ = 0;            // bumped by every search
     bool        searching_  = false;
+    bool        keyboardHeld_ = false;      // the list had it when the search began
     bool        replaceShown_ = false;
     bool        replacing_ = false;         // a Replace All or Replace Match under way
     // The rows dismissed since the last search, which Replace All leaves

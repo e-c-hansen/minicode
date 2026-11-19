@@ -936,7 +936,25 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)showLatexProblemMarks;
 - (BOOL)latexIsShowing;
 - (void)latexDidEditSource:(NSString *)newSource;
+- (void)latexShowSource:(NSString *)path line:(NSInteger)line column:(NSInteger)column;
 - (void)setPlainMessage:(NSString *)msg;
+@end
+
+// EditorController+PageSide.mm: Open Preview to the Side for LaTeX and HTML files.
+@interface EditorController (PageSide)
+- (BOOL)pageSideWanted;
+- (BOOL)pageSideShowing;
+- (BOOL)pageSideShowsLatex;
+- (NSView *)pageSideDivider;
+- (NSRect)layoutPageSideIn:(NSRect)rect textShown:(BOOL)textShown;
+- (void)refreshPageSide;
+- (void)pageSideSourceChanged;
+- (void)pageSideSelectionChanged;
+- (void)pageSideSaved:(MCTab *)t;
+- (NSString *)pageSideBufferFor:(MCTab *)t;
+- (void)pageSideTabWillLeave:(MCTab *)t;
+- (void)closePageSide;
+- (void)pageSideBarDraggedTo:(CGFloat)x;
 @end
 
 // EditorController+Highlighting.mm: the source's syntax colors, kept up as it is edited.
