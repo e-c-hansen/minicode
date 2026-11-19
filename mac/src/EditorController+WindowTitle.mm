@@ -56,6 +56,17 @@ static void *kWindowTitleFocusContext = &kWindowTitleFocusContext;
     if ([self windowTitleFocus] != WindowTitle::Focus::Document) [self refreshWindowTitle];
 }
 
+// The terminal pane holding the keyboard, found from the first responder:
+// never MCTerminalPanel's activeTerminal, whose getter makes the focused
+// pane its tab's active one (here, mid-switch, the old tab's pane became
+// the new tab's: host_reattach).
+- (TerminalView *)windowTitleFocusedTerminal {
+    NSResponder *fr = self.window.firstResponder;
+    for (NSView *v = [fr isKindOfClass:NSView.class] ? (NSView *)fr : nil; v; v = v.superview)
+        if ([v isKindOfClass:TerminalView.class]) return (TerminalView *)v;
+    return nil;
+}
+
 // A path spelled as the folder and home are: /private/tmp/x and /tmp/x
 // alike. Its folder standardized, so a file already deleted keeps it too.
 static std::string TitlePath(NSString *p) {
@@ -113,7 +124,7 @@ static NSString *MCFormatDuration(double seconds) {
     in.home = TitlePath(NSHomeDirectory());
     const BOOL document = in.focus == WindowTitle::Focus::Document;
     if (in.focus == WindowTitle::Focus::Terminal)
-        in.pane = Utf8String(self.terminalPanel.activeTerminal.title);
+        in.pane = Utf8String([self windowTitleFocusedTerminal].title);
     else if (in.focus == WindowTitle::Focus::Browser)
         in.pane = Utf8String(self.browser.pageTitle);
     NSURL *represented = nil;
