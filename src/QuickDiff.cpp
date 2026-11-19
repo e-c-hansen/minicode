@@ -215,6 +215,13 @@ Original readOriginal(const std::string& blob, FolderSearch::TextEncoding fileEn
         o.text = fromUtf8(FolderSearch::decodeWindows1252(blob));
         return o;
     }
+    // A UTF-8 file with stray bytes (Utf8Raw): a blob with them too keeps
+    // them, so staging or reverting writes them back as they were.
+    if (fileEncoding == TextEncoding::Utf8Raw && FolderSearch::readsAsUtf8WithStrayBytes(blob)) {
+        o.encoding = fileEncoding;
+        o.text = fromUtf8(FolderSearch::decodeUtf8WithStrayBytes(blob));
+        return o;
+    }
     if ((fileEncoding == TextEncoding::Utf16LE || fileEncoding == TextEncoding::Utf16BE) &&
         blob.size() >= 2 && !(blob.size() & 1)) {
         const bool le = fileEncoding == TextEncoding::Utf16LE;
@@ -242,8 +249,8 @@ std::string stagedBlob(const std::u16string& staged, const Original& how) {
         restoreBom(text, how.bom);
         return toUtf8(text);
     }
-    if (how.encoding == TextEncoding::Windows1252)
-        return FolderSearch::encodeText(toUtf8(staged), TextEncoding::Windows1252);
+    if (how.encoding == TextEncoding::Windows1252 || how.encoding == TextEncoding::Utf8Raw)
+        return FolderSearch::encodeText(toUtf8(staged), how.encoding);
     const bool le = how.encoding == TextEncoding::Utf16LE;
     std::string out;
     out.reserve(staged.size() * 2 + 2);

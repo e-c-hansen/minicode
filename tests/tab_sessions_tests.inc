@@ -276,8 +276,10 @@ static void testTabSessions() {
         a.expanded = {"/p/src", "/p/src/x"};
         a.selected = "/p/src/x/y.c";
         a.treeScroll = 42;
+        a.backupKey = "0a1b2c3d-0000-4000-8000-00000000abcd";
         Window b;
         b.root = "/q";
+        b.backupKey = "not a key/..";   // dropped on reading
         b.sidebarHidden = true;
         b.editorHidden = true;
         b.fullScreen = true;
@@ -293,6 +295,7 @@ static void testTabSessions() {
         CHECK(w.tabs.split && w.tabs.groups.groups[1].size() == 1 && w.tabs.groups.focused == 1 &&
               w.tabs.groups.fraction == 0.4 && w.tabs.groups.active[1] == "/p/b.md");
         CHECK(w.sidebar == "git" && w.sidebarWidth == 310 && !w.sidebarHidden);
+        CHECK(w.backupKey == "0a1b2c3d-0000-4000-8000-00000000abcd" && back[1].backupKey.empty());
         CHECK(w.problems && !w.editorHidden);
         CHECK(w.terminal && w.terminalHeight == 260 && w.terminalTab == 1);
         CHECK(w.terminals.size() == 2);

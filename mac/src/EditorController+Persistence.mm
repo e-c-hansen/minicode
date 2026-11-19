@@ -223,13 +223,16 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
     // a backup of a file the session lost comes back after the session's.
     std::map<std::string, std::string> backupFor;
     std::vector<std::string> extra;
+    std::vector<Backups::Restore::Item> conflicts;
     if (MCBackupStore *store = [MCBackupStore shared]) {
         [store cleanUpOnce];
-        Backups::Restore plan = [store planForRoot:[self sessionKey] sessionFiles:saved.files];
+        Backups::Restore plan = [store planForRoot:[self sessionKey] sessionFiles:saved.files
+                                            window:[self backupKey]];
         for (const Backups::Restore::Item &item : plan.items) {
             backupFor[item.path] = item.id;
             if (!item.inSession) extra.push_back(item.path);
         }
+        conflicts = plan.conflicts;
     }
     NSFileManager *fm = [NSFileManager defaultManager];
     EditorTabs::Session r = EditorTabs::restorable(saved, [fm, &backupFor](const std::string &f) {
@@ -240,7 +243,7 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
     });
     const std::string previewFile = r.preview >= 0 ? r.files[(size_t)r.preview] : "";
     for (const std::string &f : extra) r.files.push_back(f);
-    if (r.files.empty() && pages.empty()) return;
+    if (r.files.empty() && pages.empty() && conflicts.empty()) return;
     if (r.active < 0) r.active = 0;
     for (const std::string &f : r.files) {
         auto b = backupFor.find(f);
@@ -276,6 +279,7 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
         }
         [self groupAppendTab:t preview:preview ? Model::Preview::User : Model::Preview::None];
     }
+    [self restoreConflictingBackups:conflicts];
     NSArray<MCTab *> *tabs = [self tabs];   // the files', for the one on show
     // The review, a commit's page, a comparison: made again where they
     // were among the tabs (EditorController+PageTabs.mm).
@@ -366,6 +370,59 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g) {
 
 - (void)restoreWindowRecord:(NSString *)record {
     _windowRecord = [record copy];
+    // The window's backups are its own again.
+    TabSessions::Window w;
+    if ([self restoringWindow:&w] && !w.backupKey.empty()) _backupKey = @(w.backupKey.c_str());
+}
+
+- (NSString *)backupKey {
+    if (!_backupKey) _backupKey = NSUUID.UUID.UUIDString;
+    return _backupKey;
+}
+
+// Backups of a file this window brought back from another backup
+// (Backups::Restore::conflicts): another window's unsaved text in the same
+// file, which hot exit keeps at every Quit, or an older draft. Each comes
+// back as a buffer of its own beside the file, "a (unsaved copy).txt",
+// unsaved, its backup rewritten under that name first so it is never
+// without a copy on disk; one whose text is already back in the file's
+// tab is the only backup that goes (round 10's workspace item 1: the
+// older one was deleted unseen).
+- (void)restoreConflictingBackups:(const std::vector<Backups::Restore::Item> &)conflicts {
+    MCBackupStore *store = [MCBackupStore shared];
+    if (!store || conflicts.empty()) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    MCTab *firstCopy = nil;
+    for (const Backups::Restore::Item &c : conflicts) {
+        NSString *bid = @(c.id.c_str());
+        NSString *file = @(c.path.c_str());
+        Backups::Entry e;
+        NSString *text = nil;
+        if (![store loadID:bid entry:&e text:&text]) continue;   // left on disk as it is
+        MCTab *original = [self tabForPath:file];
+        if (original.dirty && [original.sourceText isEqualToString:text]) {
+            [store removeID:bid];   // the same text is back in the file's tab
+            continue;
+        }
+        const std::string draft = Backups::draftPath(c.path, [self, fm](const std::string &p) {
+            NSString *s = @(p.c_str());
+            return (bool)([fm fileExistsAtPath:s] || [self tabForPath:s]);
+        });
+        NSString *path = @(draft.c_str());
+        if (![store moveID:bid toPath:path window:[self backupKey]]) continue;
+        MCTab *t = [MCTab new];
+        t.currentPath = path;
+        t.draftOf = file;
+        if (![self takeBackup:bid intoTab:t]) continue;
+        [self groupAppendTab:t preview:Model::Preview::None];
+        if (!firstCopy) firstCopy = t;
+        [names addObject:file.lastPathComponent];
+    }
+    if (!firstCopy) return;
+    [self showStatusNote:[NSString stringWithFormat:
+        @"Unsaved changes to %@ from another window are kept apart in %@",
+        [names componentsJoinedByString:@", "], firstCopy.currentPath.lastPathComponent]];
 }
 
 // The window being brought back, while showWindow puts it back.
@@ -381,12 +438,17 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g) {
     if (!MCSessionsEnabled()) return @[];
     NSMutableArray *out = [NSMutableArray array];
     NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *keys = [NSMutableArray array];
     for (const TabSessions::Window &w : MCSessionsWindowsToRestore()) {
         NSString *root = @(w.root.c_str());
         BOOL dir = NO;
         if (!root.length || ![fm fileExistsAtPath:root isDirectory:&dir] || !dir) continue;
         [out addObject:@{@"root": root, @"record": @(TabSessions::encodeWindows({w}).c_str())}];
+        if (!w.backupKey.empty()) [keys addObject:@(w.backupKey.c_str())];
     }
+    // Each window's unsaved buffers wait for it: the first window back on
+    // a folder no longer takes another's (round 10's workspace item 1).
+    [[MCBackupStore shared] reserveWindowKeys:keys];
     return out;
 }
 
@@ -463,6 +525,7 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
 - (TabSessions::Window)windowRecordNow {
     TabSessions::Window w;
     w.root = Utf8String(_root.path);
+    w.backupKey = Utf8String([self backupKey]);
     NSWindow *win = self.window;
     w.fullScreen = (win.styleMask & NSWindowStyleMaskFullScreen) != 0;
     const NSRect f = w.fullScreen ? _frameBeforeFullScreen : win.frame;
@@ -782,7 +845,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
     for (MCTab *t in tabs) {
         if (![self tabNeedsBackup:t]) continue;
         if (!t.backupID) t.backupID = [store newID];
-        [store writeID:t.backupID path:t.currentPath root:[self sessionKey]
+        [store writeID:t.backupID path:t.currentPath root:[self sessionKey] window:[self backupKey]
               diskDate:t.fileModDate inode:t.fileID fileEncoding:MCTabEncodingName(t)
                   text:t.sourceText];   // copied from the storage here, once
         t.backedUpGeneration = t.textGeneration;
@@ -816,7 +879,7 @@ static NSString *MCTabEncodingName(MCTab *t) {
         if (![self tabTakesBackup:t]) return NO;   // nothing to keep it by: ask
         if (!t.backupID) t.backupID = [store newID];
         if (![store writeNowID:t.backupID path:t.currentPath root:[self sessionKey]
-                      diskDate:t.fileModDate inode:t.fileID
+                        window:[self backupKey] diskDate:t.fileModDate inode:t.fileID
                   fileEncoding:MCTabEncodingName(t) text:t.sourceText])
             return NO;
         t.backedUpGeneration = t.textGeneration;
@@ -903,7 +966,10 @@ static NSString *MCTabEncodingName(MCTab *t) {
 - (void)showRestoredText:(NSString *)text base:(NSDate *)base inode:(uint64_t)inode {
     MCTab *t = _activeTab;
     NSString *name = t.currentPath.lastPathComponent;
-    NSString *note = [NSString stringWithFormat:@"Restored unsaved changes to %@", name];
+    NSString *note = t.draftOf
+        ? [NSString stringWithFormat:@"Unsaved changes to %@ from another window, kept apart in %@",
+                                     t.draftOf.lastPathComponent, name]
+        : [NSString stringWithFormat:@"Restored unsaved changes to %@", name];
     self.sourceText = text;
     if (base && !t.fileModDate) {
         t.gone = YES;

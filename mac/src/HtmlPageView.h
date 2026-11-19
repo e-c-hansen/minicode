@@ -24,7 +24,9 @@
 // always the tab's file; a link to a place in the same page scrolls there.
 // A navigation the page starts by itself (a meta refresh, a script) never
 // opens another app or a file: only a web address, while its scripts run,
-// goes to the browser pane; the rest goes to `onRefused`.
+// goes to the browser pane; the rest goes to `onRefused`. A link that would
+// open another app (zoommtg:, mailto:) asks first, in a sheet naming the app,
+// since a page whose scripts run can click its own links.
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 
@@ -34,7 +36,8 @@
 // The folder the page may read from: the window's.
 @property(nonatomic, copy) NSString * (^readAccessFolder)(void);
 // A link clicked in the page (or a form submitted), or, while its
-// scripts run, a web address it went to by itself.
+// scripts run, a web address it went to by itself. One to another app
+// comes here only once the sheet asking about it is answered Open.
 @property(nonatomic, copy) void (^onOpenLink)(NSURL *url);
 // A navigation the page started by itself (a meta refresh, a script) that
 // was not followed: to a scheme other than http(s), or with scripts off.
