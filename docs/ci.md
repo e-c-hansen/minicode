@@ -337,19 +337,43 @@ five soak rounds without it:
   left on the folder put off the strip's left end in its new window
   (go_back and maximize before it, in a local run).
 
-Still open from that soak:
+- GTK `preview_tabs` again in rounds 1 and 3's orders, with the fixes
+  above (2026-11-19, a second change): the second single click on a
+  tree row (p-b) reached no handler of the tree's, nor did any click
+  after it. agents, before it in both orders, ran `git init` in the
+  shared project, made a worktree and a branch under .claude, and left
+  them, so every row was "Untracked (git)", with a tooltip, and the
+  tooltip that came up under the pointer after the click on p-a covered
+  p-b; XTest's pointer jumped onto it. `agents preview_tabs` alone
+  failed the same way before the change; with the harness hiding the
+  tooltip and the repository left (`MC_GUI_LEAKS=note`) preview_tabs
+  passed, its log noting `a tooltip ("Untracked (git)") over the point
+  to click, hidden first`. agents now removes the repository, the
+  worktree and its files and waits until the tree shows neither; the
+  harness says `LEFT` for a project left a repository and removes it
+  (`MCGuiRemoveProjectRepository`), and hides a tooltip of the app's
+  over the point of any click (docs/notes/verification.md, "A tooltip
+  takes the next click").
+- GTK `tree_stall`, "a-tree-stall is on show", in a local full run with
+  seed 791492888 (all suites in one process): its folder never came on
+  show. Replayed up to it (`bookmarks format_offer host_splits
+  latex_problems second_server git_review detach json_outline
+  tree_stall`) it failed twice in three runs on a loaded machine (a
+  build, or six busy loops, on the same four cores) and never unloaded;
+  without any one of the eight suites before it, or after json_outline
+  alone, it passed. A diagnostic build showed the folder in the tree's
+  model, first at the top level, and never on show: the eight suites
+  leave the project with more rows than the tree shows, and the row
+  that came in at the top stayed above the pane, the rows on show kept
+  where they were (GtkListView's anchor, `FileTree::keepRows`), after
+  the suite's one scroll to the top. The suite now scrolls to the top on
+  every look of its wait, noting when the tree had left it again. Under
+  six busy loops on the same cores a later row went the same way
+  (data.bin, the churning folder's rows coming and going below a-files'
+  left the tree scrolled past them), so every other row it clicks is
+  brought into view by its path first (`MCGuiBringTreeRow`).
 
-- GTK `preview_tabs` in rounds 1 and 3's orders, with the fixes above:
-  the second single click on a tree row (p-b) reaches no handler of the
-  tree's (a diagnostic build showed no release at all), and every click
-  after it is lost the same way; it passes alone, after the five suites
-  before it, and in a full run with seed 791492888. The likely cause,
-  not yet checked: agents runs `git init` in the shared project folder
-  and leaves it a repository, so every row is untracked and has a
-  tooltip ("Untracked (git)"), and the tooltip that comes up under the
-  pointer after the first click covers the row below it. agents should
-  put the folder back, and the harness should say when the project
-  became a repository.
+Still open from that soak:
 
 - Seen in one round each: Mac `organize_on_save` (an alert count off by
   one as its servers were turned off), GTK `tree_clicks`, `tab_strip`,

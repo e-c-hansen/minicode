@@ -23,6 +23,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <unordered_map>
 #include <vector>
 
@@ -134,8 +135,44 @@ Window xidOf(GtkWindow* w) {
 
 GtkWindow* gKeyWindow = nullptr;
 
+// The first label's text under `w`, for a note.
+std::string labelTextIn(GtkWidget* w) {
+    if (GTK_IS_LABEL(w)) return gtk_label_get_text(GTK_LABEL(w));
+    for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c)) {
+        const std::string t = labelTextIn(c);
+        if (!t.empty()) return t;
+    }
+    return "";
+}
+
+// Trap (soak #127): GTK shows a widget's tooltip just below the pointer once
+// it rests there, as an X window of its own over the app's. A hand moving to
+// the row below passes through the row first, and the tooltip goes; XTest's
+// pointer jumps, so preview_tabs' click on p-b, the row under p-a's
+// "Untracked (git)", landed on the tooltip and the tree never saw it. A
+// tooltip of the app's over the point is hidden before the pointer goes
+// there (on GDK's connection, so X unmaps it before the events that follow),
+// with a note. Anything else over the point (a menu, a question) is left:
+// a check meant to see it.
+void uncover(GdkSurface* own, int rootX, int rootY) {
+    const Window root = DefaultRootWindow(Dpy()), ownId = gdk_x11_surface_get_xid(own);
+    for (int i = 0; i < 4; i++) {
+        Window top = 0;
+        int x, y;
+        if (!XTranslateCoordinates(Dpy(), root, root, rootX, rootY, &x, &y, &top) || !top || top == ownId)
+            return;
+        GdkSurface* s = gdk_x11_surface_lookup_for_display(Gdk(), top);
+        GtkNative* n = s ? gtk_native_get_for_surface(s) : nullptr;
+        if (!n || strcmp(G_OBJECT_TYPE_NAME(n), "GtkTooltipWindow") != 0) return;
+        MCGuiNote("a tooltip (\"%s\") over the point to click, hidden first", labelTextIn(GTK_WIDGET(n)).c_str());
+        gtk_widget_set_visible(GTK_WIDGET(n), FALSE);
+        XSync(Dpy(), False);
+    }
+}
+
 // A point in `widget` on the root window: through the widget's window, its
-// surface's offset (the window's shadow), and X's own translation.
+// surface's offset (the window's shadow), and X's own translation; a tooltip
+// of the app's over it is hidden (uncover).
 bool pointOnRoot(GtkWidget* widget, double x, double y, int* rootX, int* rootY) {
     // A widget not laid out yet has no place (its points map to the window's
     // corner), and one clipped or covered gets clicks meant for something
@@ -154,9 +191,12 @@ bool pointOnRoot(GtkWidget* widget, double x, double y, int* rootX, int* rootY) 
     if (!surface) return false;
     const double scale = gdk_surface_get_scale(surface);
     Window child;
-    return XTranslateCoordinates(Dpy(), gdk_x11_surface_get_xid(surface), DefaultRootWindow(Dpy()),
-                                 (int)((out.x + sx) * scale + 0.5), (int)((out.y + sy) * scale + 0.5),
-                                 rootX, rootY, &child);
+    if (!XTranslateCoordinates(Dpy(), gdk_x11_surface_get_xid(surface), DefaultRootWindow(Dpy()),
+                               (int)((out.x + sx) * scale + 0.5), (int)((out.y + sy) * scale + 0.5),
+                               rootX, rootY, &child))
+        return false;
+    uncover(surface, *rootX, *rootY);
+    return true;
 }
 
 void moveTo(int rootX, int rootY) {

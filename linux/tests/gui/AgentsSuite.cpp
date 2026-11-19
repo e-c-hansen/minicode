@@ -19,6 +19,7 @@
 #include "DocumentView.h"
 #include "EvidencePage.h"
 #include "FileTree.h"
+#include "TreeGitColors.h"
 #include "Terminal.h"
 #include "TerminalAttention.h"
 #include "WindowLayout.h"
@@ -727,4 +728,23 @@ MC_GUI_SUITE(agents) {
         return has(MCGuiReadFile(gRevealLog), gScratch);
     });
     MCGuiStep("(cleanup)", [] { EnvLock::envUnset("MUTIBLE_FILE_MANAGER"); });
+    // ---- The project as the suite found it: no repository, worktree,
+    // branch or file of its own. Left a repository, every row of the shared
+    // project's tree was "Untracked (git)", with a tooltip, and in the
+    // soak's shuffled orders preview_tabs' second click landed on the one
+    // its first had left over the row below (#127; the harness now says
+    // LEFT for a project left a repository).
+    MCGuiStep("(cleanup: the project no repository again, the suite's files gone)", [] {
+        MCGuiRemoveProjectRepository();   // the worktree's folder, then .git with both branches
+        for (const char* name : {".gitignore", "base.txt", "later.txt", "agent.txt", "untracked.txt", "new.txt",
+                                 "revealed.txt", "filemanager.sh"})
+            unlink((gProj + "/" + name).c_str());
+        rmdir((gProj + "/.claude/worktrees").c_str());
+        rmdir((gProj + "/.claude").c_str());
+        GCHECK(!MCGuiProjectIsRepository());
+        GCHECK(!MCGuiFileExists(gProj + "/.claude"));
+    });
+    MCGuiWait("the tree has no repository and no Worktrees node", 15, [] {
+        return !MCGuiApp().treeColors->inRepository() && treeLabel("Worktrees") == nullptr;
+    });
 }
