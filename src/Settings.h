@@ -273,6 +273,10 @@ public:
     // workbench.enable-preview-from-quick-open: Quick Open (Cmd+P) opens in
     // the preview tab too (VS Code's enablePreviewFromQuickOpen, off).
     bool enablePreviewFromQuickOpen() const { return enablePreviewFromQuickOpen_; }
+    // explorer.auto-reveal: when another tab comes on show, the file tree
+    // opens its folders, selects its row and centers it unless it is in
+    // view (VS Code's explorer.autoReveal, centered); on by default.
+    bool explorerAutoReveal() const { return explorerAutoReveal_; }
     // editor.auto-save: off (the default), after-delay (each file with
     // unsaved changes is written once typing has paused for
     // editor.auto-save-delay milliseconds, 1000 by default, as VS Code's
@@ -575,6 +579,7 @@ private:
     bool organizeImportsOnSave_ = false;
     bool enablePreview_ = true;
     bool enablePreviewFromQuickOpen_ = false;
+    bool explorerAutoReveal_ = true;
     bool gitAutoFetch_ = false;
     int gitAutoFetchPeriod_ = 180;
     AutoSave autoSave_ = AutoSave::Off;

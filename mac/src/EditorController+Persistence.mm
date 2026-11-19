@@ -283,8 +283,12 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
         [self updateTitle];
         return;
     }
+    // The tree comes back as the record or the session left it, not moved
+    // to the file (explorer.auto-reveal).
+    [self holdTreeFollowing:YES];
     [self activateTab:tabs[(NSUInteger)active]];
     if (groups) [self restoreEditorGroups:groups];
+    [self holdTreeFollowing:NO];
 }
 
 // The split editor's groups from the form restoreEditorGroups: and

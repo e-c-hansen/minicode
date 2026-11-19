@@ -19,6 +19,9 @@
 //     widened to show a path, and which parts fit the bar; and Add to
 //     Focus, several folders as roots: the set's rules (nested folders
 //     merged), reveals, a saved set checked, and the label row's labels.
+//   - TreeReveal: the tree following the active tab (explorer.auto-reveal):
+//     the scroll that centers a row unless it is already in view, and a
+//     change made while the tree is hidden kept for when it shows.
 //
 // The Mac's EditorController and TreeDetails.mm use it, and the GTK port's
 // FileTree.cpp its TreeRefresh; nothing here touches a GUI. measure() reads
@@ -404,6 +407,13 @@ Set merged(const Set &list);
 // The index of the folder of `set` that is `rel` or holds it; -1 for none.
 int rootOf(const Set &set, const std::string &rel);
 
+// Whether `rel` (a path from the window's folder) shows as a row with
+// `set` as it is: always with no folder; with one, inside it but not the
+// folder itself (the tree's root, no row); with several, inside one of
+// them or one of them (each a root row). An open outside them (Quick Open,
+// the tree following the active tab) leaves the tree alone.
+bool shows(const Set &set, const std::string &rel);
+
 // What revealing `rel` (a path from the window's folder) makes of `set`:
 // with no folder, nothing; with one, widened() as above (the whole folder
 // when that gives ""); with several, the set itself when one of them holds
@@ -428,3 +438,39 @@ std::vector<std::string> shortLabels(const Set &set);
 std::vector<double> shared(const std::vector<double> &widths, double available);
 
 }  // namespace TreeFocus
+
+namespace TreeReveal {
+
+// The tree following the active tab (explorer.auto-reveal, as VS Code's
+// explorer.autoReveal, but centered): when another tab comes on show, its
+// file's folders open, its row is selected, and the tree scrolls only when
+// the row is not wholly in view, so clicking between two files on show
+// never moves it.
+
+// The scroll top that shows a row (`rowTop`, `rowHeight`) in a view
+// (`viewTop`, `viewHeight`) over content `contentHeight` tall, all in the
+// same flipped units: `viewTop` itself when the row is wholly inside the
+// view (or the view has no height), else the top that puts the row's middle
+// at the view's middle, held between 0 and the content's end.
+double scrollTop(double rowTop, double rowHeight, double viewTop, double viewHeight,
+                 double contentHeight);
+
+// The active file as the tree follows it, the tree on show or hidden (the
+// sidebar closed, or another panel in its place): a change while it is
+// hidden waits, and is revealed once when it shows again.
+class Follower {
+public:
+    // Another tab is on show, holding `path` ("" for none the tree has: a
+    // page, an untitled tab, a file outside the folder). true when the
+    // tree should reveal `path` now; while it is hidden, the path is kept.
+    bool activeChanged(const std::string &path, bool treeOnShow);
+    // The tree is on show again: the path to reveal, once; "" when the
+    // active tab did not change while it was hidden, or holds no file.
+    std::string treeShown();
+
+private:
+    bool pending_ = false;
+    std::string file_;
+};
+
+}  // namespace TreeReveal

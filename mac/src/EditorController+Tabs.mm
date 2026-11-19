@@ -459,7 +459,7 @@ static NSString *const kKeepUnsavedDetail = @"Keep Unsaved leaves your changes u
         [self showActiveTab];
         [self checkExternalChange];
     }
-    [self reselectCurrentFileInTree];
+    [self treeFollowActiveTab];   // the tree shows the file (explorer.auto-reveal)
     [self reloadTabStrip];
     [self saveSession];
     [self.navigator tabDidSwitch];

@@ -373,6 +373,7 @@
     self.sidebarScroll.panelColor = [cfg background:Surface::Sidebar];
     [self refreshTreeCells];   // names, and their sizes and dates
     [self updateTreeFocusBar];   // the focused tree's breadcrumb, in the sidebar's text color
+    [self treeAutoRevealSettingsApplied];   // explorer.auto-reveal
 
     self.editorScroll.panelColor = [cfg background:Surface::Editor];
     // A selection keeps the syntax colors under it, in every theme (AppKit's
@@ -873,6 +874,7 @@ static const CGFloat kDividerGrabSlop = 5;
         width = MIN(width, MAX(160, W - kMinRightAreaWidth));
         [self.splitView setPosition:width ofDividerAtIndex:0];
     }
+    [self treeRevealIfShown];   // the tree back: the file that came on show meanwhile
     if (self.hintsVisible) [self updateHints];
 }
 
@@ -916,6 +918,7 @@ static const CGFloat kDividerGrabSlop = 5;
     } else {
         [self.window makeFirstResponder:self.outline];
     }
+    [self treeRevealIfShown];   // the tree back: the file that came on show meanwhile
     if (self.hintsVisible) [self updateHints];
 }
 
@@ -943,6 +946,7 @@ static const CGFloat kDividerGrabSlop = 5;
     }
     if (self.agentsVisible) [_agents.panel focusList];
     else [self.window makeFirstResponder:self.outline];
+    [self treeRevealIfShown];   // the tree back: the file that came on show meanwhile
     if (self.hintsVisible) [self updateHints];
 }
 

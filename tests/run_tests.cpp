@@ -4059,8 +4059,8 @@ void testSettings() {
     // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands, and editor.spell-check with its color, and
-    // editor.session-host.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 140);
+    // editor.session-host, and explorer.auto-reveal.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 141);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4951,6 +4951,15 @@ void testSettings() {
         CHECK(parseSettings("editor.auto-save = after-delay\neditor.auto-save = off\n")
                   .autoSave() == AS::Off);
         CHECK(parseSettings("editor.auto-save-delay = 250\n").autoSaveDelay() == 250);
+        // explorer.auto-reveal: on by default, off or on (or a boolean).
+        CHECK(parseSettings("").explorerAutoReveal());
+        CHECK(!parseSettings("explorer.auto-reveal = off\n").explorerAutoReveal());
+        CHECK(parseSettings("explorer.auto-reveal = on\n").explorerAutoReveal());
+        {
+            std::vector<SettingsError> ea;
+            CHECK(parseSettings("explorer.auto-reveal = sometimes\n", &ea).explorerAutoReveal());
+            CHECK(ea.size() == 1 && ea[0].message.find("not on or off") != std::string::npos);
+        }
         CHECK(parseSettings("editor.auto-save-delay = 600000\n").autoSaveDelay() == 600000);
         for (const char *bad : {"editor.auto-save = afterDelay\n", "editor.auto-save = on\n",
                                 "editor.auto-save-delay = 99\n",

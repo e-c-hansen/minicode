@@ -230,6 +230,38 @@ found through that list.
   it). Persistence keeps the whole list. A drop below several roots is
   refused, as on the Mac. It keeps no open folders in a window's record.
 
+- **The tree follows the active tab** (2026-11-18, the owner: "I have to
+  hunt for the file that I am already using"; `EditorController+TreeReveal.mm`,
+  its state in `EditorController+TreeRevealIvars.h`, the core's
+  `TreeReveal` and `TreeFocus::shows` in FileDetails, `tree:auto-reveal`,
+  the `tree_focus` suite's last part; `explorer.auto-reveal`, on by
+  default): `activateTab:`, which every way to another tab goes through,
+  calls `treeFollowActiveTab` where it called `reselectCurrentFileInTree`.
+  It opens the folders down to the file with `treeOpenFoldersTo:widen:NO`
+  (the walk `revealPath:open:from:widen:` was split into: each folder on
+  the way listed with `loadChildren`, expanded, no reload), selects the row,
+  and `scrollTreeRowIntoView:` scrolls only when the row is not wholly in
+  view, then to the middle (`TreeReveal::scrollTop`, held to the rows'
+  ends). `revealPath:` scrolls the same way now, so Quick Open and Reveal
+  Active File center too. Left alone: a file outside every focused folder
+  (`TreeFocus::shows`, the rule `treeFocusShowsPath:` keeps for opens; only
+  a reveal widens), a diff or page, an untitled tab, a file gone or outside
+  the window's folder, the row a click or Return in the tree is opening
+  (`treeOpensPath:`, so a click on a row cut by the edge never scrolls),
+  and a window's tabs coming back (`holdTreeFollowing:` around
+  `restoreSession`'s activation, so the record's tree and scroll stand).
+  While the tree is hidden (`treeOnShow`: the sidebar collapsed or at
+  width 0, or Source Control, Agents or Processes in its place) the change
+  waits in a `TreeReveal::Follower`; the four sidebar toggles and the
+  sidebar's frame changes call `treeRevealIfShown`, which reveals it once.
+  `applySettings` (`treeAutoRevealSettingsApplied`) reveals the file on show
+  when the setting is turned on. The keyboard never moves: only
+  `selectRowIndexes:` and the clip view's scroll. Trap: the tree following
+  the active tab must not scroll for the row a click in the tree opens
+  (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`),
+  or a click on a row cut by the edge jumps the tree and a restored window
+  loses its scroll. The GTK port does not follow yet.
+
 ## Traps
 
 Each trap's first sentence, in the order it appears above; the whole
@@ -237,3 +269,4 @@ text is in place in its section.
 
 - The file tree (Mac): Trap: NSTableCellView moves its textField to the cell's width without a layout pass, so `MCTreeCell` places its fields again in `viewWillDraw`.
 - The file tree (Mac): Trap: `NSTableViewLastColumnOnlyAutoresizingStyle` moves the column only by the change in the outline's frame, so a width lost once stayed lost and a reload cut every name off; `fitTreeColumn` fits it after each reload and frame change.
+- The file tree (Mac): Trap: the tree following the active tab must not scroll for the row a click in the tree opens (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`).

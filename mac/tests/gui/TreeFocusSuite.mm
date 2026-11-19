@@ -29,6 +29,16 @@
 // opens the picker too, where a typed path (linux/s) completes; nothing
 // outside the window's folder is offered (../, an absolute path), and Esc
 // changes nothing.
+//
+// The tree follows the active tab (explorer.auto-reveal, 2026-11-18), in a
+// folder of 20,000 files: a deep file in folders never listed, opened, is
+// selected with its folders open and centered, within a CPU bound against
+// a plain open; another tab shows its row and back again; a row already in
+// view is selected without the tree moving; a click in the tree opens a
+// file without scrolling; the editor keeps the keyboard throughout; a file
+// outside the focused folder leaves the tree alone; with the setting off
+// nothing moves, and turning it on shows the file; with the sidebar closed
+// nothing moves until it opens again.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -192,6 +202,38 @@ NSInteger RowsOf(EditorController *c, NSString *path) {
     for (NSInteger r = 0; r < c.outline.numberOfRows; r++)
         if ([[(FileItem *)[c.outline itemAtRow:r] path] isEqualToString:path]) n++;
     return n;
+}
+
+
+// ---- the tree following the active tab
+// How far a row's middle is from the tree's, in rows.
+CGFloat RowsFromMiddle(EditorController *c, NSString *path) {
+    const NSInteger row = RowOf(c, path);
+    if (row < 0) return 1e9;
+    const NSRect r = [c.outline rectOfRow:row];
+    const NSRect v = c.sidebarScroll.contentView.bounds;
+    return fabs(NSMidY(r) - NSMidY(v)) / NSHeight(r);
+}
+BOOL WhollyInView(EditorController *c, NSString *path) {
+    const NSInteger row = RowOf(c, path);
+    if (row < 0) return NO;
+    const NSRect r = [c.outline rectOfRow:row];
+    const NSRect v = c.sidebarScroll.contentView.bounds;
+    return NSMinY(r) >= NSMinY(v) && NSMaxY(r) <= NSMaxY(v);
+}
+CGFloat TreeTop(EditorController *c) { return c.sidebarScroll.contentView.bounds.origin.y; }
+// `n` empty files named f00000.txt and up in `folder`, quickly.
+void WriteMany(NSString *folder, int n) {
+    [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES
+                                               attributes:nil error:nil];
+    for (int i = 0; i < n; i++) {
+        NSString *p = [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"f%05d.txt", i]];
+        if (FILE *f = fopen(p.fileSystemRepresentation, "w")) fclose(f);
+    }
+}
+NSString *SettingsNow(void) {
+    NSString *path = NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"];
+    return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] ?: @"";
 }
 
 }  // namespace
@@ -665,5 +707,138 @@ MC_GUI_SUITE(tree_focus) {
     MCGuiStep(@"close the window", ^{
         CloseChecked(c);
         MCGuiSetKeyWindow(nil);
+    });
+
+    // ---- the tree follows the active tab (explorer.auto-reveal)
+    NSString *big = [MCGuiScratch() stringByAppendingPathComponent:@"revealrepo"];
+    auto bf = ^NSString *(NSString *rel) { return [big stringByAppendingPathComponent:rel]; };
+    NSString *target = bf(@"m_deep/a/b/c/d/e/target.txt");
+    NSString *near = bf(@"m_deep/a/b/c/d/e/near.txt");
+    __block NSString *settingsBefore = nil;
+    MCGuiStep(@"a folder of 20,000 files: a_big and z_big, m_deep/a/b/c/d/e between", ^{
+        WriteMany(bf(@"a_big"), 10000);
+        WriteMany(bf(@"z_big"), 10000);
+        MCGuiWriteFile(target, @"target\n");
+        MCGuiWriteFile(near, @"near\n");
+        MCGuiWriteFile(bf(@"readme.txt"), @"readme\n");
+        settingsBefore = SettingsNow();
+        const NSUInteger before = MCGuiControllers().count;
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:big]]];
+        GCHECK(MCGuiControllers().count == before + 1);
+        c = MCGuiController();
+        MCGuiSetKeyWindow(c.window);
+        [c.outline expandItem:ItemAt(c, bf(@"a_big"))];
+        [c.outline expandItem:ItemAt(c, bf(@"z_big"))];
+        GCHECK(c.outline.numberOfRows > 20000);
+        GCHECK(!ItemAt(c, bf(@"m_deep")).loaded);   // never listed yet
+        GCHECK(!c.sidebarCollapsed && NSHeight(c.sidebarScroll.contentView.bounds) > 100);
+        // A first open, so the next two pay no first-time costs.
+        [c openFileAtPath:bf(@"readme.txt") from:EditorTabs::OpenFrom::Other];
+    });
+    MCGuiStep(@"a deep file opened: its folders open, its row selected and centered, cheaply", ^{
+        [c.window makeFirstResponder:c.textView];
+        // A plain open first, of a file whose row is in view.
+        double c0 = MCGuiThreadCpuMs();
+        [c openFileAtPath:bf(@"a_big/f00001.txt") from:EditorTabs::OpenFrom::Other];
+        const double plain = MCGuiThreadCpuMs() - c0;
+        GCHECK_EQ_STR(Selected(c), bf(@"a_big/f00001.txt"));
+        c0 = MCGuiThreadCpuMs();
+        [c openFileAtPath:target from:EditorTabs::OpenFrom::Other];
+        const double deep = MCGuiThreadCpuMs() - c0;
+        MCGuiNote(@"a plain open %.1f ms CPU, the deep one with its reveal %.1f ms", plain, deep);
+        GCHECK_TIME(deep - plain, 150, @"opening m_deep/a/b/c/d/e and centering the row");
+        GCHECK_EQ_STR(c.currentPath, target);
+        GCHECK(Expanded(c, bf(@"m_deep")) && Expanded(c, bf(@"m_deep/a/b/c/d/e")));
+        GCHECK_EQ_STR(Selected(c), target);
+        if (RowsFromMiddle(c, target) > 1)
+            MCGuiNote(@"row %@, the tree's view %@", NSStringFromRect([c.outline rectOfRow:RowOf(c, target)]),
+                      NSStringFromRect(c.sidebarScroll.contentView.bounds));
+        GCHECK(RowsFromMiddle(c, target) <= 1);
+        GCHECK(c.window.firstResponder == c.textView);   // the tree never takes the keyboard
+        GCHECK(Expanded(c, bf(@"a_big")) && Expanded(c, bf(@"z_big")));   // nothing closed
+    });
+    MCGuiStep(@"another tab: the selection follows and the row shows; back: centered again", ^{
+        [c activateTab:[c tabForPath:bf(@"a_big/f00001.txt")]];
+        GCHECK_EQ_STR(Selected(c), bf(@"a_big/f00001.txt"));
+        GCHECK(WhollyInView(c, bf(@"a_big/f00001.txt")));
+        GCHECK(!WhollyInView(c, target));
+        [c activateTab:[c tabForPath:target]];
+        GCHECK_EQ_STR(Selected(c), target);
+        GCHECK(RowsFromMiddle(c, target) <= 1);
+        GCHECK(c.window.firstResponder == c.textView);
+    });
+    MCGuiStep(@"a row in view is selected without the tree moving", ^{
+        GCHECK(WhollyInView(c, near));
+        const CGFloat top = TreeTop(c);
+        [c openFileAtPath:near from:EditorTabs::OpenFrom::Other];
+        GCHECK_EQ_STR(Selected(c), near);
+        GCHECK(TreeTop(c) == top);
+        [c activateTab:[c tabForPath:target]];
+        GCHECK_EQ_STR(Selected(c), target);
+        GCHECK(TreeTop(c) == top);
+        GCHECK(c.window.firstResponder == c.textView);
+    });
+    MCGuiStep(@"a click in the tree on a row cut by the bottom opens it without scrolling", ^{
+        NSString *cut = bf(@"z_big/f00040.txt");
+        const NSInteger row = RowOf(c, cut);
+        const NSRect r = [c.outline rectOfRow:row];
+        NSClipView *clip = c.sidebarScroll.contentView;
+        [clip scrollToPoint:NSMakePoint(0, NSMaxY(r) - NSHeight(clip.bounds) - NSHeight(r) / 2)];
+        [c.sidebarScroll reflectScrolledClipView:clip];
+        GCHECK(!WhollyInView(c, cut));
+        const CGFloat top = TreeTop(c);
+        [c handleRowClick:row atPoint:NSMakePoint(NSMidX(r), NSMidY(r))];
+        GCHECK_EQ_STR(c.currentPath, cut);
+        GCHECK_EQ_STR(Selected(c), cut);
+        GCHECK(TreeTop(c) == top);
+    });
+    MCGuiStep(@"a file outside the focused folder leaves the tree as it is", ^{
+        GCHECK(([c setTreeFocusFolders:@[@"z_big"]]));
+        [c.window makeFirstResponder:c.textView];
+        NSString *selected = Selected(c);
+        const CGFloat top = TreeTop(c);
+        [c activateTab:[c tabForPath:target]];
+        GCHECK_EQ_STR(c.currentPath, target);
+        GCHECK_EQ_STR(c.treeFocus, @"z_big");   // never widened
+        GCHECK_EQ_STR(Selected(c), selected);
+        GCHECK(TreeTop(c) == top);
+        GCHECK(c.window.firstResponder == c.textView);
+        // Inside it, the tree follows.
+        [c activateTab:[c tabForPath:bf(@"z_big/f00040.txt")]];
+        GCHECK_EQ_STR(Selected(c), bf(@"z_big/f00040.txt"));
+        [c showWholeFolderInTree:nil];
+        GCHECK_EQ_STR(c.treeFocus, @"");
+    });
+    MCGuiStep(@"explorer.auto-reveal = off: nothing moves; turned on, the file shows", ^{
+        MCGuiSetSettings([settingsBefore stringByAppendingString:@"\nexplorer.auto-reveal = off\n"]);
+        [c.outline collapseItem:ItemAt(c, bf(@"m_deep"))];
+        [c activateTab:[c tabForPath:near]];
+        GCHECK_EQ_STR(c.currentPath, near);
+        GCHECK(!Expanded(c, bf(@"m_deep")));
+        GCHECK(RowOf(c, near) < 0);
+        MCGuiSetSettings(settingsBefore);
+        GCHECK(Expanded(c, bf(@"m_deep/a/b/c/d/e")));
+        GCHECK_EQ_STR(Selected(c), near);
+        GCHECK(RowsFromMiddle(c, near) <= 1);
+        GCHECK(c.window.firstResponder == c.textView);
+    });
+    MCGuiStep(@"the sidebar closed: nothing moves until it opens, then the file shows once", ^{
+        [c.outline collapseItem:ItemAt(c, bf(@"m_deep"))];
+        [c toggleSidebarVisibility:nil];
+        GCHECK(c.sidebarCollapsed);
+        [c activateTab:[c tabForPath:target]];
+        GCHECK(!Expanded(c, bf(@"m_deep")));
+        [c toggleSidebarVisibility:nil];
+        GCHECK(!c.sidebarCollapsed);
+        GCHECK(Expanded(c, bf(@"m_deep/a/b/c/d/e")));
+        GCHECK_EQ_STR(Selected(c), target);
+        GCHECK(RowsFromMiddle(c, target) <= 1);
+        GCHECK(c.window.firstResponder == c.textView);
+    });
+    MCGuiStep(@"close the folder of 20,000 files", ^{
+        CloseChecked(c);
+        MCGuiSetKeyWindow(nil);
+        [[NSFileManager defaultManager] removeItemAtPath:big error:nil];
     });
 }
