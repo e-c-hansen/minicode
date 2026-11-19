@@ -90,6 +90,7 @@ private:
     GtkWidget* view_;
     GtkWidget* popover_ = nullptr;
     GtkWidget* entry_ = nullptr;
+    bool selectOnMap_ = false;   // shown, the keyboard to be given once mapped
 };
 
 }  // namespace lspgtk

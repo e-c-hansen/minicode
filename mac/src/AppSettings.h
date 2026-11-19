@@ -30,6 +30,14 @@ extern NSNotificationName const MCSettingsDidChangeNotification;
 // Writes `theme = <themeId>` into the file (Settings::withTheme), commenting
 // out the file's own colors with `commentColors`, and applies it at once.
 - (BOOL)writeTheme:(NSString *)themeId commentColors:(BOOL)commentColors;
+// Shows a theme in every window without writing it: the theme picker's
+// preview (ThemePickerPanel.h). The file's own colors still win, and a
+// change to the file meanwhile keeps the preview over it. nil shows the
+// file's own theme again. Views hear it as any settings change, and only
+// when the theme on show changes.
+- (void)previewTheme:(NSString *)themeId;
+// The theme being previewed, nil for none.
+@property(nonatomic, readonly, copy) NSString *previewedTheme;
 // Writes `key = value` into the file (Settings::withValue) and applies it
 // at once.
 - (BOOL)writeValue:(NSString *)value forKey:(NSString *)key;

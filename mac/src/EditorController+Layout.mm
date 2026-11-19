@@ -230,7 +230,13 @@
     [self.rightArea addSubview:_editorFind.bar];
     [self buildTabStrip];
 
-    [split addSubview:treeScroll];
+    // The sidebar: its row of panel icons over the tree, or over the panel
+    // shown in the tree's place (SidebarIcons.h).
+    MCSidebarHost *sidebarHost = [[MCSidebarHost alloc] initWithFrame:frame];
+    self.sidebarHost = sidebarHost;
+    sidebarHost.content = treeScroll;
+    [split addSubview:sidebarHost];
+    [self sidebarIconsInstall];
     [split addSubview:self.rightArea];
 
     // Container holds, back to front: the blur, the title bar strip, the split
@@ -384,6 +390,7 @@
     self.titleLabel.textColor = [cfg text:Surface::Titlebar];
 
     self.sidebarScroll.panelColor = [cfg background:Surface::Sidebar];
+    [self sidebarIconsApplySettings];   // the row of panel icons: colors, workbench.sidebar-icons
     [self refreshTreeCells];   // names, and their sizes and dates
     [self updateTreeFocusBar];   // the focused tree's breadcrumb, in the sidebar's text color
     [self treeAutoRevealSettingsApplied];   // explorer.auto-reveal
@@ -471,6 +478,7 @@
 - (void)keymapChanged:(NSNotification *)note {
     (void)note;
     [self showSettingsErrors];
+    [self sidebarIconsUpdate];   // the icons' tooltips name their keys
     if (!self.hintsPanel.hidden) [self updateHints];
 }
 
@@ -923,7 +931,7 @@ static const CGFloat kDividerGrabSlop = 5;
     NSView *from = [self sidebarViewOnShow];
     NSView *to = self.gitPanelVisible ? self.sidebarScroll : self.gitPanel;
     to.frame = from.frame;
-    if (from != to) [self.splitView replaceSubview:from with:to];
+    if (from != to) [self sidebarShowPanelView:to];
     self.gitPanelVisible = !self.gitPanelVisible;
     self.agentsVisible = NO;
     self.processesVisible = NO;
@@ -938,6 +946,7 @@ static const CGFloat kDividerGrabSlop = 5;
         [self.window makeFirstResponder:self.outline];
     }
     [self treeRevealIfShown];   // the tree back: the file that came on show meanwhile
+    [self sidebarIconsUpdate];
     if (self.hintsVisible) [self updateHints];
 }
 
@@ -955,7 +964,7 @@ static const CGFloat kDividerGrabSlop = 5;
     NSView *from = [self sidebarViewOnShow];
     NSView *to = self.agentsVisible ? self.sidebarScroll : _agents.panel;
     to.frame = from.frame;
-    if (from != to) [self.splitView replaceSubview:from with:to];
+    if (from != to) [self sidebarShowPanelView:to];
     self.agentsVisible = !self.agentsVisible;
     self.gitPanelVisible = NO;
     self.processesVisible = NO;
@@ -966,6 +975,7 @@ static const CGFloat kDividerGrabSlop = 5;
     if (self.agentsVisible) [_agents.panel focusList];
     else [self.window makeFirstResponder:self.outline];
     [self treeRevealIfShown];   // the tree back: the file that came on show meanwhile
+    [self sidebarIconsUpdate];
     if (self.hintsVisible) [self updateHints];
 }
 

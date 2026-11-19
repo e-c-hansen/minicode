@@ -20,7 +20,9 @@ NSMenu *MCAdjustSettingsMenu(NSString *surface, NSView *source);
 // up the responder chain with the surface id as its representedObject.
 NSMenu *MCAdjustSettingsSubmenu(void);
 
-// View > Theme: a row per theme (Settings::themes), the one in use checked.
+// View > Theme: Choose Theme…, the picker that previews each theme
+// (ThemePickerPanel.h), then a row per theme (Settings::themes), the one in
+// use checked.
 // Choosing one writes `theme = <id>` into the settings file, first asking,
 // when the file sets colors of its own, whether to comment those out so the
 // whole theme shows.

@@ -198,7 +198,16 @@ GtkWidget* paneOf(GtkWidget* w);
 
 // View > Theme opened by real clicks, up to its rows.
 void openThemeMenu() {
-    MCGuiWait("no menu open", 10, [] { return !anyMenuOpen() && MCGuiOnScreen(menuBar()); });
+    // The keyboard off the menu bar too: after an earlier menu closed,
+    // MenuBarFocus gives it back a moment later, and read before that the
+    // pane "before" was the bar's item, the keyboard then going back to the
+    // editor (1 run in 8 here, more on a busy machine).
+    MCGuiWait("no menu open, the keyboard off the menu bar", 10, [] {
+        GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
+        GtkWidget* bar = menuBar();
+        return !anyMenuOpen() && MCGuiOnScreen(bar) && focus && focus != bar &&
+               !gtk_widget_is_ancestor(focus, bar);
+    });
     MCGuiStep("View", [] {
         gPaneBefore = paneOf(gtk_root_get_focus(GTK_ROOT(MCGuiApp().window)));
         MCGuiClick(MCGuiFindLabel(menuBar(), "View"));

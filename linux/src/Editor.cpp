@@ -4,6 +4,7 @@
 // (the buffer, the highlighter, the disk) is Document.cpp, and the tabs are
 // Tabs.cpp.
 #include "Editor.h"
+#include "PopoverKeep.h"
 #include "AgentNotes.h"
 #include "InlineAgentBar.h"
 #include "Question.h"
@@ -110,6 +111,20 @@ Editor::Editor(std::shared_ptr<SessionLink::Link> link) : link_(std::move(link))
     GtkEventController* motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(onMotion), this);
     gtk_widget_add_controller(view_, motion);
+    // Files dropped on the text, from the tree or a file manager, open in
+    // tabs of their own, and a folder is shown in the tree, as VS Code and
+    // the Mac's editor do (#212), through the links' way (openLink in
+    // main.cpp). Capture phase, ahead of GtkTextView's own drop target,
+    // which typed a file's path into the text. Dropped text is still the
+    // view's to insert.
+    GtkDropTarget* drop = gtk_drop_target_new(GDK_TYPE_FILE_LIST,
+        (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK));
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(drop), GTK_PHASE_CAPTURE);
+    g_signal_connect(drop, "drop", G_CALLBACK(+[](GtkDropTarget*, const GValue* value, double,
+                                                   double, gpointer selfp) -> gboolean {
+        return static_cast<Editor*>(selfp)->openDropped(value);
+    }), this);
+    gtk_widget_add_controller(view_, GTK_EVENT_CONTROLLER(drop));
     // Return, noted for its indent (onViewKey), and Ctrl+Z, Ctrl+Shift+Z and
     // Ctrl+Y: the document's own undo (Document::undo), before the view's
     // bindings reach GTK's, which stays off; in a Markdown page, whose
@@ -654,6 +669,9 @@ void Editor::titleChanged() {
 void Editor::stash() {
     Document* d = active_;
     if (!d) return;
+    // The page's block editor applies its draft to the tab it was opened in
+    // before that tab leaves (the Mac's stashActiveTab, #223).
+    commitPageEdit();
     // A color picked a moment ago belongs to the file it was picked in.
     if (colorSaveTimer_) saveColorNow();
     dropColorPopover();
@@ -2156,6 +2174,7 @@ void Editor::togglePreview() {
         // is the user's.
         notePreviewRest();
     } else {
+        commitPageEdit();   // the source shows the draft, applied
         dropMdPopover();
         clearPage(d);
         d->setShowsPreview(false);
@@ -2622,6 +2641,29 @@ void Editor::openMarkdownLink(const std::string& url) {
     if (linkHandler_) linkHandler_(link);
 }
 
+bool Editor::openDropped(const GValue* value) {
+    if (!linkHandler_ || !value || !G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) return false;
+    std::vector<Link> links;
+    GSList* files = gdk_file_list_get_files((GdkFileList*)g_value_get_boxed(value));
+    for (GSList* l = files; l; l = l->next) {   // the list is ours, the files not
+        char* p = g_file_get_path(G_FILE(l->data));
+        struct stat st;
+        if (p && stat(p, &st) == 0) {
+            Link link;
+            link.target = p;
+            link.isDir = S_ISDIR(st.st_mode);
+            links.push_back(link);
+        }
+        g_free(p);
+    }
+    g_slist_free(files);
+    if (links.empty()) return false;
+    // A copy: opening may replace the handler's owner's state.
+    std::function<void(const Link&)> open = linkHandler_;
+    for (const Link& link : links) open(link);
+    return true;
+}
+
 bool Editor::scrollToAnchor(const std::string& anchorIn) {
     if (!inMarkdownPage()) return false;
     char* un = g_uri_unescape_string(anchorIn.c_str(), nullptr);
@@ -2669,7 +2711,7 @@ void Editor::editMarkdownBlock(int line, int column, const GdkRectangle& at, boo
     mdAdding_ = false;
     mdAnchor_ = at;
     showMdPopover(std::string(kinds[block.kind]) +
-                      " (Markdown; Enter saves, Shift+Enter for a new line)",
+                      " (Markdown; Enter applies, Shift+Enter for a new line)",
                   source.substr(block.start, block.end - block.start),
                   block.kind == MarkdownEdit::Block::ListItem);
 }
@@ -2679,6 +2721,19 @@ void Editor::showMdPopover(const std::string& title, const std::string& text, bo
         mdPop_ = gtk_popover_new();
         gtk_popover_set_position(GTK_POPOVER(mdPop_), GTK_POS_BOTTOM);
         gtk_widget_set_parent(mdPop_, mdInPane_ && side_ ? side_->textView() : view_);
+        // Kept through an app switch with what was typed (#223); a click
+        // elsewhere in the window applies the draft, as every close but
+        // Escape and Cancel does (commitPageEdit).
+        PopoverKeep::install(mdPop_, [this] { commitMdEdit(); });
+        // Closed with the keyboard still in it (Enter, Escape, Apply,
+        // Cancel), the page it was over takes the keyboard back, as on the
+        // Mac, rather than leaving it in the hidden box.
+        g_signal_connect(mdPop_, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer) {
+            GtkWidget* over = gtk_widget_get_parent(GTK_WIDGET(p));
+            GtkRoot* root = over ? gtk_widget_get_root(over) : nullptr;
+            GtkWidget* focus = root ? gtk_root_get_focus(root) : nullptr;
+            if (focus && gtk_widget_is_ancestor(focus, GTK_WIDGET(p))) gtk_widget_grab_focus(over);
+        }), nullptr);
         GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
         gtk_widget_set_size_request(box, 440, -1);
         mdPopLabel_ = gtk_label_new("");
@@ -2697,13 +2752,40 @@ void Editor::showMdPopover(const std::string& title, const std::string& text, bo
         gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll), 260);
         gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE);
         gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(scroll), TRUE);
-        // Enter saves and Shift+Enter types a newline, as on the Mac; Escape
-        // closes the popover by itself.
+        // Enter applies and Shift+Enter types a newline, as on the Mac;
+        // Escape drops the draft, as Cancel does (the only two that do).
         GtkEventController* keys = gtk_event_controller_key_new();
         gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
         g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint key,
                                                            guint, GdkModifierType mods,
                                                            gpointer selfp) -> gboolean {
+            Editor* self = static_cast<Editor*>(selfp);
+            if (key == GDK_KEY_Escape) {
+                self->mdEditValid_ = false;
+                gtk_popover_popdown(GTK_POPOVER(self->mdPop_));
+                return TRUE;
+            }
+            // Save's keys (Ctrl+S, or keys.conf's) apply the draft, then
+            // save, as Cmd+S does on the Mac: the window's accelerators never
+            // see a key typed in the box (GTK hands it to the popover's own
+            // shortcut handling), so it is asked for here.
+            if (GtkApplication* app = GTK_APPLICATION(g_application_get_default())) {
+                char** accels = gtk_application_get_accels_for_action(app, "win.save");
+                bool save = false;
+                for (char** a = accels; a && *a && !save; a++) {
+                    guint k = 0;
+                    GdkModifierType m = (GdkModifierType)0;
+                    if (gtk_accelerator_parse(*a, &k, &m))
+                        save = gdk_keyval_to_lower(k) == gdk_keyval_to_lower(key) &&
+                               (mods & gtk_accelerator_get_default_mod_mask()) == m;
+                }
+                g_strfreev(accels);
+                if (save) {
+                    self->commitMdEdit();
+                    gtk_widget_activate_action(self->view_, "win.save", nullptr);
+                    return TRUE;
+                }
+            }
             if ((key != GDK_KEY_Return && key != GDK_KEY_KP_Enter) || (mods & GDK_SHIFT_MASK))
                 return FALSE;
             static_cast<Editor*>(selfp)->commitMdEdit();
@@ -2728,7 +2810,7 @@ void Editor::showMdPopover(const std::string& title, const std::string& text, bo
             self->mdEditValid_ = false;
             gtk_popover_popdown(GTK_POPOVER(self->mdPop_));
         }), this);
-        GtkWidget* save = gtk_button_new_with_label("Save");
+        GtkWidget* save = gtk_button_new_with_label("Apply");
         gtk_widget_add_css_class(save, "suggested-action");
         g_signal_connect_swapped(save, "clicked", G_CALLBACK(+[](gpointer selfp) {
             static_cast<Editor*>(selfp)->commitMdEdit();
@@ -2843,6 +2925,10 @@ void Editor::setBlockEditorText(const std::string& text) {
     if (!mdPopText_) return;
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(mdPopText_)), text.c_str(),
                              (int)text.size());
+}
+
+void Editor::commitPageEdit() {
+    if (mdPop_ && mdEditValid_) commitMdEdit();
 }
 
 void Editor::dropMdPopover() {

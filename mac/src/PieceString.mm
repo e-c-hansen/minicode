@@ -1,6 +1,7 @@
 // PieceString.mm — see PieceString.h.
 #import "PieceString.h"
 #include "PieceTable.h"
+#include <objc/runtime.h>
 #include <algorithm>
 #include <vector>
 
@@ -294,3 +295,22 @@ BOOL SameAttributes(NSDictionary *a, NSDictionary *b) {
 }
 
 @end
+
+// ---------------------------------------------------------------- held bytes
+static char kHeldAsciiKey;
+
+void MCSetHeldAsciiBytes(NSString *text, const char *bytes, NSUInteger length) {
+    if (!text || !bytes) return;
+    // Not freed here: the string's own deallocator unmaps them.
+    NSData *d = [NSData dataWithBytesNoCopy:(void *)bytes length:length freeWhenDone:NO];
+    objc_setAssociatedObject(text, &kHeldAsciiKey, d, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+const char *MCHeldAsciiBytes(NSString *text, NSUInteger *length) {
+    *length = 0;
+    if (!text) return nullptr;
+    NSData *d = objc_getAssociatedObject(text, &kHeldAsciiKey);
+    if (!d || d.length != text.length) return nullptr;
+    *length = d.length;
+    return (const char *)d.bytes;
+}

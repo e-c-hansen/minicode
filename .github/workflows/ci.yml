@@ -9,11 +9,14 @@ on:
   workflow_dispatch:
 
 # A newer push to a pull request's branch cancels that branch's run still
-# going, which nobody will read; runs on main always finish, so each commit
-# there has a verdict. A run by hand is a group of its own, so several can
-# run at once on one commit (measuring how often a check fails).
+# going, which nobody will read. A push to main is a group of its own, by
+# its commit, so every commit there gets a run and a verdict: one group for
+# main kept one run going and one waiting, and GitHub cancelled the waiting
+# one at a third push before any job started (13 of 52 commits on
+# 2026-11-19 had no verdict). A run by hand is a group of its own too, so
+# several can run at once on one commit (measuring how often a check fails).
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
+  group: ci-${{ github.event_name == 'push' && format('push-{0}', github.sha) || github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # bash with pipefail everywhere (the default shell on macOS runners has no

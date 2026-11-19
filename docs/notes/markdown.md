@@ -56,6 +56,36 @@ found through that list.
   so the preview and a double-click agree. Tests: `md:*` (GFM's in
   `tests/markdown_gfm_tests.inc`), `tests/markdown/corpus.md`, and the
   `markdown_preview` GUI suite.
+- **GitHub's alerts, emoji and front matter** (2026-11-19, round 9's
+  "render plainly"; `md:alerts`, `md:emoji`, `md:front-matter`,
+  `markdown_preview`'s corpus step). Alerts: the quote's first line
+  `[!NOTE]` (TIP, IMPORTANT, WARNING, CAUTION, any case, an outer quote
+  only) becomes its title paragraph; `analyze()` keeps the kind per quote
+  group and every block of the group gets `Block::alert`, stamped on
+  `MdRun::alert` (the title's runs `alertTitle`); the gap runs inside take
+  the block's after them, so the bar is not cut. The Mac colors the outer
+  bar by kind (`MCAlertColor`, GitHub's light and dark shades), sets the
+  title in it after an SF Symbol tinted to it (`MCAlertIcon`), the text in
+  the body color, and marks the runs `kMarkdownAlert` with the kind's
+  name; a quote block remembers its kind (`kMCAlertKey`) so two quotes
+  never share a bar. MarkdownHtml writes GitHub's markup
+  (`markdown-alert markdown-alert-<kind>`, `markdown-alert-title` with a
+  small inline SVG) and both shades in its stylesheet. Emoji:
+  `MarkdownEmoji` (core, about 900 of gemoji's 1,800 names, one code point each, U+FE0F
+  added where the default is text) is applied at the end of `inlineRuns`
+  to text runs only (not code, math, pictures, footnote numbers, or an
+  address shown as itself), so a table measures after it; a code needs
+  no letter or digit outside its colons ("12:100:30" stays). Front matter
+  (the parser's old rule: `---` on line 0, a `key:` on line 1, `---` or
+  `...` within 200 lines) was a code block; it is a `Block::Table` of one
+  row of keys over one of values (`frontMatterRows`: lists, nested maps and
+  block scalars joined in the cell, quotes dropped, punctuation but `( )`
+  escaped, since `\(` opens math), its runs `frontMatter`. Its lines stay
+  `MdLine::Code` of one edit block, so a double-click edits the YAML as
+  code: the Mac leaves `kMarkdownTableCell` off that table, and the
+  corpus's editable check reads its line, not a cell. Linux and Android
+  show the table and the emoji as they are, and an alert as a quote with a
+  bold title until they read `alert`.
 - **Export as HTML…** (File menu, no key; 2026-11-08): `MarkdownHtml` (core,
   `md:html-export`) writes a standalone page from the same runs: GitHub's
   heading anchors, lists rebuilt from `listDepth`/`quoteIndent`/`quoteDepth`
@@ -211,8 +241,14 @@ found through that list.
   fences, a table cell with newlines and pipes escaped back, a `$$` block
   whole); `applyMarkdownSource:` splices, marks dirty, registers undo,
   re-renders at the same scroll. An edit made while the buffer changed
-  underneath is not applied: its text goes to the clipboard with a status
-  note (`MCKeepLostMarkdownEdit`).
+  underneath (an agent's rewrite read in, Cmd+Z) is made on the text as
+  it is then, the block found again by `MarkdownEdit::rebaseSpan`
+  (`MCMarkdownBlockNow`, `mdedit:rebase`; round 10's documents defect 3,
+  2026-11-19); when the block's own text changed, or is there more than
+  once, it is not applied: its text goes to the clipboard with a status
+  note (`MCKeepLostMarkdownEdit`). `markdown_page` rewrites the file
+  under an open box both ways. Trap: never splice a box's edit at the
+  offsets it opened with into text that changed since.
   The box opens on the double-clicked word (2026-11-15, D2's first step):
   `MarkdownEdit::sourceOffsetFor` finds the page's word in the block's
   Markdown by the 40 characters either side (letters and digits compared,
@@ -246,6 +282,19 @@ found through that list.
   Offscreen the popover never shows, so `markdown_page` checks the
   behavior, posts the app's resign and become-active notifications, and
   calls `popoverWillClose:` by hand.
+  **GTK** (2026-11-19, linux/HANDOFF.md item 120, `edit_boxes`): the
+  block editor says "Enter applies, Shift+Enter for a new line" and has
+  Apply; it is not autohide (`PopoverKeep.h`: an autohide popover closes
+  on an app switch, on X11 because the click on the other program is its
+  grab's outside click), so an app switch keeps it and its draft; a press
+  elsewhere in the window applies the draft, as do `Editor::stash` (a tab
+  leaving), the page turned to its source, Ctrl+S (matched in the box's own
+  key controller from win.save's accelerators: a key typed in a popover
+  never reaches the window's), Save All, closing a tab
+  or the window and quitting (`Editor::commitPageEdit`, before any
+  question); Escape and Cancel drop it. The other group shows no rendered page
+  on GTK (it names the file until clicked, `Groups.cpp`), so the Mac's
+  two-group double-click change has no counterpart.
 - **Pictures**: `MCMarkdownImage` attachments with `MCAnimatedImageCell` (sized
   to the line; a GIF's timer runs only while on screen). An `<img>`'s width
   and height (`MdRun::width`/`height`, `MdLength`: CSS pixels or a percent of
@@ -337,7 +386,14 @@ false`) a formula shows as its TeX in the code style.
   `\begin{pagecolor}` was `\pagecolor` past the word list; an environment's
   name must be letters in braces and is checked as both words, ignoring
   case, and `\lowercase`, `\uppercase`, `\Make...`, `\UseName` and
-  `\ExpandArgs` are refused as more ways to build a word. A
+  `\ExpandArgs` are refused as more ways to build a word. **Trap**
+  (round 10's documents defect 1, `kVersion` 5): what `prepare` drops
+  (`\label{...}`, an equation environment's `\begin` and `\end`) joined
+  the letters either side into a word the check never saw
+  (`\glo\label{q}bal` is `\global`), and a Greek letter spelled as a
+  bare Latin one did the same (`\catc`, omicron, `de`); `check` now also
+  checks `prepare`'s output (inline and display), and `spellUnicode`
+  braces a letter it spells (`{o}`, `{T}`). A
   formula that still closes its box early (`{$}`: TeX closes a brace for the
   `$`) has its rest gobbled unread to `\mcsentinel` by `\mcafter`; one that
   leaves a group open makes `\mcship` (built only from `\mc` copies of the
@@ -442,6 +498,8 @@ text is in place in its section.
 - Markdown: Trap: a transient popover closes when the app loses the keyboard, and what was typed in it goes too.
 - Markdown: Traps: the TextKit 1 editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);
 - Math in the Markdown preview (Mac): **Trap**: `\begin{x}` runs `\csname x\endcsname` and `\end{x}` `\csname endx\endcsname`, so `\begin{pagecolor}` was `\pagecolor` past the word list; an environment's name must be letters in braces and is checked as both words, ignoring case, and `\lowercase`, `\uppercase`, `\Make...`, `\UseName` and `\ExpandArgs` are refused as more ways to build a word.
+- Markdown: Trap: never splice a box's edit at the offsets it opened with into text that changed since.
+- Math in the Markdown preview (Mac): **Trap** (round 10's documents defect 1, `kVersion` 5): what `prepare` drops (`\label{...}`, an equation environment's `\begin` and `\end`) joined the letters either side into a word the check never saw (`\glo\label{q}bal` is `\global`), and a Greek letter spelled as a bare Latin one did the same (`\catc`, omicron, `de`); `check` now also checks `prepare`'s output (inline and display), and `spellUnicode` braces a letter it spells (`{o}`, `{T}`).
 - Math in the Markdown preview (Mac): **Trap**: `\globaldefs=-1` around each formula broke every formula's fonts (LaTeX loads fonts lazily with global definitions); check a change to the batch with a real tectonic (`markdown_math` with `MC_GUI_REAL_TECTONIC`).
 - Math in the Markdown preview (Mac): Trap: an attachment glyph's location is the bottom of its frame, not the baseline.
 - Mermaid in the preview (Mac): **Trap (2026-11-16, round 8 D3)**: the SVG was handed to NSImage until then, whose SVG drawing ignores the `<style>` Mermaid puts every color in and `em` offsets on tspans: labels sat above their boxes, text and boxes were dark grey, and each curved edge, its `fill: none` lost, filled as a black wedge; never draw Mermaid's SVG with NSImage.

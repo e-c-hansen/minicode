@@ -32,8 +32,39 @@ found through that list.
   stamp moved: from `showText:` (a toggle back, a clean tab following the
   disk) and from `recordStamp:ofTab:` (a save, Keep Mine) through
   `htmlFileMayHaveChanged`. Every main-frame navigation away from the
-  tab's own file (a link, a script, a drop) is cancelled and handed to
-  `openMarkdownLink:`; a target=_blank too. **Scripts** (the owner's call,
+  tab's own file (a link, a script, a drop) is cancelled; a link the user
+  clicked or a form they sent (`WKNavigationTypeLinkActivated`,
+  `FormSubmitted`) goes to `openMarkdownLink:`, a target=_blank too; one
+  the page started by itself (a meta refresh, a script setting location,
+  `window.open`) only when it is http(s) and the page's scripts run
+  (`MCHtmlMayFollow`), else it goes to `onRefused` and the status bar
+  names it (`htmlPageRefused:`). **Trap** (round 10's documents defect
+  2, 2026-11-19): a `<meta http-equiv="refresh">` to `zoommtg://` (any
+  app's scheme) went to `openURL:` with no click, and an https one
+  loaded in the browser pane; `html.scripts` never applied, since a
+  meta refresh is not a script. `html_page` loads both kinds and checks
+  nothing reached `openURL:` (`MCGuiOpenedURLs`, the harness records
+  it). Not done: the GTK port's `HtmlPage::started` still opens the
+  address a main-frame load the page started by itself goes to.
+  **Trap** (2026-11-19, after #249): a page whose scripts run can click
+  its own link (`a.click()`) or send its own form (`form.submit()`), and
+  WebKit reports those as `LinkActivated` and `FormSubmitted`, the
+  user's, so such a page still sent `zoommtg://` (any app's scheme) to
+  `openURL:` with no click. `WKNavigationAction` has no public sign of a
+  real click (`buttonNumber` and `modifierFlags` read a left button and
+  none for `a.click()` as for a click; `_isUserInitiated` is SPI, not
+  used), so every followed link to another app
+  (`HtmlPage::opensAnotherApp`: any scheme but http, https and file)
+  asks first in a sheet naming the app (`URLForApplicationToOpenURL:`)
+  and the address (`openAppQuestion`, `openAppDetail`, `htmlpage:apps`),
+  Open the default: one question per click by hand. One sheet at a
+  time; another meanwhile is refused (`onRefused`), and its box, Refuse
+  any more from this page, refuses the rest until the page loads again,
+  so a page clicking its link in a loop cannot hold the window.
+  `html_page` checks a page's `a.click()` at load asks and, cancelled,
+  reaches no `openURL:`, and a real click (mouse down and up handed to
+  the web view) asks and opens. The GTK port can tell the two apart
+  (WebKitGTK's `webkit_navigation_action_is_user_gesture`). **Scripts** (the owner's call,
   2026-11-15, against "nothing runs because a file was opened"):
   `html.scripts` (ask, on, off); with ask, a page whose text
   `FileSniff::htmlMayRunScripts` flags shows with
@@ -87,7 +118,21 @@ found through that list.
   edit changes one line; BOM and a missing final newline kept; a touched row
   of one empty field is written `""`; delimiter guessed (it must split most
   lines as it splits the first). Over 50 MB read-only, 100,000 rows from
-  disk. **One table view serves every CSV tab**: a cell being typed into is
+  disk. **The header row** (2026-11-19, round 9: "the CSV header row is
+  shown as data"; `csv:header`, `previews`): `Csv::looksLikeHeader` (no
+  field of row 0 empty, a number or a date, and a column under it four in
+  five numbers or dates in the first 200 rows; text alone is not guessed)
+  picks it when a file comes on show; the reader's choice, from the right
+  click menu's First Row Is Header (shown read-only too), is kept per path
+  in the user defaults (`MCCsvFirstRowIsHeader`, the 500 newest). With it
+  the grid's rows are the file's from 1 (`headerRows`), the column titles
+  are row 0's fields in bold (an empty one keeps its letter; the letter is
+  the header's tooltip), the number column gives the file's row, and the
+  info line says "N rows under a header". The view's own API
+  (`cellAtRow:`, `setCell:row:`, `rowCount`, the menu items' rows) stays
+  in the file's rows; only the data source and Edit Cell map. The same
+  file shown again (an edit, a reload) keeps the choice; it is guessed
+  again only for another path. **One table view serves every CSV tab**: a cell being typed into is
   committed in `stashActiveTab` and the toggle (`commitEditing`), and
   dropped before `showText:` replaces the document, or NSTableView commits
   it into the next file at the old row. Undo steps keep only the changed
@@ -192,6 +237,8 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- Viewers in the editor's slot (Mac): **Trap** (round 10's documents defect 2, 2026-11-19): a `<meta http-equiv="refresh">` to `zoommtg://` (any app's scheme) went to `openURL:` with no click, and an https one loaded in the browser pane; `html.scripts` never applied, since a meta refresh is not a script.
+- Viewers in the editor's slot (Mac): **Trap** (2026-11-19, after #249): a page whose scripts run can click its own link (`a.click()`) or send its own form (`form.submit()`), and WebKit reports those as `LinkActivated` and `FormSubmitted`, the user's, so such a page still sent `zoommtg://` (any app's scheme) to `openURL:` with no click.
 - CSV and TSV: **Trap (round 9)**: the grid's `validateMenuItem:` ended in `[super validateMenuItem:]`, which NSTableView does not have (it validates through `validateUserInterfaceItem:`), so validating any menu item the grid was the target of threw, AppKit dropped the key, and no menu key worked while the grid had the keyboard: Shift+Cmd+P "did nothing".
 - JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).
 - Viewers in the editor's slot (Mac): Trap: laying both panes out to size them took 1.5 s on the main thread for 50,000 lines a side; every row has one fixed height (a paragraph style), so sizes and row rects are arithmetic and layout is non-contiguous.

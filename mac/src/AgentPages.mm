@@ -1458,9 +1458,13 @@ static NSString *CountLines(NSString *s) {
     auto add = [&](NSString *str, NSDictionary *attrs) {
         [s appendAttributedString:[[NSAttributedString alloc] initWithString:str ?: @"" attributes:attrs]];
     };
-    NSUInteger counted = 0, refused = 0;
+    // A call with no result yet may be waiting at Claude Code's permission
+    // prompt: not made yet, so not counted as a change (AgentEdits::analyze
+    // leaves it out too).
+    NSUInteger counted = 0, refused = 0, waiting = 0;
     for (MCFileChange *c in _changes) {
         if (c.refused) refused++;
+        else if (!c.answered) waiting++;
         else counted++;
     }
     if (!_changes.count) {
@@ -1480,6 +1484,9 @@ static NSString *CountLines(NSString *s) {
               NSForegroundColorAttributeName: _gone ? PHex(0xE8A33D) : text});
         if (refused)
             add([NSString stringWithFormat:@"; %lu refused and not made", (unsigned long)refused],
+                @{NSFontAttributeName: body, NSForegroundColorAttributeName: Muted()});
+        if (waiting)
+            add([NSString stringWithFormat:@"; %lu with no result yet and not counted", (unsigned long)waiting],
                 @{NSFontAttributeName: body, NSForegroundColorAttributeName: Muted()});
         add(@"\n", @{NSFontAttributeName: body});
     }
@@ -1559,7 +1566,8 @@ static NSString *CountLines(NSString *s) {
             : @"No longer in the file: something changed this text since.";
         noteColor = PHex(0xE8A33D);
     } else if (!c.answered) {
-        note = @"No result yet in the transcript.";
+        note = @"No result yet in the transcript: Claude Code may be waiting for permission, so this "
+               @"is not counted as made.";
     }
     if (note)
         add([note stringByAppendingString:@"\n"],

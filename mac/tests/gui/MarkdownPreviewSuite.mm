@@ -358,6 +358,46 @@ MC_GUI_SUITE(markdown_preview) {
         GCHECK(html != NSNotFound);
         NSFont *plain = Attr(c, NSFontAttributeName, html + 1);
         GCHECK(!(plain.fontDescriptor.symbolicTraits & NSFontDescriptorTraitItalic));
+        // GitHub's alerts: the bar in the kind's color, the title in it too,
+        // after its icon; the text reads as body text.
+        const NSUInteger note = At(c, @"An alert, as GitHub writes them.");
+        GCHECK(note != NSNotFound);
+        GCHECK([Attr(c, kMarkdownAlert, note) isEqualToString:@"note"]);
+        NSTextBlock *noteBar = Para(c, note).textBlocks.firstObject;
+        GCHECK([noteBar widthForLayer:NSTextBlockBorder edge:NSRectEdgeMinX] > 1);
+        NSColor *blue = [[noteBar borderColorForEdge:NSRectEdgeMinX]
+            colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+        GCHECK(blue.blueComponent > blue.redComponent + 0.3);   // GitHub's note blue
+        const NSUInteger warning = At(c, @"Another kind.");
+        GCHECK([Attr(c, kMarkdownAlert, warning) isEqualToString:@"warning"]);
+        // The warning's title is its own paragraph above, starting with an icon.
+        NSString *page = Text(c).string;
+        const NSRange titleLine = [page lineRangeForRange:NSMakeRange(
+            [page lineRangeForRange:NSMakeRange(warning, 0)].location - 2, 0)];
+        GCHECK([[page substringWithRange:titleLine] containsString:@"Warning"]);
+        GCHECK([Attr(c, NSAttachmentAttributeName, titleLine.location)
+            isKindOfClass:NSTextAttachment.class]);
+        GCHECK([Attr(c, kMarkdownAlert, titleLine.location) isEqualToString:@"warning"]);
+        NSColor *bar = [[Para(c, warning).textBlocks.firstObject borderColorForEdge:NSRectEdgeMinX]
+            colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+        GCHECK(bar.redComponent > bar.blueComponent + 0.3);   // GitHub's warning amber
+        // One bar from the title down: the title, gap and text share it.
+        GCHECK(Para(c, titleLine.location).textBlocks.firstObject ==
+               Para(c, warning).textBlocks.firstObject);
+        // A plain quote keeps its grey bar.
+        NSColor *grey = [Para(c, outer).textBlocks.firstObject borderColorForEdge:NSRectEdgeMinX];
+        GCHECK([grey isEqual:Hex(0x4B5563)]);
+        // Emoji shortcodes are emoji; an unknown one and one in code stay.
+        NSString *tada = [NSString stringWithUTF8String:"\xF0\x9F\x8E\x89"];
+        GCHECK(At(c, [@"them: " stringByAppendingString:tada]) != NSNotFound);
+        GCHECK(At(c, @":not_an_emoji:") != NSNotFound);
+        GCHECK(At(c, @"so does :tada: in code") != NSNotFound);
+        // Front matter is a table above the title, edited as its lines.
+        const NSUInteger purpose = At(c, @"purpose");
+        GCHECK(purpose != NSNotFound && purpose < title);
+        GCHECK([Para(c, purpose).textBlocks.firstObject isKindOfClass:NSTextTableBlock.class]);
+        GCHECK(Attr(c, kMarkdownTableCell, purpose) == nil);
+        GCHECK(At(c, @"title: Markdown corpus") == NSNotFound);
         // A <details> summary is bold.
         NSFont *summary = Attr(c, NSFontAttributeName, At(c, @"A summary, in bold"));
         GCHECK(summary.fontDescriptor.symbolicTraits & NSFontDescriptorTraitBold);
@@ -366,6 +406,7 @@ MC_GUI_SUITE(markdown_preview) {
         // Pictures to look at, with MC_GUI_SNAPSHOTS set.
         MCGuiSnapshot(Text(c), @"markdown-corpus");
         for (NSString *at in @[@"and a code block", @"an item in a quote", @"A quote inside the step",
+                               @"An alert, as GitHub",
                                @"*Not emphasis*", @"A claim that needs", @"A second note."]) {
             [c scrollEditorToY:NSMinY([c textRectForCharacter:At(c, at)]) - 200];
             MCGuiSnapshot([c valueForKey:@"editorScroll"], [@"markdown-" stringByAppendingString:
@@ -546,14 +587,35 @@ MC_GUI_SUITE(markdown_preview) {
         GCHECK(At(c, @"Markdown again, after a blank line.") != NSNotFound);
     });
 
-    MCGuiStep(@"an edit after the file changed underneath goes to the clipboard, and says so", ^{
+    MCGuiStep(@"an edit after the file changed elsewhere lands where its block now is", ^{
         EditorController *c = MCGuiController();
         const NSUInteger at = At(c, @"Markdown again, after a blank line.");
         GCHECK(at != NSNotFound);
         NSRect r = [c textRectForCharacter:at];
         GCHECK([c editMarkdownAtCharacter:at point:NSMakePoint(NSMidX(r), NSMidY(r))]);
-        // Meanwhile the buffer changes (a reload from disk, an agent's edit).
-        NSString *changed = [c.sourceText stringByAppendingString:@"\nAdded meanwhile.\n"];
+        // Meanwhile the buffer changes elsewhere (a reload, an agent's edit).
+        NSString *was = [c.sourceText copy];
+        NSString *changed = [@"Added meanwhile.\n\n" stringByAppendingString:was];
+        [c setValue:changed forKey:@"sourceText"];
+        SaveEdit(c, @"Markdown again, edited.");
+        MCGuiNote(@"text now: %@", c.sourceText);
+        GCHECK([c.sourceText hasPrefix:@"Added meanwhile.\n\n"]);   // kept
+        GCHECK([c.sourceText containsString:@"Markdown again, edited."]);
+        GCHECK(![c.sourceText containsString:@"Markdown again, after a blank line."]);
+        [c setValue:was forKey:@"sourceText"];
+        [c renderMarkdownKeepingPlace];
+    });
+    MCGuiStep(@"an edit after its own block changed underneath goes to the clipboard, and says so", ^{
+        EditorController *c = MCGuiController();
+        const NSUInteger at = At(c, @"Markdown again, after a blank line.");
+        GCHECK(at != NSNotFound);
+        NSRect r = [c textRectForCharacter:at];
+        GCHECK([c editMarkdownAtCharacter:at point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        // Meanwhile that very block changes (a reload from disk, an agent's edit).
+        NSString *changed = [c.sourceText stringByReplacingOccurrencesOfString:
+                                              @"Markdown again, after a blank line."
+                                                                    withString:@"Markdown again, rewritten meanwhile."];
+        GCHECK(![changed isEqualToString:c.sourceText]);
         [c setValue:changed forKey:@"sourceText"];
         [NSPasteboard.generalPasteboard clearContents];
         SaveEdit(c, @"My careful rewrite.");
@@ -564,12 +626,14 @@ MC_GUI_SUITE(markdown_preview) {
         GCHECK([note.stringValue containsString:@"your text is on the clipboard"]);
         // Saving it unchanged is no edit, and loses nothing worth a note.
         [c renderMarkdownKeepingPlace];
-        const NSUInteger again = At(c, @"Markdown again, after a blank line.");
+        const NSUInteger again = At(c, @"Markdown again, rewritten meanwhile.");
+        GCHECK(again != NSNotFound);
+        if (again == NSNotFound) return;
         r = [c textRectForCharacter:again];
         GCHECK([c editMarkdownAtCharacter:again point:NSMakePoint(NSMidX(r), NSMidY(r))]);
         [c setValue:[changed stringByAppendingString:@"x"] forKey:@"sourceText"];
         [NSPasteboard.generalPasteboard clearContents];
-        SaveEdit(c, @"Markdown again, after a blank line.");
+        SaveEdit(c, @"Markdown again, rewritten meanwhile.");
         GCHECK([NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString] == nil);
     });
 

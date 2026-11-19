@@ -15,8 +15,9 @@ enum Font { kKey = 0, kLabel = 1, kHeading = 2 };
 // The most columns, for the widest screens at the smallest zoom (the Mac's).
 const int kMaxColumns = 16;
 
-// The Mac's colors: keys blue, what they do light, states and headings muted.
-const guint32 kKeyColor = 0x4EA1F7, kLabelColor = 0xE0E0E0, kMutedColor = 0x9D9D9D;
+// The Mac's colors: keys blue (theme::kHintsKeyColor), what they do light,
+// states and headings muted.
+const guint32 kLabelColor = 0xE0E0E0, kMutedColor = 0x9D9D9D;
 
 void insert(PangoAttrList* list, PangoAttribute* a, size_t from, size_t to) {
     a->start_index = (guint)from;
@@ -33,6 +34,8 @@ PangoAttribute* color(guint32 rgb) {
 }  // namespace
 
 HintsColumns::HintsColumns() {
+    // Dark Modern's, until main.cpp gives the theme's.
+    colors_ = {Rgba::hex(0xCE9178), Rgba::hex(0xC586C0), Rgba::hex(0xDCDCAA)};
     area_ = gtk_drawing_area_new();
     gtk_widget_add_css_class(area_, "minicode-hints-text");
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(area_), draw, this, nullptr);
@@ -119,7 +122,8 @@ void HintsColumns::setFonts(double points, double scale) {
     baseline_ = std::round((lineH_ - ascent - descent) / 2 + ascent);
 }
 
-// `text`'s width in `font` as drawn, whole pixels rounded up.
+// `text`'s width in `font` as drawn, whole pixels rounded up (a key's
+// spaces half a cell, as keyAttributes draws them).
 double HintsColumns::measure(int font, const std::string& text) {
     if (text.empty()) return 0;
     auto known = widths_[font].find(text);
@@ -131,6 +135,9 @@ double HintsColumns::measure(int font, const std::string& text) {
         pango_attr_list_insert(attrs,
                                pango_attr_letter_spacing_new((int)(letterSpacing_ * PANGO_SCALE)));
         pango_attr_list_insert(attrs, pango_attr_text_transform_new(PANGO_TEXT_TRANSFORM_UPPERCASE));
+    } else if (font == kKey) {
+        attrs = pango_attr_list_new();
+        keyAttributes(attrs, text, 0, false);
     }
     pango_layout_set_attributes(scratch_, attrs);
     if (attrs) pango_attr_list_unref(attrs);
@@ -142,25 +149,55 @@ double HintsColumns::measure(int font, const std::string& text) {
     return w;
 }
 
-void HintsColumns::show(std::vector<HintRow>& rows, double room, double points, double scale,
-                        const std::string& query) {
+// The thin space between a key's parts (Commands::kLinuxKeyJoin) or a
+// space in one ("Page Down"): bytes at `i`, or 0.
+static size_t spaceAt(const std::string& s, size_t i) {
+    if (s[i] == ' ') return 1;
+    return s.compare(i, 3, "\xE2\x80\x89") == 0 ? 3 : 0;
+}
+
+void HintsColumns::keyAttributes(PangoAttrList* list, const std::string& key, size_t at,
+                                 bool colors) const {
+    for (size_t i = 0; i < key.size();) {
+        if (const size_t n = spaceAt(key, i)) {
+            // Half a cell of the keys' monospace (4 pixels at 10 points):
+            // a whole one spreads a key out, the desktop font's thin space
+            // (2 pixels) ran "Ctrl Alt S" together.
+            insert(list, pango_attr_scale_new(0.5), at + i, at + i + n);
+            i += n;
+            continue;
+        }
+        size_t j = i;
+        while (j < key.size() && !spaceAt(key, j)) ++j;
+        const std::string word = key.substr(i, j - i);
+        const Rgba* c = word == "Ctrl"    ? &colors_.ctrl
+                        : word == "Alt"   ? &colors_.alt
+                        : word == "Super" ? &colors_.super
+                                          : nullptr;
+        if (c && colors) insert(list, color((guint32)(c->r << 16 | c->g << 8 | c->b)), at + i, at + j);
+        i = j;
+    }
+}
+
+void HintsColumns::show(const std::vector<HintRow>& rows, double room, double points,
+                        double scale, const std::string& query) {
     using Kind = PageMeasure::HintItem::Kind;
     setFonts(points, scale);
+    given_ = rows;
+    room_ = std::max(room, 40.0);
 
     // The rows as the core's items: a row with no key goes with the one
     // before it, a line of text is kept with what follows it as a heading
     // is, and the blank line before the last row is a gap.
-    std::vector<std::vector<size_t>> items;   // each item's rows
-    std::vector<PageMeasure::HintItem> measured;
-    for (size_t i = 0; i < rows.size(); ++i) {
-        HintRow& r = rows[i];
-        r.column = -1;
-        r.start = r.textAt = r.stateAt = r.end = 0;
-        if (r.kind == HintRow::Row && r.key.empty() && !measured.empty() &&
-            measured.back().kind == Kind::Shortcut) {
-            items.back().push_back(i);
-            measured.back().height += lineH_;
-            measured.back().label = std::max(measured.back().label, measure(kLabel, r.text));
+    items_.clear();
+    measured_.clear();
+    for (size_t i = 0; i < given_.size(); ++i) {
+        const HintRow& r = given_[i];
+        if (r.kind == HintRow::Row && r.key.empty() && !measured_.empty() &&
+            measured_.back().kind == Kind::Shortcut) {
+            items_.back().push_back(i);
+            measured_.back().height += lineH_;
+            measured_.back().label = std::max(measured_.back().label, measure(kLabel, r.text));
             continue;
         }
         PageMeasure::HintItem m;
@@ -183,11 +220,82 @@ void HintsColumns::show(std::vector<HintRow>& rows, double room, double points, 
             m.state = measure(kLabel, r.state);
             m.height = lineH_;
         }
-        items.push_back({i});
-        measured.push_back(m);
+        items_.push_back({i});
+        measured_.push_back(m);
     }
-    const PageMeasure::HintsLayout layout =
-        PageMeasure::layoutHints(measured, std::max(room, 40.0), 12 * scale, 28 * scale, kMaxColumns);
+    // The list as it is without a query, whose columns and size a query's
+    // keeps to.
+    const PageMeasure::HintsLayout plain =
+        PageMeasure::layoutHints(measured_, room_, 12 * scale_, 28 * scale_, kMaxColumns);
+    plainCount_ = plain.count();
+    plainWidth_ = (int)std::ceil(plain.textWidth);
+    plainHeight_ = plain.wraps ? 0 : (int)std::ceil(plain.textHeight);
+    query_ = query;
+    order_ = orderFor(query_);
+    layOut();
+    applyMarks();
+}
+
+HintsSearch::Bubbled HintsColumns::orderFor(const std::string& query) const {
+    HintsSearch::Bubbled b;
+    const std::vector<bool> found = HintsSearchBox::found(given_, query);
+    if (found.empty()) {
+        for (size_t i = 0; i < items_.size(); ++i) b.order.push_back(i);
+        b.rest = b.order.size();
+        return b;
+    }
+    auto isLine = [this](size_t item) {
+        const HintRow& r = given_[items_[item].front()];
+        return r.kind == HintRow::Text && !r.text.empty();
+    };
+    std::vector<HintsSearch::Item> list;
+    list.reserve(items_.size());
+    for (size_t i = 0; i < items_.size(); ++i) {
+        const HintRow& r = given_[items_[i].front()];
+        HintsSearch::Item it;
+        if (r.kind == HintRow::Heading) {
+            it.kind = HintsSearch::Item::Heading;
+        } else if (r.kind == HintRow::Text && r.text.empty()) {
+            it.kind = HintsSearch::Item::Gap;
+        } else if (r.kind == HintRow::Text) {
+            // A note's lines go together.
+            it.kind = HintsSearch::Item::Line;
+            it.withNext = i + 1 < items_.size() && isLine(i + 1);
+        }
+        for (size_t ri : items_[i]) it.matches = it.matches || found[ri];
+        list.push_back(it);
+    }
+    return HintsSearch::bubbleMatches(list);
+}
+
+void HintsColumns::layOut() {
+    using Kind = PageMeasure::HintItem::Kind;
+    ++layouts_;
+    bool reordered = false;
+    for (size_t p = 0; p < order_.order.size(); ++p) reordered = reordered || order_.order[p] != p;
+
+    // The items in their order, and their rows, a heading that is there
+    // twice a row each time.
+    std::vector<PageMeasure::HintItem> measured;
+    std::vector<std::vector<size_t>> units;   // each place's rows in `placed`
+    std::vector<HintRow> placed;
+    std::vector<size_t> rowAt;
+    for (size_t p = 0; p < order_.order.size(); ++p) {
+        const size_t item = order_.order[p];
+        measured.push_back(measured_[item]);
+        units.emplace_back();
+        for (size_t ri : items_[item]) {
+            HintRow r = given_[ri];
+            r.column = -1;
+            r.start = r.textAt = r.stateAt = r.end = 0;
+            r.rest = p >= order_.rest;
+            units.back().push_back(placed.size());
+            placed.push_back(std::move(r));
+            rowAt.push_back(p);
+        }
+    }
+    const PageMeasure::HintsLayout layout = PageMeasure::layoutHints(
+        measured, room_, 12 * scale_, 28 * scale_, reordered ? plainCount_ : kMaxColumns);
     wraps_ = layout.wraps;
 
     // Each column's text, a line a row, and its fonts and colors.
@@ -219,15 +327,16 @@ void HintsColumns::show(std::vector<HintRow>& rows, double room, double points, 
             // A blank line above a heading or the last row's gap, except at
             // the column's top.
             if (i != col.first && measured[i].spaceBefore > 0) line();
-            for (size_t ri : items[i]) {
-                HintRow& r = rows[ri];
+            for (size_t pi : units[i]) {
+                HintRow& r = placed[pi];
                 r.column = c;
                 if (measured[i].kind == Kind::Gap) continue;   // its blank line
                 line();
                 if (r.kind == HintRow::Row) {
                     r.start = s.size();
                     s += r.key;
-                    style(r.start, kKey, kKeyColor);
+                    style(r.start, kKey, theme::kHintsKeyColor);
+                    keyAttributes(attrs, r.key, r.start, true);
                     s += "\t";
                     r.textAt = s.size();
                     s += r.text;
@@ -266,19 +375,38 @@ void HintsColumns::show(std::vector<HintRow>& rows, double room, double points, 
         tallest = std::max(tallest, (int)(pango_layout_get_line_count(out.layout) * lineH_));
         columns_.push_back(out);
     }
-    rows_ = rows;
-    width_ = (int)std::ceil(layout.textWidth);
-    height_ = tallest;
+    rows_ = std::move(placed);
+    rowAt_ = std::move(rowAt);
+    // Reordered, the panel keeps at least its size without a query, so
+    // that it neither shrinks nor jumps as the query changes.
+    width_ = std::max((int)std::ceil(layout.textWidth), reordered ? plainWidth_ : 0);
+    height_ = std::max(tallest, reordered ? plainHeight_ : 0);
     gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(area_), std::max(1, width_));
     gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(area_), std::max(1, height_));
-    mark(query);
 }
 
 double HintsColumns::mark(const std::string& query) {
+    if (query == query_) return applyMarks();
+    query_ = query;
+    HintsSearch::Bubbled b = orderFor(query_);
+    if (b.order != order_.order) {
+        // What the query finds changed: laid out again.
+        order_ = std::move(b);
+        layOut();
+    } else if (b.rest != order_.rest) {
+        // The same order, nothing found or everything (or the query
+        // emptied with nothing found before): only the rows dimmed change.
+        order_.rest = b.rest;
+        for (size_t i = 0; i < rows_.size(); ++i) rows_[i].rest = rowAt_[i] >= order_.rest;
+    }
+    return applyMarks();
+}
+
+double HintsColumns::applyMarks() {
     std::vector<PangoAttrList*> lists;
     for (const Column& c : columns_) lists.push_back(pango_attr_list_copy(c.base));
     std::vector<std::pair<int, size_t>> hits;
-    HintsSearchBox::attributes(rows_, query, lists, &hits);
+    HintsSearchBox::attributes(rows_, query_, lists, &hits);
     for (size_t c = 0; c < columns_.size(); ++c) {
         pango_layout_set_attributes(columns_[c].layout, lists[c]);
         pango_attr_list_unref(lists[c]);
@@ -291,7 +419,6 @@ double HintsColumns::mark(const std::string& query) {
     gtk_widget_queue_draw(area_);
     return top;
 }
-
 double HintsColumns::lineTop(int column, int index) const {
     PangoLayout* l = layout(column);
     if (!l) return 0;

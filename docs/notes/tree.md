@@ -391,7 +391,12 @@ found through that list.
   (`MCGuiFindLabel`): `tree_clicks` waited for its own folder's b.txt to
   go and found rif4/b.txt, which its folder closing moved up into view
   (FLAKY on CI in both runs from the one rif4 came in, 2026-11-19, passing
-  alone; the folder had closed and stayed closed).
+  alone; the folder had closed and stayed closed). Brought into view
+  first (`MCGuiBringTreeRow`): `preview_tabs` waited for p-a.txt by name
+  and failed in every soak round of 2026-11-19, the folders earlier
+  suites had opened holding it far below the tree's last row (CI's order
+  runs it sixth, the project nearly empty). Every suite now finds tree
+  rows by path.
 
 - **A row going keeps the tree's place (GTK)** (2026-11-18, the owner: "If
   I delete a file in the filetree panel, rather than simply removing it
@@ -430,6 +435,16 @@ found through that list.
   and the keyboard moves to the next row only once the row is out; and the
   tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or
   the tree goes to the next tab's file.
+- **Rows dragged out of the tree on GTK** (2026-11-19, linux/HANDOFF.md
+  item 120, the Mac's #212): the row's GdkFileList (Move and Copy) dropped
+  on the terminal types its path as the Mac's does (`Terminal::dropped`,
+  TermDrop::paths, as a paste; VTE's GTK 4 build takes no drops), and on
+  the editor's text opens the file in a tab of its own, a folder shown in
+  the tree (`Editor::openDropped` through the link handler; a capture-phase
+  drop target ahead of GtkTextView's, which typed the path). Checked by
+  `tree_drags` with real XTest drags. The tree's name box (Rename, New
+  File) keeps its typing through an app switch (`PopoverKeep.h`, checked
+  by `edit_boxes`).
 
 ## Traps
 

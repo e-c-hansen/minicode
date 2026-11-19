@@ -1,5 +1,6 @@
 // LspPicker.cpp — see LspPicker.h.
 #include "LspPicker.h"
+#include "PopoverKeep.h"
 
 #include "Palette.h"
 
@@ -13,16 +14,12 @@ void installCss() {
     static bool done = false;
     if (done || !gdk_display_get_default()) return;
     done = true;
+    // Only the layout: the colors follow the theme (ThemeCss.cpp, #212).
     const std::string css =
-        "popover.minicode-picker > contents, popover.minicode-rename > contents {"
-        "  background-color: " + std::string(pal::SidebarBg) + ";"
-        "  color: " + pal::EditorText + ";"
-        "  border: 1px solid #454545; border-radius: 4px; padding: 0; }"
         "popover.minicode-picker list { background: transparent; }"
         "popover.minicode-picker row { padding: 1px 8px; min-height: 0; }"
-        "popover.minicode-picker row:selected { background-color: #04395E; }"
         "popover.minicode-picker row.minicode-picker-heading { padding-top: 4px; }"
-        "popover.minicode-rename > contents { padding: 4px; }";
+        "popover.minicode-rename > contents { padding: 0; }";
     GtkCssProvider* p = gtk_css_provider_new();
     gtk_css_provider_load_from_string(p, css.c_str());
     gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(p),
@@ -176,20 +173,52 @@ RenameBox::~RenameBox() {
     }
 }
 
+// Over the name itself, as VS Code's rename field and the Mac's (#212): no
+// arrow, the field's text where the name's is, in the editor's font, with
+// the old name selected, so the line below stays in view. Kept through an
+// app switch with what was typed (#223, PopoverKeep.h); a click elsewhere
+// in the window cancels, as Escape does.
 void RenameBox::show(const std::string& name, const GdkRectangle& at) {
     if (!popover_) {
         popover_ = gtk_popover_new();
         gtk_widget_add_css_class(popover_, "minicode-rename");
         gtk_popover_set_position(GTK_POPOVER(popover_), GTK_POS_BOTTOM);
+        gtk_popover_set_has_arrow(GTK_POPOVER(popover_), FALSE);
         entry_ = gtk_entry_new();
         gtk_editable_set_width_chars(GTK_EDITABLE(entry_), 32);
         g_signal_connect(entry_, "activate", G_CALLBACK(onActivate), this);
         gtk_popover_set_child(GTK_POPOVER(popover_), entry_);
         g_signal_connect(popover_, "closed", G_CALLBACK(onClosed), this);
         gtk_widget_set_parent(popover_, view_);
+        PopoverKeep::install(popover_, [this] { close(); });
+        // A popover not on screen yet takes the keyboard once it is.
+        g_signal_connect(popover_, "map", G_CALLBACK(+[](GtkWidget*, gpointer selfp) {
+            RenameBox* self = static_cast<RenameBox*>(selfp);
+            if (self->selectOnMap_) {
+                self->selectOnMap_ = false;
+                gtk_widget_grab_focus(self->entry_);
+                gtk_editable_select_region(GTK_EDITABLE(self->entry_), 0, -1);
+            }
+        }), this);
+    }
+    // The editor's font, so the name reads as it does in the text.
+    if (const PangoFontDescription* font =
+            pango_context_get_font_description(gtk_widget_get_pango_context(view_))) {
+        PangoAttrList* attrs = pango_attr_list_new();
+        pango_attr_list_insert(attrs, pango_attr_font_desc_new(font));
+        gtk_entry_set_attributes(GTK_ENTRY(entry_), attrs);
+        pango_attr_list_unref(attrs);
     }
     gtk_editable_set_text(GTK_EDITABLE(entry_), name.c_str());
-    gtk_popover_set_pointing_to(GTK_POPOVER(popover_), &at);
+    // A popover is centered under the rectangle it points at: one as wide as
+    // the box puts the box's left edge there, kInset before the name, so the
+    // field's text starts where the name does; its top just above the line.
+    const int kInset = 5;   // the box's border, the field's border and padding (ThemeCss.cpp)
+    int width = 0;
+    gtk_widget_measure(entry_, GTK_ORIENTATION_HORIZONTAL, -1, nullptr, &width, nullptr, nullptr);
+    const GdkRectangle over = {at.x - kInset, at.y - 3, width + 2, 1};
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover_), &over);
+    selectOnMap_ = true;
     gtk_popover_popup(GTK_POPOVER(popover_));
     gtk_widget_grab_focus(entry_);
     gtk_editable_select_region(GTK_EDITABLE(entry_), 0, -1);

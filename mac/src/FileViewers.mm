@@ -191,6 +191,10 @@ static BOOL IsTsvPath(NSString *path) {
                 MCFileViewers *me = weakSelf;
                 if (me.onOpenLink) me.onOpenLink(url);
             };
+            _html.onRefused = ^(NSURL *url) {
+                MCFileViewers *me = weakSelf;
+                if (me.onHtmlRefused) me.onHtmlRefused(url);
+            };
             [self addView:_html];
         }
         _kind = kind;

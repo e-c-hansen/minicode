@@ -39,6 +39,21 @@ static void testMarkdownHtml() {
 
     GROUP("md:html-export");
     {
+        // GitHub's alerts as GitHub writes them, and front matter's table.
+        const std::string alert = body("> [!WARNING]\n> Mind the step.\n\n> plain\n");
+        CHECK(has(alert, "<div class=\"markdown-alert markdown-alert-warning\">\n"
+                         "<p class=\"markdown-alert-title\"><svg class=\"octicon\""));
+        CHECK(has(alert, "Warning</strong></p>\n<p>Mind the step.</p>\n</div>\n"));
+        CHECK(has(alert, "<blockquote>\n<p>plain</p>\n</blockquote>"));
+        CHECK(balanced(alert));
+        const std::string page = MarkdownHtml::page("> [!TIP]\n> x\n", "t");
+        CHECK(has(page, ".markdown-alert-tip { border-left-color: #1a7f37; }"));
+        CHECK(has(page, ".markdown-alert-tip { border-left-color: #3fb950; }"));   // dark
+        const std::string fm = body("---\ntitle: T\n---\ntext :tada:\n");
+        CHECK(has(fm, "<table class=\"front-matter\">\n<thead>\n<tr><th>title</th></tr>"));
+        CHECK(has(fm, "<td>T</td>") && has(fm, "<p>text \xF0\x9F\x8E\x89</p>"));
+    }
+    {
         // A standalone page: doctype, charset, its title, a stylesheet,
         // and nothing fetched.
         const std::string p = page("# Hello & Co <3\n\nText.\n", "file.md");

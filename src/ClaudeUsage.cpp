@@ -623,6 +623,15 @@ std::string pctText(double p) {
     return s;
 }
 
+// A session id as the log keeps it: letters, digits, '-', '_' and '.', at
+// most 64; anything else makes it unknown (empty).
+std::string sessionWord(const std::string &id) {
+    if (id.empty() || id.size() > 64) return "";
+    for (unsigned char c : id)
+        if (!std::isalnum(c) && c != '-' && c != '_' && c != '.') return "";
+    return id;
+}
+
 bool number(const std::string &w, double *out) {
     if (w.empty()) return false;
     char *e = nullptr;
@@ -645,6 +654,7 @@ bool sampleFromStatusJson(const std::string &json, double now, Sample *out) {
     readWindow(rl["seven_day"], &out->weekPct, &out->weekReset);
     if (!out->hasFive()) out->fivePct = -1, out->fiveReset = 0;
     if (!out->hasWeek()) out->weekPct = -1, out->weekReset = 0;
+    if (j["session_id"].isString()) out->session = sessionWord(j["session_id"].asString());
     return out->hasFive() || out->hasWeek();
 }
 
@@ -659,16 +669,21 @@ std::string formatSample(const Sample &s) {
     std::snprintf(b, sizeof b, "v1 %.0f %s %s", std::floor(s.time),
                   win(s.hasFive(), s.fivePct, s.fiveReset).c_str(),
                   win(s.hasWeek(), s.weekPct, s.weekReset).c_str());
-    return b;
+    const std::string session = sessionWord(s.session);
+    return session.empty() ? std::string(b) : std::string(b) + " " + session;
 }
 
 bool parseSample(const std::string &line, Sample *out) {
     *out = Sample();
     std::istringstream in(line);
-    std::string w[7];
+    std::string w[8];
     int n = 0;
-    while (n < 7 && in >> w[n]) n++;
-    if (n != 6 || w[0] != "v1") return false;
+    while (n < 8 && in >> w[n]) n++;
+    if ((n != 6 && n != 7) || w[0] != "v1") return false;
+    if (n == 7) {
+        out->session = sessionWord(w[6]);
+        if (out->session.empty()) return false;
+    }
     if (!number(w[1], &out->time) || out->time <= 0) return false;
     auto win = [](const std::string &p, const std::string &r, double *pct, double *reset) {
         if (p == "-" && r == "-") return true;
@@ -694,13 +709,67 @@ std::vector<Sample> parseLog(const std::string &text) {
     return out;
 }
 
+bool olderReading(const Sample &last, const Sample &next) {
+    bool older = false, newer = false;
+    auto window = [&](bool hasLast, double pLast, double rLast, bool hasNext, double pNext,
+                      double rNext) {
+        if (!hasLast || !hasNext) return;
+        if (rNext < rLast - 90) older = true;
+        else if (rNext > rLast + 90) newer = true;
+        else if (pNext < pLast - 1e-6) older = true;
+        else if (pNext > pLast + 1e-6) newer = true;
+    };
+    window(last.hasFive(), last.fivePct, last.fiveReset, next.hasFive(), next.fivePct, next.fiveReset);
+    window(last.hasWeek(), last.weekPct, last.weekReset, next.hasWeek(), next.weekPct, next.weekReset);
+    return older && !newer;
+}
+
 bool worthLogging(const Sample &last, const Sample &next, double minGap) {
     if (last.time <= 0) return true;
+    // A second session's stale reading (logged when the user types into a
+    // session that has been idle) is not news; logging it made the log
+    // alternate between two sessions' values and grow a line a run.
+    if (olderReading(last, next)) return false;
     if (std::fabs(last.fivePct - next.fivePct) > 1e-6 || std::fabs(last.weekPct - next.weekPct) > 1e-6)
         return true;
     if (std::fabs(last.fiveReset - next.fiveReset) > 1 || std::fabs(last.weekReset - next.weekReset) > 1)
         return true;
     return next.time - last.time >= minGap;
+}
+
+std::vector<Sample> readingTimes(const std::vector<Sample> &samples,
+                                 const std::vector<Entry> &entries) {
+    // Each session's reply times, oldest first, for the sessions that logged.
+    std::map<std::string, std::vector<double>> replies;
+    for (const Sample &s : samples)
+        if (!s.session.empty()) replies[s.session];
+    if (!replies.empty())
+        for (const Entry &e : entries) {
+            auto it = replies.find(e.sessionId);
+            if (it != replies.end()) it->second.push_back(e.time);
+        }
+    std::vector<Sample> out;
+    out.reserve(samples.size());
+    std::map<std::string, double> lastReading;   // per session, the reading last kept
+    for (const Sample &s : samples) {
+        Sample r = s;
+        if (!s.session.empty()) {
+            const std::vector<double> &times = replies[s.session];
+            auto it = std::upper_bound(times.begin(), times.end(), s.time);
+            if (it != times.begin()) {
+                r.time = *(it - 1);
+                // The same reply's reading logged again (the status line
+                // runs every few seconds): not a reading of its own.
+                auto seen = lastReading.find(s.session);
+                if (seen != lastReading.end() && seen->second == r.time) continue;
+                lastReading[s.session] = r.time;
+            }
+        }
+        out.push_back(r);
+    }
+    std::stable_sort(out.begin(), out.end(),
+                     [](const Sample &a, const Sample &b) { return a.time < b.time; });
+    return out;
 }
 
 // ------------------------------------------------------------- the fit
@@ -722,21 +791,46 @@ struct Group {
 // reading; smaller ones are added to the next.
 constexpr double kReadingCost = 0.25, kReadingPct = 2.0;
 
-std::vector<Group> groups(const std::vector<Sample> &samples, const std::vector<Entry> &entries,
-                          Window w, double coveredFrom) {
-    std::vector<Group> out;
-    for (const Sample &s : samples) {
+// One window's readings, at their own times (readingTimes), oldest first,
+// each newer than the one before: a reading with an earlier reset than one
+// already seen, or the same reset and a lower percent, is a stale one (a
+// session's that had been idle, logged before sessions were) and left out.
+// The percent never falls within a window, so it never starts the fit over.
+struct Point {
+    double time = 0, pct = 0, reset = 0;
+};
+
+std::vector<Point> points(const std::vector<Sample> &samples, const std::vector<Entry> &entries,
+                          Window w) {
+    std::vector<Point> out;
+    for (const Sample &s : readingTimes(samples, entries)) {
         const bool has = w == Window::FiveHour ? s.hasFive() : s.hasWeek();
         if (!has) continue;
-        const double pct = w == Window::FiveHour ? s.fivePct : s.weekPct;
-        const double reset = w == Window::FiveHour ? s.fiveReset : s.weekReset;
-        if (s.time >= reset) continue;   // taken after its window ended
-        if (out.empty() || std::fabs(out.back().reset - reset) > 90) {
+        Point p;
+        p.time = s.time;
+        p.pct = w == Window::FiveHour ? s.fivePct : s.weekPct;
+        p.reset = w == Window::FiveHour ? s.fiveReset : s.weekReset;
+        if (!out.empty()) {
+            const Point &prev = out.back();
+            if (p.reset < prev.reset - 90) continue;
+            if (std::fabs(p.reset - prev.reset) <= 90 && p.pct < prev.pct - 1e-6) continue;
+        }
+        out.push_back(p);
+    }
+    return out;
+}
+
+std::vector<Group> groups(const std::vector<Point> &pts, const std::vector<Entry> &entries,
+                          Window w, double coveredFrom) {
+    std::vector<Group> out;
+    for (const Point &p : pts) {
+        if (p.time >= p.reset) continue;   // taken after its window ended
+        if (out.empty() || std::fabs(out.back().reset - p.reset) > 90) {
             Group g;
-            g.reset = reset;
+            g.reset = p.reset;
             out.push_back(g);
         }
-        out.back().points.push_back({s.time, pct});
+        out.back().points.push_back({p.time, p.pct});
     }
     const double length = windowLength(w);
     for (Group &g : out) {
@@ -751,11 +845,6 @@ std::vector<Group> groups(const std::vector<Sample> &samples, const std::vector<
             if (t <= prevT) continue;
             const double dc = costBetween(entries, prevT, t);
             const double dp = p - prevP;
-            if (dp < -0.5) {   // the percent fell: start over from here
-                prevT = t;
-                prevP = p;
-                continue;
-            }
             const bool last = i + 1 == g.points.size();
             if (dc >= kReadingCost || dp >= kReadingPct || (last && (dc >= 0.05 || dp >= 0.5))) {
                 g.readings.push_back({std::max(0.0, dp), dc});
@@ -795,7 +884,7 @@ Fit fitFrom(const std::vector<Group> &gs) {
 }  // namespace
 
 Fit fitScale(const std::vector<Sample> &samples, const std::vector<Entry> &entries, Window w) {
-    return fitFrom(groups(samples, entries, w, 0));
+    return fitFrom(groups(points(samples, entries, w), entries, w, 0));
 }
 
 // ------------------------------------------------------------- the forecast
@@ -805,18 +894,20 @@ WindowForecast windowForecast(const std::vector<Sample> &samples, const std::vec
                               double now, Window w, double coveredFrom) {
     WindowForecast out;
     const double length = windowLength(w);
-    const std::vector<Group> gs = groups(samples, entries, w, coveredFrom);
-    out.fit = fitFrom(gs);
-    const Sample *last = nullptr;
+    // The readings logged by now, at their own times; the newest is the
+    // last (an older one, a second session's stale reading, is left out).
+    std::vector<Sample> taken;
     for (const Sample &s : samples)
-        if (s.time <= now && (w == Window::FiveHour ? s.hasFive() : s.hasWeek()) &&
-            (!last || s.time >= last->time))
-            last = &s;
-    if (!last) return out;
+        if (s.time <= now) taken.push_back(s);
+    const std::vector<Point> pts = points(taken, entries, w);
+    const std::vector<Group> gs = groups(pts, entries, w, coveredFrom);
+    out.fit = fitFrom(gs);
+    if (pts.empty()) return out;
+    const Point *last = &pts.back();
     out.known = true;
     out.sampledAt = last->time;
-    const double pct = w == Window::FiveHour ? last->fivePct : last->weekPct;
-    const double reset = w == Window::FiveHour ? last->fiveReset : last->weekReset;
+    const double pct = last->pct;
+    const double reset = last->reset;
     const double scale = out.fit.ok ? out.fit.scale : 0;
     double windowStart;
     if (now < reset) {
@@ -864,15 +955,10 @@ WindowForecast windowForecast(const std::vector<Sample> &samples, const std::vec
         out.pctPerHourHigh = *std::max_element(rates.begin(), rates.end());
     } else if (!out.estimated) {
         // No fit yet: the readings' own slope over the last hour.
-        for (const Sample &s : samples) {
-            const bool has = w == Window::FiveHour ? s.hasFive() : s.hasWeek();
-            const double r = w == Window::FiveHour ? s.fiveReset : s.weekReset;
-            if (!has || std::fabs(r - reset) > 90 || s.time < last->time - kHour) continue;
-            const double dt = last->time - s.time;
-            if (dt >= 600) {
-                const double p0 = w == Window::FiveHour ? s.fivePct : s.weekPct;
-                out.pctPerHour = std::max(0.0, (pct - p0) / (dt / kHour));
-            }
+        for (const Point &p : pts) {
+            if (std::fabs(p.reset - reset) > 90 || p.time < last->time - kHour) continue;
+            const double dt = last->time - p.time;
+            if (dt >= 600) out.pctPerHour = std::max(0.0, (pct - p.pct) / (dt / kHour));
             break;
         }
         out.pctPerHourLow = out.pctPerHourHigh = out.pctPerHour;

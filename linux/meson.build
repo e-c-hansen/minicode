@@ -14,6 +14,7 @@ core_dir = meson.current_source_dir() / '..' / 'src'
 core_sources = [
   core_dir / 'SyntaxHighlighter.cpp',
   core_dir / 'MarkdownParser.cpp',
+  core_dir / 'MarkdownEmoji.cpp',
   core_dir / 'MarkdownEdit.cpp',
   core_dir / 'MarkdownTasks.cpp',
   core_dir / 'MarkdownPage.cpp',
@@ -27,6 +28,7 @@ core_sources = [
   core_dir / 'KeepSorted.cpp',
   core_dir / 'FolderSearch.cpp',
   core_dir / 'TextFind.cpp',
+  core_dir / 'TextScan.cpp',
   core_dir / 'Regex.cpp',
   # The find bar's rules, several replacements over one text, and the word
   # at the caret that seeds the query (PARITY.md 1.6).
@@ -560,7 +562,10 @@ port_tests = executable('mutible-linux-tests',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', core_dir / 'GitModel.cpp',
   'src/WebImageRules.cpp', 'src/LaunchOptions.cpp', 'src/EnvLock.cpp',
-  'src/MigrationLinux.cpp'],
+  'src/MigrationLinux.cpp',
+  # ThemeCss's popups read the find bar's palette (FindRules).
+  core_dir / 'FindRules.cpp', core_dir / 'EditSpans.cpp', core_dir / 'MultiCaret.cpp',
+  core_dir / 'TextFind.cpp', core_dir / 'Regex.cpp'],
   include_directories : inc,
   dependencies : [dependency('gio-2.0'), dependency('threads')],
   install : false)

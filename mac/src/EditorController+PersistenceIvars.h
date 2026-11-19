@@ -18,5 +18,10 @@
     // Quitting kept the unsaved tabs' backups for the next launch
     // (keepUnsavedTabsForNextLaunch), so terminating leaves them.
     BOOL _unsavedKeptForNextLaunch;
+    // This window's name in the backups (Backups::Entry::window), kept in
+    // its record (TabSessions::Window::backupKey) so the next launch's
+    // window takes its own unsaved buffers: from the record it was brought
+    // back from, else new (backupKey).
+    NSString *_backupKey;
 }
 @end

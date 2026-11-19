@@ -32,6 +32,7 @@ std::string MCUtf8(NSString *s) { return s.UTF8String ?: ""; }
 
 - (NSUInteger)runs { return _runs; }
 - (BOOL)inRepository { return _topLevel != nil; }
+- (NSUInteger)changeCount { return _decorations ? (NSUInteger)_decorations->changeCount() : 0; }
 - (Git::StatusBranch)statusBranch { return _branch; }
 
 - (void)setBranch:(const Git::StatusBranch &)branch {

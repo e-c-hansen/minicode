@@ -244,9 +244,11 @@ GtkWidget* bookButton(const std::string& text) {
     GtkWidget* b = bookOpen(gWinA) ? modelButton(bookPopover(gWinA), text) : nullptr;
     return b && MCGuiOnScreen(b) ? b : nullptr;
 }
+// A row of `w`'s tree by its path in the window's folder, never its name
+// (docs/notes/tree.md).
 GtkWidget* treeRow(GtkWindow* w, const std::string& name) {
-    FileTree* t = win(w).tree;
-    return t ? MCGuiFindLabel(t->widget(), name) : nullptr;
+    const MCGuiAppWindow a = win(w);
+    return MCGuiTreeRow(a.tree, a.rootDir + "/" + name);
 }
 void setShowHidden(bool on) {
     g_action_group_change_action_state(G_ACTION_GROUP(MCGuiApplication()), "showhidden",

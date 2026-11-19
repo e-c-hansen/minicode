@@ -7,6 +7,15 @@
 //
 // A file too large to edit (over 50 MB) is shown read-only, its first
 // 100,000 rows only, read straight from the disk.
+//
+// A first row that looks like a header (Csv::looksLikeHeader) is shown as
+// the columns' names, bold, in the table's header, which stays in view as
+// the rows scroll; the right click menu's First Row Is Header turns that
+// on and off, and the choice is remembered for the file. Without one the
+// columns are named A, B, C, as a spreadsheet's, and so is a column whose
+// header field is empty. Rows and columns in this API are the file's
+// (row 0 is the header row when there is one); the grid's rows are those
+// under the header.
 #import <Cocoa/Cocoa.h>
 
 @interface MCCsvTableView : NSView
@@ -30,6 +39,9 @@
 - (void)commitEditing;
 
 @property(nonatomic, readonly) BOOL editable;
+// Whether the first row is shown as the columns' names. Setting it
+// remembers the choice for the file on show.
+@property(nonatomic, assign) BOOL firstRowIsHeader;
 @property(nonatomic, readonly) NSUInteger rowCount, columnCount;
 @property(nonatomic, readonly) BOOL truncated;
 @property(nonatomic, readonly) NSString *infoText;   // the line over the table

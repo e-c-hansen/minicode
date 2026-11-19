@@ -1,6 +1,7 @@
 // FolderSearch.cpp — see FolderSearch.h.
 #include "FolderSearch.h"
 #include "MarkdownTasks.h"
+#include "TextScan.h"
 
 #include <algorithm>
 #include <cctype>
@@ -114,109 +115,11 @@ bool cancelled(const std::atomic<bool>* cancel) {
 
 // ------------------------------------------------------------ the needle
 // Text a line must hold to match, looked for in a whole file at once
-// (Horspool's search, on bytes, ASCII letters folded when `fold`).
-struct Needle {
-    std::string bytes;    // lower case when fold
-    bool fold = false;
-    bool never = false;   // holds a line break, so no line can hold it
-    unsigned char skip[256] = {};
+// (TextScan.h, which the editor's find bar shares).
+using Needle = TextScan::Needle;
 
-    bool empty() const { return bytes.empty(); }
-
-    void prepare() {
-        const std::size_t m = bytes.size();
-        if (fold)
-            for (char& c : bytes) c = static_cast<char>(asciiLower(static_cast<unsigned char>(c)));
-        const unsigned char cap = static_cast<unsigned char>(std::min<std::size_t>(m, 255));
-        for (unsigned char& k : skip) k = cap;
-        for (std::size_t k = 0; k + 1 < m; ++k)
-            skip[static_cast<unsigned char>(bytes[k])] =
-                static_cast<unsigned char>(std::min<std::size_t>(m - 1 - k, cap));
-    }
-
-    unsigned char at(const char* s, std::size_t i) const {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        return fold ? asciiLower(c) : c;
-    }
-
-    // The first occurrence in s[from, n), or npos.
-    std::size_t find(const char* s, std::size_t n, std::size_t from) const {
-        const std::size_t m = bytes.size();
-        if (m == 0 || from > n || n - from < m) return std::string::npos;
-        const unsigned char* b = reinterpret_cast<const unsigned char*>(bytes.data());
-        if (m == 1 && !fold) {
-            const void* p = std::memchr(s + from, b[0], n - from);
-            return p ? static_cast<std::size_t>(static_cast<const char*>(p) - s) : std::string::npos;
-        }
-        const unsigned char last = b[m - 1];
-        if (!fold) {
-            // The first byte by memchr, then the rest: quick when that byte
-            // is rare, which a query's first letter usually is per line.
-            for (std::size_t i = from; i + m <= n;) {
-                const void* p = std::memchr(s + i, b[0], n - m + 1 - i);
-                if (!p) return std::string::npos;
-                i = static_cast<std::size_t>(static_cast<const char*>(p) - s);
-                if (static_cast<unsigned char>(s[i + m - 1]) == last &&
-                    std::memcmp(s + i + 1, b + 1, m - 1) == 0)
-                    return i;
-                ++i;
-            }
-            return std::string::npos;
-        }
-        for (std::size_t i = from; i + m <= n;) {
-            const unsigned char c = at(s, i + m - 1);
-            if (c == last) {
-                std::size_t k = 0;
-                while (k + 1 < m && at(s, i + k) == b[k]) ++k;
-                if (k + 1 == m) return i;
-            }
-            i += skip[c];
-        }
-        return std::string::npos;
-    }
-};
-
-// The needle for text every match holds (TextFind::requiredText, or the
-// query): its UTF-8 when matching case; ignoring case, its longest run of
-// ASCII characters, which only ASCII characters fold to.
 Needle makeNeedle(const std::u32string& text, bool caseSensitive) {
-    Needle nd;
-    for (char32_t c : text)
-        if (c == '\n' || c == '\r' || c == 0x2029) {
-            nd.never = true;
-            return nd;
-        }
-    if (caseSensitive) {
-        for (char32_t c : text) {
-            if (c < 0x80) nd.bytes += static_cast<char>(c);
-            else if (c < 0x800) {
-                nd.bytes += static_cast<char>(0xC0 | (c >> 6));
-                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
-            } else if (c < 0x10000) {
-                nd.bytes += static_cast<char>(0xE0 | (c >> 12));
-                nd.bytes += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
-                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
-            } else {
-                nd.bytes += static_cast<char>(0xF0 | (c >> 18));
-                nd.bytes += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
-                nd.bytes += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
-                nd.bytes += static_cast<char>(0x80 | (c & 0x3F));
-            }
-        }
-    } else {
-        std::string run;
-        for (char32_t c : text) {
-            if (c < 0x80) {
-                run += static_cast<char>(c);
-                if (run.size() > nd.bytes.size()) nd.bytes = run;
-            } else {
-                run.clear();
-            }
-        }
-        nd.fold = true;
-    }
-    nd.prepare();
-    return nd;
+    return Needle::make(text, caseSensitive);
 }
 
 std::u32string decodeAll(const std::string& s) {
@@ -496,8 +399,11 @@ FileKind readForSearch(const std::string& path, std::uintmax_t maxSize, std::str
         // Not UTF-8: a single-byte encoding (Latin-1, Windows-1252), read
         // as Windows-1252, unless a NUL anywhere says it is binary (the
         // rule the editor opens such a file by: readsAsWindows1252).
-        if (!readsAsWindows1252(*out)) return FileKind::Silent;
-        *out = decodeWindows1252(*out);
+        if (std::memchr(out->data(), 0, out->size())) return FileKind::Silent;
+        // Mostly UTF-8 with stray bytes (readsAsUtf8WithStrayBytes): its
+        // characters as the editor shows them, never the whole file as
+        // Windows-1252; Replace in Folder leaves it alone too.
+        *out = readsAsUtf8WithStrayBytes(*out) ? decodeUtf8WithStrayBytes(*out) : decodeWindows1252(*out);
         return FileKind::Legacy;
     }
     return FileKind::Searched;
@@ -550,7 +456,7 @@ struct Matcher {
         const bool legacy = o.kind == FileKind::Legacy;
         if (legacy) o.kind = FileKind::Searched;
         if (o.kind != FileKind::Searched) return;
-        if (useNeedle && needle.never) return;   // no line can match
+        if (useNeedle && needle.never()) return;   // no line can match
         const Needle* nd = useNeedle ? &needle : nullptr;
         auto halted = [this, &o] {
             if (cancelled(cancel)) o.cancelled = true;
@@ -652,7 +558,7 @@ struct Matcher {
             }
             const std::string_view view(text.data(), cut);
             if (k) finishAfter(view, o, k);
-            if (!full && !(useNeedle && needle.never))
+            if (!full && !(useNeedle && needle.never()))
                 rows(view, nd, halted, o, line, limit, !eof, &tail);
             full = o.rows.size() >= limit;
             if (eof || (full && o.needAfter.empty())) return;
@@ -750,7 +656,7 @@ struct Matcher {
         std::vector<MarkdownTasks::OpenTask> tasks;
         if (markdown) tasks = MarkdownTasks::openTasks(std::string(content));
         std::size_t nextTask = 0;
-        const std::size_t m = needle.bytes.size();
+        const std::size_t m = needle.byteLength();
         eachLine(content, nd, halted, [&](int lineNo, std::size_t start, std::size_t end,
                                           std::size_t at) {
             const std::string line(content.substr(start, end - start));
@@ -1621,13 +1527,13 @@ FolderSearchResult search(const std::string& root, const std::string& query,
     if (tq.usable()) {
         m.tq = &tq;
         m.needle = makeNeedle(TextFind::requiredText(tq), options.caseSensitive);
-        m.useNeedle = m.needle.never || !m.needle.empty();
+        m.useNeedle = m.needle.never() || !m.needle.empty();
     } else {
         m.needle = makeNeedle(decodeAll(q), options.caseSensitive);
-        m.useNeedle = m.needle.never || !m.needle.empty();
+        m.useNeedle = m.needle.never() || !m.needle.empty();
         // Plain text matching case, or in ASCII (which only ASCII folds
         // to): the needle is the query.
-        m.exact = m.useNeedle && !m.needle.never && (options.caseSensitive || isAscii(q));
+        m.exact = m.useNeedle && !m.needle.never() && (options.caseSensitive || isAscii(q));
     }
     Walker w(options, cancel, out, m);
     w.start(root);
@@ -1683,7 +1589,7 @@ FolderReplacePlan planReplace(const std::string& root, const std::string& query,
     m.tq = &tq;
     m.plan = true;
     m.needle = makeNeedle(TextFind::requiredText(tq), options.caseSensitive);
-    m.useNeedle = m.needle.never || !m.needle.empty();
+    m.useNeedle = m.needle.never() || !m.needle.empty();
     const fs::path canon = fs::canonical(root, ec);
     if (!ec) m.rootCanon = canon.string();
     Walker w(options, cancel, out, m);
@@ -1805,9 +1711,98 @@ std::string decodeWindows1252(std::string_view bytes) {
     return out;
 }
 
-bool readsAsWindows1252(std::string_view bytes) {
-    return !std::memchr(bytes.data(), 0, bytes.size()) && !isValidUtf8(bytes);
+namespace {
+// The length of the valid UTF-8 character at s[i], or 0 when it is not one.
+std::size_t validSequenceAt(std::string_view s, std::size_t i) {
+    const unsigned char c = static_cast<unsigned char>(s[i]);
+    if (c < 0x80) return 1;
+    const std::size_t n = (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3
+                        : (c & 0xF8) == 0xF0 ? 4 : 0;
+    if (!n || i + n > s.size() || !isValidUtf8(s.substr(i, n))) return 0;
+    return n;
 }
+
+bool isStrayEscape(char32_t cp) { return cp >= kStrayByteBase + 0x80 && cp <= kStrayByteBase + 0xFF; }
+
+// Whether bytes that are not valid UTF-8 (and hold no NUL) are mostly UTF-8.
+bool mostlyUtf8(std::string_view s) {
+    std::size_t characters = 0, runs = 0;
+    bool inRun = false;
+    for (std::size_t i = 0; i < s.size();) {
+        if (static_cast<unsigned char>(s[i]) < 0x80) {
+            inRun = false;
+            ++i;
+            continue;
+        }
+        const std::size_t n = validSequenceAt(s, i);
+        if (n) {
+            // A character in the escapes' range would come back as a byte.
+            if (n == 4) {
+                std::size_t len = 0;
+                if (isStrayEscape(decodeAt(std::string(s.substr(i, 4)), 0, &len))) return false;
+            }
+            ++characters;
+            inRun = false;
+            i += n;
+        } else {
+            if (!inRun) ++runs;
+            inRun = true;
+            ++i;
+        }
+    }
+    return runs > 0 && characters >= runs;
+}
+}  // namespace
+
+bool readsAsUtf8WithStrayBytes(std::string_view bytes) {
+    return !std::memchr(bytes.data(), 0, bytes.size()) && !isValidUtf8(bytes) &&
+           mostlyUtf8(bytes);
+}
+
+bool readsAsWindows1252(std::string_view bytes) {
+    return !std::memchr(bytes.data(), 0, bytes.size()) && !isValidUtf8(bytes) &&
+           !mostlyUtf8(bytes);
+}
+
+std::string decodeUtf8WithStrayBytes(std::string_view bytes) {
+    std::string out;
+    out.reserve(bytes.size() + 16);
+    for (std::size_t i = 0; i < bytes.size();) {
+        const std::size_t n = validSequenceAt(bytes, i);
+        if (n) {
+            out.append(bytes.data() + i, n);
+            i += n;
+        } else {
+            appendUtf8(out, kStrayByteBase + static_cast<unsigned char>(bytes[i]));
+            ++i;
+        }
+    }
+    return out;
+}
+
+namespace {
+// Utf8Raw's text as the file's bytes: each escape back to its byte.
+std::string encodeUtf8WithStrayBytes(const std::string& utf8) {
+    std::string out;
+    out.reserve(utf8.size());
+    for (std::size_t i = 0; i < utf8.size();) {
+        const unsigned char c = static_cast<unsigned char>(utf8[i]);
+        // U+10FE80..U+10FEFF is F4 8F BA|BB 80..BF.
+        if (c == 0xF4 && i + 4 <= utf8.size() && static_cast<unsigned char>(utf8[i + 1]) == 0x8F) {
+            const unsigned char c2 = static_cast<unsigned char>(utf8[i + 2]);
+            const unsigned char c3 = static_cast<unsigned char>(utf8[i + 3]);
+            if ((c2 == 0xBA || c2 == 0xBB) && (c3 & 0xC0) == 0x80) {
+                out += static_cast<char>(0x80 + ((c2 - 0xBA) << 6) + (c3 & 0x3F));
+                i += 4;
+                continue;
+            }
+        }
+        out += static_cast<char>(c);
+        ++i;
+    }
+    return out;
+}
+}  // namespace
 
 namespace {
 // The Windows-1252 byte for a code point, or -1 when it has none.
@@ -1862,6 +1857,7 @@ const char* encodingLabel(TextEncoding encoding, bool bom) {
     case TextEncoding::Utf16LE: return "UTF-16 LE";
     case TextEncoding::Utf16BE: return "UTF-16 BE";
     case TextEncoding::Windows1252: return "Windows-1252";
+    case TextEncoding::Utf8Raw: return "UTF-8, bad bytes kept";
     case TextEncoding::Utf8: break;
     }
     return bom ? "UTF-8 with BOM" : "UTF-8";
@@ -1904,6 +1900,7 @@ bool decodeUtf16(const std::string& bytes, std::string* utf8, TextEncoding* enco
 
 std::string encodeText(const std::string& utf8, TextEncoding encoding) {
     if (encoding == TextEncoding::Utf8) return utf8;
+    if (encoding == TextEncoding::Utf8Raw) return encodeUtf8WithStrayBytes(utf8);
     if (encoding == TextEncoding::Windows1252) {
         std::string out;
         encodeWindows1252(utf8, &out, nullptr);
@@ -1953,9 +1950,16 @@ bool decodeFileText(std::string* bytes, TextEncoding* encoding, bool* bom) {
     }
     // Not UTF-8 and no NUL: Latin-1 or Windows-1252, as Find in Folder
     // reads it (readsAsWindows1252).
-    if (readsAsWindows1252(*bytes)) {
-        *bytes = decodeWindows1252(*bytes);
-        *encoding = TextEncoding::Windows1252;
+    if (!std::memchr(bytes->data(), 0, bytes->size()) && !isValidUtf8(*bytes)) {
+        // Mostly UTF-8 with a few stray bytes (readsAsUtf8WithStrayBytes):
+        // UTF-8, the bytes kept, never the whole file as Windows-1252.
+        if (mostlyUtf8(*bytes)) {
+            *bytes = decodeUtf8WithStrayBytes(*bytes);
+            *encoding = TextEncoding::Utf8Raw;
+        } else {
+            *bytes = decodeWindows1252(*bytes);
+            *encoding = TextEncoding::Windows1252;
+        }
         *bom = false;
         return true;
     }
@@ -1979,6 +1983,7 @@ const char* encodingName(TextEncoding encoding, bool bom) {
     case TextEncoding::Utf16LE: return "utf16le";
     case TextEncoding::Utf16BE: return "utf16be";
     case TextEncoding::Windows1252: return "windows1252";
+    case TextEncoding::Utf8Raw: return "utf8raw";
     case TextEncoding::Utf8: break;
     }
     return bom ? "utf8bom" : "utf8";
@@ -1991,8 +1996,8 @@ bool parseEncodingName(const std::string& name, TextEncoding* encoding, bool* bo
     } else if (name == "utf16le" || name == "utf16be") {
         *encoding = name == "utf16le" ? TextEncoding::Utf16LE : TextEncoding::Utf16BE;
         *bom = true;
-    } else if (name == "windows1252") {
-        *encoding = TextEncoding::Windows1252;
+    } else if (name == "windows1252" || name == "utf8raw") {
+        *encoding = name == "utf8raw" ? TextEncoding::Utf8Raw : TextEncoding::Windows1252;
         *bom = false;
     } else {
         return false;

@@ -12,7 +12,8 @@ No dependencies and no I/O unless noted, so the ports can use it. New logic
 goes here first, with tests; the GUI only displays it.
 
 - `SyntaxHighlighter` (about 200 grammars, `IncrementalHighlighter`),
-  `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEdit`
+  `MarkdownParser` (CommonMark plus GitHub, math, `lines()`), `MarkdownEmoji`
+  (GitHub's common emoji shortcodes, for the parser), `MarkdownEdit`
   (the block behind a preview click), `MarkdownPage` (a page in pieces, and
   which survive an edit), `MarkdownHtml` (Export as HTML's page), `MarkdownTasks` (task lists), `MathTex`
   (the Markdown math batch), `MermaidDiagram` (```mermaid blocks for mmdc),
@@ -115,7 +116,9 @@ goes here first, with tests; the GUI only displays it.
   parse, expand, the tab stops through edits), `LineIndex` (line starts, a gap
   buffer), `PieceTable` (a text as pieces of an original and of its
   edits: large-file mode's storage), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
-  UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
+  UTF-8), `TextScan` (a large text searched for what every match holds
+  first, sixteen bytes at a time: the find bar's large files and Find in
+  Folder's needle), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
   header only), `WrapIndent.h` (where a wrapped line goes on,
   editor.wrapping-indent, header only), `SpellCheck` (which words of a file are prose for the
@@ -139,7 +142,8 @@ goes here first, with tests; the GUI only displays it.
   block or a few lines makes of the file), `MergeConflicts` (git's
   conflict blocks, and what keeping a side or both makes of the text).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
-  (the folder picker's paths, rows and completion), `HintsSearch.h`
+  (the folder picker's paths, rows and completion), `ThemePicker` (the
+  theme picker's list and its preview, choose and cancel), `HintsSearch.h`
   (the shortcut hints' search, header only), `WindowTitle.h` (the
   window's title: the file's path from the folder, ~ outside it, the
   terminal's or the page's title while it has the keyboard; header only), `SymbolOutline`
@@ -204,10 +208,13 @@ goes here first, with tests; the GUI only displays it.
 - `Migration` (the first launch since the rename: copies Application
   Support, ~/.config, WebKit's data and the defaults domain from
   minicode's names, once, by `Rename.h`'s rules). <!-- rename-mutible: keep -->
-- `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
-  `Keymap`.
+- `AppSettings` (with the theme picker's preview, `previewTheme:`),
+  `Appearance` (Adjust Settings, Theme menu, opacity popover),
+  `ThemePickerPanel` (the theme picker in the palette), `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
-  `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
+  `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`,
+  `HoverHint` (the link hint beside the pointer, a subview, since AppKit's
+  toolTip set after the pointer rests never shows).
 - Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownMedia`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
   `HtmlPage`, `CompareView`, `MarkdownSidePreview` (Markdown's page beside
@@ -227,7 +234,9 @@ goes here first, with tests; the GUI only displays it.
   headless one, and each tab's document on them, editor.session-host;
   `docs/notes/session-host.md`), `SessionWindow` (a window's link, record
   and what it took from a closed window's, stage 6),
-  `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box).
+  `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box),
+  `SidebarIcons` (`MCSidebarHost`, the split view's first subview, and its
+  row of panel icons, workbench.sidebar-icons).
 - Agents: `AgentPanel` (Cmd+I), `ChangePanel` (Request a Change),
   `ControlServer`, `ControlCommands`, `IdeLinkServer` (Claude Code's /ide),
   `ClaudeHooksOffer` (the waiting dots' hooks, offered in the app),
@@ -258,7 +267,9 @@ Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
 LanguageServers, Agents (inline agent, Request a
 Change, control channel, agent work), Processes (the Processes panel's
-hooks, its state in associated objects), LargeFile (large-file mode, its
+hooks, its state in associated objects), SidebarIcons (the sidebar's row of
+panel icons: what each shows, a click's panel; no ivars, the host is the
+`sidebarHost` property), LargeFile (large-file mode, its
 status bar note, the 1 GB question), Tests (the ▶ beside each test, Run
 Test at Cursor), LineHistory (Show Line History's host), Markdown and
 MarkdownRender, LatexInputs (a LaTeX document's \input files, as its

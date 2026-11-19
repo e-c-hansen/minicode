@@ -64,6 +64,9 @@ NSString *MCNotebookMarkdown(NSString *json);
 // clicked in it (HtmlPageView.h).
 @property(nonatomic, copy) NSString * (^htmlFolder)(void);
 @property(nonatomic, copy) void (^onOpenLink)(NSURL *url);
+// A navigation the HTML page started by itself and was not let make (a
+// meta refresh to another app's scheme; HtmlPageView.h).
+@property(nonatomic, copy) void (^onHtmlRefused)(NSURL *url);
 // The HTML page on show loads its file again, keeping its scroll, when the
 // file changed on disk since it was loaded (a save, a write from outside).
 - (void)htmlFileMayHaveChanged;

@@ -172,11 +172,24 @@ std::string randomTerminalOutput(std::mt19937& rng, int pieces, const std::strin
     return out;
 }
 
-// /tmp/mc-term-XXXXXX, made for a test.
+// /tmp/mc-term-XXXXXX, made for a test and removed when the tests end
+// (they were left behind: thousands of them after a day of runs).
 std::string scratchFolder() {
+    struct Made {
+        std::vector<std::string> dirs;
+        ~Made() {
+            for (const std::string& d : dirs) {
+                std::error_code ec;
+                std::filesystem::remove_all(d, ec);
+            }
+        }
+    };
+    static Made made;
     char tmpl[] = "/tmp/mc-term-XXXXXX";
-    const char* made = mkdtemp(tmpl);
-    return made ? made : "/tmp";
+    const char* dir = mkdtemp(tmpl);
+    if (!dir) return "/tmp";
+    made.dirs.push_back(dir);
+    return dir;
 }
 
 double nowMs() {

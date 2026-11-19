@@ -7646,3 +7646,202 @@ its own reading, the bytes kept in `Extra::oldImage`/`newImage`
   GTK scrolls sideways). heic, webp and ico need their gdk-pixbuf loaders
   installed; without one the file keeps "A binary file: its bytes are not
   shown."
+
+### 119. The hints' keys in colour, and what the search finds first (November 2026)
+
+The owner's two decisions about the shortcut hints (2026-11-19). The
+first changed twice on the way: Apple's symbols for every modifier
+(⌃⌥⇧❖) were asked for, then ISO/IEC 9995-7's PC symbols (⎈ ⎇ ⇱ ⇲), and
+then, as the owner had never seen ⎈ or ⎇, the words a PC keyboard prints
+for Ctrl, Alt and Super, each in a colour of its own, with ⇧ for Shift.
+
+- **What a user meets.** Ctrl+Shift+H shows its keys as "Ctrl ⇧ P",
+  "Ctrl ⏎", "Alt Z", "⇧ ⇥", "⎋", "Ctrl Alt ⇧ Page Down": Ctrl, Alt and
+  Super are words, each in a colour of its own the same all through the
+  panel (on Dark Modern Ctrl orange #CE9178, Alt pink #C586C0, Super
+  yellow #DCDCAA), the rest of a key in the keys' blue; Shift is ⇧, Enter,
+  Tab, Esc, Backspace, Delete and the arrows ⏎ ⇥ ⎋ ⌫ ⌦ ↑ ↓ ← →; Home,
+  End, Page Up, Page Down, Space and Menu are words; a thin space parts
+  the pieces of a key, half a monospace cell (4 pixels at 10 points), and
+  no "+". The
+  colours come from the theme's syntax colours and follow a theme change
+  at once (View > Theme, or the settings file). The palette, the menus,
+  tooltips and the status bar keep "Ctrl+Shift+P". With a query in the
+  search box, what it finds moves to the top of the first column, under
+  its sections' headings (only those with a match, in their order), still
+  marked, and everything else follows, dimmed: a heading whose rows all
+  moved is not repeated below, "Hide these hints" comes with the blank
+  line above it rather than under the last heading. The panel keeps its
+  columns and never shrinks while searching, the list scrolls to its top,
+  and emptying the box (Backspace or Esc) puts the list back exactly as it
+  was. A query that finds nothing dims everything in place. Searching by
+  name: "ctrl", "control", "cmd" and "command" find Ctrl; "alt", "opt" and
+  "option" Alt; "super", "win" and "meta" Super; "shift" ⇧; "return" and
+  "enter" ⏎; and "shift+ctrl+h" finds Ctrl ⇧ H in any order.
+- **Code.** Core: `Commands::keyLabel(k, Platform::Linux)` (the new
+  spelling, the Mac's untouched), `Commands::modifiersLabel` and
+  `Commands::kLinuxKeyJoin` (new); `HintsSearch`'s Linux spelling
+  (`linuxKeyNames`, `keyNames(Spelling)`, `glyphsNamed(w, Spelling)`,
+  combinations joined by thin spaces) and the new
+  `HintsSearch::bubbleMatches(items)` with `Item` and `Bubbled`, written
+  for the Mac to adopt (its header says how). GTK: `ThemeCss.h`'s
+  `hintsModifierColors(settings)`, `contrast`, `distinct`,
+  `kHintsBackground` and `kHintsKeyColor`; `HintsColumns` keeps the rows
+  it was given and lays them out in `orderFor(query)`'s order (`layOut`),
+  `mark(query)` laying out again only when that order changed,
+  `keyAttributes` (the spaces at half the keys' size, the modifier words
+  in their colours), `setModifierColors`, `layouts()`; `HintRow::rest`;
+  `HintsSearchBox::found` and `attributes` (the rest dimmed whole);
+  main.cpp's `showHintsText` (the colours on every layout),
+  `hintsQueryChanged` (the top, always), and `hintsRows`' keys written by
+  hand (`keyed`, `with`: "Alt click", "Ctrl or ⇧ click", "⇥, ⇧ ⇥").
+- **Traps.** A monospace font gives a thin space (U+2009) a whole cell, 8
+  pixels in DejaVu Sans Mono at 10 points, where Ubuntu Sans gives it 2,
+  and drawn in the desktop's font the first snapshot ran "Ctrl Alt S"
+  together; a key's spaces are drawn, and measured, at half the keys'
+  size, 4 pixels. The
+  panel's background is #252526 on every theme, so a light theme's syntax
+  colours (keyword #0000FF) are lightened toward white to 4.5:1 there.
+  DejaVu Sans Mono lacks ⎇ (Pango fell back to DejaVu Sans), one more
+  reason the words won.
+- **Not done.** The Mac still dims in place; it adopts `bubbleMatches`
+  in its own change, with CLAUDE.md's hints sentence. The panel itself
+  stays dark on a light theme, as the Mac's.
+- **Checks.** `hints_panel` (HintsPanelSuite.cpp, its header saying what
+  it checks): the keys' spelling (no "Shift" and no "+" in 113 keys, "Ctrl
+  ⇧ P", "Alt Z", "⇧ ⇥"), no glyph missing from the fonts
+  (`pango_layout_get_unknown_glyphs_count`), Ctrl, Alt and ⇧ in their
+  colours in every key, Light Modern's colours after a theme change and
+  Dark Modern's back; "save" putting Save at the top of the first column
+  under KEYBOARD SHORTCUTS, then TABS with Save all, then 124 rows of the
+  rest, every one dimmed; "shift+ctrl+h", "control" and "qui" likewise
+  (their first parts' headings those of the sections found in, in
+  order); a space typed laying nothing out again; the list at its top
+  after each query; nothing found dimming in place; Esc restoring the
+  list exactly (text, columns, sizes, place). `keys` reads the new
+  spellings. The core's `hints:key-labels`, `hints:search` and the new
+  `hints:bubble`; linux's `make test` adds `theme:hints-modifiers` (every
+  theme's three colours at 4.5:1 or better, apart from the blue and each
+  other).
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7, other agents
+  building): `hints_panel`, `keys`, `terminal_keys`, `window_title` and
+  `palette` 1,507 checks, none failed, in 11.9 s. A keystroke that finds
+  other rows lays the list out again in 10.4 to 11.5 ms of CPU (bound 25),
+  one that finds the same rows marks them in 5.2 to 5.8 ms (bound 8),
+  each under a frame. `make test` 196,374 passed and 2 failed that touch
+  none of this, under a load of 12: `usage:scanner`'s CPU bound (464 of
+  400 ms) and `sessionweb:files`' video body; linux's `make test` 435
+  passed; `meson test --no-suite gui` passed.
+
+### 120. Tree drags reach the terminal and the editor; the server's popups in the theme's colors; edit boxes keep their typing through an app switch (the Mac's #212 and #223; November 2026)
+
+The Mac fixed four things in #212 and #223 with no core parts. Each was
+first checked on GTK with a new GUI check, run against the code before the
+change; GTK had all four.
+
+- **Tree rows dropped on the terminal and the editor** (`tree_drags`, real
+  XTest drags in the harness's Xvfb, so GTK's drag source and the XDND
+  exchange both run). Before: nothing reached the terminal (VTE's GTK 4
+  build has no drop target of its own), and a file dropped on the editor
+  typed its path into the text (GtkTextView's own drop target, as item 13
+  said). Now `Terminal::dropped` (a GtkDropTarget on the VTE widget, a
+  GdkFileList or a string, Copy, Move or Link) types each path quoted as
+  the Mac's terminal does (the core's `TermDrop::paths`: backslashes, a
+  space after each) as a paste, and the terminal takes the keyboard; the
+  check reads `.../drags/a\ b\'s.txt X` back after typing X. On the
+  editor, a capture-phase drop target ahead of the text view's
+  (`Editor::openDropped`) opens each file through the link handler (a tab
+  of its own, as VS Code does) and shows a dropped folder in the tree;
+  dropped text is still the view's to insert.
+- **The language server's popups** (`lsp_popups`, dark-modern and
+  light-modern, each popup's drawn background against the theme's).
+  Before: the hover box, the completion list, the signature hint and the
+  references list were #181818 on both themes (the themes want #202020
+  and #F8F8F8), from fixed CSS in `Lsp.cpp` and `LspPicker.cpp`. Now
+  `ThemeCss.cpp` styles them from `FindRules::palette` (what the find bar
+  reads): editorWidget.background, its border and foreground, the
+  selection for a list's selected row, input.* and focusBorder for the
+  rename field; muted text in their markup is the label's own color at
+  70% (`fgalpha`), and the signature's active parameter is VS Code's list
+  highlight by the theme's darkness. `Lsp.cpp` and `LspPicker.cpp` keep
+  only the layout.
+- **The rename field over the name** (`lsp_popups`). Before: under the
+  name's line, over the next. Now no arrow, the box as wide as the field
+  (a popover is centered on the rectangle it points at, so the box starts
+  where the name does, less the field's 5-pixel inset), its top just above
+  the line, in the editor's font, the old name selected.
+- **Edit boxes through an app switch** (`lsp_popups` for the rename field,
+  `edit_boxes` for the Markdown page's block editor and the tree's name
+  box). Before: switching apps closed each box and its typing went, and
+  the block editor said "Enter saves" with a Save button that only
+  applied the edit. Trap: an autohide popover closes when another program
+  takes the keyboard: on X11 GDK grabs the pointer and keyboard for it, so
+  the click on the other program's window is its outside click (and under
+  the grab the window does not even go inactive), and on Wayland the
+  compositor dismisses a grabbing popup. `PopoverKeep::install`
+  (`PopoverKeep.h`) makes the three not autohide and watches presses in
+  their window while they show: a press outside calls the box's own answer
+  (the rename fields cancel, the block editor applies its draft) from an
+  idle, and the press goes on. Escape still closes them. The block editor
+  now says "Enter applies, Shift+Enter for a new line", its button is
+  Apply, Escape and Cancel are the only ways to drop a draft, and
+  `Editor::commitPageEdit` applies one before a tab leaves (`stash`), the
+  page turns to its source, Ctrl+S, Save All, closing a tab or the window
+  (before the unsaved question) and quitting. Closed with the keyboard in
+  it, it gives the keyboard back to the page, as on the Mac.
+- **Trap: a key typed in a popover never reaches the window's
+  accelerators.** Ctrl+S in the block editor ran no Save at all (before
+  this change, too): GTK hands a key in a popover to the popover's own
+  shortcut handling. The box's key controller now matches Save's keys
+  (`gtk_application_get_accels_for_action("win.save")`, so keys.conf's
+  too), applies the draft and activates `win.save`; `edit_boxes` checks
+  the file then holds the draft.
+- **Trap (the checks): a double-click soon after the last.** The page
+  opens the block editor on a double-click only (`n == 2`); a second
+  double-click on the same paragraph within GTK's double-click time is
+  its third and fourth clicks, which select the line and open nothing.
+  `edit_boxes` typed a word, pressed Escape and double-clicked again in
+  under 0.4 s; it now pauses 0.5 s before each double-click, as
+  `tree_clicks` does. Not a product problem: a hand is never that quick
+  after Escape.
+- **Trap (the checks): a popup's picture right after a theme change.**
+  `lsp_popups` read a pixel inside the rename field on light-modern just
+  as the field showed; in the long run (a busier machine) the box was not
+  yet laid out at the new theme's sizes, the field's right end past the
+  box's, and the read missed. It now waits until the field lies inside
+  the box and the box is drawn.
+- **The harness**: `MCGuiFocusElsewhere()` switches apps as a hand does
+  with the mouse: a click on a 10-pixel window of the harness's own, on a
+  second X connection, in the screen's far corner, then the X focus given
+  to it. `XSetInputFocus(None)` alone left the window active here.
+- **Mac-only, not ported**: ClickOutline's drag detection (GTK's click
+  acts on release and its drag starts past the threshold, item 13),
+  pictures with no file of their own dropped on the terminal (saved as a
+  PNG in Mutible-drop), promised files, the paste question for dropped
+  text (GTK's terminal asks none for a paste either), and the two-group
+  double-click (the other group shows no rendered page on GTK).
+- **Not checked**: a row dragged onto a folder row of the tree itself. The
+  harness's drag, two rows up the same list, never landed (neither moved
+  nor copied), before this change as after it; item 13 checked it with
+  xdotool in Docker. A real drag, Alt+Tab under GNOME (X11 and Wayland)
+  with each box open, and the popups' look need the owner's eyes.
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7): before the
+  change `tree_drags` failed 8 checks, `lsp_popups` 19 (the colors on
+  both themes, the field's place, the field lost in the switch) and
+  `edit_boxes` 16. After it, alone: `edit_boxes` 16 passed, `lsp_popups`
+  43, `tree_drags` 9, `themes` 136 (five runs, each 136, none failed);
+  the four together 204 passed, none failed, twice, and once more with
+  MC_GUI_ROOT under linux/build. With tree_clicks, tree_focus,
+  tree_edits, terminal_tabs, notes, lsp_actions, signature_help,
+  completion_keys, second_server and markdown_side_edit as well: 683
+  passed, none failed. `meson test --no-suite gui` and `make test` (349)
+  pass.
+- **Trap (the checks): `themes` read "the pane before" off the menu
+  bar.** Its "the keyboard back where it was" failed 1 run in 8 alone on
+  this branch (main: 5 of 5 passed): the check before View read the
+  keyboard while it was still on an earlier menu's bar item, which
+  MenuBarFocus gives back a moment after that menu closes, so the pane
+  "before" was the bar's item and the keyboard went back to the editor.
+  This change touches neither the menus nor MenuBarFocus; a longer
+  stylesheet for each theme change is the likeliest reason the race shows
+  more here. `openThemeMenu` now waits for the keyboard to be off the bar.

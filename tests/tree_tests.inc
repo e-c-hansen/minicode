@@ -323,6 +323,11 @@ static void testTreeRefresh() {
         // What a change on disk needs: none inside ignored folders.
         CHECK(d.ignored("build") && d.ignored("build/a/b") && d.ignored("src/main.o"));
         CHECK(!d.ignored("src") && !d.ignored("src/main.c") && !d.ignored("scratch"));
+        // The sidebar's badge: every changed path once (kept.txt, named
+        // twice, once; lib/old.c is the rename's source, not a path of its
+        // own), the untracked folders as git lists them, no ignored path.
+        CHECK(d.changeCount() == 13);
+        if (d.changeCount() != 13) std::printf("    changeCount %zu\n", d.changeCount());
         // Comparing two statuses: the tree recolors only when they differ.
         Git::Decorations same = Git::Decorations::fromStatus(Git::parseStatus(out));
         CHECK(same == d);
@@ -331,6 +336,8 @@ static void testTreeRefresh() {
         CHECK(other != d);
         Git::Decorations none = Git::Decorations::fromStatus(Git::parseStatus(""));
         CHECK(none.empty() && none.file("a") == Decoration::None && !none.ignored("a"));
+        CHECK(none.changeCount() == 0);
+        CHECK(Git::Decorations::fromStatus(Git::parseStatus(rec("! build/"))).changeCount() == 0);
         // A submodule with changes colors its own folder.
         Git::Decorations sub = Git::Decorations::fromStatus(
             Git::parseStatus(rec("1 .M S.M. 160000 160000 160000 aaaa bbbb vendor/lib")));

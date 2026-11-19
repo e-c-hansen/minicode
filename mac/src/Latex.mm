@@ -20,10 +20,15 @@
 //   * Each preview typesets from a sibling and into a folder of its own
 //     (LatexScratch::Owner), so two windows on one file never collide.
 //   * A click on text from an \input or \include file edits that file: it
-//     is parsed on its own (its tab's buffer, else the disk), and the edit
-//     goes into its tab through the controller (inputText, onInputEdited),
-//     unsaved. The typeset reads such files from disk, so the bar says
-//     which have unsaved changes until they are saved.
+//     is placed in the file as the typeset read it (the disk), then found
+//     again in its tab's buffer, and the edit goes into that tab through
+//     the controller (inputText, onInputEdited), unsaved. The typeset reads
+//     such files from disk, so the bar says which have unsaved changes
+//     until they are saved.
+//   * An edit is made on the text as it is when it is applied: the span
+//     the box opened on is found again in it (MarkdownEdit::rebaseSpan),
+//     and the edit is refused, its text put on the clipboard, when that
+//     span itself changed meanwhile (an agent's rewrite, a reload).
 #import "Latex.h"
 #import "Environment.h"
 #import "PageZoom.h"
@@ -430,7 +435,9 @@ static NSString *MCDescribeProblem(MCLatexProblem *p, NSString *texPath, NSStrin
     // parsed from (a click parses again only when the text changed).
     std::map<std::string, std::pair<std::string, LatexDoc>> _inputDocs;
     NSString *_editingFile;      // the \input file the popover edits (nil: the document)
-    std::string _editingSrc;     // and its text when the box opened
+    std::string _editingSrc;     // and its text (its tab's buffer) when the box opened
+    LatexDoc _editingDoc;        // that text, parsed: the box's span and list are in it
+    std::string _editBase;       // the document's text the box's span is in
     // The text the edit box opened with, and whether its draft was dealt
     // with (applied, or dropped by Esc or Cancel): a box closed any other
     // way (a click elsewhere in the window) applies what was typed
@@ -571,6 +578,9 @@ static const CGFloat kStatusHeight = 26;
     std::string incoming = Utf8(source ?: @"");
     if (samePath && incoming == _src) return;
     self.texPath = [texPath copy];
+    // Changed from elsewhere (typed in the source, read again from disk):
+    // the preview's own undo snapshots would put the old text back over it.
+    if (incoming != _src) [self forgetEdits];
     _src = incoming;
     _doc = LatexDoc::parse(_src);
     [self scheduleCompile];
@@ -584,10 +594,17 @@ static const CGFloat kStatusHeight = 26;
 }
 
 // Apply an edit produced by LatexDoc and tell the window about it.
+// Beside the source the edit is one undo step of the source's own
+// (latexDidEditSource:), so the preview's stack is left alone: a snapshot
+// there, undone later in the full preview, dropped the typing made since
+// (round 10's documents defect 8).
 - (void)applyEdit:(const LatexDoc::Edit &)edit {
-    _undo.push_back(_src);
-    if (_undo.size() > kMaxUndo) _undo.erase(_undo.begin());
-    _redo.clear();
+    const BOOL besideSource = self.bufferText && self.bufferText();
+    if (!besideSource) {
+        _undo.push_back(_src);
+        if (_undo.size() > kMaxUndo) _undo.erase(_undo.begin());
+        _redo.clear();
+    }
     _src = edit.source;
     _doc = LatexDoc::parse(_src);
     if (self.onSourceEdited) self.onSourceEdited(NsStr(_src));
@@ -603,6 +620,17 @@ static const CGFloat kStatusHeight = 26;
               to:(std::vector<std::string> &)to
            saying:(NSString *)what {
     if (from.empty()) { NSBeep(); return; }
+    // The text changed since these snapshots were taken, and nothing told
+    // the preview: they would put the old text back over the new.
+    NSString *now = self.sourceNow ? self.sourceNow() : nil;
+    if (now && Utf8(now) != _src) {
+        [self forgetEdits];
+        NSBeep();
+        [self setStatus:@"The text changed since the edits made here, so they cannot be undone "
+                        @"from the page"
+                   busy:NO];
+        return;
+    }
     to.push_back(_src);
     _src = from.back();
     from.pop_back();
@@ -1179,8 +1207,6 @@ static const CGFloat kStatusHeight = 26;
     return files.array;
 }
 
-// The \input file's source, parsed, from its tab's buffer or the disk;
-// nullptr when it cannot be read. Parsed again only when its text changed.
 // An \input file's text as the user has it: its tab's buffer, else the disk.
 - (NSString *)textOfInputFile:(NSString *)path {
     NSString *text = self.inputText ? self.inputText(path) : nil;
@@ -1189,8 +1215,16 @@ static const CGFloat kStatusHeight = 26;
     return text;
 }
 
+// The \input file's source as the typeset read it, parsed; nullptr when it
+// cannot be read. tectonic reads the disk, unsaved changes or not, so
+// SyncTeX's lines are the disk's: a click is placed in that text, and the
+// box then finds its span again in the buffer (openEditorForPage:point:).
+// Placed in the buffer, a chapter with unsaved lines above the click
+// matched another paragraph (round 10's documents defect 4). Parsed again
+// only when its text changed.
 - (const LatexDoc *)docOfInputFile:(NSString *)path source:(std::string *)srcOut {
-    NSString *text = [self textOfInputFile:path];
+    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding
+                                                  error:nil];
     if (!text) return nullptr;
     const std::string src = Utf8(text);
     auto &slot = _inputDocs[Utf8(path)];
@@ -1561,18 +1595,30 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     NSInteger line = 0, column = 0;
     const LatexSpan *span = [self spanForPage:page point:pagePoint file:&file source:&fileSrc
                                          hits:&hits];
+    size_t spanStart = span ? span->start : 0, spanEnd = span ? span->end : 0;
+    if (span && file) {
+        // Placed in the file as the typeset read it: its line in the tab's
+        // buffer is where that text is now, when it is there once.
+        const std::string buffer = Utf8([self textOfInputFile:file] ?: @"");
+        const auto r = MarkdownEdit::rebaseSpan(fileSrc, spanStart, spanEnd, buffer);
+        if (r.first != std::string::npos) {
+            fileSrc = buffer;
+            spanStart = r.first;
+            spanEnd = r.second;
+        }
+    }
     const std::string &src = file ? fileSrc : _src;
-    if (span && span->start <= span->end && span->end <= src.size()) {
+    if (span && spanStart <= spanEnd && spanEnd <= src.size()) {
         // The clicked word in the span's LaTeX, as the edit box finds it;
         // the span's start when it is not there.
-        size_t at = span->start;
+        size_t at = spanStart;
         NSString *before = @"", *after = @"";
         NSString *clicked = MCLatexClickedWord(page, pagePoint, &before, &after);
         if (clicked) {
-            const std::string body = src.substr(span->start, span->end - span->start);
+            const std::string body = src.substr(spanStart, spanEnd - spanStart);
             const auto w = MarkdownEdit::sourceOffsetFor(body, Utf8(clicked), Utf8(before),
                                                          Utf8(after));
-            if (w.first != std::string::npos) at = span->start + w.first;
+            if (w.first != std::string::npos) at = spanStart + w.first;
         }
         const size_t lineStart = at == 0 ? 0 : src.rfind('\n', at - 1) == std::string::npos
                                                    ? 0 : src.rfind('\n', at - 1) + 1;
@@ -1622,12 +1668,41 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     std::string fileSrc;
     const LatexSpan *span = [self spanForPage:page point:pagePoint file:&file source:&fileSrc
                                          hits:&hits];
-    _editingFile = span ? file : nil;
-    _editingSrc = span && file ? fileSrc : std::string();
+    _editingFile = nil;
+    _editingSrc.clear();
     if (!span) {
         [self setStatus:@"That is not text Mutible can trace back to the source"
                    busy:NO];
         return;
+    }
+    if (file) {
+        // Placed in the file as the typeset read it (the disk); the box
+        // edits its tab's buffer, so the span is found there again, as
+        // that text parses. Not there once, exactly as the page shows it
+        // (the unsaved changes rewrote it): refused, nothing guessed.
+        NSString *bufferText = [self textOfInputFile:file];
+        const std::string buffer = Utf8(bufferText ?: @"");
+        const auto r = bufferText ? MarkdownEdit::rebaseSpan(fileSrc, span->start, span->end, buffer)
+                                  : std::make_pair(std::string::npos, std::string::npos);
+        const LatexSpan *found = nullptr;
+        if (r.first != std::string::npos) {
+            const LatexDoc *read = buffer == fileSrc ? [self docOfInputFile:file source:nullptr]
+                                                     : nullptr;
+            _editingDoc = read ? *read : LatexDoc::parseInput(buffer);
+            for (const LatexSpan &sp : _editingDoc.spans)
+                if (sp.start == r.first && sp.end == r.second) { found = &sp; break; }
+        }
+        if (!found) {
+            [self setStatus:[NSString stringWithFormat:
+                                 @"%@ has unsaved changes to that text, which the page does not "
+                                 @"show yet: save it (\u2318S) to edit it here",
+                                 file.lastPathComponent]
+                       busy:NO];
+            return;
+        }
+        _editingFile = file;
+        _editingSrc = buffer;
+        span = found;
     }
 
     // Anchor the popover on the box the click landed in.
@@ -1685,9 +1760,12 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     _editingValid = YES;
     _addingItem = NO;
     _editingItemIndex = span.itemIndex;
-    // An \input file's span is in that file's text, and its lists.
+    // An \input file's span is in that file's text, and its lists. The
+    // document's text is kept as the box opened on it: the edit is made on
+    // the text as it is then, the span found again in it.
     const std::string &src = _editingFile ? _editingSrc : _src;
-    const LatexDoc *doc = _editingFile ? &_inputDocs[Utf8(_editingFile)].second : &_doc;
+    const LatexDoc *doc = _editingFile ? &_editingDoc : &_doc;
+    if (!_editingFile) _editBase = _src;
     BOOL inList = span.listIndex >= 0 &&
                   (size_t)span.listIndex < doc->lists.size();
     if (inList) _editingList = doc->lists[(size_t)span.listIndex];
@@ -1841,6 +1919,53 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     if (edited && _editingValid) [self applyEditText:text];
 }
 
+// The box's edit made on `now`, the text as it is when it is applied: its
+// span (adding an entry, its list) found again there from `base`, the text
+// the box opened on (MarkdownEdit::rebaseSpan). 1 with `*out` made, 0 when
+// there is nothing to change, -1 when the span is not in `now` once,
+// exactly as the box showed it: an agent's rewrite or a reload changed it,
+// and splicing anyway would put the old offsets, or the old text, over
+// that change (round 10's documents defect 3).
+static int MCLatexEditOnto(const std::string &base, const std::string &now, LatexSpan span,
+                           LatexList list, BOOL adding, int itemIndex, const std::string &text,
+                           LatexDoc::Edit *out) {
+    if (adding) {
+        if (text.empty()) return 0;
+        const auto r = MarkdownEdit::rebaseSpan(base, list.start, list.end, now);
+        if (r.first == std::string::npos) return -1;
+        const size_t from = list.start;
+        for (size_t &at : list.itemBodyStart) at = at - from + r.first;
+        for (size_t &at : list.itemBodyEnd) at = at - from + r.first;
+        list.end = r.second;
+        list.start = r.first;
+        *out = LatexDoc::addItem(now, list, itemIndex, text);
+        return 1;
+    }
+    const auto r = MarkdownEdit::rebaseSpan(base, span.start, span.end, now);
+    if (r.first == std::string::npos) return -1;
+    span.start = r.first;
+    span.end = r.second;
+    if (now.compare(span.start, span.end - span.start, text) == 0) return 0;
+    *out = LatexDoc::replaceSpan(now, span, text);
+    return 1;
+}
+
+// An edit that could not go in: its text on the clipboard and the bar
+// saying why, never dropped unseen (as the Markdown page's box does).
+- (void)keepLostEdit:(const std::string &)text file:(NSString *)file {
+    if (!text.empty()) {
+        NSPasteboard *pb = NSPasteboard.generalPasteboard;
+        [pb clearContents];
+        [pb setString:NsStr(text) forType:NSPasteboardTypeString];
+    }
+    NSString *name = (file ?: self.texPath).lastPathComponent ?: @"The file";
+    [self setStatus:[NSString stringWithFormat:@"%@ changed while the box was open, and so did "
+                                               @"the text you edited, so your edit was not "
+                                               @"applied; your text is on the clipboard",
+                                               name]
+               busy:NO];
+}
+
 - (void)applyEditText:(const std::string &)text {
     BOOL adding = _addingItem;
     _editingValid = NO;
@@ -1849,44 +1974,45 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
         [self commitInputEdit:text adding:adding];
         return;
     }
-    if (adding) {
-        if (text.empty()) return;
-        LatexDoc::Edit edit =
-            LatexDoc::addItem(_src, _editingList, _editingItemIndex, text);
-        [self applyEdit:edit];
-        [self setStatus:@"Added a list entry" busy:YES];
+    // The text now: an agent may have rewritten the file, and the clean
+    // tab read it again, while the box was open.
+    NSString *nowText = self.sourceNow ? self.sourceNow() : nil;
+    const std::string now = nowText ? Utf8(nowText) : _src;
+    LatexDoc::Edit edit;
+    const int made = MCLatexEditOnto(_editBase, now, _editing, _editingList, adding,
+                                     _editingItemIndex, text, &edit);
+    if (made < 0) {
+        if (adding || text != Utf8(_editOriginal ?: @"")) [self keepLostEdit:text file:nil];
         return;
     }
-    std::string current = _src.substr(_editing.start, _editing.end - _editing.start);
-    if (text == current) return;
-    LatexDoc::Edit edit = LatexDoc::replaceSpan(_src, _editing, text);
+    if (made == 0) return;
+    if (now != _src) {   // the page's text catches up first, so undo steps back to `now`
+        _src = now;
+        _doc = LatexDoc::parse(_src);
+    }
     [self applyEdit:edit];
+    if (adding) [self setStatus:@"Added a list entry" busy:YES];
 }
 
 // The popover's edit of an \input file: a splice of that file's text, put
 // into its tab by the controller (opened in the background when it was not
-// open), unsaved, one undo step there. Refused when the file's text
-// changed while the box was open.
+// open), unsaved, one undo step there. Made on the file's text as it is
+// now, the span found again in it; refused when the span itself changed
+// while the box was open.
 - (void)commitInputEdit:(const std::string &)text adding:(BOOL)adding {
     NSString *file = _editingFile;
     NSString *name = file.lastPathComponent;
     NSString *nowText = [self textOfInputFile:file];
     const std::string now = Utf8(nowText ?: @"");
-    if (!nowText || now != _editingSrc) {
-        [self setStatus:[NSString stringWithFormat:@"%@ changed while the box was open, "
-                                                   @"so the edit was not made", name]
-                   busy:NO];
+    LatexDoc::Edit edit;
+    const int made = nowText ? MCLatexEditOnto(_editingSrc, now, _editing, _editingList, adding,
+                                               _editingItemIndex, text, &edit)
+                             : -1;
+    if (made < 0) {
+        if (adding || text != Utf8(_editOriginal ?: @"")) [self keepLostEdit:text file:file];
         return;
     }
-    LatexDoc::Edit edit;
-    if (adding) {
-        if (text.empty()) return;
-        edit = LatexDoc::addItem(now, _editingList, _editingItemIndex, text);
-    } else {
-        const size_t a = std::min(_editing.start, now.size());
-        if (now.substr(a, std::min(_editing.end, now.size()) - a) == text) return;
-        edit = LatexDoc::replaceSpan(now, _editing, text);
-    }
+    if (made == 0) return;
     // The splice as a range of the old text (UTF-16) and what replaces it:
     // the common ends of the two texts, kept off a character's middle.
     const std::string &after = edit.source;
@@ -1910,8 +2036,10 @@ const LatexSpan *MCLatexSpanAtPointInFiles(
     [self showPagesStatus];
 }
 
+// Only this box's text view: a box closing late (the one a second
+// double-click replaced) must not empty the next one's draft.
 - (void)popoverDidClose:(NSNotification *)note {
-    self.editText = nil;
+    if (note.object == self.popover) self.editText = nil;
 }
 
 @end

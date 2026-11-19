@@ -3,6 +3,7 @@
 #include "SyntaxHighlighter.h"
 #include "TermLinks.h"
 #include "MarkdownParser.h"
+#include "MarkdownEmoji.h"
 #include "MarkdownEdit.h"
 #include "MarkdownTasks.h"
 #include "MathTex.h"
@@ -34,6 +35,7 @@
 #include "AutoClose.h"
 #include "CommandPalette.h"
 #include "FolderPicker.h"
+#include "ThemePicker.h"
 #include "Backups.h"
 #include "TabSessions.h"
 #include "SavePlan.h"
@@ -1573,6 +1575,48 @@ void testMarkdownEdit() {
         CHECK(at("a [x](http://example.org) b", "example") == "example@13");   // only in the URL
     }
 
+    GROUP("mdedit:rebase");
+    {
+        // An edit box's span, found again in the text as it is when the
+        // edit is applied (round 10's documents defect 3: an agent rewrote
+        // the file while the box was open, and the edit went in at the old
+        // offsets, or reverted the rewrite). Only the span's own bytes are
+        // ever named, so applying there keeps whatever else changed.
+        const std::string npos = "<none>";
+        auto at = [](const std::string &base, const std::string &span, const std::string &now) {
+            const size_t s = base.find(span);
+            const auto r = rebaseSpan(base, s, s + span.size(), now);
+            if (r.first == std::string::npos) return std::string("<none>");
+            return now.substr(r.first, r.second - r.first) + "@" + std::to_string(r.first);
+        };
+        const std::string base = "Intro.\n\nThe heron waits.\n\nThe end.\n";
+        CHECK(at(base, "The heron waits.", base) == "The heron waits.@8");
+        // A change after the span, and one before it (offsets shift).
+        CHECK(at(base, "The heron waits.", base + "Added by an agent.\n") == "The heron waits.@8");
+        CHECK(at(base, "The heron waits.", "# Agent\n\n" + base) == "The heron waits.@17");
+        // Changes on both sides: found where its exact bytes are, once.
+        CHECK(at(base, "The heron waits.", "Intro, rewritten.\n\nThe heron waits.\n\nThe close.\n") ==
+              "The heron waits.@19");
+        // Right against the change, either side, still its own bytes.
+        CHECK(at("foo bar", "foo", "foo2 bar") == "foo@0");
+        CHECK(at("foo bar", "bar", "foo 2bar") == "bar@5");
+        // The span itself rewritten, or gone: refused.
+        CHECK(at(base, "The heron waits.", "Intro.\n\nThe egret waits.\n\nThe end.\n") == npos);
+        CHECK(at(base, "The heron waits.", "Intro.\n") == npos);
+        // In the new text twice, with the text around it changed: no guess.
+        CHECK(at(base, "The heron waits.",
+                 "New.\n\nThe heron waits.\n\nThe heron waits.\n\nEnd.\n") == npos);
+        // Twice, but the change is wholly after the first: that one.
+        CHECK(at(base, "The heron waits.", base + "The heron waits.\n") == "The heron waits.@8");
+        // Out of range, or empty and inside the change.
+        CHECK(rebaseSpan("abc", 2, 5, "abc").first == std::string::npos);
+        CHECK(rebaseSpan("abc", 2, 1, "abc").first == std::string::npos);
+        CHECK(rebaseSpan("abcd", 2, 2, "aXYd").first == std::string::npos);
+        // Multibyte text either side: whole characters, as written.
+        CHECK(at("Café\n\nthe crème\n", "the crème", "Café au lait\n\nthe crème\n") ==
+              "the crème@15");
+    }
+
     GROUP("mdedit:blocks-more");
     const std::string more =
         "- item one\n"          // 0
@@ -2077,6 +2121,7 @@ void testMarkdownCommonMark() {
         CHECK(mdText(nested) == "outer\n\ninner\n");
         auto alert = P::parse("> [!TIP]\n> Use it.\n");
         CHECK(mdRun(alert, "Tip").bold && mdRun(alert, "Tip").quote);
+        CHECK(mdRun(alert, "Tip").alert == 2 && mdRun(alert, "Use it.").alert == 2);
         CHECK(mdRun(alert, "Use it.").quote && !mdRun(alert, "Use it.").bold);
         auto list = P::parse("> - a\n> - b\n");
         CHECK(mdCount(list, [](const MdRun &x) { return x.marker && x.quote; }) == 2);
@@ -2112,9 +2157,10 @@ void testMarkdownCommonMark() {
         CHECK(mdRun(two, "One").heading == 1 && mdRun(two, "Two").heading == 1);
         CHECK(mdRun(two, "Two").line == 0);   // one heading, one line
         CHECK(mdRun(P::parse("<h2 align=\"center\">Hi <b>there</b></h2>\n"), "there").heading == 2);
-        // Front matter shows as code.
+        // Front matter shows as a table (md:front-matter).
         auto fm = P::parse("---\ntitle: x\n---\n# Body\n");
-        CHECK(mdRun(fm, "title: x\n").codeBlock && mdRun(fm, "Body").heading == 1);
+        CHECK(mdRun(fm, "title").frontMatter && mdRun(fm, "x").frontMatter);
+        CHECK(mdRun(fm, "Body").heading == 1);
         CHECK(!mdAny(fm, [](const MdRun &x) { return x.rule; }));
         auto notFm = P::parse("---\nplain words\n---\n");
         CHECK(mdAny(notFm, [](const MdRun &x) { return x.rule; }));
@@ -2552,15 +2598,17 @@ void testMarkdownCorpus() {
                            r.text.find("<kbd>") != std::string::npos);
     }));
     CHECK(mdCount(runs, [](const MdRun &r) { return r.tableId > 0 && r.tableRow == 0 &&
-                                                    r.tableCol == 0; }) == 3);
+                                                    r.tableCol == 0; }) == 4);   // front matter's too
     // Every run that shows text maps back to a block a double-click can edit.
     bool editable = true;
     for (const MdRun &r : runs) {
         if (r.gap || r.rule || r.text.find_first_not_of(" \n") == std::string::npos) continue;
         if (r.table && r.tableCol < 0) continue;
         int line = r.line;
-        if (r.table) line = r.line + r.tableRow + (r.tableRow > 0 ? 1 : 0);
-        if (MarkdownEdit::blockAt(src, line, r.table ? r.tableCol : -1).kind ==
+        // Front matter's table edits as the code block it is written as.
+        const bool cell = r.table && !r.frontMatter;
+        if (cell) line = r.line + r.tableRow + (r.tableRow > 0 ? 1 : 0);
+        if (MarkdownEdit::blockAt(src, line, cell ? r.tableCol : -1).kind ==
             MarkdownEdit::Block::None) {
             editable = false;
             std::printf("  no block for run '%s' on line %d\n", r.text.c_str(), line);
@@ -4062,8 +4110,8 @@ void testSettings() {
     // editor.session-host, and explorer.auto-reveal, and
     // editor.session-web-idle-minutes, and editor.wrapping-indent, and
     // terminal.mac-style-keys, and terminal.close-on-exit, and
-    // files.hot-exit.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 146);
+    // files.hot-exit, and workbench.sidebar-icons.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 147);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -5078,21 +5126,45 @@ void testSettings() {
         CHECK(keyLabel(K("escape"), Platform::Mac) == "⎋");
         CHECK(keyLabel(K("shift+tab"), Platform::Mac) == "⇧⇥");
         CHECK(keyLabel(K("alt+cmd+left"), Platform::Mac) == "⌥⌘←");
-        CHECK(keyLabel(K("ctrl+shift+p"), Platform::Linux) == "Ctrl+Shift+P");
-        CHECK(keyLabel(K("shift+alt+ctrl+t"), Platform::Linux) == "Ctrl+Alt+Shift+T");
-        CHECK(keyLabel(K("ctrl+enter"), Platform::Linux) == "Ctrl+⏎");
-        CHECK(keyLabel(K("ctrl+backspace"), Platform::Linux) == "Ctrl+⌫");
+        // Linux's: Ctrl, Alt and Super in words, Shift and the keys with
+        // a symbol on a PC keyboard in symbols, Home, End, Page Up, Page
+        // Down, Space, Menu and the keypad in words, a thin space between.
+        CHECK(std::string(Commands::kLinuxKeyJoin) == " ");
+        CHECK(keyLabel(K("ctrl+shift+p"), Platform::Linux) == "Ctrl ⇧ P");
+        CHECK(keyLabel(K("shift+alt+ctrl+t"), Platform::Linux) == "Ctrl Alt ⇧ T");
+        CHECK(keyLabel(K("ctrl+enter"), Platform::Linux) == "Ctrl ⏎");
+        CHECK(keyLabel(K("ctrl+backspace"), Platform::Linux) == "Ctrl ⌫");
         CHECK(keyLabel(K("delete"), Platform::Linux) == "⌦");
         CHECK(keyLabel(K("escape"), Platform::Linux) == "⎋");
-        CHECK(keyLabel(K("shift+tab"), Platform::Linux) == "Shift+⇥");
-        CHECK(keyLabel(K("alt+up"), Platform::Linux) == "Alt+↑");
+        CHECK(keyLabel(K("shift+tab"), Platform::Linux) == "⇧ ⇥");
+        CHECK(keyLabel(K("alt+up"), Platform::Linux) == "Alt ↑");
+        CHECK(keyLabel(K("alt+z"), Platform::Linux) == "Alt Z");
         CHECK(keyLabel(K("ctrl+alt+shift+pagedown"), Platform::Linux) ==
-              "Ctrl+Alt+Shift+Page Down");
-        CHECK(keyLabel(K("ctrl+`"), Platform::Linux) == "Ctrl+`");
-        CHECK(keyLabel(K("ctrl+shift+space"), Platform::Linux) == "Ctrl+Shift+Space");
+              "Ctrl Alt ⇧ Page Down");
+        CHECK(keyLabel(K("ctrl+home"), Platform::Linux) == "Ctrl Home");
+        CHECK(keyLabel(K("shift+end"), Platform::Linux) == "⇧ End");
+        CHECK(keyLabel(K("ctrl+pageup"), Platform::Linux) == "Ctrl Page Up");
+        CHECK(keyLabel(K("ctrl+`"), Platform::Linux) == "Ctrl `");
+        CHECK(keyLabel(K("ctrl+shift+space"), Platform::Linux) == "Ctrl ⇧ Space");
+        CHECK(keyLabel(K("shift+contextmenu"), Platform::Linux) == "⇧ Menu");
         CHECK(keyLabel(K("f12"), Platform::Linux) == "F12");
-        CHECK(keyLabel(K("ctrl+numpad0"), Platform::Linux) == "Ctrl+Keypad 0");
-        // No word for a key that has a symbol, on either platform.
+        CHECK(keyLabel(K("ctrl+numpad0"), Platform::Linux) == "Ctrl Keypad 0");
+        CHECK(keyLabel(K("cmd+c"), Platform::Linux) == "Super C");   // Super is the Key's Cmd
+        CHECK(keyLabel(K("alt+cmd+k"), Platform::Linux) == "Alt Super K");
+        // The Mac's own for the same keys, unchanged: Space, Menu and the keypad in words.
+        CHECK(keyLabel(K("ctrl+home"), Platform::Mac) == "⌃↖");
+        CHECK(keyLabel(K("ctrl+pageup"), Platform::Mac) == "⌃⇞");
+        CHECK(keyLabel(K("ctrl+shift+space"), Platform::Mac) == "⌃⇧Space");
+        CHECK(keyLabel(K("shift+contextmenu"), Platform::Mac) == "⇧Menu");
+        CHECK(keyLabel(K("ctrl+numpad0"), Platform::Mac) == "⌃Keypad 0");
+        // The modifiers alone, for a hint written by hand.
+        CHECK(Commands::modifiersLabel(Commands::Ctrl | Commands::Shift, Platform::Linux) ==
+              "Ctrl ⇧");
+        CHECK(Commands::modifiersLabel(Commands::Alt | Commands::Cmd, Platform::Linux) ==
+              "Alt Super");
+        CHECK(Commands::modifiersLabel(Commands::Ctrl | Commands::Shift, Platform::Mac) == "⌃⇧");
+        CHECK(Commands::modifiersLabel(0, Platform::Linux).empty());
+        // No word for a key that has a symbol, on either platform; no "+" on Linux.
         for (const char* t : {"shift+cmd+enter", "ctrl+shift+backspace", "alt+escape",
                               "shift+tab", "ctrl+delete", "alt+up", "alt+down", "ctrl+left",
                               "ctrl+right"}) {
@@ -5101,8 +5173,9 @@ void testSettings() {
             for (const char* word : {"Shift", "Return", "Enter", "Backspace", "Delete", "Tab",
                                      "Escape", "Up", "Down", "Left", "Right"}) {
                 CHECK(mac.find(word) == std::string::npos);
-                if (std::string(word) != "Shift") CHECK(onLinux.find(word) == std::string::npos);
+                CHECK(onLinux.find(word) == std::string::npos);
             }
+            CHECK(onLinux.find('+') == std::string::npos);
         }
         // The search over each platform's labels.
         using HintsSearch::Field;
@@ -5131,6 +5204,9 @@ void testSettings() {
         CHECK(HintsSearch::match(u"cmd+return", macCommit).matches);
         CHECK(HintsSearch::match(u"enter", macCommit).matches);
         CHECK(!HintsSearch::match(u"esc", macCommit).matches);
+        // The Mac's names are as they were: no "super", "win" or "meta".
+        CHECK(!HintsSearch::match(u"super", macHide).matches);
+        CHECK(!HintsSearch::match(u"meta", macHide).matches);
         const std::vector<Field> linHide = {
             {field(keyLabel(K("ctrl+shift+h"), Platform::Linux)), true},
             {u"Hide these hints", false}};
@@ -5141,23 +5217,143 @@ void testSettings() {
         const std::vector<Field> linPage = {
             {field(keyLabel(K("ctrl+alt+shift+pagedown"), Platform::Linux)), true},
             {u"Tab to right group", false}};
+        const std::vector<Field> linWrap = {{field(keyLabel(K("alt+z"), Platform::Linux)), true},
+                                            {u"Word wrap", false}};
+        const std::vector<Field> linSuper = {{field(keyLabel(K("cmd+c"), Platform::Linux)), true},
+                                             {u"Interrupt", false}};
+        const std::vector<Field> linHome = {{field(keyLabel(K("ctrl+home"), Platform::Linux)), true},
+                                            {u"Top of the file", false}};
+        const std::vector<Field> linTab = {{field(keyLabel(K("shift+tab"), Platform::Linux)), true},
+                                           {u"Outdent", false}};
         CHECK(HintsSearch::match(u"ctrl+shift+h", linHide, Spelling::Linux).matches);
         CHECK(HintsSearch::match(u"shift+ctrl+h", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"Shift+Ctrl+H", linHide, Spelling::Linux).matches);
         CHECK(HintsSearch::match(u"control", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"ctrl", linHide, Spelling::Linux).matches);
+        // A Mac user's Cmd is Ctrl here.
+        CHECK(HintsSearch::match(u"cmd", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"command", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"cmd+shift+h", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"shift", linHide, Spelling::Linux).matches);
+        CHECK(!HintsSearch::match(u"shift", linCommit, Spelling::Linux).matches);
         CHECK(!HintsSearch::match(u"alt", linHide, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"alt", linWrap, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"opt", linWrap, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"option+z", linWrap, Spelling::Linux).matches);
+        CHECK(!HintsSearch::match(u"ctrl", linWrap, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"super", linSuper, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"win", linSuper, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"meta+c", linSuper, Spelling::Linux).matches);
+        CHECK(!HintsSearch::match(u"super", linHide, Spelling::Linux).matches);
+        CHECK(!HintsSearch::match(u"cmd", linSuper, Spelling::Linux).matches);
         CHECK(HintsSearch::match(u"return", linCommit, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"enter", linCommit, Spelling::Linux).matches);
         CHECK(HintsSearch::match(u"control+return", linCommit, Spelling::Linux).matches);
         CHECK(HintsSearch::match(u"esc", linEsc, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"home", linHome, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"home+ctrl", linHome, Spelling::Linux).matches);
+        CHECK(HintsSearch::match(u"shift+tab", linTab, Spelling::Linux).matches);
         CHECK(HintsSearch::match(u"shift+alt+ctrl+pagedown", linPage, Spelling::Linux).matches);
-        CHECK(HintsSearch::combination(u"shift+ctrl+h", Spelling::Linux) == u"ctrl+shift+h");
-        CHECK(HintsSearch::combination(u"opt+pageup", Spelling::Linux) == u"alt+page up");
+        CHECK(HintsSearch::match(u"page", linPage, Spelling::Linux).matches);
+        CHECK(HintsSearch::combination(u"shift+ctrl+h", Spelling::Linux) == u"ctrl ⇧ h");
+        CHECK(HintsSearch::combination(u"cmd+h", Spelling::Linux) == u"ctrl h");
+        CHECK(HintsSearch::combination(u"opt+pageup", Spelling::Linux) == u"alt page up");
+        CHECK(HintsSearch::combination(u"win+alt+k", Spelling::Linux) == u"alt super k");
+        CHECK(HintsSearch::combination(u"ctrl+cmd+x", Spelling::Linux) == u"ctrl x");
         // The Mac's spelling does not find Linux's words as keys, nor the reverse.
         CHECK(!HintsSearch::match(u"shift+ctrl+h", linHide).matches);
         CHECK(!HintsSearch::match(u"shift+cmd+h", macHide, Spelling::Linux).matches);
-        // What is found is marked: the whole of "Shift" for "shi" on Linux.
+        // What is found is marked: ⇧ for "shi" on Linux, the word Ctrl for "control".
         HintsSearch::Match m = HintsSearch::match(u"shi", linHide, Spelling::Linux);
-        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].start == 5 &&
-              m.spans[0].length == 5);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].field == 0 &&
+              m.spans[0].start == 5 && m.spans[0].length == 1);
+        m = HintsSearch::match(u"control", linHide, Spelling::Linux);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].start == 0 &&
+              m.spans[0].length == 4);
+        m = HintsSearch::match(u"shift+ctrl+h", linHide, Spelling::Linux);
+        CHECK(m.matches && m.spans.size() == 1 && m.spans[0].start == 0 &&
+              m.spans[0].length == 8);
+    }
+
+    GROUP("hints:bubble");
+    {
+        // The matches first under their sections' headings, the rest as it
+        // was after them (HintsSearch::bubbleMatches).
+        using HintsSearch::Item;
+        auto H = [] { return Item{Item::Heading, false, false}; };
+        auto S = [](bool found, bool withNext = false) { return Item{Item::Shortcut, found, withNext}; };
+        auto L = [](bool found, bool withNext = false) { return Item{Item::Line, found, withNext}; };
+        auto G = [] { return Item{Item::Gap, false, false}; };
+        using V = std::vector<size_t>;
+        // 0 H, 1 S, 2 S*, 3 S | 4 H, 5 S, 6 S* | 7 H, 8 S | 9 G, 10 S*
+        const std::vector<Item> list = {H(), S(false), S(true),  S(false), H(), S(false),
+                                        S(true), H(), S(false), G(), S(true)};
+        HintsSearch::Bubbled b = HintsSearch::bubbleMatches(list);
+        CHECK(b.order == V({0, 2, 4, 6, 9, 10, 0, 1, 3, 4, 5, 7, 8}));
+        CHECK(b.rest == 6);
+        // Nothing found: the list as it was, all of it the rest.
+        std::vector<Item> none = list;
+        for (Item& it : none) it.matches = false;
+        b = HintsSearch::bubbleMatches(none);
+        V identity;
+        for (size_t i = 0; i < list.size(); ++i) identity.push_back(i);
+        CHECK(b.order == identity && b.rest == 0);
+        // Everything found: the list as it was, none of it the rest.
+        std::vector<Item> all = list;
+        for (Item& it : all)
+            if (it.kind == Item::Shortcut) it.matches = true;
+        b = HintsSearch::bubbleMatches(all);
+        CHECK(b.order == identity && b.rest == list.size());
+        // A section whose every shortcut moved leaves no heading behind.
+        b = HintsSearch::bubbleMatches({H(), S(true), S(true), H(), S(false)});
+        CHECK(b.order == V({0, 1, 2, 3, 4}) && b.rest == 3);
+        b = HintsSearch::bubbleMatches({H(), S(false), H(), S(true)});
+        CHECK(b.order == V({2, 3, 0, 1}) && b.rest == 2);
+        // A pair moves whole when either half matches, and stays together.
+        b = HintsSearch::bubbleMatches({H(), S(false), S(false, true), S(true), S(false)});
+        CHECK(b.order == V({0, 2, 3, 0, 1, 4}) && b.rest == 3);
+        b = HintsSearch::bubbleMatches({H(), S(true, true), S(false), S(false)});
+        CHECK(b.order == V({0, 1, 2, 0, 3}) && b.rest == 3);
+        // A note's lines move together, and a line found moves as a shortcut does.
+        b = HintsSearch::bubbleMatches({H(), L(false, true), L(true), S(false), S(true)});
+        CHECK(b.order == V({0, 1, 2, 4, 0, 3}) && b.rest == 4);
+        // withNext never joins across a heading or a gap.
+        b = HintsSearch::bubbleMatches({H(), S(false, true), H(), S(true)});
+        CHECK(b.order == V({2, 3, 0, 1}) && b.rest == 2);
+        // Items before any heading are a section of their own, without one.
+        b = HintsSearch::bubbleMatches({S(false), S(true), H(), S(true)});
+        CHECK(b.order == V({1, 2, 3, 0}) && b.rest == 3);
+        // A heading with nothing under it stays in the rest.
+        b = HintsSearch::bubbleMatches({H(), H(), S(true), S(false)});
+        CHECK(b.order == V({1, 2, 0, 1, 3}) && b.rest == 2);
+        // The empty list.
+        b = HintsSearch::bubbleMatches({});
+        CHECK(b.order.empty() && b.rest == 0);
+        // Every item is there once, a heading or a gap at most twice.
+        b = HintsSearch::bubbleMatches(list);
+        for (size_t i = 0; i < list.size(); ++i) {
+            const size_t n = (size_t)std::count(b.order.begin(), b.order.end(), i);
+            const bool head = list[i].kind == Item::Heading || list[i].kind == Item::Gap;
+            CHECK(head ? (n >= 1 && n <= 2) : n == 1);
+        }
+        // Laid out by PageMeasure::layoutHints, the matches start the first column.
+        std::vector<PageMeasure::HintItem> measured;
+        for (const Item& it : list) {
+            PageMeasure::HintItem m;
+            m.kind = it.kind == Item::Heading ? PageMeasure::HintItem::Heading
+                     : it.kind == Item::Gap   ? PageMeasure::HintItem::Gap
+                                              : PageMeasure::HintItem::Shortcut;
+            m.key = 40;
+            m.label = 80;
+            m.height = it.kind == Item::Gap ? 0 : 20;
+            m.spaceBefore = it.kind == Item::Shortcut ? 0 : 20;
+            measured.push_back(m);
+        }
+        std::vector<PageMeasure::HintItem> reordered;
+        for (size_t i : b.order) reordered.push_back(measured[i]);
+        const PageMeasure::HintsLayout l = PageMeasure::layoutHints(reordered, 1000, 10, 20);
+        CHECK(l.count() >= 2 && l.columns[0].first == 0);
+        CHECK(b.order[l.columns[0].first] == 0 && b.order[l.columns[0].first + 1] == 2);
     }
 
     GROUP("settings:keep-sorted");
@@ -11687,6 +11883,7 @@ static void testMultiCaretOccurrences() {
 #include "fold_tests.inc"
 #include "previews_tests.inc"
 #include "folder_picker_tests.inc"
+#include "theme_picker_tests.inc"
 #include "commands_tests.inc"
 #include "commands_linux_tests.inc"
 #include "procs_tests.inc"
@@ -11712,6 +11909,7 @@ static void testMultiCaretOccurrences() {
 #include "markdown_page_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
+#include "text_scan_tests.inc"
 #include "wrap_indent_tests.inc"
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
@@ -11768,6 +11966,7 @@ int main() {
     testSyntaxLiterals();
     testIncrementalHighlight();
     testLargeFiles();
+    testTextScan();
     testWrapIndent();
     testTermLinks();
     benchIncrementalHighlight();
@@ -11860,6 +12059,7 @@ int main() {
     testMultiCaret();
     testCommandPalette();
     testFolderPicker();
+    testThemePicker();
     testMultiCaretOccurrences();
     testBackups();
     testTabSessions();

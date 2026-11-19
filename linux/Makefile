@@ -22,9 +22,9 @@ BIN      := $(BUILD)/mutible
 # Shared portable core (never copied — compiled straight from ../src). Keep it
 # the same list as core_sources in meson.build: CI builds only with Meson, so
 # a file missing here is noticed by nobody until someone runs this.
-CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
+CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEmoji.cpp ../src/MarkdownEdit.cpp \
         ../src/MarkdownTasks.cpp ../src/MarkdownPage.cpp ../src/PreviewScroll.cpp ../src/MarkdownHtml.cpp ../src/MermaidDiagram.cpp ../src/MathTex.cpp ../src/Settings.cpp ../src/LineComments.cpp \
-        ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
+        ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp ../src/TextScan.cpp \
         ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp ../src/Text.cpp ../src/Document.cpp ../src/UndoHistory.cpp \
         ../src/Ot.cpp ../src/SessionProtocol.cpp ../src/SessionHost.cpp ../src/SessionClient.cpp ../src/SessionServer.cpp \
         ../src/SessionWeb.cpp ../src/SessionWebPage.cpp ../src/SessionWebViewers.cpp ../src/SessionWebAccess.cpp ../src/SessionFiles.cpp ../src/SqliteRead.cpp \
@@ -135,6 +135,8 @@ test:
 	    ../src/TermLinks.cpp src/TermLinkPath.cpp \
 	    ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
 	    src/WebImageRules.cpp src/LaunchOptions.cpp src/EnvLock.cpp src/MigrationLinux.cpp \
+	    ../src/FindRules.cpp ../src/EditSpans.cpp ../src/MultiCaret.cpp \
+	    ../src/TextFind.cpp ../src/Regex.cpp \
 	    $(shell pkg-config --cflags --libs gio-2.0) -pthread \
 	    -o $(TEST_BIN)
 	@$(TEST_BIN)

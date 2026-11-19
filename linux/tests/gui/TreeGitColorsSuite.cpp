@@ -24,8 +24,8 @@ using namespace gitchecks;
 namespace {
 
 TreeGitColors* Colors() { return RepoWindow().treeColors; }
-GtkWidget* TreeWidget() { return RepoWindow().tree->widget(); }
-GtkWidget* Row(const std::string& name) { return MCGuiFindLabel(TreeWidget(), name); }
+// A row by its path in the repository, never its name (docs/notes/tree.md).
+GtkWidget* Row(const std::string& path) { return MCGuiTreeRow(RepoWindow().tree, In(path)); }
 
 std::string gSettings = "lsp.enabled = false\n";
 
@@ -72,23 +72,23 @@ MC_GUI_SUITE(tree_git_colors) {
                Colors()->inRepository();
     });
     MCGuiStep("a click opens src", [] { MCGuiClick(Row("src")); });
-    MCGuiWait("its files", 10, [] { return Row("a.txt") && Row("b.txt") && Row("deep"); });
+    MCGuiWait("its files", 10, [] { return Row("src/a.txt") && Row("src/b.txt") && Row("src/deep"); });
     MCGuiStep("a clean repository: every row in the tree's text color", [] {
-        for (const char* n : {"src", "a.txt", "b.txt", "deep", "docs", "small.txt"})
+        for (const char* n : {"src", "src/a.txt", "src/b.txt", "src/deep", "docs", "small.txt"})
             GCHECK(Plain(n));
-        GCHECK_EQ_STR(Tip("a.txt"), "");
+        GCHECK_EQ_STR(Tip("src/a.txt"), "");
         gRuns = Colors()->runs();
         MCGuiWriteFile(In("src/a.txt"), "ALPHA\n");   // as an editor elsewhere would
     });
 
     // ---- following the disk
     MCGuiWait("the changed file and its folder in the modified color", 15, [] {
-        return Colored("a.txt", TreeGitColor::Modified) && Colored("src", TreeGitColor::Modified);
+        return Colored("src/a.txt", TreeGitColor::Modified) && Colored("src", TreeGitColor::Modified);
     });
     MCGuiStep("clean rows keep the tree's text color; the tooltip names the status", [] {
         GCHECK(Colors()->runs() > gRuns);
-        GCHECK(Plain("b.txt") && Plain("deep") && Plain("docs") && Plain("small.txt"));
-        GCHECK_EQ_STR(Tip("a.txt"), "Modified (git)");
+        GCHECK(Plain("src/b.txt") && Plain("src/deep") && Plain("docs") && Plain("small.txt"));
+        GCHECK_EQ_STR(Tip("src/a.txt"), "Modified (git)");
         GCHECK_EQ_STR(Tip("src"), "Modified (git)");
         // An untracked file, and output in an ignored folder.
         MCGuiWriteFile(In("notes.txt"), "n\n");
@@ -111,16 +111,16 @@ MC_GUI_SUITE(tree_git_colors) {
     // is opened first.
     MCGuiStep("a click opens deep", [] {
         GCHECK_EQ_STR(Tip("added.txt"), "Added (git)");
-        MCGuiClick(Row("deep"));
+        MCGuiClick(Row("src/deep"));
     });
-    MCGuiWait("its file", 10, [] { return Row("d.txt") != nullptr; });
+    MCGuiWait("its file", 10, [] { return Row("src/deep/d.txt") != nullptr; });
     MCGuiStep("a file changed two folders down", [] {
-        GCHECK(Plain("deep") && Plain("d.txt"));
+        GCHECK(Plain("src/deep") && Plain("src/deep/d.txt"));
         MCGuiWriteFile(In("src/deep/d.txt"), "DELTA\n");
     });
     MCGuiWait("it and both folders above in the modified color", 15, [] {
-        return Colored("d.txt", TreeGitColor::Modified) &&
-               Colored("deep", TreeGitColor::Modified) && Colored("src", TreeGitColor::Modified);
+        return Colored("src/deep/d.txt", TreeGitColor::Modified) &&
+               Colored("src/deep", TreeGitColor::Modified) && Colored("src", TreeGitColor::Modified);
     });
 
     // ---- the editor's own save
@@ -134,7 +134,7 @@ MC_GUI_SUITE(tree_git_colors) {
     });
     MCGuiWait("saved", 10, [] { return MCGuiReadFile(In("docs/guide.txt")) == "more\nguide\n"; });
     MCGuiWait("the file and its folder in the modified color", 15, [] {
-        return Colored("guide.txt", TreeGitColor::Modified) &&
+        return Colored("docs/guide.txt", TreeGitColor::Modified) &&
                Colored("docs", TreeGitColor::Modified);
     });
 
@@ -144,8 +144,8 @@ MC_GUI_SUITE(tree_git_colors) {
         MCGuiSetSettings(gSettings);
     });
     MCGuiWait("VS Code's light colors", 10, [] {
-        return Colored("a.txt", TreeGitColor::Modified) &&
-               Colored("notes.txt", TreeGitColor::Untracked) && Plain("b.txt");
+        return Colored("src/a.txt", TreeGitColor::Modified) &&
+               Colored("notes.txt", TreeGitColor::Untracked) && Plain("src/b.txt");
     });
     MCGuiStep("light: the modified color is VS Code's #895503", [] {
         GCHECK(Expected(TreeGitColor::Modified).rgb() == 0x895503);
@@ -153,7 +153,7 @@ MC_GUI_SUITE(tree_git_colors) {
         MCGuiSetSettings(gSettings);
     });
     MCGuiWait("tree.git-modified's color", 10, [] {
-        return Colored("a.txt", Rgba::hex(0xFF00FF)) && Colored("src", Rgba::hex(0xFF00FF));
+        return Colored("src/a.txt", Rgba::hex(0xFF00FF)) && Colored("src", Rgba::hex(0xFF00FF));
     });
     MCGuiStep("the settings back", [] {
         gSettings = "lsp.enabled = false\n";
@@ -161,14 +161,14 @@ MC_GUI_SUITE(tree_git_colors) {
     });
     MCGuiWait("dark again: VS Code's #E2C08D", 10, [] {
         return Expected(TreeGitColor::Modified).rgb() == 0xE2C08D &&
-               Colored("a.txt", TreeGitColor::Modified);
+               Colored("src/a.txt", TreeGitColor::Modified);
     });
 
     // ---- a commit made outside writes only in .git
     Shell("everything committed, as a terminal would",
           "set -e; cd '" + repo + "'; " + G() + " add -A; " + G() + " commit -qm second");
     MCGuiWait("committed rows lose their color; the ignored folder keeps its own", 15, [] {
-        return Plain("a.txt") && Plain("src") && Plain("deep") && Plain("notes.txt") &&
+        return Plain("src/a.txt") && Plain("src") && Plain("src/deep") && Plain("notes.txt") &&
                Plain("added.txt") && Colored("build", TreeGitColor::Ignored);
     });
     MCGuiWaitQuiet("the commit's last status runs out first", 1.0, 20, [] {
@@ -177,13 +177,13 @@ MC_GUI_SUITE(tree_git_colors) {
     // build is opened, so its folder is watched and the change is reported:
     // it is the colors that let it go.
     MCGuiStep("a click opens build", [] { MCGuiClick(Row("build")); });
-    MCGuiWait("its file", 10, [] { return Row("out.o") != nullptr; });
+    MCGuiWait("its file", 10, [] { return Row("build/out.o") != nullptr; });
     MCGuiWaitQuiet("the statuses run out", 1.0, 20, [] { return (long)Colors()->runs(); });
     MCGuiStep("a change only inside the ignored folder", [] {
         gRuns = Colors()->runs();
         MCGuiWriteFile(In("build/more.o"), "o\n");
     });
-    MCGuiWait("reported: the tree lists it", 10, [] { return Row("more.o") != nullptr; });
+    MCGuiWait("reported: the tree lists it", 10, [] { return Row("build/more.o") != nullptr; });
     MCGuiPause(1.0);   // before a negative check: no status is to run (one waits 0.5 s)
     MCGuiStep("runs no status", [] {
         MCGuiNote("statuses since: %u", Colors()->runs() - gRuns);

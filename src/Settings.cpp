@@ -960,6 +960,8 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return boolValue(v, s.enablePreview_, e);),
         MC_KEY("workbench.enable-preview-from-quick-open", Word, false,
                return boolValue(v, s.enablePreviewFromQuickOpen_, e);),
+        MC_KEY("workbench.sidebar-icons", Word, false,
+               return boolValue(v, s.sidebarIcons_, e);),
         MC_KEY("explorer.auto-reveal", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1750,6 +1752,12 @@ const char* Settings::defaultFileText() {
 # workbench.enable-preview = on
 # Whether Quick Open (Cmd+P) opens files in the preview tab too.
 # workbench.enable-preview-from-quick-open = off
+# A row of icons at the top of the sidebar, one for each panel that takes
+# its place: the file tree, Source Control (with the count of changes),
+# Agents (with a dot while a session waits for you), and Processes (with the
+# count of running servers). A click shows that panel. Off, the panels are
+# reached by their keys and the View menu (macOS).
+# workbench.sidebar-icons = on
 
 # The file editor and Markdown preview.
 # editor.background = #1F1F1F

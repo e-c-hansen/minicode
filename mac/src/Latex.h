@@ -72,6 +72,13 @@
 // than it typesets it first and edits nothing, since the page's places
 // name text that has moved.
 @property(nonatomic, copy) NSString *(^bufferText)(void);
+// The tab's text as it is now, wherever it is (the editor beside the page,
+// or the tab's buffer behind the full preview). The edit box applies its
+// edit to this text, its span found again in it (MarkdownEdit::rebaseSpan)
+// when an agent, a reload or Cmd+Z changed it while the box was open, and
+// refuses, the text going to the clipboard, when the span itself changed:
+// never at the old offsets, never over someone else's change.
+@property(nonatomic, copy) NSString *(^sourceNow)(void);
 
 // This preview's own output folder and hidden sibling: each preview has
 // both to itself (LatexScratch::Owner), so two windows on one file never
@@ -103,7 +110,10 @@
 // different file); re-typeset it.
 - (void)setPath:(NSString *)texPath source:(NSString *)source;
 // Preview edits have their own undo stack: the PDF is not a text view, so
-// Cmd+Z here steps back through the edits made in the preview.
+// Cmd+Z here steps back through the edits made in the full preview (an
+// edit beside the source is the source's own undo step instead). The
+// stack is cleared when the text changes from elsewhere (typing, a
+// reload), since its snapshots would put the old text back over it.
 - (BOOL)canUndoEdit;
 - (BOOL)canRedoEdit;
 - (void)undoEdit;

@@ -262,15 +262,27 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   --exclude-standard`, `Section::Plain` with Side by Side and Open. Apply
   to Main… (`GitUi::applyToMainPlan`) reads main's status first and
   refuses, naming them, when main has changes of its own in those files,
-  else asks naming the files; the patch is the worktree's `diff --binary`
-  against the merge base plus a `diff --no-index /dev/null <file>` per
-  untracked file (never `add -N` in the worktree's index), given to `git
-  apply` in the main checkout (the first `worktree list --porcelain`
-  entry), all or nothing; when that fails, `apply --3way`, which leaves
-  conflict marks (and git's unmerged entries) in the files that clash and
-  stages the rest, which are then unstaged (`GitUi::unstageArgs`), so
-  everything arrives unstaged. Never a commit, merge or branch switch.
-  `apply` has git's two-minute limit (`Git::timeoutFor`).
+  else asks naming the files. After the yes, both ports run the core's
+  `ChangeReview::applyToMain` (the Mac through a `GitRunner` over
+  `MCGitRunSync`, since 2026-11-19): the worktree is read again
+  (`worktreeRawArgs` and `untrackedArgs`, `ChangeReview::applyNow`) and
+  anything it lists that the question did not (a file changed or made
+  since the page's read, either side of a rename) refuses the whole
+  (`GitUi::applyStaleText`, naming them); main's status is checked again
+  (a change of the user's own made while the question was up refuses
+  too); the patch is the worktree's `diff --binary` against the merge
+  base held to the files asked about (`worktreeDiffArgs(base, paths)`,
+  `--literal-pathspecs`), plus a `diff --no-index /dev/null <file>` per
+  file asked about that is untracked now (never `add -N` in the
+  worktree's index), given to `git apply` in the main checkout (the
+  first `worktree list --porcelain` entry), all or nothing; when that
+  fails, `apply --3way`, which leaves conflict marks (and git's unmerged
+  entries) in the files that clash and stages the rest, which are then
+  unstaged (`GitUi::unstageArgs`, a rename's source path with its new
+  one), so everything arrives unstaged. Never a commit, merge or branch
+  switch. `apply` has git's two-minute limit (`Git::timeoutFor`). Checks:
+  `review-worktree:git`, `:apply-checked`, `:apply-rename`, and the
+  worktree_review suite's late.txt.
 - **Change bars** (Mac, `GitGutter.mm`, core `QuickDiff`): the original is
   the index entry, as VS Code's quick diff (`ls-files --stage`, then `cat-file
   blob` of its object), read again only when the file or the index file's stat
@@ -401,3 +413,5 @@ text is in place in its section.
 - Git panel (all three ports): **Header trap**: `StatusBranchItem.h` takes NSStrings, not `Git::StatusBranch`, because `EditorController+Private.h` imports it and every GUI suite imports that.
 - Git panel (all three ports): **Tool guard trap**: in a worktree-isolated agent session, git commands in compound or unusual forms are refused (even a filename containing "git"); use plain `cd x && git ...` lines or a script file.
 - Git panel (all three ports): **Trap**: a scroll to an iter just after the GTK review page's text is replaced uses line heights GTK has not measured, and the page went to its top (the top-row anchor did so too); `scrollRowTo` scrolls to a mark, then a tick callback (`onSettle`) puts the row right each frame until it holds three, and the reveal, the acted place and the top row all go through it.
+- Git panel (all three ports): **Apply to Main checks and applies the same files** (round 10's defect 6, 2026-11-19): the check ran on the page's read and the apply on a fresh `git diff <base>` with no pathspec, so a file the agent changed after the read was patched into main over the user's own edit, unchecked, and an untracked file made since was dropped; the apply reads the worktree again and refuses anything new, checks main again, and holds the diff to the paths asked about. And after `apply --3way` a rename is one status entry: restoring only its new path left the source's deletion staged; unstage `origPath` too.
+- Git panel (all three ports): **A refusal's note settles on the read after it** (2026-11-19, main's CI after #245): a worktree page settled every note on the read on show, but a refused Apply to Main asks the user to look over the read that follows (it shows the file changed since), so that read took the note away; `_noteSettlesOnNextRead` settles a refusal's note on the next read. In a check, wait for the read that shows the change (its row), never for any later read: one started before the write can land first.

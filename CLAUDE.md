@@ -123,7 +123,8 @@ a trap.
   (FAIL, FATAL, sanitizer reports, compiler errors) plus SLOW, NEAR and
   LEAK lines at the top of the run's page and on the PR; the runner
   images are named (`macos-26`, `ubuntu-26.04`), never `latest`; a newer
-  push cancels a PR's older run.
+  push cancels a PR's older run, and every push to main gets a run of
+  its own (since 2026-11-19, `docs/ci.md`).
   How CI is made quick (ccache, two harness processes, `GUI_ALONE`,
   `GUI_SECOND_HALF`): `docs/notes/build.md`. `scripts/ci-local.sh` runs on the Mac
   what CI runs, without Docker (`--quick` before a push: core tests,
@@ -254,7 +255,11 @@ adding a file or looking for where something lives.
   nothing. A shortcut (key, label, state; a pair is two) matches when every
   word is found in it, keys also by name ("cmd", "shift+cmd+h"); matches
   are marked (`MCHintsMatchAttribute`) and the rest dimmed
-  (`MCHintsDimmedAttribute`), never hidden, so the layout stays. Prefer
+  (`MCHintsDimmedAttribute`), never hidden. Since 2026-11-19 (both
+  systems, `HintsSearch::bubbleMatches`) a query puts each section's
+  matches first under its heading and the rest after them, dimmed, in the
+  unfiltered panel's columns and size, scrolled to the top; an empty
+  query gives back the layout exactly. Prefer
   menu items with key equivalents to the key monitor: they work in every pane
   and for shifted variants.
 - No third-party dependencies, ever; new capabilities use system frameworks.
@@ -385,7 +390,7 @@ session has a display. Check first.
   large_file, save, paste, zoomfit, spell_check;
   files and windows: tree, tree_hidden, tree_focus, folder_picker, preview_tabs, split_editor, search,
   replace_in_folder, backups, window_restore, palette, symbols, keymap, config_writes,
-  daily_work, structure, utf16, hints_panel, swatch_escape;
+  daily_work, structure, utf16, hints_panel, swatch_escape, sidebar_icons;
   language servers and formatting: language, lsp_fixes, lsp_sync,
   lsp_progress, lsp_watch, lsp_open_tabs, inlay_hints, semantic_tokens,
   snippets, completion_keys, problems, clangd_flags, servers_by_extension, server_consent, tools_consent,

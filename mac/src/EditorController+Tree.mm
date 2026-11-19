@@ -359,7 +359,10 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     if (!_gitColors) {
         _gitColors = [MCTreeGitColors new];
         __weak EditorController *weakSelf = self;
-        _gitColors.onChange = ^{ [weakSelf refreshTreeCells]; };
+        _gitColors.onChange = ^{
+            [weakSelf refreshTreeCells];
+            [weakSelf sidebarIconsUpdate];   // the Source Control badge
+        };
         // The status bar's branch reads the same status.
         _gitColors.onBranchChange = ^{
             EditorController *s = weakSelf;
@@ -609,6 +612,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 - (NSUInteger)treeGitRuns { return _gitColors.runs; }   // tests
+- (NSUInteger)treeGitChangeCount { return _gitColors.changeCount; }
 
 // Rebuild the rows, from the disk when `rescan`, else only in a new order,
 // keeping the expanded folders, the selected row and the scroll position.

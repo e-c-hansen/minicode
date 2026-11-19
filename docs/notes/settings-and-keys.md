@@ -54,6 +54,35 @@ found through that list.
   popovers that force DarkAqua and inline hex are unchanged.
   `selectedTextAttributes` is only a background, since after a switch AppKit
   drew selected text in its own color.
+- **The theme picker** (2026-11-18, the owner's decision: settings stay a
+  text file, and only themes get a picker that previews;
+  `ThemePicker.{h,cpp}`, `themepick:*`, `ThemePickerPanel.{h,mm}`, checked
+  in `config_writes`). VS Code's Preferences: Color Theme,
+  `workbench.action.selectTheme`, on Ctrl+Cmd+T (VS Code's Cmd+K Cmd+T, as
+  a Cmd+K chord is Control+Command and its second key in mutible), View >
+  Theme > Choose Theme… (the submenu's first item, nil target, so the app
+  delegate's `selectColorTheme:`), and the palette by that name. It is an
+  `MCPalettePick` with `preview`, `cancel` and `initialIndex`
+  (`PalettePanel.h`): the rows are `ThemePicker::rows()` (dark then light,
+  each by title, "dark themes" and "light themes" at the right of each
+  group's first row), the theme in use selected. `ThemePicker::Session`
+  decides: each row the list comes to (arrows, typing, the pointer over a
+  row through the table's tracking area) is previewed once; Return gives
+  the id to write ("" for the set theme: nothing written), which goes
+  through `MCChooseTheme`, so the write keeps the file byte for byte
+  apart from the theme line (`Settings::withTheme`), asks about the
+  file's own colors, and is refused while a tab holds the file unsaved;
+  then the preview ends, so a refused or cancelled write shows the set
+  theme again. Esc, a click outside, the keyboard leaving, or the palette
+  going with its window ends the preview, nothing written. The preview
+  is `AppSettings previewTheme:` (`Settings::setTheme` over the parsed
+  file, kept across a reload, so the file's own colors still win), posted
+  as a settings change only when the theme on show changes; every window
+  and the palette itself (`settingsChanged:`, keeping the shown row
+  selected) follow. A preview step is bound at 100 ms of main-thread CPU
+  with three tabs open. There is no pair of themes that follows the
+  system's appearance (VS Code's window.autoDetectColorScheme); if one
+  comes, the picker should write the theme for the appearance in use.
 - **mutible's own writes** to settings.conf and keys.conf (a theme, the IDE
   link toggle, the first file of either) go through `MCWriteConfigFile`
   (AppSettings.h, over `FolderSearch::writeFileAtomically`), never
@@ -116,17 +145,33 @@ found through that list.
 - **The hints panel** (Shift+Cmd+H, `EditorController+StatusBar.mm`;
   2026-11-18). Its keys are symbols, from one core function,
   `Commands::keyLabel(key, Platform)`: on the Mac `glyphs()`, Apple's
-  ⌃⌥⇧⌘ before ⏎ ⌫ ⌦ ⇥ ⎋ ↑ ↓ ← → (`MCKeymapGlyphs` calls it); on Linux the
-  modifiers in words joined by "+", in GTK's and VS Code's order, and the
-  same symbols for the keys that have one: "Ctrl+Shift+P", "Ctrl+⏎",
-  "Shift+⇥", "⎋" (Home, End, Page Up, Page Down, Space and Menu keep their
-  names; a Linux user reads ⇞ less readily than Page Up). Words for the
-  modifiers on Linux, because Ctrl and Alt have no symbol a PC keyboard
-  prints, and "Ctrl+⇧+P" mixes the two ways in one key. It is not
-  `linuxLabel()`, which docs/REFERENCE.md's Linux column and the status bar
-  keep. Menus draw their own keys. `HintsSearch::parse(query, Spelling)`
-  finds keys by name in either spelling ("return" ⏎, "shift+ctrl+h"
-  Ctrl+Shift+H, "control" Ctrl on Linux). The rows are read as one list,
+  ⌃⌥⇧⌘ before ⏎ ⌫ ⌦ ⇥ ⎋ ↑ ↓ ← → (`MCKeymapGlyphs` calls it). On Linux
+  (2026-11-19, the owner's, after ISO/IEC 9995-7's ⎈ ⎇ were tried and
+  found unknown to PC users) each system has its own: Ctrl, Alt and Super
+  (the Key's Cmd) stay words, the words a PC keyboard prints, and Shift is
+  ⇧, printed on most; ⏎ ⇥ ⎋ ⌫ ⌦ and the arrows as on the Mac; Home, End,
+  Page Up, Page Down, Space, Menu and "Keypad 0" words (no ↖ ↘ ⇞ ⇟); the
+  modifiers in GTK's and VS Code's order (Ctrl, Alt, Shift, Super), and a
+  thin space (U+2009, `Commands::kLinuxKeyJoin`) between the parts, no
+  "+": "Ctrl ⇧ P", "Ctrl ⏎", "Alt Z", "⇧ ⇥", "Ctrl Alt ⇧ Page Down".
+  `Commands::modifiersLabel(mods, Platform)` spells modifiers alone for a
+  row written by hand ("Alt click"). The GTK panel draws Ctrl, Alt and
+  Super each in a colour of its own (below). It is not `linuxLabel()`,
+  which docs/REFERENCE.md's Linux column, the palette, menus and the status
+  bar keep. Menus draw their own keys. `HintsSearch::parse(query, Spelling)`
+  finds keys by name in either spelling ("return" ⏎; on Linux "control",
+  "cmd" and "command" Ctrl, "opt" Alt, "win" and "meta" Super, "shift" ⇧,
+  and "shift+ctrl+h" Ctrl ⇧ H, the combination joined by thin spaces).
+  **Matches first** (2026-11-19, the owner's; GTK first, the Mac to
+  follow): `HintsSearch::bubbleMatches(items)` takes the list layoutHints
+  lays out, as `HintsSearch::Item`s (Heading, Shortcut, Line, Gap, whether
+  the query found it, `withNext` for a pair or a note's lines), and
+  returns the order to lay it out in: each section with a match, its
+  heading (or the gap that heads "Hide these hints") and its matches in
+  their order, then from `rest` the list as it was without them, dimmed,
+  a heading left out of the rest when everything under it moved; a pair
+  moves whole when either half matches (`hints:bubble`, the header's
+  comment says how the Mac adopts it). The rows are read as one list,
   a pair's two shortcuts one after the other, and
   `PageMeasure::layoutHints(items, room, gap, columnGap, maxColumns)` cuts
   it into as many columns as fit the room (16 at most): the tallest column
@@ -139,6 +184,17 @@ found through that list.
   wrong column; a heading has a blank line above it except at a column's
   top. With no room for one column the text is the old one column, labels
   wrapping at their stop. `hintsText` (tests) is one column.
+- **The hints' search, matches first, on the Mac** (2026-11-19, the
+  owner's decision for both systems; `hints_panel`): with a query,
+  `hintsTextForRows:...search:YES` passes one `HintsSearch::Item` an
+  entry (a pair's first half `withNext`) to `HintsSearch::bubbleMatches`
+  and draws its order: `[0, rest)` the matching sections (heading lit,
+  matches marked), `[rest, end)` dimmed, headings too. `updateHints`
+  lays out the whole list first, for its column count and the panel's
+  size, then the bubbled list at that count (`maxColumns`), the panel
+  no smaller than the whole list's, so typing never adds a column or
+  shrinks the panel; `hintsQueryChanged` scrolls to the top. An empty
+  query draws the whole list, as it was, through the same path.
 - **The hints' columns on Linux** (2026-11-18, `linux/src/HintsColumns.{h,cpp}`,
   `linux/HANDOFF.md` item 111): the same `layoutHints`, from widths
   measured with Pango in the fonts drawn (keys in Monospace, labels in the
@@ -160,8 +216,30 @@ found through that list.
   ("open") is a field of its own at its own stop, no longer spaces in the
   label. Each `HintRow` is told its column and its bytes in that column's
   text, and `HintsSearchBox::attributes` adds the marks to each column's
-  attributes over the fonts and colors, so a search moves nothing; the
-  list scrolls to the highest mark. The room is the overlay's width less
+  attributes over the fonts and colors. While the box holds a query the
+  list is laid out in bubbleMatches' order (`HintsColumns::orderFor`), in
+  no more columns than without one and the drawing area no smaller, so
+  the panel neither shrinks nor jumps; the rest's rows carry `rest` and
+  are dimmed whole, and the list scrolls to its top. A keystroke that
+  leaves what the query finds as it was only marks again
+  (`HintsColumns::mark` compares the orders; `layouts()` counts the
+  layouts for hints_panel), and an empty query restores the list exactly.
+  **Trap**: a monospace font gives a thin space (U+2009) a whole cell (8
+  pixels in DejaVu Sans Mono at 10 points, 2 in Ubuntu Sans, which ran
+  "Ctrl Alt S" together in hints_panel's first snapshot), so a key's thin
+  spaces (and the space in "Page Down") are drawn, and measured, at half
+  the keys' size (`pango_attr_scale_new(0.5)`, 4 pixels). Ctrl, Alt and Super are coloured by word with Pango
+  attributes, `theme::hintsModifierColors(settings)` (ThemeCss.h, pure,
+  `theme:hints-modifiers` in linux's `make test`): the theme's keyword,
+  string, preprocessor, function, type, number, escape, tag and attribute
+  colours in that order, each lightened toward white to 4.5:1 on the
+  panel's #252526 (the panel stays dark on a light theme, as the Mac's),
+  taken when 30 degrees of hue (or a redmean distance of 100 for a grey)
+  from the keys' blue and the ones taken before; Dark Modern gives Ctrl
+  #CE9178, Alt #C586C0 and Super #DCDCAA (its keyword blue #569CD6 is the
+  keys' #4EA1F7 again). main.cpp's `showHintsText` sets them on every
+  layout, so a theme change (`onSettingsChanged`, `refreshHints`) recolours
+  an open panel. The room is the overlay's width less
   the panel's margins, padding, border and the scroll bar's 10 pixels
   (main.cpp's `hintsRoom`); the overlay's `get-child-position`, emitted as
   it places the panel, sees a new width and lays the list out again from
@@ -175,8 +253,8 @@ found through that list.
   `linux/HANDOFF.md` item 108): the Mac's box (CLAUDE.md, "Its search box")
   as a GtkSearchEntry at the panel's top, matched by the core's
   `HintsSearch` with `Spelling::Linux` (the panel draws keys with
-  `Commands::keyLabel(key, Platform::Linux)`, `Keys::hintLabel`: "Ctrl+Shift+H",
-  "Ctrl+⏎", so "control", "opt", "return" and "shift+ctrl+h" find them). "Without Command or
+  `Commands::keyLabel(key, Platform::Linux)`, `Keys::hintLabel`: "Ctrl ⇧ H",
+  "Ctrl ⏎", so "control", "cmd", "opt", "return" and "shift+ctrl+h" find them). "Without Command or
   Control" is without Ctrl or Super there. main.cpp's key controller in the
   window's capture phase (`onHintsKey`) hands every key press to
   `HintsSearchBox::takeKey` while the panel shows and the palette is
@@ -184,8 +262,8 @@ found through that list.
   given back on close, the editor when a click put it there), forwards the
   key to the entry's GtkText (`gtk_event_controller_key_forward`), and types
   an Alt+letter's letter itself. Marks and dims are Pango attributes on
-  each column's layout (a background, a foreground alpha), so the text and
-  its size never change. The controller, added to the window after GTK's own, runs before
+  each column's layout (a background, a foreground alpha); what is found
+  moves first (the columns, above). The controller, added to the window after GTK's own, runs before
   the application's accelerators on GTK 4.22: Alt+Z reached the box and
   left Word Wrap alone with nothing unbound (checked by taking Keys out of
   it; the accelerators of Ctrl keys and function keys run because the box
@@ -209,4 +287,5 @@ text is in place in its section.
 - Settings, themes and Adjust Settings: Trap: an NSTextView with `usesFontPanel` sets the shared NSColorPanel to the color under the caret when the selection moves, and the panel forwarded that to `colorPicked:`, so every pick became the text color; the editor sets `usesFontPanel = NO`.
 - Keys: the registry, keys.conf and the key monitor: **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified" check had sent the event to the menu directly.
 - Keys: the registry, keys.conf and the key monitor: **Trap** (the hints' search box on Linux): an input method types nothing for Alt+letter (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`), so a forwarded Alt+Z was lost.
+- Keys: the registry, keys.conf and the key monitor: **Trap** (the hints' keys on Linux): a monospace font gives a thin space a whole cell, so a key's spaces are drawn at half the keys' size.
 - Keys: the registry, keys.conf and the key monitor: **Trap** (the hints' columns on Linux): Pango's absolute line height does not make lines that mix fonts as tall as asked, so the columns are drawn a line at a time.

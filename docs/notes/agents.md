@@ -212,6 +212,11 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   is gone, and undone last first while each new text is found exactly
   once (a created Write ends it with no file) gives the file before the
   session; anything ambiguous stops that with a sentence saying why.
+  Refused calls, and calls with no result yet (2026-11-19: one waiting at
+  Claude Code's permission prompt is not made, and was read as made, so
+  the page said something had changed the text or rebuilt a wrong
+  before), are left out of the reckoning, Unknown; the page counts the
+  latter apart ("with no result yet and not counted").
   `AgentEvidence` also lists the file edits (`Evidence::edits`).
   `AgentEvidence`: every Bash call, test commands recognised anywhere in a
   chain past env, time, timeout and assignments (pytest forms, make test and
@@ -337,7 +342,21 @@ over JSON-RPC with a tool table, the lock file, the tools' JSON shapes. Mac
   growing to 64 MB for one line; a replaced or shorter file is read again
   and the tally drops the copies. `blocks` and `blockCostPerHour` are
   ccusage's. Samples: `v1 <time> <5h %> <5h reset> <week %> <week reset>`
-  ("-" for a missing window). `fitScale`: per window (one resets_at),
+  ("-" for a missing window), then the status line's `session_id` when
+  it gives one (2026-11-19; a 6-field line still reads). **Several
+  sessions** (round 10's agents Medium 2): each session's status line
+  reports its own last reply's percentages, so an idle session's
+  reading, logged when the user types into it, is old. `readingTimes`
+  puts each sample at its session's last reply at or before it was
+  logged (the transcripts' entries by session id) and drops a session's
+  repeats of one reading; then within a window a reading with an earlier
+  reset, or the same reset and a lower percent, than one before it is
+  stale and left out (the percent never falls within a window, so
+  nothing starts the fit over; lines without a session rely on this
+  alone). The forecast's current percent is the newest reading so
+  ordered. `worthLogging` skips a sample that is an `olderReading` than
+  the log's last line, so two sessions do not alternate a line a run.
+  `fitScale`: per window (one resets_at),
   readings from the window's start (reset minus 5 h or 7 d, when the
   transcripts reach back that far) to the first sample, then sample to
   sample once $0.25 or 2 points moved; the scale is the readings'

@@ -80,6 +80,9 @@ public:
     // needs no new status.
     bool ignored(const std::string& rel) const;
     bool empty() const { return files_.empty() && untrackedDirs_.empty() && ignoredDirs_.empty(); }
+    // How many paths have a change (an untracked folder is one, as git
+    // lists it; ignored paths are none): the sidebar's Source Control badge.
+    size_t changeCount() const { return changes_; }
     bool operator==(const Decorations& o) const;
     bool operator!=(const Decorations& o) const { return !(*this == o); }
 
@@ -88,6 +91,7 @@ private:
     std::unordered_map<std::string, Decoration> files_;
     std::unordered_map<std::string, Decoration> folders_;
     std::unordered_set<std::string> untrackedDirs_, ignoredDirs_;
+    size_t changes_ = 0;   // follows from the rest, so == need not compare it
 };
 
 // Whether an entry belongs in the "Staged" list, the "Changes" list, or

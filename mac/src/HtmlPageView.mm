@@ -4,6 +4,7 @@
 #import "Browser.h"
 #import "EditorTab.h"   // MCStampOfFile
 #include "FileSniff.h"
+#include "HtmlPage.h"
 #include "Settings.h"
 #include <string>
 
@@ -50,6 +51,8 @@ static NSURL *WithoutFragment(NSURL *url) {
     NSTextField *_question;
     NSMutableSet<NSString *> *_requested;   // files this page was asked to load
     NSString *_text;          // the buffer shown (showText:), nil for the file itself
+    BOOL _askingToOpen;       // the sheet asking before a link opens another app is up
+    BOOL _refusesApps;        // its box was ticked: the page's later ones are refused
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -307,6 +310,7 @@ static NSURL *WithoutFragment(NSURL *url) {
                         [self.path hasPrefix:[root stringByAppendingString:@"/"]]))
         access = root;
     self.loads++;
+    _refusesApps = NO;
     if (!_requested) _requested = [NSMutableSet set];
     [_requested addObject:self.path.stringByStandardizingPath];
     // The buffer: the file itself when it holds just that, else the text
@@ -386,11 +390,27 @@ static NSURL *WithoutFragment(NSURL *url) {
     }];
 }
 
+// Whether a navigation away from the page may go to onOpenLink: a link the
+// user clicked or a form they submitted, always; one the page started by
+// itself (a <meta http-equiv="refresh">, a script setting location) only
+// to a web address, and only while the page's scripts run, since such a
+// page acts on its own as a script would. A meta refresh to zoommtg://,
+// smb:// or any app's scheme opened that app with no click (round 10's
+// documents defect 2); html.scripts never applied, as it is not a script.
+static BOOL MCHtmlMayFollow(WKNavigationAction *action, NSURL *url, BOOL runsScripts) {
+    const WKNavigationType type = action.navigationType;
+    if (type == WKNavigationTypeLinkActivated || type == WKNavigationTypeFormSubmitted) return YES;
+    NSString *scheme = url.scheme.lowercaseString;
+    return runsScripts && ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]);
+}
+
 // Scripts on or off for every navigation of the page. The page on show
-// stays the tab's file: a link clicked (or a script or form) taking the
-// page anywhere else goes to onOpenLink instead, which opens a local file
-// in its own tab and a web address in the browser pane; a link to a place
-// in the same page scrolls there. Frames inside the page load as they ask.
+// stays the tab's file: a link clicked (or a form) taking the page
+// anywhere else goes to onOpenLink instead, which opens a local file in
+// its own tab and a web address in the browser pane; a link to a place in
+// the same page scrolls there; a navigation the page starts by itself is
+// followed only as MCHtmlMayFollow says, else refused and named in the
+// window's status bar (onRefused). Frames inside the page load as they ask.
 - (void)webView:(WKWebView *)wv decidePolicyForNavigationAction:(WKNavigationAction *)action
                                                      preferences:(WKWebpagePreferences *)prefs
                                                  decisionHandler:(void (^)(WKNavigationActionPolicy,
@@ -412,20 +432,73 @@ static NSURL *WithoutFragment(NSURL *url) {
                            (type == WKNavigationTypeOther && url.isFileURL &&
                             [_requested containsObject:url.path.stringByStandardizingPath]);
         if (stale) return;
-        void (^open)(NSURL *) = self.onOpenLink;
-        if (open) dispatch_async(dispatch_get_main_queue(), ^{ open(url); });
+        [self followOrRefuse:action url:url];
         return;
     }
     handler(WKNavigationActionPolicyAllow, prefs);
 }
 
-// A target=_blank link or window.open: opened as a link is.
+// A link followed to another app (zoommtg:, smb:, mailto:) is asked about
+// first, as HtmlPage::opensAnotherApp says: a page whose scripts run can
+// click its own links (a.click()) and send its own forms (form.submit()),
+// and WebKit reports those as LinkActivated and FormSubmitted, the user's.
+// WKNavigationAction has no public sign of a real click: buttonNumber and
+// modifierFlags are a left button and none for a.click() as for a click,
+// and _isUserInitiated is SPI. So every one asks, a click by hand once.
+- (void)followOrRefuse:(WKNavigationAction *)action url:(NSURL *)url {
+    const BOOL follow = MCHtmlMayFollow(action, url, self.runsScripts);
+    const BOOL ask = follow && HtmlPage::opensAnotherApp(url.scheme.UTF8String ?: "");
+    void (^go)(NSURL *) = follow ? self.onOpenLink : self.onRefused;
+    __weak MCHtmlPage *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (ask) [weakSelf askToOpen:url];
+        else if (go) go(url);
+    });
+}
+
+// The sheet asking whether to open another app, naming it and the address.
+// One at a time: another the page asks for meanwhile is refused, as is
+// every one after the box was ticked, until the page loads again.
+- (void)askToOpen:(NSURL *)url {
+    NSWindow *window = self.window;
+    if (_askingToOpen || _refusesApps || !window || !self.onOpenLink) {
+        if (self.onRefused) self.onRefused(url);
+        return;
+    }
+    _askingToOpen = YES;
+    NSString *app = nil;
+    NSURL *appURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:url];
+    if (appURL) {
+        NSBundle *bundle = [NSBundle bundleWithURL:appURL];
+        app = [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"] ?:
+              [bundle objectForInfoDictionaryKey:@"CFBundleName"];
+        if (![app isKindOfClass:NSString.class] || !app.length)
+            app = appURL.lastPathComponent.stringByDeletingPathExtension;
+    }
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @(HtmlPage::openAppQuestion(app.UTF8String ?: "").c_str());
+    alert.informativeText = @(HtmlPage::openAppDetail(url.absoluteString.UTF8String ?: "").c_str());
+    [alert addButtonWithTitle:@(HtmlPage::kOpenApp)];
+    [alert addButtonWithTitle:@"Cancel"];
+    alert.showsSuppressionButton = YES;
+    alert.suppressionButton.title = @(HtmlPage::kRefuseMore);
+    __weak MCHtmlPage *weakSelf = self;
+    [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse answer) {
+        MCHtmlPage *me = weakSelf;
+        if (!me) return;
+        me->_askingToOpen = NO;
+        if (alert.suppressionButton.state == NSControlStateValueOn) me->_refusesApps = YES;
+        if (answer == NSAlertFirstButtonReturn && me.onOpenLink) me.onOpenLink(url);
+    }];
+}
+
+// A target=_blank link or window.open: opened as a link is, by the same
+// rule.
 - (WKWebView *)webView:(WKWebView *)wv createWebViewWithConfiguration:(WKWebViewConfiguration *)cfg
        forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)features {
     (void)wv; (void)cfg; (void)features;
     NSURL *url = action.request.URL;
-    void (^open)(NSURL *) = self.onOpenLink;
-    if (url && open) dispatch_async(dispatch_get_main_queue(), ^{ open(url); });
+    if (url) [self followOrRefuse:action url:url];
     return nil;
 }
 

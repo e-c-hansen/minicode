@@ -337,8 +337,10 @@ std::vector<std::string> updateIndexArgs(const IndexEntry& e, const std::string&
 // when that fails `apply --3way`, which leaves the files that clash with
 // conflict marks (git lists them as conflicts) and stages the rest, which
 // the page then unstages (`restore --staged`), so everything arrives as
-// unstaged changes.
-std::vector<std::string> worktreeDiffArgs(const std::string& base);
+// unstaged changes. The diff is held to `paths`, the files the user was
+// asked about (literal pathspecs): what the agent changed after the page's
+// read is never brought in unasked (ChangeReview::applyToMain refuses it).
+std::vector<std::string> worktreeDiffArgs(const std::string& base, const std::vector<std::string>& paths);
 std::vector<std::string> untrackedArgs();   // ls-files --others --exclude-standard -z
 std::vector<std::string> newFilePatchArgs(const std::string& path);   // exit 1: it differs
 std::vector<std::string> applyToMainArgs(bool threeWay);
@@ -353,6 +355,9 @@ struct ApplyPlan : ActionPlan {
 // the files (up to six, then how many more).
 ApplyPlan applyToMainPlan(const std::vector<std::string>& paths, const Git::Status& mainStatus,
                           const std::string& mainName, const std::string& worktreeName);
+// Why nothing was brought in when the worktree has changes the page's read
+// did not have (`extra`, changed or made since): named, up to six.
+std::string applyStaleText(const std::vector<std::string>& extra);
 // What happened, in words: every file in cleanly; or which came in with
 // conflict marks (`conflicts`, from main's status afterwards); or why
 // nothing could be applied.

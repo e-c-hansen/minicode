@@ -35,14 +35,14 @@ LDFLAGS  := -framework Cocoa -framework WebKit -framework CoreServices \
             -framework CoreMedia -framework Carbon -lz -lsqlite3
 
 # The pure-C++ core, testable on its own (no frameworks, no Objective-C).
-CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.cpp \
+CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/MarkdownEmoji.cpp src/TerminalStream.cpp \
             src/TerminalScreen.cpp \
             src/Settings.cpp src/RunFile.cpp src/Runnables.cpp src/LineComments.cpp \
             src/LatexDoc.cpp src/SyncTex.cpp src/Json.cpp src/InlayHints.cpp \
             src/LspClient.cpp src/LspProtocol.cpp src/LspText.cpp src/LspServers.cpp \
             src/LspDiagnostics.cpp src/LspCompletion.cpp src/LspSync.cpp src/LspFeatures.cpp \
             src/LspEdits.cpp \
-            src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/Regex.cpp \
+            src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/TextScan.cpp src/Regex.cpp \
             src/EditSpans.cpp src/FindRules.cpp src/Text.cpp src/Document.cpp src/UndoHistory.cpp \
             src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/SessionServer.cpp src/HostPty.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebViewers.cpp src/SessionWebAccess.cpp src/SessionFiles.cpp src/SqliteRead.cpp \
@@ -51,7 +51,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/Formatter.cpp src/FormatRun.cpp src/FolderTools.cpp src/InstallHints.cpp src/LineDiff.cpp src/QuickDiff.cpp \
             src/PythonEnvs.cpp \
             src/AutoIndent.cpp src/KeepSorted.cpp src/FileDetails.cpp \
-            src/ChangeRequest.cpp src/MultiCaret.cpp src/AutoClose.cpp src/CommandPalette.cpp src/FolderPicker.cpp src/Backups.cpp src/TabSessions.cpp src/SavePlan.cpp \
+            src/ChangeRequest.cpp src/MultiCaret.cpp src/AutoClose.cpp src/CommandPalette.cpp src/FolderPicker.cpp src/ThemePicker.cpp src/Backups.cpp src/TabSessions.cpp src/SavePlan.cpp \
             src/InlineAgent.cpp src/LineIndex.cpp src/PieceTable.cpp src/BracketMatch.cpp src/BracketPairs.cpp \
             src/ControlProtocol.cpp src/SideBySide.cpp src/ChangeReview.cpp src/ChangeReviewRead.cpp src/MergeConflicts.cpp src/PreviewScroll.cpp \
             src/AgentTranscript.cpp src/AgentIndex.cpp src/AgentEvidence.cpp src/AgentView.cpp src/AgentTask.cpp src/AgentEdits.cpp src/LineHistory.cpp \
@@ -76,8 +76,8 @@ OBJDIR   := build/obj
 SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.cpp \
             src/SessionProtocol.cpp src/Ot.cpp src/HostPty.cpp src/TerminalScreen.cpp \
             src/TerminalStream.cpp src/Document.cpp src/UndoHistory.cpp src/Text.cpp \
-            src/EditSpans.cpp src/FolderSearch.cpp src/EditorTabs.cpp src/TextFind.cpp \
-            src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp \
+            src/EditSpans.cpp src/FolderSearch.cpp src/EditorTabs.cpp src/TextFind.cpp src/TextScan.cpp \
+            src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp src/MarkdownEmoji.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebAccess.cpp src/IdeLink.cpp src/MarkdownHtml.cpp \
             src/SyntaxHighlighter.cpp src/Settings.cpp src/AutoIndent.cpp src/LineComments.cpp \
             src/SessionFiles.cpp src/FileDetails.cpp src/FileSniff.cpp src/Backups.cpp src/SavePlan.cpp src/Csv.cpp \

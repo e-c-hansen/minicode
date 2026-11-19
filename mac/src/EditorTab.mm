@@ -1,5 +1,6 @@
 // EditorTab.mm — see EditorTab.h.
 #import "EditorTab.h"
+#import "PieceString.h"
 #import "SessionLink.h"
 #import "SourceStorage.h"
 #include "FolderSearch.h"
@@ -106,6 +107,7 @@ MCDiskText *ReadLargeText(NSString *path, unsigned long long maxBytes) {
                 munmap(pages, mapped);
             }];
             if (!text) munmap(pages, mapped);
+            else MCSetHeldAsciiBytes(text, (const char *)bytes + skip, got - skip);
         } else {
             // UTF-16 in the string (twice the bytes), the pages let go; not
             // UTF-8 at all (UTF-16 with its mark, Windows-1252): the
@@ -150,7 +152,8 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes) {
 static_assert((int)MCTextEncodingUtf8 == (int)FolderSearch::TextEncoding::Utf8 &&
                   (int)MCTextEncodingUtf16LE == (int)FolderSearch::TextEncoding::Utf16LE &&
                   (int)MCTextEncodingUtf16BE == (int)FolderSearch::TextEncoding::Utf16BE &&
-                  (int)MCTextEncodingWindows1252 == (int)FolderSearch::TextEncoding::Windows1252,
+                  (int)MCTextEncodingWindows1252 == (int)FolderSearch::TextEncoding::Windows1252 &&
+                  (int)MCTextEncodingUtf8Raw == (int)FolderSearch::TextEncoding::Utf8Raw,
               "MCTextEncoding mirrors FolderSearch::TextEncoding");
 
 BOOL MCUtf8Bytes(NSString *text, std::string *out) {

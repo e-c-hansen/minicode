@@ -1704,7 +1704,8 @@ MC_GUI_SUITE(git_review) {
 // refused, naming the file, while main has a change of its own in it; then
 // asks and brings every change in as unstaged changes, the untracked file
 // too, with nothing committed; and a change that no longer applies comes in
-// with conflict marks, listed as a conflict, in words.
+// with conflict marks, listed as a conflict, in words. A file the agent
+// makes after the page's read refuses the whole, naming it.
 MC_GUI_SUITE(worktree_review) {
     __block EditorController *c = nil;
     __block NSInteger actions = 0;
@@ -1860,7 +1861,13 @@ MC_GUI_SUITE(worktree_review) {
         MCGuiWriteFile([wt stringByAppendingPathComponent:@"n.txt"], @"newer\n");
         [page() reload];
     });
-    MCGuiWait(@"the worktree read again", 15, ^BOOL { return page().loads > loads; });
+    // The read that shows n.txt's new text, not merely a later read: one
+    // started before the write (the apply's own git commands in the
+    // worktree wake its watcher) can land first and still show the old
+    // changes (CI on main, 2026-11-19).
+    MCGuiWait(@"the worktree read again, n.txt's change on show", 15, ^BOOL {
+        return page().loads > loads && [page().rowDescriptions containsObject:@"+ newer"];
+    });
     MCGuiStep(@"the agent worked on: Apply to Main… is back, the old result gone", ^{
         MCChangeReviewPage *p = page();
         NSButton *apply = [p valueForKey:@"applyButton"];
@@ -1870,6 +1877,39 @@ MC_GUI_SUITE(worktree_review) {
         GCHECK(apply.enabled);
         GCHECK([[p valueForKey:@"sourceButton"] isHidden]);
         GCHECK(p.message.length == 0);
+    });
+    // Round 10's defect 6: what was asked about is what is applied. The
+    // page's read has a.txt, b.txt and n.txt; the agent then makes late.txt
+    // and the user says yes to the question about the three: nothing comes
+    // in, and the refusal names late.txt.
+    GitShell(@"main put back, clean", [NSString stringWithFormat:@"set -e; cd '%@'; %@ reset -q --hard; %@ clean -fdq",
+                                                                 repo, G, G]);
+    MCGuiStep(@"the agent makes late.txt after the read; Apply to Main; yes", ^{
+        MCChangeReviewPage *p = page();
+        MCGuiNote(@"read before late.txt: %@", p.rowDescriptions);
+        GCHECK(![p.rowDescriptions containsObject:@"F late.txt  (new)  +1"]);
+        MCGuiWriteFile([wt stringByAppendingPathComponent:@"late.txt"], @"late\n");
+        actions = 0;
+        alerts = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        [p applyToMain];
+    });
+    MCGuiWait(@"refused", 20, ^BOOL { return actions == 1; });
+    // The refusal stays over the read that shows late.txt, which it asks
+    // the user to look over (it went with that read: CI on main).
+    MCGuiWait(@"the page shows late.txt", 15, ^BOOL {
+        return [page().rowDescriptions containsObject:@"F late.txt  (new)  +1"];
+    });
+    MCGuiStep(@"it names late.txt; main has none of it", ^{
+        NSArray *shown = MCGuiAlertsShown();
+        MCGuiNote(@"asked %@; refusal: %@", [shown subarrayWithRange:NSMakeRange(alerts, shown.count - alerts)],
+                  page().message);
+        GCHECK([page().message hasPrefix:@"late.txt was changed in the worktree after this page was read, "
+                                          "so nothing was brought in."]);
+        GCHECK(!page().applied);
+        GCHECK(Read([repo stringByAppendingPathComponent:@"late.txt"]) == nil);
+        GCHECK_EQ_STR(inMain(@"a.txt"), @"1\nDOS\n3\n4\n5\n");
+        GCHECK_EQ_STR(GitText(repo, @[@"status", @"--porcelain"]), @"");
     });
     MCGuiStep(@"the window closes; the real Trash back", ^{
         UseScratchTrash(NO);

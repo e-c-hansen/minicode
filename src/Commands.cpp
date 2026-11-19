@@ -239,13 +239,33 @@ std::string glyphs(const Key& k) {
     return s + n;
 }
 
+const char* const kLinuxKeyJoin = " ";
+
+std::string modifiersLabel(unsigned mods, Platform p) {
+    if (p == Platform::Mac) {
+        std::string s;
+        if (mods & Ctrl) s += "⌃";
+        if (mods & Alt) s += "⌥";
+        if (mods & Shift) s += "⇧";
+        if (mods & Cmd) s += "⌘";
+        return s;
+    }
+    std::string s;
+    auto add = [&s](const char* part) {
+        if (!s.empty()) s += kLinuxKeyJoin;
+        s += part;
+    };
+    if (mods & Ctrl) add("Ctrl");
+    if (mods & Alt) add("Alt");
+    if (mods & Shift) add("⇧");
+    if (mods & Cmd) add("Super");
+    return s;
+}
+
 std::string keyLabel(const Key& k, Platform p) {
     if (p == Platform::Mac) return glyphs(k);
-    std::string s;
-    if (k.mods & Ctrl) s += "Ctrl+";
-    if (k.mods & Alt) s += "Alt+";
-    if (k.mods & Shift) s += "Shift+";
-    if (k.mods & Cmd) s += "Cmd+";
+    std::string s = modifiersLabel(k.mods, p);
+    if (!s.empty()) s += kLinuxKeyJoin;
     const std::string& n = k.name;
     static const struct { const char* name; const char* label; } kLabels[] = {
         {"up", "↑"}, {"down", "↓"}, {"left", "←"}, {"right", "→"}, {"home", "Home"},
@@ -673,6 +693,12 @@ const std::vector<Command>& all() {
          "togglePlayback:", 0, 0, nullptr},
         {"editor.action.showContextMenu", "Show Context Menu", "View",
          "shift+f10 ctrl+enter contextmenu", A, "showContextMenu:", 0, Global, nullptr},
+        // VS Code's Preferences: Color Theme, Cmd+K Cmd+T. mutible has no
+        // chords: a Cmd+K chord is Control+Command and its second key, as
+        // Open Preview to the Side's is. The themes preview as the list
+        // moves (ThemePicker.h); the menu item is View > Theme's first.
+        {"workbench.action.selectTheme", "Choose Theme…", "View > Theme", "ctrl+cmd+t", A,
+         "selectColorTheme:", 0, 0, nullptr},
 
         // ---- Terminal
         {"workbench.action.terminal.new", "New Terminal", "Terminal", "ctrl+shift+`", A,

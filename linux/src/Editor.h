@@ -379,6 +379,11 @@ public:
     std::string blockEditorText() const;
     void setBlockEditorText(const std::string& text);
     bool blockEditorInPane() const { return mdInPane_; }
+    // The page's block editor, if open with a draft, applied to its page's
+    // source (one undo step) and closed, as Enter does; Ctrl+S, Save All,
+    // closing a tab or the window, and quitting call it first, so only
+    // Escape and Cancel drop a draft (the Mac's commitPageEdit, #223).
+    void commitPageEdit();
     bool showsSide() const { return sideDoc_ != nullptr; }
     // A CSV or TSV tab shown as its table (CsvTable.h) rather than the text.
     // The table finishes a cell being typed before the tab goes.
@@ -516,6 +521,9 @@ public:
         int line = 0;
     };
     void setLinkHandler(std::function<void(const Link&)> h) { linkHandler_ = std::move(h); }
+    // Files dropped on the text (a GdkFileList): each opened through the
+    // link handler, a folder shown in the tree. False with none to open.
+    bool openDropped(const GValue* value);
 
     // An .html file shown as its page (HtmlView.h; browser builds). The
     // window's folder, which the page may read, and the write of a

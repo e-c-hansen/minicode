@@ -193,7 +193,7 @@ void prepareProject() {
                         });
     });
     MCGuiWait("the tree lists the demo folder", 15, [] {
-        return MCGuiFindLabel(win(), "hello.py") && MCGuiFindLabel(win(), "vec");
+        return MCGuiTreeRow(MCGuiProjectFile("hello.py")) && MCGuiTreeRow(MCGuiProjectFile("vec"));
     });
 }
 
@@ -243,22 +243,19 @@ void stopRecording(const std::string& scene) {
     });
 }
 
-// A label in the tree, clicked: a folder opens, a file shows.
-void clickTree(const std::string& name) {
-    MCGuiWait("the tree shows " + name, 10, [name] {
-        return MCGuiFindLabel(MCGuiApp().tree->widget(), name) != nullptr;
-    });
-    MCGuiStep("click " + name, [name] { MCGuiClick(MCGuiFindLabel(MCGuiApp().tree->widget(), name)); });
+// A row in the tree, clicked: a folder opens, a file shows. Known by its
+// path in the project (`relative`), never its name (docs/notes/tree.md).
+void clickTree(const std::string& relative) {
+    const std::string path = MCGuiProjectFile(relative);
+    MCGuiWait("the tree shows " + relative, 10, [path] { return MCGuiTreeRow(path) != nullptr; });
+    MCGuiStep("click " + relative, [path] { MCGuiClick(MCGuiTreeRow(path)); });
     MCGuiPause(0.6);   // time is the condition: a person looks
 }
 
 void openFile(const std::string& relative) {
-    std::string rest = relative;
-    for (size_t slash; (slash = rest.find('/')) != std::string::npos;) {
-        clickTree(rest.substr(0, slash));
-        rest = rest.substr(slash + 1);
-    }
-    clickTree(rest);
+    for (size_t slash = 0; (slash = relative.find('/', slash)) != std::string::npos; slash++)
+        clickTree(relative.substr(0, slash));
+    clickTree(relative);
     MCGuiWait("the editor shows " + relative, 10, [relative] {
         return ed()->currentPath() == MCGuiProjectFile(relative);
     });
@@ -479,7 +476,7 @@ MC_GUI_SUITE(_demo_settings) {
     still("settings-1-start");
     label("Right-click the file tree", 0.2);
     MCGuiStep("right click on the tree", [] {
-        MCGuiClick(MCGuiFindLabel(MCGuiApp().tree->widget(), "vec"), -1, -1, 3);
+        MCGuiClick(MCGuiTreeRow(MCGuiProjectFile("vec")), -1, -1, 3);
     });
     MCGuiWait("the tree's menu", 10, [] {
         return menuShowing(win(), "Adjust Settings…") != nullptr;

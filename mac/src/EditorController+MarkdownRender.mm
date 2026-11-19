@@ -130,6 +130,52 @@ static void MCIndentBlock(NSTextBlock *inner, CGFloat points) {
            edge:NSRectEdgeMinX];
     objc_setAssociatedObject(inner, &kMCIndentKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
+// An alert's color, GitHub's for its kind, in the light or the dark
+// page's shade.
+static NSColor *MCAlertColor(int alert, bool dark) {
+    static const unsigned int kLight[] = {0, 0x0969DA, 0x1A7F37, 0x8250DF, 0x9A6700, 0xD1242F};
+    static const unsigned int kDark[] = {0, 0x4493F8, 0x3FB950, 0xAB7DF8, 0xD29922, 0xF85149};
+    if (alert < 1 || alert > 5) return nil;
+    return Hex(dark ? kDark[alert] : kLight[alert]);
+}
+
+// An alert's icon in its color, as tall as the title's capitals: the SF
+// Symbol nearest GitHub's octicon (an i in a circle, a light bulb, a speech
+// bubble, a triangle and an octagon with an exclamation mark).
+static NSAttributedString *MCAlertIcon(int alert, NSColor *color, NSFont *font) {
+    static NSString *const kSymbols[] = {@"", @"info.circle", @"lightbulb",
+                                         @"exclamationmark.bubble", @"exclamationmark.triangle",
+                                         @"exclamationmark.octagon"};
+    if (alert < 1 || alert > 5 || !color) return nil;
+    NSImage *symbol = [NSImage imageWithSystemSymbolName:kSymbols[alert]
+                                accessibilityDescription:nil];
+    if (!symbol) return nil;
+    NSImageSymbolConfiguration *config = nil;
+    if (@available(macOS 11.0, *))
+        config = [NSImageSymbolConfiguration configurationWithPointSize:font.pointSize
+                                                                 weight:NSFontWeightMedium];
+    if (config) symbol = [symbol imageWithSymbolConfiguration:config] ?: symbol;
+    const NSSize size = symbol.size;
+    // A symbol image is a template: drawn as it is it would be black.
+    NSImage *tinted = [NSImage imageWithSize:size flipped:NO
+                              drawingHandler:^BOOL(NSRect rect) {
+        [symbol drawInRect:rect];
+        [color set];
+        NSRectFillUsingOperation(rect, NSCompositingOperationSourceAtop);
+        return YES;
+    }];
+    NSTextAttachment *att = [NSTextAttachment new];
+    att.image = tinted;
+    att.bounds = NSMakeRect(0, (font.capHeight - size.height) / 2, size.width, size.height);
+    NSMutableAttributedString *icon = [[NSMutableAttributedString alloc]
+        initWithAttributedString:[NSAttributedString attributedStringWithAttachment:att]];
+    [icon appendAttributedString:[[NSAttributedString alloc] initWithString:@"\u2002"
+                                                                  attributes:@{NSFontAttributeName: font}]];
+    return icon;
+}
+
+static char kMCAlertKey;
+
 static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
     if (NSTextBlock *indent = objc_getAssociatedObject(b, &kMCIndentKey)) [blocks addObject:indent];
     [blocks addObject:b];
@@ -169,11 +215,18 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
     const NSInteger levels = MAX(0, r.listDepth - outside);
     const NSUInteger depth = r.quote ? (NSUInteger)MAX(1, r.quoteDepth) : 0;
     while (quotes.count > depth) [quotes removeLastObject];
+    // An alert's bar is its own: a quote of another kind starts afresh.
+    if (quotes.count > 0 &&
+        [objc_getAssociatedObject(quotes[0], &kMCAlertKey) intValue] != r.alert)
+        [quotes removeAllObjects];
     while (quotes.count < depth) {
         NSTextBlock *b = MCFullWidthBlock();
         [b setWidth:3 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder
                edge:NSRectEdgeMinX];
-        [b setBorderColor:Hex(0x4B5563) forEdge:NSRectEdgeMinX];
+        NSColor *bar = quotes.count == 0 ? MCAlertColor(r.alert, cfg.settings.isDark()) : nil;
+        [b setBorderColor:bar ?: Hex(0x4B5563) forEdge:NSRectEdgeMinX];
+        if (quotes.count == 0)
+            objc_setAssociatedObject(b, &kMCAlertKey, @(r.alert), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [b setWidth:13 type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding
                edge:NSRectEdgeMinX];
         if (quotes.count == 0 && outside > 0) MCIndentBlock(b, outside * step);
@@ -328,6 +381,12 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
     if (r.table && inCell && r.bold && !r.code)
         color = [cfg markdown:MarkdownColor::Heading];
     if (r.quote && !r.code) color = [cfg markdown:MarkdownColor::Quote];
+    // An alert's text reads as body text, its title in the alert's color.
+    if (r.alert && !r.code) {
+        color = r.alertTitle ? MCAlertColor(r.alert, cfg.settings.isDark())
+                             : [cfg text:Surface::Editor];
+        a[kMarkdownAlert] = @(MarkdownParser::alertName(r.alert));
+    }
     if (r.marker) {
         // "  • " from the parser: the tabs of the paragraph style place it.
         NSString *m = [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
@@ -519,6 +578,16 @@ static void MCAddBlock(NSMutableArray<NSTextBlock *> *blocks, NSTextBlock *b) {
     a[NSFontAttributeName] = font;
     a[NSForegroundColorAttributeName] = color;
     a[NSParagraphStyleAttributeName] = ps;
+    // An alert's title starts with its icon (the title is one run: the
+    // parser writes it, "Note" and the like).
+    if (r.alertTitle && r.alert && r.text != "\n") {
+        if (NSAttributedString *icon = MCAlertIcon(r.alert, color, font)) {
+            NSMutableAttributedString *t = [icon mutableCopy];
+            [t addAttributes:a range:NSMakeRange(0, t.length)];
+            [t appendAttributedString:[[NSAttributedString alloc] initWithString:s attributes:a]];
+            return t;
+        }
+    }
     return [[NSAttributedString alloc] initWithString:s attributes:a];
 }
 
@@ -682,8 +751,11 @@ static std::vector<CGFloat> MCTableColumnWidths(NSArray<NSAttributedString *> *c
                          range:NSMakeRange(0, text.length)];
             [text addAttribute:kMarkdownSourceLine value:@(runs[first].line)
                          range:NSMakeRange(0, text.length)];
-            [text addAttribute:kMarkdownTableCell value:@[@(row), @(col)]
-                         range:NSMakeRange(0, text.length)];
+            // Front matter's table is edited as the lines it is written
+            // as (a code block), not cell by cell.
+            if (!runs[first].frontMatter)
+                [text addAttribute:kMarkdownTableCell value:@[@(row), @(col)]
+                             range:NSMakeRange(0, text.length)];
             [out appendAttributedString:text];
         }
     }

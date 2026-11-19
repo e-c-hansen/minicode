@@ -189,6 +189,12 @@ top of a turn, never inside a text system callback.
 - **GtkStack moves the keyboard to a tab's first pane** when it shows
   another tab with the keyboard in the one going ("Terminal splits in the
   record"): `TerminalDock::activate` hands it to the tab's active pane.
+- **Every accepted connection is a descriptor of the app's**, on the Mac
+  at the default limit of 256: the server once took idle loopback
+  connections without limit or deadline, and any local process could
+  hold them until the app's opens, saves and backups failed with EMFILE
+  (round 10's defect 10). Keep the cap and the request deadline
+  ("Connections" above) on anything new the server accepts.
 - **Confine with `confinedPath`, never by spelling.** A path from a page
   is held inside the folder by its `realpath` (symlinks followed) and
   must not hold "..", ".", empty names or a leading '/'; the Mac's `open`
@@ -1177,6 +1183,14 @@ CSS and script, no third-party code). The user's side is REFERENCE.md's
   changes; anything else is dropped. It follows the session's tab on show
   until a tab is clicked, keeps 5,000 scrollback lines, sticks to the
   bottom unless scrolled up, and reconnects every 2 s after a drop.
+- **Connections** (2026-11-19, round 10's defect 10): at most
+  `Options::maxConnections` (64) at once, one past it closed as it is
+  accepted (accepted, so the listening socket does not stay ready); a
+  connection that has not sent a whole request, or not taken its answer,
+  within `Options::requestDeadlineMs` (5 s) of its accept is closed. A
+  page's socket once upgraded (waiting for the app's answer too) and a
+  file being sent are not held to the deadline. `Server::connections()`
+  counts them (`sessionweb:connections`).
 - **Threads.** One thread of the server's: poll(2) over the listening
   socket, the browsers and a pipe the client's `setWake` writes; the
   client's messages are dispatched there, so the views are touched by

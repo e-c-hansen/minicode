@@ -314,17 +314,30 @@ static void MCAddMarkdownAnchors(NSMutableDictionary<NSString *, NSNumber *> *an
 
 // ---------------------------------------------- editing from the preview
 
-// An edit from the preview that cannot go in, because the file changed
-// while it was being typed (a reload from disk, an agent's edit, Cmd+Z):
-// the text goes to the clipboard and the status bar says so, rather than
-// the edit vanishing.
+// An edit from the preview that cannot go in, because the block it edits
+// changed while it was being typed (a reload from disk, an agent's edit,
+// Cmd+Z): the text goes to the clipboard and the status bar says so,
+// rather than the edit vanishing.
 static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
     if (!text.length) return;
     NSPasteboard *pb = NSPasteboard.generalPasteboard;
     [pb clearContents];
     [pb setString:text forType:NSPasteboardTypeString];
-    [me showStatusNote:@"The file changed while you were editing, so your edit was not "
-                       @"applied; your text is on the clipboard."];
+    [me showStatusNote:@"The file changed while you were editing, and so did the text you "
+                       @"edited, so your edit was not applied; your text is on the clipboard."];
+}
+
+// The box's block in the file's text as it is now (`now`), from `src`, the
+// text it opened on: where it is when the file changed elsewhere
+// meanwhile (MarkdownEdit::rebaseSpan), so the edit keeps that change;
+// NO when the block's own text changed or is there more than once.
+static BOOL MCMarkdownBlockNow(const std::string &src, const std::string &now,
+                               MarkdownEdit::Block *block) {
+    const auto r = MarkdownEdit::rebaseSpan(src, block->start, block->end, now);
+    if (r.first == std::string::npos) return NO;
+    block->start = r.first;
+    block->end = r.second;
+    return YES;
 }
 
 // A double-click on rendered Markdown opens the block behind it (a
@@ -436,17 +449,19 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
     if (NSIsEmptyRect(anchor)) anchor = NSMakeRect(point.x, point.y, 1, 1);
     if (!self.markdownEditPanel) self.markdownEditPanel = [MCMarkdownEditPanel new];
     __weak EditorController *weakSelf = self;
-    NSString *before = self.sourceText;
     void (^addItem)(NSString *) = nil;
     if (block.kind == MarkdownEdit::Block::ListItem) {
         addItem = ^(NSString *newText) {
             EditorController *me = weakSelf;
             if (!me) return;
-            if (![me.sourceText isEqualToString:before]) {
+            // Made on the text as it is now, the item found again in it.
+            const std::string now = Utf8String(me.sourceText ?: @"");
+            MarkdownEdit::Block at = block;
+            if (!MCMarkdownBlockNow(src, now, &at)) {
                 MCKeepLostMarkdownEdit(me, newText);
                 return;
             }
-            std::string edited = MarkdownEdit::addItem(src, block, Utf8String(newText));
+            std::string edited = MarkdownEdit::addItem(now, at, Utf8String(newText));
             [me applyMarkdownEdit:[NSString stringWithUTF8String:edited.c_str()] side:side];
         };
     }
@@ -492,12 +507,19 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
         commit:^(NSString *newText) {
             EditorController *me = weakSelf;
             if (!me) return;
-            if (![me.sourceText isEqualToString:before]) {   // the file changed meanwhile
+            // Made on the text as it is now: when the file changed
+            // meanwhile (an agent's rewrite read in, Cmd+Z), the block is
+            // found again in it, never spliced at the old offsets nor the
+            // old text put back over the change (round 10's documents
+            // defect 3).
+            const std::string now = Utf8String(me.sourceText ?: @"");
+            MarkdownEdit::Block at = block;
+            if (!MCMarkdownBlockNow(src, now, &at)) {
                 if (![newText isEqualToString:text]) MCKeepLostMarkdownEdit(me, newText);
                 return;
             }
-            std::string edited = MarkdownEdit::replace(src, block, Utf8String(newText));
-            if (edited != src)
+            std::string edited = MarkdownEdit::replace(now, at, Utf8String(newText));
+            if (edited != now)
                 [me applyMarkdownEdit:[NSString stringWithUTF8String:edited.c_str()] side:side];
         }
         addItem:addItem];
@@ -568,6 +590,19 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
     } else if (self.isMarkdown) {
         [self refreshDisplay];
     }
+}
+
+// An HTML page tried to go somewhere by itself (a meta refresh, a script)
+// and was not let: said in the status bar, nothing opened.
+- (void)htmlPageRefused:(NSURL *)url {
+    NSString *where = url.absoluteString ?: @"";
+    if (where.length > 80) where = [[where substringToIndex:79] stringByAppendingString:@"\u2026"];
+    NSString *scheme = url.scheme.lowercaseString;
+    const BOOL web = [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"];
+    [self showStatusNote:[NSString stringWithFormat:
+        web ? @"The page tried to open %@ by itself; with its scripts off, it was not followed"
+            : @"The page tried to open %@ by itself; mutible did not open it",
+        where]];
 }
 
 // A click on a link in rendered Markdown. "#section" scrolls to that heading;

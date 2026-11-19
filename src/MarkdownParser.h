@@ -123,6 +123,21 @@ struct MdRun {
     int  detailsLine = -1;
     bool summary = false;
     bool detailsOpen = false;
+    // GitHub's alerts: a quote whose first line is "[!NOTE]", "[!TIP]",
+    // "[!IMPORTANT]", "[!WARNING]" or "[!CAUTION]". `alert` is its kind (1
+    // note, 2 tip, 3 important, 4 warning, 5 caution; MarkdownParser::
+    // alertName) on every run of the quote, which keeps `quote` too, so a
+    // port that draws no alert shows a quote. The marker line becomes the
+    // title ("Note", ...), bold, with `alertTitle` set on its runs; GitHub
+    // draws it, and the quote's bar, in the kind's color with an icon.
+    int  alert = 0;
+    bool alertTitle = false;
+    // YAML front matter at the top of the file ("---", "key: value" lines,
+    // "---"), shown as GitHub shows it: a table of one header row of keys
+    // and one row of their values, its runs carrying `frontMatter` as well
+    // as the table's fields. A nested value (a list, a mapping, a block
+    // scalar) is its items joined in one cell.
+    bool frontMatter = false;
 };
 
 // How the parser read one line of the source. MarkdownEdit works from this,
@@ -181,4 +196,8 @@ public:
     // counts it: 1 video (.mp4, .mov, .m4v), 2 audio (.mp3, .m4a, .wav), 0
     // neither. A query or fragment after it is allowed.
     static int mediaKind(const std::string& src);
+    // An alert's kind as GitHub names it in its class (markdown-alert-note):
+    // "note", "tip", "important", "warning" or "caution"; "" for 0 or
+    // anything else.
+    static const char* alertName(int alert);
 };

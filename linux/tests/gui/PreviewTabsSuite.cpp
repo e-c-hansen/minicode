@@ -45,9 +45,13 @@ bool italicsAgree() {
     return true;
 }
 
-GtkWidget* treeRow(const std::string& name) {
-    return MCGuiFindLabel(MCGuiApp().tree->widget(), name);
-}
+// A file's row in the tree, known by its path: in a shuffled order the
+// earlier suites leave the project with a hundred entries and folders open,
+// so a row by its name was off screen ("the tree lists them" in every soak
+// round) or another folder's file of that name (docs/notes/tree.md). Each
+// click is on a row brought into view first (bring).
+GtkWidget* treeRow(const std::string& name) { return MCGuiTreeRow(F(name)); }
+void bring(const std::string& name) { MCGuiBringTreeRow(F(name)); }
 
 bool activeIs(const std::string& name) { return ed()->currentPath() == F(name); }
 
@@ -107,20 +111,20 @@ MC_GUI_SUITE(preview_tabs) {
         MCGuiWriteFile(F("found/one.txt"), "first\nneedle one\n");
         MCGuiWriteFile(F("found/two.txt"), "needle two\n");
     });
-    MCGuiWait("the tree lists them", 10, [] {
-        return ed()->tabCount() == 0 && treeRow("p-a.txt") && treeRow("p-e.txt");
-    });
+    MCGuiWait("no tab open", 10, [] { return ed()->tabCount() == 0; });
 
+    bring("p-a.txt");
     MCGuiStep("a single click opens the file in the preview tab, in italics", [] {
         MCGuiClick(treeRow("p-a.txt"));
     });
     MCGuiWait("it is the preview tab", 10, [] { return row() == "[p-a.txt]"; });
     MCGuiStep("drawn in italics", [] {
-        GCHECK(ed()->active()->isPreviewTab());
+        GCHECK(ed()->active() && ed()->active()->isPreviewTab());
         GCHECK(italicsAgree());
         GCHECK(gtk_widget_has_css_class(strip()->tabWidget(0), "preview"));
     });
     MCGuiPause(0.5);   // the double-click interval: the next click is a new one
+    bring("p-b.txt");
     MCGuiStep("another single click replaces it: still one tab", [] {
         gClosed = ed()->closedTabCount();
         MCGuiClick(treeRow("p-b.txt"));
@@ -131,15 +135,20 @@ MC_GUI_SUITE(preview_tabs) {
         GCHECK(italicsAgree());
     });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-b.txt");
     MCGuiStep("a double-click on the file keeps it", [] { MCGuiDoubleClick(treeRow("p-b.txt")); });
     MCGuiWait("an ordinary tab now", 10, [] { return row() == "p-b.txt"; });
-    MCGuiStep("no italics", [] { GCHECK(italicsAgree() && !ed()->active()->isPreviewTab()); });
+    MCGuiStep("no italics", [] {
+        GCHECK(italicsAgree() && ed()->active() && !ed()->active()->isPreviewTab());
+    });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-c.txt");
     MCGuiStep("the next click opens a new preview tab beside the kept one", [] {
         MCGuiClick(treeRow("p-c.txt"));
     });
     MCGuiWait("beside it", 10, [] { return row() == "p-b.txt [p-c.txt]"; });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-d.txt");
     MCGuiStep("Ctrl+click opens a kept tab and leaves the preview tab alone", [] {
         MCGuiClickWith("ctrl", treeRow("p-d.txt"));
     });
@@ -147,6 +156,7 @@ MC_GUI_SUITE(preview_tabs) {
         return row() == "p-b.txt [p-c.txt] p-d.txt" && activeIs("p-d.txt");
     });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-c.txt");
     MCGuiStep("Ctrl+click on the preview tab's file keeps it", [] {
         MCGuiClickWith("ctrl", treeRow("p-c.txt"));
     });
@@ -154,6 +164,7 @@ MC_GUI_SUITE(preview_tabs) {
         return row() == "p-b.txt p-c.txt p-d.txt" && activeIs("p-c.txt");
     });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-b.txt");
     MCGuiStep("a click on a file open in a kept tab only shows it", [] { MCGuiClick(treeRow("p-b.txt")); });
     MCGuiWait("p-b on show, the row as it was", 10, [] {
         return row() == "p-b.txt p-c.txt p-d.txt" && activeIs("p-b.txt");
@@ -161,6 +172,7 @@ MC_GUI_SUITE(preview_tabs) {
 
     // ---- what keeps a preview tab
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-a.txt");
     MCGuiStep("a preview tab again", [] { MCGuiClick(treeRow("p-a.txt")); });
     MCGuiWait("right of the active one", 10, [] { return row() == "p-b.txt [p-a.txt] p-c.txt p-d.txt"; });
     MCGuiStep("a click in its text", [] { MCGuiClick(ed()->textView()); });
@@ -180,6 +192,7 @@ MC_GUI_SUITE(preview_tabs) {
                MCGuiReadFile(F("p-a.txt")) == "typed p-a.txt\nline 2\n";
     });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-e.txt");
     MCGuiStep("another preview tab", [] { MCGuiClick(treeRow("p-e.txt")); });
     MCGuiWait("a preview tab", 10, [] { return row() == "p-b.txt [p-e.txt] p-c.txt p-d.txt"; });
     MCGuiStep("Ctrl+S, which writes a clean file too, keeps it", [] {
@@ -190,6 +203,7 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiStep("closed", [] { MCGuiKey("ctrl+w"); });
     MCGuiWait("gone", 10, [] { return row() == "p-b.txt p-c.txt p-d.txt"; });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-e.txt");
     MCGuiStep("a preview tab once more", [] { MCGuiClick(treeRow("p-e.txt")); });
     MCGuiWait("a preview tab, drawn", 10, [] {
         return row() == "p-b.txt [p-e.txt] p-c.txt p-d.txt" &&
@@ -200,6 +214,7 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiStep("closed", [] { MCGuiKey("ctrl+w"); });
     MCGuiWait("gone", 10, [] { return row() == "p-b.txt p-c.txt p-d.txt"; });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-e.txt");
     MCGuiStep("and once more", [] { MCGuiClick(treeRow("p-e.txt")); });
     MCGuiWait("a preview tab, drawn", 10, [] {
         return row() == "p-b.txt [p-e.txt] p-c.txt p-d.txt" &&
@@ -215,6 +230,7 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiStep("closed", [] { MCGuiKey("ctrl+w"); });
     MCGuiWait("gone", 10, [] { return row() == "p-b.txt p-c.txt p-d.txt"; });
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-e.txt");
     MCGuiStep("and the File menu's Keep Open", [] { MCGuiClick(treeRow("p-e.txt")); });
     MCGuiWait("a preview tab", 10, [] { return row() == "p-b.txt [p-e.txt] p-c.txt p-d.txt"; });
     MCGuiStep("File > Keep Open", [] {
@@ -224,6 +240,7 @@ MC_GUI_SUITE(preview_tabs) {
 
     // ---- a double-click on a tab whose first click is slow
     MCGuiPause(0.5);   // the double-click interval
+    bring("p-a.txt");
     MCGuiStep("a preview tab to keep", [] { MCGuiClick(treeRow("p-a.txt")); });
     MCGuiWait("drawn", 10, [] {
         return row() == "p-b.txt p-e.txt [p-a.txt] p-c.txt p-d.txt" &&
@@ -251,6 +268,7 @@ MC_GUI_SUITE(preview_tabs) {
         MCGuiSetSettings("lsp.enabled = false\nworkbench.enable-preview = off\n");
     });
     MCGuiPause(0.5);   // the double-click interval, and the settings read
+    bring("p-a.txt");
     MCGuiStep("a click on p-a", [] { MCGuiClick(treeRow("p-a.txt")); });
     MCGuiWait("kept, right of the active one", 10, [] {
         return row() == "p-b.txt p-e.txt p-a.txt p-c.txt p-d.txt" && activeIs("p-a.txt");
@@ -263,18 +281,31 @@ MC_GUI_SUITE(preview_tabs) {
         MCGuiKey("ctrl+shift+f");
     });
     MCGuiWait("its window", 10, [] { return MCGuiTopWindow() != MCGuiApp().window; });
-    MCGuiStep("the word typed", [] {
+    // The window may be the one earlier suites searched in, and keeps their
+    // scope, files to include and options (replace_in_folder's rif and
+    // "three.txt" found nothing here in a soak round): put back, then scoped
+    // to this suite's folder, so no other suite's needle is listed above.
+    MCGuiStep("Find in Folder put back, and scoped to this suite's folder", [] {
         gSearch = MCGuiTopWindow();
         MCGuiSetKeyWindow(gSearch);
-        MCGuiType("needle");
+        MCGuiResetFolderSearch();
+        MCGuiApp().search->setScope(F("found"));
     });
+    // Time is the condition: a files box emptied above searches again 350 ms
+    // later, which would replace the rows under a click below.
+    MCGuiPause(0.5);
+    MCGuiStep("the word typed", [] { MCGuiType("needle"); });
+    // The whole word's search, not one of a pause between keys, which lists
+    // the same lines and is replaced under the click.
     MCGuiWait("both results", 10, [] {
-        return labelHolding(GTK_WIDGET(gSearch), "needle one") &&
+        SearchPanel* sp = MCGuiApp().search;
+        return !sp->searching() && sp->searchedQuery() == "needle" && sp->matches().size() == 2 &&
+               labelHolding(GTK_WIDGET(gSearch), "needle one") &&
                labelHolding(GTK_WIDGET(gSearch), "needle two");
     });
     MCGuiStep("a single click on a result previews it", [] { clickResult("needle one", false); });
     MCGuiWait("in the preview tab, the match selected", 10, [] {
-        return activeIs("found/one.txt") && ed()->active()->isPreviewTab() &&
+        return activeIs("found/one.txt") && ed()->active() && ed()->active()->isPreviewTab() &&
                row() == "p-b.txt p-e.txt p-a.txt [one.txt] p-c.txt p-d.txt";
     });
     MCGuiPause(0.5);   // the double-click interval
@@ -309,8 +340,9 @@ MC_GUI_SUITE(preview_tabs) {
         MCGuiKey("escape");
     });
     MCGuiWait("gone", 10, [] { return MCGuiTopWindow() == MCGuiApp().window; });
-    MCGuiStep("the keyboard back in the app's window", [] {
+    MCGuiStep("the keyboard back in the app's window; Find in Folder as a new window's", [] {
         MCGuiSetKeyWindow(nullptr);
         MCGuiFocusKeyWindow();
+        MCGuiResetFolderSearch();
     });
 }

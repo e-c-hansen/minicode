@@ -34,6 +34,7 @@
 #import "AgentPanel.h"
 #import "EditorFind.h"
 #import "ProblemsPanel.h"
+#import "SidebarIcons.h"
 #import "HintsSearchBox.h"
 #import "StatusBranchItem.h"
 #import "PalettePanel.h"
@@ -46,6 +47,7 @@
 #import "CompareView.h"
 #import "FileViewers.h"
 #include "TabSessions.h"
+#include "Backups.h"
 @class MCChangeReviewPage;
 #import "QuickLook.h"
 #import "MarkdownCode.h"
@@ -117,6 +119,9 @@ static NSString *const kOpacityLink = @"mutible-opacity";
 static NSAttributedStringKey const kMarkdownSourceLine = @"MCMarkdownSourceLine";
 // On a fenced block's label line above it (a notebook's "In [3]"), for tests.
 static NSAttributedStringKey const kMarkdownCodeLabel = @"MCMarkdownCodeLabel";
+// On the runs of one of GitHub's alerts: its kind's name ("note", "tip",
+// MarkdownParser::alertName), for tests.
+static NSAttributedStringKey const kMarkdownAlert = @"MCMarkdownAlert";
 // On a rendered table cell: @[row, column], row 0 being the header.
 static NSAttributedStringKey const kMarkdownTableCell = @"MCMarkdownTableCell";
 // On the alt text standing in for a web picture still on its way:
@@ -294,6 +299,9 @@ static const NSInteger kRemoveFocusMenuTag = 7707;
 @property(nonatomic, assign) CGFloat browserFraction;   // of the top's width
 @property(nonatomic, strong) NSSplitView *splitView;
 @property(nonatomic, strong) PanelScrollView *sidebarScroll;
+// The split view's first subview: the row of panel icons and whichever
+// panel is on show (SidebarIcons.h, EditorController+SidebarIcons.mm).
+@property(nonatomic, strong) MCSidebarHost *sidebarHost;
 @property(nonatomic, assign) BOOL sidebarCollapsed;
 @property(nonatomic, assign) CGFloat sidebarWidthBeforeCollapse;
 @property(nonatomic, assign) BOOL editorHidden;   // Shift+Cmd+E: file view hidden
@@ -395,6 +403,18 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (MCProcessesPanel *)processesPanelOnShow;           // nil unless shown
 // The close question's Show in Processes: the panel shown, `t`'s job selected.
 - (void)showProcessesForTerminal:(TerminalView *)t job:(pid_t)job;
+@end
+
+// EditorController+SidebarIcons.mm: the sidebar's row of panel icons
+// (SidebarIcons.h). Layout makes the host; the panels' toggles show what
+// they put in the sidebar through sidebarShowPanelView: and call
+// sidebarIconsUpdate, as do the tree's git colors when they change.
+@interface EditorController (SidebarIcons)
+- (void)sidebarIconsInstall;                     // once, with the window
+- (void)sidebarShowPanelView:(NSView *)view;     // where replaceSubview: was
+- (void)sidebarIconsUpdate;                      // the mark, tips, and badges
+- (void)sidebarIconsApplySettings;               // colors, and the setting
+- (void)showSidebarPanel:(MCSidebarPanel)panel;  // an icon's click
 @end
 
 // EditorController+LatexInputs.mm: the files a LaTeX document reads, as its
@@ -529,6 +549,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)reExpand:(FileItem *)node usingSet:(NSSet<NSString *> *)expanded;
 - (NSColor *)gitColorOf:(FileItem *)node tip:(NSString **)tip;
 - (NSUInteger)treeGitRuns;
+- (NSUInteger)treeGitChangeCount;   // paths git reports changed, for the Source Control badge
 - (NSString *)worktreesFolder;
 - (NSArray<FileItem *> *)withWorktreesNode:(NSArray<FileItem *> *)shown of:(FileItem *)node;
 - (BOOL)isWorktreeRow:(FileItem *)node;
@@ -897,6 +918,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)discardBackupsAsWindowCloses;
 - (void)backupsAppWillTerminate:(NSNotification *)note;
 - (BOOL)takeBackup:(NSString *)bid intoTab:(MCTab *)t;
+// This window's name in the backups (Backups::Entry::window).
+- (NSString *)backupKey;
+- (void)restoreConflictingBackups:(const std::vector<Backups::Restore::Item> &)conflicts;
 - (void)showRestoredText:(NSString *)text base:(NSDate *)base inode:(uint64_t)inode;
 - (Settings::AutoSave)autoSaveMode;
 - (BOOL)tabTakesAutoSave:(MCTab *)t;
@@ -1162,6 +1186,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)applySidePreviewEdit:(NSString *)source;
 - (void)applyMarkdownSource:(NSString *)source;
 - (void)openMarkdownLink:(NSString *)href;
+- (void)htmlPageRefused:(NSURL *)url;
 - (BOOL)scrollToMarkdownAnchor:(NSString *)anchor;
 - (void)renderMarkdown:(NSString *)content;
 - (BOOL)typesetsMath;

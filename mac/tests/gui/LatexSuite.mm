@@ -41,6 +41,12 @@
 // page beside the source (a Command-click there moves the caret, a
 // double-click's edit is one undo step of the source, and the page
 // typesets on save, not on typing); a file with no page has the item off.
+// An agent rewriting the file while the edit box is open (full preview and
+// beside the source) keeps its rewrite: Apply edits the text where it now
+// is, or, when the rewrite changed that text, applies nothing and puts the
+// draft on the clipboard; a double-click on an \input file with unsaved
+// lines above the word opens that word's paragraph, and one whose text
+// the unsaved changes rewrote is refused.
 #import "Harness.h"
 #import "Lsp.h"   // MCDiagnosticColor
 #import "EditorController.h"
@@ -943,6 +949,73 @@ MC_GUI_SUITE(latex) {
         MCGuiWriteFile(chapter, ReadText(Fixtures(@"fixtures/chapter.tex")));
     });
 
+    // The chapter with unsaved lines above the clicked text (round 10's
+    // documents defect 4): the page's SyncTeX lines are the disk's, and
+    // placed in the buffer they picked another paragraph. The click is
+    // placed in the text the typeset read and found again in the buffer;
+    // when the unsaved changes rewrote that very text, it is refused.
+    __block MCTab *tabU = nil, *tabCh = nil;
+    MCGuiStep(@"the chapter, with an unsaved paragraph above its lemur", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:chapter]);
+        tabCh = Active(c);
+        if (c.previewMode) [c togglePreview:nil];
+        GCHECK(!c.previewMode);
+        NSTextView *tv = c.textView;
+        const NSRange at = NSMakeRange([tv.string rangeOfString:@"The chapter's first"].location, 0);
+        GCHECK(at.location != NSNotFound);
+        if (at.location == NSNotFound) return;
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [tv insertText:@"An unsaved paragraph about a stoat.\n\nAnd another, about a vole.\n\n"
+                replacementRange:at];
+        });
+        GCHECK(tabCh.dirty);
+        GCHECK([c showFile:mainTex]);
+        tabU = Active(c);
+        GCHECK(tabU != tabCh && tabU.isLatex && c.previewMode);
+    });
+    MCGuiWait(@"the document typesets", 20, ^BOOL {
+        return ![[tabU.latex valueForKey:@"compiling"] boolValue] &&
+               [tabU.latex latexPDFView].document.pageCount == 2;
+    });
+    MCGuiStep(@"a double-click on lemur opens lemur's own paragraph, and the edit lands there", ^{
+        NSTextView *box = OpenBoxOn(tabU.latex, @"lemur");
+        GCHECK(box != nil);
+        if (!box) return;
+        NSString *span = [box.string copy] ?: @"";
+        MCGuiNote(@"the span: \"%@\"", span);
+        GCHECK([span containsString:@"lemur in the snow"]);
+        GCHECK(![span containsString:@"stoat"] && ![span containsString:@"vole"] &&
+               ![span containsString:@"marmot"]);
+        box.string = [span stringByReplacingOccurrencesOfString:@"lemur" withString:@"ocelot"];
+        [tabU.latex commitEdit:nil];
+        GCHECK([tabCh.sourceText containsString:@"a ocelot in the snow"]);
+        GCHECK([tabCh.sourceText hasPrefix:@"% !TEX root = main.tex\n\\section{Chapter}\n"
+                                           @"An unsaved paragraph about a stoat."]);
+        GCHECK([tabCh.sourceText containsString:@"talks about a marmot."]);
+        GCHECK_EQ_STR(ReadText(chapter), ReadText(Fixtures(@"fixtures/chapter.tex")));
+    });
+    MCGuiStep(@"its text changed in the buffer: a double-click on it is refused, saying why", ^{
+        NSString *was = [tabCh.sourceText copy];
+        PDFPage *page = nil;
+        NSPoint mid = NSZeroPoint;
+        GCHECK(WordOnPage(tabU.latex, @"lemur", &page, &mid));
+        if (!page) return;
+        [tabU.latex openEditorForPage:page point:mid];
+        NSString *status = [tabU.latex valueForKeyPath:@"statusLabel.stringValue"];
+        MCGuiNote(@"status: %@", status);
+        GCHECK([status containsString:@"chapter.tex has unsaved changes to that text"]);
+        GCHECK(!tabU.latex.editPending);
+        GCHECK_EQ_STR(tabCh.sourceText, was);
+    });
+    MCGuiStep(@"close them, the chapter unsaved", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c closeTab:tabCh prompt:NO]);
+        GCHECK([c closeTab:tabU prompt:NO]);
+        tabCh = tabU = nil;
+        GCHECK_EQ_STR(ReadText(chapter), ReadText(Fixtures(@"fixtures/chapter.tex")));
+    });
+
     // The page to the source, on the committed fixture: a Command-click
     // (SyncTeX's inverse search) puts the caret on the clicked word in the
     // source, an \input file's in that file's tab; Shift+Cmd+V from the
@@ -1028,6 +1101,81 @@ MC_GUI_SUITE(latex) {
     });
     MCGuiWait(@"(typeset again as it was)", 20, ^BOOL {
         return ![[tabS.latex valueForKey:@"compiling"] boolValue];
+    });
+    // An agent rewrites the file while the box is open (round 10's
+    // documents defect 3): the clean tab reads it in, and Apply put the
+    // draft in at the old offsets. Now the edit lands where its text is in
+    // the new file, and the rewrite stays; when the rewrite changed the
+    // text being edited, nothing is applied and the draft goes to the
+    // clipboard.
+    __block NSString *rewritten = nil;
+    MCGuiStep(@"the box open on \"heron\", an agent rewrites the file", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(c.previewMode && !tabS.dirty);
+        GCHECK_EQ_STR(tabS.sourceText, untouched);
+        NSTextView *box = OpenBoxOn(tabS.latex, @"heron");
+        GCHECK(box != nil);
+        if (!box) return;
+        [box insertText:@"egret" replacementRange:[box.string rangeOfString:@"heron"]];
+        rewritten = [[untouched stringByReplacingOccurrencesOfString:@"\\section{Opening}\n"
+                                                          withString:@"\\section{Opening}\n"
+                                                                     @"% A line an agent added.\n"]
+            stringByReplacingOccurrencesOfString:@"The closing line"
+                                      withString:@"The agent's closing line"];
+        GCHECK(![rewritten isEqualToString:untouched]);
+        MCGuiWriteFile(mainTex, rewritten);
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the clean tab reads the rewrite, the box still open", 10, ^BOOL {
+        return [tabS.sourceText isEqualToString:rewritten];
+    });
+    MCGuiStep(@"Apply: the edit is in the rewritten text, the agent's lines kept", ^{
+        GCHECK(tabS.latex.editPending);
+        [tabS.latex commitEdit:nil];
+        NSString *want = [rewritten stringByReplacingOccurrencesOfString:@"the patient heron"
+                                                              withString:@"the patient egret"];
+        MCGuiNote(@"text now:\n%@", tabS.sourceText);
+        GCHECK_EQ_STR(tabS.sourceText, want);
+        GCHECK([tabS.sourceText containsString:@"% A line an agent added."]);
+        GCHECK([tabS.sourceText containsString:@"The agent's closing line"]);
+        GCHECK(tabS.dirty);
+        GCHECK_EQ_STR(ReadText(mainTex), rewritten);   // applied, not saved
+        // Cmd+Z in the preview goes back to the agent's text, not the old.
+        GCHECK([tabS.latex canUndoEdit]);
+        [tabS.latex undoEdit];
+        GCHECK_EQ_STR(tabS.sourceText, rewritten);
+    });
+    MCGuiStep(@"the box open again, the agent rewrites the very sentence being edited", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(!tabS.dirty);
+        NSTextView *box = OpenBoxOn(tabS.latex, @"heron");
+        GCHECK(box != nil);
+        if (!box) return;
+        [box insertText:@"egret" replacementRange:[box.string rangeOfString:@"heron"]];
+        rewritten = [rewritten stringByReplacingOccurrencesOfString:@"mentions the patient heron and nothing else."
+                                                         withString:@"was rewritten by an agent."];
+        MCGuiWriteFile(mainTex, rewritten);
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"(read in)", 10, ^BOOL { return [tabS.sourceText isEqualToString:rewritten]; });
+    MCGuiStep(@"Apply changes nothing: the rewrite stays, the draft is on the clipboard", ^{
+        NSString *draft = [((NSTextView *)[tabS.latex valueForKey:@"editText"]).string copy];
+        GCHECK([draft containsString:@"patient egret"]);
+        [tabS.latex commitEdit:nil];
+        GCHECK_EQ_STR(tabS.sourceText, rewritten);
+        GCHECK(!tabS.dirty);
+        GCHECK_EQ_STR([NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString], draft);
+        NSString *status = [tabS.latex valueForKeyPath:@"statusLabel.stringValue"];
+        MCGuiNote(@"status: %@", status);
+        GCHECK([status containsString:@"your edit was not applied"] &&
+               [status containsString:@"clipboard"]);
+        // The file as it was, for the steps after.
+        MCGuiWriteFile(mainTex, untouched);
+        [MCGuiController() checkTabsOnDisk];
+    });
+    MCGuiWait(@"(the file as it was, read in and typeset)", 20, ^BOOL {
+        return [tabS.sourceText isEqualToString:untouched] &&
+               ![[tabS.latex valueForKey:@"compiling"] boolValue];
     });
     MCGuiStep(@"Command-click on \"heron\": the source, the caret on the word", ^{
         EditorController *c = MCGuiController();
@@ -1167,6 +1315,47 @@ MC_GUI_SUITE(latex) {
     MCGuiWait(@"(typeset)", 20, ^BOOL {
         return [[tabS.latex valueForKey:@"generation"] unsignedIntegerValue] > typesets &&
                ![[tabS.latex valueForKey:@"compiling"] boolValue];
+    });
+    // Beside the source, the same: Apply once replaced the reloaded text
+    // with the old text plus the edit, reverting the agent's change.
+    __block NSString *sideRewrite = nil;
+    MCGuiStep(@"beside the source, the box open on \"heron\", an agent rewrites the file", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c pageSideShowing] && !c.previewMode && !tabS.dirty);
+        NSString *was = [c.textView.string copy];
+        NSTextView *box = OpenBoxOn(tabS.latex, @"heron");
+        GCHECK(box != nil);
+        if (!box) return;
+        [box insertText:@"egret" replacementRange:[box.string rangeOfString:@"heron"]];
+        sideRewrite = [was stringByReplacingOccurrencesOfString:@"The closing line"
+                                                     withString:@"An agent's closing line"];
+        GCHECK(![sideRewrite isEqualToString:was]);
+        MCGuiWriteFile(mainTex, sideRewrite);
+        [c checkTabsOnDisk];
+    });
+    MCGuiWait(@"the source reads the rewrite", 10, ^BOOL {
+        return [MCGuiController().textView.string isEqualToString:sideRewrite];
+    });
+    MCGuiStep(@"Apply: the edit goes into the rewritten source, one undo step", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(tabS.latex.editPending);
+        [tabS.latex commitEdit:nil];
+        NSString *want = [sideRewrite stringByReplacingOccurrencesOfString:@"the patient heron"
+                                                                withString:@"the patient egret"];
+        GCHECK_EQ_STR(c.textView.string, want);
+        GCHECK([c.textView.string containsString:@"An agent's closing line"]);
+        GCHECK_EQ_STR(tabS.undoManager.undoActionName, @"Edit in Preview");
+        // The preview's own stack has no copy of it (round 10's defect 8:
+        // undone from the full preview, it dropped the typing since).
+        GCHECK(![tabS.latex canUndoEdit]);
+        GCHECK(tabS.dirty);
+        // (Not undone here: offscreen, the reload's undo step and this one
+        // share the open group, so Cmd+Z would take back both.)
+        [c saveCurrentFile:nil];
+        GCHECK(!tabS.dirty);
+    });
+    MCGuiWait(@"(typeset)", 20, ^BOOL {
+        return ![[tabS.latex valueForKey:@"compiling"] boolValue];
     });
     MCGuiStep(@"Control+Command+V again: the source has the slot", ^{
         EditorController *c = MCGuiController();

@@ -38,6 +38,17 @@ code" lists them), `LspServer.mm`, `LspPopups.mm` and `CodeTextView.mm` own
 processes and UI; the GTK port has `linux/src/Lsp.cpp` over the same core.
 GTK trap: a popover parented to a `GtkTextView` must be unparented before the
 view is disposed (on `unrealize`), or dispose loops forever.
+GTK's popups (2026-11-19, linux/HANDOFF.md item 120, the Mac's #212 and
+#223): the hover box, the completion list, the signature hint, the
+references and quick fix lists and the rename box take their colors from
+`ThemeCss.cpp` (FindRules::palette, the find bar's: editorWidget.* for the
+boxes, the selection for a list's row, input.* and focusBorder for the
+rename field; muted text is the widget's own color at 70%), never one dark
+color on every theme; `Lsp.cpp` and `LspPicker.cpp` keep only the
+layout. The rename field lies over the name (no arrow, the box as wide as
+the field so its left edge can be placed, the editor's font), and is not
+autohide (`PopoverKeep.h`): an app switch keeps it and its typing, a
+click elsewhere in the window cancels. Checked by `lsp_popups`.
 
 - **Hooks are few**: `documentOpened:` (nil for messages, binaries and
   previews), `documentSaved`, `setRoot:`, `shutdown`, `openPaths` and
@@ -396,6 +407,7 @@ Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
 - LSP (read before touching it): GTK trap: a popover parented to a `GtkTextView` must be unparented before the view is disposed (on `unrealize`), or dispose loops forever.
+- LSP (read before touching it): GTK trap: an autohide popover closes when another program takes the keyboard (GDK's grab on X11 takes the click on the other program as its outside click; on Wayland the compositor dismisses a grabbing popup), so an edit box in one is made with `PopoverKeep::install`.
 - LSP (read before touching it): Trap: FSEvents keeps a file's created flag on its later events, so a path already reported is Changed whatever the flags say (`Lsp::FileEventClassifier`).
 - LSP (read before touching it): Traps: Ruff's diagnostic source is "Ruff", its server name "ruff".
 - LSP (read before touching it): ... (trap: the editedRange of NSTextStorageDidProcessEditing is the union of an editing session's changes, attribute fixes included, so a letter typed over a stop could read as the whole line replaced and end the session; seen only in a whole `make guitest`) (`Snippet::Session`: the current stop and those around it grow at ...

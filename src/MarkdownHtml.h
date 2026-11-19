@@ -5,6 +5,9 @@
 // anchors (MarkdownParser::anchor, repeats numbered as GitHub numbers them),
 // lists nest as they do in the preview, quotes and the code and lists inside
 // them keep their places, tables are tables with their columns' alignment,
+// GitHub's alerts are its markup (a div of class markdown-alert-note and the
+// like, a title with a small SVG icon, colored by the stylesheet), front
+// matter is a table of class front-matter,
 // footnotes are a numbered list at the end with links both ways, task boxes
 // are disabled checkboxes, a fenced block's language is its code element's
 // class (language-python) and the rest of its info string (a notebook's
