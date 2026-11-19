@@ -455,6 +455,11 @@ Json panesViewJson(const Json& report) {
     return view;
 }
 
+bool windowOpen(const Json& record) {
+    if (record["connected"].isBool() && !record["connected"].asBool()) return false;
+    return !record["tabs"]["detached"].asBool();
+}
+
 Json localFileJson(const std::string& folder, const std::string& rel, bool hidden) {
     Json j = Json::object();
     j.set("t", Json("filetext"));
@@ -2169,6 +2174,9 @@ void Server::lookAtState() {
     s.allowedTerms.clear();
     for (const Json& w : st["windows"].elements()) {
         if (opt_.window && (std::uint64_t)w["window"].asInt() != opt_.window) continue;
+        // A closed window's record (its renderer gone, or left detached for
+        // the folder's next window) is not a window the page shows.
+        if (!windowOpen(w)) continue;
         Json tabs = w["tabs"];
         // The window's browser pane, checked again here: the report is a
         // renderer's. A window without one (GTK's, the checks') has none.

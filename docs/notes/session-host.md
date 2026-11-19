@@ -994,6 +994,11 @@ place on its link, and `EditorController+Session.mm` the window's hooks.
   edit outside the history, so the host counts it unsaved), each terminal
   `rehostOn:` (a new shell). A host that cannot be had again: the
   process's link takes them, so nothing typed is lost either way.
+- **The page** (`Web::windowOpen`, in `lookAtState`): a record whose
+  renderer is gone (`connected` false) or that a closing window left
+  (`"detached"`, which GTK's `windowDetached` now sets too) is no window
+  on the page; its documents stay in the page's list as the host's, and a
+  window taking the record over shows again (`sessionweb:closed-windows`).
 - **Checks.** `make guitest SUITES=host_reattach` (HostReattachSuite.mm;
   its header says what it checks): with `on`, a closed window's saved
   file and running shell back in the folder's next window under the same

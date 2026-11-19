@@ -302,6 +302,13 @@ Json panesReportJson(bool browser, bool terminal, double browserShare);
 // when there is no report.
 Json panesViewJson(const Json& report);
 
+// Whether a window record of the host's state (Host::state()'s windows) is
+// a window still open: its renderer still connected, and the record not
+// one a closing window left for the folder's next window ("detached" in
+// its tabs, stage 6). The page leaves the others out; their documents and
+// terminals stay on the host until a window takes them.
+bool windowOpen(const Json& record);
+
 // A file of `folder` read for a tab of the page's own: {t: "filetext",
 // path, abs, kind, version, lines, html | note, indent} as a document's
 // "doc" is, or {t: "filetext", path, error}. Held inside the folder as the
