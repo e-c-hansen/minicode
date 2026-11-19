@@ -7081,3 +7081,87 @@ they do in Terminal.app.
   window, as item 110 read them, and whether its Super+Alt keymap for
   mutible is wanted), and GNOME on Wayland, where the harness's X11 Super
   (Mod4) cannot speak for GDK's Super mask.
+
+### 117. Find in Folder: Enter never replaces, the panes take the keyboard, dismissed rows stay out of Replace All (the Mac's #210; November 2026)
+
+On the Mac (1.6.3) a walker's `python3 -m pytest -q` and Enter landed in
+the Search window's replace field, where Enter was Replace All, and a file
+was rewritten; a row's Dismiss took it out of the list, but Replace All
+re-planned the folder and replaced it anyway. #210 fixed both there and
+added the core's `FolderReplaceExclusions`, `excludeDismissed`,
+`dismissedLines`, skip lines in `replaceInText` and
+`TextFind::dropEditsOnLines` (`search:dismissed`). GTK had the same
+Enter, no Dismiss at all, and a search window no accelerator reached.
+`linux/src/Search.{h,cpp}` and `main.cpp`, with the core's functions only:
+
+- **Enter in the replacement** (`fieldReturn`) does what Enter in the
+  query does: it searches, or, when the list already answers the query,
+  goes into the results on the first row. It never replaces. (The Mac's
+  Enter always searches again; GTK's query had gone into the list since
+  September 2026, and kept that, so Enter after a dismiss keeps the
+  dismissals while rows are left.) Replace All is its button or
+  Ctrl+Alt+Enter, only while the replace row shows (else the bell, the
+  Mac's `replaceAllFromKey`); the button's tooltip no longer says Enter.
+- **The results take the keyboard.** A single click on a row selects it,
+  gives the list the keyboard and shows the match in the preview tab
+  without presenting the editor window (`openMatch(..., present)`; it
+  had presented it, so the keyboard left the results at every click),
+  as the Mac's `previewHandler` and VS Code's search view do; the arrows
+  then move between rows and Enter opens one kept, as a double-click
+  does, both presenting the editor window.
+- **Pane keys from the search window.** The Find in Folder and TODOs
+  windows are no application windows, so Ctrl+`, Ctrl+Shift+P and the
+  rest did nothing there and what was typed next stayed in the fields.
+  `runPaneKey` matches the keys of `kPaneCommands` (the commands the
+  Mac's `currentForPane:` serves: terminal, browser, hints, sidebar
+  panels, problems, palette, focus commands) against the key with
+  `gtk_shortcut_trigger_trigger` over `Commands::linuxAccelerators`, so
+  keys.conf moves them, and main.cpp's `runPaneCommandFromSearch`
+  presents the editor window and runs the action; Toggle Terminal and
+  Toggle Browser show and focus their pane, never hide it.
+- **Dismiss.** GTK's results are lines without file rows, so: a row's ×
+  (shown on `:hover` and `:selected`, `installRowCss`; not focusable),
+  Delete in the list (VS Code's Linux key for Dismiss; the Mac has none)
+  and the right click menu's Dismiss take the line, and the menu's Dismiss
+  File every line of its file (the Mac's Dismiss on a file's row). The
+  rows leave the list a run at a time (`removeRows`, the scroll kept), the
+  keyboard held on the window's box meanwhile (`ListKeyboard::hold`; a
+  scroller would pass the focus to the list's removed row) and given to
+  the row now in the first one's place; the status says what is left
+  ("3 matches in 2 files (dismissed rows are left alone)"). Replace All
+  copies the dismissals into its plan job (`excludeDismissed` on the
+  worker, so a search while it counts cannot change them), the question
+  says how many matches they keep, and `replaceInPaths` skips dismissed
+  files and lines in tabs (`dropEditsOnLines`) and on disk
+  (`replaceInText` with skip lines); a file whose dismissed line changed
+  since the search is left alone whole and named. A new search clears
+  them. In the TODOs window the same keys and menu take rows out of the
+  list (and out of its filter's source).
+- **Left out:** the Mac's file rows (Replace All in This File, a file
+  row's own ×), which GTK's flat list never had; Cmd+G stepping through
+  the results; and #210's discarding of keys queued before the question,
+  which GTK does not need: a key the X server sent while the search window
+  had the focus goes to that window, where Enter now only searches.
+- **Checks.** `replace_in_folder` (46 checks): its four Enter-as-Replace-All
+  presses became Ctrl+Alt+Enter and the button; new steps on four files
+  (seven matches, six rows) check Enter in the replacement moving into the
+  results with no question and every file unchanged after a second's
+  wait, Down and Down moving the selection, a click on a row from the
+  replace field previewing it with the list holding the keyboard and the
+  search window still active, Up from there, a line dismissed by its ×,
+  a file by the menu's Dismiss File, a line by Delete (the keyboard still
+  in the list, Up working after), the status each time, Ctrl+Alt+Enter
+  asking "Replace 3 matches in 2 files?" with "4 matches in dismissed rows
+  are left alone.", the dismissed line, file and row unchanged on disk and
+  in the preview tab while the rest is replaced, every row back after;
+  then Ctrl+` from the replace field making the editor window active with
+  its terminal shown and holding the keyboard, and Ctrl+` again from the
+  search window leaving it shown. The suite now gives the X focus back
+  when it closes the window (it had printed a LEFT line). Seen failing
+  without the feature: Enter as Replace All failed at the first new wait
+  (the question up); presenting on a single click failed the active
+  window checks; Replace All without the dismissals failed the question
+  and the files (a.txt's line 2 and d.txt replaced, b.txt's tab changed).
+- **Needs the owner's eyes:** the × on hover, the right click menu's look,
+  and the click-then-arrows feel with a real window manager, which keeps
+  the transient search window over the editor's.

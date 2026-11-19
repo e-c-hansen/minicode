@@ -158,6 +158,29 @@ found through that list.
   (Toggle Terminal, Toggle Browser) from there shows and focuses its pane,
   as VS Code's toggles hide only the focused view. The key monitor runs
   Global keys (Ctrl+`) for those windows too (`MCKeymapHandleGlobalKeyDown`).
+- **The same on Linux** (2026-11-19, `linux/HANDOFF.md` item 117,
+  `linux/src/Search.cpp`). Enter in the replace field is `fieldReturn`,
+  what Enter in the query does (search, or into the results when they
+  answer the query; GTK's query did that before #210); Replace All is the
+  button or Ctrl+Alt+Enter (`editor.action.replaceAll`, `onWindowKey`),
+  only while the replace row shows, else the bell. GTK's results are a
+  flat list of lines (no file rows), so a row's × (CSS-shown on `:hover`
+  and `:selected`), Delete in the list, and the right click menu's Dismiss
+  take a line, and the menu's Dismiss File every line of its file; both
+  record into `FolderReplaceExclusions`, Replace All copies them into its
+  plan job (`excludeDismissed` on the worker) and on into
+  `replaceInPaths` (`dismissedLines`, `replaceInText` with skip lines,
+  `dropEditsOnLines` in a tab), and `runSearch` clears them. A single
+  click on a row previews it without presenting the editor window
+  (`openMatch(..., present = false)`), the list taking the keyboard, as
+  the Mac's `previewHandler`; a double-click or Enter keeps it and
+  presents. The search window is no application window, so no
+  accelerator reached it: `runPaneKey` matches the keys of
+  `kPaneCommands` (the Mac's `currentForPane:` callers) with
+  `gtk_shortcut_trigger_trigger` and main.cpp's
+  `runPaneCommandFromSearch` presents the editor window and runs the
+  action, Toggle Terminal and Toggle Browser showing and focusing their
+  pane, never hiding it. Checked in the GTK `replace_in_folder` suite.
 
 ## Traps
 
