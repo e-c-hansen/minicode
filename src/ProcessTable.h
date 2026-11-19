@@ -11,7 +11,13 @@
 //   - every descendant of a mutible terminal's shell, with that terminal as
 //     its origin, kept after it is re-parented to launchd (a daemon, or a job
 //     left behind when its terminal closed); its own children follow it.
-//     A process that detaches between two samples is missed;
+//     One already re-parented when a look first sees it (a job started
+//     with `( ... &)`, or with nohup or disown just before `exit`) is
+//     found by its session: the pty's shell leads the session every
+//     process started in it keeps, unless it calls setsid itself, so a
+//     process whose session leader is (or was) a terminal's shell came
+//     from that terminal. Each terminal's shell is remembered, by pid and
+//     start time, until nothing is left in its session;
 //   - every process of the user's not started from mutible (nor by mutible
 //     itself: language servers, git) whose working folder is inside a
 //     watched folder ("not started here"), while it stays there;
@@ -48,6 +54,7 @@ struct Key {
 // One row of the process table.
 struct Basic {
     int pid = 0, ppid = 0, pgid = 0;
+    int sid = 0;         // its session (the session leader's pid), 0 when unknown
     uint32_t uid = 0;
     int64_t start = 0;   // microseconds since 1970
     std::string name;    // the kernel's short name (p_comm)
@@ -153,6 +160,14 @@ private:
         Key root;
     };
     std::map<int, SessionRoot> sessions_;
+    // Every terminal shell seen, by pid, with the terminal it ran in, kept
+    // after the shell or its terminal is gone while a process still has its
+    // session (see the top of this file).
+    struct ShellSeen {
+        int64_t start = 0;
+        Terminal terminal;
+    };
+    std::map<int, ShellSeen> shellsSeen_;
 };
 
 // ------------------------------------------------------------ the panel

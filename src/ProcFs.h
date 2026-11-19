@@ -35,7 +35,7 @@ namespace ProcFs {
 // ----- parsers over text already read (tests feed them canned text)
 
 struct Stat {
-    int pid = 0, ppid = 0, pgid = 0;
+    int pid = 0, ppid = 0, pgid = 0, sid = 0;
     std::string name;          // comm, which may hold spaces and parentheses
     uint64_t utime = 0, stime = 0, startTicks = 0;
 };

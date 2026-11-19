@@ -179,6 +179,14 @@ extern NSNotificationName const MCTerminalClaudeDidStartNotification;
 - (BOOL)typeCommand:(NSString *)line;
 // Ends the shell (SIGHUP, the pty closed) for good. The view is then dead.
 - (void)close;
+// The shell ended as the user meant it to (`exit`, Ctrl+D at an empty
+// prompt; on the session's host as well, which has ended its terminal by
+// then) and terminal.close-on-exit is on: the owner closes this terminal
+// (MCTerminalPanel does, unasked; the last one takes the dock with it).
+// Told after the turn the shell ended in, and not when a shell started
+// again meanwhile. Without it, or for a shell killed by a signal, the
+// terminal says so and waits for Return (TerminalExit.h).
+@property(nonatomic, copy) void (^onShellExit)(TerminalView *terminal);
 // What the newest command that finished printed (the shell integration's
 // marks say where it began and ended), nil when none has; grid mode only.
 // copyLastCommandOutput: puts it on the pasteboard (Terminal menu).
