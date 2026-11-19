@@ -2001,7 +2001,8 @@ static void testSessionWeb() {
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
         a = ask("/file/" + token);
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
-        a = ask("/file/" + token.substr(0, 47) + "0/pic.png");
+        // A wrong token: the last digit changed (always another digit).
+        a = ask("/file/" + token.substr(0, 47) + (token[47] == '0' ? "1" : "0") + "/pic.png");
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
         a = ask("/file/pic.png?t=" + token);
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
