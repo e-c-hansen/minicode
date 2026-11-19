@@ -1108,6 +1108,11 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSInteger)markdownSourceLineNear:(NSUInteger)i;
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point;
 - (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point;
+// A double-click at `at` (window coordinates) on whichever page is under it,
+// the full page or the one beside the source: the block editor opens, as the
+// page's own double-click opens it. For a double-click that began in the
+// other editor group (otherGroupPressed:).
+- (BOOL)editPageAtWindowPoint:(NSPoint)at;
 - (BOOL)editMarkdownIn:(NSTextView *)page atCharacter:(NSUInteger)index point:(NSPoint)point;
 - (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side;
 - (void)applySidePreviewEdit:(NSString *)source;

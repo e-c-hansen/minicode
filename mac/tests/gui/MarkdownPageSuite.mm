@@ -11,7 +11,11 @@
 // between, stays where it was, one text view, centered at its measure,
 // all of it marked to be drawn again each time (the owner's STATUS.md on
 // 1.6.3, 2026-11-18: an older, narrower copy of the page in its left
-// margin, cut off where the page's column starts).
+// margin, cut off where the page's column starts). And the page's edit
+// box (D2 on 1.6.3 and 1.6.4): what is typed in it survives a switch to
+// another app, a close other than Esc applies it, its button says Apply,
+// and with two editor groups a double-click on the other group's page
+// opens it on the first try.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -20,6 +24,8 @@
 #import "MarkdownSidePreview.h"
 #import "PageMeasure.h"
 #import "AppSettings.h"
+#import "MarkdownEditPanel.h"
+#import "EditorMirror.h"
 #import <objc/runtime.h>
 
 namespace {
@@ -250,6 +256,40 @@ void CheckOnePage(EditorController *c, NSUInteger subviewsBefore, NSString *when
 // view's height may have moved since (layout below the pane goes on),
 // so "whole" is its full width from its top to well past a screenful
 // below the pane; marks of what shows alone stop at the pane.
+// The app going to the background and coming back, as AppKit says so.
+void SwitchAppAndBack(void) {
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc postNotificationName:NSApplicationWillResignActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationDidResignActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationWillBecomeActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationDidBecomeActiveNotification object:NSApp];
+}
+
+// A press on the page at `at` (window coordinates), as a mouse-down of
+// `clicks` clicks is handed to `view` (a window never on screen gets no
+// mouse-down through sendEvent:).
+void PressAt(NSView *view, NSPoint at, NSInteger clicks) {
+    NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:at
+                                  modifierFlags:0
+                                      timestamp:NSProcessInfo.processInfo.systemUptime
+                                   windowNumber:view.window.windowNumber context:nil
+                                    eventNumber:0 clickCount:clicks pressure:1];
+    [view mouseDown:down];
+}
+
+// Where a word of the page on show is, in window coordinates.
+NSPoint WindowPointOf(EditorController *c, NSString *word) {
+    NSTextView *tv = [c valueForKey:@"textView"];
+    const NSRange r = [tv.string rangeOfString:word];
+    if (r.location == NSNotFound) return NSMakePoint(-1, -1);
+    const NSRect box = [c textRectForCharacter:r.location + 1];
+    return [tv convertPoint:NSMakePoint(NSMidX(box), NSMidY(box)) toView:nil];
+}
+
+NSTextView *EditBox(EditorController *c) {
+    return [[c valueForKey:@"markdownEditPanel"] valueForKey:@"_editor"];
+}
+
 void CheckWholeViewMarked(NSTextView *tv, NSString *when) {
     NSArray<NSValue *> *marked = StopMarks();
     const NSRect vis = tv.visibleRect;
@@ -465,6 +505,155 @@ MC_GUI_SUITE(markdown_page) {
         NSTextView *tv = [c valueForKey:@"textView"];
         GCHECK([tv.string containsString:@"\t2.\tsecond"] && [tv.string containsString:@"\t3.\tthird"]);
         GCHECK(![tv.string containsString:@"\t4.\tthird"]);
+    });
+    // The edit box on the page (D2 on 1.6.3 and 1.6.4): switching to
+    // another app and back closed it and lost what was typed; its button
+    // said Save but only applied the edit.
+    NSString *fix = [dir stringByAppendingPathComponent:@"fix.md"];
+    NSString *const fixText = @"A paragraph with a wrod to fix.\n\nAnother paragraph here.\n";
+    MCGuiStep(@"what is typed in the page's edit box survives a switch to another app", ^{
+        StopMarks();
+        MCGuiWriteFile(fix, fixText);
+        GCHECK([c showFile:fix]);
+        if (!c.previewMode) [c togglePreview:nil];
+        GCHECK(c.previewMode);
+        NSTextView *tv = [c valueForKey:@"textView"];
+        const NSRange word = [tv.string rangeOfString:@"wrod"];
+        GCHECK(word.location != NSNotFound);
+        if (word.location == NSNotFound) return;
+        const NSRect r = [c textRectForCharacter:word.location + 1];
+        GCHECK([c editMarkdownAtCharacter:word.location + 1
+                                    point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
+        NSPopover *pop = [panel valueForKey:@"_popover"];
+        // A transient popover closes when the app loses the keyboard.
+        MCGuiNote(@"popover behavior %ld", (long)pop.behavior);
+        GCHECK(pop.behavior == NSPopoverBehaviorSemitransient);
+        // It says what Return does: the edit goes into the document.
+        NSMutableArray<NSString *> *buttons = [NSMutableArray array];
+        for (NSView *v in pop.contentViewController.view.subviews)
+            if ([v isKindOfClass:NSButton.class]) [buttons addObject:((NSButton *)v).title];
+        NSString *label = nil;
+        for (NSView *v in pop.contentViewController.view.subviews)
+            if ([v isKindOfClass:NSTextField.class]) label = ((NSTextField *)v).stringValue;
+        MCGuiNote(@"buttons %@, title \"%@\"", buttons, label);
+        GCHECK([buttons containsObject:@"Apply"] && ![buttons containsObject:@"Save"]);
+        GCHECK([label containsString:@"Return applies"] && ![label containsString:@"saves"]);
+        NSTextView *editor = EditBox(c);
+        GCHECK_EQ_STR(editor.string, @"A paragraph with a wrod to fix.");
+        [editor insertText:@"word" replacementRange:[editor.string rangeOfString:@"wrod"]];
+        GCHECK_EQ_STR(editor.string, @"A paragraph with a word to fix.");
+        SwitchAppAndBack();
+        // Still open with the text, or applied: never lost.
+        const BOOL kept = panel.edited && [EditBox(c).string isEqualToString:
+                                                @"A paragraph with a word to fix."];
+        const BOOL applied = [c.sourceText containsString:@"a word to fix"];
+        MCGuiNote(@"after the switch: kept %d, applied %d", kept, applied);
+        GCHECK(kept || applied);
+        GCHECK(kept);   // semi-transient: AppKit leaves it open
+        // Return applies it into the document, which is then unsaved.
+        MCGuiUndoGroup([[c valueForKey:@"textView"] undoManager], ^{
+            [panel performSelector:@selector(save:) withObject:nil];
+        });
+        GCHECK([c.sourceText containsString:@"A paragraph with a word to fix."]);
+        GCHECK(!panel.edited);
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:fix encoding:NSUTF8StringEncoding error:nil], fixText);   // applied, not saved
+    });
+    MCGuiStep(@"a box closed by anything but Esc applies what was typed, one undo step", ^{
+        NSTextView *tv = [c valueForKey:@"textView"];
+        NSString *before = [c.sourceText copy];
+        const NSRange word = [tv.string rangeOfString:@"Another"];
+        GCHECK(word.location != NSNotFound);
+        if (word.location == NSNotFound) return;
+        NSRect r = [c textRectForCharacter:word.location];
+        GCHECK([c editMarkdownAtCharacter:word.location point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        MCMarkdownEditPanel *panel = [c valueForKey:@"markdownEditPanel"];
+        EditBox(c).string = @"Another paragraph, changed.";
+        // AppKit closing it on its own (a click elsewhere in the window).
+        NSPopover *pop = [panel valueForKey:@"_popover"];
+        MCGuiUndoGroup(tv.undoManager, ^{
+            [panel performSelector:@selector(popoverWillClose:)
+                        withObject:[NSNotification notificationWithName:NSPopoverWillCloseNotification
+                                                                 object:pop]];
+        });
+        GCHECK([c.sourceText containsString:@"Another paragraph, changed."]);
+        [tv.undoManager undo];
+        GCHECK_EQ_STR(c.sourceText, before);
+        // Esc (close) drops it, as asked.
+        const NSRange again = [tv.string rangeOfString:@"Another"];
+        r = [c textRectForCharacter:again.location];
+        GCHECK([c editMarkdownAtCharacter:again.location point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        EditBox(c).string = @"Dropped on purpose.";
+        [panel close];
+        GCHECK_EQ_STR(c.sourceText, before);
+        // A save, a close or a quit asks about it with the rest
+        // (commitPageEdit): applied first.
+        r = [c textRectForCharacter:again.location];
+        GCHECK([c editMarkdownAtCharacter:again.location point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        EditBox(c).string = @"Another paragraph, kept for the save.";
+        MCGuiUndoGroup(tv.undoManager, ^{ [c commitPageEdit]; });
+        GCHECK([c.sourceText containsString:@"Another paragraph, kept for the save."]);
+        GCHECK(!panel.edited);
+    });
+    // Two editor groups, a page in each: a double-click in the group
+    // without the keyboard opens the box on the first try.
+    NSString *left = [dir stringByAppendingPathComponent:@"left.md"];
+    NSString *right = [dir stringByAppendingPathComponent:@"right.md"];
+    MCGuiStep(@"two groups: a double-click on the other group's page opens the box at once", ^{
+        MCGuiWriteFile(left, @"Left page with a wrod.\n");
+        MCGuiWriteFile(right, @"Right page with a recieve.\n");
+        [c openFileAtPath:left from:EditorTabs::OpenFrom::Other];
+        if (!c.previewMode) [c togglePreview:nil];
+        [c splitEditor:nil];   // left.md in both, the right group focused
+        GCHECK([c editorSplit] && [c focusedGroup] == 1);
+        [c openFileAtPath:right from:EditorTabs::OpenFrom::Other];
+        if (!c.previewMode) [c togglePreview:nil];
+        // Where left.md's word is on its page, in the left group.
+        [c focusFirstEditorGroup:nil];
+        GCHECK([c focusedGroup] == 0 && c.previewMode);
+        const NSPoint at = WindowPointOf(c, @"wrod");
+        [c focusSecondEditorGroup:nil];
+        GCHECK([c focusedGroup] == 1 && c.previewMode);
+        MCEditorMirror *mirror = [c valueForKey:@"mirror"];
+        GCHECK(mirror.showsPicture);   // left.md's page, as a picture
+        GCHECK(at.x >= 0);
+        if (!mirror.showsPicture || at.x < 0) return;
+        // The press arrives with two clicks (the first went to making the
+        // window key, or the group): the box opens on the word, at once.
+        [c setValue:nil forKey:@"markdownEditPanel"];
+        PressAt(mirror.pictureView, at, 2);
+        MCGuiNote(@"group %ld, box \"%@\"", (long)[c focusedGroup], EditBox(c).string);
+        GCHECK([c focusedGroup] == 0);
+        GCHECK_EQ_STR(EditBox(c).string, @"Left page with a wrod.");
+        [[c valueForKey:@"markdownEditPanel"] close];
+    });
+    MCGuiStep(@"two groups: one click, then the second, in the other group's page", ^{
+        // Where right.md's word is, in the right group.
+        [c focusSecondEditorGroup:nil];
+        const NSPoint at = WindowPointOf(c, @"recieve");
+        [c focusFirstEditorGroup:nil];
+        MCEditorMirror *mirror = [c valueForKey:@"mirror"];
+        GCHECK(mirror.showsPicture && at.x >= 0);
+        if (!mirror.showsPicture || at.x < 0) return;
+        [c setValue:nil forKey:@"markdownEditPanel"];
+        PressAt(mirror.pictureView, at, 1);   // the group takes the keyboard
+        GCHECK([c focusedGroup] == 1);
+        // The second click lands on the page itself, now under the pointer.
+        NSTextView *tv = [c valueForKey:@"textView"];
+        const NSPoint p = [tv convertPoint:at fromView:nil];
+        const NSUInteger i = [tv characterIndexForInsertionAtPoint:p];
+        const NSRange word = [tv.string rangeOfString:@"recieve"];
+        MCGuiNote(@"the second click at character %lu, the word at %@", (unsigned long)i,
+                  NSStringFromRange(word));
+        // (Only sent where it opens a box: a double-click that did not would
+        // start the text view's own tracking, waiting for a release.)
+        const BOOL onWord = c.previewMode && word.location != NSNotFound &&
+                            i >= word.location && i <= NSMaxRange(word);
+        GCHECK(onWord);
+        if (!onWord) return;
+        PressAt(tv, at, 2);
+        GCHECK_EQ_STR(EditBox(c).string, @"Right page with a recieve.");
+        [[c valueForKey:@"markdownEditPanel"] close];
     });
     MCGuiStep(@"the window goes", ^{
         StopMarks();

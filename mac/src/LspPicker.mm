@@ -221,6 +221,7 @@ static const CGFloat kPickerRowHeight = 20;
     MCRenamePanel *_panel;
     NSView *_content;
     __weak NSWindow *_parent;
+    BOOL _appLeaving;   // between the app resigning active and coming back
 }
 
 - (NSView *)contentView { return _content; }
@@ -236,6 +237,9 @@ static const CGFloat kPickerRowHeight = 20;
                     backing:NSBackingStoreBuffered defer:YES];
     _panel.hasShadow = YES;
     _panel.releasedWhenClosed = NO;
+    // It stays with its window while another app is in front, behind that
+    // app's windows as its window is, rather than being ordered out.
+    _panel.hidesOnDeactivate = NO;
     _content = _panel.contentView;
     _content.wantsLayer = YES;
     _content.layer.borderWidth = 1;
@@ -250,11 +254,47 @@ static const CGFloat kPickerRowHeight = 20;
     _field.cell.wraps = NO;
     _field.toolTip = @"Return to rename, Esc to cancel";
     [_content addSubview:_field];
-    // A click anywhere else takes the keyboard away, which cancels.
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(resignedKey:)
-                                                 name:NSWindowDidResignKeyNotification
-                                               object:_panel];
+    // A click anywhere else takes the keyboard away, which cancels; but
+    // switching to another app takes it away too, and that keeps the box
+    // and what was typed in it, with the keyboard again on the way back
+    // (D2 on 1.6.3: the name typed was gone after a look at Terminal).
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(resignedKey:)
+               name:NSWindowDidResignKeyNotification object:_panel];
+    [nc addObserver:self selector:@selector(appWillResignActive:)
+               name:NSApplicationWillResignActiveNotification object:nil];
+    [nc addObserver:self selector:@selector(appDidBecomeActive:)
+               name:NSApplicationDidBecomeActiveNotification object:nil];
 }
+
+// The app is going to the background: the panel's window gives up the
+// keyboard next, which is not a click elsewhere.
+- (void)appWillResignActive:(NSNotification *)note {
+    (void)note;
+    if (_visible) _appLeaving = YES;
+}
+
+// Back: the box takes the keyboard again, its text and selection as they
+// were (the field editor stays the panel's first responder meanwhile).
+// AppKit gives the keyboard back to the window that had it after this
+// notification, so the panel asks for it a turn later, and only if its
+// window has it or nothing does.
+- (void)appDidBecomeActive:(NSNotification *)note {
+    (void)note;
+    if (!_appLeaving) return;
+    _appLeaving = NO;
+    if (!_visible) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSWindow *parent = self->_parent;
+        if (!self->_visible || !parent || self->_panel.isKeyWindow) return;
+        NSWindow *key = NSApp.keyWindow;
+        if (key && key != parent) return;
+        [self->_panel makeKeyWindow];
+    });
+}
+
+// For tests: whether the box is waiting for the app to come back.
+- (BOOL)waitingForApp { return _appLeaving; }
 
 - (void)showWithName:(NSString *)name relativeToRect:(NSRect)rect ofView:(NSView *)view
                 font:(NSFont *)font {
@@ -314,12 +354,14 @@ static const CGFloat kPickerRowHeight = 20;
 
 - (void)resignedKey:(NSNotification *)note {
     (void)note;
+    if (_appLeaving) return;   // another app in front: kept (appDidBecomeActive:)
     [self close];
 }
 
 - (void)close {
     if (!_visible) return;
     _visible = NO;
+    _appLeaving = NO;
     NSWindow *parent = _parent;
     [parent removeChildWindow:_panel];
     [_panel orderOut:nil];

@@ -255,7 +255,10 @@ found through that list.
   Cmd+1, Cmd+2) copies what the editor shows into the mirror, focuses the
   window's other group (`_win->focus`), swaps the strips (`self.tabStrip`
   is always the focused group's) and activates the other tab at the
-  mirror's place; a press goes on to the same character. The groups are
+  mirror's place; a press goes on to the same character. A two-click press
+  on a page shown as a picture opens the page's block editor at once
+  (`editPageAtWindowPoint:`, `docs/notes/markdown.md`), and the picture
+  accepts the first mouse, as the text does. The groups are
   `_win`'s; `tabs` is every document of either group
   (`Model::Window::documents`: backups, sessions, auto-save, disk checks,
   the servers' open files untouched); the strip, tab keys and closing use

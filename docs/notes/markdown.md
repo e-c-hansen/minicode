@@ -216,7 +216,31 @@ found through that list.
   page's lines, in the page's 15 points for prose, and as tall as the
   text; nothing is preselected otherwise. The LaTeX popover selects the
   clicked word the same way (`MCLatexClickedWord`). Editing in place on
-  the page, Typora's way, is the planned second step.
+  the page, Typora's way, is the planned second step (D7; it needs a
+  design).
+  **The box keeps its draft** (2026-11-19, D2 on 1.6.3 and 1.6.4,
+  `markdown_page`). Trap: a transient popover closes when the app loses
+  the keyboard, and what was typed in it goes too. The popover is `NSPopoverBehaviorSemitransient`, so
+  switching apps leaves it open (transient closed it, and the typing went
+  with it); a click elsewhere in the window still closes it. Only Esc and
+  Cancel (`close`) drop the draft; Return and Apply (`save:`) apply it;
+  AppKit closing it any other way applies it (`popoverWillClose:`, unless
+  `_settled`), and so do a tab leaving (`stashActiveTab`), a second
+  double-click (`editMarkdownAtCharacter:` and
+  `editSidePreviewAtCharacter:` apply first, the full page's character then
+  read anew), Cmd+S, closing a tab, a window or quitting
+  (`commitPageEdit`, before the unsaved-changes question). The button is
+  Apply and the title "Return applies": it puts the edit in the buffer,
+  never on disk (the owner's call: Apply, since auto-save may write it).
+  In two editor groups the other group shows a page as a picture
+  (`MCMirrorPictureView`, which accepts the first mouse); a two-click press
+  there (its first click spent making the window key) focuses the group
+  and opens the box on the page now under the pointer
+  (`otherGroupPressed:` then `editPageAtWindowPoint:`), and a one-click
+  press focuses it so the second click lands on the page itself.
+  Offscreen the popover never shows, so `markdown_page` checks the
+  behavior, posts the app's resign and become-active notifications, and
+  calls `popoverWillClose:` by hand.
 - **Pictures**: `MCMarkdownImage` attachments with `MCAnimatedImageCell` (sized
   to the line; a GIF's timer runs only while on screen). An `<img>`'s width
   and height (`MdRun::width`/`height`, `MdLength`: CSS pixels or a percent of
@@ -410,6 +434,7 @@ text is in place in its section.
 
 - Markdown: **Trap: mark the whole view, not what shows** (2026-11-18, the owner's screenshot of `.grades/STATUS.md` on 1.6.3, a file a script rewrites every few minutes, in a 2300-pixel window: an older, narrower copy of the page in its left margin, cut off where the page's column starts, starting partway down).
 - Markdown: Trap: `setNeedsDisplayInRect:` on the pane after a splice laid out the page to that rect in small steps, each walking every laid-out line fragment (the text blocks' slow path, see the editor's trap): 4.3 s at 20,000 lines; the mark uses `avoidAdditionalLayout:YES`.
+- Markdown: Trap: a transient popover closes when the app loses the keyboard, and what was typed in it goes too.
 - Markdown: Traps: the TextKit 1 editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);
 - Math in the Markdown preview (Mac): **Trap**: `\begin{x}` runs `\csname x\endcsname` and `\end{x}` `\csname endx\endcsname`, so `\begin{pagecolor}` was `\pagecolor` past the word list; an environment's name must be letters in braces and is checked as both words, ignoring case, and `\lowercase`, `\uppercase`, `\Make...`, `\UseName` and `\ExpandArgs` are refused as more ways to build a word.
 - Math in the Markdown preview (Mac): **Trap**: `\globaldefs=-1` around each formula broke every formula's fonts (LaTeX loads fonts lazily with global definitions); check a change to the batch with a real tectonic (`markdown_math` with `MC_GUI_REAL_TECTONIC`).
