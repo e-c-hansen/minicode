@@ -1336,7 +1336,12 @@ What later items build on:
   disagrees is this. `CodeView::setBuffer` now puts both adjustments at 0
   while the old text is still laid out, then changes the buffer; tab places
   come back after it as before. `gutter_switch` checks it (all four rounds
-  failed without it).
+  failed without it). The scroll goes before the cache is emptied, never
+  after: scrolling asks for the caret's place, which lays the caret's line
+  out into the cache again, and a line with no height yet (the text just
+  replaced) kept its display through set_buffer (#165 did it after, and
+  `semantic_tokens` crashed main's GTK job twice; item 122). The cache is
+  now emptied again after set_buffer as well.
 
 ### 17. Sessions, backups and auto-save (done, November 2026; `PARITY.md` items 1.2 and 1.3)
 
@@ -7962,3 +7967,62 @@ never applied, a refresh not being a script. GTK now follows the same rule.
   note need the owner's eyes on the ThinkPad; a real Zoom was never
   started (no handler for zoommtg: or smb: is installed here, and the
   checks record the desktop's handler instead).
+
+### 122. GtkTextView's line cache emptied after set_buffer too: semantic_tokens' signal 11 on main (November 2026)
+
+- **What happened**: main's GTK job died with signal 11 in
+  `semantic_tokens` at "the servers off again; the tab closed unasked" on
+  two runs in a row, 44258729827 (ff0dcf0a, #165's merge) and 44260237099
+  (2d0e5332, #166 on top of it). No GLib critical came before it. Against
+  Ubuntu's debug symbols for CI's GTK (4.22.4+ds-0ubuntu0.2, amd64v3, from
+  debuginfod.ubuntu.com) the stack is `_gtk_text_line_get_number` under
+  `gtk_text_line_display_compare`, `g_sequence_insert_sorted`,
+  `gtk_text_line_display_cache_get`, `gtk_text_layout_snapshot` and
+  `gtk_text_view_snapshot`, from the frame clock's paint, with no frame of
+  ours: not a language server's callback after its server or document
+  went, but item 16's first trap again. A display of the closed tab's
+  buffer stayed in the view's line cache through set_buffer, and the next
+  frame sorted a display in beside it and read its freed line. #165 had
+  put the scroll to the top after the cache was emptied; the step's
+  `setText` had just replaced every line (none with a height yet) and left
+  the caret at the end, the scroll asked for the caret's place
+  (GtkTextView's `value_changed` updates the input method's spot), and that
+  line's display, of a line the view had never validated, was one
+  set_buffer does not drop. #168 (4f5a13de, merged an hour later) moved
+  the scroll before the emptying, and no run since has crashed there: no
+  main run's GTK job, no nightly soak, and no failed CI run of any branch
+  from November 17 on (76 runs, every failed GTK job's log read) failed in
+  `semantic_tokens` after 4f5a13de. #165's own PR run passed the suite,
+  so on CI the old order crashed two runs of three.
+- **Reproduced** with #165's order put back: `semantic_tokens` alone
+  crashed 4 runs of 5 under `MALLOC_PERTURB_=165`, the same frames
+  (symbolized against this machine's GTK). On main's order it passed 30
+  of 30 (ten perturb values).
+- **Change**: `CodeView::setViewBuffer` now empties the cache again once
+  the view shows the new buffer (`emptyLineCaches`, the same never-applied
+  tag, on the new buffer's table), so no display of the old buffer can
+  stay, whatever laid its lines out after the first emptying. Emptying a
+  cache whole reads none of its lines (GTK removes each display by
+  pointer, gtktextlinedisplaycache.c), so it is safe even with a line
+  already freed. With #165's order and this change, `semantic_tokens`
+  passed 5 of 5 and `tab_close_now` 5 of 5.
+- **Checked by** `tab_close_now`'s new rounds, which need no server: a
+  2,000-line file scrolled 400 px, its text set again whole, the caret at
+  its end and every tab closed in one step, then two frames drawn. With
+  #165's order they crashed 5 runs of 5 under `MALLOC_PERTURB_` (which
+  `meson test`, so CI, sets), and 3 of 3 in an AddressSanitizer build with
+  `free_fill_byte` (a plain segfault: GTK is not instrumented), where
+  `semantic_tokens` passed 3 of 3; with #168's order or this change they
+  pass. With this change, `semantic_tokens` passed 30 runs alone (5 of
+  them on one core under load), 3 under ASan with no report, and CI's
+  first half in its order up to it twice (`MC_GUI_IN_ORDER=1`, once on
+  two cores beside an ASan build); `tab_close_now` passed 18. That
+  two-core run failed `large_file`'s 60 MB stall bound (529 ms of CPU for
+  361); main's code failed the same bound beside the same build (435 for
+  346), and three runs of each, alternated, measured alike (main 238, 435,
+  345 ms; this change 165, 436, 301).
+- **Trap**: anything that lays out a line of the buffer a view is
+  leaving, after the cache is emptied (a scroll, a caret's or an iter's
+  place), leaves a display that set_buffer keeps unless the line has a
+  height. The second emptying covers it now; keep it after
+  `gtk_text_view_set_buffer`.
