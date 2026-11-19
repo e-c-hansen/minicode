@@ -64,6 +64,7 @@
 #include "AttentionBoard.h"
 #include "ClaudeHooks.h"
 #include "ShellIntegration.h"
+#include "TerminalExit.h"
 
 #include <util.h>
 #include <termios.h>
@@ -247,10 +248,14 @@ static const CFTimeInterval kSliceSeconds = 0.012;
 //   a suspended one resumed so its cancel can finish, unwritten bytes
 //   dropped. When both are gone the main thread lets go of the descriptor
 //   (`released`), then it is closed and the shell reaped (`exited`): a
-//   shell still there 2 s after the hang-up gets SIGKILL. Cancelling from
-//   the main thread used to race the reader suspending itself, and a
-//   source cancelled while suspended never finished: the fd stayed open
-//   and the shell was never reaped.
+//   shell still there 2 s after the hang-up gets SIGKILL; `exited` gets
+//   its wait status. The shell's own exit closes the pty too (a proc
+//   source), after what is left to read is read: a job it left running
+//   with the pty open (nohup) kept the master from its end of file, so
+//   `exit` closed nothing (the session host's `exited` does the same).
+//   Cancelling from the main thread used to race the reader suspending
+//   itself, and a source cancelled while suspended never finished: the fd
+//   stayed open and the shell was never reaped.
 @interface MCPty : NSObject {
 @public
     int fd;
@@ -263,10 +268,10 @@ static const CFTimeInterval kSliceSeconds = 0.012;
     size_t outStart;            // written bytes at the front of `out`
 }
 @property(nonatomic, strong) dispatch_queue_t queue;
-@property(nonatomic, strong) dispatch_source_t readSource, writeSource;
+@property(nonatomic, strong) dispatch_source_t readSource, writeSource, procSource;
 @property(nonatomic, copy) void (^deliver)(NSData *data);   // I/O queue
 @property(nonatomic, copy) void (^released)(void);          // main thread
-@property(nonatomic, copy) void (^exited)(void);            // main thread
+@property(nonatomic, copy) void (^exited)(int status);     // main thread; -1 unknown
 @end
 
 @implementation MCPty
@@ -289,6 +294,10 @@ static const CFTimeInterval kSliceSeconds = 0.012;
         dispatch_source_set_event_handler(_writeSource, ^{ [self flush]; });
         dispatch_source_set_cancel_handler(_readSource, ^{ [self sourceGone]; });
         dispatch_source_set_cancel_handler(_writeSource, ^{ [self sourceGone]; });
+        // Not counted in `sources`: it holds nothing the reap waits for.
+        _procSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)shell,
+                                             DISPATCH_PROC_EXIT, queue);
+        if (_procSource) dispatch_source_set_event_handler(_procSource, ^{ [self shellGone]; });
     }
     return self;
 }
@@ -297,6 +306,28 @@ static const CFTimeInterval kSliceSeconds = 0.012;
 // stays suspended until a write meets a full pty.
 - (void)start {
     dispatch_resume(_readSource);
+    if (_procSource) dispatch_resume(_procSource);
+}
+
+// I/O queue: the shell ended. What it printed last is read (up to 1 MB,
+// so a job flooding the pty cannot hold this up), then the pty is closed
+// as at its end of file.
+- (void)shellGone {
+    if (closing) return;
+    size_t got = 0;
+    char buf[65536];
+    while (!closing && got < (1u << 20)) {
+        ssize_t n = read(fd, buf, sizeof buf);
+        if (n > 0) {
+            got += (size_t)n;
+            queued.fetch_add(n);
+            if (self.deliver) self.deliver([NSData dataWithBytes:buf length:(NSUInteger)n]);
+            continue;
+        }
+        if (n < 0 && errno == EINTR) continue;
+        break;
+    }
+    [self shutdown];
 }
 
 - (void)readable {
@@ -365,6 +396,7 @@ static const CFTimeInterval kSliceSeconds = 0.012;
     closing = YES;
     std::string().swap(out);
     outStart = 0;
+    if (_procSource) dispatch_source_cancel(_procSource);
     dispatch_source_cancel(_readSource);
     dispatch_source_cancel(_writeSource);
     if (readSuspended) { readSuspended = NO; dispatch_resume(_readSource); }
@@ -389,6 +421,7 @@ static const CFTimeInterval kSliceSeconds = 0.012;
     int status = 0;
     pid_t r = waitpid(pid, &status, WNOHANG);
     if (r < 0 && errno == EINTR) r = 0;
+    if (r < 0) status = -1;   // reaped elsewhere: no status
     if (r == 0) {
         if (tries == 40) kill(pid, SIGKILL);   // 2 s: it ignored the hang-up
         if (tries < 100) {
@@ -398,10 +431,10 @@ static const CFTimeInterval kSliceSeconds = 0.012;
             });
             return;
         }
-        waitpid(pid, &status, 0);   // SIGKILL has not taken yet: block
+        if (waitpid(pid, &status, 0) < 0) status = -1;   // SIGKILL has not taken yet: block
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.exited) self.exited();
+        if (self.exited) self.exited(status);
         self.exited = nil;
     });
 }
@@ -693,7 +726,7 @@ struct MCHostTermListener : Shared::Client::TermListener {
 - (void)hostOpened:(Shared::TermId)term pid:(int)pid;
 - (void)hostOutput:(Shared::TermId)term bytes:(const std::string &)bytes replay:(BOOL)replay;
 - (void)hostShell:(Shared::TermId)term state:(const Shared::TermShell &)shell;
-- (void)hostExited:(Shared::TermId)term error:(const std::string &)error;
+- (void)hostExited:(Shared::TermId)term status:(int)status error:(const std::string &)error;
 @end
 
 @implementation TerminalView
@@ -2692,15 +2725,18 @@ static NSString *MCBrowserHelperPath(void) {
         TerminalView *s = weakSelf;
         if (s && s->_pty && s->_pty == weakPty) s->_master = -1;
     };
-    pty.exited = ^{ [weakSelf shellExited:generation]; };
+    pty.exited = ^(int status) { [weakSelf shellExited:generation status:status]; };
     _pty = pty;
     _backlog = [NSMutableData data];
     _backlogStart = 0;
     [pty start];
 }
 
-- (void)shellExited:(int)generation {
+- (void)shellExited:(int)generation status:(int)status {
     if (generation != _generation || _closed) return;   // replaced or torn down
+    // Whether the shell got as far as a prompt (a shell without the marks:
+    // ran long enough that it must have), before anything here resets it.
+    const BOOL prompted = _seenPrompt || -[_shellStarted timeIntervalSinceNow] > 2.0;
     // The last of its output first, so the note goes below it.
     while (_backlog.length > _backlogStart) [self drainBacklog];
     _pty = nil;
@@ -2718,14 +2754,34 @@ static NSString *MCBrowserHelperPath(void) {
     else _screen.feed("\x1b[?1049l\x1b[!p\x1b[?2004l\r\n");   // out of whatever it left
     _commandStarted = NO;
     [self promptReturned];       // no program title, no mouse reporting left on
-    // Restart right away, unless the shell is dying at startup; then wait for
-    // Enter so a broken startup file can't spin in a loop.
-    if (-[_shellStarted timeIntervalSinceNow] > 2.0) {
-        [self note:@"[shell exited — restarting]" color:0x6A9955];
+    // `exit` or Ctrl+D closes the terminal (terminal.close-on-exit); a
+    // signal, an end before the first prompt, or the setting off leaves it
+    // saying so until Return starts a new shell (TerminalExit.h).
+    const TerminalExit::Outcome o =
+        TerminalExit::decide(TerminalExit::fromWaitStatus(status), prompted,
+                             [AppSettings shared].settings.terminalCloseOnExit());
+    if (o.action == TerminalExit::Action::Close && (_pendingCommands.count || _pendingTyped)) {
+        // A command still waits for a prompt: a new shell runs it.
+        [self note:@"[shell exited — a new one runs the waiting command]" color:0x6A9955];
         [self startShell];
-    } else {
-        [self note:@"[shell exited — press Enter to start a new one]" color:0xF48771];
+        return;
     }
+    if (o.action == TerminalExit::Action::Close && self.onShellExit) {
+        // After this turn, so whoever told us (the pty's reap, the host's
+        // message) is done with this view first; not when a shell started
+        // again meanwhile (runCommand:).
+        const int closing = _generation;
+        __weak TerminalView *weakSelf = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TerminalView *t = weakSelf;
+            if (!t || t->_closed || t->_generation != closing || t->_shellPid > 0) return;
+            if (t.onShellExit) t.onShellExit(t);
+        });
+        return;
+    }
+    NSString *note = o.note.empty() ? @"Process exited. Press Return to start a new shell."
+                                    : @(o.note.c_str());
+    [self note:note color:o.error ? 0xF48771 : 0x6A9955];
 }
 
 - (NSString *)quote:(NSString *)s {   // single-quote for the shell
@@ -2848,14 +2904,14 @@ static NSString *MCBrowserHelperPath(void) {
     if (_pendingCommands.count || _pendingTyped) [self flushPendingInput];
 }
 
-- (void)hostExited:(Shared::TermId)term error:(const std::string &)error {
+- (void)hostExited:(Shared::TermId)term status:(int)status error:(const std::string &)error {
     if (term != _hostTerm) return;
     _hostTerm = 0;
     _hostShell = Shared::TermShell();
     if (!error.empty())
         [self note:[NSString stringWithFormat:@"Could not start shell: %s", error.c_str()]
              color:0xF48771];
-    [self shellExited:_generation];
+    [self shellExited:_generation status:error.empty() ? status : -1];
 }
 
 - (void)scheduleDrain {
@@ -3224,6 +3280,6 @@ void MCHostTermListener::termOutput(Shared::TermId t, const std::string &bytes, 
 void MCHostTermListener::termShell(Shared::TermId t, const Shared::TermShell &shell) {
     [view hostShell:t state:shell];
 }
-void MCHostTermListener::termExited(Shared::TermId t, int, const std::string &error) {
-    [view hostExited:t error:error];
+void MCHostTermListener::termExited(Shared::TermId t, int status, const std::string &error) {
+    [view hostExited:t status:status error:error];
 }

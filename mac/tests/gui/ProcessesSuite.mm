@@ -9,10 +9,15 @@
 // (not an earlier job of that terminal that has exited); running rows lead
 // their group and exited helpers fold into one "N exited" row below them; the
 // orphan's row has a Stop button; Shift+Cmd+J toggles the panel. A server started outside mutible in the folder
-// is "not started here". The time a look takes is measured with at least
+// is "not started here", and one detached in mutible's own terminal with
+// `( server & )`, launchd's before any look saw it under the shell (round
+// 9, A4), is that terminal's, and after the shell's `exit` closes the
+// terminal an orphan of this window, never "not started here": once with
+// the terminal's pty in mutible and once on the session's host. The time a look takes is measured with at least
 // 200 processes on the machine. Every process here is one this suite
 // started, and only those are signalled.
 #import "Harness.h"
+#import "SessionLink.h"
 #import "ControlCommands.h"
 #import "EditorController.h"
 #import "Lsp.h"
@@ -36,7 +41,9 @@
 
 @interface MCProcsState : NSObject
 @property(nonatomic, strong) EditorController *c;
-@property(nonatomic, strong) TerminalView *termA, *termB;
+@property(nonatomic, strong) TerminalView *termA, *termB, *termC;
+@property(nonatomic) int port3, detachedPid, termCId;
+@property(nonatomic, copy) NSString *settingsWas;
 @property(nonatomic, strong) MCProcessesPanel *panel;
 @property(nonatomic, copy) NSString *server;   // python3, or nc
 @property(nonatomic, copy) NSString *root;     // the window's folder
@@ -175,6 +182,99 @@ NSDictionary *GroupWithPid(NSDictionary *j, int pid) {
         for (NSDictionary *p in g[@"processes"])
             if ([p[@"pid"] intValue] == pid) return g;
     return nil;
+}
+
+// The live process listening on `port` in the monitor's view, with the
+// group it is in.
+struct PortRow {
+    const Procs::Proc *proc = nullptr;
+    Procs::GroupKind kind = Procs::GroupKind::Outside;
+    int terminal = 0;
+};
+PortRow FindPort(const Procs::View &v, int port) {
+    PortRow out;
+    std::function<const Procs::Proc *(const std::vector<Procs::Node> &)> find =
+        [&](const std::vector<Procs::Node> &ns) -> const Procs::Proc * {
+        for (const Procs::Node &n : ns) {
+            if (n.proc.alive)
+                for (const Procs::Listen &l : n.proc.ports)
+                    if (l.port == port) return &n.proc;
+            if (const Procs::Proc *p = find(n.children)) return p;
+        }
+        return nullptr;
+    };
+    for (const Procs::Group &g : v.groups)
+        if (const Procs::Proc *p = find(g.roots)) {
+            out.proc = p;
+            out.kind = g.kind;
+            out.terminal = g.terminal;
+            return out;
+        }
+    return out;
+}
+
+Procs::View ViewOf(MCProcsState *s) {
+    return [[MCProcessMonitor shared] viewForWindow:MCControlWindowID(s.c)
+                                             folder:MCProcessRealPath(s.c.rootPath)];
+}
+
+// A server detached in a terminal of this window with `( server & )`: its
+// parent is launchd before any look, so only its session (the pty's,
+// led by the terminal's shell) says it was started here. Then `exit`
+// closes the terminal and the server is an orphan of this window.
+void DetachedServer(MCProcsState *s, BOOL host) {
+    NSString *where = host ? @"on the session's host" : @"in mutible";
+    MCGuiStep([NSString stringWithFormat:@"a terminal %@", where], ^{
+        if (host) MCGuiSetSettings(@"lsp.enabled = false\neditor.session-host = on\n");
+        else if (s.settingsWas) MCGuiSetSettings(s.settingsWas);
+        s.termC = [s.c newTerminalForAgentIn:s.root beside:NO];
+        GCHECK(s.termC != nil);
+        // CI's pass with the host forces it on; this suite is not in it.
+        GCHECK(s.termC.onSessionHost == (host || MCSessionHostEnabled()));
+        s.termCId = (int)MCControlTerminalID(s.termC);
+        s.port3 = FreePort();
+        while (s.port3 == s.port || s.port3 == s.port2) s.port3 = FreePort();
+        s.detachedPid = 0;
+    });
+    MCGuiWait(@"its prompt", 20, ^BOOL { return s.termC.atPrompt && !s.termC.busy; });
+    MCGuiStep(@"( server & ): launchd's at once", ^{
+        GCHECK(s.termC.shellPid > 1);
+        [s.termC runCommand:[NSString stringWithFormat:@"( cd '%@' || exit; %@ </dev/null >/dev/null 2>&1 & )",
+                             s.root, ServeCommand(s, s.port3)]];
+    });
+    MCGuiWait(@"it shows under that terminal, not under not started here", 15, ^BOOL {
+        const Procs::View v = ViewOf(s);   // the rows point into it
+        const PortRow r = FindPort(v, s.port3);
+        if (r.proc && !s.detachedPid) {
+            s.detachedPid = r.proc->key.pid;
+            [s.started addObject:@(s.detachedPid)];
+        }
+        return r.proc && r.kind == Procs::GroupKind::Terminal && r.terminal == s.termCId;
+    });
+    MCGuiStep(@"its parent is launchd, and the panel has it in the terminal's group", ^{
+        const Procs::View v = ViewOf(s);   // the rows point into it
+        const PortRow r = FindPort(v, s.port3);
+        GCHECK(r.proc && r.proc->ppid == 1);
+        GCHECK(GroupHasPort(s.panel, @"G terminal", s.port3));
+        GCHECK(!GroupHasPort(s.panel, @"G outside", s.port3));
+        [s.termC runCommand:@"exit"];
+    });
+    MCGuiWait(@"exit closes the terminal", 10, ^BOOL {
+        MCTerminalPanel *tp = [s.c valueForKey:@"terminalPanel"];
+        return ![tp.terminals containsObject:s.termC];
+    });
+    MCGuiWait(@"the server is an orphan of this window", 15, ^BOOL {
+        const Procs::View v = ViewOf(s);   // the rows point into it
+        const PortRow r = FindPort(v, s.port3);
+        return r.proc && r.kind == Procs::GroupKind::Orphans && GroupHasPort(s.panel, @"G orphans", s.port3);
+    });
+    MCGuiStep(@"it lives; this suite ends it", ^{
+        GCHECK(Alive(s.detachedPid));
+        GCHECK(!GroupHasPort(s.panel, @"G outside", s.port3));
+        if (s.detachedPid > 1) kill(s.detachedPid, SIGKILL);
+        s.termC = nil;
+    });
+    MCGuiWait(@"it ends", 6, ^BOOL { return !Alive(s.detachedPid); });
 }
 
 void Sample(NSString *name) {
@@ -638,6 +738,17 @@ MC_GUI_SUITE(processes) {
                 withSession += [p[@"session"] isEqual:@"r74-session"];
         GCHECK(withSession == 2);
     });
+
+    // ---------------- a server detached in this window's terminal (A4)
+    MCGuiStep(@"the settings as they are", ^{
+        NSString *path = NSProcessInfo.processInfo.environment[@"MUTIBLE_SETTINGS"];
+        s.settingsWas = path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil]
+                             : nil;
+        if (!s.settingsWas) s.settingsWas = @"lsp.enabled = false\n";
+    });
+    DetachedServer(s, NO);
+    DetachedServer(s, YES);
+    MCGuiStep(@"the settings back", ^{ MCGuiSetSettings(s.settingsWas); });
 
     // --------------------------------------------------------------- after
     MCGuiStep(@"Shift+Cmd+J, Toggle Processes: the panel goes, the tree comes back", ^{

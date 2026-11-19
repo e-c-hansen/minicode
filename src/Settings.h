@@ -462,6 +462,12 @@ public:
     // is run to do it; the folder's own .venv waits for the same yes the
     // language servers wait for.
     bool terminalActivateVenv() const { return terminalActivateVenv_; }
+    // terminal.close-on-exit: `exit`, or Ctrl+D at an empty prompt, closes
+    // the terminal (on, the default, as Terminal.app, VS Code and Zed do);
+    // off leaves it saying "Process exited" until Return starts a new
+    // shell. A shell killed by a signal never closes its terminal
+    // (TerminalExit.h). The Mac's terminals.
+    bool terminalCloseOnExit() const { return terminalCloseOnExit_; }
     // terminal.multiline-paste-warning: auto (the default), always or
     // never; when a paste of several lines asks first
     // (TerminalScreen::checkPaste, VS Code's enableMultiLinePasteWarning).
@@ -651,6 +657,7 @@ private:
     bool terminalOptionAsMeta_ = true;
     bool terminalMacStyleKeys_ = false;
     bool terminalActivateVenv_ = true;
+    bool terminalCloseOnExit_ = true;
     std::string terminalPasteWarning_ = "auto";
     std::string terminalCursorStyle_ = "block";
     bool searchUseIgnoreFiles_ = true;
