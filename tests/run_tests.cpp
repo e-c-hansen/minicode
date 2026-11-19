@@ -4059,8 +4059,9 @@ void testSettings() {
     // syntax.tag, syntax.attribute and syntax.tag-bracket, and html.scripts,
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands, and editor.spell-check with its color, and
-    // editor.session-host, and explorer.auto-reveal.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 141);
+    // editor.session-host, and explorer.auto-reveal, and
+    // editor.session-web-idle-minutes.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 142);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4959,6 +4960,19 @@ void testSettings() {
             std::vector<SettingsError> ea;
             CHECK(parseSettings("explorer.auto-reveal = sometimes\n", &ea).explorerAutoReveal());
             CHECK(ea.size() == 1 && ea[0].message.find("not on or off") != std::string::npos);
+        }
+        // editor.session-web-idle-minutes: 60 by default, 0 for ever,
+        // fractions allowed, at most a week.
+        CHECK(parseSettings("").sessionWebIdleMinutes() == 60);
+        CHECK(parseSettings("editor.session-web-idle-minutes = 0\n").sessionWebIdleMinutes() == 0);
+        CHECK(std::abs(parseSettings("editor.session-web-idle-minutes = 0.05\n").sessionWebIdleMinutes() - 0.05) < 1e-9);
+        CHECK(parseSettings("editor.session-web-idle-minutes = 10080\n").sessionWebIdleMinutes() == 10080);
+        for (const char *bad : {"editor.session-web-idle-minutes = -1\n",
+                                "editor.session-web-idle-minutes = 10081\n",
+                                "editor.session-web-idle-minutes = an hour\n"}) {
+            std::vector<SettingsError> ie;
+            CHECK(parseSettings(bad, &ie).sessionWebIdleMinutes() == 60);
+            CHECK(ie.size() == 1 && ie[0].message.find("minutes") != std::string::npos);
         }
         CHECK(parseSettings("editor.auto-save-delay = 600000\n").autoSaveDelay() == 600000);
         for (const char *bad : {"editor.auto-save = afterDelay\n", "editor.auto-save = on\n",
@@ -11449,6 +11463,7 @@ int main() {
     testSessionBackups();
     testTermDockRecord();
     testSessionWeb();
+    testSessionWebAccess();
     testLspProjectCode();
     testLspClangdFlags();
     testMultiEdit();

@@ -607,6 +607,9 @@ const std::vector<Command>& all() {
          "showSessionInBrowser:", 0, 0, nullptr},
         {"mutible.copySessionBrowserLink", "Copy Session Browser Link", "View", "", A,
          "copySessionBrowserLink:", 0, 0, nullptr},
+        // The browsers Always Allow remembered for those pages (app-wide).
+        {"mutible.rememberedSessionBrowsers", "Remembered Browsers…", "View", "", A,
+         "showRememberedBrowsers:", 0, 0, nullptr},
         {"workbench.actions.view.problems", "Problems", "View", "shift+cmd+m", A,
          "toggleProblems:", 0, 0, nullptr},
         {"mutible.toggleEditor", "Toggle Editor", "View", "shift+cmd+e", A, "toggleEditor:", 0,

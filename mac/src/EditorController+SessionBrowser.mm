@@ -3,7 +3,8 @@
 // window's server is kept as an associated object, so the class gains no
 // ivars, and it stops itself when the window closes. Show asks whether the
 // page may edit, the last answer first (editable until one is given), and
-// remembers it; Copy uses the remembered one. A page's save is the tab's
+// remembers it; Copy uses the remembered one. Each makes a fresh link, good
+// for one browser (SessionWebAccess.h). A page's save is the tab's
 // own Cmd+S, its questions about the disk included. On an editable page a
 // click on a file in the page's tree opens it here as a click in the
 // window's tree would, and a tab's close button closes it here (never one
@@ -61,9 +62,9 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     NSAlert *a = [NSAlert new];
     a.messageText = @"Show this window's session in the browser";
     a.informativeText = @"Editable lets the page type into this window's files, undo, and save "
-                        @"them, as you can here. Anyone on this Mac with the link can do the "
-                        @"same until the window closes. Read-only shows the files and follows "
-                        @"your typing.";
+                        @"them, as you can here. Each link opens the page in one browser, and "
+                        @"mutible asks before a browser it does not remember connects. Read-only "
+                        @"shows the files and follows your typing.";
     [a addButtonWithTitle:last ? @"Editable" : @"Read-Only"];
     [a addButtonWithTitle:last ? @"Read-Only" : @"Editable"];
     [a addButtonWithTitle:@"Cancel"];
@@ -181,7 +182,7 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     if (![self askSessionBrowserEditable:&editable]) return;
     MCSessionBrowser *b = [self startedSessionBrowser:editable];
     if (!b) return;
-    NSURL *url = [NSURL URLWithString:b.url];
+    NSURL *url = [NSURL URLWithString:[b newLink]];
     if (MCSessionBrowserOpener) MCSessionBrowserOpener(url);
     else [NSWorkspace.sharedWorkspace openURL:url];
     [self flashStatus:editable
@@ -196,8 +197,8 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     if (!b) return;
     NSPasteboard *pb = NSPasteboard.generalPasteboard;
     [pb clearContents];
-    [pb setString:b.url forType:NSPasteboardTypeString];
-    [self flashStatus:@"Copied the session's link: it opens only on this Mac, and holds its key."];
+    [pb setString:[b newLink] forType:NSPasteboardTypeString];
+    [self flashStatus:@"Copied a fresh link to the session's page: it opens once, only on this Mac."];
 }
 
 @end

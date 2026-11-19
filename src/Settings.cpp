@@ -1062,6 +1062,14 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                }
                s.sessionHostMode_ = on ? SessionHostMode::On : SessionHostMode::Off;
                return true;),
+        MC_KEY("editor.session-web-idle-minutes", Word, false,
+               double m;
+               if (!parseDecimal(v, m) || m < 0 || m > kMaxSessionWebIdleMinutes) {
+                   e = "'" + v + "' is not a number of minutes from 0 (never) to 10080";
+                   return false;
+               }
+               s.sessionWebIdleMinutes_ = m;
+               return true;),
         MC_KEY("editor.large-file-optimizations", Word, false,
                const std::string w = lower(v);
                bool on = true;
@@ -1762,6 +1770,11 @@ const char* Settings::defaultFileText() {
 # window's terminals and saved files come back while the app runs.
 # Windows opened after a change follow it.
 # editor.session-host = off
+# A browser's view of the session (View > Show Session in Browser…, or
+# `mutible host --web`) closes after this many minutes with nothing from
+# the browser: no reload, no file, nothing typed or clicked on the page. A
+# fresh link from mutible opens it again. 0 keeps it open for ever.
+# editor.session-web-idle-minutes = 60
 # A file over 20 MB or 300,000 lines opens in large-file mode, as in VS Code:
 # no syntax colors, folding, bracket boxes or language server. The status
 # bar says so, and a click there turns them on for that tab (macOS). Off,

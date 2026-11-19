@@ -1,6 +1,7 @@
 // main.mm — application bootstrap and menu bar. Objective-C++.
 #import <Cocoa/Cocoa.h>
 #import "EditorController.h"
+#import "SessionBrowser.h"
 #import "SessionLink.h"
 #import "SessionStore.h"
 #import "Lsp.h"
@@ -844,6 +845,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
 - (void)showSessionInBrowser:(id)sender { [[self current] showSessionInBrowser:sender]; }
 - (void)copySessionBrowserLink:(id)sender { [[self current] copySessionBrowserLink:sender]; }
+- (void)showRememberedBrowsers:(id)sender { MCSessionBrowsersShowRemembered(); }
 - (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
 - (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
@@ -1658,6 +1660,11 @@ static void BuildMenu(void) {
                  keyEquivalent:@""];
     [viewMenu addItemWithTitle:@"Copy Session Browser Link"
                         action:@selector(copySessionBrowserLink:)
+                 keyEquivalent:@""];
+    // The browsers Always Allow remembered for those pages: listed, and
+    // forgotten (SessionBrowser.h).
+    [viewMenu addItemWithTitle:@"Remembered Browsers…"
+                        action:@selector(showRememberedBrowsers:)
                  keyEquivalent:@""];
 
     // Shift+Cmd+M as in VS Code: every problem the language servers report,

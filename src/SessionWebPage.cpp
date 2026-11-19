@@ -189,6 +189,11 @@ body:not(.editable) #caret { display: none; }
 #cursor { position: absolute; width: 1ch; height: var(--lh); background: var(--tfg);
           opacity: .55; pointer-events: none; }
 #banner { padding: 6px 10px; background: #5a1d1d; color: #fff; }
+/* Waiting for the app's answer, refused, or expired: one plain sentence
+   over the whole page. */
+#gate { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center;
+        justify-content: center; padding: 24px; background: var(--bg); color: var(--fg);
+        font-size: 17px; text-align: center; line-height: 1.5; }
 @media (max-width: 700px) {
   body { font-size: 14px; }
   #code, #term { font-size: calc(var(--efs) - 1px); }
@@ -211,6 +216,7 @@ body:not(.editable) #caret { display: none; }
 <body>
 <header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">mutible</span><span id="folder"></span><button id="webbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the browser on this page">Browser</button><button id="termbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the terminal on this page">Terminal</button><span id="status">connecting</span></header>
 <div id="banner" class="hidden"></div>
+<div id="gate" class="hidden" role="status"></div>
 <div id="wrap">
 <aside id="side" aria-label="Files">
   <div id="sidebar"><span id="sidename">Files</span><button id="refresh" class="iconbtn" type="button" title="Refresh the tree" aria-label="Refresh the tree">&#8635;</button></div>
@@ -251,7 +257,11 @@ body:not(.editable) #caret { display: none; }
 "use strict";
 (function () {
   const $ = (id) => document.getElementById(id);
-  const token = new URLSearchParams(location.search).get("t") || "";
+  // The view's own path. The link's token was spent on this page's load
+  // for the credential's cookie: out of the address bar and the history
+  // entry it goes, before anything else runs.
+  const viewBase = "{{BASE}}";
+  if (location.search || location.pathname !== viewBase) history.replaceState(null, "", viewBase);
   const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
   let ws = null, palette = null, state = null, ended = false, folder = "", termNote = "";
   let editable = false, canSave = false, canBrowse = false, canOpen = false, canClose = false;
@@ -640,12 +650,12 @@ body:not(.editable) #caret { display: none; }
     markCurrent();
   }
   // ---- a file the browser shows itself (R3), in a tab of this page's own:
-  // served by the session's server at /file/TOKEN/PATH, read from the
+  // served by the session's server at /v/ID/file/PATH, read from the
   // host's folder, in the browser's own viewers; a CSV or TSV as rows the
   // server parsed (`file`, answered `table`).
   const V = { on: "" };   // the viewer tab on show, by path
   function fileUrl(rel) {
-    return "/file/" + encodeURIComponent(token) + "/" + rel.split("/").map(encodeURIComponent).join("/");
+    return viewBase + "file/" + rel.split("/").map(encodeURIComponent).join("/");
   }
   function fileNote(text) {
     const box = $("fileview");
@@ -1815,14 +1825,34 @@ body:not(.editable) #caret { display: none; }
   // ---- the socket
   function setStatus(text, live) { const s = $("status"); s.textContent = text; s.classList.toggle("live", !!live); }
   function banner(text) { const b = $("banner"); b.textContent = text; b.classList.toggle("hidden", !text); }
+  // Waiting for the app's answer, refused, or expired: the sentence alone.
+  function gate(text) { const g = $("gate"); g.textContent = text; g.classList.toggle("hidden", !text); }
+  // Someone using the page keeps its credential alive: at most once a
+  // minute, while the page shows and was used since.
+  let usedAt = 0, aliveAt = 0;
+  function used() {
+    usedAt = Date.now();
+    if (usedAt - aliveAt >= 60000 && !document.hidden && post({ t: "alive" })) aliveAt = usedAt;
+  }
+  for (const type of ["keydown", "pointerdown", "wheel", "touchstart"])
+    window.addEventListener(type, used, { capture: true, passive: true });
+  setInterval(() => {
+    if (!document.hidden && usedAt > aliveAt && post({ t: "alive" })) aliveAt = Date.now();
+  }, 60000);
   function connect() {
     const scheme = location.protocol === "https:" ? "wss://" : "ws://";
-    ws = new WebSocket(scheme + location.host + "/ws?t=" + encodeURIComponent(token));
+    ws = new WebSocket(scheme + location.host + viewBase + "ws");
     ws.onopen = () => { said = ""; sentSize = ""; banner(""); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       switch (m.t) {
+        case "waiting": gate(m.text); setStatus("waiting"); break;
+        case "denied": case "expired":
+          ended = true; gate(m.text); setStatus(m.t === "denied" ? "refused" : "expired");
+          hideViewer(); $("web").setAttribute("src", "about:blank");
+          break;
         case "hello":
+          gate("");
           $("machine").textContent = m.machine || "mutible";
           folder = m.folder;
           termNote = m.termNote || "";
@@ -2007,6 +2037,7 @@ body:not(.editable) #caret { display: none; }
                note: ($("filenote") || {}).textContent || "" };
     },
     windowPanes: () => windowPanes(),
+    gate: () => ($("gate").classList.contains("hidden") ? "" : $("gate").textContent),
   };
   connect();
 })();
