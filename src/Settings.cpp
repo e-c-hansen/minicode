@@ -1553,6 +1553,12 @@ Rgba Settings::terminalInputText() const {
                                         : Rgba::hex(theme_->terminalInput);
 }
 
+Rgba Settings::terminalCursor() const { return Rgba::hex(text(Surface::Terminal).rgb()); }
+
+Rgba Settings::terminalCursorText() const {
+    return Rgba::hex(background(Surface::Terminal).rgb());
+}
+
 bool Settings::isDark() const {
     Rgba bg = background(Surface::Editor);
     bg.a = 1;

@@ -91,6 +91,7 @@ LatexForwardSuite.cpp
 JsonOutlineSuite.cpp
 TerminalTabsSuite.cpp
 TerminalSplitsSuite.cpp
+TerminalDrawSuite.cpp
 MarkdownSideSuite.cpp
 MarkdownTablesSuite.cpp
 MarkdownSideSyncSuite.cpp
