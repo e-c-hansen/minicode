@@ -5,8 +5,12 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <cstdint>
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 #include "FileDetails.h"
@@ -144,6 +148,59 @@ Json listFolder(const std::string& root, const std::string& rel, bool hidden) {
     return j;
 }
 
+// A piece of one file's bytes (the "read" op).
+Json readFile(const std::string& root, const Json& request, std::string* bytes) {
+    const std::string rel = request["path"].asString();
+    std::string abs, why;
+    std::vector<std::string> names;
+    if (!namesOf(rel, &names, &why) || names.empty())
+        return failed("read", rel, why.empty() ? "no file named" : why);
+    if (!request["hidden"].asBool())
+        for (const std::string& n : names)
+            if (n[0] == '.') return failed("read", rel, "a hidden file (Show Hidden Files is off)");
+    if (!confinedPath(root, rel, &abs, &why)) return failed("read", rel, why);
+    // At its real place, with no symlink followed there: what was checked
+    // is what is read, or nothing.
+    const std::string real = realPlace(abs);
+    if (real.empty()) return failed("read", rel, std::strerror(errno));
+    const int fd = ::open(real.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return failed("read", rel, std::strerror(errno));
+    struct stat st;
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        ::close(fd);
+        return failed("read", rel, "not a file");
+    }
+    const std::uint64_t size = (std::uint64_t)st.st_size;
+    const double asked = request["offset"].asNumber(0);
+    const std::uint64_t offset = asked > 0 ? std::min<std::uint64_t>((std::uint64_t)asked, size) : 0;
+    const double want = request["length"].asNumber(0);
+    std::size_t length = want > 0 ? (std::size_t)std::min<double>(want, (double)kMaxReadBytes) : 0;
+    length = (std::size_t)std::min<std::uint64_t>(length, size - offset);
+    std::string got(length, '\0');
+    std::size_t have = 0;
+    while (have < length) {
+        const ssize_t n = ::pread(fd, &got[have], length - have, (off_t)(offset + have));
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) {
+            const std::string e = std::strerror(errno);
+            ::close(fd);
+            return failed("read", rel, e);
+        }
+        if (n == 0) break;   // shorter than it was a moment ago
+        have += (std::size_t)n;
+    }
+    ::close(fd);
+    got.resize(have);
+    Json j = Json::object();
+    j.set("op", Json("read"));
+    j.set("path", Json(rel));
+    j.set("size", Json((int64_t)size));
+    j.set("offset", Json((int64_t)offset));
+    j.set("length", Json((int64_t)have));
+    if (bytes) *bytes = std::move(got);
+    return j;
+}
+
 }  // namespace
 
 bool confinedPath(const std::string& root, const std::string& rel, std::string* abs,
@@ -167,10 +224,12 @@ bool confinedPath(const std::string& root, const std::string& rel, std::string* 
     return false;
 }
 
-Json readWorkspace(const std::string& root, const Json& request) {
+Json readWorkspace(const std::string& root, const Json& request, std::string* bytes) {
     const std::string op = request["op"].asString();
     const std::string path = request["path"].asString();
+    if (bytes) bytes->clear();
     if (op == "list") return listFolder(root, path, request["hidden"].asBool());
+    if (op == "read") return readFile(root, request, bytes);
     return failed(op, path, "the host has no read \"" + op + "\"");
 }
 
