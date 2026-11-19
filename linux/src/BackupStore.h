@@ -45,11 +45,24 @@ public:
     // Until everything queued so far is on disk.
     void flush();
 
+    // The keys of the windows this launch brings back (their records'
+    // TabSessions::Window::backupKey, the Mac's reserveWindowKeys:), so each
+    // window's backups wait for it, not the first window on its folder.
+    void reserveWindowKeys(const std::vector<std::string>& keys);
     // What a window opening `root` (resolved) brings back: Backups::plan over
-    // the backups no running process holds, with the older backups of one
-    // file removed. The ones it brings back are this process's from now on.
+    // the backups no running process holds, `window` being the window's key
+    // (no longer reserved from then on) and the other reserved keys' left to
+    // their windows. Nothing is deleted: Backups::Restore::conflicts are the
+    // window's to show as copies (move). The ones it brings back are this
+    // process's from now on.
     Backups::Restore planForRoot(const std::string& root,
-                                 const std::vector<std::string>& sessionFiles);
+                                 const std::vector<std::string>& sessionFiles,
+                                 const std::string& window);
+    // A conflicting backup given a path of its own (Backups::draftPath), as a
+    // buffer with no file yet, held by this process for `window`: rewritten
+    // now, in place, so it is never without a copy on disk. The Mac's
+    // moveID:toPath:window:.
+    bool move(const std::string& id, const std::string& path, const std::string& window);
     bool load(const std::string& id, Backups::Entry* e, std::string* text);
     // Folders with backups no running window holds, newest first, leaving
     // out `open` (resolved): each gets a window at launch.
@@ -75,7 +88,7 @@ private:
     double myStart_ = 0;
     bool cleaned_ = false;
 
-    std::mutex lock_;   // the queue, the stamps and the claimed ids
+    std::mutex lock_;   // the queue, the stamps, the claimed ids and the reserved keys
     std::condition_variable wake_;
     std::deque<std::function<void()>> queue_;
     std::thread worker_;
@@ -84,4 +97,7 @@ private:
     // Backups a window of this process brought back: held from then on,
     // even before the first write puts this process's name in them.
     std::set<std::string> claimed_;
+    // Keys of windows this launch brings back that have not planned yet
+    // (reserveWindowKeys): their backups wait for them.
+    std::set<std::string> reserved_;
 };

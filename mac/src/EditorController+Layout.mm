@@ -340,6 +340,7 @@
     self.splitView.frame = NSMakeRect(0, kStatusBarHeight, W,
                                       MAX(0, H - kStatusBarHeight - titleH));
     self.statusBar.frame = NSMakeRect(0, 0, W, kStatusBarHeight);
+    [self layoutStatusLabels];   // the branch takes at most a third of the width
     if (self.hintsVisible) [self updateHints];
 }
 
@@ -431,6 +432,7 @@
                      NSForegroundColorAttributeName: [cfg text:Surface::Statusbar]}];
     self.settingsLabel.textColor = [cfg text:Surface::Statusbar];
     self.savedLabel.textColor = [cfg text:Surface::Statusbar];
+    self.statusBranchItem.textColor = [cfg text:Surface::Statusbar];
     self.lspLabel.textColor = [cfg text:Surface::Statusbar];
     self.problemsLabel.textColor = [cfg text:Surface::Statusbar];
     [self layoutStatusRight];

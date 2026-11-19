@@ -56,6 +56,35 @@ static void testHtmlPage() {
               "The link goes to smb://" + std::string(73, 'x') + "\xE2\x80\xA6, outside mutible.");
         CHECK(std::string(HtmlPage::kOpenApp) == "Open");
     }
+    GROUP("htmlpage:app-gesture");
+    {
+        // What a followed navigation does: another app's address asks when
+        // the user's click made it; where the port can tell (GTK), a
+        // script's click (a.click(), form.submit()) is refused unasked.
+        using N = HtmlPage::Navigation;
+        using F = HtmlPage::Follow;
+        auto nav = [](const char *scheme, N::Kind kind, bool gesture) {
+            N n;
+            n.scheme = scheme;
+            n.kind = kind;
+            n.userGesture = gesture;
+            return n;
+        };
+        for (N::Kind k : {N::Kind::Link, N::Kind::Form, N::Kind::Other}) {
+            for (const char *s : {"zoommtg", "smb", "mailto", "tel", "x-app"}) {
+                CHECK(HtmlPage::follow(nav(s, k, true), true) == F::Ask);
+                CHECK(HtmlPage::follow(nav(s, k, false), true) == F::Refuse);
+                // The Mac cannot tell: it asks about every one.
+                CHECK(HtmlPage::follow(nav(s, k, false), false) == F::Ask);
+                CHECK(HtmlPage::follow(nav(s, k, true), false) == F::Ask);
+            }
+            // A web address or a file: as before, clicked or not.
+            for (const char *s : {"http", "https", "file", ""})
+                for (bool gesture : {false, true})
+                    for (bool known : {false, true})
+                        CHECK(HtmlPage::follow(nav(s, k, gesture), known) == F::Open);
+        }
+    }
     GROUP("htmlpage:navigation");
     {
         using N = HtmlPage::Navigation;

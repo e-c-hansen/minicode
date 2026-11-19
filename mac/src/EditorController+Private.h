@@ -36,6 +36,7 @@
 #import "ProblemsPanel.h"
 #import "SidebarIcons.h"
 #import "HintsSearchBox.h"
+#import "StatusBranchItem.h"
 #import "PalettePanel.h"
 #import "Navigation.h"
 #import "Gutter.h"
@@ -341,6 +342,9 @@ static const NSInteger kRemoveFocusMenuTag = 7707;
 @property(nonatomic, strong) MCTabStrip *tabStrip;   // the open files, over the editor
 @property(nonatomic, strong) NSTextField *emptyLabel; // the editor's slot with no file open
 @property(nonatomic, strong) NSTextField *savedLabel; // "Saved 14:32", with details on
+// The branch at the status bar's left end (StatusBranchItem.h), from the
+// tree's git status; hidden outside a repository.
+@property(nonatomic, strong) MCStatusBranchItem *statusBranchItem;
 @end
 
 // Each category's own methods. EditorController.h declares the ones the
@@ -456,6 +460,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)showStatusNote:(NSString *)note;
 - (void)updateSavedStatus;
 - (void)layoutStatusLabels;
+// The tree's git status read the branch (Git::statusBranch's words; an
+// empty name hides it).
+- (void)showStatusBranchName:(NSString *)name counts:(NSString *)counts tip:(NSString *)tip;
 - (void)flashStatus:(NSString *)message;
 - (void)endFlash;
 @end

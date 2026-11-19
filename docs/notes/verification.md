@@ -139,6 +139,16 @@ found through that list.
   harness corrupted its heap that way); `env:raw-access` in `make test`
   holds mac/tests/gui to it. See docs/notes/build.md, "The environment
   and starting programs".
+- **A stand-in holds a stage until the suite has seen it, never for a
+  time** (2026-11-19, agent_panel): a stage a stand-in program keeps up
+  with `sleep` is a pause in disguise. On CI, at the start of the job,
+  a GUI process's main thread was once kept away 7 to 9 s (the other
+  half's first suite ran 8 s long at the same moment) while the stand-in
+  agent's stream of a few seconds went by, so the waits never saw the
+  1.2 s it held "Reading util.py…". The stand-in now waits at a gate
+  for a file the suite writes once its wait has seen that stage
+  (`GatedStream`, `Gate` in AgentPanelSuite.mm), and goes on by itself
+  after 30 s so a failed suite is not held.
 - **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the
   window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events
   through the window then the main menu (`MCGuiPerformMenuKey`, built from the
@@ -220,6 +230,7 @@ text is in place in its section.
 - Verification reality (important) (the rest): **What a suite needs, it sets up**: in CI's order a suite runs after the same few suites every time, so it can pass for months on what they happen to leave and fail in every shuffled order.
 - Verification reality (important) (the rest): **A tooltip takes the next click**: GTK's tooltip is an X window below a resting pointer, and XTest's pointer jumps onto it; the harness hides one over the point before pointer input goes there.
 - Verification reality (important) (the rest): **A long run on a loaded machine**: GDK hands the window one X event a turn of the main loop, so wait for all of a typed string; VTE is 80 x 24 until the window's first layout; bound the main thread's own work by its CPU (`MCGuiWaitCpu`); a caret blinking keeps the main thread from ever standing still; close the tabs a suite opens.
+- Verification reality (important) (the rest): **A stand-in holds a stage until the suite has seen it, never for a time**: a stage a stand-in program keeps up with `sleep` is a pause in disguise.
 - Verification reality (important) (the rest): **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events through the window then the main menu (`MCGuiPerformMenuKey`, built from the key code; setting the unicode string made the menu refuse a matching key); tree keys through `[window ...
 - Verification reality (important) (the rest): Older traps: an arrow key event needs the function-key character (U+F701...) as `characters`, and an empty string makes `-[NSMenu performKeyEquivalent:]` throw;
 - Verification reality (important) (the rest): **Docker trap**: `open -g -a Docker` raised an administrator password prompt and the daemon never started; never start Docker unattended.

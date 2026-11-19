@@ -96,6 +96,11 @@ std::string openAppDetail(const std::string &url) {
     return "The link goes to " + where + ", outside mutible.";
 }
 
+Follow follow(const Navigation &nav, bool gestureKnown) {
+    if (!opensAnotherApp(nav.scheme)) return Follow::Open;
+    return !gestureKnown || nav.userGesture ? Follow::Ask : Follow::Refuse;
+}
+
 Started started(const Navigation &nav, const std::string &own,
                 const std::set<std::string> &requested) {
     if (isOwnOrBlank(nav, own)) return Started::Keep;

@@ -120,7 +120,8 @@ Document::Read Document::readText(const std::string& path, std::string& out,
     close(fd);
     // The core's rules, the Mac's (MCReadDiskText): UTF-16 with its byte
     // order mark decoded exactly, bytes that are not UTF-8 and hold no NUL
-    // read as Windows-1252, a UTF-8 mark kept apart. UTF-16 that does not
+    // read as Windows-1252 (or, mostly UTF-8, as UTF-8 with the stray bytes
+    // kept: Utf8Raw), a UTF-8 mark kept apart. UTF-16 that does not
     // decode (a lone surrogate, an odd byte) is not text.
     FileEncoding found;
     if (!FolderSearch::decodeFileText(&out, &found.encoding, &found.bom)) return Read::NotText;

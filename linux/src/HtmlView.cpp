@@ -5,6 +5,7 @@
 
 #include "ConsentBar.h"
 #include "FileSniff.h"
+#include "Question.h"
 
 #include <sys/stat.h>
 
@@ -182,9 +183,11 @@ static HtmlPage::Navigation navigationFor(WebKitNavigationAction* a, const char*
 
 // The policy check for a navigation (HtmlPage::policy): the page's own file,
 // about:blank and a frame's load go ahead; the user's leaves the page for the
-// link handler; one the page started by itself to an app's scheme is refused
-// here, in any frame, before anything loads. A target=_blank arrives here as
-// a new window. The response check follows for whatever loads.
+// link handler, asked about first when it goes to another app and refused
+// when a script clicked it (HtmlPage::follow); one the page started by
+// itself to an app's scheme is refused here, in any frame, before anything
+// loads. A target=_blank arrives here as a new window. The response check
+// follows for whatever loads.
 gboolean HtmlView::onPolicy(WebKitPolicyDecision* d, WebKitPolicyDecisionType type) {
     if (type == WEBKIT_POLICY_DECISION_TYPE_RESPONSE)
         return onResponse(WEBKIT_RESPONSE_POLICY_DECISION(d));
@@ -196,16 +199,16 @@ gboolean HtmlView::onPolicy(WebKitPolicyDecision* d, WebKitPolicyDecisionType ty
     WebKitURIRequest* r = a ? webkit_navigation_action_get_request(a) : nullptr;
     const char* uri = r ? webkit_uri_request_get_uri(r) : nullptr;
     if (!uri) return FALSE;
-    const HtmlPage::Policy v =
-        HtmlPage::policy(navigationFor(a, uri), type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION,
-                         runs_, canonical(path_), requested_);
+    const HtmlPage::Navigation nav = navigationFor(a, uri);
+    const HtmlPage::Policy v = HtmlPage::policy(
+        nav, type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION, runs_, canonical(path_), requested_);
     if (v == HtmlPage::Policy::Load) {
         webkit_policy_decision_use(d);
         return TRUE;
     }
     webkit_policy_decision_ignore(d);
-    if (v == HtmlPage::Policy::Open || v == HtmlPage::Policy::Refuse)
-        hand(uri, v == HtmlPage::Policy::Open);
+    if (v == HtmlPage::Policy::Open) hand(uri, HtmlPage::follow(nav, true));
+    else if (v == HtmlPage::Policy::Refuse) hand(uri, HtmlPage::Follow::Refuse);
     return TRUE;
 }
 
@@ -214,10 +217,10 @@ void HtmlView::onNewWindow(WebKitNavigationAction* a) {
     WebKitURIRequest* r = webkit_navigation_action_get_request(a);
     const char* uri = r ? webkit_uri_request_get_uri(r) : nullptr;
     if (!uri || !*uri) return;
-    const HtmlPage::Policy v =
-        HtmlPage::policy(navigationFor(a, uri), true, runs_, canonical(path_), requested_);
-    if (v == HtmlPage::Policy::Open || v == HtmlPage::Policy::Refuse)
-        hand(uri, v == HtmlPage::Policy::Open);
+    const HtmlPage::Navigation nav = navigationFor(a, uri);
+    const HtmlPage::Policy v = HtmlPage::policy(nav, true, runs_, canonical(path_), requested_);
+    if (v == HtmlPage::Policy::Open) hand(uri, HtmlPage::follow(nav, true));
+    else if (v == HtmlPage::Policy::Refuse) hand(uri, HtmlPage::Follow::Refuse);
 }
 
 // The main frame's answer: the one place WebKitGTK tells the main frame from
@@ -263,18 +266,58 @@ gboolean HtmlView::onFailed(const char* uri, GError* error) {
 
 void HtmlView::followOrRefuse(const std::string& uri) {
     // Not the user's: every navigation they made left at the policy check.
-    hand(uri, HtmlPage::mayFollow(navigationFor(uri.c_str()), runs_));
+    // mayFollow lets only a web address through, which follow Opens.
+    const HtmlPage::Navigation nav = navigationFor(uri.c_str());
+    hand(uri, HtmlPage::mayFollow(nav, runs_) ? HtmlPage::follow(nav, true) : HtmlPage::Follow::Refuse);
 }
 
-void HtmlView::hand(const std::string& uri, bool open) {
-    struct Job { HtmlView* v; std::shared_ptr<bool> alive; std::string uri; bool open; };
+void HtmlView::hand(const std::string& uri, HtmlPage::Follow how) {
+    struct Job { HtmlView* v; std::shared_ptr<bool> alive; std::string uri; HtmlPage::Follow how; };
     g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, +[](gpointer p) -> gboolean {
         std::unique_ptr<Job> j(static_cast<Job*>(p));
         if (!*j->alive) return G_SOURCE_REMOVE;
-        if (j->open) j->v->openLink(j->uri);
+        if (j->how == HtmlPage::Follow::Open) j->v->openLink(j->uri);
+        else if (j->how == HtmlPage::Follow::Ask) j->v->askToOpen(j->uri);
         else if (j->v->host_.refused) j->v->host_.refused(j->uri);
         return G_SOURCE_REMOVE;
-    }, new Job{this, alive_, uri, open}, nullptr);
+    }, new Job{this, alive_, uri, how}, nullptr);
+}
+
+std::string HtmlView::appFor(const std::string& uri) {
+    char* scheme = g_uri_parse_scheme(uri.c_str());
+    GAppInfo* app = scheme ? g_app_info_get_default_for_uri_scheme(scheme) : nullptr;
+    g_free(scheme);
+    if (!app) return "";
+    const char* name = g_app_info_get_display_name(app);
+    std::string out = name ? name : "";
+    g_object_unref(app);
+    return out;
+}
+
+// The Mac's sheet (HtmlPageView.mm's askToOpen:) as a question over the
+// window, in its words and with its buttons, Open then Cancel; Return is
+// Open, Esc Cancel. The Mac's box, Refuse any more from this page, is not
+// here: only the user's own click or key asks (a script's is refused
+// unasked), so a page cannot ask over and over.
+void HtmlView::askToOpen(const std::string& uri) {
+    GtkRoot* root = web_ ? gtk_widget_get_root(web_) : nullptr;
+    if (askingToOpen_ || !GTK_IS_WINDOW(root) || !host_.openLink) {
+        if (host_.refused) host_.refused(uri);
+        return;
+    }
+    askingToOpen_ = true;
+    Question::Spec spec;
+    spec.message = HtmlPage::openAppQuestion(appFor(uri));
+    spec.detail = HtmlPage::openAppDetail(uri);
+    spec.buttons = {HtmlPage::kOpenApp, "Cancel"};
+    spec.defaultButton = 0;
+    spec.cancelButton = 1;
+    std::shared_ptr<bool> alive = alive_;
+    Question::ask(GTK_WINDOW(root), spec, [this, alive, uri](int answer) {
+        if (!*alive) return;
+        askingToOpen_ = false;
+        if (answer == 0) openLink(uri);
+    });
 }
 
 void HtmlView::openLink(const std::string& uri) {

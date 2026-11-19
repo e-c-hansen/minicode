@@ -107,6 +107,25 @@ char unstagedLetter(const Entry& e);
 // "main", "main ↑2 ↓1", or "HEAD (detached at 1a2b3c4)". UTF-8.
 std::string branchLabel(const Status& s);
 
+// The status bar's branch item, as VS Code's bottom left: the branch, or
+// HEAD's short hash when it is detached, with "*" after it while there are
+// uncommitted changes (staged, unstaged, untracked or a conflict), and,
+// when the branch has an upstream git can compare with, what there is to
+// push and to pull, "↑2 ↓1" ("↑0 ↓0" when level). A click on the name
+// switches branch; one on the counts syncs (pull, then push). `tip` says
+// both. Not shown outside a repository (an empty Status). UTF-8.
+struct StatusBranch {
+    bool shown = false;
+    std::string name;     // "main*", "1a2b3c4"
+    std::string counts;   // "↑2 ↓1"; "" without an upstream to compare with
+    std::string tip;
+    bool operator==(const StatusBranch& o) const {
+        return shown == o.shown && name == o.name && counts == o.counts && tip == o.tip;
+    }
+    bool operator!=(const StatusBranch& o) const { return !(*this == o); }
+};
+StatusBranch statusBranch(const Status& s);
+
 // -------------------------------------------------------------------- diff
 enum class LineKind {
     FileHeader,   // diff --git, index, ---, +++, mode and rename lines

@@ -277,7 +277,10 @@ Status parseStatus(const std::string& out) {
 
 // ------------------------------------------------------- the tree's colors
 std::vector<std::string> decorationArgs() {
-    return {"status", "--porcelain=v2", "-z", "--ignored=matching", "--untracked-files=normal"};
+    // --branch: the status bar's branch item reads the same status
+    // (statusBranch), so it costs no git of its own.
+    return {"status", "--porcelain=v2", "-z", "--ignored=matching", "--untracked-files=normal",
+            "--branch"};
 }
 
 const char* decorationName(Decoration d) {
@@ -421,6 +424,44 @@ std::string branchLabel(const Status& s) {
         if (s.behind) label += " ↓" + std::to_string(s.behind);
     }
     return label;
+}
+
+StatusBranch statusBranch(const Status& s) {
+    StatusBranch b;
+    std::string head;   // what the tip calls HEAD
+    if (s.detached || s.branch.empty()) {
+        if (s.oid.empty()) return b;   // no branch, no commit: not a repository's status
+        b.name = s.oid.substr(0, 7);
+        head = "HEAD detached at " + b.name;
+    } else {
+        b.name = s.branch;
+        head = "On " + s.branch;
+    }
+    b.shown = true;
+    const bool dirty = !s.entries.empty();
+    if (dirty) b.name += "*";
+    std::string tip = head;
+    if (s.initial) tip += ", no commits yet";
+    if (dirty) tip += ", with uncommitted changes";
+    const auto commits = [](int n, const char* what) {
+        return std::to_string(n) + (n == 1 ? " commit to " : " commits to ") + what;
+    };
+    const bool compare = s.hasAheadBehind && !s.upstream.empty() && !s.detached;
+    if (compare) {
+        b.counts = "\xe2\x86\x91" + std::to_string(s.ahead) + " \xe2\x86\x93" + std::to_string(s.behind);
+        tip += ". ";
+        if (!s.ahead && !s.behind) tip += "Up to date with " + s.upstream;
+        else if (!s.behind) tip += commits(s.ahead, "push to ") + s.upstream;
+        else if (!s.ahead) tip += commits(s.behind, "pull from ") + s.upstream;
+        else tip += commits(s.ahead, "push and ") + std::to_string(s.behind) + " to pull, with " + s.upstream;
+    } else if (!s.detached && !s.upstream.empty()) {
+        tip += ". Its upstream, " + s.upstream + ", is gone";
+    }
+    tip += ".\nClick the branch to switch branches";
+    if (compare) tip += "; click the arrows to sync (pull, then push)";
+    tip += ".";
+    b.tip = tip;
+    return b;
 }
 
 // -------------------------------------------------------------------- diff

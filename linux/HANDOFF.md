@@ -1336,7 +1336,12 @@ What later items build on:
   disagrees is this. `CodeView::setBuffer` now puts both adjustments at 0
   while the old text is still laid out, then changes the buffer; tab places
   come back after it as before. `gutter_switch` checks it (all four rounds
-  failed without it).
+  failed without it). The scroll goes before the cache is emptied, never
+  after: scrolling asks for the caret's place, which lays the caret's line
+  out into the cache again, and a line with no height yet (the text just
+  replaced) kept its display through set_buffer (#165 did it after, and
+  `semantic_tokens` crashed main's GTK job twice; item 122). The cache is
+  now emptied again after set_buffer as well.
 
 ### 17. Sessions, backups and auto-save (done, November 2026; `PARITY.md` items 1.2 and 1.3)
 
@@ -7958,7 +7963,222 @@ never applied, a refresh not being a script. GTK now follows the same rule.
   its `form.submit()`, counts as the user's on both platforms (WebKit
   reports a link click or a form submission), so a page whose scripts run
   can still open another app; scripts run only once the user says so.
-  A real meta refresh, an app's scheme and the look of the status bar's
+  (Item 123 closes it: such a click is refused on GTK, asked about on
+  the Mac.) A real meta refresh, an app's scheme and the look of the status bar's
   note need the owner's eyes on the ThinkPad; a real Zoom was never
   started (no handler for zoommtg: or smb: is installed here, and the
   checks record the desktop's handler instead).
+
+### 122. GtkTextView's line cache emptied after set_buffer too: semantic_tokens' signal 11 on main (November 2026)
+
+- **What happened**: main's GTK job died with signal 11 in
+  `semantic_tokens` at "the servers off again; the tab closed unasked" on
+  two runs in a row, 44258729827 (ff0dcf0a, #165's merge) and 44260237099
+  (2d0e5332, #166 on top of it). No GLib critical came before it. Against
+  Ubuntu's debug symbols for CI's GTK (4.22.4+ds-0ubuntu0.2, amd64v3, from
+  debuginfod.ubuntu.com) the stack is `_gtk_text_line_get_number` under
+  `gtk_text_line_display_compare`, `g_sequence_insert_sorted`,
+  `gtk_text_line_display_cache_get`, `gtk_text_layout_snapshot` and
+  `gtk_text_view_snapshot`, from the frame clock's paint, with no frame of
+  ours: not a language server's callback after its server or document
+  went, but item 16's first trap again. A display of the closed tab's
+  buffer stayed in the view's line cache through set_buffer, and the next
+  frame sorted a display in beside it and read its freed line. #165 had
+  put the scroll to the top after the cache was emptied; the step's
+  `setText` had just replaced every line (none with a height yet) and left
+  the caret at the end, the scroll asked for the caret's place
+  (GtkTextView's `value_changed` updates the input method's spot), and that
+  line's display, of a line the view had never validated, was one
+  set_buffer does not drop. #168 (4f5a13de, merged an hour later) moved
+  the scroll before the emptying, and no run since has crashed there: no
+  main run's GTK job, no nightly soak, and no failed CI run of any branch
+  from November 17 on (76 runs, every failed GTK job's log read) failed in
+  `semantic_tokens` after 4f5a13de. #165's own PR run passed the suite,
+  so on CI the old order crashed two runs of three.
+- **Reproduced** with #165's order put back: `semantic_tokens` alone
+  crashed 4 runs of 5 under `MALLOC_PERTURB_=165`, the same frames
+  (symbolized against this machine's GTK). On main's order it passed 30
+  of 30 (ten perturb values).
+- **Change**: `CodeView::setViewBuffer` now empties the cache again once
+  the view shows the new buffer (`emptyLineCaches`, the same never-applied
+  tag, on the new buffer's table), so no display of the old buffer can
+  stay, whatever laid its lines out after the first emptying. Emptying a
+  cache whole reads none of its lines (GTK removes each display by
+  pointer, gtktextlinedisplaycache.c), so it is safe even with a line
+  already freed. With #165's order and this change, `semantic_tokens`
+  passed 5 of 5 and `tab_close_now` 5 of 5.
+- **Checked by** `tab_close_now`'s new rounds, which need no server: a
+  2,000-line file scrolled 400 px, its text set again whole, the caret at
+  its end and every tab closed in one step, then two frames drawn. With
+  #165's order they crashed 5 runs of 5 under `MALLOC_PERTURB_` (which
+  `meson test`, so CI, sets), and 3 of 3 in an AddressSanitizer build with
+  `free_fill_byte` (a plain segfault: GTK is not instrumented), where
+  `semantic_tokens` passed 3 of 3; with #168's order or this change they
+  pass. With this change, `semantic_tokens` passed 30 runs alone (5 of
+  them on one core under load), 3 under ASan with no report, and CI's
+  first half in its order up to it twice (`MC_GUI_IN_ORDER=1`, once on
+  two cores beside an ASan build); `tab_close_now` passed 18. That
+  two-core run failed `large_file`'s 60 MB stall bound (529 ms of CPU for
+  361); main's code failed the same bound beside the same build (435 for
+  346), and three runs of each, alternated, measured alike (main 238, 435,
+  345 ms; this change 165, 436, 301).
+- **Trap**: anything that lays out a line of the buffer a view is
+  leaving, after the cache is emptied (a scroll, a caret's or an iter's
+  place), leaves a display that set_buffer keeps unless the line has a
+  height. The second emptying covers it now; keep it after
+  `gtk_text_view_set_buffer`.
+
+### 123. A link to another app asks first, and a script's click to one is refused (the Mac's #254; November 2026)
+
+Item 121 left one way out: a page whose scripts run can click its own
+link (`a.click()`) or send its own form (`form.submit()`), WebKit reports
+those as a link clicked and a form sent, like the user's, and so such a
+page could still hand `zoommtg://` (any app's scheme) to the desktop with
+no click. The Mac (#254) cannot tell a script's click from the user's, so
+there every followed link to another app asks first, in a sheet naming the
+app and the address. WebKitGTK can tell
+(`webkit_navigation_action_is_user_gesture`), so GTK, agreed with the Mac
+session, asks only about the user's own and refuses the script's unasked.
+
+- **The core** (`src/HtmlPage.{h,cpp}`, `htmlpage:app-gesture`):
+  `HtmlPage::follow(nav, gestureKnown)` says what becomes of a navigation
+  the port has decided to follow: Open for a web address or a file (as
+  before), and for another app's address (`opensAnotherApp`: any scheme
+  but http, https and file) Ask when `nav.userGesture`, or always when the
+  port cannot tell (`gestureKnown` false, the Mac's case), else Refuse.
+  The question's words are #254's: `openAppQuestion(app)` ("Open in Zoom?",
+  "Open in another app?" with no app known), `openAppDetail(url)` ("The
+  link goes to zoommtg://example, outside mutible.", the address cut at
+  80 characters) and `kOpenApp` ("Open").
+- **GTK** (`linux/src/HtmlView.cpp`): the policy check's Open (`onPolicy`,
+  a link, a form, a target=_blank) and `create`'s (`onNewWindow`) go
+  through `follow(nav, true)`; `hand` now takes a `Follow`: Open to the
+  link handler as before, Refuse to `Host::refused` (the status bar's
+  `refusedNote`, "The page tried to open smb://x by itself; mutible did
+  not open it"), Ask to `askToOpen`. That puts up `Question::ask` over the
+  window (modal, transient for it) with the core's message and detail and
+  the Mac's buttons in its order, Open then Cancel; Return is Open, Esc
+  and closing it Cancel. Open hands the address to the link handler
+  (`Editor::openMarkdownLink`, so `GtkUriLauncher`, or the harness's
+  recorder); Cancel opens nothing. One question at a time: another the
+  page asks for meanwhile is refused, as on the Mac. The app is the
+  scheme's default handler (`HtmlView::appFor`:
+  `g_app_info_get_default_for_uri_scheme`, its display name), a lookup
+  that starts nothing. `followOrRefuse` (a page's own jump) goes through
+  `follow` too, though `mayFollow` already lets only web addresses by.
+- **Not ported: the Mac's box**, Refuse any more from this page. It is
+  there so a page clicking its own link in a loop cannot hold the window
+  with sheets; on GTK a script's click never asks, so only the user's own
+  clicks can.
+- **Unchanged**: http, https and file links (#253's rules, no question);
+  a Markdown preview's links, on both platforms (`openMarkdownLink` gives
+  zoommtg: to the desktop unasked, the Mac's `openURL:` the same).
+- **The check** (`html_page`, its new steps; the spy now lets every
+  address but a web one through, since the desktop's handler is the
+  recorder): with scripts on, a page whose script runs
+  `document.querySelector('a').click()` on its `smb://x` link at load,
+  and one whose script sends its form to `mailto:someone@example.com`,
+  are refused with no question (no window over the app's, `askingToOpen`
+  false), nothing reaches the link handler or the recorder, and the
+  status bar names each in the Mac's words. A desktop file for
+  `x-scheme-handler/zoommtg` named "Zoom Check" (Exec `/bin/false`) goes
+  in the scratch world's `XDG_DATA_HOME/applications`, the default in its
+  `XDG_CONFIG_HOME/mimeapps.list`, both removed at the end, and the suite
+  waits until `appFor` sees it. A real click (XTest) on a `zoommtg://example`
+  link puts up "Open in Zoom Check?" over the window, with "The link goes
+  to zoommtg://example, outside mutible." under it, Open left of Cancel,
+  and nothing opened; Cancel opens nothing; a second click answered Open
+  hands `zoommtg://example` to the link handler and the recorder once,
+  the page still the file. Real clicks on an https link (the link
+  handler, no question) and on a file link (its tab, no question) behave
+  as before, and a Markdown file's `[join](zoommtg://example/md)`, clicked
+  in its preview, reaches the recorder with no question, as before.
+  What each showed: the script's click and form reached the policy check
+  as a link and a form with `is_user_gesture` false, and the XTest click
+  as a link with it true (the question came up), so the two are told
+  apart as WebKitGTK documents. The form's address is
+  `mailto:someone@example.com?subject=hello`; the status bar names it.
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7): `html_page` 129
+  passed, none failed, with MC_GUI_ROOT=/tmp and with a long root inside
+  `linux/build` (removed after); markdown_side, markdown_side_edit,
+  markdown_side_sync, markdown_tables, tab_viewers, browser_pages,
+  browser_tabs and browser_find 218 passed, none failed. The core's
+  `make test` 197,060 passed (`htmlpage:app-gesture` new); `meson test
+  --no-suite gui` and linux's `make test` (435) pass.
+- **Trap (the check): the X focus after a question.** With no window
+  manager the X focus stays on the question once it closes, and the
+  harness says so (a LEFT line, the app's window inactive); the steps
+  after Cancel and Open give it back (`MCGuiFocusKeyWindow`).
+- **Needs the owner's eyes**: the question's look over a real window, a
+  real handler's name (Zoom, a mail app) from the desktop's defaults, and
+  Return and Esc on it by hand. No real app was started: the checks
+  record the desktop's handler.
+
+### 124. Backups by window, and UTF-8 with stray bytes kept (the Mac's #247; November 2026)
+
+The Mac's #247 (round 10's workspace items 1 and 2) on GTK, through the
+core's rules: `Backups::plan` with a window and the reserved keys,
+`Backups::draftPath`, `TabSessions::Window::backupKey`, and
+`FolderSearch::decodeFileText`'s `Utf8Raw`. `../docs/notes/sessions.md`
+has the rules ("Backups by window", "UTF-8 with stray bytes").
+
+- **Before** (the new checks run against the GTK code without this
+  change). Two windows on one folder, each with different unsaved text
+  in a.txt, then killed: every GTK window planned with no key, so the
+  first window back took the newest a.txt and every other backup of the
+  folder, whichever window's they were; which text a window got followed
+  their ages and the order the windows came back in, not the window that
+  wrote it (the backups named no window). Until #247 the older a.txt was
+  deleted unseen (`r.discard`); with #247's stopgap in `BackupStore` it
+  waited on disk and the next window took it. A launch with one window on
+  the folder got the newest a.txt and left the other on disk unshown:
+  Don't Save asked about two files and the third backup stayed behind
+  (and later suites' launches opened a window for it). A held document from the session's
+  host removed any backup of its file a process that went had left,
+  unread. A mostly-UTF-8 file with a stray byte read whole as
+  Windows-1252 (`readsAsWindows1252`, item 102) until #247's core change;
+  GTK took that change through `Document::readText` (the new
+  `latin1_files` part passed against the old GTK code too), and this item
+  adds its tooltip and Replace in Folder's note.
+- **Now.** Every backup names its window (`Persistence::backupKey`, a
+  `BackupStore::newId` kept in the window's record and taken back from it
+  by `setBackupKey` in `newWindow`; `writeBackup` sets `Entry::window`).
+  `restoreOpenWindows` reserves every record's key
+  (`BackupStore::reserveWindowKeys`) before the first window opens, and
+  `planForRoot(root, files, window)` hands the window and the reserved
+  keys to `Backups::plan`: each window gets its own back, and nothing of
+  another's. A second backup of a file the window brings back (a
+  `Restore::conflicts` entry, or a backup of a file it holds from the
+  session's host whose text differs from the held document's) opens after
+  the session's tabs as "a (unsaved copy).txt" (`Backups::draftPath`):
+  `Persistence::restoreConflicts`, the Mac's `restoreConflictingBackups:`,
+  rewrites the backup under that name first (`BackupStore::move`, on the
+  store's thread, `diskExisted` false, held by this process for the
+  window), so it is never without a copy on disk, then makes the tab
+  (`addTab`, `takeBackup`): unsaved, not on disk until Ctrl+S, never
+  auto-saved (`autoSaveNow` now skips a buffer that was never on disk, as
+  the Mac's untitled tabs). Its note when shown is "Unsaved changes to
+  a.txt from another window, kept apart in a (unsaved copy).txt", and the
+  window says the same once its tab on show is up. The only backup removed
+  is one whose text is already the file's tab's.
+  A UTF-8 file with stray bytes opens as UTF-8, its label the core's
+  ("UTF-8, bad bytes kept", with a tooltip saying the bytes are saved back
+  as they were), a backup records `file-encoding: utf8raw`, and a save,
+  edited or not, writes the stray bytes back unchanged. Replace in Folder
+  leaves such a file alone and now says "has bytes that are not UTF-8"
+  (`notUtf8Reason`, Search.cpp).
+- **Checks**: `backups` (its new part and three children:
+  `_backups_two_writer` opens two windows on one folder, types different
+  text into a.txt in both and b.txt in the second, and is SIGKILLed;
+  `_backups_two_restore`, launched with no path, finds both windows back,
+  each with its own tabs and text and no copy, all three backups still on
+  disk, and is SIGKILLed in turn; `_backups_two_copy`, opened on the
+  folder, gets a.txt with one text and "a (unsaved copy).txt" with the
+  other, not on disk, its backup moved under that name, the note, and
+  Don't Save leaves nothing); `latin1_files` (a UTF-8 file with 0xFF and
+  0x80 opens as UTF-8 with the label, an unchanged save and an edit
+  elsewhere both keep the file's bytes, the edit's arrow written once).
+- **Left**: the copy tab is a plain unsaved tab (the Mac marks it
+  `draftOf`); Find in Folder's streamed read of a large file still
+  switches to Windows-1252 at the first piece that is not UTF-8 (round 10
+  item 3, open on both ports).
