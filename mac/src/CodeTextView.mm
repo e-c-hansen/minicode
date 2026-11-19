@@ -712,6 +712,15 @@ static BOOL MCPlaceInserted(NSString *text, NSArray<NSString *> *inserted, NSArr
                                                  : @selector(moveToEndOfDocument:))];
         return;
     }
+    // Home and End (Fn+Left / Right on a laptop) go to the line's start and
+    // end, Shift selecting, at every caret, as VS Code's cursorHome and
+    // cursorEnd do on the Mac; AppKit's would scroll to the document's ends
+    // and leave the caret where it was. Page Up and Down still scroll.
+    if ((event.keyCode == 115 || event.keyCode == 119) &&
+        (mods == 0 || mods == NSEventModifierFlagShift) && !self.hasMarkedText) {
+        [_multi homeOrEnd:event.keyCode == 119 extend:mods == NSEventModifierFlagShift];
+        return;
+    }
     // Option+Up / Down move the lines too, as in VS Code on the Mac, with or
     // without a selection (AppKit would move the caret by paragraph). Taken
     // by key code here, since AppKit sends two selectors for each.

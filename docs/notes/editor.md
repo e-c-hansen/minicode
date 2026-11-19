@@ -343,6 +343,25 @@ found through that list.
   keys from the find field and commit box. Cmd+Delete deletes to the line's
   start (the tree takes it as Move to Trash in its own `keyDown:`; as a menu
   key it trashed the tree's selection from the editor).
+- **Home and End** (2026-11-18, a grader's walk: End scrolled, AppKit's
+  binding, so "End, Left Left" typed a line up): VS Code's cursorHome and
+  cursorEnd, taken by key code in CodeTextView's `keyDown:` (plain and
+  Shift; Cmd is the file's ends above; Page Up and Down still scroll),
+  `MCMultiCarets homeOrEnd:extend:`, core `MultiCaret::homeTarget`,
+  `endTarget`, `homeCarets`, `endCarets` (`multicaret:home-end`, `make
+  guitest SUITES=editor_keys`). Home: first non-blank, then column 0 (an
+  all-blank line: column 0); End: the line's end. With word wrap a row is
+  the line fragment (`MCRowAt`; a caret at a fragment's start is on it):
+  End goes to the row's end first, which for a row that wraps is before
+  its last character (the space it broke at), so the caret is drawn at
+  that row's edge and needs no upstream affinity, then the line's end; Home
+  on a later row to its start first. One caret's head is not public in
+  AppKit: `soleHead` steps Shift+Right and back (Shift+Left at the text's
+  end) and sees which end moved. With Shift the head is carried by
+  AppKit's own moves (paragraph start or end, then single steps from the
+  nearer of head and line start, `extendSoleFrom:`), since a selection set
+  outright makes AppKit extend from its start: Shift+Home then Shift+Right
+  must give a character back.
 - **Words** (2026-11-08; a double-click on `arr` in `arr.size` took both,
   AppKit's UAX 29 words keeping a period between letters): in source text
   every word rule is `MultiCaret`'s `charClass`, VS Code's default
@@ -501,4 +520,5 @@ text is in place in its section.
 - The editor's text view (Mac): **Trap: anything that lays out all of a large text stays.** Two did on every open after a file with diagnostics or a preview: `needsDisplay = YES` on the text view, which NSTextView answers by laying out every glyph of its bounds (CodeTextView's `setNeedsDisplay:` now redraws only the visible and prepared rects; clearing ...
 - Folding (Mac): Trap: one region at a time was quadratic (6 s and 18 s for Fold All and Unfold All of 50,000); they go in as one sorted merge and one invalidation (`collapseAll`).
 - Several carets and line commands (Mac): **Trap (2026-11-06)**: the window server counts clicks by time alone (HIDClickSpace is (0,0)), so a second click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView.
+- Several carets and line commands (Mac): Trap: AppKit's selection affinity is not the selection's direction (Shift+End to a wrapped paragraph's end left it upstream), and a selection set with `setSelectedRange:` extends from its start whatever affinity it is given; keep AppKit's anchor by moving with its own `...AndModifySelection:` methods (`extendSoleFrom:`).
 - Several carets and line commands (Mac): GUI trap: a simulated key press that changes nothing, wrapped in `MCGuiUndoGroup`, leaves an empty undo group on top that a real key press never opens.
