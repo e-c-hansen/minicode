@@ -22,6 +22,7 @@
 #import "SessionLink.h"
 #import "Terminal.h"
 #import "TerminalPanel.h"
+#import "Keymap.h"
 #include "../../../tests/GuiRetry.h"
 
 // The panel's close without the question (TerminalPanel.mm), for the
@@ -675,6 +676,20 @@ void MCGuiSendKeyToApp(NSWindow *window, unsigned short keyCode, NSEventModifier
                                 characters:chars charactersIgnoringModifiers:charsIgnoringModifiers
                                  isARepeat:NO keyCode:keyCode];
     [NSApp sendEvent:e];
+}
+
+BOOL MCGuiPressKey(NSWindow *window, unsigned short keyCode, NSEventModifierFlags flags) {
+    NSEvent *made = MenuKeyEvent(keyCode, flags, nil, NO);
+    // The same press, addressed to the window, for the monitor's question
+    // of what has the keyboard.
+    NSEvent *e = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                             modifierFlags:made.modifierFlags timestamp:0
+                              windowNumber:window.windowNumber context:nil
+                                characters:made.characters
+               charactersIgnoringModifiers:made.charactersIgnoringModifiers
+                                 isARepeat:NO keyCode:keyCode];
+    if (MCKeymapHandleKeyDown(e)) return YES;
+    return MCGuiPerformMenuKey(window, keyCode, flags, nil, nil);
 }
 
 void MCGuiUndoGroup(NSUndoManager *undo, void (^block)(void)) {
