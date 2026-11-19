@@ -376,6 +376,14 @@ found through that list.
   rows just put in, which comes after a frame's tick callbacks and may
   come after a low-priority idle, so `centerRow` reads it in the frame
   clock's after-paint, where no listing can have moved the rows since.
+  Trap (GTK): a focus changed (Show Whole Folder, a breadcrumb, Add to
+  Focus), hidden files shown or a window's record open the folders that
+  were open from an idle as their rows come (`tryExpand`, from
+  `onItemsChanged`), after the rows are in, so a check that closes one of
+  those folders first waits for it to be open: closed before that idle,
+  the close did nothing and the folder and its folders opened after it
+  (`tree_focus`'s auto-reveal-off step failed so, 1 run in 5 beside
+  `hints_panel`, 2026-11-19).
 
 - **A row going keeps the tree's place (GTK)** (2026-11-18, the owner: "If
   I delete a file in the filetree panel, rather than simply removing it
@@ -425,5 +433,6 @@ text is in place in its section.
 - The file tree (Mac): Trap: a within-app mask of Move alone had the terminal refuse every row (it takes only Copy, Generic or Link), and #187's check never saw it because its fake drag offered every operation; a drop check names the real source's mask.
 - The file tree (Mac): Trap: the tree following the active tab must not scroll for the row a click in the tree opens (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`).
 - The file tree (GTK): Trap: a row's place is only right after the layout that holds the rows just put in, which comes after a frame's tick callbacks and may come after a low-priority idle, so `centerRow` reads it in the frame clock's after-paint, where no listing can have moved the rows since.
+- The file tree (GTK): Trap: a focus changed (Show Whole Folder, a breadcrumb, Add to Focus), hidden files shown or a window's record open the folders that were open from an idle as their rows come (`tryExpand`, from `onItemsChanged`), after the rows are in, so a check that closes one of those folders first waits for it to be open.
 - The file tree (GTK): Trap: a name the icon theme lacks draws GTK's missing-image picture (no fallback by dropping parts of the name), so every name is checked with `gtk_icon_theme_has_icon` and each type's list ends with text-x-generic.
 - The file tree (GTK): Trap: GtkListView puts the list at its top a frame or two after the row it is anchored on goes, so `keepRows` undoes a scroll gone to 0 after rows go, and the keyboard moves to the next row only once the row is out; and the tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or the tree goes to the next tab's file.
