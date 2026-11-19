@@ -109,6 +109,22 @@ container (PanelHost, laid out by hand in layoutContainer)
   the keyboard is there; never while hidden. `navigateToString:` clears the
   toolbar allowance. Tab in the address bar goes into the page through the
   field's delegate while the field editor still has the keyboard.
+- **The window's title** (2026-11-18, `EditorController+WindowTitle.mm`
+  over the core's `WindowTitle.h`, `window-title:*`, checked in
+  `daily_work`): the file's path from the window's folder ("prep/a.json —
+  mutible"), ~ for home outside it, an untitled tab's name, a diff's or a
+  page's name as before, with "● " for unsaved changes and the viewer's
+  detail (size, pages, tasks done) after. While the terminal or the
+  browser has the keyboard, its title (the active terminal's `title`, the
+  page's `pageTitle`) instead; any other pane (the tree, the git panel,
+  problems) keeps the document's. It is set by `updateTitle`, by KVO on
+  the window's `firstResponder` (context `kWindowTitleFocusContext`,
+  removed in dealloc), and by the terminal's and the browser's
+  `onTitlesChanged` (their `reloadStrip`), which refresh only while one of
+  them has the keyboard. `representedURL` is the file while its path is
+  the title (the proxy icon, Cmd+click on the title), nil otherwise. Paths
+  are compared with their folders standardized (/private/tmp is /tmp).
+  The GTK window is to use the same function.
 - Window tabbing is off (`setAllowsAutomaticWindowTabbing:NO`, or Cmd+W closes
   a merged group); `window.releasedWhenClosed = NO` (or ARC and the legacy
   release double-free it on close).

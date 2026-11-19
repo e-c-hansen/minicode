@@ -11481,6 +11481,7 @@ static void testMultiCaretOccurrences() {
 #include "spell_check_tests.inc"
 #include "process_env_tests.inc"
 #include "rename_tests.inc"
+#include "window_title_tests.inc"
 
 int main() {
     std::printf("Running Mutible core tests...\n");
@@ -11663,6 +11664,7 @@ int main() {
     testLspSemanticTokens();
     testProcessEnv();
     testRename();
+    testWindowTitle();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

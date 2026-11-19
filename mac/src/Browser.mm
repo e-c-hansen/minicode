@@ -703,6 +703,7 @@ static const CGFloat kBrowserBarHeight = 36;
     // The agent page on show: none of the user's tabs is.
     self.strip.activeIndex = self.agentPageShown ? -1 : _selected;
     self.strip.needsDisplay = YES;
+    if (_onTitlesChanged) _onTitlesChanged();
 }
 
 // Whether the keyboard is in the user's page on show (not the toolbar).

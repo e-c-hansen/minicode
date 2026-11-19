@@ -138,7 +138,9 @@ goes here first, with tests; the GUI only displays it.
   conflict blocks, and what keeping a side or both makes of the text).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
   (the folder picker's paths, rows and completion), `HintsSearch.h`
-  (the shortcut hints' search, header only), `SymbolOutline`
+  (the shortcut hints' search, header only), `WindowTitle.h` (the
+  window's title: the file's path from the folder, ~ outside it, the
+  terminal's or the page's title while it has the keyboard; header only), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
   line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking
@@ -240,7 +242,7 @@ goes here first, with tests; the GUI only displays it.
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
 Tabs (tabs, closed tabs, saving), Session (the session host's hooks), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
-files changed outside), TreeFocus (Focus on Folder and Add to Focus), TreeReveal (the tree following the active tab), Rendering (what the editor's slot shows), Highlighting,
+files changed outside), TreeFocus (Focus on Folder and Add to Focus), TreeReveal (the tree following the active tab), WindowTitle (the window's title and representedURL, by who has the keyboard), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
 LanguageServers, Agents (inline agent, Request a

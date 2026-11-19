@@ -556,6 +556,23 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)reloadTreeKeepingState:(BOOL)rescan alsoExpanding:(NSSet<NSString *> *)more;
 @end
 
+// EditorController+WindowTitle.mm: the window's title (the core's
+// WindowTitle.h), set by updateTitle and when who has the keyboard changes.
+@interface EditorController (WindowTitle)
+// The title and representedURL for the tab on show and the focused pane.
+- (void)refreshWindowTitle;
+// The terminal's or the browser's titles changed: the window's again, only
+// while one of them has the keyboard (a program's titles never cost the
+// document's detail, such as a Markdown file's tasks counted).
+- (void)windowTitlePaneChanged;
+// The window's firstResponder observed (showWindow) and no longer (dealloc).
+- (void)windowTitleStartObservingFocus;
+- (void)windowTitleStopObservingFocus;
+// observeValueForKeyPath: hands every change here first: YES when it was
+// this category's.
+- (BOOL)windowTitleObserved:(NSString *)keyPath of:(id)object context:(void *)context;
+@end
+
 // EditorController+TreeReveal.mm: the tree follows the active tab
 // (explorer.auto-reveal). Its state is in EditorController+TreeRevealIvars.h.
 @interface EditorController (TreeReveal)
@@ -918,7 +935,6 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)latexIsShowing;
 - (void)latexDidEditSource:(NSString *)newSource;
 - (void)setPlainMessage:(NSString *)msg;
-- (void)setStatus:(NSString *)path;
 @end
 
 // EditorController+Highlighting.mm: the source's syntax colors, kept up as it is edited.
