@@ -48,7 +48,22 @@ for full-screen programs. Both can be open at once.
   the dock goes, Ctrl+D closes one of two, the setting off says "Process
   exited (code 3)" and Return starts a shell, SIGKILL says signal 9 and
   Return starts a shell; `terminal_reflow`'s killed shell waits for Return.
-  Linux still starts a new shell (linux/src/Terminal.cpp `shellExited`).
+  The GTK port does the same (2026-11-19, linux/HANDOFF.md item 117):
+  `Terminal::shellExited(status, error)` asks the same core functions
+  with the host's TermExited status (`prompted`: a prompt the host
+  counted, a held shell attached, or 2 s since the spawn), and on Close
+  calls `onShellExit` from an idle, which `TerminalDock::hook` answers
+  with `closePane(t, false)`: a split's pane, the tab with its last pane,
+  the dock with the last tab (`onEmpty`), as Close Tab. Waiting, a Return
+  in VTE's commit starts a new shell (`startAgain`; nothing else typed
+  goes anywhere), and so do `runLine` and `typeText`; a line runLine
+  still waits to type gets a new shell instead of a close. The restart it
+  did before (three quick deaths stopped the loop) is gone. Checked by
+  the GTK harness's `terminal_exit` and `processes` (a `( job & )` under
+  its terminal, then an orphan after `exit`). **Trap**: GTK suites that
+  wanted a fresh shell typed `exit` and waited for the restart
+  (`shell_integration`, `terminal_marks`); they now make a new terminal
+  and close the others.
 - **Output flow**: past 1 MB handed to the main thread the reader
   (`MCPtyReader`) suspends its source (the program blocks) until under 256 KB;
   the main thread parses in 16 KB pieces for about 12 ms a run-loop turn
@@ -705,6 +720,7 @@ Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
 - The terminal: Traps: paste only once the tty is raw; check reaping with `kill(pid, 0) == ESRCH`, not `waitpid`.
+- The terminal: **Trap**: GTK suites that wanted a fresh shell typed `exit` and waited for the restart (`shell_integration`, `terminal_marks`); they now make a new terminal and close the others.
 - The terminal: **Trap** (2026-11-16): the queue was one line, and a second `runCommand:` while the first still waited (a prompt between its 133;A and B) replaced it: the first never ran (terminal_reflow's flake on CI, `read` missing from the screen).
 - The terminal: **Trap** (2026-11-18): Ctrl+C typed while ZLE reads left the old B believed until zsh's SIGINT was handled, and a command typed in that moment lost its `ESC [` to the dying line editor and ran as `[9999~read ...` (terminal_paste's flake on CI).
 - The terminal: Trap: the harness can run zsh; an agent's own shell may be refused it by the worktree guard.
