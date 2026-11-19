@@ -4061,8 +4061,8 @@ void testSettings() {
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
     // editor.session-web-idle-minutes, and editor.wrapping-indent, and
-    // terminal.mac-style-keys.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 144);
+    // terminal.mac-style-keys, and terminal.close-on-exit.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 145);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -11681,6 +11681,7 @@ static void testMultiCaretOccurrences() {
 #include "markup_syntax_tests.inc"
 #include "bracket_pairs_tests.inc"
 #include "terminal_layout_tests.inc"
+#include "terminal_exit_tests.inc"
 #include "right_area_tests.inc"
 #include "browser_tabs_tests.inc"
 #include "bookmark_tests.inc"
@@ -11760,6 +11761,7 @@ int main() {
     testMarkupSyntax();
     testBracketPairs();
     testTerminalLayout();
+    testTerminalExit();
     testRightArea();
     testGettingAround();
     testAdjustSettings();
