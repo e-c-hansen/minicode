@@ -7081,3 +7081,106 @@ they do in Terminal.app.
   window, as item 110 read them, and whether its Super+Alt keymap for
   mutible is wanted), and GNOME on Wayland, where the harness's X11 Super
   (Mod4) cannot speak for GDK's Super mask.
+
+### 114. Home and End as VS Code's, JSON errors in Problems, and wrapped lines keeping their indentation (November 2026)
+
+The Mac's #213 and #214 brought to GTK with the same core calls
+(`MultiCaret::homeTarget`, `endTarget`, `homeCarets`, `endCarets`;
+`JsonOutline::checksAsJson`, `problems`, `allowsComments`;
+`WrapIndent::leadingColumns`, `continuationIndent`; none of their logic
+copied).
+
+- **Home and End.** Before, GTK's own: Home and End went to the display
+  line's start and end, so Home never stopped at the first non-blank
+  character. Now `Carets::onMoveCursor` takes
+  `GTK_MOVEMENT_DISPLAY_LINE_ENDS` (Home, End, the keypad's, with Shift)
+  in source text at one caret or several (`Carets::homeOrEnd`): Home to
+  the first non-blank character, then the line's start, then back; End to
+  the line's end; on a wrapped line End goes to the row's end first
+  (before the space it broke at, so the caret is drawn on that row) and
+  Home on a later row to its start first. A row is GTK's display line
+  (`Carets::rowAt`: `gtk_text_view_backward_display_line_start`, then
+  `forward_display_line` for the next one's start); not wrapping, the
+  whole line. GtkTextBuffer keeps the anchor itself (the selection bound),
+  so Shift needs none of the Mac's head-finding: Shift+Home then
+  Shift+Right gives a character back. A Markdown page, a message or the
+  welcome text keep GTK's. The registry's `cursorHome`, `cursorHomeSelect`,
+  `cursorEnd` and `cursorEndSelect` are Linux rows (home, shift+home, end,
+  shift+end), listed, not actions, like Ctrl+Home; the hints panel has
+  "Start of the line" and "End of the line (Shift selects)", and
+  REFERENCE.md's Linux column the keys.
+- **Trap: a long line read in blocks.** The core reads the text through
+  `MultiCaret::Text`, which asked `CaretText::text()` for 1,024-character
+  blocks; each block's `gtk_text_buffer_get_iter_at_offset` found its place
+  in a 5 MB line from the line's start, so End there took 49 s of CPU
+  (large_file's stall check). `CaretText::textNear(offsets)` reads the
+  carets' lines whole, once each, and serves the core's blocks from them:
+  92 ms for that End now (the bound is 250). `moveAll` (the arrows, and End
+  at several carets before this item) still reads through `text()`.
+- **JSON in Problems** (`LspSessionJsonCheck.cpp`, the Mac's
+  Lsp+JsonCheck.mm): a file `JsonOutline::checksAsJson` names that no
+  server has (`server_` and `alsoServer_` null, which servers off
+  includes) is parsed on a detached thread when it comes on show
+  (`documentChanged`) and 0.3 s after typing (`textEdited`); the answer
+  comes back through `lspui::afterMs` under `life_` and a generation, and
+  goes into the diagnostics store as the list of a server of its own,
+  `mutible.json`, source "json". Painting and F8 use `shownUri()` (the
+  server's URI, else the check's), `problemsKnown` holds while a file is
+  checked (so a valid one says "No problems"), `tabsChanged` drops the
+  lists of files no tab has, and a server taking the file erases the
+  editor's list. Over 8 MB: no check. JSON with comments (tsconfig.json,
+  .jsonc, .vscode's files) allows comments and trailing commas.
+- **Wrapped lines keep their indentation** (`WrapIndentTags.{h,cpp}`,
+  `editor.wrapping-indent`): GtkTextView has nothing like TextKit's line
+  fragment rects, but a paragraph's `indent` taken negative is a hanging
+  indent. Each source line with leading spaces or tabs and something after
+  them carries one tag of the shared tag table, `mutible-wrap-<columns>`
+  (columns by `WrapIndent::leadingColumns`, tabs to Pango's 8-column
+  stops), over the whole line and its break, so alike neighbours join up.
+  Each tag's pixels are `-continuationIndent(columns × space, mode, 4 ×
+  space, room)`, set by `WrapIndentTable::configure` from
+  `Editor::updateWrapIndent` (the setting through `applySettings`; a space
+  measured as the ruler measures, in the view's font, only while it shows
+  source; the room the text window less its margins), run in an idle after
+  each allocation (`CodeView::onAllocated`) and after a zoom; only tags
+  whose pixels change are set, so a zoom or a resize past the half-room
+  fall back re-lays lines out, and typing never does. `WrapIndentTags` (one
+  a document) retags the lines an edit touched, in the buffer's
+  `insert-text` and `delete-range` after-handlers: a space typed into the
+  indentation took 0.02 to 0.03 ms of CPU there in a file of 20,000
+  wrapped lines, and nothing changes when the leading width stays (the
+  line's first character's tags are read with `gtk_text_iter_get_tags`;
+  only they count, as GTK takes a paragraph's attributes from there). More
+  than 1,000 lines (a file opening, a big paste) get the lines on screen
+  at once and the rest in idle slices of 5 ms, the waiting range carried
+  through edits (`noteLines`). A paste from another buffer brings its
+  tags; `apply-tag` refuses wrap tags from anyone else, as the
+  highlighter's. On only for text, not in large-file mode (no wrapping
+  there) and not with none, decided in `Document::wrapIndentSettingChanged`
+  (from `startHighlighting`, so each load, rename and large-file switch,
+  and from `Editor::applySettings`); tags left from before keep 0 px with
+  none. Nothing reaches the text, its undo, a copy or a server. Left: the
+  first source file shown after the welcome text may draw one frame with
+  0 px (the space is measured in an idle once the view's font is the
+  source's).
+- **The CSV grid's menu keys** (#214's other half): the Mac's grid
+  swallowed every menu key; GTK's never did (its key controller takes only
+  Ctrl+Z and Ctrl+Y, and the window's accelerators run), now checked.
+- **Checks**: `editor_keys` (new, EditorKeysSuite.cpp: Home and End
+  first and second presses, End Left Left, Shift with Shift+Right and
+  Shift+End past the anchor, two carets plain and with Shift, and a
+  wrapped line's rows: End to the first row's end, drawn on that row, then
+  the line's end; Home on the second row to its start, then the line's;
+  Shift+End to the row's end; two carets on two rows); `problems` (a
+  package.json with a trailing comma: one error drawn on the comma, the
+  list's rows "# package.json — 1 error | E 3:21 Trailing comma [json]",
+  the status bar's "1 error"; Delete takes it away, "No problems"; typed
+  back, back; tsconfig.json's comment and trailing comma none; its tab
+  closed, gone); `word_wrap` (the continuations of an 8-space line and a
+  tab line at the first non-blank character's x by
+  `gtk_text_view_get_iter_location`, none at the edge, indent 4 spaces
+  further in, a space typed into the indentation moving them, a line
+  indented past half the pane at the edge, and 20,000 such lines settled
+  in idle time with a typed space's retag bounded at 2 ms of CPU);
+  `csv_table` (Ctrl+Shift+P in the grid opens the palette). The core's
+  `commands:linux-defaults` checks the four rows.

@@ -16,7 +16,11 @@
 //     keyboard (the next F8 still works);
 //   - closing a tab drops what its server said about it while open;
 //   - Ctrl+W with the keyboard in the list closes the list, not the tab;
-//     the status bar's counts open and close it with a click.
+//     the status bar's counts open and close it with a click;
+//   - a JSON file no server has is checked by the editor (#213): its
+//     trailing comma one error, drawn, listed and counted, gone once taken
+//     out and back once typed again; none for tsconfig.json's comments and
+//     trailing commas; gone when its tab closes.
 #include "Harness.h"
 
 #include "Editor.h"
@@ -127,6 +131,17 @@ bool listHasKeyboard() { return panel()->shown() && panel()->hasFocus(); }
 
 std::string gSettings;
 int gStep = 0;   // F8's expected places, in order
+
+const std::string kPackage = "{\n  \"name\": \"x\",\n  \"version\": \"1.0.0\",\n}\n";
+
+// Whether an error's squiggle is on the character at `offset`.
+bool errorTagAt(int offset) {
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(ed()->buffer(), &it, offset);
+    GtkTextTag* t = gtk_text_tag_table_lookup(gtk_text_buffer_get_tag_table(ed()->buffer()),
+                                              "lsp-error");
+    return t && gtk_text_iter_has_tag(&it, t);
+}
 
 }  // namespace
 
@@ -296,4 +311,79 @@ MC_GUI_SUITE(problems) {
     MCGuiWait("no server left, nothing counted", 10, [] {
         return LspRunningServerCount() == 0 && !gtk_widget_get_visible(panel()->statusLabel());
     });
+
+    // ---------------------------------------------- JSON, which no server has
+    // The editor checks it itself, as VS Code does (#213): a trailing comma
+    // is one error, drawn on the comma, listed and counted; taken out, it
+    // goes, and typed back it returns; JSON with comments (tsconfig.json)
+    // may have comments and trailing commas; its tab closed, it goes.
+    MCGuiStep("package.json with a trailing comma, and no server", [] {
+        MCGuiWriteFile(F("package.json"), kPackage);
+        MCGuiWriteFile(F("tsconfig.json"), "// the compiler's options\n{\n  /* target */ "
+                                           "\"target\": \"es2022\",\n  \"lib\": [\"dom\",],\n}\n");
+        showTab("package.json");
+    });
+    MCGuiWait("one problem, and the status bar says so", 10, [] {
+        return onShow("package.json") && lsp()->problemErrors() == 1 &&
+               panel()->statusText() == "1 error" && gtk_widget_get_visible(panel()->statusLabel());
+    });
+    MCGuiStep("Ctrl+Shift+M", [] { MCGuiKey("ctrl+shift+m"); });
+    MCGuiWait("the list shows it", 10, [] {
+        return panel()->shown() && listHasKeyboard() &&
+               rowOf("E 3:21 Trailing comma [json]") >= 0;
+    });
+    MCGuiStep("drawn on the comma, listed at its line under its file; Escape", [] {
+        MCGuiNote("rows: %s", rowsJoined().c_str());
+        const int comma = offsetOf(2, 20);   // after "1.0.0"
+        GCHECK(MCGuiEditorText().substr((size_t)comma, 1) == ",");
+        GCHECK(errorTagAt(comma) && !errorTagAt(comma - 1) && !errorTagAt(comma + 1));
+        GCHECK_EQ_STR(rowsJoined(), "# package.json \xE2\x80\x94 1 error | E 3:21 Trailing comma [json]");
+        MCGuiKey("escape");
+    });
+    MCGuiWait("the editor has the keyboard, the list still showing", 10, [] {
+        return editorHasKeyboard() && panel()->shown();
+    });
+    MCGuiStep("the comma taken out with Delete", [] {
+        caretAt(offsetOf(2, 20));
+        MCGuiKey("Delete");
+    });
+    MCGuiWait("the comma taken out: no problems, and the status bar says so", 10, [] {
+        return MCGuiEditorText().find("\"1.0.0\"\n}") != std::string::npos &&
+               lsp()->problemErrors() == 0 && rowOf("package.json") < 0 &&
+               panel()->statusText() == "No problems" && !errorTagAt(offsetOf(2, 19));
+    });
+    MCGuiStep("typed back", [] { MCGuiType(","); });
+    MCGuiWait("the problem is back", 10, [] {
+        return MCGuiEditorText() == kPackage && lsp()->problemErrors() == 1 &&
+               errorTagAt(offsetOf(2, 20)) && rowOf("E 3:21 Trailing comma [json]") >= 0;
+    });
+    MCGuiStep("tsconfig.json: JSON with comments", [] { showTab("tsconfig.json"); });
+    MCGuiWait("on show; package.json's error still counted", 10, [] {
+        return onShow("tsconfig.json") && panel()->statusText() == "1 error";
+    });
+    // A negative check: tsconfig.json is checked at once, on a thread; a
+    // second is long enough for it to have answered.
+    MCGuiPause(1.0);
+    MCGuiStep("none for tsconfig.json; package.json's listed while its tab is open", [] {
+        MCGuiNote("rows: %s", rowsJoined().c_str());
+        GCHECK(rowOf("tsconfig.json") < 0);
+        GCHECK(rowOf("# package.json") >= 0);
+        GCHECK(!errorTagAt(offsetOf(3, 15)));   // the comma before ]
+    });
+    MCGuiStep("package.json's tab closed with Ctrl+W", [] { showTab("package.json"); });
+    MCGuiWait("it with the keyboard", 10, [] { return onShow("package.json") && editorHasKeyboard(); });
+    MCGuiStep("Ctrl+W", [] { MCGuiKey("ctrl+w"); });
+    MCGuiWait("its problem gone from the list", 10, [] {
+        return !ed()->documentFor(F("package.json")) && rowOf("package.json") < 0 &&
+               lsp()->problemErrors() == 0;
+    });
+    MCGuiStep("the tabs closed unasked", [] { ed()->closeAllTabs(); });
+    MCGuiWait("nothing counted", 10, [] { return !gtk_widget_get_visible(panel()->statusLabel()); });
+    MCGuiStep("the list given the keyboard, then Ctrl+W", [] {
+        MCGuiFocusKeyWindow();
+        MCGuiKey("ctrl+shift+m");
+    });
+    MCGuiWait("the list has the keyboard", 10, listHasKeyboard);
+    MCGuiStep("Ctrl+W", [] { MCGuiKey("ctrl+w"); });
+    MCGuiWait("the list closed", 10, [] { return !panel()->shown(); });
 }

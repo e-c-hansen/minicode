@@ -67,8 +67,8 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/TreeFollow.cpp src/T
        src/Formatting.cpp src/FormatRunner.cpp src/LspSessionFormatting.cpp \
        src/LspSessionProblems.cpp src/ProblemsPanel.cpp src/LspSessionAlso.cpp \
        src/LspSessionWatch.cpp src/LspWatcher.cpp src/LspSessionImports.cpp \
-       src/LspSessionSemantic.cpp src/SemanticColors.cpp \
-       src/LspSessionSymbols.cpp src/LspSessionFolding.cpp \
+       src/LspSessionSemantic.cpp src/SemanticColors.cpp src/WrapIndentTags.cpp \
+       src/LspSessionSymbols.cpp src/LspSessionFolding.cpp src/LspSessionJsonCheck.cpp \
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp src/EnvLock.cpp \
        src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/TestGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
        src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp src/HintsSearchBox.cpp src/HintsColumns.cpp \

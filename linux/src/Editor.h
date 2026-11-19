@@ -528,6 +528,12 @@ public:
 
     // Word wrap turned over (Alt+Z) or set: the view follows (Zoom.h).
     void applyWordWrap() { setProseFont(prose_); }
+    // Wrapped lines keep their indentation (WrapIndentTags.h): the tags'
+    // indents from editor.wrapping-indent, a space's width in the source's
+    // font and the room a line has, now; and the same in an idle, after the
+    // view's font or size changed (a zoom, a resize).
+    void updateWrapIndent();
+    void wrapIndentGeometryChanged();
 
     // One observer (the language server session), not owned.
     void setObserver(EditorObserver* o) { observer_ = o; }
@@ -772,6 +778,7 @@ private:
     GtkTextBuffer* welcome_  = nullptr;   // the view's buffer with no tab open
     char           typedKey_ = 0;         // ':' or a closer being typed (electric)
     bool           prose_ = true;         // the view shows prose, not source (setProseFont)
+    guint          wrapIdle_ = 0;         // wrapIndentGeometryChanged's
     bool           composing_ = false;    // an input method's text in the view
 
     // The window's tabs (the core's), the documents they name, and the one
