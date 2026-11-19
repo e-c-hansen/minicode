@@ -338,9 +338,14 @@ static void testTreeRefresh() {
               sub.folder("vendor") == Decoration::Modified);
         // The arguments: one status, ignored and untracked folders whole.
         const std::vector<std::string> args = Git::decorationArgs();
-        CHECK(args.size() == 5 && args[0] == "status" && args[1] == "--porcelain=v2" &&
+        CHECK(args.size() == 6 && args[0] == "status" && args[1] == "--porcelain=v2" &&
               args[2] == "-z" && args[3] == "--ignored=matching" &&
-              args[4] == "--untracked-files=normal");
+              args[4] == "--untracked-files=normal" && args[5] == "--branch");
+        // Its branch headers are no path's color.
+        Git::Decorations withBranch = Git::Decorations::fromStatus(Git::parseStatus(
+            rec("# branch.oid (initial)") + rec("# branch.head main") + rec("? x.txt")));
+        CHECK(withBranch.file("x.txt") == Decoration::Untracked &&
+              withBranch.file("main") == Decoration::None);
         CHECK(Git::timeoutFor(args) == 30);
         // 100,000 changed files are read and rolled up quickly.
         std::string big;

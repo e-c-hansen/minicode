@@ -3,7 +3,9 @@
 // lists a modification, a deletion and an untracked file, Space's action
 // stages and unstages, a diff takes the editor's slot (and saves nothing),
 // a commit with a message lands in the graph, an empty message is refused
-// with git's own words, and nothing but the index and the commit changed.
+// with git's own words, and nothing but the index and the commit changed;
+// the status bar's branch shows the name, "*" and the counts, its name
+// opens Switch Branch, its counts sync, and it goes with the repository.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorFont.h"
@@ -16,6 +18,14 @@
 #import "PalettePanel.h"
 #include <objc/runtime.h>
 #include <vector>
+
+// The status bar's branch item (StatusBranchItem.h, whose header brings
+// the core's Git namespace, which Git() below would clash with).
+@protocol BranchItemParts
+@property(nonatomic, readonly) NSButton *nameButton;
+@property(nonatomic, readonly) NSButton *countsButton;
+@end
+typedef NSView<BranchItemParts> BranchItem;
 
 namespace {
 MCGitPanel *Git(EditorController *c) { return [c valueForKey:@"gitPanel"]; }
@@ -384,6 +394,94 @@ MC_GUI_SUITE(git_panel) {
         // Staged whole, as any binary file.
         const NSInteger header = [p rowOfFile:@"new.png" staged:NO];
         GCHECK(!NSIsEmptyRect([p buttonRect:@"Stage File" row:header]));
+    });
+
+    // The status bar's branch, as VS Code's bottom left: the name (with
+    // "*" for uncommitted changes), the counts with an upstream; the name
+    // opens Switch Branch, the counts sync; gone outside a repository.
+    MCGuiAsync(@"everything committed; a remote it is pushed to", 30, ^(MCGuiDone done) {
+        if (!git) { done(); return; }
+        NSString *sh = [NSString stringWithFormat:
+            @"set -e; cd '%@'; '%@' add -A; '%@' commit -qm all --allow-empty; "
+             "'%@' init -q --bare ../gitpanel-remote.git; '%@' remote add origin ../gitpanel-remote.git; "
+             "'%@' push -qu origin main", repo, git, git, git, git, git];
+        MCGuiRunProcess(@[@"/bin/sh", @"-c", sh], nil, ^(int s, NSString *, NSString *err) {
+            GCHECK(s == 0);
+            if (s) MCGuiNote(@"git: %@", err);
+            done();
+        });
+    });
+    MCGuiWait(@"the status bar: main, level with origin/main", 15, ^BOOL {
+        if (!git) return YES;
+        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        return !b.hidden && [b.nameButton.title isEqualToString:@"main"] &&
+               [b.countsButton.title isEqualToString:@"\u21910 \u21930"] && !b.countsButton.hidden;
+    });
+    MCGuiStep(@"its glyph, its place, its tip", ^{
+        if (!git) return;
+        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        GCHECK(b.nameButton.image != nil);
+        GCHECK(b.superview == [c valueForKey:@"statusBar"] && NSMinX(b.frame) == 12);
+        GCHECK(NSWidth(b.frame) > 0 && NSMinX(b.countsButton.frame) >= NSMaxX(b.nameButton.frame));
+        MCGuiNote(@"branch tip: %@", b.nameButton.toolTip);
+        GCHECK([b.nameButton.toolTip containsString:@"Up to date with origin/main"]);
+        GCHECK([b.nameButton.toolTip containsString:@"click the arrows to sync"]);
+        NSTextField *settings = [c valueForKey:@"settingsLabel"];
+        GCHECK(NSMinX(settings.frame) >= NSMaxX(b.frame));
+    });
+    MCGuiAsync(@"a commit to push, and a new file", 30, ^(MCGuiDone done) {
+        if (!git) { done(); return; }
+        NSString *sh = [NSString stringWithFormat:
+            @"set -e; cd '%@'; echo more > d.txt; '%@' add d.txt; '%@' commit -qm more; "
+             "echo dirty > e.txt", repo, git, git];
+        MCGuiRunProcess(@[@"/bin/sh", @"-c", sh], nil, ^(int s, NSString *, NSString *err) {
+            GCHECK(s == 0);
+            if (s) MCGuiNote(@"git: %@", err);
+            done();
+        });
+    });
+    MCGuiWait(@"main*, one to push", 15, ^BOOL {
+        if (!git) return YES;
+        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        return [b.nameButton.title isEqualToString:@"main*"] &&
+               [b.countsButton.title isEqualToString:@"\u21911 \u21930"];
+    });
+    MCGuiStep(@"a click on the counts syncs", ^{
+        if (!git) return;
+        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        GCHECK([b.countsButton.toolTip containsString:@"1 commit to push to origin/main"]);
+        [b.countsButton performClick:nil];
+    });
+    MCGuiWait(@"pushed: level again", 30, ^BOOL {
+        if (!git) return YES;
+        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        return !Git(c).syncing && [b.countsButton.title isEqualToString:@"\u21910 \u21930"];
+    });
+    MCGuiStep(@"a click on the name opens Switch Branch", ^{
+        if (!git) return;
+        MCGuiNote(@"after the sync: %@", Git(c).lastSync);
+        GCHECK(MCCommandPaletteIn(c.window) == nil);
+        BranchItem *b = [c valueForKey:@"statusBranchItem"];
+        [b.nameButton performClick:nil];
+    });
+    MCGuiWait(@"the branch picker, main in it", 10, ^BOOL {
+        if (!git) return YES;
+        NSView *p = MCCommandPaletteIn(c.window);
+        return p && [MCCommandPaletteLabels(p) containsObject:@"main"];
+    });
+    MCGuiStep(@"Esc; the repository goes", ^{
+        if (!git) return;
+        NSTextField *field = MCCommandPaletteField(MCCommandPaletteIn(c.window));
+        [(NSTextView *)field.currentEditor doCommandBySelector:@selector(cancelOperation:)];
+        GCHECK(MCCommandPaletteIn(c.window) == nil);
+        NSError *err = nil;
+        GCHECK([[NSFileManager defaultManager]
+            moveItemAtPath:[repo stringByAppendingPathComponent:@".git"]
+                    toPath:[repo stringByAppendingPathComponent:@"not-git"] error:&err]);
+    });
+    MCGuiWait(@"no branch outside a repository", 15, ^BOOL {
+        if (!git) return YES;
+        return [[c valueForKey:@"statusBranchItem"] isHidden];
     });
     MCGuiStep(@"the window closes", ^{
         if (!git) return;

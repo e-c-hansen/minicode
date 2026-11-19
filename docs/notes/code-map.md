@@ -214,7 +214,8 @@ goes here first, with tests; the GUI only displays it.
 - `Browser` (with `MCKeyboardWindow`), `Bookmarks` (the bookmark folder,
   reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
   TODOs window), `GitPanel`, `ChangeReviewPage` (every uncommitted change in
-  one tab), `GitGutter` (change bars), `EditorConflicts` (merge conflicts
+  one tab), `GitGutter` (change bars), `StatusBranchItem` (the status
+  bar's branch and counts), `EditorConflicts` (merge conflicts
   in the editor), `TreeDetails`, `FileTypeIcons` (a file's icon and
   color by its `FileIcon::Type`, for the tree and Find in Folder), `TreeFocusBar` (the focused tree's
   breadcrumb row, or its label row for several folders),

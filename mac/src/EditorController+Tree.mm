@@ -360,6 +360,11 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         _gitColors = [MCTreeGitColors new];
         __weak EditorController *weakSelf = self;
         _gitColors.onChange = ^{ [weakSelf refreshTreeCells]; };
+        // The status bar's branch reads the same status.
+        _gitColors.onBranchChange = ^{
+            EditorController *s = weakSelf;
+            if (s) [s showStatusBranch:s->_gitColors.statusBranch];
+        };
     }
     [_gitColors setRoot:path];
     FSEventStreamContext ctx = {0, (__bridge void *)self, NULL, NULL, NULL};

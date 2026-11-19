@@ -342,6 +342,26 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   from session X" (left out until it can be exact), and a gap between
   git's and LineDiff's alignment of blank lines around an insertion (one
   may read "Not committed" or the commit where the other reads the session).
+- **The status bar's branch** (Mac, 2026-11-19, round 9's "no branch and
+  no git button"; `StatusBranchItem.{h,mm}`, core `Git::statusBranch`,
+  `git:status-branch`; GUI `git_panel`): VS Code's bottom left, at the
+  status bar's left end before "Saved ...": SF Symbols'
+  `arrow.triangle.branch`, the branch (HEAD's short hash when detached)
+  with "*" for any status entry (untracked too), then "↑2 ↓1" only when
+  `# branch.ab` came (an upstream git compares with; "↑0 ↓0" when level,
+  so there is always something to click to sync). The name runs
+  `gitCheckout:` (the palette's branch picker), the counts `gitSync:`
+  (the panel's runSync, which asks nothing, as the button); one tooltip
+  on both names the two clicks. **No git of its own**: `Git::decorationArgs`
+  gained `--branch`, so the tree's colors' one status per change on disk
+  (`MCTreeGitColors`, which already looks after writes to .git's index,
+  HEAD and refs, and skips objects and logs) carries the headers, and
+  `onBranchChange` fires when `statusBranch` differs. Hidden when the
+  status fails or the folder leaves a repository (`setRoot:` clears it).
+  A root below the top level sees no .git events, so a commit made in a
+  terminal there shows at the next change under the root, as the tree's
+  colors do. At most a third of the bar; the name truncates, the counts
+  never. The GTK port can show the same `StatusBranch`.
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
   plain `cd x && git ...` lines or a script file.

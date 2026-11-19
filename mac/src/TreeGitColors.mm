@@ -16,6 +16,7 @@ std::string MCUtf8(NSString *s) { return s.UTF8String ?: ""; }
     NSString *_prefix;         // the root from the top level ("src/" or "")
     BOOL _looked;              // a look finished for this root
     std::shared_ptr<const Git::Decorations> _decorations;
+    Git::StatusBranch _branch;   // the status bar's branch item
     NSUInteger _generation;
     BOOL _running, _again, _scheduled;
     NSUInteger _runs;
@@ -31,6 +32,13 @@ std::string MCUtf8(NSString *s) { return s.UTF8String ?: ""; }
 
 - (NSUInteger)runs { return _runs; }
 - (BOOL)inRepository { return _topLevel != nil; }
+- (Git::StatusBranch)statusBranch { return _branch; }
+
+- (void)setBranch:(const Git::StatusBranch &)branch {
+    if (branch == _branch) return;
+    _branch = branch;
+    if (self.onBranchChange) self.onBranchChange();
+}
 
 - (void)setRoot:(NSString *)root {
     if (root == _root || [root isEqualToString:_root]) return;
@@ -45,11 +53,13 @@ std::string MCUtf8(NSString *s) { return s.UTF8String ?: ""; }
     const BOOL had = _decorations && !_decorations->empty();
     _decorations.reset();
     if (had && self.onChange) self.onChange();
+    [self setBranch:Git::StatusBranch()];
     if (root) [self look];
 }
 
 - (void)stop {
     self.onChange = nil;
+    self.onBranchChange = nil;
     [self setRoot:nil];
 }
 
@@ -127,14 +137,17 @@ static NSString *MCRelativeTo(NSString *path, NSString *top) {
             }
         }
         std::shared_ptr<const Git::Decorations> decorations;
+        Git::StatusBranch branch;
         if (top) {
             NSMutableArray<NSString *> *args = [NSMutableArray array];
             for (const std::string &a : Git::decorationArgs()) [args addObject:@(a.c_str())];
             MCGitResult *st = MCGitRunSync(top, args);
             if (st.ok) {
                 const std::string bytes((const char *)st.output.bytes, st.output.length);
+                const Git::Status status = Git::parseStatus(bytes);
                 decorations = std::make_shared<const Git::Decorations>(
-                    Git::Decorations::fromStatus(Git::parseStatus(bytes)));
+                    Git::Decorations::fromStatus(status));
+                branch = Git::statusBranch(status);
             } else {
                 top = nil;   // the repository went (or status failed): look again next time
                 prefix = @"";
@@ -155,6 +168,7 @@ static NSString *MCRelativeTo(NSString *path, NSString *top) {
             s->_prefix = prefix;
             s->_decorations = decorations;
             if (changed && s.onChange) s.onChange();
+            [s setBranch:branch];
             if (s->_again) {
                 s->_again = NO;
                 [s schedule];

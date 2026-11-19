@@ -1,6 +1,7 @@
 // TreeGitColors.h — Objective-C++. The file tree's git colors for one
 // window: one `git status` (Git::decorationArgs) per refresh on a queue of
-// its own, read into Git::Decorations, which the tree asks per row. The
+// its own, read into Git::Decorations, which the tree asks per row, and
+// into the status bar's branch item (Git::statusBranch). The
 // rules are in the core (GitStatus.h); this runs git and keeps the answer.
 //
 // It looks when the folder is set, then after changes on disk, gathered
@@ -16,6 +17,11 @@
 @interface MCTreeGitColors : NSObject
 // Called on the main thread when the colors changed.
 @property(nonatomic, copy) void (^onChange)(void);
+// The status bar's branch item from the same status (its --branch
+// headers, Git::statusBranch), and a call on the main thread when it
+// changed (to not shown, too, when the folder leaves a repository).
+@property(nonatomic, copy) void (^onBranchChange)(void);
+@property(nonatomic, readonly) Git::StatusBranch statusBranch;
 // The window's folder, as the tree spells it (nil: none). Forgets the old
 // folder's colors and looks at once.
 - (void)setRoot:(NSString *)root;

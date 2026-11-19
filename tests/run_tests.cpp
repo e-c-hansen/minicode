@@ -8320,6 +8320,63 @@ static void testGitStatus() {
         CHECK(branchLabel(s2) == "HEAD (detached)");
     }
 
+    GROUP("git:status-branch");
+    {
+        // The status bar's item: the branch, "*" with uncommitted changes,
+        // the counts only with an upstream git compares with.
+        const std::string up = "\xe2\x86\x91", down = "\xe2\x86\x93";
+        StatusBranch clean = statusBranch(parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head main"})));
+        CHECK(clean.shown && clean.name == "main" && clean.counts.empty());
+        CHECK(clean.tip == "On main.\nClick the branch to switch branches.");
+        StatusBranch dirty = statusBranch(parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head feature/x",
+            "# branch.upstream origin/feature/x", "# branch.ab +2 -1",
+            "1 .M N..." + modes + h40 + " " + h40 + " src/main.cpp"})));
+        CHECK(dirty.name == "feature/x*");
+        CHECK(dirty.counts == up + "2 " + down + "1");
+        CHECK(dirty.tip == "On feature/x, with uncommitted changes. 2 commits to push and 1 to "
+                           "pull, with origin/feature/x.\nClick the branch to switch branches; "
+                           "click the arrows to sync (pull, then push).");
+        // Level with the upstream: both counts, at nought.
+        StatusBranch level = statusBranch(parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head main", "# branch.upstream origin/main",
+            "# branch.ab +0 -0"})));
+        CHECK(level.counts == up + "0 " + down + "0");
+        CHECK(level.tip.find("Up to date with origin/main.") != std::string::npos);
+        CHECK(level != clean && level == level);
+        StatusBranch ahead = statusBranch(parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head main", "# branch.upstream origin/main",
+            "# branch.ab +1 -0"})));
+        CHECK(ahead.tip.find("1 commit to push to origin/main.") != std::string::npos);
+        StatusBranch behind = statusBranch(parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head main", "# branch.upstream origin/main",
+            "# branch.ab +0 -3"})));
+        CHECK(behind.counts == up + "0 " + down + "3");
+        CHECK(behind.tip.find("3 commits to pull from origin/main.") != std::string::npos);
+        // An upstream that is gone: git prints no counts; nothing to sync.
+        StatusBranch gone = statusBranch(parseStatus(nulRecords({
+            "# branch.oid " + h40, "# branch.head main", "# branch.upstream origin/main"})));
+        CHECK(gone.counts.empty() && gone.tip.find("is gone") != std::string::npos);
+        CHECK(gone.tip.find("arrows") == std::string::npos);
+        // Detached: the short hash; an untracked file is a change too.
+        StatusBranch det = statusBranch(parseStatus(nulRecords({
+            "# branch.oid 1a2b3c4d5e6f" + std::string(28, '0'), "# branch.head (detached)",
+            "? new.txt"})));
+        CHECK(det.shown && det.name == "1a2b3c4*" && det.counts.empty());
+        CHECK(det.tip.rfind("HEAD detached at 1a2b3c4, with uncommitted changes.", 0) == 0);
+        // A fresh repository: its branch, before any commit.
+        StatusBranch fresh = statusBranch(parseStatus(nulRecords({
+            "# branch.oid (initial)", "# branch.head main"})));
+        CHECK(fresh.shown && fresh.name == "main");
+        CHECK(fresh.tip.rfind("On main, no commits yet.", 0) == 0);
+        // Outside a repository (no status at all) and a detached HEAD with
+        // no commit: nothing shown.
+        CHECK(!statusBranch(parseStatus("")).shown);
+        CHECK(!statusBranch(parseStatus(nulRecords({"# branch.head (detached)"}))).shown);
+        CHECK(statusBranch(parseStatus("")) == StatusBranch());
+    }
+
     GROUP("git:status-robust");
     {
         // Short, unknown and truncated records are skipped, and output that
