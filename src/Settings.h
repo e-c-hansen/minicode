@@ -331,6 +331,11 @@ public:
     enum class SessionHostMode { Off, On, Headless };
     SessionHostMode sessionHostMode() const { return sessionHostMode_; }
     bool sessionHostHeadless() const { return sessionHostMode_ == SessionHostMode::Headless; }
+    // editor.session-web-idle-minutes: how long a browser's view of the
+    // session (SessionWeb.h) stays open with nothing from its browser, in
+    // minutes (fractions allowed); 0 for ever. 60 by default.
+    double sessionWebIdleMinutes() const { return sessionWebIdleMinutes_; }
+    static constexpr double kMaxSessionWebIdleMinutes = 10080;   // a week
     // editor.large-file-optimizations: a file over LargeFile's thresholds
     // (VS Code's: 20 MB or 300,000 lines) opens without highlighting,
     // folding, bracket matching or a language server (on, the default, as
@@ -594,6 +599,7 @@ private:
     bool wordWrap_ = true;
     bool autoClose_ = true;
     SessionHostMode sessionHostMode_ = SessionHostMode::Off;
+    double sessionWebIdleMinutes_ = 60;
     InlayHints inlayHints_ = InlayHints::On;
     bool inlayHintParameterNames_ = false;
     std::optional<Rgba> inlayHintColor_, inlayHintBackground_;

@@ -540,7 +540,56 @@ Json localFileJson(const std::string& folder, const std::string& rel, bool hidde
     return j;
 }
 
-Answer answer(const Request& r, const std::string& token, const std::string& page) {
+const char* const kExpiredText = "This view has expired; open a new link from mutible.";
+const char* const kDeniedText = "mutible refused this browser. Open a new link from mutible to ask again.";
+const char* const kWaitingText = "Waiting for approval in mutible";
+
+namespace {
+
+// The page, with a fresh nonce for its script and the view's path, and the
+// cookies an exchange sets.
+Answer pageAnswer(const std::string& page, const std::string& base, const std::string& cookies) {
+    const std::string nonce = newToken().substr(0, 32);
+    std::string body = page;
+    for (std::size_t at = body.find("{{NONCE}}"); at != std::string::npos;
+         at = body.find("{{NONCE}}", at + nonce.size()))
+        body.replace(at, 9, nonce);
+    for (std::size_t at = body.find("{{BASE}}"); at != std::string::npos;
+         at = body.find("{{BASE}}", at + base.size()))
+        body.replace(at, 8, base);
+    Answer a;
+    a.kind = Answer::Page;
+    a.status = 200;
+    a.response = httpResponse(
+        200, "OK", "text/html; charset=utf-8", body,
+        "Content-Security-Policy: default-src 'none'; script-src 'nonce-" + nonce +
+            "'; style-src 'unsafe-inline'; img-src data: 'self'; media-src 'self'; "
+            "connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-src 'self' http: https:; "
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n"
+            "X-Frame-Options: DENY\r\n" + cookies);
+    return a;
+}
+
+// A refusal whose body is the sentence alone (a reload of a page whose
+// credential is no more).
+Answer refusePlain(int status, const char* reason, const std::string& why, const std::string& body) {
+    Answer a = refuse(status, reason, why);
+    a.response = httpResponse(status, reason, "text/plain; charset=utf-8", body + "\n");
+    return a;
+}
+
+// Why a credential in some state is not let through to a file.
+std::string notAllowed(Access::State s) {
+    switch (s) {
+    case Access::State::Pending: return kWaitingText;
+    case Access::State::Denied: return kDeniedText;
+    default: return kExpiredText;
+    }
+}
+
+}  // namespace
+
+Answer answer(const Request& r, Access& access, const std::string& page, const Caller& from) {
     if (r.state != Request::Complete) return refuse(400, "Bad Request", "the request was not HTTP");
     if (r.method != "GET") return refuse(405, "Method Not Allowed", "only GET is served");
     auto header = [&](const char* name) -> const std::string* {
@@ -555,50 +604,37 @@ Answer answer(const Request& r, const std::string& token, const std::string& pag
     const std::string* origin = header("origin");
     if (origin && !sameOrigin(*origin, *host))
         return refuse(403, "Forbidden", "pages from " + *origin + " are not served");
-    if (!origin && r.path == "/ws")
+    const std::string& base = access.base();
+    if (!origin && r.path == base + "ws")
         return refuse(403, "Forbidden", "the socket opens only from mutible's own page");
-    // A file for a viewer: the token is the path's first name.
-    if (r.path.compare(0, 6, "/file/") == 0) {
-        const std::string rest = r.path.substr(6);
-        const std::size_t slash = rest.find('/');
-        const std::string given = rest.substr(0, slash);
-        if (given.empty() || slash == std::string::npos)
-            return refuse(403, "Forbidden", "no token: open the address mutible printed");
-        if (token.empty() || !IdeLink::sameSecret(given, token))
-            return refuse(403, "Forbidden", "wrong token: open the address mutible printed");
+    // Every address is under the view's own path.
+    if (r.path.compare(0, base.size(), base) != 0)
+        return refuse(404, "Not Found", "nothing is served at " + r.path + ": open the address mutible printed");
+    const std::string rest = r.path.substr(base.size());
+    const std::string* cookieHeader = header("cookie");
+    const std::string cookies = cookieHeader ? *cookieHeader : std::string();
+    const std::string credential = cookieValue(cookies, credentialCookie(from.serverPort));
+    const Access::State held = access.state(credential, from.now);
+
+    // A file for a viewer: the credential only (an <img> or <video> sends
+    // no header of the page's).
+    if (rest.compare(0, 5, "file/") == 0) {
+        if (credential.empty())
+            return refuse(403, "Forbidden", "no credential: open the address mutible printed");
+        if (held != Access::State::Allowed) return refuse(403, "Forbidden", notAllowed(held));
         std::string rel;
-        if (!pathDecode(rest.substr(slash + 1), &rel))
+        if (!pathDecode(rest.substr(5), &rel))
             return refuse(400, "Bad Request", "a file's address that does not decode");
+        access.touch(credential, from.now);
         Answer a;
         a.kind = Answer::File;
         a.status = 200;
         a.file = std::move(rel);
+        a.credential = credential;
+        a.state = held;
         return a;
     }
-    auto t = r.query.find("t");
-    if (t == r.query.end() || t->second.empty())
-        return refuse(403, "Forbidden", "no token: open the address mutible printed");
-    if (token.empty() || !IdeLink::sameSecret(t->second, token))
-        return refuse(403, "Forbidden", "wrong token: open the address mutible printed");
-    if (r.path == "/") {
-        const std::string nonce = newToken().substr(0, 32);
-        std::string body = page;
-        for (std::size_t at = body.find("{{NONCE}}"); at != std::string::npos;
-             at = body.find("{{NONCE}}", at + nonce.size()))
-            body.replace(at, 9, nonce);
-        Answer a;
-        a.kind = Answer::Page;
-        a.status = 200;
-        a.response = httpResponse(
-            200, "OK", "text/html; charset=utf-8", body,
-            "Content-Security-Policy: default-src 'none'; script-src 'nonce-" + nonce +
-                "'; style-src 'unsafe-inline'; img-src data: 'self'; media-src 'self'; "
-                "connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-src 'self' http: https:; "
-                "frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n"
-                "X-Frame-Options: DENY\r\n");
-        return a;
-    }
-    if (r.path == "/ws") {
+    if (rest == "ws") {
         const std::string* upgrade = header("upgrade");
         const std::string* connection = header("connection");
         const std::string* version = header("sec-websocket-version");
@@ -608,15 +644,61 @@ Answer answer(const Request& r, const std::string& token, const std::string& pag
             lower(*connection).find("upgrade") == std::string::npos || !version ||
             *version != "13" || !key || !IdeLink::fromBase64(*key, raw) || raw.size() != 16)
             return refuse(400, "Bad Request", "not a WebSocket upgrade");
+        if (credential.empty())
+            return refuse(403, "Forbidden", "no credential: open the address mutible printed");
+        // Taken in any state, so the page hears whether it waits, was
+        // refused or has expired, rather than reconnecting for ever.
+        access.touch(credential, from.now);
         Answer a;
         a.kind = Answer::Socket;
         a.status = 101;
+        a.credential = credential;
+        a.state = held;
         a.response = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                      "Connection: Upgrade\r\nSec-WebSocket-Accept: " +
                      IdeLink::acceptKey(*key) + "\r\n\r\n";
         return a;
     }
-    return refuse(404, "Not Found", "nothing is served at " + r.path);
+    if (!rest.empty()) return refuse(404, "Not Found", "nothing is served at " + r.path);
+
+    // The page. A link's token is traded for a credential; a reload has the
+    // credential already.
+    auto t = r.query.find("t");
+    const std::string token = t == r.query.end() ? std::string() : t->second;
+    if (!token.empty()) {
+        const std::string* ua = header("user-agent");
+        const Access::Exchange x =
+            access.exchange(token, cookieValue(cookies, kBrowserCookie), ua ? *ua : std::string(),
+                            from.peer, from.peerPort, from.now);
+        if (x.kind == Access::Exchange::Ok) {
+            std::string set = setCookieHeader(credentialCookie(from.serverPort), x.credential, base,
+                                              "Strict", 0);
+            // The browser's id is only a name: Lax, so a link followed from
+            // another site still finds it, and shared by every view (/v/).
+            if (x.newBrowser)
+                set += setCookieHeader(kBrowserCookie, x.browserId, "/v/", "Lax", kBrowserCookieSeconds);
+            Answer a = pageAnswer(page, base, set);
+            a.credential = x.credential;
+            a.state = x.state;
+            a.exchanged = true;
+            a.question = x.question;
+            return a;
+        }
+        // The same browser opening its spent link again: its credential.
+        if (held == Access::State::Unknown) {
+            if (x.kind == Access::Exchange::Busy) return refuse(429, "Too Many Requests", x.why);
+            return refuse(403, "Forbidden", x.why);
+        }
+    } else if (credential.empty()) {
+        return refuse(403, "Forbidden", "no token: open the address mutible printed");
+    } else if (held == Access::State::Unknown) {
+        return refusePlain(403, "Forbidden", kExpiredText, kExpiredText);
+    }
+    access.touch(credential, from.now);
+    Answer a = pageAnswer(page, base, "");
+    a.credential = credential;
+    a.state = held;
+    return a;
 }
 
 // ---------------------------------------------------------------- files
@@ -659,9 +741,9 @@ FileType fileType(const std::string& path) {
     return t;
 }
 
-std::string fileTarget(const std::string& token, const std::string& rel) {
+std::string fileTarget(const std::string& base, const std::string& rel) {
     static const char* hex = "0123456789ABCDEF";
-    std::string out = "/file/" + token + "/";
+    std::string out = base + "file/";
     for (unsigned char c : rel) {
         if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
             out += (char)c;
@@ -1205,6 +1287,11 @@ struct Server::Conn {
     TermId term = 0;
     int termCols = 0, termRows = 0;   // its terminal pane's cells (tsize), 0 unsaid
     bool welcomed = false;
+    bool counted = false;         // in browsers_
+    bool waiting = false;         // its browser waits for the app's answer
+    std::string credential;       // the page's (its cookie's)
+    std::string peer;             // the connection's address
+    int peerPort = 0;
     std::unique_ptr<FileSend> file;   // a file for a viewer, being sent
 };
 
@@ -1310,7 +1397,9 @@ Server::~Server() {
 
 bool Server::start(const Options& o, std::string* error) {
     opt_ = o;
-    if (opt_.token.empty()) opt_.token = newToken();
+    if (!opt_.token.empty()) access_.addLink(opt_.token);
+    access_.setAsking((bool)opt_.ask);
+    if (opt_.remembered) access_.setRemembered(opt_.remembered);
     if (opt_.machine.empty()) {
         char name[256] = {0};
         if (gethostname(name, sizeof name - 1) == 0) opt_.machine = name;
@@ -1348,7 +1437,13 @@ bool Server::start(const Options& o, std::string* error) {
             settingsPath_ = std::string(home) + "/.config/mutible/settings.conf";
     }
     lookAtSettings(true);
+    applyIdle();
     return true;
+}
+
+void Server::applyIdle() {
+    const double minutes = opt_.idleMinutes >= 0 ? opt_.idleMinutes : idleFromSettings_;
+    access_.setIdle(std::chrono::milliseconds((long long)(minutes * 60000.0)));
 }
 
 bool Server::lookAtSettings(bool force) {
@@ -1376,7 +1471,10 @@ bool Server::lookAtSettings(bool force) {
             text = ss.str();
         }
     }
-    Json p = paletteJson(Settings::parse(text));
+    const Settings settings = Settings::parse(text);
+    idleFromSettings_ = settings.sessionWebIdleMinutes();
+    applyIdle();
+    Json p = paletteJson(settings);
     if (p == palette_) return false;
     palette_ = std::move(p);
     return true;
@@ -1410,8 +1508,19 @@ void Server::lookNow() {
     wake();
 }
 
-std::string Server::url() const {
-    return "http://127.0.0.1:" + std::to_string(port_) + "/?t=" + opt_.token;
+std::string Server::linkUrl(const std::string& token) const {
+    return "http://127.0.0.1:" + std::to_string(port_) + access_.base() + "?t=" + token;
+}
+
+std::string Server::token() { return access_.liveLink(); }
+
+std::string Server::url() { return linkUrl(access_.liveLink()); }
+
+std::string Server::newLink() { return linkUrl(access_.newLink()); }
+
+void Server::answer(std::uint64_t question, bool allow) {
+    access_.answer(question, allow);
+    wake();
 }
 
 void Server::wake() {
@@ -1426,7 +1535,10 @@ void Server::stop() {
 
 void Server::acceptAll() {
     for (;;) {
-        const int fd = ::accept(listen_, nullptr, nullptr);
+        sockaddr_in peer;
+        std::memset(&peer, 0, sizeof peer);
+        socklen_t len = sizeof peer;
+        const int fd = ::accept(listen_, (sockaddr*)&peer, &len);
         if (fd < 0) {
             if (errno == EINTR) continue;
             return;
@@ -1435,6 +1547,10 @@ void Server::acceptAll() {
         auto c = std::make_unique<Conn>();
         c->fd = fd;
         c->id = ++nextConn_;
+        char addr[INET_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET, &peer.sin_addr, addr, sizeof addr);
+        c->peerPort = ntohs(peer.sin_port);
+        c->peer = std::string(addr) + ":" + std::to_string(c->peerPort);
         conns_.push_back(std::move(c));
     }
 }
@@ -1492,7 +1608,14 @@ void Server::handleHttp(Conn& c) {
     }
     const Request r = readRequest(c.in);
     if (r.state == Request::Incomplete) return;
-    const Answer a = answer(r, opt_.token, pageHtml());
+    Caller from;
+    from.peer = c.peer;
+    from.peerPort = c.peerPort;
+    from.serverPort = port_;
+    from.now = Clock::now();
+    const Answer a = Web::answer(r, access_, pageHtml(), from);
+    if (a.question) lookAtAccess();   // the app asked now, not at the next turn
+    if (a.exchanged && opt_.nextLink) opt_.nextLink(newLink());
     if (a.kind == Answer::File) {
         c.in.clear();
         auto range = r.headers.find("range");
@@ -1508,8 +1631,30 @@ void Server::handleHttp(Conn& c) {
     const std::string rest = c.in.substr(r.consumed);
     c.in.clear();
     c.socket = true;
+    c.credential = a.credential;
     c.frames.feed(rest);
+    auto say = [&](const char* type, const char* text, bool close) {
+        Json m = Json::object();
+        m.set("t", Json(type));
+        m.set("text", Json(text));
+        sendJson(c, m);
+        if (close) c.closeAfterWrite = true;
+    };
+    switch (a.state) {
+    case Access::State::Allowed: welcome(c); break;
+    case Access::State::Pending:
+        c.waiting = true;
+        say("waiting", kWaitingText, false);
+        break;
+    case Access::State::Denied: say("denied", kDeniedText, true); break;
+    case Access::State::Unknown: say("expired", kExpiredText, true); break;
+    }
+}
+
+void Server::welcome(Conn& c) {
+    c.waiting = false;
     browsers_++;
+    c.counted = true;
     if (!session_ && !attach()) {
         Json e = Json::object();
         e.set("t", Json("ended"));
@@ -1523,10 +1668,63 @@ void Server::handleHttp(Conn& c) {
     c.welcomed = true;
 }
 
+void Server::lookAtAccess() {
+    const Clock::time_point now = Clock::now();
+    // The app is asked one question at a time: the next once the last is
+    // answered (or its page has gone quiet past its idle time).
+    if (opt_.ask) {
+        const Access::Question q = access_.waiting();
+        if (q.id && q.id != asked_) {
+            asked_ = q.id;
+            opt_.ask(q);
+        }
+    }
+    auto say = [&](Conn& c, const char* type, const char* text) {
+        Json m = Json::object();
+        m.set("t", Json(type));
+        m.set("text", Json(text));
+        sendJson(c, m);
+        c.closeAfterWrite = true;
+    };
+    // Pages waiting: the app may have answered.
+    for (auto& c : conns_) {
+        if (!c->waiting || c->dead || c->closeAfterWrite) continue;
+        switch (access_.state(c->credential, now)) {
+        case Access::State::Pending: break;
+        case Access::State::Allowed: welcome(*c); break;
+        case Access::State::Denied:
+            c->waiting = false;
+            say(*c, "denied", kDeniedText);
+            break;
+        case Access::State::Unknown:
+            c->waiting = false;
+            say(*c, "expired", kExpiredText);
+            break;
+        }
+    }
+    // Credentials whose idle time passed: their pages are told, and closed.
+    const long long idle = (long long)access_.idle().count();
+    const long long every = idle == 0 ? 1000 : std::max(50LL, std::min(1000LL, idle / 4));
+    if (msSince(lastExpire_) < every) return;
+    lastExpire_ = now;
+    for (const std::string& gone : access_.expire(now))
+        for (auto& c : conns_)
+            if (c->socket && !c->dead && !c->closeAfterWrite && c->credential == gone) {
+                c->waiting = false;
+                say(*c, "expired", kExpiredText);
+            }
+}
+
 void Server::handleMessage(Conn& c, const std::string& text) {
+    // A page waiting for the app's answer, or told it has expired, is heard
+    // no more.
+    if (!c.welcomed || c.closeAfterWrite) return;
+    // Anything from the page is its browser in use.
+    if (!access_.touch(c.credential, Clock::now())) return;
     Json j;
     if (!Json::parse(text, j) || !j.isObject()) return;
     const std::string t = j["t"].asString();
+    if (t == "alive") return;
     if (t == "show") {
         c.doc = (DocId)std::max<int64_t>(0, j["doc"].asInt());
         const TermId term = (TermId)std::max<int64_t>(0, j["term"].asInt());
@@ -2450,6 +2648,10 @@ bool Server::run() {
     for (;;) {
         if (stop_) return false;
         int timeout = 1000;
+        {
+            const long long idle = (long long)access_.idle().count();
+            if (idle > 0) timeout = (int)std::max(50LL, std::min<long long>(timeout, idle / 4));
+        }
         if (session_) {
             const long long toLook = opt_.pollMs - msSince(session_->lastLook);
             timeout = (int)std::max(0LL, std::min<long long>(timeout, toLook));
@@ -2483,6 +2685,7 @@ bool Server::run() {
                 if (polls[i].revents & (POLLIN | POLLHUP | POLLERR)) readFrom(c);
             }
         }
+        lookAtAccess();
         if (session_) {
             session_->client->dispatch();
             takeOutcomes();
@@ -2518,7 +2721,7 @@ bool Server::run() {
             if ((*it)->dead) {
                 if ((*it)->file && (*it)->file->req && session_)
                     session_->client->forgetRead((*it)->file->req);
-                if ((*it)->socket) {
+                if ((*it)->counted) {
                     browsers_--;
                     lostBrowser = true;
                 }

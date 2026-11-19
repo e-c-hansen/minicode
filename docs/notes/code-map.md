@@ -88,9 +88,12 @@ goes here first, with tests; the GUI only displays it.
   `hostserver:*`; docs/notes/session-host.md), and `SessionFiles` (stage
   7's first read: `FsRead` lists one folder of the session's, confined to
   it by `confinedPath`, with the apps' trees' dotfile, order and ignore
-  rules, for the browser's tree; `host:fs-list`), and `SessionWebViewers`
+  rules, for the browser's tree; `host:fs-list`), `SessionWebViewers`
   (what the browser's page renders itself: a notebook as a page, a SQLite
-  database's tables and rows; `sessionweb:viewers`). The wire
+  database's tables and rows; `sessionweb:viewers`), and `SessionWebAccess`
+  (who may use the browser's view: single-use links, the credential's
+  cookie, idle expiry, the app's question before a new browser and its
+  rate limit; `sessionweb:access*`). The wire
   unit is the renderer's (Hello says which); the host converts at the
   edge. A UTF-16 renderer must never split a surrogate pair (a renderer
   counting code points could not follow). `host:*`: the edit loop, undo

@@ -52,6 +52,7 @@ core_sources = [
   core_dir / 'SessionWeb.cpp',
   core_dir / 'SessionWebPage.cpp',
   core_dir / 'SessionWebViewers.cpp',
+  core_dir / 'SessionWebAccess.cpp',
   core_dir / 'SqliteRead.cpp',
   core_dir / 'SessionFiles.cpp',
   # The terminals' ptys belong to the host too (stage 5): a pty per shell,

@@ -482,7 +482,8 @@ void takeStopSignals() {
 }
 
 // The browser's view (SessionWeb.h) of the host at `socket`: started, its
-// address printed once with its token. False, with the reason printed, when
+// address printed with a link's token, and the next address printed each
+// time one is used. False, with the reason printed, when
 // the port cannot be had.
 bool startWeb(Shared::Web::Server &web, const std::string &socket, const std::string &folder,
               int port, bool edit) {
@@ -491,6 +492,13 @@ bool startWeb(Shared::Web::Server &web, const std::string &socket, const std::st
     w.folder = folder;
     w.port = port;
     w.editable = edit;
+    // A link is good for one browser: the next one's address after each
+    // use. Nobody is here to approve a browser, so the link alone admits.
+    w.nextLink = [](const std::string &url) {
+        std::fprintf(stderr, "mutible: that address has been used; the next browser opens:\n");
+        std::printf("%s\n", url.c_str());
+        std::fflush(stdout);
+    };
     std::string error;
     if (!web.start(w, &error)) {
         std::fprintf(stderr, "mutible: the browser's view could not listen: %s\n", error.c_str());

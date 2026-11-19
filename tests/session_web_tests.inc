@@ -168,8 +168,56 @@ struct PageClient {
         close();
         return r;
     }
-    // The upgrade: true with the 101 read, its answer in `head` either way.
-    // `origin`: "" for the page's own, "-" for none.
+    // The page's cookies, as a browser keeps them: "name=value; ..." for
+    // the Cookie header ("" for none).
+    std::string cookie;
+    // Keeps the cookies a response sets (its Set-Cookie lines).
+    void keepCookies(const std::string& response) {
+        const std::size_t end = response.find("\r\n\r\n");
+        std::size_t at = 0;
+        while ((at = response.find("\r\nSet-Cookie: ", at)) != std::string::npos && at < end) {
+            at += 14;
+            const std::string pair = response.substr(at, response.find(';', at) - at);
+            // A cookie of the same name replaces the one kept, as a
+            // browser's jar does.
+            const std::string name = pair.substr(0, pair.find('='));
+            std::string kept;
+            std::size_t from = 0;
+            while (from < cookie.size()) {
+                std::size_t semi = cookie.find("; ", from);
+                if (semi == std::string::npos) semi = cookie.size();
+                const std::string one = cookie.substr(from, semi - from);
+                if (one.substr(0, one.find('=')) != name) kept += (kept.empty() ? "" : "; ") + one;
+                from = semi + 2;
+            }
+            cookie = kept + (kept.empty() ? "" : "; ") + pair;
+        }
+    }
+    // The page loaded from the server's live link, as a browser opens it:
+    // the token traded for the credential's cookie. The response in `got`.
+    bool enter(Web::Server& web, std::string* got = nullptr) {
+        const std::string r = exchange(web.port(), "GET " + web.base() + "?t=" + web.token() +
+                                                       " HTTP/1.1\r\nHost: 127.0.0.1:" +
+                                                       std::to_string(web.port()) + "\r\n" +
+                                                       (cookie.empty() ? "" : "Cookie: " + cookie + "\r\n") +
+                                                       "\r\n");
+        if (got) *got = r;
+        keepCookies(r);
+        return r.compare(0, 12, "HTTP/1.1 200") == 0 &&
+               cookie.find(Web::credentialCookie(web.port()) + "=") != std::string::npos;
+    }
+    // The page loaded, then its socket: what a browser does with a link.
+    bool open(Web::Server& web, std::string* head = nullptr, const std::string& origin = "") {
+        std::string got;
+        if (!enter(web, &got)) {
+            if (head) *head = got;
+            return false;
+        }
+        return upgrade(web.port(), web.base() + "ws", head, origin);
+    }
+    // The upgrade, with the cookies kept: true with the 101 read, its
+    // answer in `head` either way. `origin`: "" for the page's own, "-" for
+    // none.
     bool upgrade(int port, const std::string& target, std::string* head = nullptr,
                  const std::string& origin = "") {
         if (!connectTo(port)) return false;
@@ -180,6 +228,7 @@ struct PageClient {
                                 "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                                 "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
                                 "Sec-WebSocket-Version: 13\r\n" +
+                                (cookie.empty() ? std::string() : "Cookie: " + cookie + "\r\n") +
                                 (o == "-" ? std::string() : "Origin: " + o + "\r\n") + "\r\n";
         if (!write(req)) return false;
         const double end = nowMs() + 5000;
@@ -434,6 +483,31 @@ std::string getWith(const std::string& target, const std::string& extra = "") {
     return "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:8123\r\n" + extra + "\r\n";
 }
 
+// answer() over an Access of its own, as a server on port 8123 asks it: a
+// live link (`token`), and `cookie`, the header line of a credential
+// already traded for another (allowed: nobody is asked).
+struct Gate {
+    Web::Access access;
+    std::string page = "<p>{{NONCE}} {{NONCE}}</p>";
+    std::string token, credential, cookie;
+    Web::Access::Clock::time_point now = Web::Access::Clock::now();
+    Gate() {
+        const Web::Access::Exchange x = access.exchange(access.newLink(), "", "", "127.0.0.1:5000", 5000, now);
+        credential = x.credential;
+        cookie = "Cookie: " + Web::credentialCookie(8123) + "=" + credential + "\r\n";
+        token = access.newLink();
+    }
+    const std::string& base() const { return access.base(); }
+    Web::Answer ask(const std::string& text) {
+        Web::Caller c;
+        c.peer = "127.0.0.1:5000";
+        c.peerPort = 5000;
+        c.serverPort = 8123;
+        c.now = now;
+        return Web::answer(request(text), access, page, c);
+    }
+};
+
 }  // namespace
 
 static void testSessionWeb() {
@@ -508,74 +582,105 @@ static void testSessionWeb() {
         CHECK(!Web::loopbackOrigin("https://evil.com") && !Web::loopbackOrigin("null"));
         CHECK(!Web::loopbackOrigin("http://evil.com") && !Web::loopbackOrigin("127.0.0.1"));
 
-        const std::string token = "0123456789abcdef0123456789abcdef0123456789abcdef";
-        const std::string page = "<p>{{NONCE}} {{NONCE}}</p>";
-        auto ask = [&](const std::string& text) { return Web::answer(request(text), token, page); };
+        // Each check over a gate of its own: a link is spent once traded.
+        auto ask = [&](const std::string& text) {
+            Gate g;
+            std::string t = text;
+            for (std::size_t at; (at = t.find("TOKEN")) != std::string::npos;) t.replace(at, 5, g.token);
+            for (std::size_t at; (at = t.find("BASE/")) != std::string::npos;) t.replace(at, 5, g.base());
+            for (std::size_t at; (at = t.find("COOKIE\r\n")) != std::string::npos;) t.replace(at, 8, g.cookie);
+            return g.ask(t);
+        };
         auto refused = [](const Web::Answer& a, int status) {
             return a.kind == Web::Answer::Refused && a.status == status &&
                    a.response.compare(0, 12, "HTTP/1.1 " + std::to_string(status)) == 0 &&
                    a.response.find("<p>") == std::string::npos;
         };
         // No token, an empty one, a wrong one, one a character short.
-        Web::Answer a = ask(getWith("/"));
+        Web::Answer a = ask(getWith("BASE/"));
         CHECK(refused(a, 403) && a.why.find("no token") == 0);
-        CHECK(refused(ask(getWith("/?t=")), 403));
-        a = ask(getWith("/?t=" + std::string(48, 'f')));
+        CHECK(refused(ask(getWith("BASE/?t=")), 403));
+        a = ask(getWith("BASE/?t=" + std::string(48, 'f')));
         CHECK(refused(a, 403) && a.why.find("wrong token") == 0);
-        CHECK(refused(ask(getWith("/?t=" + token.substr(1))), 403));
-        CHECK(refused(ask(getWith("/?T=" + token)), 403));
+        {
+            Gate g;
+            CHECK(refused(g.ask(getWith(g.base() + "?t=" + g.token.substr(1))), 403));
+        }
+        CHECK(refused(ask(getWith("BASE/?T=TOKEN")), 403));
+        // Anywhere but under the view's own path: nothing, token or not.
+        CHECK(refused(ask(getWith("/?t=TOKEN")), 404));
+        CHECK(refused(ask(getWith("/v/0123456789abcdef/?t=TOKEN")), 404));
         // The Host must be the loopback, whatever the token.
-        a = Web::answer(request("GET /?t=" + token + " HTTP/1.1\r\nHost: evil.com\r\n\r\n"), token, page);
+        a = ask("GET BASE/?t=TOKEN HTTP/1.1\r\nHost: evil.com\r\n\r\n");
         CHECK(refused(a, 403) && a.why.find("Host") != std::string::npos);
-        CHECK(refused(Web::answer(request("GET /?t=" + token + " HTTP/1.1\r\n\r\n"), token, page), 403));
-        CHECK(refused(Web::answer(request("GET /?t=" + token + " HTTP/1.1\r\nHost: 10.0.0.2:8123\r\n\r\n"),
-                                  token, page),
-                      403));
+        CHECK(refused(ask("GET BASE/?t=TOKEN HTTP/1.1\r\n\r\n"), 403));
+        CHECK(refused(ask("GET BASE/?t=TOKEN HTTP/1.1\r\nHost: 10.0.0.2:8123\r\n\r\n"), 403));
         // A page from elsewhere is turned away even with the token, and so
         // is another loopback page: only the page's own origin.
-        CHECK(refused(ask(getWith("/?t=" + token, "Origin: http://evil.com\r\n")), 403));
-        CHECK(refused(ask(getWith("/ws?t=" + token, "Origin: https://127.0.0.1.evil.com\r\n")), 403));
-        CHECK(refused(ask(getWith("/?t=" + token, "Origin: http://localhost:8123\r\n")), 403));
-        CHECK(refused(ask(getWith("/ws?t=" + token, "Origin: http://127.0.0.1:9999\r\n")), 403));
-        // Only GET; an unknown path only once the token is right.
-        CHECK(refused(ask("POST /?t=" + token + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), 405));
-        CHECK(refused(ask(getWith("/x?t=" + token)), 404));
-        CHECK(refused(ask(getWith("/x")), 403));
-        // No server token at all serves nothing.
-        CHECK(Web::answer(request(getWith("/?t=")), "", page).kind == Web::Answer::Refused);
-        CHECK(Web::answer(request(getWith("/?t=x")), "", page).kind == Web::Answer::Refused);
-        CHECK(refused(Web::answer(request("junk"), token, page), 400));
+        CHECK(refused(ask(getWith("BASE/?t=TOKEN", "Origin: http://evil.com\r\n")), 403));
+        CHECK(refused(ask(getWith("BASE/ws", "COOKIE\r\nOrigin: https://127.0.0.1.evil.com\r\n")), 403));
+        CHECK(refused(ask(getWith("BASE/?t=TOKEN", "Origin: http://localhost:8123\r\n")), 403));
+        CHECK(refused(ask(getWith("BASE/ws", "COOKIE\r\nOrigin: http://127.0.0.1:9999\r\n")), 403));
+        // Only GET; an unknown path under the view's is not found.
+        CHECK(refused(ask("POST BASE/?t=TOKEN HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), 405));
+        CHECK(refused(ask(getWith("BASE/x?t=TOKEN")), 404));
+        CHECK(refused(ask(getWith("BASE/x")), 404));
+        CHECK(refused(ask("junk"), 400));
 
-        // The page, with a fresh nonce in it and in its policy.
-        a = ask(getWith("/?t=" + token, "Origin: http://127.0.0.1:8123\r\n"));
-        CHECK(a.kind == Web::Answer::Page && a.status == 200);
-        const std::size_t csp = a.response.find("script-src 'nonce-");
-        CHECK(csp != std::string::npos);
-        if (csp != std::string::npos) {
-            const std::string nonce = a.response.substr(csp + 18, 32);
-            CHECK(a.response.find("<p>" + nonce + " " + nonce + "</p>") != std::string::npos);
-            CHECK(ask(getWith("/?t=" + token)).response.find(nonce) == std::string::npos);
+        // The page, with a fresh nonce in it and in its policy, and the
+        // credential's cookie set: HttpOnly, SameSite=Strict, the view's path.
+        {
+            Gate g;
+            a = g.ask(getWith(g.base() + "?t=" + g.token, "Origin: http://127.0.0.1:8123\r\n"));
+            CHECK(a.kind == Web::Answer::Page && a.status == 200 && a.exchanged && a.question == 0);
+            CHECK(a.state == Web::Access::State::Allowed && a.credential.size() == 48);
+            const std::size_t csp = a.response.find("script-src 'nonce-");
+            CHECK(csp != std::string::npos);
+            if (csp != std::string::npos) {
+                const std::string nonce = a.response.substr(csp + 18, 32);
+                CHECK(a.response.find("<p>" + nonce + " " + nonce + "</p>") != std::string::npos);
+                CHECK(g.ask(getWith(g.base(), g.cookie)).response.find(nonce) == std::string::npos);
+            }
+            CHECK(a.response.find("{{NONCE}}") == std::string::npos);
+            CHECK(a.response.find("frame-ancestors 'none'") != std::string::npos);
+            const std::string head = a.response.substr(0, a.response.find("\r\n\r\n") + 2);
+            CHECK(head.find("\r\nSet-Cookie: mutible-view-8123=" + a.credential + "; Path=" + g.base() +
+                            "; HttpOnly; SameSite=Strict\r\n") != std::string::npos);
+            // A browser with no id gets one, for every view on the machine.
+            CHECK(head.find("\r\nSet-Cookie: mutible-browser=") != std::string::npos);
+            CHECK(head.find("; Path=/v/; HttpOnly; SameSite=Lax; Max-Age=34560000\r\n") != std::string::npos);
+            CHECK(head.find("Cache-Control: no-store") != std::string::npos);
+            // The page knows its own path.
+            g.page = "{{BASE}}";
+            a = g.ask(getWith(g.base(), g.cookie));
+            CHECK(a.kind == Web::Answer::Page && a.response.substr(a.response.size() - g.base().size()) == g.base());
+            CHECK(a.response.find("Set-Cookie") == std::string::npos);   // a reload sets nothing
         }
-        CHECK(a.response.find("{{NONCE}}") == std::string::npos);
-        CHECK(a.response.find("frame-ancestors 'none'") != std::string::npos);
-        // The socket: the upgrade's headers, and the RFC's accept key.
+        // The socket: the upgrade's headers, the RFC's accept key, and the
+        // credential's cookie (the token is no way in).
         const std::string up = "Upgrade: websocket\r\nConnection: keep-alive, Upgrade\r\n"
                                "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
                                "Origin: http://127.0.0.1:8123\r\n";
-        a = ask(getWith("/ws?t=" + token, up));
-        CHECK(a.kind == Web::Answer::Socket && a.status == 101);
+        a = ask(getWith("BASE/ws", "COOKIE\r\n" + up));
+        CHECK(a.kind == Web::Answer::Socket && a.status == 101 && a.state == Web::Access::State::Allowed);
         CHECK(a.response.find("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n") != std::string::npos);
         // The socket opens only with an Origin, which every browser sends.
         const std::string upNoOrigin = up.substr(0, up.find("Origin:"));
-        a = ask(getWith("/ws?t=" + token, upNoOrigin));
+        a = ask(getWith("BASE/ws", "COOKIE\r\n" + upNoOrigin));
         CHECK(refused(a, 403) && a.why.find("own page") != std::string::npos);
-        CHECK(refused(ask(getWith("/ws?t=" + token, "Origin: http://127.0.0.1:8123\r\n")), 400));
-        CHECK(refused(ask(getWith("/ws?t=" + token, "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-                                                      "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: c2hvcnQ=\r\n"
-                                                      "Origin: http://127.0.0.1:8123\r\n")),
+        CHECK(refused(ask(getWith("BASE/ws", "COOKIE\r\nOrigin: http://127.0.0.1:8123\r\n")), 400));
+        CHECK(refused(ask(getWith("BASE/ws", "COOKIE\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                                                "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: c2hvcnQ=\r\n"
+                                                "Origin: http://127.0.0.1:8123\r\n")),
                       400));
-        CHECK(refused(ask(getWith("/ws", up)), 403));
-        CHECK(refused(ask(getWith("/ws?t=nope", up)), 403));
+        CHECK(refused(ask(getWith("BASE/ws", up)), 403));
+        CHECK(refused(ask(getWith("BASE/ws?t=TOKEN", up)), 403));
+        // A cookie the server does not know: taken, so the page hears it
+        // has expired rather than reconnecting for ever.
+        a = ask(getWith("BASE/ws", "Cookie: mutible-view-8123=" + std::string(48, 'a') + "\r\n" + up));
+        CHECK(a.kind == Web::Answer::Socket && a.state == Web::Access::State::Unknown);
+        // Another server's cookie (another port's name) is no credential.
+        CHECK(refused(ask(getWith("BASE/ws", "Cookie: mutible-view-8124=x\r\n" + up)), 403));
         // The real page has its nonce slot and draws nothing it is not sent.
         CHECK(Web::pageHtml().find("<script nonce=\"{{NONCE}}\">") != std::string::npos);
         CHECK(Web::pageHtml().find("http://") == std::string::npos);
@@ -999,8 +1104,9 @@ static void testSessionWeb() {
         CHECK(web.start(o, &error));
         std::thread webThread([&] { web.run(); });
         const int port = web.port();
-        CHECK(port > 0 && web.url() == "http://127.0.0.1:" + std::to_string(port) + "/?t=" + web.token());
+        CHECK(port > 0 && web.url() == "http://127.0.0.1:" + std::to_string(port) + web.base() + "?t=" + web.token());
         CHECK(web.token().size() == 48);
+        CHECK(web.base().size() == 20 && web.base().compare(0, 3, "/v/") == 0 && web.base().back() == '/');
         if (a.client && port > 0) {
             const std::u16string text = u"def f(x):\n    return x + 1\n";
             a.mirror.doc = 1;
@@ -1011,22 +1117,26 @@ static void testSessionWeb() {
 
             // Over the wire: refusals, and nothing attached for them.
             PageClient p;
-            std::string r = p.exchange(port, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            const std::string base = web.base();
+            std::string r = p.exchange(port, "GET " + base + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
             CHECK(r.compare(0, 12, "HTTP/1.1 403") == 0 && r.find("<html") == std::string::npos);
-            r = p.exchange(port, "GET /?t=" + web.token() + " HTTP/1.1\r\nHost: attacker.example\r\n\r\n");
+            r = p.exchange(port, "GET " + base + "?t=" + web.token() + " HTTP/1.1\r\nHost: attacker.example\r\n\r\n");
             CHECK(r.compare(0, 12, "HTTP/1.1 403") == 0);
-            r = p.exchange(port, "GET /?t=" + std::string(48, '0') + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            r = p.exchange(port, "GET " + base + "?t=" + std::string(48, '0') + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
             CHECK(r.compare(0, 12, "HTTP/1.1 403") == 0);
+            // The old address, with the token at the top: nothing there.
+            r = p.exchange(port, "GET /?t=" + web.token() + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            CHECK(r.compare(0, 12, "HTTP/1.1 404") == 0);
             std::string head;
-            CHECK(!p.upgrade(port, "/ws?t=wrong", &head) && head.compare(0, 12, "HTTP/1.1 403") == 0);
+            CHECK(!p.upgrade(port, base + "ws?t=" + web.token(), &head) && head.compare(0, 12, "HTTP/1.1 403") == 0);
             p.close();
-            r = p.exchange(port, "GET /?t=" + web.token() + " HTTP/1.1\r\nHost: localhost:" +
+            r = p.exchange(port, "GET " + base + "?t=" + web.token() + " HTTP/1.1\r\nHost: localhost:" +
                                      std::to_string(port) + "\r\n\r\n");
             CHECK(r.compare(0, 12, "HTTP/1.1 200") == 0 && r.find("<!DOCTYPE html>") != std::string::npos);
             CHECK(rig.server->renderers() == 1 && web.browsers() == 0);
 
             // A browser: hello, then the session's state.
-            CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+            CHECK(p.open(web));
             Json hello, state;
             PageDoc doc;
             PageTerm term;
@@ -1080,7 +1190,7 @@ static void testSessionWeb() {
 
             // A second browser gets the same, whole, and both follow.
             PageClient q;
-            CHECK(q.upgrade(port, "/ws?t=" + web.token()));
+            CHECK(q.open(web));
             PageDoc doc2;
             Json state2;
             auto take2 = [&](const Json& m) {
@@ -1206,11 +1316,11 @@ static void testSessionWeb() {
         {
             PageClient p;
             std::string head;
-            CHECK(!p.upgrade(port, "/ws?t=" + std::string(48, '0'), &head) &&
+            CHECK(!p.upgrade(port, web.base() + "ws?t=" + std::string(48, '0'), &head) &&
                   head.compare(0, 12, "HTTP/1.1 403") == 0);
             p.close();
             CHECK(connects == 0);
-            CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+            CHECK(p.open(web));
             Json hello, state;
             PageDoc doc;
             int gone = 0;
@@ -1361,7 +1471,7 @@ static void testSessionWeb() {
         std::thread webThread([&] { web.run(); });
         {
             PageClient p;
-            CHECK(p.upgrade(web.port(), "/ws?t=" + web.token()));
+            CHECK(p.open(web));
             Json state;
             auto take = [&](const Json& m) {
                 if (m["t"].asString() == "state") state = m;
@@ -1439,19 +1549,21 @@ static void testSessionWeb() {
             CHECK(a.wait([&] { return a.pid > 0 && a.out.find("$ ") != std::string::npos; }));
 
             // Only the page's own origin opens the socket.
+            // Only the page's own origin opens the socket, its credential
+            // or not.
             PageClient bad;
             std::string head;
-            CHECK(!bad.upgrade(port, "/ws?t=" + web.token(), &head, "http://evil.example") &&
+            CHECK(bad.enter(web));
+            const std::string ws = web.base() + "ws";
+            CHECK(!bad.upgrade(port, ws, &head, "http://evil.example") &&
                   head.compare(0, 12, "HTTP/1.1 403") == 0);
-            CHECK(!bad.upgrade(port, "/ws?t=" + web.token(), &head, "-") &&
-                  head.compare(0, 12, "HTTP/1.1 403") == 0);
-            CHECK(!bad.upgrade(port, "/ws?t=" + web.token(), &head,
-                               "http://localhost:" + std::to_string(port)) &&
+            CHECK(!bad.upgrade(port, ws, &head, "-") && head.compare(0, 12, "HTTP/1.1 403") == 0);
+            CHECK(!bad.upgrade(port, ws, &head, "http://localhost:" + std::to_string(port)) &&
                   head.compare(0, 12, "HTTP/1.1 403") == 0);
             bad.close();
 
             PageClient p;
-            CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+            CHECK(p.open(web));
             PageEditor page;
             page.p = &p;
             page.id = 1;
@@ -1537,7 +1649,7 @@ static void testSessionWeb() {
 
             // A read-only view of the same host refuses all of it.
             PageClient q;
-            CHECK(q.upgrade(ro.port(), "/ws?t=" + ro.token()));
+            CHECK(q.open(ro));
             PageEditor rpage;
             rpage.p = &q;
             rpage.id = 1;
@@ -1627,8 +1739,8 @@ static void testSessionWeb() {
                 if (m["t"].asString() == "state") s2 = m;
                 t2.take(m);
             };
-            CHECK(p1.upgrade(web.port(), "/ws?t=" + web.token()));
-            CHECK(p2.upgrade(web.port(), "/ws?t=" + web.token()));
+            CHECK(p1.open(web));
+            CHECK(p2.open(web));
             CHECK(p1.pump(take1, [&] { return s1.isObject(); }));
             CHECK(p2.pump(take2, [&] { return s2.isObject(); }));
             p1.sendText("{\"t\":\"show\",\"doc\":0,\"term\":7}");
@@ -1762,7 +1874,7 @@ static void testSessionWeb() {
             CHECK(a.client->settle());
 
             PageClient p;
-            CHECK(p.upgrade(web.port(), "/ws?t=" + web.token()));
+            CHECK(p.open(web));
             Json state;
             PageTerm term;
             std::vector<Shared::TermId> snapshots;
@@ -1806,7 +1918,7 @@ static void testSessionWeb() {
 
             // The headless view sees both.
             PageClient q;
-            CHECK(q.upgrade(all.port(), "/ws?t=" + all.token()));
+            CHECK(q.open(all));
             Json allState;
             CHECK(q.pump([&](const Json& m) { if (m["t"].asString() == "state") allState = m; },
                          [&] { return allState.isObject(); }));
@@ -1904,16 +2016,16 @@ static void testSessionWeb() {
             PageClient p;
             std::string r = p.exchange(port, "GET /list?t=" + web.token() + "&path= HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
             CHECK(r.compare(0, 12, "HTTP/1.1 404") == 0);
-            r = p.exchange(port, "GET /list?path= HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
-            CHECK(r.compare(0, 12, "HTTP/1.1 403") == 0);
+            r = p.exchange(port, "GET " + web.base() + "list?path= HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            CHECK(r.compare(0, 12, "HTTP/1.1 404") == 0);
             std::string head;
-            CHECK(!p.upgrade(port, "/ws", &head) && head.compare(0, 12, "HTTP/1.1 403") == 0);
+            CHECK(!p.upgrade(port, web.base() + "ws", &head) && head.compare(0, 12, "HTTP/1.1 403") == 0);
             p.close();
-            CHECK(!p.upgrade(port, "/ws?t=" + web.token(), &head, "http://evil.example") &&
-                  head.compare(0, 12, "HTTP/1.1 403") == 0);
+            CHECK(!p.open(web, &head, "http://evil.example") && head.compare(0, 12, "HTTP/1.1 403") == 0);
             p.close();
+            p.cookie.clear();
 
-            CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+            CHECK(p.open(web));
             Json state, hello;
             std::map<std::string, Json> trees, files;
             std::vector<Json> opens;
@@ -2008,7 +2120,7 @@ static void testSessionWeb() {
             // An editable page: a click opens the file in the window; a
             // folder, or a path out of the folder, is not opened.
             PageClient ep;
-            CHECK(ep.upgrade(editing.port(), "/ws?t=" + editing.token()));
+            CHECK(ep.open(editing));
             hello = Json();
             state = Json();
             opens.clear();
@@ -2037,7 +2149,7 @@ static void testSessionWeb() {
 
             // A host with no window to open files in says so.
             PageClient q;
-            CHECK(q.upgrade(headless.port(), "/ws?t=" + headless.token()));
+            CHECK(q.open(headless));
             Json hstate, hhello, hfile;
             std::vector<Json> hopens;
             bool listed = false;
@@ -2096,8 +2208,8 @@ static void testSessionWeb() {
         for (const char* text : {"main.py", "notes.txt", "Makefile", ".png", "a.js", "x.sqlite3x", "a.ts"})
             CHECK(Web::fileType(text).view.empty() && Web::fileType(text).mime.empty());
         CHECK(Web::fileType("big.png").maxBytes == std::uint64_t(64) << 20);
-        CHECK(Web::fileTarget("ab12", "docs/My Shot+1.png") == "/file/ab12/docs/My%20Shot%2B1.png");
-        CHECK(Web::fileTarget("ab12", "caf\xc3\xa9/%.png") == "/file/ab12/caf%C3%A9/%25.png");
+        CHECK(Web::fileTarget("/v/ab12/", "docs/My Shot+1.png") == "/v/ab12/file/docs/My%20Shot%2B1.png");
+        CHECK(Web::fileTarget("/v/ab12/", "caf\xc3\xa9/%.png") == "/v/ab12/file/caf%C3%A9/%25.png");
 
         // Ranges: one range, clipped; several, another unit or malformed,
         // the whole file; past the end, unsatisfiable.
@@ -2145,33 +2257,40 @@ static void testSessionWeb() {
         CHECK(Web::fileHead(Web::fileType("a.pdf"), 10, range(nullptr, 10)).find("Content-Security-Policy") ==
               std::string::npos);
 
-        // The token is the path's first name; the Host and Origin rules hold.
-        const std::string token = Web::newToken();
+        // Under the view's path, with the credential's cookie; the Host and
+        // Origin rules hold.
+        Gate g;
+        const std::string files = g.base() + "file/";
         auto ask = [&](const std::string& target, const std::string& extra = "") {
-            return Web::answer(request(getWith(target, extra)), token, "page");
+            return g.ask(getWith(target, extra));
         };
-        Web::Answer a = ask("/file/" + token + "/pics/My%20Shot+1.png");
-        CHECK(a.kind == Web::Answer::File && a.file == "pics/My Shot+1.png");
-        a = ask("/file/" + token + "/a%2F..%2Fb.png");
+        Web::Answer a = ask(files + "pics/My%20Shot+1.png", g.cookie);
+        CHECK(a.kind == Web::Answer::File && a.file == "pics/My Shot+1.png" && a.credential == g.credential);
+        a = ask(files + "a%2F..%2Fb.png", g.cookie);
         CHECK(a.kind == Web::Answer::File && a.file == "a/../b.png");   // the host refuses it (below)
-        CHECK(ask("/file/" + token + "/").kind == Web::Answer::File);    // no name: the host refuses it
-        a = ask("/file//pic.png");
+        CHECK(ask(files, g.cookie).kind == Web::Answer::File);          // no name: the host refuses it
+        // No cookie, a wrong one (the last digit changed), the link's token
+        // instead, the old form with the token in the path: refused.
+        a = ask(files + "pic.png");
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
-        a = ask("/file/" + token);
+        const std::string& c = g.credential;
+        a = ask(files + "pic.png", "Cookie: " + Web::credentialCookie(8123) + "=" + c.substr(0, 47) +
+                                       (c[47] == '0' ? "1" : "0") + "\r\n");
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
-        // A wrong token: the last digit changed (always another digit).
-        a = ask("/file/" + token.substr(0, 47) + (token[47] == '0' ? "1" : "0") + "/pic.png");
+        a = ask(files + "pic.png?t=" + g.token);
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
-        a = ask("/file/pic.png?t=" + token);
-        CHECK(a.kind == Web::Answer::Refused && a.status == 403);
-        a = ask("/file/" + token + "/a%00.png");
+        a = ask("/file/" + g.token + "/pic.png", g.cookie);
+        CHECK(a.kind == Web::Answer::Refused && a.status == 404);
+        a = ask(files + "a%00.png", g.cookie);
         CHECK(a.kind == Web::Answer::Refused && a.status == 400);
-        a = Web::answer(request("GET /file/" + token + "/pic.png HTTP/1.1\r\nHost: evil.com\r\n\r\n"), token, "page");
+        a = g.ask("GET " + files + "pic.png HTTP/1.1\r\nHost: evil.com\r\n" + g.cookie + "\r\n");
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
-        a = ask("/file/" + token + "/pic.png", "Origin: http://evil.example\r\n");
+        a = ask(files + "pic.png", g.cookie + "Origin: http://evil.example\r\n");
         CHECK(a.kind == Web::Answer::Refused && a.status == 403);
-        a = Web::answer(request("POST /file/" + token + "/pic.png HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), token, "page");
+        a = g.ask("POST " + files + "pic.png HTTP/1.1\r\nHost: 127.0.0.1\r\n" + g.cookie + "\r\n");
         CHECK(a.kind == Web::Answer::Refused && a.status == 405);
+        // The addresses the page builds carry no secret.
+        CHECK(Web::fileTarget(g.base(), "a b.png") == files + "a%20b.png");
 
         // A CSV as the page's rows: quotes, a TSV, a cut start.
         Json t = Web::tableJson("d.csv", "name,note\r\n\"Smith, J\",\"said \"\"hi\"\"\"\nx\n", true);
@@ -2270,11 +2389,15 @@ static void testSessionWeb() {
         CHECK(web.start(o, &error));
         std::thread webThread([&] { web.run(); });
         const int port = web.port();
-        const std::string base = "/file/" + web.token() + "/";
-        auto get = [&](const std::string& target, const std::string& extra = "") {
+        const std::string base = web.base() + "file/";
+        // The page loaded first: its cookie goes with every file, as a
+        // browser sends it with an <img>.
+        PageClient p;
+        CHECK(p.enter(web));
+        auto get = [&](const std::string& target, const std::string& extra = "", bool cookie = true) {
             PageClient c;
             return c.exchange(port, "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) +
-                                        "\r\n" + extra + "\r\n");
+                                        "\r\n" + (cookie ? "Cookie: " + p.cookie + "\r\n" : "") + extra + "\r\n");
         };
         auto bodyOf = [](const std::string& r) {
             const std::size_t e = r.find("\r\n\r\n");
@@ -2283,8 +2406,7 @@ static void testSessionWeb() {
         auto headOf = [](const std::string& r) { return r.substr(0, r.find("\r\n\r\n") + 2); };
         // Nothing before a page is open: the session is read only for one.
         CHECK(get(base + "pic.png").compare(0, 12, "HTTP/1.1 503") == 0);
-        PageClient p;
-        CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+        CHECK(p.upgrade(port, web.base() + "ws"));
         Json state;
         std::map<std::string, Json> trees, tables;
         auto take = [&](const Json& m) {
@@ -2300,13 +2422,16 @@ static void testSessionWeb() {
         CHECK(headOf(r).find("Content-Type: image/png\r\n") != std::string::npos);
         CHECK(headOf(r).find("X-Content-Type-Options: nosniff\r\n") != std::string::npos);
         CHECK(bodyOf(r) == std::string("\x89PNG\r\n\x1a\n", 8) + "pixels");
-        // No token, a wrong one, the query's form, another Host: refused.
-        CHECK(get("/file//pic.png").compare(0, 12, "HTTP/1.1 403") == 0);
-        CHECK(get("/file/" + std::string(48, 'a') + "/pic.png").compare(0, 12, "HTTP/1.1 403") == 0);
-        CHECK(get("/file/pic.png?t=" + web.token()).compare(0, 12, "HTTP/1.1 403") == 0);
+        // No cookie, a wrong one, the link's token instead, another Host:
+        // refused.
+        CHECK(get(base + "pic.png", "", false).compare(0, 12, "HTTP/1.1 403") == 0);
+        CHECK(get(base + "pic.png", "Cookie: " + Web::credentialCookie(port) + "=" + std::string(48, 'a') + "\r\n",
+                  false).compare(0, 12, "HTTP/1.1 403") == 0);
+        CHECK(get(base + "pic.png?t=" + web.token(), "", false).compare(0, 12, "HTTP/1.1 403") == 0);
         {
             PageClient c;
-            CHECK(c.exchange(port, "GET " + base + "pic.png HTTP/1.1\r\nHost: evil.com\r\n\r\n").compare(0, 12, "HTTP/1.1 403") == 0);
+            CHECK(c.exchange(port, "GET " + base + "pic.png HTTP/1.1\r\nHost: evil.com\r\nCookie: " + p.cookie +
+                                       "\r\n\r\n").compare(0, 12, "HTTP/1.1 403") == 0);
         }
         // Escapes and what the tree does not show: refused, nothing of them sent.
         for (const std::string& bad : std::vector<std::string>{"../" + elsewhere.substr(5) + "/secret.png", "..%2F..%2Fetc%2Fhosts.png",
@@ -2367,7 +2492,8 @@ static void testSessionWeb() {
         host.stop();
         hostThread.join();
         // The page's CSP lets the file views load from its own server only.
-        const Web::Answer pageAnswer = ask("/?t=" + token);
+        Gate pg;
+        const Web::Answer pageAnswer = pg.ask(getWith(pg.base() + "?t=" + pg.token));
         CHECK(pageAnswer.response.find("img-src data: 'self'; media-src 'self';") != std::string::npos);
         CHECK(pageAnswer.response.find("frame-src 'self' http: https:;") != std::string::npos);
         CHECK(Web::pageHtml().find("id=\"fileview\"") != std::string::npos);
@@ -2382,7 +2508,10 @@ static void testSessionWeb() {
         for (const char* db : {"app.sqlite", "app.sqlite3", "cache.db", "x.DB3"})
             CHECK(Web::fileType(db).view == "database" && Web::fileType(db).mime.empty());
         // Served as bytes never: the /file/ route has no type for them.
-        CHECK(Web::answer(Web::readRequest(getWith("/file/tok/a.ipynb")), "tok", "").kind == Web::Answer::File);
+        {
+            Gate g;
+            CHECK(g.ask(getWith(g.base() + "file/a.ipynb", g.cookie)).kind == Web::Answer::File);
+        }
 
         // SqliteRead's pieces.
         CHECK(SqliteRead::isDatabaseHeader(std::string("SQLite format 3\0rest", 20)));
@@ -2653,13 +2782,15 @@ static void testSessionWeb() {
         CHECK(web.start(o, &error));
         std::thread webThread([&] { web.run(); });
         const int port = web.port();
+        PageClient p;
+        CHECK(p.enter(web));
         {
             PageClient c;
-            const std::string r = c.exchange(port, "GET /file/" + web.token() + "/good.ipynb HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            const std::string r = c.exchange(port, "GET " + web.base() + "file/good.ipynb HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: " +
+                                                       p.cookie + "\r\n\r\n");
             CHECK(r.compare(0, 12, "HTTP/1.1 404") == 0 || r.compare(0, 12, "HTTP/1.1 503") == 0);
         }
-        PageClient p;
-        CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+        CHECK(p.upgrade(port, web.base() + "ws"));
         Json state;
         std::map<std::string, Json> trees, nbs, dbs;
         auto take = [&](const Json& m) {
@@ -2828,7 +2959,7 @@ static void testSessionWeb() {
         std::thread t1([&] { editing.run(); }), t2([&] { reading.run(); }), t3([&] { paneless.run(); });
         {
             PageClient p;
-            CHECK(p.upgrade(editing.port(), "/ws?t=" + editing.token()));
+            CHECK(p.open(editing));
             Json hello, state;
             std::vector<Json> answers, notes;
             auto take = [&](const Json& m) {
@@ -2879,7 +3010,7 @@ static void testSessionWeb() {
 
             // A read-only page lists the tabs but cannot open an address.
             PageClient r;
-            CHECK(r.upgrade(reading.port(), "/ws?t=" + reading.token()));
+            CHECK(r.open(reading));
             hello = Json();
             state = Json();
             notes.clear();
@@ -2894,7 +3025,7 @@ static void testSessionWeb() {
 
             // Without a browser pane to open in (unset browse), it says so.
             PageClient q;
-            CHECK(q.upgrade(paneless.port(), "/ws?t=" + paneless.token()));
+            CHECK(q.open(paneless));
             hello = Json();
             state = Json();
             answers.clear();
@@ -2923,8 +3054,8 @@ static void testSessionWeb() {
         }
         // A window that reports no pane (a headless host has none) gives the
         // page no browser group; the page's frame is limited by its policy.
-        const std::string token = "0123456789abcdef0123456789abcdef0123456789abcdef";
-        const Web::Answer a = Web::answer(request(getWith("/?t=" + token)), token, "<p></p>");
+        Gate g;
+        const Web::Answer a = g.ask(getWith(g.base() + "?t=" + g.token));
         CHECK(a.response.find("frame-src 'self' http: https:;") != std::string::npos);
         CHECK(a.response.find("connect-src 'self' ws://127.0.0.1:* ws://localhost:*;") != std::string::npos);
         CHECK(a.response.find("default-src 'none'") != std::string::npos);
@@ -3047,7 +3178,7 @@ static void testSessionWeb() {
         std::thread t1([&] { editing.run(); }), t2([&] { reading.run(); });
         {
             PageClient p;
-            CHECK(p.upgrade(editing.port(), "/ws?t=" + editing.token()));
+            CHECK(p.open(editing));
             Json hello, state;
             std::vector<Json> answers, notes;
             auto take = [&](const Json& m) {
@@ -3100,7 +3231,7 @@ static void testSessionWeb() {
 
             // A page that only reads closes nothing of the window's.
             PageClient r;
-            CHECK(r.upgrade(reading.port(), "/ws?t=" + reading.token()));
+            CHECK(r.open(reading));
             hello = Json();
             state = Json();
             answers.clear();
@@ -3169,7 +3300,7 @@ static void testSessionWeb() {
             };
             CHECK(a.wait([&] { return prompt(21) && prompt(22); }));
             PageClient p;
-            CHECK(p.upgrade(web.port(), "/ws?t=" + web.token()));
+            CHECK(p.open(web));
             Json state;
             PageTerm term;
             auto take = [&](const Json& m) {
@@ -3201,5 +3332,367 @@ static void testSessionWeb() {
         }
         web.stop();
         webThread.join();
+    }
+}
+
+// Who may use the page (SessionWebAccess.h): links good for one exchange,
+// the credential's cookie, idle expiry, the app's question before a browser
+// it does not know, and the limits that keep a page from asking in a loop;
+// then the same over the wire.
+static void testSessionWebAccess() {
+    using Clock = Web::Access::Clock;
+    using State = Web::Access::State;
+    using X = Web::Access::Exchange;
+    GROUP("sessionweb:access");
+    {
+        // Cookies: read from the header as a browser sends them, set with
+        // their attributes.
+        CHECK(Web::credentialCookie(8123) == "mutible-view-8123");
+        CHECK(Web::cookieValue("a=1; mutible-view-8123=abc; b=2", "mutible-view-8123") == "abc");
+        CHECK(Web::cookieValue("mutible-view-8123=\"q\"", "mutible-view-8123") == "q");
+        CHECK(Web::cookieValue("xmutible-view-8123=no;mutible-view-8123=yes", "mutible-view-8123") == "yes");
+        CHECK(Web::cookieValue("a=1; mutible-view-8123=first; mutible-view-8123=second", "mutible-view-8123") ==
+              "first");
+        CHECK(Web::cookieValue("", "a").empty() && Web::cookieValue("a", "a").empty());
+        CHECK(Web::setCookieHeader("n", "v", "/v/x/", "Strict", 0) ==
+              "Set-Cookie: n=v; Path=/v/x/; HttpOnly; SameSite=Strict\r\n");
+        CHECK(Web::setCookieHeader("n", "v", "/v/", "Lax", 60) ==
+              "Set-Cookie: n=v; Path=/v/; HttpOnly; SameSite=Lax; Max-Age=60\r\n");
+        // A browser's name for the app's question.
+        const std::pair<const char*, const char*> agents[] = {
+            {"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+             "Version/17.4 Safari/605.1.15", "Safari on macOS"},
+            {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+             "Chrome/124.0.0.0 Safari/537.36", "Chrome on Windows"},
+            {"Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0", "Firefox on Linux"},
+            {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+             "Chrome/124.0.0.0 Safari/537.36 Edg/124.0.2478.51", "Edge on Windows"},
+            {"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+             "Chrome/124.0.0.0 Mobile Safari/537.36", "Chrome on Android"},
+            {"Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+             "Version/17.4 Mobile/15E148 Safari/604.1", "Safari on iPhone"},
+            {"Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+             "CriOS/124.0.6367.88 Mobile/15E148 Safari/604.1", "Chrome on iPhone"},
+            {"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+             "a WebKit browser on macOS"},
+            {"curl/8.4.0", "curl"},
+            {"", "an unknown browser"},
+        };
+        for (const auto& [ua, want] : agents) {
+            CHECK(Web::browserSummary(ua) == want);
+            if (Web::browserSummary(ua) != want)
+                std::printf("  sessionweb:access: %s -> %s\n", ua, Web::browserSummary(ua).c_str());
+        }
+
+        // A link is good for one exchange.
+        const Clock::time_point t0 = Clock::now();
+        auto at = [&](int ms) { return t0 + std::chrono::milliseconds(ms); };
+        Web::Access acc;
+        CHECK(acc.base().size() == 20 && acc.base().compare(0, 3, "/v/") == 0);
+        CHECK(Web::Access().base() != acc.base());
+        const std::string link = acc.newLink();
+        CHECK(link.size() == 48);
+        X x = acc.exchange(link, "", "", "127.0.0.1:5000", 5000, t0);
+        CHECK(x.kind == X::Ok && x.state == State::Allowed && x.credential.size() == 48 && x.question == 0);
+        CHECK(x.newBrowser && x.browserId.size() == 32);
+        CHECK(acc.state(x.credential, t0) == State::Allowed);
+        X again = acc.exchange(link, "", "", "127.0.0.1:5001", 5001, t0);
+        CHECK(again.kind == X::Spent && again.credential.empty() && again.why.find("used already") != std::string::npos);
+        CHECK(acc.exchange(std::string(48, 'a'), "", "", "", 0, t0).kind == X::Wrong);
+        CHECK(acc.exchange("", "", "", "", 0, t0).kind == X::Wrong);
+        // The live link is made afresh once the last is spent, and kept
+        // until it is.
+        const std::string live = acc.liveLink();
+        CHECK(live != link && acc.liveLink() == live);
+        // At most kMaxLinks unspent: the oldest goes.
+        const std::string oldest = acc.newLink();
+        for (std::size_t i = 0; i < Web::Access::kMaxLinks; i++) acc.newLink();
+        CHECK(acc.exchange(oldest, "", "", "", 0, t0).kind == X::Wrong);
+        // A browser's id: kept when it is one, made when it is not.
+        X known = acc.exchange(acc.newLink(), x.browserId, "", "", 0, t0);
+        CHECK(known.kind == X::Ok && !known.newBrowser && known.browserId == x.browserId);
+        for (const std::string& bad : {std::string("zz"), std::string(32, 'A'), std::string(33, 'a'),
+                                       std::string(31, 'a') + ";"}) {
+            X b = acc.exchange(acc.newLink(), bad, "", "", 0, t0);
+            CHECK(b.kind == X::Ok && b.newBrowser && b.browserId != bad);
+        }
+        CHECK(acc.state(std::string(48, 'b'), t0) == State::Unknown);
+        CHECK(acc.state("", t0) == State::Unknown && !acc.touch("", t0));
+
+        // Idle expiry: anything from the browser starts it again.
+        acc.setIdle(std::chrono::milliseconds(1000));
+        CHECK(acc.state(x.credential, at(999)) == State::Allowed);
+        CHECK(acc.touch(x.credential, at(900)));
+        CHECK(acc.state(x.credential, at(1899)) == State::Allowed);
+        CHECK(acc.state(x.credential, at(1900)) == State::Unknown);
+        CHECK(!acc.touch(x.credential, at(1900)));   // too late: it stays gone
+        std::vector<std::string> gone = acc.expire(at(1900));
+        CHECK(std::find(gone.begin(), gone.end(), x.credential) != gone.end());
+        CHECK(std::find(gone.begin(), gone.end(), known.credential) != gone.end());   // never touched
+        CHECK(acc.expire(at(1900)).empty());
+        acc.setIdle(std::chrono::milliseconds(0));   // 0: for ever
+        X forever = acc.exchange(acc.newLink(), "", "", "", 0, at(2000));
+        CHECK(acc.state(forever.credential, at(2000) + std::chrono::hours(24 * 365)) == State::Allowed);
+        CHECK(acc.expire(at(2000) + std::chrono::hours(24 * 365)).empty());
+
+        // The app's question, for a browser it does not remember.
+        Web::Access q;
+        q.setAsking(true);
+        const std::string remembered = std::string(32, 'c');
+        q.setRemembered([&](const std::string& id) { return id == remembered; });
+        const std::string safari =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            "Version/17.4 Safari/605.1.15";
+        X p1 = q.exchange(q.newLink(), "", safari, "127.0.0.1:6001", 6001, t0);
+        CHECK(p1.kind == X::Ok && p1.state == State::Pending && p1.question != 0);
+        Web::Access::Question w = q.waiting();
+        CHECK(w.id == p1.question && w.browser == "Safari on macOS" && w.peer == "127.0.0.1:6001" &&
+              w.peerPort == 6001 && w.browserId == p1.browserId);
+        CHECK(q.state(p1.credential, t0) == State::Pending);
+        // One question at a time: another browser waits its turn.
+        X p2 = q.exchange(q.newLink(), "", "", "127.0.0.1:6002", 6002, t0);
+        CHECK(p2.kind == X::Ok && p2.state == State::Pending && p2.question != p1.question);
+        CHECK(q.waiting().id == p1.question && q.questions() == 2);
+        // A browser the app remembered never waits, nor counts as a question.
+        X r1 = q.exchange(q.newLink(), remembered, "", "", 0, t0);
+        CHECK(r1.kind == X::Ok && r1.state == State::Allowed && r1.question == 0 && !r1.newBrowser);
+        CHECK(q.questions() == 2);
+        CHECK(q.answer(p1.question, true));
+        CHECK(!q.answer(p1.question, false));   // answered once
+        CHECK(q.state(p1.credential, t0) == State::Allowed);
+        CHECK(q.waiting().id == p2.question && q.waiting().peerPort == 6002 && q.questions() == 1);
+        CHECK(q.answer(p2.question, false));
+        CHECK(q.state(p2.credential, t0) == State::Denied && q.waiting().id == 0 && q.questions() == 0);
+        CHECK(!q.answer(12345, true));
+        // At most kMaxWaiting unanswered: the next is turned away, its link
+        // kept for when it may.
+        std::vector<X> queued;
+        for (std::size_t i = 0; i < Web::Access::kMaxWaiting; i++) {
+            queued.push_back(q.exchange(q.newLink(), "", "", "", 0, at(1)));
+            CHECK(queued.back().kind == X::Ok && queued.back().state == State::Pending);
+        }
+        const std::string kept = q.newLink();
+        X busy = q.exchange(kept, "", "", "", 0, at(1));
+        CHECK(busy.kind == X::Busy && busy.credential.empty() &&
+              busy.why.find("asking about other browsers") != std::string::npos);
+        for (const X& w : queued) CHECK(q.answer(w.question, false));
+        X turn = q.exchange(kept, "", "", "", 0, at(2));
+        CHECK(turn.kind == X::Ok && turn.state == State::Pending);
+        CHECK(q.answer(turn.question, true));
+        // At most kMaxQuestions in kQuestionWindow, answered or not (six
+        // put so far).
+        for (int i = 6; i < Web::Access::kMaxQuestions; i++) {
+            X pi = q.exchange(q.newLink(), "", "", "", 0, at(3 + i));
+            CHECK(pi.kind == X::Ok && pi.state == State::Pending);
+            CHECK(q.answer(pi.question, false));
+        }
+        const std::string limited = q.newLink();
+        X many = q.exchange(limited, "", "", "", 0, at(20));
+        CHECK(many.kind == X::Busy && many.why.find("too many") == 0);
+        CHECK(q.exchange(q.newLink(), remembered, "", "", 0, at(20)).state == State::Allowed);
+        // Ten minutes after the first, one more may be asked.
+        const Clock::time_point later = t0 + Web::Access::kQuestionWindow;
+        X after = q.exchange(limited, "", "", "", 0, later);
+        CHECK(after.kind == X::Ok && after.state == State::Pending);
+        // A question whose page went quiet past its idle time no longer
+        // holds the turn.
+        q.setIdle(std::chrono::milliseconds(1000));
+        X next = q.exchange(q.newLink(), "", "", "", 0, later + std::chrono::milliseconds(1500));
+        CHECK(next.kind == X::Ok && next.question != after.question && q.waiting().id == next.question);
+        CHECK(!q.answer(after.question, true));   // its credential has gone
+        CHECK(q.state(after.credential, later + std::chrono::milliseconds(1500)) == State::Unknown);
+    }
+
+    GROUP("sessionweb:access-server");
+    {
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        writeText(rig.proj + "/pic.png", std::string("\x89PNG\r\n\x1a\n", 8) + "pixels");
+        auto bodyOf = [](const std::string& r) {
+            const std::size_t e = r.find("\r\n\r\n");
+            return e == std::string::npos ? std::string() : r.substr(e + 4);
+        };
+        auto get = [](int port, const std::string& target, const std::string& cookie) {
+            PageClient c;
+            return c.exchange(port, "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) +
+                                        "\r\n" + (cookie.empty() ? "" : "Cookie: " + cookie + "\r\n") + "\r\n");
+        };
+        auto messages = [](PageClient& p, int ms, bool* closed = nullptr) {
+            std::vector<Json> got;
+            const bool open = p.pump([&](const Json& m) { got.push_back(m); }, [] { return false; }, ms);
+            (void)open;
+            if (closed) *closed = p.fd >= 0 && !p.readSome(50);
+            return got;
+        };
+        auto first = [](const std::vector<Json>& got, const std::string& type) {
+            for (const Json& m : got)
+                if (m["t"].asString() == type) return m;
+            return Json();
+        };
+
+        // A headless view: no one to ask, the link alone admits; the next
+        // link said once one is used; a short idle time.
+        std::mutex linksMu;
+        std::vector<std::string> links;
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = rig.path();
+        o.folder = rig.proj;
+        o.pollMs = 100;
+        o.idleMinutes = 0.03;   // 1.8 s
+        o.nextLink = [&](const std::string& url) {
+            std::lock_guard<std::mutex> lk(linksMu);
+            links.push_back(url);
+        };
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        const int port = web.port();
+        const std::string base = web.base();
+        {
+            PageClient p;
+            const std::string spent = web.token();
+            CHECK(p.open(web));
+            std::vector<Json> got = messages(p, 400);
+            CHECK(first(got, "hello").isObject());
+            CHECK(p.cookie.find(Web::credentialCookie(port) + "=") != std::string::npos);
+            CHECK(p.cookie.find(std::string(Web::kBrowserCookie) + "=") != std::string::npos);
+            {
+                std::lock_guard<std::mutex> lk(linksMu);
+                CHECK(links.size() == 1);
+                if (!links.empty()) {
+                    CHECK(links[0].find("http://127.0.0.1:" + std::to_string(port) + base + "?t=") == 0);
+                    CHECK(links[0].find(spent) == std::string::npos);
+                    CHECK(links[0].substr(links[0].size() - 48) == web.token());
+                }
+            }
+            // The spent link, from a browser without the cookie: refused.
+            std::string r = get(port, base + "?t=" + spent, "");
+            CHECK(r.compare(0, 12, "HTTP/1.1 403") == 0 && bodyOf(r).find("used already") != std::string::npos);
+            // A reload: the page again through the credential, nothing set.
+            r = get(port, base, p.cookie);
+            CHECK(r.compare(0, 12, "HTTP/1.1 200") == 0 && r.find("Set-Cookie") == std::string::npos);
+            CHECK(r.find("const viewBase = \"" + base + "\";") != std::string::npos);
+            // The same browser opening its spent link again: its credential.
+            r = get(port, base + "?t=" + spent, p.cookie);
+            CHECK(r.compare(0, 12, "HTTP/1.1 200") == 0 && r.find("Set-Cookie") == std::string::npos);
+            // A file through the credential.
+            r = get(port, base + "file/pic.png", p.cookie);
+            CHECK(r.compare(0, 15, "HTTP/1.1 200 OK") == 0 && bodyOf(r).find("pixels") != std::string::npos);
+
+            // Something from the page keeps it: `alive` for longer than the
+            // idle time, past it.
+            const double until = nowMs() + 2600;
+            bool expiredEarly = false;
+            while (nowMs() < until) {
+                p.sendText("{\"t\":\"alive\"}");
+                for (const Json& m : messages(p, 300)) expiredEarly = expiredEarly || m["t"].asString() == "expired";
+            }
+            CHECK(!expiredEarly);
+            CHECK(web.browsers() == 1);
+            // Then nothing: the page is told, and its socket closed.
+            bool closed = false;
+            const double t0 = nowMs();
+            got = messages(p, 4000, &closed);
+            const Json ex = first(got, "expired");
+            CHECK(ex.isObject() && ex["text"].asString() == Web::kExpiredText);
+            CHECK(closed);
+            CHECK(nowMs() - t0 < 4000);
+            CHECK(waitUntil([&] { return web.browsers() == 0; }));
+            // A reload says so; files and the socket are refused or told.
+            r = get(port, base, p.cookie);
+            CHECK(r.compare(0, 12, "HTTP/1.1 403") == 0 && bodyOf(r) == std::string(Web::kExpiredText) + "\n");
+            CHECK(get(port, base + "file/pic.png", p.cookie).compare(0, 12, "HTTP/1.1 403") == 0);
+            CHECK(p.upgrade(port, base + "ws"));
+            got = messages(p, 300, &closed);
+            CHECK(first(got, "expired").isObject() && !first(got, "hello").isObject());
+            // A fresh link opens it again, in the same browser.
+            p.close();
+            CHECK(p.open(web));
+            CHECK(first(messages(p, 300), "hello").isObject());
+        }
+        web.stop();
+        webThread.join();
+
+        // The Mac's kind: a browser the app does not remember waits for its
+        // answer.
+        std::mutex askMu;
+        std::vector<Web::Access::Question> asked;
+        std::set<std::string> remembered;
+        Web::Server mac;
+        Web::Options m = o;
+        m.idleMinutes = 0;
+        m.nextLink = nullptr;
+        m.ask = [&](const Web::Access::Question& q) {
+            std::lock_guard<std::mutex> lk(askMu);
+            asked.push_back(q);
+        };
+        m.remembered = [&](const std::string& id) {
+            std::lock_guard<std::mutex> lk(askMu);
+            return remembered.count(id) > 0;
+        };
+        CHECK(mac.start(m, &error));
+        std::thread macThread([&] { mac.run(); });
+        const int mport = mac.port();
+        {
+            auto questions = [&] {
+                std::lock_guard<std::mutex> lk(askMu);
+                return asked;
+            };
+            PageClient p;
+            CHECK(p.enter(mac));
+            CHECK(waitUntil([&] { return questions().size() == 1; }));
+            const Web::Access::Question q1 = questions().empty() ? Web::Access::Question() : questions()[0];
+            CHECK(q1.browser == "an unknown browser" && q1.peer.find("127.0.0.1:") == 0 && q1.peerPort > 0);
+            // Its page waits: no hello, nothing of the session, no file.
+            CHECK(p.upgrade(mport, mac.base() + "ws"));
+            std::vector<Json> got = messages(p, 400);
+            const Json w = first(got, "waiting");
+            CHECK(w.isObject() && w["text"].asString() == Web::kWaitingText);
+            CHECK(!first(got, "hello").isObject() && !first(got, "state").isObject());
+            CHECK(mac.browsers() == 0);
+            CHECK(get(mport, mac.base() + "file/pic.png", p.cookie).compare(0, 12, "HTTP/1.1 403") == 0);
+            p.sendText("{\"t\":\"list\",\"path\":\"\"}");   // heard no more than the rest
+            // Another browser meanwhile waits its turn: the app is not asked
+            // about it yet.
+            PageClient p2;
+            CHECK(p2.enter(mac));
+            CHECK(p2.upgrade(mport, mac.base() + "ws"));
+            CHECK(first(messages(p2, 300), "waiting").isObject());
+            CHECK(questions().size() == 1);
+            // Allow: the page goes on, and the next question is put.
+            mac.answer(q1.id, true);
+            got = messages(p, 800);
+            CHECK(first(got, "hello").isObject() && first(got, "state").isObject());
+            CHECK(!first(got, "tree").isObject());   // the list sent while waiting was dropped
+            CHECK(mac.browsers() == 1);
+            CHECK(waitUntil([&] { return questions().size() == 2; }));
+            // Deny refuses the second for good.
+            mac.answer(questions().back().id, false);
+            bool closed = false;
+            got = messages(p2, 800, &closed);
+            const Json d = first(got, "denied");
+            CHECK(d.isObject() && d["text"].asString() == Web::kDeniedText && closed);
+            CHECK(!first(got, "hello").isObject());
+            // Its reload is the page, and its socket is told at once; the
+            // app is not asked again.
+            CHECK(get(mport, mac.base(), p2.cookie).compare(0, 12, "HTTP/1.1 200") == 0);
+            p2.close();
+            CHECK(p2.upgrade(mport, mac.base() + "ws"));
+            CHECK(first(messages(p2, 300), "denied").isObject());
+            CHECK(questions().size() == 2 && mac.browsers() == 1);
+            // A browser the app remembered: straight in, nobody asked.
+            {
+                std::lock_guard<std::mutex> lk(askMu);
+                remembered.insert(q1.browserId);
+            }
+            PageClient p3;
+            p3.cookie = std::string(Web::kBrowserCookie) + "=" + q1.browserId;
+            CHECK(p3.open(mac));
+            CHECK(first(messages(p3, 400), "hello").isObject());
+            CHECK(questions().size() == 2 && mac.browsers() == 2);
+        }
+        mac.stop();
+        macThread.join();
     }
 }

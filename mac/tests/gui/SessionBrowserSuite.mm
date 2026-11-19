@@ -114,15 +114,50 @@ std::string Get(int port, const std::string &target, const std::string &host) {
     return Exchange(port, "GET " + target + " HTTP/1.1\r\nHost: " + host + "\r\n\r\n");
 }
 
-// A browser's socket, scripted on a thread of its own: the upgrade, then
-// every message, keeping the hello, the newest state and the document's
-// lines as the page splices them.
+// The parts of a link, http://127.0.0.1:PORT/v/ID/?t=TOKEN: the view's path
+// and the token.
+void LinkParts(NSString *url, std::string *base, std::string *token) {
+    NSURLComponents *c = [NSURLComponents componentsWithString:url ?: @""];
+    *base = c.path.UTF8String ?: "";
+    token->clear();
+    for (NSURLQueryItem *q in c.queryItems)
+        if ([q.name isEqualToString:@"t"]) *token = q.value.UTF8String ?: "";
+}
+
+// Keeps the cookies a response sets, as a browser's jar does: one of a name
+// replaces the one kept.
+void KeepCookies(const std::string &response, std::string &jar) {
+    const std::size_t end = response.find("\r\n\r\n");
+    std::size_t at = 0;
+    while ((at = response.find("\r\nSet-Cookie: ", at)) != std::string::npos && at < end) {
+        at += 14;
+        const std::string pair = response.substr(at, response.find(';', at) - at);
+        const std::string name = pair.substr(0, pair.find('='));
+        std::string kept;
+        std::size_t from = 0;
+        while (from < jar.size()) {
+            std::size_t semi = jar.find("; ", from);
+            if (semi == std::string::npos) semi = jar.size();
+            const std::string one = jar.substr(from, semi - from);
+            if (one.substr(0, one.find('=')) != name) kept += (kept.empty() ? "" : "; ") + one;
+            from = semi + 2;
+        }
+        jar = kept + (kept.empty() ? "" : "; ") + pair;
+    }
+}
+
+// A browser, scripted on a thread of its own: the page loaded with a link's
+// token (the cookies it sets kept), then its socket with them, then every
+// message, keeping the hello, the newest state and the document's lines as
+// the page splices them, and whether it was told to wait or was refused.
 struct Browser {
     int port = 0;
-    std::string token;
+    std::string base, token;
+    std::string cookie;   // its jar: set before start() for a browser seen before
     int fd = -1;
     std::thread thread;
     std::atomic<bool> stop{false}, upgraded{false}, ended{false};
+    std::atomic<bool> waited{false}, denied{false};
     std::mutex mu;
     Json hello, state;
     long long docId = 0;
@@ -165,6 +200,8 @@ struct Browser {
         if (t == "hello") hello = m;
         else if (t == "state") state = m;
         else if (t == "gone") gone++;
+        else if (t == "waiting") waited = true;
+        else if (t == "denied") denied = true;
         else if (t == "doc") {
             docId = m["id"].asInt();
             lines.clear();
@@ -187,12 +224,20 @@ struct Browser {
     }
     void run() {
         if (fd < 0) return;
-        const std::string req = "GET /ws?t=" + token + " HTTP/1.1\r\nHost: 127.0.0.1:" +
-                                std::to_string(port) +
+        // The page first: its token traded for the credential's cookie.
+        const std::string host = "127.0.0.1:" + std::to_string(port);
+        const std::string page = Exchange(port, "GET " + base + "?t=" + token + " HTTP/1.1\r\nHost: " + host +
+                                                    "\r\n" + (cookie.empty() ? "" : "Cookie: " + cookie + "\r\n") +
+                                                    "\r\n");
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            KeepCookies(page, cookie);
+        }
+        const std::string req = "GET " + base + "ws HTTP/1.1\r\nHost: " + host +
                                 "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                                 "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-                                "Sec-WebSocket-Version: 13\r\nOrigin: http://127.0.0.1:" +
-                                std::to_string(port) + "\r\n\r\n";
+                                "Sec-WebSocket-Version: 13\r\nCookie: " + cookie +
+                                "\r\nOrigin: http://" + host + "\r\n\r\n";
         if (!WriteAll(fd, req)) return;
         std::string in;
         char buf[65536];
@@ -236,19 +281,37 @@ struct Browser {
     }
 };
 
+// A scripted browser on a fresh link of the window's page; `cookie` its jar
+// from before ("" for a browser never seen).
+Browser *NewBrowser(MCSessionBrowser *b, const std::string &cookie = "") {
+    Browser *r = new Browser();
+    r->port = b.port;
+    LinkParts([b newLink], &r->base, &r->token);
+    r->cookie = cookie;
+    r->start();
+    return r;
+}
+std::string CookieNamed(Browser *b, const std::string &name) {
+    std::lock_guard<std::mutex> lk(b->mu);
+    std::size_t at = b->cookie.find(name + "=");
+    if (at == std::string::npos) return "";
+    return b->cookie.substr(at, b->cookie.find(';', at) - at);
+}
+
 EditorController *gC = nil, *gC2 = nil;
 TerminalView *gTermA = nil, *gTermB = nil;
 Browser *gBrowser = nil, *gBrowser2 = nil;
 NSURL *gOpened = nil;
 NSString *gUrl = nil;
 int gPort = 0;
-std::string gToken;
+std::string gToken, gBase;
 NSString *gFile = nil;
 // What the plain requests got (written on their thread before `done`).
-std::string page, noToken, wrongToken, otherHost, wsWrong;
+std::string page, spent, noToken, wrongToken, otherHost, wsWrong;
 
 WKWebView *gPage = nil;
 NSDictionary *gSeen = nil;   // the page as last read
+dispatch_block_t gHeldAsk = nil;   // the window's sheet, held back (MCSessionBrowserAskDelay)
 
 // What the page shows, read in its own world (window.mcSessionView).
 NSString *const kRead =
@@ -269,6 +332,7 @@ NSString *const kRead =
     @" local: window.mcSessionView ? window.mcSessionView.local() : '',"
     @" closers: document.querySelectorAll('#tabs button:not(.local) .x').length,"
     @" web: window.mcSessionView ? window.mcSessionView.web() : null,"
+    @" href: location.href, gate: window.mcSessionView ? window.mcSessionView.gate() : '',"
     @" file: window.mcSessionView ? window.mcSessionView.file() : null,"
     @" pwned: String(window.pwned),"
     @" mode: document.getElementById('modebtn').classList.contains('hidden') ? '' : document.getElementById('modebtn').textContent,"
@@ -425,50 +489,84 @@ MC_GUI_SUITE(session_browser) {
         MCGuiNote(@"opened: %@", gOpened.absoluteString);
         GCHECK(gPort > 0);
         GCHECK_EQ_STR(gOpened.absoluteString, gUrl);
-        NSString *prefix = [NSString stringWithFormat:@"http://127.0.0.1:%d/?t=", gPort];
+        NSString *prefix = [NSString stringWithFormat:@"http://127.0.0.1:%d/v/", gPort];
         GCHECK([gUrl hasPrefix:prefix]);
-        NSString *token = [gUrl componentsSeparatedByString:@"?t="].lastObject;
-        GCHECK(token.length == 48);
-        gToken = token.UTF8String ?: "";
+        LinkParts(gUrl, &gBase, &gToken);
+        GCHECK(gToken.size() == 48 && gBase.size() == 20);
     });
-    MCGuiStep(@"a file opened now has a document on the host; the link copies the same address", ^{
+    __block std::string copiedToken;
+    __block NSUInteger sheetsBefore = 0;
+    MCGuiStep(@"a file opened now has a document on the host; the link copied is a fresh one", ^{
         [gC openFileAtPath:gFile];
         GCHECK(Active(gC).session != nil);
         [gC copySessionBrowserLink:nil];
-        GCHECK_EQ_STR([NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString], gUrl);
+        NSString *copied = [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];
+        std::string copiedBase;
+        LinkParts(copied, &copiedBase, &copiedToken);
+        MCGuiNote(@"copied %@", copied);
+        GCHECK(copiedBase == gBase && copiedToken.size() == 48 && copiedToken != gToken);
         GCHECK(gC.sessionBrowser.port == gPort);   // one server for the window
         [gC.sessionBrowser reportTabs];
+        sheetsBefore = MCGuiSheetsShown().count;
     });
     MCGuiAsync(@"plain requests: the page with its token, refusals without", 20, ^(MCGuiDone done) {
         const int port = gPort;
-        const std::string token = gToken;
+        const std::string token = gToken, base = gBase, other = copiedToken;
         std::thread([=] {
-            page = Get(port, "/?t=" + token, "127.0.0.1:" + std::to_string(port));
-            noToken = Get(port, "/", "127.0.0.1:" + std::to_string(port));
-            wrongToken = Get(port, "/?t=" + std::string(48, '0'), "127.0.0.1:" + std::to_string(port));
-            otherHost = Get(port, "/?t=" + token, "attacker.example");
-            wsWrong = Exchange(port, "GET /ws?t=wrong HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n"
-                                     "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-                                     "Sec-WebSocket-Version: 13\r\n\r\n");
+            const std::string host = "127.0.0.1:" + std::to_string(port);
+            page = Get(port, base + "?t=" + token, host);
+            spent = Get(port, base + "?t=" + token, host);
+            noToken = Get(port, base, host);
+            wrongToken = Get(port, base + "?t=" + std::string(48, '0'), host);
+            otherHost = Get(port, base + "?t=" + other, "attacker.example");
+            wsWrong = Exchange(port, "GET " + base + "ws?t=" + other + " HTTP/1.1\r\nHost: " + host +
+                                     "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                                     "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                                     "Sec-WebSocket-Version: 13\r\nOrigin: http://" + host + "\r\n\r\n");
             dispatch_async(dispatch_get_main_queue(), ^{ done(); });
         }).detach();
     });
     MCGuiStep(@"what each request got", ^{
         GCHECK(page.compare(0, 12, "HTTP/1.1 200") == 0);
         GCHECK(page.find("<!DOCTYPE html>") != std::string::npos);
+        // The cookie that carries the credential: HttpOnly, SameSite=Strict,
+        // the view's path.
+        GCHECK(page.find("\r\nSet-Cookie: mutible-view-" + std::to_string(gPort) + "=") != std::string::npos);
+        GCHECK(page.find("; Path=" + gBase + "; HttpOnly; SameSite=Strict\r\n") != std::string::npos);
+        // The link a second time: refused.
+        GCHECK(spent.compare(0, 12, "HTTP/1.1 403") == 0 && spent.find("used already") != std::string::npos);
         GCHECK(noToken.compare(0, 12, "HTTP/1.1 403") == 0 && noToken.find("<html") == std::string::npos);
         GCHECK(wrongToken.compare(0, 12, "HTTP/1.1 403") == 0);
         GCHECK(otherHost.compare(0, 12, "HTTP/1.1 403") == 0);
         GCHECK(wsWrong.compare(0, 12, "HTTP/1.1 403") == 0);
         GCHECK(gC.sessionBrowser.browsers == 0);
-        gBrowser = new Browser();
-        gBrowser->port = gPort;
-        gBrowser->token = gToken;
-        gBrowser->start();
+    });
+    MCGuiWait(@"the window asks about the browser that traded the link, on a sheet (Allow)", 20, ^BOOL {
+        return MCGuiSheetsShown().count > sheetsBefore && gC.sessionBrowser.asking == 0;
+    });
+    MCGuiStep(@"the sheet names the browser and where it is; then a scripted browser, Always Allowed", ^{
+        MCGuiNote(@"asked: %@ / %@", MCGuiSheetsShown().lastObject, MCGuiLastAlertInformative());
+        GCHECK_EQ_STR(MCGuiSheetsShown().lastObject, @"Allow an unknown browser to open this window's session?");
+        GCHECK(MCGuiLastSheetWindow() == gC.window);
+        GCHECK([MCGuiLastAlertInformative() containsString:@"from this Mac (127.0.0.1:"]);
+        GCHECK([MCGuiLastAlertInformative() containsString:@"see and edit"]);
+        GCHECK(MCSessionBrowsersRemembered().count == 0);
+        sheetsBefore = MCGuiSheetsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertThirdButtonReturn)]);   // Always Allow
+        gBrowser = NewBrowser(gC.sessionBrowser);
     });
     MCGuiWait(@"the browser's socket gets the window's tabs", 20, ^BOOL {
         std::lock_guard<std::mutex> lk(gBrowser->mu);
         return gBrowser->state.isObject() && gBrowser->state["docs"].size() > 0;
+    });
+    __block std::string remembered;   // the Always Allowed browser's id cookie
+    MCGuiStep(@"it was asked about once, and is remembered", ^{
+        GCHECK(MCGuiSheetsShown().count == sheetsBefore + 1);
+        NSArray *list = MCSessionBrowsersRemembered();
+        remembered = CookieNamed(gBrowser, "mutible-browser");
+        MCGuiNote(@"remembered: %@, its cookie %s", list, remembered.c_str());
+        GCHECK(list.count == 1 && !remembered.empty());
+        GCHECK(list.count == 1 && remembered == "mutible-browser=" + std::string([list[0][@"id"] UTF8String]));
     });
     __block long long docId = 0;
     MCGuiStep(@"the hello, and the state: the window's one document, no terminals", ^{
@@ -507,7 +605,32 @@ MC_GUI_SUITE(session_browser) {
         WKWebViewConfiguration *config = [WKWebViewConfiguration new];
         config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
         gPage = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 900, 700) configuration:config];
+        // The window's sheet held back, so the page is seen waiting.
+        MCSessionBrowserAskDelay = ^(dispatch_block_t ask) { gHeldAsk = ask; };
+        sheetsBefore = MCGuiSheetsShown().count;
+        gUrl = [gC.sessionBrowser newLink];
         [gPage loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:gUrl]]];
+    });
+    MCGuiWait(@"the page says it waits for approval in mutible", 30, ^BOOL {
+        Read();
+        return gHeldAsk != nil && [gSeen[@"gate"] isEqualToString:@"Waiting for approval in mutible"];
+    });
+    MCGuiStep(@"its address has lost the token; the window's sheet, Allow", ^{
+        NSString *at = [NSString stringWithFormat:@"http://127.0.0.1:%d%s", gPort, gBase.c_str()];
+        MCGuiNote(@"opened %@, now at %@", gUrl, gSeen[@"href"]);
+        GCHECK_EQ_STR(gSeen[@"href"], at);
+        GCHECK_EQ_STR(gPage.URL.absoluteString, at);
+        GCHECK(gPage.backForwardList.backList.count == 0);
+        GCHECK(gC.sessionBrowser.browsers == 0);   // nothing of the session yet
+        MCSessionBrowserAskDelay = nil;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);   // Allow
+        dispatch_block_t ask = gHeldAsk;
+        gHeldAsk = nil;
+        ask();
+        GCHECK(MCGuiSheetsShown().count == sheetsBefore + 1);
+        MCGuiNote(@"asked: %@", MCGuiSheetsShown().lastObject);
+        GCHECK_EQ_STR(MCGuiSheetsShown().lastObject, @"Allow a WebKit browser on macOS to open this window's session?");
+        GCHECK(MCSessionBrowsersRemembered().count == 1);   // Allow alone remembers nothing
     });
     MCGuiWait(@"the page shows the window's file, editable", 30, ^BOOL {
         Read();
@@ -612,7 +735,10 @@ MC_GUI_SUITE(session_browser) {
     MCGuiStep(@"at the token's /file/ address, in a tab of the page's own", ^{
         NSDictionary *f = gSeen[@"file"];
         MCGuiNote(@"file view: %@, tabs: %@", f, gSeen[@"tabs"]);
-        GCHECK_EQ_STR(f[@"src"], ([NSString stringWithFormat:@"/file/%s/logo.png", gToken.c_str()]));
+        // At the view's own address, with no secret in it: the cookie goes
+        // with the picture's request.
+        GCHECK_EQ_STR(f[@"src"], ([NSString stringWithFormat:@"%sfile/logo.png", gBase.c_str()]));
+        GCHECK(![f[@"src"] containsString:@(gToken.c_str())] && ![f[@"src"] containsString:@"t="]);
         GCHECK_EQ_STR(gSeen[@"local"], @"logo.png");
         GCHECK([[gSeen[@"tabs"] componentsSeparatedByString:@"|"] containsObject:@"+logo.png"]);
         GCHECK_EQ_STR(gSeen[@"note"], @"");
@@ -763,21 +889,17 @@ MC_GUI_SUITE(session_browser) {
         return [SeenPanes()[@"terminal"] boolValue];
     });
     MCGuiStep(@"a scripted browser on each window's page", ^{
-        gBrowser = new Browser();
-        gBrowser->port = gPort;
-        gBrowser->token = gToken;
-        gBrowser->start();
-        NSString *url2 = gC2.sessionBrowser.url;
-        gBrowser2 = new Browser();
-        gBrowser2->port = gC2.sessionBrowser.port;
-        gBrowser2->token = [url2 componentsSeparatedByString:@"?t="].lastObject.UTF8String ?: "";
-        gBrowser2->start();
+        // The browser Always Allowed: no sheet on either window.
+        sheetsBefore = MCGuiSheetsShown().count;
+        gBrowser = NewBrowser(gC.sessionBrowser, remembered);
+        gBrowser2 = NewBrowser(gC2.sessionBrowser, remembered);
     });
-    MCGuiWait(@"each page lists its own window's terminal and not the other's", 20, ^BOOL {
+    MCGuiWait(@"each page lists its own window's terminal and not the other's, nobody asked", 20, ^BOOL {
         return gBrowser->terms() == std::to_string(gTermA.sessionTerminal) + " " &&
                gBrowser2->terms() == std::to_string(gTermB.sessionTerminal) + " ";
     });
     MCGuiStep(@"keys for the other window's terminal, asked for by id, then for its own", ^{
+        GCHECK(MCGuiSheetsShown().count == sheetsBefore);
         MCGuiNote(@"this page: %s, the other: %s", gBrowser->terms().c_str(), gBrowser2->terms().c_str());
         const std::string b = std::to_string(gTermB.sessionTerminal);
         const std::string a = std::to_string(gTermA.sessionTerminal);
@@ -829,6 +951,31 @@ MC_GUI_SUITE(session_browser) {
         [gC2.window performClose:nil];
     });
     MCGuiWait(@"the second window is gone", 10, ^BOOL { return ![MCGuiControllers() containsObject:gC2]; });
+    MCGuiStep(@"a browser the window does not know, and Deny", ^{
+        sheetsBefore = MCGuiSheetsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Deny
+        gBrowser = NewBrowser(gC.sessionBrowser);
+    });
+    MCGuiWait(@"is refused, and its socket closed", 20, ^BOOL { return gBrowser->denied && gBrowser->ended; });
+    MCGuiStep(@"it saw nothing of the session; Remembered Browsers… lists the one, and Forget All", ^{
+        {
+            std::lock_guard<std::mutex> lk(gBrowser->mu);
+            GCHECK(!gBrowser->hello.isObject() && !gBrowser->state.isObject());
+        }
+        GCHECK(MCGuiSheetsShown().count == sheetsBefore + 1);
+        gBrowser->finish();
+        delete gBrowser;
+        gBrowser = nullptr;
+        GCHECK(gC.sessionBrowser.browsers == 1);   // the page in WebKit
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);   // Forget All
+        GCHECK([NSApp sendAction:@selector(showRememberedBrowsers:) to:nil from:nil]);
+        MCGuiNote(@"listed: %@ / %@", MCGuiAlertsShown().lastObject, MCGuiLastAlertInformative());
+        GCHECK_EQ_STR(MCGuiAlertsShown().lastObject, @"One browser is remembered");
+        GCHECK([MCGuiLastAlertInformative() hasPrefix:@"an unknown browser, from this Mac, since "]);
+        GCHECK(MCSessionBrowsersRemembered().count == 0);
+        [NSApp sendAction:@selector(showRememberedBrowsers:) to:nil from:nil];
+        GCHECK_EQ_STR(MCGuiAlertsShown().lastObject, @"No browsers are remembered");
+    });
     __block NSString *readUrl = nil;
     MCGuiStep(@"the page again, read-only (the remembered choice)", ^{
         [gPage stopLoading];

@@ -170,6 +170,20 @@ top of a turn, never inside a text system callback.
 
 ## Traps
 
+- **Cookies are not kept apart by port** (the browser view, 2026-11-18):
+  a cookie for 127.0.0.1 goes to every port of it, so a view's credential
+  is named for its port and scoped to its own path (`/v/ID/`); scoped to
+  `/` it would reach any dev server the page frames in its browser pane.
+  And `SameSite=Strict` is not sent on a navigation from another site, so
+  the browser's id (only a name) is Lax, or a link clicked in a chat page
+  would make the browser look new and forget that it was remembered.
+- **`history.replaceState` runs first in the page's script**, before the
+  socket opens; the page's own requests use `viewBase` (`{{BASE}}`), never a
+  path relative to the address, which changes under them.
+- **A page's socket is taken whatever its credential's state** and told
+  `waiting`, `denied` or `expired`: refused at the upgrade, a page cannot
+  tell why and reconnects every 2 s for ever. Only a socket with no
+  credential cookie at all is refused (403).
 - **A tree listing runs on the host's thread**, between typing messages;
   hence `kMaxListed`. Stage 7's bigger reads belong on a worker.
 - **GtkStack moves the keyboard to a tab's first pane** when it shows
@@ -1085,22 +1099,27 @@ rules, the views as data) and `src/SessionWebPage.cpp` (the one page, its
 CSS and script, no third-party code). The user's side is REFERENCE.md's
 "Remote sessions (early)".
 
-- **Access.** A socket on 127.0.0.1 (never `INADDR_ANY`), and a token of 48
-  hex digits from /dev/urandom made at start, printed once in the address
-  (`http://127.0.0.1:PORT/?t=TOKEN`). `Web::answer` refuses, in this order:
-  anything but GET (405), a Host that is not 127.0.0.1, localhost or [::1]
-  with any port (403; two Host or two Origin headers make the request bad),
-  an Origin that is not the page's own (`sameOrigin`: http:// and the
-  Host the request came under, so a page on another port or under the
-  other loopback name is refused too) and a socket upgrade with no Origin
-  at all (403; since 8b, when pages can edit), no token or a wrong
-  one (403, compared with `IdeLink::sameSecret`), then serves `/` (the page)
-  or `/ws` (the WebSocket upgrade, IdeLink's accept key and frames), else
-  404. The token is in the query of both because a browser's WebSocket
-  cannot send headers; the page has `Referrer-Policy: no-referrer` and
+- **Access.** A socket on 127.0.0.1 (never `INADDR_ANY`). Every address is
+  under the view's own path, `/v/ID/` (`Access::base`, 16 hex digits made
+  at start): the page at `/v/ID/`, the socket at `/v/ID/ws`, files at
+  `/v/ID/file/PATH`. A link (`http://127.0.0.1:PORT/v/ID/?t=TOKEN`, a token
+  of 48 hex digits from /dev/urandom) is good for one exchange, and the
+  page, the socket, files and reloads carry a credential in a cookie
+  instead (below, "Links, credentials and the Mac's question").
+  `Web::answer` refuses, in this order: anything but GET (405), a Host that
+  is not 127.0.0.1, localhost or [::1] with any port (403; two Host or two
+  Origin headers make the request bad), an Origin that is not the page's
+  own (`sameOrigin`: http:// and the Host the request came under, so a page
+  on another port or under the other loopback name is refused too) and a
+  socket upgrade with no Origin at all (403; since 8b, when pages can
+  edit), a path outside `/v/ID/` (404), then for the page a link's token
+  (exchanged) or the credential, for files the credential (allowed), for
+  the socket any credential cookie (an unknown one is taken and told
+  `expired`), else 403. The page has `Referrer-Policy: no-referrer` and
   fetches nothing else. The page's Content-Security-Policy allows one
-  script by a nonce made per response (`{{NONCE}}` in the page), inline
-  styles, data: pictures, and WebSockets to 127.0.0.1 and localhost.
+  script by a nonce made per response (`{{NONCE}}` in the page; `{{BASE}}`
+  is the view's path), inline styles, data: pictures, and WebSockets to
+  127.0.0.1 and localhost.
 - **A renderer that only reads.** The server attaches to the host's Unix
   socket as a `Client` with `setReadOnly(true)` (Hello flag 1) while at
   least one browser is connected, and detaches when the last goes, so a
@@ -1176,6 +1195,140 @@ document, and the view detaching when the browsers go). `make guitest
 SUITES=session_web` loads the page in a WKWebView that is in no window
 against a host in the guitest process: lines and colored spans, typing and
 terminal output followed, a wrong token refused.
+
+### Links, credentials and the Mac's question (2026-11-18)
+
+The owner's three (approved 2026-11-18): the token leaves the address bar
+and the history, a page left idle expires, and the Mac asks before a new
+browser connects. The logic is the core's `src/SessionWebAccess.{h,cpp}`
+(`Web::Access`, every method safe from any thread, the clock passed in);
+`Web::answer` and the server use it.
+
+- **Links are single use.** `Access::newLink` makes a token good until it
+  is exchanged once (we picked single use over "until exchanged", which is
+  the same rule: a token that was never exchanged works, one that was is
+  refused with "this link was used already", the last 64 spent ones
+  remembered for that message). At most 8 unspent links live; the oldest
+  goes. They do not expire: the headless host prints its first one at
+  start and may be opened hours later. `Server::url()`/`token()` give the
+  newest unspent link, made when none is; `Server::newLink()` a fresh one
+  (the Mac's Show and Copy each call it). `Options::nextLink` (the CLI)
+  hears a fresh address after each exchange, and `mutible host --web`
+  prints it ("that address has been used; the next browser opens:").
+- **The exchange** is the page's load: `GET /v/ID/?t=TOKEN` spends the
+  token and answers the page with `Set-Cookie: mutible-view-PORT=CRED;
+  Path=/v/ID/; HttpOnly; SameSite=Strict` (no Max-Age: gone when the
+  browser quits). Cookies are not kept apart by port, so the name carries
+  the port and the path is the view's own: a dev server on another
+  127.0.0.1 port that the page frames in its browser pane never gets it.
+  The page's script runs `history.replaceState(null, "", "/v/ID/")`
+  before anything else, so the address bar and the history entry lose
+  the token; a reload is `GET /v/ID/` with the cookie. A request with a
+  live credential and a spent or wrong token gets the page through the
+  credential (the same browser opening its link again). A live token is
+  exchanged even when a credential came too, so a new link replaces a
+  refused credential.
+- **The browser's id** (`mutible-browser`, 32 hex digits, `Path=/v/;
+  HttpOnly; SameSite=Lax; Max-Age` 400 days) is set at a browser's first
+  exchange, shared by every view on the machine so a remembered browser
+  is known again on another port (the Mac's port changes with each
+  server). Lax, so a link followed from another site (a chat page) still
+  sends it; it is only a name, worth nothing without a link's token. A
+  value that is not 32 lowercase hex digits is replaced.
+- **Idle expiry.** A credential ends after `Access::idle` with nothing
+  from its browser: an HTTP request carrying it (`touch` in `answer`) or
+  any message on its socket (`handleMessage` touches before anything
+  else; what the server sends does not count). The page sends `alive` at
+  most once a minute while it is visible and someone used it (keys,
+  pointer, wheel, touch), so a person reading and scrolling keeps it, and
+  a forgotten tab does not. The idle time is `Options::idleMinutes`
+  (fractions allowed; < 0, the default, takes
+  `editor.session-web-idle-minutes` from the settings file the palette
+  comes from, read at each change of the file; 60 by default, 0 for
+  ever). `lookAtAccess`, every turn of the server's loop (the poll's
+  timeout at most a quarter of the idle time), sweeps (`expire`) at most
+  every second (a quarter of the idle time when shorter) and tells each
+  page of a credential gone `expired {text}` (kExpiredText, "This view has
+  expired; open a new link from mutible.") and closes it. A reload with
+  that cookie is refused with the sentence alone as its body.
+- **The Mac's question.** With `Options::ask` set (the Mac), an exchange
+  from a browser `Options::remembered` does not know makes a Pending
+  credential and a question (`Access::Question`: id, the browser's id,
+  `browserSummary` of its User-Agent, the peer address and port). The
+  page loads; its socket gets `waiting {text}` instead of hello (it is not
+  counted in `browsers()`, attaches nothing, and every message from it is
+  dropped). `lookAtAccess` hands the oldest unanswered question to
+  `Options::ask` (once: `asked_`), and the next only once that one is
+  answered (`Server::answer`, any thread) or its credential expired.
+  Allow welcomes the waiting socket (hello and state); Deny sends `denied
+  {text}` and closes, and a reload of a denied credential is the page,
+  told `denied` at once, never asked again. **Rate limit**: at most
+  `kMaxWaiting` (3) questions unanswered and `kMaxQuestions` (10) put in
+  `kQuestionWindow` (10 minutes); past either the exchange answers 429
+  and the link is kept for later. Since every question costs a fresh link
+  that only the person at the Mac makes, no page can make the Mac ask in a
+  loop. Without `Options::ask` (`mutible host --web`, GTK until it
+  follows through the Linux session) the link alone admits: Allowed at
+  once.
+- **The Mac's side** (`MCSessionBrowser`): `o.ask` looks up on the
+  server's thread where the connection comes from (`MCSessionBrowserPeer`:
+  libproc over the user's processes for the TCP socket from the peer's
+  port to the server's; when that is `sshd`'s, the far end of its
+  established connection, "ADDRESS, through an SSH tunnel"; else "this
+  Mac"), then on the main queue begins a sheet on the window: "Allow
+  BROWSER to open this window's session?", Allow (Return), Deny (Escape),
+  Always Allow. The answer goes to the server that asked (a generation
+  per server started). Always Allow stores `{id, browser, address, since}`
+  under `MCSessionBrowsersRemembered` in the app's defaults, which
+  `o.remembered` reads (any thread). View > Remembered Browsers…
+  (`mutible.rememberedSessionBrowsers`, AppDelegate's
+  `showRememberedBrowsers:`, `MCSessionBrowsersShowRemembered`) lists them
+  in an alert with Done and Forget All. `MCSessionBrowserAskDelay` holds a
+  sheet back for checks. A window not active also bounces the Dock icon
+  once (`requestUserAttention:` informational).
+- **The page**: `#gate`, a plain sentence over the whole page, for
+  `waiting`, `denied` and `expired` (the last two end it: no reconnecting,
+  the viewer and the browser frame emptied). File addresses are
+  `/v/ID/file/PATH` with nothing secret in them (`fileTarget(base, rel)`).
+
+#### Checks
+
+`sessionweb:access`: cookies read and set, `browserSummary` over ten
+agents; a link exchanged once then Spent, a wrong and an empty one, the
+live link made afresh, the eight-link cap, browser ids kept or replaced
+(four malformed); idle expiry to the millisecond, a touch that comes too
+late, `expire`, 0 for ever; the question for a browser not remembered,
+one waiting its turn, a remembered one never asked, Allow and Deny, three
+waiting then Busy with the link kept, ten in ten minutes then Busy, one
+more after the window, a question whose page went quiet no longer
+answerable. `sessionweb:access-server` over the wire: a headless view
+(no one asked, a 1.8 s idle time): the exchange's two cookies, the next
+link said once, the spent link refused without the cookie and served
+with it, a reload with nothing set and the page's own path in it, a file
+through the cookie, `alive` keeping the page past its idle time, then
+`expired` and the socket closed, a reload's sentence, files refused, the
+socket told `expired`, a fresh link opening it again; then the Mac's
+kind: the page `waiting` with nothing of the session and no file, a
+second browser waiting its turn unasked, Allow (hello, and the list sent
+while waiting dropped), the next question put, Deny (`denied`, closed,
+its reload told at once and not asked again), a remembered browser
+straight in. `sessionweb:refusals` and `sessionweb:files` check the rules
+above as pure functions (the Set-Cookie lines, the old `/?t=` and
+`/file/TOKEN/` forms gone, no file without the cookie). GUI:
+`session_web` (the address after the page loads is `/v/ID/` with no
+token, nothing behind it in the history; a reload through the cookie; the
+same link in a second WKWebView refused as used; a 0.05-minute idle
+written to the settings file, then the page's "This view has expired"
+and its socket closed; the reload's sentence) and `session_browser` (the
+link Show opened and the one Copy made differ, both under `/v/ID/`; the
+plain request's Set-Cookie, the link refused the second time; the
+window's sheet for that browser, its words and window; a scripted
+browser Always Allowed and remembered; the WebKit page "Waiting for
+approval in mutible" while the sheet is held, its address without the
+token, then Allow; a picture's address with no secret; both windows'
+scripted browsers, remembered, let in with no sheet; an unknown browser
+Denied, seeing nothing; Remembered Browsers… listing it and Forget All).
+The sheet's wording and the expired page need the owner's eyes.
 
 ### The Mac's own host in a browser (View > Show Session in Browser…)
 
@@ -1478,9 +1631,11 @@ the browser shows them with its own viewers.
   was checked is what is read), at most `kMaxReadBytes` (4 MB) a read, on
   the host's thread. `length` 0 gives the size alone.
 - **HTTP, not the socket.** `<img>`, `<video>` and the PDF viewer need an
-  address, and video needs Range. `/file/TOKEN/PATH`: the token is the
-  path's first name, not the query, so an HTML page's relative pictures
-  and style sheets resolve to addresses that carry it (`answer()` gives
+  address, and video needs Range. `/v/ID/file/PATH` (it was
+  `/file/TOKEN/PATH` until the credential's cookie, 2026-11-18; above,
+  "Links, credentials and the Mac's question"): the browser sends the
+  cookie with each, so an HTML page's relative pictures and style sheets
+  are served too (`answer()` gives
   `Answer::File` with the path decoded by `pathDecode`: '+' kept, a NUL
   refused; the Host and Origin checks come first, as for the page). The
   server needs a page's socket open (the session is attached only then):
@@ -1564,7 +1719,7 @@ sandboxed, PDF not, a 5 MB video whole (three pieces) and in four
 ranges with a 416, the tree's views, a CSV's rows over the socket and
 two refusals, and 503 again once the page has gone; the page's CSP.
 GUI: `session_browser` clicks a PNG in the editable page's tree (the
-page shows it in a tab of its own at the token's /file/ address, decoded
+page shows it in a tab of its own at the view's /file/ address, decoded
 at its real width, and the window opens it) and a CSV (the page's table
 has the core's rows, and the window opens it); then a PNG in the
 read-only page's tree (its own tab, the window opening nothing, its ×
