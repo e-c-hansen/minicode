@@ -6811,20 +6811,37 @@ cursor in the terminal for dark mode does not appear to exist", and
   mutible at all: its `clas` wants `^ai\\.ible\\.Mutible$`. Adding mutible
   to Toshy's `terminals` list instead would make Cmd keys Ctrl+Shift in
   the whole window (Cmd+S as Save As), so it is not the fix.
-- **The `agents` suite's "the same key closes the panel" (open).** It
-  failed 1 of 5 plain runs of `agents` alone here (and in several logs of
-  other branches today), never in 44 runs since: 34 with a probe of the
-  test's own (an `activate` handler on the action, key controllers on the
-  window, or only the focus read before the key) and 10 with one
-  `fprintf` in `act_toggle_agents`. What the runs showed: the keyboard is
-  not in the terminal when the key is pressed but in the editor's tab
-  strip's GtkScrolledWindow (TabStrip's `scroller_`; every failing log
-  says the same), `<Control><Shift>a` runs `win.toggleagents` then, and
-  in a passing run the action runs once per press. Whether a failing run
-  runs it no times or twice is not known, so no fix was made; the next
-  step is a failing run with the `fprintf` probe, or the focus put back in
-  the editor when the agents panel's list empties, if the scroller turns
-  out to matter.
+- **The `agents` suite's "the same key closes the panel" (fixed, November
+  19).** It failed 2 of 3 runs of `agents` alone on main's build (3 of 5 on
+  another branch), the panel left open and the Worktrees steps after it
+  failing in turn. A probe (`fprintf` in `act_toggle_agents`, in the
+  window's capture-phase key controller `onHintsKey`, and in the step)
+  found the action ran no times: as the key went, the window's focus was a
+  `GtkListBoxRow` with no parent and no root, and the key reached none of
+  the window's controllers. `AgentsPanel::rebuild` removes every row and
+  makes them again; the last session's row had the keyboard (the step's
+  click on it), and GTK moves the keyboard off a removed widget only at
+  the window's next frame. Until then `gtk_root_get_focus` names the
+  removed row, a key goes to that row alone (its event's path runs up its
+  parents, and it has none), and no accelerator runs. The step pressed the
+  key as soon as the wait saw the rows gone: in passing runs 33 to 47 ms
+  after the rebuild, after GTK's frame had put the keyboard in the tab
+  strip's GtkScrolledWindow (where the failing logs found it, 5 s later);
+  in failing runs before it. A person met it too: a key pressed in the
+  frame after any remake of the rows, on a model change while Claude Code
+  writes a transcript or on the 30 s tick, was lost while a session row
+  had the keyboard; the Processes panel remakes its rows every half
+  second the same way. Now `linux/src/ListKeyboard.h` (header only) puts
+  the keyboard on the panel itself before the old rows go, and on the
+  selected new row (else the first) once they are in, or leaves it on the
+  panel, focusable while it has it, when there are none, so the window's
+  focus is never a removed widget; both panels use it. Opening the Agents
+  panel with no sessions now gives the panel the keyboard (its list is
+  hidden and could not take it), as the Problems panel does. The step
+  checks the keyboard is on the panel before the key, which failed in
+  every run without the fix (on the removed row, or in the tab strip once
+  GTK had moved it), where the key itself failed only when the race was
+  lost. Then 15 runs of `agents` alone passed in a row.
 - **Docs.** `docs/REFERENCE.md`: the Linux column says "in the terminal
   the program has it" for Ctrl+D, Q, C, X, V, F, N, O, S, L, B and Z, the
   terminal's word and line deletion row has Ctrl+W and Ctrl+U, and the
@@ -7064,6 +7081,109 @@ they do in Terminal.app.
   window, as item 110 read them, and whether its Super+Alt keymap for
   mutible is wanted), and GNOME on Wayland, where the harness's X11 Super
   (Mod4) cannot speak for GDK's Super mask.
+
+### 114. Home and End as VS Code's, JSON errors in Problems, and wrapped lines keeping their indentation (November 2026)
+
+The Mac's #213 and #214 brought to GTK with the same core calls
+(`MultiCaret::homeTarget`, `endTarget`, `homeCarets`, `endCarets`;
+`JsonOutline::checksAsJson`, `problems`, `allowsComments`;
+`WrapIndent::leadingColumns`, `continuationIndent`; none of their logic
+copied).
+
+- **Home and End.** Before, GTK's own: Home and End went to the display
+  line's start and end, so Home never stopped at the first non-blank
+  character. Now `Carets::onMoveCursor` takes
+  `GTK_MOVEMENT_DISPLAY_LINE_ENDS` (Home, End, the keypad's, with Shift)
+  in source text at one caret or several (`Carets::homeOrEnd`): Home to
+  the first non-blank character, then the line's start, then back; End to
+  the line's end; on a wrapped line End goes to the row's end first
+  (before the space it broke at, so the caret is drawn on that row) and
+  Home on a later row to its start first. A row is GTK's display line
+  (`Carets::rowAt`: `gtk_text_view_backward_display_line_start`, then
+  `forward_display_line` for the next one's start); not wrapping, the
+  whole line. GtkTextBuffer keeps the anchor itself (the selection bound),
+  so Shift needs none of the Mac's head-finding: Shift+Home then
+  Shift+Right gives a character back. A Markdown page, a message or the
+  welcome text keep GTK's. The registry's `cursorHome`, `cursorHomeSelect`,
+  `cursorEnd` and `cursorEndSelect` are Linux rows (home, shift+home, end,
+  shift+end), listed, not actions, like Ctrl+Home; the hints panel has
+  "Start of the line" and "End of the line (Shift selects)", and
+  REFERENCE.md's Linux column the keys.
+- **Trap: a long line read in blocks.** The core reads the text through
+  `MultiCaret::Text`, which asked `CaretText::text()` for 1,024-character
+  blocks; each block's `gtk_text_buffer_get_iter_at_offset` found its place
+  in a 5 MB line from the line's start, so End there took 49 s of CPU
+  (large_file's stall check). `CaretText::textNear(offsets)` reads the
+  carets' lines whole, once each, and serves the core's blocks from them:
+  92 ms for that End now (the bound is 250). `moveAll` (the arrows, and End
+  at several carets before this item) still reads through `text()`.
+- **JSON in Problems** (`LspSessionJsonCheck.cpp`, the Mac's
+  Lsp+JsonCheck.mm): a file `JsonOutline::checksAsJson` names that no
+  server has (`server_` and `alsoServer_` null, which servers off
+  includes) is parsed on a detached thread when it comes on show
+  (`documentChanged`) and 0.3 s after typing (`textEdited`); the answer
+  comes back through `lspui::afterMs` under `life_` and a generation, and
+  goes into the diagnostics store as the list of a server of its own,
+  `mutible.json`, source "json". Painting and F8 use `shownUri()` (the
+  server's URI, else the check's), `problemsKnown` holds while a file is
+  checked (so a valid one says "No problems"), `tabsChanged` drops the
+  lists of files no tab has, and a server taking the file erases the
+  editor's list. Over 8 MB: no check. JSON with comments (tsconfig.json,
+  .jsonc, .vscode's files) allows comments and trailing commas.
+- **Wrapped lines keep their indentation** (`WrapIndentTags.{h,cpp}`,
+  `editor.wrapping-indent`): GtkTextView has nothing like TextKit's line
+  fragment rects, but a paragraph's `indent` taken negative is a hanging
+  indent. Each source line with leading spaces or tabs and something after
+  them carries one tag of the shared tag table, `mutible-wrap-<columns>`
+  (columns by `WrapIndent::leadingColumns`, tabs to Pango's 8-column
+  stops), over the whole line and its break, so alike neighbours join up.
+  Each tag's pixels are `-continuationIndent(columns × space, mode, 4 ×
+  space, room)`, set by `WrapIndentTable::configure` from
+  `Editor::updateWrapIndent` (the setting through `applySettings`; a space
+  measured as the ruler measures, in the view's font, only while it shows
+  source; the room the text window less its margins), run in an idle after
+  each allocation (`CodeView::onAllocated`) and after a zoom; only tags
+  whose pixels change are set, so a zoom or a resize past the half-room
+  fall back re-lays lines out, and typing never does. `WrapIndentTags` (one
+  a document) retags the lines an edit touched, in the buffer's
+  `insert-text` and `delete-range` after-handlers: a space typed into the
+  indentation took 0.02 to 0.03 ms of CPU there in a file of 20,000
+  wrapped lines, and nothing changes when the leading width stays (the
+  line's first character's tags are read with `gtk_text_iter_get_tags`;
+  only they count, as GTK takes a paragraph's attributes from there). More
+  than 1,000 lines (a file opening, a big paste) get the lines on screen
+  at once and the rest in idle slices of 5 ms, the waiting range carried
+  through edits (`noteLines`). A paste from another buffer brings its
+  tags; `apply-tag` refuses wrap tags from anyone else, as the
+  highlighter's. On only for text, not in large-file mode (no wrapping
+  there) and not with none, decided in `Document::wrapIndentSettingChanged`
+  (from `startHighlighting`, so each load, rename and large-file switch,
+  and from `Editor::applySettings`); tags left from before keep 0 px with
+  none. Nothing reaches the text, its undo, a copy or a server. Left: the
+  first source file shown after the welcome text may draw one frame with
+  0 px (the space is measured in an idle once the view's font is the
+  source's).
+- **The CSV grid's menu keys** (#214's other half): the Mac's grid
+  swallowed every menu key; GTK's never did (its key controller takes only
+  Ctrl+Z and Ctrl+Y, and the window's accelerators run), now checked.
+- **Checks**: `editor_keys` (new, EditorKeysSuite.cpp: Home and End
+  first and second presses, End Left Left, Shift with Shift+Right and
+  Shift+End past the anchor, two carets plain and with Shift, and a
+  wrapped line's rows: End to the first row's end, drawn on that row, then
+  the line's end; Home on the second row to its start, then the line's;
+  Shift+End to the row's end; two carets on two rows); `problems` (a
+  package.json with a trailing comma: one error drawn on the comma, the
+  list's rows "# package.json — 1 error | E 3:21 Trailing comma [json]",
+  the status bar's "1 error"; Delete takes it away, "No problems"; typed
+  back, back; tsconfig.json's comment and trailing comma none; its tab
+  closed, gone); `word_wrap` (the continuations of an 8-space line and a
+  tab line at the first non-blank character's x by
+  `gtk_text_view_get_iter_location`, none at the edge, indent 4 spaces
+  further in, a space typed into the indentation moving them, a line
+  indented past half the pane at the edge, and 20,000 such lines settled
+  in idle time with a typed space's retag bounded at 2 ms of CPU);
+  `csv_table` (Ctrl+Shift+P in the grid opens the palette). The core's
+  `commands:linux-defaults` checks the four rows.
 
 ### 115. Tabs: whole names and a scrolling row, as VS Code's tabSizing "fit" (November 2026)
 

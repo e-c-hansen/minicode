@@ -11,6 +11,7 @@
 #include "CodeView.h"
 #include "DocumentView.h"
 #include "Editor.h"
+#include "LargeFileView.h"
 #include "MultiEdit.h"
 
 #include <algorithm>
@@ -121,6 +122,47 @@ MultiCaret::Text CaretText::text() {
     return MultiCaret::Text(n, [this](size_t start, size_t length, char16_t* out) {
         const std::u16string s = slice(start, start + length);
         std::copy(s.begin(), s.end(), out);
+    });
+}
+
+MultiCaret::Text CaretText::textNear(const std::vector<size_t>& offsets) {
+    lines_.clear();
+    for (size_t p : offsets) {
+        GtkTextIter a;
+        gtk_text_buffer_get_iter_at_offset(buffer_, &a, (int)p);
+        gtk_text_iter_set_line_offset(&a, 0);
+        const size_t start = (size_t)gtk_text_iter_get_offset(&a);
+        if (std::any_of(lines_.begin(), lines_.end(), [&](const Line& l) { return l.start == start; }))
+            continue;
+        GtkTextIter b = a;
+        if (!gtk_text_iter_forward_line(&b)) gtk_text_buffer_get_end_iter(buffer_, &b);
+        char* raw = gtk_text_buffer_get_slice(buffer_, &a, &b, TRUE);
+        std::u16string u = units(raw ? raw : "");
+        g_free(raw);
+        u.resize((size_t)(gtk_text_iter_get_offset(&b) - gtk_text_iter_get_offset(&a)), u' ');
+        lines_.push_back({start, std::move(u)});
+    }
+    const size_t n = (size_t)gtk_text_buffer_get_char_count(buffer_);
+    return MultiCaret::Text(n, [this](size_t start, size_t length, char16_t* out) {
+        size_t i = 0;
+        while (i < length) {
+            const size_t at = start + i;
+            const Line* in = nullptr;
+            size_t next = start + length;   // where the next line read whole starts
+            for (const Line& l : lines_) {
+                if (at >= l.start && at < l.start + l.units.size()) in = &l;
+                else if (l.start > at) next = std::min(next, l.start);
+            }
+            if (in) {
+                const size_t k = std::min(length - i, in->start + in->units.size() - at);
+                std::copy_n(in->units.begin() + (long)(at - in->start), k, out + i);
+                i += k;
+            } else {
+                const std::u16string s = slice(at, next);
+                std::copy(s.begin(), s.end(), out + i);
+                i += next - at;
+            }
+        }
     });
 }
 
@@ -258,6 +300,50 @@ void Carets::moveAll(Move m, bool extend) {
     goalX_.clear();
     set(MultiCaret::move(reader.text(), current(), m, extend));
     if (m == Move::DocumentStart || m == Move::DocumentEnd || !active()) revealCaret();
+}
+
+// The row of the screen a character is on, as MultiCaret::Row: the display
+// line GTK laid it on, from that line's start to the next one's (a caret at
+// a display line's start is on that line), or the whole line when the view
+// does not wrap. GTK lays out the caret's line to answer.
+MultiCaret::Row Carets::rowAt(size_t offset) const {
+    if (gtk_text_view_get_wrap_mode(view()) == GTK_WRAP_NONE) return {};
+    GtkTextIter start;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &start, (int)offset);
+    if (!gtk_text_view_starts_display_line(view(), &start))
+        gtk_text_view_backward_display_line_start(view(), &start);
+    GtkTextIter next = start;
+    // At the text's last display line it stops at the end (or stays put),
+    // which MultiCaret takes as the line's end.
+    gtk_text_view_forward_display_line(view(), &next);
+    return {(size_t)gtk_text_iter_get_offset(&start), (size_t)gtk_text_iter_get_offset(&next)};
+}
+
+// Home and End, Shift selecting, at one caret or several, as VS Code's
+// cursorHome and cursorEnd (MultiCaret::homeCarets, endCarets): Home to the
+// line's first non-blank character, then its start; End to the line's end,
+// or on a wrapped line to the row's end first. One caret is the buffer's
+// selection, whose bound stays as the anchor, so Shift+arrows after go on
+// from it. A long line shown a part at a time (LargeFileView.h) shows the
+// part the caret lands in.
+void Carets::homeOrEnd(bool toEnd, bool extend) {
+    CaretText reader(buffer_);
+    goalX_.clear();
+    const std::vector<Caret> carets = current();
+    std::vector<MultiCaret::Row> rows;
+    std::vector<size_t> heads;
+    rows.reserve(carets.size());
+    heads.reserve(carets.size());
+    for (const Caret& c : carets) {
+        rows.push_back(rowAt(c.head));
+        heads.push_back(c.head);
+    }
+    // Only the carets' lines are read (a long line's in one go).
+    const MultiCaret::Text text = reader.textNear(heads);
+    set(toEnd ? MultiCaret::endCarets(text, carets, rows, extend)
+              : MultiCaret::homeCarets(text, carets, rows, extend));
+    if (LongLines* l = LongLines::of(buffer_)) l->followCaret();
+    if (!active()) revealCaret();
 }
 
 // Up and Down: each caret a display line up or down at the x it had when

@@ -49,6 +49,7 @@ void LspSession::detachDocument() {
 // diagnostics, for when it is back on show.
 void LspSession::closeDocument() {
     detachDocument();
+    jsonDocumentClosed();
     server_.reset();
     alsoServer_.reset();
     uri_.clear();
@@ -90,7 +91,8 @@ void LspSession::documentChanged(const std::string& pathIn) {
     // It, and every other tab a running server takes (a server just started
     // gets them all); a tab that closed or stopped showing text is closed.
     syncOpenDocuments();
-    paintDiagnostics();
+    jsonCheckDocument();   // JSON no server has, checked by the editor
+    paintDiagnostics();    // a server's, or what the editor's last check found
     updateStatus();
     scheduleSemanticTokens(0);   // LspSessionSemantic.cpp
     if (!uri_.empty()) scheduleFoldingRanges(100);
@@ -102,13 +104,17 @@ void LspSession::textEdited(const char* inserted, int len) {
     actionsFollowCaret();
     scheduleSemanticTokens(300);   // the new text's tokens once typing pauses
     if (!uri_.empty()) scheduleFoldingRanges(600);
+    checkJsonAfter(300);   // only while the editor checks it as JSON
     // The session's own edits going in (an accept, the applier) are not typing.
     if (uri_.empty() || applyingEdit_) return;
     signatureAfterEdit(inserted, len);
     completionAfterEdit(inserted, len);
 }
 
-void LspSession::tabsChanged() { scheduleSync(); }
+void LspSession::tabsChanged() {
+    scheduleSync();
+    forgetJsonChecksOfClosedTabs();
+}
 
 // A file written from any tab, on show or not (Save All, auto-save, closing):
 // the servers that have it open hear didSave with the text written, so

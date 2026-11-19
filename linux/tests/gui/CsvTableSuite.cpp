@@ -9,6 +9,7 @@
 #include "CsvTable.h"
 #include "DocumentView.h"
 #include "Editor.h"
+#include "PalettePanel.h"
 
 #include <string>
 
@@ -70,6 +71,24 @@ MC_GUI_SUITE(csv_table) {
         GCHECK_EQ_STR(t->cell(2, 1), "Bob");
         GCHECK(t->delimiter() == ',');
         GCHECK(!ed()->dirty());
+    });
+    // The menu keys work while the grid has the keyboard (the Mac's #214:
+    // none did there; GTK's accelerators are the window's, which the
+    // grid's own Ctrl+Z and Ctrl+Y leave alone).
+    MCGuiStep("a click in the grid's first row", [] {
+        MCGuiFocusKeyWindow();
+        MCGuiClick(ed()->csvTable()->widget(), 60, 45);
+    });
+    MCGuiWait("the grid has the keyboard", 10, [] {
+        GtkWidget* f = gtk_root_get_focus(GTK_ROOT(MCGuiApp().window));
+        GtkWidget* grid = ed()->csvTable()->widget();
+        return f && (f == grid || gtk_widget_is_ancestor(f, grid));
+    });
+    MCGuiStep("Ctrl+Shift+P", [] { MCGuiKey("ctrl+shift+p"); });
+    MCGuiWait("the palette opens", 10, [] { return MCGuiApp().palette->isOpen(); });
+    MCGuiStep("Escape", [] { MCGuiKey("escape"); });
+    MCGuiWait("it closes, nothing changed", 10, [] {
+        return !MCGuiApp().palette->isOpen() && !ed()->dirty();
     });
     MCGuiStep("one cell edited: one line of the text changes, in one undo step", [] {
         GCHECK(ed()->csvTable()->setCell(2, 2, "99"));

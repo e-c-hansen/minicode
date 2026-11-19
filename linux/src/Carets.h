@@ -46,6 +46,12 @@
 //     Shift), Ctrl+Backspace and Ctrl+Delete. A preview keeps GTK's words.
 //   - Ctrl+Up and Ctrl+Down scroll a line, the caret staying, as VS Code's
 //     scrollLineUp and scrollLineDown (GTK's move by paragraphs).
+//   - Home and End are VS Code's cursorHome and cursorEnd (the core's
+//     MultiCaret::homeTarget and endTarget, as on the Mac): Home goes to the
+//     line's first non-blank character, then to its start; End to the
+//     line's end, or on a wrapped line to the end of the row on screen
+//     first (GTK's display line, rowAt); Shift selects from the anchor.
+//     GTK's own went to the display line's start.
 //
 // Not done: an input method's composed text goes in at the first caret
 // only (and ends the others), the extra carets do not blink, and a column
@@ -157,6 +163,10 @@ private:
     void newline();
     void tab();
     void moveAll(MultiCaret::Move m, bool extend);
+    // Home and End at every caret (one or several), and the screen row a
+    // character is on for them.
+    void homeOrEnd(bool toEnd, bool extend);
+    MultiCaret::Row rowAt(size_t offset) const;
     void moveVertically(int direction, bool extend);
     void collapse();
     bool findStateHolds() const;

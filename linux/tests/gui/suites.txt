@@ -129,3 +129,4 @@ HostWrapSuite.cpp
 TreeEditsSuite.cpp
 HintsPanelSuite.cpp
 WindowTitleSuite.cpp
+EditorKeysSuite.cpp
