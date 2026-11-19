@@ -16,7 +16,11 @@
 // at once and sent with the version they were made on (moved past others'
 // with the same rules as src/Ot.cpp), undo and save asked of the server,
 // and keys for the terminal on show. A Markdown page goes into a sandboxed
-// frame with no scripts. "{{NONCE}}" is the response's script nonce. Every
+// frame with no scripts. A picture, PDF, audio, video or HTML file clicked
+// in the tree shows in a tab of this page's own from the server's /file/
+// address (an HTML page in a frame sandboxed with no scripts), and a CSV
+// or TSV file as a table of the rows the server parsed (R3); an editable
+// page opens it in the window too. "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
 #include "SessionWeb.h"
@@ -159,6 +163,23 @@ body:not(.editable) #caret { display: none; }
 #code.wrap .l::before { text-indent: 0; }
 #md { flex: 1; border: 0; width: 100%; background: var(--bg); min-height: 0; }
 #note { padding: 2em 1em; color: var(--muted); }
+#fileopen { color: var(--accent); flex: none; font-size: 12px; }
+#fileview { flex: 1; min-height: 0; overflow: auto; display: flex; }
+#fileview.center { align-items: center; justify-content: center; padding: 12px; }
+#fileview img { max-width: 100%; max-height: 100%; object-fit: contain;
+                background: repeating-conic-gradient(rgba(127, 127, 127, .18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+#fileview video { max-width: 100%; max-height: 100%; }
+#fileview audio { width: min(600px, 90%); }
+#fileview iframe { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
+#fileview table { border-collapse: collapse; align-self: flex-start; font-size: var(--efs); }
+#fileview td, #fileview th { border: 1px solid var(--line); padding: 2px 8px; text-align: left;
+                             vertical-align: top; white-space: pre; max-width: 40ch; overflow: hidden;
+                             text-overflow: ellipsis; }
+#fileview th.rn { color: var(--ln); background: var(--gutter); text-align: right; font-weight: normal;
+                  user-select: none; position: sticky; left: 0; }
+#fileview tr.head td { font-weight: 600; position: sticky; top: 0; background: var(--hbg); }
+#filenote { padding: 2em 1em; color: var(--muted); }
+#filemore { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none; }
 #termnote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px;
             border-top: 1px solid #333333; }
 .hidden { display: none !important; }
@@ -201,10 +222,12 @@ body:not(.editable) #caret { display: none; }
  <div id="top">
   <section id="docsec">
     <div id="tabrow"><nav id="tabs" class="strip"></nav></div>
-    <div id="docbar"><span id="docpath"></span><button id="modebtn" class="hidden" type="button"></button></div>
+    <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
     <div id="note" class="hidden"></div>
+    <div id="fileview" class="hidden"></div>
+    <p id="filemore" class="hidden"></p>
   </section>
   <section id="websec" class="hidden" aria-label="Browser">
     <div id="webrow" class="panerow"><nav id="webtabs" class="strip"></nav><input id="browse" class="hidden" type="text" inputmode="url" placeholder="Open an address in the window" title="Opens in the mutible window's browser pane" aria-label="Open an address in the mutible window's browser pane" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button id="webclose" class="iconbtn" type="button" title="Hide the browser on this page (the window keeps it)" aria-label="Hide the browser on this page">&#215;</button></div>
@@ -549,6 +572,7 @@ body:not(.editable) #caret { display: none; }
   // A document with typing not yet confirmed waits for it before another
   // shows, so nothing typed is left behind.
   function showDoc(id) {
+    hideViewer();
     if (L.on) {
       L.on = "";
       if (id === want.doc) { want.doc = 0; D.id = 0; }   // asked for again: the server sends it whole
@@ -573,6 +597,8 @@ body:not(.editable) #caret { display: none; }
     const f = L.tabs.find((x) => x.path === rel);
     if (!f) return;
     if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
+    if (f.viewer) { showViewer(f); return; }
+    hideViewer();
     L.on = rel;
     if (want.doc) { want.doc = 0; sendShow(); }   // the session's document stops coming
     followDoc = false;
@@ -601,6 +627,7 @@ body:not(.editable) #caret { display: none; }
   function closeLocal(rel) {
     L.tabs = L.tabs.filter((x) => x.path !== rel);
     if (L.on === rel) {
+      hideViewer();
       // Back to the window's tab on show.
       L.on = "";
       D.id = 0;
@@ -611,6 +638,113 @@ body:not(.editable) #caret { display: none; }
     }
     drawTabs();
     markCurrent();
+  }
+  // ---- a file the browser shows itself (R3), in a tab of this page's own:
+  // served by the session's server at /file/TOKEN/PATH, read from the
+  // host's folder, in the browser's own viewers; a CSV or TSV as rows the
+  // server parsed (`file`, answered `table`).
+  const V = { on: "" };   // the viewer tab on show, by path
+  function fileUrl(rel) {
+    return "/file/" + encodeURIComponent(token) + "/" + rel.split("/").map(encodeURIComponent).join("/");
+  }
+  function fileNote(text) {
+    const box = $("fileview");
+    box.textContent = ""; box.className = "";
+    const n = document.createElement("div");
+    n.id = "filenote"; n.textContent = text;
+    box.appendChild(n);
+  }
+  function openViewer(rel, view) {
+    if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
+    if (!L.tabs.find((x) => x.path === rel))
+      L.tabs.push({ path: rel, abs: T.root ? T.root + "/" + rel : rel, view: view, viewer: true });
+    showLocal(rel);
+  }
+  function showViewer(f) {
+    const rel = f.path, view = f.view;
+    L.on = rel;
+    if (want.doc) { want.doc = 0; sendShow(); }   // the session's document stops coming
+    followDoc = false;
+    D.id = 0; D.kind = ""; D.editable = false; D.flight = null; D.queue = [];
+    $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
+    $("modebtn").classList.add("hidden"); $("note").classList.add("hidden");
+    $("docpath").textContent = rel + " (on this page only)";
+    drawSelection();
+    const box = $("fileview"), url = fileUrl(rel), open = $("fileopen");
+    box.classList.remove("hidden");
+    $("filemore").classList.add("hidden");
+    open.href = url;
+    open.classList.toggle("hidden", view === "table");
+    if (V.on !== rel) {
+      V.on = rel;
+      box.textContent = ""; box.className = "";
+      let el = null;
+      if (view === "image") {
+        el = document.createElement("img"); el.alt = base(rel); box.className = "center";
+      } else if (view === "audio" || view === "video") {
+        el = document.createElement(view); el.controls = true; el.preload = "metadata"; box.className = "center";
+      } else if (view === "pdf") {
+        el = document.createElement("iframe"); el.title = base(rel);
+      } else if (view === "html") {
+        // Sandboxed with no scripts and an origin of its own, as the
+        // server's CSP serves it too: the page is drawn, nothing in it runs.
+        el = document.createElement("iframe"); el.setAttribute("sandbox", "");
+        el.referrerPolicy = "no-referrer"; el.title = base(rel);
+      } else if (view === "table") {
+        if (f.table) drawTable(f.table);
+        else { fileNote("Reading " + base(rel) + "…"); post({ t: "file", path: rel }); }
+      }
+      if (el) {
+        el.addEventListener("error", () => { if (V.on === rel) fileNote(base(rel) + " could not be shown here."); });
+        el.src = url;
+        box.appendChild(el);
+      }
+    } else if (view === "table" && f.table) {
+      drawTable(f.table);
+    }
+    drawTabs();
+    markCurrent();
+  }
+  // The file's view goes (no sound left playing), and the editor's area is
+  // the editor's again.
+  function hideViewer() {
+    if (!V.on) return;
+    V.on = "";
+    $("fileview").textContent = "";
+    $("fileview").classList.add("hidden");
+    $("filemore").classList.add("hidden");
+    $("fileopen").classList.add("hidden");
+  }
+  function drawTable(m) {
+    const box = $("fileview");
+    box.textContent = ""; box.className = "";
+    if (m.error !== undefined) { fileNote(m.error); return; }
+    if (!(m.rows || []).length) { fileNote(base(m.path) + " is empty."); return; }
+    const table = document.createElement("table"), body = document.createElement("tbody");
+    m.rows.forEach((row, i) => {
+      const tr = document.createElement("tr");
+      if (i === 0) tr.className = "head";   // the first row is usually the header, as the window shows it
+      const n = document.createElement("th");
+      n.className = "rn"; n.textContent = String(i + 1);
+      tr.appendChild(n);
+      for (let c = 0; c < (m.columns || 0); c++) {
+        const td = document.createElement("td");
+        td.textContent = c < row.length ? row[c] : "";
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    box.appendChild(table);
+    const more = $("filemore");
+    more.textContent = m.truncated ? "The first " + m.rows.length + " rows; the rest shows in the mutible window." : "";
+    more.classList.toggle("hidden", !m.truncated);
+  }
+  function onTable(m) {
+    const f = L.tabs.find((x) => x.viewer && x.path === m.path);
+    if (!f) return;
+    f.table = m;
+    if (V.on === m.path) drawTable(m);
   }
   function onFileText(m) {
     const p = T.pending;
@@ -726,6 +860,17 @@ body:not(.editable) #caret { display: none; }
   function openFile(rel, e, keep) {
     treeNote("");
     if (narrow.matches) setSide(false);
+    if (e.view) {
+      // A file the browser shows itself: in a tab of this page's own; an
+      // editable page opens it in the window too, as for any file, and
+      // stays on it here.
+      openViewer(rel, e.view);
+      if (canOpen) {
+        T.pending = { rel: rel, kind: e.kind || "text", abs: "", shown: true };
+        if (!post({ t: "open", path: rel, keep: !!keep })) T.pending = null;
+      }
+      return;
+    }
     if (!canOpen) {
       // This page's own tab: the window's tabs stay as they are. A file
       // the window has open already is shown from its tab, live.
@@ -733,7 +878,7 @@ body:not(.editable) #caret { display: none; }
       const d = state && abs ? state.docs.find((x) => x.path === abs) : null;
       if (d) { followDoc = d.id === sessionDoc(); showDoc(d.id); return; }
       if (kViewerKinds.has(e.kind || "text")) {
-        treeNote(base(rel) + " is not text: this page shows text files; it opens in the mutible window.");
+        treeNote(base(rel) + " is not a file this page can show; it opens in the mutible window.");
         return;
       }
       T.pending = { rel: rel, kind: e.kind || "text", abs: "" };
@@ -746,6 +891,7 @@ body:not(.editable) #caret { display: none; }
   function onOpening(m) {
     const p = T.pending;
     if (!p || p.rel !== m.path) return;
+    if (p.shown) { T.pending = null; return; }
     if (!m.ok) { T.pending = null; treeNote(m.why); return; }
     if (kViewerKinds.has(p.kind)) {
       T.pending = null;
@@ -1468,6 +1614,7 @@ body:not(.editable) #caret { display: none; }
 
   // ---- documents on show
   function showNote(text) {
+    hideViewer();
     $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
     $("modebtn").classList.add("hidden");
     const n = $("note"); n.textContent = text; n.classList.remove("hidden");
@@ -1716,6 +1863,7 @@ body:not(.editable) #caret { display: none; }
         case "opening": onOpening(m); break;
         case "browsing": onBrowsing(m); break;
         case "filetext": onFileText(m); break;
+        case "table": onTable(m); break;
         case "closing": if (!m.ok) toast(m.why || "That tab was not closed."); break;
       }
     };
@@ -1848,6 +1996,16 @@ body:not(.editable) #caret { display: none; }
     tabs: () => [...$("tabs").querySelectorAll("button")].map((b) => (b.classList.contains("local") ? "+" : "") +
                                                                       b.firstChild.textContent),
     local: () => L.on,
+    file: () => {
+      if (!V.on) return null;
+      const f = L.tabs.find((x) => x.path === V.on) || {};
+      const box = $("fileview"), el = box.firstElementChild, rows = [...box.querySelectorAll("tbody tr")];
+      return { view: f.view, path: V.on, src: (el && el.getAttribute("src")) || "",
+               width: el && el.tagName === "IMG" ? el.naturalWidth : 0,
+               sandbox: el && el.hasAttribute("sandbox") ? el.getAttribute("sandbox") : null,
+               rows: rows.map((r) => [...r.querySelectorAll("td")].map((c) => c.textContent).join(",")),
+               note: ($("filenote") || {}).textContent || "" };
+    },
     windowPanes: () => windowPanes(),
   };
   connect();

@@ -1236,6 +1236,132 @@ static void testSessionWeb() {
         }
     }
 
+    // Closed windows (stage 6): a record whose renderer went, or that a
+    // closing window left on the host detached for the folder's next
+    // window, is no window on the page; its documents still are, and a
+    // window taking the record over shows again.
+    GROUP("sessionweb:closed-windows");
+    {
+        auto record = [](int connected, int detached) {
+            Json r = Json::object();
+            if (connected >= 0) r.set("connected", Json(connected == 1));
+            Json tabs = Json::object();
+            if (detached >= 0) tabs.set("detached", Json(detached == 1));
+            r.set("tabs", std::move(tabs));
+            return r;
+        };
+        CHECK(Web::windowOpen(record(1, -1)));
+        CHECK(Web::windowOpen(record(-1, -1)));   // a host from before `connected`
+        CHECK(Web::windowOpen(record(1, 0)));
+        CHECK(!Web::windowOpen(record(0, -1)));
+        CHECK(!Web::windowOpen(record(1, 1)));
+        CHECK(!Web::windowOpen(record(0, 1)));
+
+        std::mutex routesMu;
+        std::map<Shared::ClientId, Shared::Client*> routes;
+        Shared::SessionHost host([&](Shared::ClientId to, Message&& m) {
+            std::lock_guard<std::mutex> lk(routesMu);
+            auto it = routes.find(to);
+            if (it != routes.end()) it->second->deliver(std::move(m));
+        });
+        auto join = [&](Shared::Client& c) {
+            const Shared::ClientId id = host.connect();
+            {
+                std::lock_guard<std::mutex> lk(routesMu);
+                routes[id] = &c;
+            }
+            c.connect([&host, id](Message&& m) { host.post(id, std::move(m)); });
+            return id;
+        };
+        auto tabsOf = [](Shared::DocId d, const std::string& path) {
+            Json t = Json::object();
+            t.set("doc", Json((int64_t)d));
+            t.set("path", Json(path));
+            Json tabs = Json::array();
+            tabs.push(std::move(t));
+            Json g = Json::object();
+            g.set("tabs", std::move(tabs));
+            g.set("active", Json((int64_t)d));
+            Json groups = Json::array();
+            groups.push(std::move(g));
+            Json w = Json::object();
+            w.set("root", Json("/w"));
+            w.set("focused", Json(0));
+            w.set("groups", std::move(groups));
+            return w;
+        };
+        Shared::Client editor(Model::Unit::Utf16, "editor"), other(Model::Unit::Utf16, "other");
+        join(editor);
+        const Shared::ClientId otherId = join(other);
+        editor.open(1, "/w/a.txt", "a\n", nullptr);
+        editor.open(2, "/w/b.txt", "b\n", nullptr);
+        other.open(3, "/w/c.txt", "c\n", nullptr);
+        editor.windowTabs(5, tabsOf(1, "/w/a.txt"));   // open
+        Json left = tabsOf(2, "/w/b.txt");
+        left.set("detached", Json(true));               // a closing window's
+        editor.windowTabs(6, left);
+        editor.detach(2);
+        other.windowTabs(7, tabsOf(3, "/w/c.txt"));
+        CHECK(editor.settle() && other.settle());
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes.erase(otherId);
+        }
+        host.disconnect(otherId);   // its renderer goes: window 7 is closed
+        CHECK(editor.settle());
+
+        Web::Server web;
+        Web::Options o;
+        o.folder = "/w";
+        o.pollMs = 100;
+        o.connect = [&](Shared::Client& c) -> std::function<void()> {
+            const Shared::ClientId id = join(c);
+            return [&, id] {
+                {
+                    std::lock_guard<std::mutex> lk(routesMu);
+                    routes.erase(id);
+                }
+                host.disconnect(id);
+            };
+        };
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        {
+            PageClient p;
+            CHECK(p.upgrade(web.port(), "/ws?t=" + web.token()));
+            Json state;
+            auto take = [&](const Json& m) {
+                if (m["t"].asString() == "state") state = m;
+            };
+            auto actives = [&] {
+                std::string out;
+                for (const Json& w : state["windows"].elements())
+                    out += std::to_string(w["groups"][0]["active"].asInt()) + " ";
+                return out;
+            };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            // Window 5 only; every document still listed.
+            CHECK(actives() == "1 ");
+            if (actives() != "1 ") std::printf("  closed-windows: %s\n", state.dump().c_str());
+            CHECK(state["docs"].size() == 3);
+            // The folder's next window takes record 6 over: shown again.
+            editor.open(2, "/w/b.txt", "", nullptr);
+            editor.windowTabs(6, tabsOf(2, "/w/b.txt"));
+            CHECK(editor.settle());
+            web.lookNow();
+            CHECK(p.pump(take, [&] { return actives() == "1 2 "; }, 5000));
+            p.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0; }));
+        }
+        web.stop();
+        webThread.join();
+        {
+            std::lock_guard<std::mutex> lk(routesMu);
+            routes.clear();
+        }
+    }
+
     // A page that edits (stage 8b): its edits reach the host and the
     // window's renderer, crossing the renderer's own in flight and ending
     // on one text; Return takes the core's indentation; undo is the host's;
@@ -1913,6 +2039,306 @@ static void testSessionWeb() {
         const std::string& page = Web::pageHtml();
         CHECK(page.find("id=\"tree\"") != std::string::npos && page.find("id=\"sidebtn\"") != std::string::npos);
         CHECK(Web::paletteJson().has("treeIgnored"));
+    }
+
+    // Files for the page's viewers (R3): what is served and how, as pure
+    // functions; the host's "read" confined as the tree's listing is; then
+    // the whole server over the wire: no file without the token or before a
+    // page is open, every escape refused, the bytes whole and in ranges,
+    // nosniff and a sandbox CSP, and a CSV as rows over the socket.
+    GROUP("sessionweb:files");
+    {
+        // What the page shows itself, and how it is served.
+        CHECK(Web::fileType("a/b/Shot.PNG").view == "image" && Web::fileType("x.png").mime == "image/png");
+        CHECK(Web::fileType("x.jpeg").mime == "image/jpeg" && Web::fileType("x.webp").view == "image");
+        CHECK(Web::fileType("logo.svg").mime == "image/svg+xml" && Web::fileType("logo.svg").sandbox);
+        CHECK(Web::fileType("doc.pdf").view == "pdf" && Web::fileType("doc.pdf").mime == "application/pdf");
+        CHECK(!Web::fileType("doc.pdf").sandbox);
+        CHECK(Web::fileType("song.mp3").view == "audio" && Web::fileType("song.mp3").maxBytes == 0);
+        CHECK(Web::fileType("clip.mov").mime == "video/quicktime" && Web::fileType("clip.webm").view == "video");
+        CHECK(Web::fileType("index.html").view == "html" && Web::fileType("index.html").sandbox);
+        CHECK(Web::fileType("index.htm").mime == "text/html; charset=utf-8");
+        CHECK(Web::fileType("data.csv").view == "table" && Web::fileType("data.csv").mime.empty());
+        CHECK(Web::fileType("data.TSV").view == "table");
+        CHECK(Web::fileType("site.css").view.empty() && Web::fileType("site.css").mime == "text/css; charset=utf-8");
+        for (const char* text : {"main.py", "notes.txt", "Makefile", ".png", "a.js", "x.sqlite", "a.ts"})
+            CHECK(Web::fileType(text).view.empty() && Web::fileType(text).mime.empty());
+        CHECK(Web::fileType("big.png").maxBytes == std::uint64_t(64) << 20);
+        CHECK(Web::fileTarget("ab12", "docs/My Shot+1.png") == "/file/ab12/docs/My%20Shot%2B1.png");
+        CHECK(Web::fileTarget("ab12", "caf\xc3\xa9/%.png") == "/file/ab12/caf%C3%A9/%25.png");
+
+        // Ranges: one range, clipped; several, another unit or malformed,
+        // the whole file; past the end, unsatisfiable.
+        auto range = [](const char* h, std::uint64_t size) {
+            const std::string header = h ? h : "";
+            return Web::byteRange(h ? &header : nullptr, size);
+        };
+        Web::ByteRange br = range(nullptr, 1000);
+        CHECK(br.kind == Web::ByteRange::Whole && br.start == 0 && br.end == 999 && br.length() == 1000);
+        br = range("bytes=100-199", 1000);
+        CHECK(br.kind == Web::ByteRange::Part && br.start == 100 && br.end == 199 && br.length() == 100);
+        br = range("bytes=900-", 1000);
+        CHECK(br.kind == Web::ByteRange::Part && br.start == 900 && br.end == 999);
+        br = range("bytes=990-5000", 1000);
+        CHECK(br.kind == Web::ByteRange::Part && br.end == 999 && br.length() == 10);
+        br = range("bytes=-10", 1000);
+        CHECK(br.kind == Web::ByteRange::Part && br.start == 990 && br.end == 999);
+        br = range("bytes=-5000", 1000);
+        CHECK(br.kind == Web::ByteRange::Part && br.start == 0 && br.end == 999);
+        CHECK(range("bytes=1000-", 1000).kind == Web::ByteRange::Unsatisfiable);
+        CHECK(range("bytes=0-", 0).kind == Web::ByteRange::Unsatisfiable);
+        CHECK(range("bytes=-0", 1000).kind == Web::ByteRange::Unsatisfiable);
+        for (const char* whole : {"bytes=0-1,5-9", "items=0-5", "bytes=5-1", "bytes=a-b", "bytes=", "bytes=-", "0-5",
+                                  "bytes=99999999999999999999-"})
+            CHECK(range(whole, 1000).kind == Web::ByteRange::Whole);
+
+        // The heads.
+        std::string head = Web::fileHead(Web::fileType("a.png"), 1000, range(nullptr, 1000));
+        CHECK(head.compare(0, 15, "HTTP/1.1 200 OK") == 0);
+        CHECK(head.find("\r\nContent-Type: image/png\r\n") != std::string::npos);
+        CHECK(head.find("\r\nContent-Length: 1000\r\n") != std::string::npos);
+        CHECK(head.find("\r\nX-Content-Type-Options: nosniff\r\n") != std::string::npos);
+        CHECK(head.find("\r\nAccept-Ranges: bytes\r\n") != std::string::npos);
+        CHECK(head.find("Content-Security-Policy: sandbox;") != std::string::npos);
+        CHECK(head.size() >= 4 && head.compare(head.size() - 4, 4, "\r\n\r\n") == 0);
+        head = Web::fileHead(Web::fileType("a.mp4"), 1000, range("bytes=100-199", 1000));
+        CHECK(head.compare(0, 12, "HTTP/1.1 206") == 0);
+        CHECK(head.find("\r\nContent-Range: bytes 100-199/1000\r\n") != std::string::npos);
+        CHECK(head.find("\r\nContent-Length: 100\r\n") != std::string::npos);
+        head = Web::fileHead(Web::fileType("a.mp4"), 1000, range("bytes=2000-", 1000));
+        CHECK(head.compare(0, 12, "HTTP/1.1 416") == 0 && head.find("Content-Range: bytes */1000") != std::string::npos);
+        for (const char* sandboxed : {"a.svg", "a.html", "a.xhtml", "a.css", "a.mp3", "a.webm"})
+            CHECK(Web::fileHead(Web::fileType(sandboxed), 10, range(nullptr, 10))
+                      .find("Content-Security-Policy: sandbox; script-src 'none'") != std::string::npos);
+        CHECK(Web::fileHead(Web::fileType("a.pdf"), 10, range(nullptr, 10)).find("Content-Security-Policy") ==
+              std::string::npos);
+
+        // The token is the path's first name; the Host and Origin rules hold.
+        const std::string token = Web::newToken();
+        auto ask = [&](const std::string& target, const std::string& extra = "") {
+            return Web::answer(request(getWith(target, extra)), token, "page");
+        };
+        Web::Answer a = ask("/file/" + token + "/pics/My%20Shot+1.png");
+        CHECK(a.kind == Web::Answer::File && a.file == "pics/My Shot+1.png");
+        a = ask("/file/" + token + "/a%2F..%2Fb.png");
+        CHECK(a.kind == Web::Answer::File && a.file == "a/../b.png");   // the host refuses it (below)
+        CHECK(ask("/file/" + token + "/").kind == Web::Answer::File);    // no name: the host refuses it
+        a = ask("/file//pic.png");
+        CHECK(a.kind == Web::Answer::Refused && a.status == 403);
+        a = ask("/file/" + token);
+        CHECK(a.kind == Web::Answer::Refused && a.status == 403);
+        // A wrong token: the last digit changed (always another digit).
+        a = ask("/file/" + token.substr(0, 47) + (token[47] == '0' ? "1" : "0") + "/pic.png");
+        CHECK(a.kind == Web::Answer::Refused && a.status == 403);
+        a = ask("/file/pic.png?t=" + token);
+        CHECK(a.kind == Web::Answer::Refused && a.status == 403);
+        a = ask("/file/" + token + "/a%00.png");
+        CHECK(a.kind == Web::Answer::Refused && a.status == 400);
+        a = Web::answer(request("GET /file/" + token + "/pic.png HTTP/1.1\r\nHost: evil.com\r\n\r\n"), token, "page");
+        CHECK(a.kind == Web::Answer::Refused && a.status == 403);
+        a = ask("/file/" + token + "/pic.png", "Origin: http://evil.example\r\n");
+        CHECK(a.kind == Web::Answer::Refused && a.status == 403);
+        a = Web::answer(request("POST /file/" + token + "/pic.png HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), token, "page");
+        CHECK(a.kind == Web::Answer::Refused && a.status == 405);
+
+        // A CSV as the page's rows: quotes, a TSV, a cut start.
+        Json t = Web::tableJson("d.csv", "name,note\r\n\"Smith, J\",\"said \"\"hi\"\"\"\nx\n", true);
+        CHECK(t["columns"].asInt() == 2 && t["rows"].size() == 3 && !t["truncated"].asBool());
+        CHECK(t["rows"][1][0].asString() == "Smith, J" && t["rows"][1][1].asString() == "said \"hi\"");
+        CHECK(t["rows"][2].size() == 1);
+        t = Web::tableJson("d.tsv", "a\tb,c\n1\t2\n", true);
+        CHECK(t["columns"].asInt() == 2 && t["rows"][0][1].asString() == "b,c");
+        t = Web::tableJson("d.csv", "a,b\n1,2\n3,", false);
+        CHECK(t["rows"].size() == 2 && t["truncated"].asBool());
+        std::string wide;
+        for (int r = 0; r < 300; r++) wide += std::string(999, ',') + "\n";   // 1,000 cells a row
+        t = Web::tableJson("d.csv", wide, true);
+        CHECK(t["rows"].size() == Web::kMaxTableCells / 1000 && t["truncated"].asBool());
+        t = Web::tableJson("d.csv", std::string(5000, 'x') + "\n", true);
+        CHECK(t["rows"][0][0].asString().size() == Web::kMaxCellBytes);
+
+        // The host's read: confined as the listing is, a piece at a time.
+        const std::string root = Shared::resolveFolder(scratchFolder()), elsewhere = scratchFolder();
+        std::string clip;
+        for (std::uint32_t i = 0; i < (5u << 20) + 123; i++) clip += (char)((i * 7919u) >> 3);
+        writeText(root + "/clip.mp4", clip);
+        writeText(root + "/.hidden.png", "h");
+        writeText(elsewhere + "/secret.png", "not yours");
+        ::mkdir((root + "/sub").c_str(), 0755);
+        writeText(root + "/sub/in.png", "inside");
+        CHECK(::symlink(elsewhere.c_str(), (root + "/away").c_str()) == 0);
+        CHECK(::symlink((elsewhere + "/secret.png").c_str(), (root + "/leak.png").c_str()) == 0);
+        CHECK(::symlink((root + "/sub/in.png").c_str(), (root + "/near.png").c_str()) == 0);
+        CHECK(::mkfifo((root + "/pipe.png").c_str(), 0600) == 0);
+        auto fsRead = [](const std::string& path, double offset, double length, bool hidden = false) {
+            Json r = Json::object();
+            r.set("op", Json("read"));
+            r.set("path", Json(path));
+            r.set("offset", Json(offset));
+            r.set("length", Json(length));
+            r.set("hidden", Json(hidden));
+            return r;
+        };
+        std::string bytes;
+        Json got = Shared::readWorkspace(root, fsRead("clip.mp4", 100, 50), &bytes);
+        CHECK(got["size"].asInt() == (int64_t)clip.size() && got["offset"].asInt() == 100 &&
+              got["length"].asInt() == 50 && bytes == clip.substr(100, 50));
+        got = Shared::readWorkspace(root, fsRead("clip.mp4", 0, 0), &bytes);
+        CHECK(got["size"].asInt() == (int64_t)clip.size() && got["length"].asInt() == 0 && bytes.empty());
+        got = Shared::readWorkspace(root, fsRead("clip.mp4", 0, 1e12), &bytes);
+        CHECK(bytes.size() == Shared::kMaxReadBytes && bytes == clip.substr(0, Shared::kMaxReadBytes));
+        got = Shared::readWorkspace(root, fsRead("clip.mp4", (double)clip.size() - 3, 100), &bytes);
+        CHECK(got["length"].asInt() == 3 && bytes == clip.substr(clip.size() - 3));
+        got = Shared::readWorkspace(root, fsRead("clip.mp4", 1e12, 100), &bytes);
+        CHECK(!got.has("error") && bytes.empty());
+        got = Shared::readWorkspace(root, fsRead("near.png", 0, 100), &bytes);   // a link inside
+        CHECK(!got.has("error") && bytes == "inside");
+        got = Shared::readWorkspace(root, fsRead(".hidden.png", 0, 100, true), &bytes);
+        CHECK(!got.has("error") && bytes == "h");
+        int refusedReads = 0;
+        for (const char* bad : {"../" , "..", "", "/etc/passwd", "sub/../../x.png", "./clip.mp4", "away/secret.png",
+                                "leak.png", ".hidden.png", "sub", "pipe.png", "missing.png", "sub//in.png"}) {
+            bytes = "left";
+            got = Shared::readWorkspace(root, fsRead(bad, 0, 100), &bytes);
+            if (got.has("error") && bytes.empty()) refusedReads++;
+            else std::printf("  sessionweb:files: read %s: %s\n", bad, got.dump().c_str());
+        }
+        CHECK(refusedReads == 13);
+        // FsData carries the bytes through the wire's encoding.
+        {
+            Shared::Message m;
+            m.kind = Shared::Kind::FsData;
+            m.req = 9;
+            m.json = got;
+            m.bytes = clip.substr(0, 70000);
+            Shared::Message back;
+            CHECK(Shared::decode(Shared::encode(m), &back) && back.bytes == m.bytes && back.kind == Shared::Kind::FsData);
+        }
+
+        // The server, over the wire, on a host serving that folder.
+        writeText(root + "/pic.png", std::string("\x89PNG\r\n\x1a\n", 8) + "pixels");
+        writeText(root + "/logo.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>");
+        writeText(root + "/page.html", "<p>hi</p><script>alert(1)</script>");
+        writeText(root + "/doc.pdf", "%PDF-1.4\n");
+        writeText(root + "/data.csv", "name,qty\napple,3\n\"pear, green\",5\n");
+        writeText(root + "/notes.txt", "text\n");
+        Shared::HostServer host;
+        Shared::HostOptions ho;
+        ho.folder = root;
+        ho.socketDir = scratchFolder() + "/s";
+        ho.idleMs = 60000;
+        std::string error;
+        CHECK(host.start(ho, &error) == Shared::HostServer::Start::Ok);
+        std::thread hostThread([&] { host.run(); });
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = host.socketPath();
+        o.folder = root;
+        o.pollMs = 100;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        const int port = web.port();
+        const std::string base = "/file/" + web.token() + "/";
+        auto get = [&](const std::string& target, const std::string& extra = "") {
+            PageClient c;
+            return c.exchange(port, "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) +
+                                        "\r\n" + extra + "\r\n");
+        };
+        auto bodyOf = [](const std::string& r) {
+            const std::size_t e = r.find("\r\n\r\n");
+            return e == std::string::npos ? std::string() : r.substr(e + 4);
+        };
+        auto headOf = [](const std::string& r) { return r.substr(0, r.find("\r\n\r\n") + 2); };
+        // Nothing before a page is open: the session is read only for one.
+        CHECK(get(base + "pic.png").compare(0, 12, "HTTP/1.1 503") == 0);
+        PageClient p;
+        CHECK(p.upgrade(port, "/ws?t=" + web.token()));
+        Json state;
+        std::map<std::string, Json> trees, tables;
+        auto take = [&](const Json& m) {
+            const std::string ty = m["t"].asString();
+            if (ty == "state") state = m;
+            else if (ty == "tree") trees[m["path"].asString()] = m;
+            else if (ty == "table") tables[m["path"].asString()] = m;
+        };
+        CHECK(p.pump(take, [&] { return state.isObject(); }));
+
+        std::string r = get(base + "pic.png");
+        CHECK(r.compare(0, 15, "HTTP/1.1 200 OK") == 0);
+        CHECK(headOf(r).find("Content-Type: image/png\r\n") != std::string::npos);
+        CHECK(headOf(r).find("X-Content-Type-Options: nosniff\r\n") != std::string::npos);
+        CHECK(bodyOf(r) == std::string("\x89PNG\r\n\x1a\n", 8) + "pixels");
+        // No token, a wrong one, the query's form, another Host: refused.
+        CHECK(get("/file//pic.png").compare(0, 12, "HTTP/1.1 403") == 0);
+        CHECK(get("/file/" + std::string(48, 'a') + "/pic.png").compare(0, 12, "HTTP/1.1 403") == 0);
+        CHECK(get("/file/pic.png?t=" + web.token()).compare(0, 12, "HTTP/1.1 403") == 0);
+        {
+            PageClient c;
+            CHECK(c.exchange(port, "GET " + base + "pic.png HTTP/1.1\r\nHost: evil.com\r\n\r\n").compare(0, 12, "HTTP/1.1 403") == 0);
+        }
+        // Escapes and what the tree does not show: refused, nothing of them sent.
+        for (const std::string& bad : std::vector<std::string>{"../" + elsewhere.substr(5) + "/secret.png", "..%2F..%2Fetc%2Fhosts.png",
+                                      "away/secret.png", "leak.png", ".hidden.png", "%2E%2E/x.png", "pipe.png",
+                                      "sub%2F..%2F..%2Fx.png", "missing.png"}) {
+            r = get(base + bad);
+            CHECK(r.compare(0, 12, "HTTP/1.1 404") == 0 && r.find("not yours") == std::string::npos);
+            if (r.compare(0, 12, "HTTP/1.1 404") != 0) std::printf("  sessionweb:files: %s: %s\n", bad.c_str(), r.substr(0, 80).c_str());
+        }
+        CHECK(get(base + "notes.txt").compare(0, 12, "HTTP/1.1 404") == 0);   // text opens as a tab
+        CHECK(get(base + "sub/in.png").find("\r\n\r\ninside") != std::string::npos);
+        // A script in an SVG or HTML file runs nowhere: sandboxed; a PDF is not.
+        CHECK(headOf(get(base + "logo.svg")).find("Content-Security-Policy: sandbox;") != std::string::npos);
+        r = get(base + "page.html");
+        CHECK(headOf(r).find("Content-Type: text/html; charset=utf-8\r\n") != std::string::npos);
+        CHECK(headOf(r).find("Content-Security-Policy: sandbox; script-src 'none'") != std::string::npos);
+        r = get(base + "doc.pdf");
+        CHECK(headOf(r).find("Content-Type: application/pdf\r\n") != std::string::npos &&
+              headOf(r).find("Content-Security-Policy") == std::string::npos && bodyOf(r) == "%PDF-1.4\n");
+        // A video whole (three pieces from the host) and in ranges.
+        r = get(base + "clip.mp4");
+        CHECK(headOf(r).find("Content-Length: " + std::to_string(clip.size()) + "\r\n") != std::string::npos);
+        CHECK(bodyOf(r) == clip);
+        r = get(base + "clip.mp4", "Range: bytes=100-199\r\n");
+        CHECK(r.compare(0, 12, "HTTP/1.1 206") == 0);
+        CHECK(headOf(r).find("Content-Range: bytes 100-199/" + std::to_string(clip.size()) + "\r\n") != std::string::npos);
+        CHECK(bodyOf(r) == clip.substr(100, 100));
+        r = get(base + "clip.mp4", "Range: bytes=-10\r\n");
+        CHECK(r.compare(0, 12, "HTTP/1.1 206") == 0 && bodyOf(r) == clip.substr(clip.size() - 10));
+        r = get(base + "clip.mp4", "Range: bytes=4194000-\r\n");
+        CHECK(r.compare(0, 12, "HTTP/1.1 206") == 0 && bodyOf(r) == clip.substr(4194000));
+        r = get(base + "clip.mp4", "Range: bytes=" + std::to_string(clip.size()) + "-\r\n");
+        CHECK(r.compare(0, 12, "HTTP/1.1 416") == 0 && bodyOf(r).empty());
+
+        // The tree says how the page shows each file; a CSV comes as rows.
+        p.sendText("{\"t\":\"list\",\"path\":\"\"}");
+        CHECK(p.pump(take, [&] { return trees.count(""); }));
+        std::map<std::string, std::string> views;
+        for (const Json& e : trees[""]["entries"].elements()) views[e["name"].asString()] = e["view"].asString();
+        CHECK(views["pic.png"] == "image" && views["clip.mp4"] == "video" && views["doc.pdf"] == "pdf");
+        CHECK(views["page.html"] == "html" && views["data.csv"] == "table" && views["notes.txt"].empty());
+        CHECK(views["sub"].empty());
+        p.sendText("{\"t\":\"file\",\"path\":\"data.csv\"}");
+        p.sendText("{\"t\":\"file\",\"path\":\"away/secret.csv\"}");
+        p.sendText("{\"t\":\"file\",\"path\":\"pic.png\"}");
+        CHECK(p.pump(take, [&] { return tables.size() == 3; }));
+        const Json& table = tables["data.csv"];
+        CHECK(table["columns"].asInt() == 2 && table["rows"].size() == 3 && !table["truncated"].asBool());
+        CHECK(table["rows"][2][0].asString() == "pear, green" && table["rows"][1][1].asString() == "3");
+        CHECK(tables["away/secret.csv"].has("error") && !tables["away/secret.csv"].has("rows"));
+        CHECK(tables["pic.png"].has("error"));
+        p.close();
+        CHECK(waitUntil([&] { return web.browsers() == 0; }));
+        // The page gone, the session's reads end with it.
+        CHECK(get(base + "pic.png").compare(0, 12, "HTTP/1.1 503") == 0);
+        web.stop();
+        webThread.join();
+        host.stop();
+        hostThread.join();
+        // The page's CSP lets the file views load from its own server only.
+        const Web::Answer pageAnswer = ask("/?t=" + token);
+        CHECK(pageAnswer.response.find("img-src data: 'self'; media-src 'self';") != std::string::npos);
+        CHECK(pageAnswer.response.find("frame-src 'self' http: https:;") != std::string::npos);
+        CHECK(Web::pageHtml().find("id=\"fileview\"") != std::string::npos);
     }
 
     // The window's browser pane (R4): its tabs as the window reports them,
