@@ -473,6 +473,14 @@ static BOOL MCPerform(const Commands::Command *c) {
     return [NSApp sendAction:sel to:target from:item];
 }
 
+BOOL MCKeymapHandleGlobalKeyDown(NSEvent *e) {
+    Key k = KeyForEvent(e);
+    if (k.empty()) return NO;
+    const Commands::Command *c = [[MCKeymap shared] map].commandFor(k, WhereIs(e.window.firstResponder));
+    if (!c || (c->flags & Commands::Fixed) || !(c->flags & Commands::Global)) return NO;
+    return MCPerform(c);
+}
+
 BOOL MCKeymapEventIsBound(NSEvent *e) {
     Key k = KeyForEvent(e);
     if (k.empty()) return NO;

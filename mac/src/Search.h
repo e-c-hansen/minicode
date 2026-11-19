@@ -17,10 +17,15 @@
 //
 // The search is FolderSearch's (src/FolderSearch.h).
 //
-// Replace in Folder (the replace field under the query): Replace All counts
-// every match first (FolderSearch::planReplace) and asks "Replace 42
-// matches in 7 files?"; a result's right-click menu (or the buttons) replaces
-// only that match or only that file. Files open in a tab of the editor
+// Replace in Folder (the replace field under the query): Replace All (its
+// button, or Option+Cmd+Return anywhere in the window) counts every match
+// first (FolderSearch::planReplace) and asks "Replace 42 matches in 7
+// files?", the same question either way; Return in the replace field only
+// searches, as in VS Code. A result's right-click menu (or the buttons)
+// replaces only that match or only that file, or dismisses the row: a
+// dismissed row's matches (a file's, or a line's) are left alone by Replace
+// All and Replace in This File until the next search
+// (FolderReplaceExclusions). Files open in a tab of the editor
 // window are changed in the tab's buffer, unsaved and undoable, as rename
 // changes them; other files are written to disk atomically (a temporary
 // renamed over the file, its permissions kept). A file whose tab holds
@@ -87,6 +92,7 @@ typedef NS_ENUM(NSInteger, MCOpenFileState) {
 @property(nonatomic) BOOL matchCase, wholeWord, regex, preserveCase;
 - (void)runSearch:(id)sender;
 - (void)replaceAll:(id)sender;
+@property(nonatomic, readonly) NSUInteger dismissedCount;   // rows dismissed since the search
 // `row` indexes the results' lines (the `hits` key), not the tree's rows.
 - (void)replaceMatchAtRow:(NSInteger)row;
 - (void)replaceFileAtRow:(NSInteger)row;

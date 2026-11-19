@@ -134,6 +134,30 @@ found through that list.
   question (`FolderReplaceFile::outside`). Replace Match replaces only while
   the row's line still reads as searched. `replaceOneAt` maps a result's byte
   column to a tab's UTF-16.
+- **Find in Folder's keys and dismissed rows** (2026-11-18, after a round 9
+  walker on 1.6.3). Return in any of the window's fields searches, the
+  replace field's too (VS Code's searchWidget submits the search there);
+  Replace All is the button or Option+Cmd+Return, taken by
+  `MCSearchContent performKeyEquivalent:` (`onReplaceAll`, only while the
+  replace row shows, else a beep) because the Edit menu's Replace All
+  (`performTextFinderAction:`) is validated by the field editor first and
+  was off in this window. Both go through `replaceAll:`, so the question is
+  the same; before `runModal` it drops key events already queued
+  (`discardEventsMatchingMask:`), so keys typed while the matches were
+  counted never answer it. A row's x (and the right click menu's Dismiss)
+  records the row in `FolderReplaceExclusions` (core, `FolderSearch.h`):
+  a file whole, or a line by its number and its row's text. Replace All runs
+  `planReplace` and then `excludeDismissed`, and `replaceInPaths:` leaves
+  those lines alone (`dismissedLines`, then `replaceInText` with skip lines
+  on disk, `TextFind::dropEditsOnLines` in a tab); a file whose dismissed
+  line no longer reads as its row showed is left alone whole and named
+  (`changedSinceSearch`). A new search clears the dismissals
+  (`search:dismissed`; checked in the `replace_in_folder` suite). Pane
+  commands from the Search or TODOs window go through AppDelegate's
+  `currentForPane:`, which makes the editor window key first; a toggle
+  (Toggle Terminal, Toggle Browser) from there shows and focuses its pane,
+  as VS Code's toggles hide only the focused view. The key monitor runs
+  Global keys (Ctrl+`) for those windows too (`MCKeymapHandleGlobalKeyDown`).
 
 ## Traps
 
@@ -142,3 +166,4 @@ text is in place in its section.
 
 - Find and replace (Mac): Traps: libc++ and libstdc++ each break JavaScript's repetition rules in places (groups unset per repetition, empty repetitions not counting), libc++ finds no `\b` at a line's end once a search starts past 0, and libc++ throws error_complexity (a silent "no match") on short exponential patterns rather than hanging, while ...
 - Find and replace (Mac): Trap: CALayer copies `shadowPath`, so release the path you made, never the one the getter returns (that crashed in the next CA commit).
+- Find in Folder's keys: the Search window floats over the editor window and stays key, so a command run from it through AppDelegate's `[self current]` changed the editor window's panes (Toggle Terminal showed the terminal and called `focusInput`) while every key typed after still went to Search: a walker's `python3 -m pytest -q` and Return landed in the replace field, where Return was Replace All, and a file was rewritten. A command that shows a pane must make the editor window key (`currentForPane:`), Return in a field of that window must never write files, and Dismiss must reach Replace All, which re-plans the whole folder and had ignored the rows taken out of the results.
