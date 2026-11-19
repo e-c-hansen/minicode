@@ -45,7 +45,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/TerminalStream.
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/Regex.cpp \
             src/EditSpans.cpp src/FindRules.cpp src/Text.cpp src/Document.cpp src/UndoHistory.cpp \
             src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/SessionServer.cpp src/HostPty.cpp \
-            src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionFiles.cpp \
+            src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebViewers.cpp src/SessionFiles.cpp src/SqliteRead.cpp \
             src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
             src/Formatter.cpp src/FormatRun.cpp src/FolderTools.cpp src/InstallHints.cpp src/LineDiff.cpp src/QuickDiff.cpp \
@@ -80,7 +80,8 @@ SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.
             src/Regex.cpp src/MarkdownTasks.cpp src/MarkdownParser.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/IdeLink.cpp src/MarkdownHtml.cpp \
             src/SyntaxHighlighter.cpp src/Settings.cpp src/AutoIndent.cpp src/LineComments.cpp \
-            src/SessionFiles.cpp src/FileDetails.cpp src/FileSniff.cpp src/Backups.cpp src/SavePlan.cpp src/Csv.cpp
+            src/SessionFiles.cpp src/FileDetails.cpp src/FileSniff.cpp src/Backups.cpp src/SavePlan.cpp src/Csv.cpp \
+            src/SessionWebViewers.cpp src/SqliteRead.cpp src/Notebook.cpp
 OBJ      := $(patsubst mac/src/%,$(OBJDIR)/%.o,$(patsubst src/%,$(OBJDIR)/%.o,$(SRC)))
 
 # A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)
@@ -94,6 +95,9 @@ APP_OBJ  := $(if $(RELEASE),$(filter-out $(RELEASE_ONLY_OUT),$(OBJ)),$(OBJ))
 VARIANT  := $(if $(RELEASE),release,development)
 TESTDIR  := build/test-obj
 TESTFLAGS := -std=c++17 -Wall -Wextra -Isrc -pthread $(MINFLAGS)
+# The system libraries the core links: SQLite (SqliteRead, the session
+# page's database viewer).
+TESTLIBS  := -lsqlite3
 TEST_OBJ := $(TESTDIR)/run_tests.cpp.o $(patsubst src/%,$(TESTDIR)/%.o,$(CORE_SRC))
 
 # Parallel by default, one job per core: GNU make 3.81 (the Mac's) cannot tell
@@ -141,7 +145,7 @@ $(OBJDIR)/tools/%.cpp.o: tools/%.cpp $(OBJDIR)/flags.txt
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 $(CLI): $(CLI_OBJ)
-	$(CXX) $(CXXFLAGS) $(CLI_OBJ) -o $@
+	$(CXX) $(CXXFLAGS) $(CLI_OBJ) -lsqlite3 -o $@
 
 # What BROWSER names in mutible's terminals (Terminal.mm): a script that
 # is shell and JavaScript at once, beside the client (in the bundle it is
@@ -242,7 +246,7 @@ test: build/run_tests
 	@./build/run_tests
 
 build/run_tests: $(TEST_OBJ)
-	$(CXX) $(TESTFLAGS) $(TEST_OBJ) -o $@
+	$(CXX) $(TESTFLAGS) $(TEST_OBJ) $(TESTLIBS) -o $@
 
 $(TESTDIR)/flags.txt:
 	@mkdir -p $(@D) && printf '%s\n' '$(TESTCMD)' > $@
@@ -280,7 +284,7 @@ test-asan: $(ASANDIR)/run_tests
 	@./$(ASANDIR)/run_tests
 
 $(ASANDIR)/run_tests: $(ASAN_OBJ)
-	$(CXX) $(ASANFLAGS) $(ASAN_OBJ) -o $@
+	$(CXX) $(ASANFLAGS) $(ASAN_OBJ) $(TESTLIBS) -o $@
 
 $(ASANDIR)/flags.txt:
 	@mkdir -p $(@D) && printf '%s\n' '$(ASANCMD)' > $@
@@ -322,7 +326,7 @@ test-tsan: $(TSANDIR)/run_tests
 	  ./$(TSANDIR)/run_tests
 
 $(TSANDIR)/run_tests: $(TSAN_OBJ)
-	$(CXX) $(TSANFLAGS) $(TSAN_OBJ) -o $@
+	$(CXX) $(TSANFLAGS) $(TSAN_OBJ) $(TESTLIBS) -o $@
 
 $(TSANDIR)/flags.txt:
 	@mkdir -p $(@D) && printf '%s\n' '$(TSANCMD)' > $@

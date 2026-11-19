@@ -35,7 +35,12 @@
 // clicked in its tree opens in a tab of the page's own and not in the
 // window, the window's tabs have no close button, and the page's tab
 // closes on the page. Closing the window stops the server. No browser
-// window opens.
+// window opens. On the read-only page, a notebook clicked in the tree shows
+// as the page the core rendered, in a frame sandboxed with no scripts (its
+// hostile cells escaped, nothing run), and a SQLite database as its tables
+// (hostile names as text) and its rows a page at a time, Next going on,
+// the file unchanged; and a Markdown file as its page, Show Source flipping
+// to its text and Show Page back.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 #import "EditorController.h"
@@ -50,6 +55,7 @@
 #include <atomic>
 #include <mutex>
 #include <netinet/in.h>
+#include <sqlite3.h>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
@@ -263,7 +269,10 @@ NSString *const kRead =
     @" local: window.mcSessionView ? window.mcSessionView.local() : '',"
     @" closers: document.querySelectorAll('#tabs button:not(.local) .x').length,"
     @" web: window.mcSessionView ? window.mcSessionView.web() : null,"
-    @" file: window.mcSessionView ? window.mcSessionView.file() : null})";
+    @" file: window.mcSessionView ? window.mcSessionView.file() : null,"
+    @" pwned: String(window.pwned),"
+    @" mode: document.getElementById('modebtn').classList.contains('hidden') ? '' : document.getElementById('modebtn').textContent,"
+    @" mdShown: !document.getElementById('md').classList.contains('hidden')})";
 
 // Script run in the page (a click on its controls), its failure noted.
 void Eval(NSString *js) {
@@ -882,6 +891,127 @@ MC_GUI_SUITE(session_browser) {
         Read();
         return [gSeen[@"local"] isEqualToString:@""] && gSeen[@"file"] == NSNull.null &&
                [gSeen[@"text"] isEqualToString:TV(gC).string];
+    });
+    // A notebook and a database (R3's second slice), with hostile cells,
+    // tables and columns: rendered by the core, shown as text, run nowhere.
+    NSString *nbPath = [dir stringByAppendingPathComponent:@"lab.ipynb"];
+    NSString *dbPath = [dir stringByAppendingPathComponent:@"app.sqlite"];
+    __block NSData *dbBefore = nil;
+    MCGuiStep(@"a notebook and a database in the folder; the read-only page's tree refreshed", ^{
+        MCGuiWriteFile(nbPath, @"{\"nbformat\": 4, \"nbformat_minor\": 5, \"metadata\": {}, \"cells\": ["
+            @"{\"cell_type\": \"markdown\", \"metadata\": {}, \"source\": [\"# Lab results\\n\", "
+            @"\"<img src=x onerror=\\\"window.pwned=1\\\"><script>window.pwned=2</script>\"]},"
+            @"{\"cell_type\": \"code\", \"execution_count\": 1, \"metadata\": {}, \"source\": [\"print(1)\"],"
+            @" \"outputs\": [{\"output_type\": \"stream\", \"name\": \"stdout\","
+            @" \"text\": [\"</pre><script>window.pwned=3</script>\\n\"]}]}]}");
+        [NSFileManager.defaultManager removeItemAtPath:dbPath error:nil];
+        sqlite3 *db = nullptr;
+        GCHECK(sqlite3_open(dbPath.fileSystemRepresentation, &db) == SQLITE_OK);
+        std::string sql = "CREATE TABLE \"<img src=x onerror=window.pwned=4>\"(\"\"\"><script>window.pwned=5</script>\" TEXT);"
+                          "INSERT INTO \"<img src=x onerror=window.pwned=4>\" VALUES ('<b onclick=window.pwned=6>bold</b>');"
+                          "CREATE TABLE items(n INTEGER, name TEXT);";
+        for (int i = 1; i <= 150; i++)
+            sql += "INSERT INTO items VALUES (" + std::to_string(i) + ", 'item " + std::to_string(i) + "');";
+        GCHECK(sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+        dbBefore = [NSData dataWithContentsOfFile:dbPath];
+        MCGuiWriteFile([dir stringByAppendingPathComponent:@"notes.md"], @"# Notes\n\nSome *text*.\n");
+        Eval(@"(() => { document.getElementById('refresh').click(); return 1; })()");
+    });
+    MCGuiWait(@"the tree lists them", 20, ^BOOL {
+        Read();
+        return [gSeen[@"tree"] containsString:@"lab.ipynb"] && [gSeen[@"tree"] containsString:@"app.sqlite"] &&
+               [gSeen[@"tree"] containsString:@"notes.md"];
+    });
+    MCGuiStep(@"the notebook clicked in the tree", ^{ ClickRow(@"lab.ipynb"); });
+    MCGuiWait(@"shows as the core's page in a frame sandboxed with no scripts", 20, ^BOOL {
+        Read();
+        NSDictionary *f = [gSeen[@"file"] isKindOfClass:NSDictionary.class] ? gSeen[@"file"] : nil;
+        return [gSeen[@"local"] isEqualToString:@"lab.ipynb"] && [f[@"view"] isEqualToString:@"notebook"] &&
+               [f[@"html"] containsString:@"Lab results</h1>"];
+    });
+    MCGuiStep(@"its hostile cells escaped, nothing run, the window opening nothing", ^{
+        NSDictionary *f = gSeen[@"file"];
+        GCHECK_EQ_STR(f[@"sandbox"], @"");
+        GCHECK(![f[@"html"] containsString:@"<script"]);
+        GCHECK(![f[@"html"] containsString:@"onerror="]);
+        GCHECK([f[@"html"] containsString:@"&lt;/pre&gt;&lt;script&gt;window.pwned=3"]);
+        GCHECK_EQ_STR(gSeen[@"pwned"], @"undefined");
+        GCHECK([gC tabs].count == tabsBefore);
+        GCHECK(![Active(gC).currentPath hasSuffix:@"/lab.ipynb"]);
+        ClickRow(@"app.sqlite");
+    });
+    MCGuiWait(@"the database shows its tables, the first one's rows, hostile names as text", 20, ^BOOL {
+        Read();
+        NSDictionary *f = [gSeen[@"file"] isKindOfClass:NSDictionary.class] ? gSeen[@"file"] : nil;
+        return [gSeen[@"local"] isEqualToString:@"app.sqlite"] && [f[@"view"] isEqualToString:@"database"] &&
+               [f[@"rows"] count] == 1;
+    });
+    MCGuiStep(@"its tables, columns and cells as the database has them", ^{
+        NSDictionary *f = gSeen[@"file"];
+        MCGuiNote(@"database: %@", f);
+        GCHECK(([f[@"tables"] isEqual:@[ @"<img src=x onerror=window.pwned=4>", @"items" ]]));
+        GCHECK(([f[@"columns"] isEqual:@[ @"\"><script>window.pwned=5</script>" ]]));
+        GCHECK_EQ_STR(f[@"rows"][0], @"<b onclick=window.pwned=6>bold</b>");
+        GCHECK_EQ_STR(gSeen[@"pwned"], @"undefined");
+        Eval(@"(() => { const s = document.getElementById('dbtable'); s.value = 'items';"
+             @" s.dispatchEvent(new Event('change')); return 1; })()");
+    });
+    MCGuiWait(@"another table picked: its first hundred rows", 20, ^BOOL {
+        Read();
+        NSDictionary *f = [gSeen[@"file"] isKindOfClass:NSDictionary.class] ? gSeen[@"file"] : nil;
+        return [f[@"table"] isEqualToString:@"items"] && [f[@"rows"] count] == 100;
+    });
+    MCGuiStep(@"rows 1 to 100, then Next", ^{
+        NSDictionary *f = gSeen[@"file"];
+        GCHECK_EQ_STR(f[@"rows"][0], @"1,item 1");
+        GCHECK_EQ_STR(f[@"where"], @"Rows 1–100, more after");
+        Eval(@"(() => { const b = [...document.querySelectorAll('#dbbar button')].find(x => x.textContent === 'Next');"
+             @" if (b) b.click(); return !!b; })()");
+    });
+    MCGuiWait(@"the next page: rows 101 to 150", 20, ^BOOL {
+        Read();
+        NSDictionary *f = [gSeen[@"file"] isKindOfClass:NSDictionary.class] ? gSeen[@"file"] : nil;
+        return [f[@"rows"] count] == 50 && [f[@"rows"][0] isEqualToString:@"101,item 101"];
+    });
+    MCGuiStep(@"the database unchanged and the window untouched; both tabs closed", ^{
+        GCHECK_EQ_STR(gSeen[@"file"][@"where"], @"Rows 101–150");
+        GCHECK([[NSData dataWithContentsOfFile:dbPath] isEqualToData:dbBefore]);
+        GCHECK_EQ_STR(gSeen[@"pwned"], @"undefined");
+        GCHECK([gC tabs].count == tabsBefore);
+        CloseTab(@"app.sqlite");
+        CloseTab(@"lab.ipynb");
+    });
+    MCGuiWait(@"back to the window's tab", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && gSeen[@"file"] == NSNull.null &&
+               ![gSeen[@"tabs"] containsString:@"app.sqlite"] && ![gSeen[@"tabs"] containsString:@"lab.ipynb"];
+    });
+    MCGuiStep(@"a Markdown file clicked in the read-only page's tree", ^{ ClickRow(@"notes.md"); });
+    MCGuiWait(@"shows as its page, with Show Source", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@"notes.md"] && [gSeen[@"mdShown"] boolValue] &&
+               [gSeen[@"mode"] isEqualToString:@"Show Source"];
+    });
+    MCGuiStep(@"Show Source", ^{
+        Eval(@"(() => { document.getElementById('modebtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"its text, and Show Page to go back", 20, ^BOOL {
+        Read();
+        return ![gSeen[@"mdShown"] boolValue] && [gSeen[@"lines"] hasPrefix:@"# Notes"] &&
+               [gSeen[@"mode"] isEqualToString:@"Show Page"];
+    });
+    MCGuiStep(@"Show Page, then its close button", ^{
+        Eval(@"(() => { document.getElementById('modebtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"the page again", 20, ^BOOL {
+        Read();
+        return [gSeen[@"mdShown"] boolValue] && [gSeen[@"mode"] isEqualToString:@"Show Source"];
+    });
+    MCGuiStep(@"closed", ^{ CloseTab(@"notes.md"); });
+    MCGuiWait(@"back to the window's tab once more", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:@"notes.md"];
     });
     MCGuiStep(@"the window closes, and the server with it", ^{
         GCHECK([gC tabs].count == tabsBefore);

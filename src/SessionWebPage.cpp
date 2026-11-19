@@ -19,8 +19,10 @@
 // frame with no scripts. A picture, PDF, audio, video or HTML file clicked
 // in the tree shows in a tab of this page's own from the server's /file/
 // address (an HTML page in a frame sandboxed with no scripts), and a CSV
-// or TSV file as a table of the rows the server parsed (R3); an editable
-// page opens it in the window too. "{{NONCE}}" is the response's script nonce. Every
+// or TSV file as a table of the rows the server parsed (R3); a notebook as
+// the page the server rendered, in a frame sandboxed with no scripts, and a
+// SQLite database as its tables and a page of rows at a time, read-only
+// (R3's second slice); an editable page opens it in the window too. "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
 #include "SessionWeb.h"
@@ -179,6 +181,19 @@ body:not(.editable) #caret { display: none; }
                   user-select: none; position: sticky; left: 0; }
 #fileview tr.head td { font-weight: 600; position: sticky; top: 0; background: var(--hbg); }
 #filenote { padding: 2em 1em; color: var(--muted); }
+#fileview iframe.nb { background: var(--bg); }
+#fileview.db { flex-direction: column; overflow: hidden; }
+#dbbar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px;
+         border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+#dbbar select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+                max-width: 50%; }
+#dbbar button { font: inherit; color: var(--fg); background: none; border: 1px solid var(--line);
+                border-radius: 3px; padding: 1px 8px; cursor: pointer; }
+#dbbar span { white-space: nowrap; }
+#dbbar button:disabled { opacity: .4; cursor: default; }
+#dbscroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+#fileview thead th { position: sticky; top: 0; background: var(--hbg); font-weight: 600; z-index: 1; }
+#fileview td.null, #fileview td.blob { color: var(--muted); font-style: italic; }
 #filemore { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none; }
 #termnote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px;
             border-top: 1px solid #333333; }
@@ -297,6 +312,8 @@ body:not(.editable) #caret { display: none; }
     $("theme").textContent = css;
     $("code").classList.toggle("wrap", !!p.wordWrap);
     if (mdHtml !== null) setMarkdown(mdHtml);
+    const nb = V.on ? L.tabs.find((x) => x.viewer && x.path === V.on && x.nb) : null;
+    if (nb) drawNotebook(nb.nb);
     drawSelection();
   }
   // A Markdown page in the frame, in the host's colors.
@@ -313,11 +330,16 @@ body:not(.editable) #caret { display: none; }
     if (m.maxWidth) css += ".markdown-body{max-width:" + m.maxWidth + "px}";
     return css;
   }
-  function setMarkdown(html) {
-    mdHtml = html;
+  // A rendered page (Markdown, a notebook) with the host's colors in a
+  // <style> before its </head>, so the frame keeps no script.
+  function withPalette(html) {
     const style = palette ? "<style>" + markdownCss(palette) + "</style>" : "";
     const at = html.lastIndexOf("</head>");
-    $("md").srcdoc = at < 0 ? style + html : html.slice(0, at) + style + html.slice(at);
+    return at < 0 ? style + html : html.slice(0, at) + style + html.slice(at);
+  }
+  function setMarkdown(html) {
+    mdHtml = html;
+    $("md").srcdoc = withPalette(html);
   }
 
   // ---- messages out
@@ -674,7 +696,8 @@ body:not(.editable) #caret { display: none; }
     box.classList.remove("hidden");
     $("filemore").classList.add("hidden");
     open.href = url;
-    open.classList.toggle("hidden", view === "table");
+    // Only what the server serves as bytes has an address of its own.
+    open.classList.toggle("hidden", view === "table" || view === "notebook" || view === "database");
     if (V.on !== rel) {
       V.on = rel;
       box.textContent = ""; box.className = "";
@@ -693,6 +716,12 @@ body:not(.editable) #caret { display: none; }
       } else if (view === "table") {
         if (f.table) drawTable(f.table);
         else { fileNote("Reading " + base(rel) + "…"); post({ t: "file", path: rel }); }
+      } else if (view === "notebook") {
+        if (f.nb) drawNotebook(f.nb);
+        else { fileNote("Reading " + base(rel) + "…"); post({ t: "notebook", path: rel }); }
+      } else if (view === "database") {
+        if (f.db) drawDb(f.db);
+        else { fileNote("Reading " + base(rel) + "…"); askDb(rel, "", 0); }
       }
       if (el) {
         el.addEventListener("error", () => { if (V.on === rel) fileNote(base(rel) + " could not be shown here."); });
@@ -739,6 +768,123 @@ body:not(.editable) #caret { display: none; }
     const more = $("filemore");
     more.textContent = m.truncated ? "The first " + m.rows.length + " rows; the rest shows in the mutible window." : "";
     more.classList.toggle("hidden", !m.truncated);
+  }
+  // A notebook: the server's page in a frame sandboxed with no scripts and
+  // an origin of its own; its pictures are data: images, which the page's
+  // CSP (inherited by the frame) allows, and nothing else is fetched.
+  function drawNotebook(m) {
+    const box = $("fileview");
+    box.textContent = ""; box.className = "";
+    if (m.error !== undefined) { fileNote(m.error); return; }
+    const el = document.createElement("iframe");
+    el.setAttribute("sandbox", "");
+    el.className = "nb"; el.title = base(m.path);
+    el.srcdoc = withPalette(m.html || "");
+    box.appendChild(el);
+  }
+  function onNotebook(m) {
+    const f = L.tabs.find((x) => x.viewer && x.path === m.path);
+    if (!f) return;
+    f.nb = m;
+    if (V.on === m.path) drawNotebook(m);
+  }
+  // A database: its tables in a menu, a page of the one picked's rows, and
+  // the pages before and after it, each asked of the server (db), which
+  // opens the file read-only every time.
+  function askDb(path, table, offset) {
+    post({ t: "db", path: path, table: table, offset: offset });
+  }
+  function sizeText(n) {
+    return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " bytes";
+  }
+  function drawDb(m) {
+    const box = $("fileview");
+    box.textContent = ""; box.className = "db";
+    const bar = document.createElement("div");
+    bar.id = "dbbar";
+    const tables = m.tables || [];
+    if (tables.length) {
+      const sel = document.createElement("select");
+      sel.id = "dbtable"; sel.setAttribute("aria-label", "Table");
+      tables.forEach((t) => {
+        const o = document.createElement("option");
+        o.value = t.name;
+        o.textContent = t.type === "view" ? t.name + " (view)" : t.name;
+        sel.appendChild(o);
+      });
+      if (m.moreTables) {
+        const o = document.createElement("option");
+        o.disabled = true; o.textContent = m.moreTables + " more not listed";
+        sel.appendChild(o);
+      }
+      sel.value = m.table || "";
+      sel.addEventListener("change", () => askDb(m.path, sel.value, 0));
+      bar.appendChild(sel);
+    }
+    const rows = m.rows || [], off = m.offset || 0, page = Math.max(rows.length, 100);
+    const where = document.createElement("span");
+    where.id = "dbwhere";
+    where.textContent = m.error !== undefined || !tables.length ? "" :
+      rows.length ? "Rows " + (off + 1) + "–" + (off + rows.length) + (m.more ? ", more after" : "") :
+      off ? "No rows past " + off : "No rows";
+    bar.appendChild(where);
+    const prev = document.createElement("button"), next = document.createElement("button");
+    prev.type = next.type = "button";
+    prev.textContent = "Previous"; next.textContent = "Next";
+    prev.disabled = m.error !== undefined || off <= 0;
+    next.disabled = m.error !== undefined || !m.more;
+    prev.addEventListener("click", () => askDb(m.path, m.table || "", Math.max(0, off - page)));
+    next.addEventListener("click", () => askDb(m.path, m.table || "", off + rows.length));
+    if (tables.length) { bar.appendChild(prev); bar.appendChild(next); }
+    const ro = document.createElement("span");
+    ro.textContent = "Read-only"; ro.title = "Opened read-only: nothing on this page can change the database.";
+    bar.appendChild(ro);
+    box.appendChild(bar);
+    const note = (text) => {
+      const n = document.createElement("div");
+      n.id = "filenote"; n.textContent = text;
+      box.appendChild(n);
+    };
+    if (m.error !== undefined) { note(m.error); return; }
+    if (!tables.length) { note(base(m.path) + " has no tables."); return; }
+    const scroll = document.createElement("div");
+    scroll.id = "dbscroll";
+    const table = document.createElement("table"), head = document.createElement("thead"),
+          body = document.createElement("tbody"), hr = document.createElement("tr");
+    const corner = document.createElement("th");
+    corner.className = "rn";
+    hr.appendChild(corner);
+    (m.columns || []).forEach((c) => {
+      const th = document.createElement("th");
+      th.className = "col"; th.textContent = c;
+      hr.appendChild(th);
+    });
+    head.appendChild(hr);
+    rows.forEach((row, i) => {
+      const tr = document.createElement("tr");
+      const n = document.createElement("th");
+      n.className = "rn"; n.textContent = String(off + i + 1);
+      tr.appendChild(n);
+      row.forEach((v) => {
+        const td = document.createElement("td");
+        if (v === null) { td.textContent = "NULL"; td.className = "null"; }
+        else if (typeof v === "object" && v.blob !== undefined) { td.textContent = "blob, " + sizeText(v.blob); td.className = "blob"; }
+        else if (typeof v === "object") { td.textContent = (v.text || "") + "…"; td.title = "Cut here: the value is " + sizeText(v.bytes || 0) + "."; }
+        else td.textContent = String(v);
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(head);
+    table.appendChild(body);
+    scroll.appendChild(table);
+    box.appendChild(scroll);
+  }
+  function onDb(m) {
+    const f = L.tabs.find((x) => x.viewer && x.path === m.path);
+    if (!f) return;
+    f.db = m;
+    if (V.on === m.path) drawDb(m);
   }
   function onTable(m) {
     const f = L.tabs.find((x) => x.viewer && x.path === m.path);
@@ -1626,7 +1772,7 @@ body:not(.editable) #caret { display: none; }
     const code = $("code"), md = $("md");
     const page = D.kind === "markdown" && D.mode === "page";
     $("modebtn").classList.toggle("hidden", D.kind !== "markdown");
-    $("modebtn").textContent = page ? "Edit Source" : "Show Page";
+    $("modebtn").textContent = page ? (D.editable ? "Edit Source" : "Show Source") : "Show Page";
     $("note").classList.add("hidden");
     code.classList.toggle("hidden", page);
     md.classList.toggle("hidden", !page);
@@ -1864,6 +2010,8 @@ body:not(.editable) #caret { display: none; }
         case "browsing": onBrowsing(m); break;
         case "filetext": onFileText(m); break;
         case "table": onTable(m); break;
+        case "notebook": onNotebook(m); break;
+        case "db": onDb(m); break;
         case "closing": if (!m.ok) toast(m.why || "That tab was not closed."); break;
       }
     };
@@ -2004,6 +2152,11 @@ body:not(.editable) #caret { display: none; }
                width: el && el.tagName === "IMG" ? el.naturalWidth : 0,
                sandbox: el && el.hasAttribute("sandbox") ? el.getAttribute("sandbox") : null,
                rows: rows.map((r) => [...r.querySelectorAll("td")].map((c) => c.textContent).join(",")),
+               columns: [...box.querySelectorAll("thead th.col")].map((c) => c.textContent),
+               tables: [...box.querySelectorAll("#dbtable option")].filter((o) => !o.disabled).map((o) => o.value),
+               table: ($("dbtable") || {}).value || "",
+               where: ($("dbwhere") || {}).textContent || "",
+               html: el && el.tagName === "IFRAME" ? el.srcdoc || "" : "",
                note: ($("filenote") || {}).textContent || "" };
     },
     windowPanes: () => windowPanes(),
