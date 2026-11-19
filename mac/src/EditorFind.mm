@@ -36,19 +36,20 @@ static NSString *FNS(const std::u16string &u) {
 
 // The text a search reads, as of one version of the storage's characters:
 // an immutable copy of the string made on the main thread (a copy of the
-// characters, about 0.13 ms for 2.4 MB), turned into UTF-16 on the search
-// queue the first time a search reads it, and then only read there. Made
-// once per edit of the text, not once per keystroke in the find field
-// (every keystroke copied the whole buffer on the main thread).
+// characters, about 0.13 ms for 2.4 MB; no copy at all of a large file's,
+// whose copy shares its pieces, PieceString.h), read on the search queue a
+// block of lines at a time (TextFind's Reader), never turned into one
+// UTF-16 string: a 260 MB log's was 520 MB. Made once per edit of the text,
+// not once per keystroke in the find field (every keystroke copied the
+// whole buffer on the main thread).
 struct MCFindText {
-    NSString *source;                            // until the queue converts it
-    std::shared_ptr<const std::u16string> text;  // the queue's, once it has
-    const std::u16string &characters() {         // on the queue only
-        if (!text) {
-            text = std::make_shared<const std::u16string>(FU16(source));
-            source = nil;
-        }
-        return *text;
+    NSString *source;
+    size_t length() const { return source.length; }
+    TextFind::Reader reader() const {
+        NSString *s = source;
+        return [s](size_t start, size_t n, char16_t *out) {
+            [s getCharacters:(unichar *)out range:NSMakeRange(start, n)];
+        };
     }
 };
 
@@ -684,7 +685,11 @@ static const CGFloat kSashWidth = 4;
     if (word) *word = NSMakeRange(NSNotFound, 0);
     if (sel.location > text.length) return nil;
     if (sel.length == 0) {
-        MultiCaret::Caret c = MultiCaret::wordAt(FU16(text), sel.location);
+        MultiCaret::Caret c = MultiCaret::wordAt(
+            MultiCaret::Text(text.length, [text](size_t start, size_t n, char16_t *out) {
+                [text getCharacters:(unichar *)out range:NSMakeRange(start, n)];
+            }),
+            sel.location);
         if (c.empty()) return nil;
         NSRange r = NSMakeRange(c.lo(), c.hi() - c.lo());
         if (word) *word = r;
@@ -938,7 +943,7 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
         if (cancel->load()) return;
         bool truncated = false, cancelled = false;
         std::vector<TextFind::Match> found = InScope(
-            TextFind::findAll(text->characters(), query,
+            TextFind::findAll(text->length(), text->reader(), query,
                               scope.location == NSNotFound ? kMatchLimit : 0,
                               &truncated, cancel.get(), &cancelled),
             scope);
@@ -1132,7 +1137,7 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
     __weak MCEditorFind *weakSelf = self;
     dispatch_async(_queue, ^{
         std::vector<TextFind::Edit16> edits =
-            TextFind::replaceAll(text->characters(), query, with);
+            TextFind::replaceAll(text->length(), text->reader(), query, with);
         if (scope.location != NSNotFound)
             edits.erase(std::remove_if(edits.begin(), edits.end(),
                                        [&](const TextFind::Edit16 &e) {

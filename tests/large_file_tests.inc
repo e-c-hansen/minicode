@@ -3,6 +3,8 @@
 // end lines in the highlighter as in LineIndex, and large-file mode's
 // thresholds (VS Code's 20 MB or 300,000 lines).
 #include "LargeFile.h"
+#include "PieceTable.h"
+#include "TextFind.h"
 
 namespace {
 
@@ -393,5 +395,185 @@ void testLargeFiles() {
         CHECK(hiddenNote(990, 0) == "990 characters before");
         CHECK(hiddenNote(0, 1) == "1 more character");
         CHECK(hiddenNote(1000, 1) == "1 more character, 1,000 before");
+    }
+
+    GROUP("largefile:piece-table");
+    {
+        // Random edits against a plain string: every read, the length, and
+        // each character agree; the original is never written.
+        std::mt19937 rng(17);
+        std::u16string original;
+        for (int i = 0; i < 5000; i++) original += (char16_t)(i % 37 == 0 ? u'\n' : u'a' + i % 26);
+        const std::u16string kept = original;
+        auto reader = [&](size_t start, size_t n, char16_t *out) {
+            std::copy(original.begin() + (long)start, original.begin() + (long)(start + n), out);
+        };
+        PieceTable t(original.size());
+        std::u16string model = original;
+        CHECK(t.isOriginal() && t.length() == original.size() && t.sameAsOriginal(reader));
+        int bad = 0;
+        for (int i = 0; i < 4000; i++) {
+            const size_t pos = rng() % (model.size() + 1);
+            const size_t del = rng() % 3 == 0 ? rng() % std::min<size_t>(model.size() - pos + 1, 40) : 0;
+            std::u16string ins;
+            const size_t n = rng() % 4 == 0 ? 0 : rng() % (rng() % 50 == 0 ? 30000 : 6);
+            for (size_t k = 0; k < n; k++) ins += (char16_t)(u'A' + rng() % 26);
+            model.replace(pos, del, ins);
+            t.replace(pos, del, ins.data(), ins.size());
+            if (t.length() != model.size()) bad++;
+            const size_t a = model.empty() ? 0 : rng() % model.size();
+            const size_t len = std::min<size_t>(model.size() - a, rng() % 300);
+            std::u16string got(len, u'\0');
+            t.read(a, len, &got[0], reader);
+            if (got != model.substr(a, len)) bad++;
+            if (!model.empty() && t.at(a, reader) != model[a]) bad++;
+        }
+        std::u16string whole(t.length(), u'\0');
+        t.read(0, whole.size(), &whole[0], reader);
+        CHECK(bad == 0 && whole == model && original == kept);
+        CHECK(!t.sameAsOriginal(reader));
+    }
+    {
+        // Typed after the last typed character, a piece grows; typed and
+        // deleted again, the pieces join and the text is the original again,
+        // compared without reading the pieces that never moved.
+        std::u16string original(100000, u'x');
+        size_t readsOfOriginal = 0;
+        auto reader = [&](size_t start, size_t n, char16_t *out) {
+            readsOfOriginal += n;
+            std::fill(out, out + n, original[start]);
+        };
+        PieceTable t(original.size());
+        for (int i = 0; i < 50; i++) t.replace(500 + i, 0, u"q", 1);
+        CHECK(t.pieceCount() == 3);   // before, the typed run, after
+        t.replace(500, 50, nullptr, 0);
+        CHECK(t.isOriginal() && t.pieceCount() == 1);
+        readsOfOriginal = 0;
+        CHECK(t.sameAsOriginal(reader) && readsOfOriginal == 0);
+        // Equal length, other characters: unequal, and only the edited part read.
+        t.replace(10, 1, u"x", 1);
+        readsOfOriginal = 0;
+        CHECK(t.sameAsOriginal(reader) && readsOfOriginal <= 4096);
+        t.replace(10, 1, u"y", 1);
+        CHECK(!t.sameAsOriginal(reader));
+        // Deleting everything, then typing into the empty text.
+        PieceTable e(3);
+        e.replace(0, 3, nullptr, 0);
+        CHECK(e.length() == 0 && e.pieceCount() == 0 && !e.isOriginal());
+        e.replace(0, 0, u"ab", 2);
+        char16_t two[2];
+        e.read(0, 2, two, reader);
+        CHECK(e.length() == 2 && two[0] == u'a' && two[1] == u'b');
+        CHECK(PieceTable(0).isOriginal());
+    }
+    {
+        // A copy is a snapshot: the table it came from goes on editing (into
+        // the block they share) and the copy reads what it held; the copy's
+        // own edits never reach the table it came from.
+        std::u16string original = u"0123456789";
+        auto reader = [&](size_t start, size_t n, char16_t *out) {
+            std::copy(original.begin() + (long)start, original.begin() + (long)(start + n), out);
+        };
+        auto text = [&](const PieceTable &t) {
+            std::u16string s(t.length(), u'\0');
+            t.read(0, s.size(), &s[0], reader);
+            return s;
+        };
+        PieceTable t(original.size());
+        t.replace(5, 0, u"ab", 2);
+        PieceTable snap = t;
+        t.replace(7, 0, u"cd", 2);   // right after "ab", in the same block
+        t.replace(0, 2, nullptr, 0);
+        CHECK(text(snap) == u"01234ab56789");
+        CHECK(text(t) == u"234abcd56789");
+        snap.replace(7, 0, u"ZZ", 2);
+        CHECK(text(snap) == u"01234abZZ56789" && text(t) == u"234abcd56789");
+        t.replace(t.length(), 0, u"!", 1);
+        CHECK(text(snap) == u"01234abZZ56789" && text(t) == u"234abcd56789!");
+        // Two tables over one original compare by what they hold, sharing
+        // or not: a saved text against the text typed on since.
+        PieceTable saved = t;
+        CHECK(t.sameAs(saved, reader) && saved.sameAs(t, reader));
+        t.replace(3, 0, u"x", 1);
+        CHECK(!t.sameAs(saved, reader));
+        t.replace(3, 1, nullptr, 0);
+        CHECK(t.sameAs(saved, reader));
+        t.replace(0, 1, u"2", 1);   // the same character, from another block
+        CHECK(t.sameAs(saved, reader));
+        t.replace(0, 1, u"9", 1);
+        CHECK(!t.sameAs(saved, reader) && !t.sameAs(PieceTable(original.size()), reader));
+        PieceTable other(original.size());
+        other.replace(0, 2, nullptr, 0);
+        other.replace(3, 0, u"abcd", 4);
+        other.replace(other.length(), 0, u"!", 1);
+        PieceTable back = t;
+        back.replace(0, 1, u"2", 1);
+        CHECK(text(other) == text(back) && other.sameAs(back, reader) && back.sameAs(other, reader));
+    }
+
+    GROUP("largefile:find-in-blocks");
+    {
+        // The matches and Replace All's edits read a block of lines at a
+        // time are the whole text's, with blocks far smaller than its lines
+        // so lines are cut every way: "\r\n" across a block's end, a line
+        // longer than the block, empty lines, and the empty last line.
+        std::mt19937 rng(23);
+        const char16_t alphabet[] = u"abA \r\n\n\u2029b";
+        const char *patterns[] = {"ab", "a", "^", "$", "^$", "b$", "^a", "a+", "\\bab\\b", "[ab]{2,}"};
+        int bad = 0, checked = 0;
+        for (int round = 0; round < 120; round++) {
+            std::u16string text;
+            const size_t n = rng() % 400;
+            for (size_t i = 0; i < n; i++) text += alphabet[rng() % 9];
+            if (round % 7 == 0) text += u"\n";
+            for (const char *p : patterns) {
+                TextFind::Options o;
+                o.regex = std::strchr("^$\\[+", p[0]) || std::strpbrk(p, "^$\\[+");
+                o.caseSensitive = round % 2;
+                o.wholeWord = round % 5 == 0 && !o.regex;
+                const TextFind::Query q = TextFind::Query::make(std::string(p), o);
+                if (!q.usable()) continue;
+                const size_t block = 1 + rng() % 24;
+                size_t most = 0;
+                auto reader = [&](size_t start, size_t len, char16_t *out) {
+                    std::copy(text.begin() + (long)start, text.begin() + (long)(start + len), out);
+                    most = std::max(most, len);
+                };
+                const auto whole = TextFind::findAll(text, q);
+                const auto blocks = TextFind::findAll(text.size(), reader, q, 0, nullptr, nullptr,
+                                                      nullptr, block);
+                bool same = whole.size() == blocks.size();
+                for (size_t i = 0; same && i < whole.size(); i++)
+                    same = whole[i].start == blocks[i].start && whole[i].length == blocks[i].length &&
+                           whole[i].groups == blocks[i].groups;
+                const auto edits = TextFind::replaceAll(text, q, u"<$&>");
+                const auto edits2 = TextFind::replaceAll(text.size(), reader, q, u"<$&>", block);
+                same = same && edits.size() == edits2.size();
+                for (size_t i = 0; same && i < edits.size(); i++)
+                    same = edits[i].start == edits2[i].start && edits[i].length == edits2[i].length &&
+                           edits[i].text == edits2[i].text;
+                // At most the limit, with "truncated" as the whole text says.
+                bool cutWhole = false, cutBlocks = false;
+                const auto lw = TextFind::findAll(text, q, 3, &cutWhole);
+                const auto lb = TextFind::findAll(text.size(), reader, q, 3, &cutBlocks, nullptr,
+                                                  nullptr, block);
+                same = same && lw.size() == lb.size() && cutWhole == cutBlocks;
+                if (!same) bad++;
+                checked++;
+            }
+        }
+        CHECK(bad == 0 && checked > 1000);
+        // A cancelled search finds nothing and says so.
+        std::atomic<bool> stop{true};
+        bool cancelled = false;
+        std::u16string many(300000, u'a');
+        for (size_t i = 0; i < many.size(); i += 10) many[i] = u'\n';
+        auto reader = [&](size_t start, size_t len, char16_t *out) {
+            std::copy(many.begin() + (long)start, many.begin() + (long)(start + len), out);
+        };
+        const auto none = TextFind::findAll(many.size(), reader,
+                                            TextFind::Query::make(std::string("a"), {}), 0, nullptr,
+                                            &stop, &cancelled, 4096);
+        CHECK(none.empty() && cancelled);
     }
 }

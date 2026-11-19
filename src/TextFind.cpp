@@ -1024,6 +1024,101 @@ void dropEditsOnLines(const std::u16string& text, std::vector<Edit16>* edits,
     *edits = std::move(kept);
 }
 
+namespace {
+
+// Calls f(block, at, last) for the text in blocks of whole lines, each about
+// blockUnits long; f returns false to stop.
+template <class F>
+void forEachLineBlock(std::size_t length, const Reader& read, std::size_t blockUnits, F f) {
+    auto ends = [](char16_t c, char16_t next) {
+        return c == u'\n' || c == 0x2029 || (c == u'\r' && next != u'\n');
+    };
+    blockUnits = std::max<std::size_t>(blockUnits, 1);
+    std::u16string block;
+    for (std::size_t at = 0; at < length;) {
+        std::size_t want = std::min(blockUnits, length - at), cut = 0;
+        for (;;) {
+            // With the unit after, which says whether a '\r' ends a line.
+            const std::size_t got = std::min(want + 1, length - at);
+            block.resize(got);
+            read(at, got, &block[0]);
+            if (at + want >= length) {
+                cut = length - at;
+                break;
+            }
+            std::size_t i = want;
+            while (i > 0 && !ends(block[i - 1], block[i])) i--;
+            if (i > 0) {
+                cut = i;
+                break;
+            }
+            want = std::min(want * 2, length - at);   // a line longer than the block
+        }
+        block.resize(cut);
+        const bool last = at + cut >= length;
+        if (!f(block, at, last)) return;
+        at += cut;
+    }
+}
+
+}  // namespace
+
+std::vector<Match> findAll(std::size_t length, const Reader& read, const Query& query,
+                           std::size_t limit, bool* truncated, const std::atomic<bool>* cancel,
+                           bool* cancelled, std::size_t blockUnits) {
+    if (truncated) *truncated = false;
+    if (cancelled) *cancelled = false;
+    std::vector<Match> out;
+    if (!query.usable()) return out;
+    if (length == 0) return findAll(std::u16string(), query, limit, truncated, cancel, cancelled);
+    forEachLineBlock(length, read, blockUnits,
+                     [&](const std::u16string& block, std::size_t at, bool last) {
+        bool cut = false, stopped = false;
+        std::vector<Match> found =
+            findAll(block, query, limit ? limit - out.size() : 0, &cut, cancel, &stopped);
+        if (stopped) {
+            if (cancelled) *cancelled = true;
+            out.clear();
+            return false;
+        }
+        // A block ends in a line break, after which findAll searches an
+        // empty last line the text does not have there (the next block's
+        // first line starts at that place).
+        if (!last && !found.empty() && found.back().start == block.size()) {
+            found.pop_back();
+            cut = false;
+        }
+        for (Match& m : found) {
+            m.start += at;
+            for (auto& g : m.groups)
+                if (g.first != std::u16string::npos) g.first += at;
+            out.push_back(std::move(m));
+        }
+        if (cut) {
+            if (truncated) *truncated = true;
+            return false;
+        }
+        return true;
+    });
+    return out;
+}
+
+std::vector<Edit16> replaceAll(std::size_t length, const Reader& read, const Query& query,
+                               const std::u16string& replacement, std::size_t blockUnits) {
+    if (length == 0) return replaceAll(std::u16string(), query, replacement);
+    std::vector<Edit16> edits;
+    if (!query.usable()) return edits;
+    forEachLineBlock(length, read, blockUnits,
+                     [&](const std::u16string& block, std::size_t at, bool last) {
+        for (const Match& m : findAll(block, query)) {
+            if (!last && m.start == block.size()) continue;   // the empty line after the block
+            edits.push_back({m.start + at, m.length, expand(replacement, block, m, query)});
+        }
+        return true;
+    });
+    return edits;
+}
+
 std::u16string applyEdits(const std::u16string& text, const std::vector<Edit16>& edits) {
     std::u16string out;
     out.reserve(text.size());
