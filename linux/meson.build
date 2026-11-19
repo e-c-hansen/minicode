@@ -349,6 +349,8 @@ gui_sources = [
   'src/Keys.cpp',
   # The shortcut hints' search box.
   'src/HintsSearchBox.cpp',
+  # The shortcut hints in columns, as many as fit the window.
+  'src/HintsColumns.cpp',
   # The window's panes: the sidebar, and the editor, browser and terminal
   # laid out as on the Mac.
   'src/WindowLayout.cpp',

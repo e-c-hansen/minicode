@@ -122,6 +122,103 @@ std::vector<std::string> labels(const std::vector<std::string> &paths) {
     return out;
 }
 
+std::vector<TabName> tabNames(const std::vector<std::string> &paths) {
+    const std::vector<std::string> long_ = labels(paths);
+    std::vector<TabName> out(paths.size());
+    for (size_t i = 0; i < paths.size(); i++) {
+        if (paths[i].empty()) continue;
+        out[i].name = tail(paths[i], 1);
+        const std::string &l = long_[i];
+        if (l.size() > out[i].name.size() + 1)
+            out[i].hint = l.substr(0, l.size() - out[i].name.size() - 1);
+    }
+    return out;
+}
+
+StripLayout layoutStrip(const std::vector<double> &natural, double minWidth, double maxWidth) {
+    StripLayout l;
+    l.x.reserve(natural.size());
+    l.w.reserve(natural.size());
+    for (double n : natural) {
+        const double w = std::ceil(std::min(maxWidth, std::max(minWidth, n)));
+        l.x.push_back(l.content);
+        l.w.push_back(w);
+        l.content += w;
+    }
+    return l;
+}
+
+double clampScroll(double scroll, double content, double view) {
+    return std::max(0.0, std::min(scroll, content - view));
+}
+
+double revealScroll(double scroll, double left, double right, double content, double view) {
+    if (right > scroll + view) scroll = right - view;
+    if (left < scroll) scroll = left;
+    return clampScroll(scroll, content, view);
+}
+
+double wheelScroll(double scroll, double dx, double dy, bool precise, double lineStep,
+                   double content, double view) {
+    double d = std::fabs(dx) > std::fabs(dy) ? dx : dy;
+    if (!precise) d *= lineStep;
+    return clampScroll(scroll - d, content, view);
+}
+
+double dragAutoScroll(double x, double view, double edge, double maxStep) {
+    if (edge <= 0 || view <= 0) return 0;
+    if (x < edge) return -maxStep * std::min(1.0, (edge - x) / edge);
+    if (x > view - edge) return maxStep * std::min(1.0, (x - (view - edge)) / edge);
+    return 0;
+}
+
+Clipped clipped(double scroll, double content, double view) {
+    Clipped c;
+    c.left = scroll > 0.5;
+    c.right = content - scroll > view + 0.5;
+    return c;
+}
+
+// The byte offsets where a UTF-8 string's code points start, and its size.
+static std::vector<size_t> codePointStarts(const std::string &s) {
+    std::vector<size_t> starts;
+    for (size_t i = 0; i < s.size(); i++)
+        if (((unsigned char)s[i] & 0xC0) != 0x80) starts.push_back(i);
+    starts.push_back(s.size());
+    return starts;
+}
+
+std::string fitMiddle(const std::string &text, double width, const Measure &measure) {
+    if (measure(text) <= width) return text;
+    static const std::string ellipsis = "\xE2\x80\xA6";
+    if (measure(ellipsis) > width) return "";
+    const std::vector<size_t> at = codePointStarts(text);
+    const size_t n = at.size() - 1;   // code points
+    // `k` code points kept, the extra one at the front.
+    auto cut = [&](size_t k) {
+        const size_t head = (k + 1) / 2, back = k / 2;
+        return text.substr(0, at[head]) + ellipsis + text.substr(at[n - back]);
+    };
+    size_t lo = 0, hi = n == 0 ? 0 : n - 1;   // lo always fits
+    while (lo < hi) {
+        const size_t mid = (lo + hi + 1) / 2;
+        if (measure(cut(mid)) <= width) lo = mid;
+        else hi = mid - 1;
+    }
+    return cut(lo);
+}
+
+TabName fitName(const TabName &t, double width, double gap, double minHint,
+                const Measure &measureName, const Measure &measureHint) {
+    const double name = measureName(t.name);
+    if (!t.hint.empty() && name + gap + measureHint(t.hint) <= width) return t;
+    if (!t.hint.empty() && width - name - gap >= minHint) {
+        TabName out{t.name, fitMiddle(t.hint, width - name - gap, measureHint)};
+        if (!out.hint.empty()) return out;
+    }
+    return TabName{fitMiddle(t.name, width, measureName), ""};
+}
+
 int dropIndex(const std::vector<double> &widths, int from, double x) {
     const int n = (int)widths.size();
     if (from < 0 || from >= n) return from;
@@ -358,6 +455,12 @@ std::vector<std::string> Window::labels(int group) const {
     std::vector<std::string> paths;
     for (DocId id : tabs(group)) paths.push_back(path(id));
     return EditorTabs::labels(paths);
+}
+
+std::vector<EditorTabs::TabName> Window::tabNames(int group) const {
+    std::vector<std::string> paths;
+    for (DocId id : tabs(group)) paths.push_back(path(id));
+    return EditorTabs::tabNames(paths);
 }
 
 void Window::ensure(DocId id, const std::string &path, Preview kind) {

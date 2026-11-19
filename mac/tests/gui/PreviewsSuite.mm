@@ -2,7 +2,8 @@
 // for more kinds of file (FileViewers.h): Quick Look in the editor's slot
 // for what mutible has no viewer for, Space in the tree for the Quick Look
 // panel, binary files never opened as text, and the acceptance checks of a
-// PDF, a .mov, a .docx and a .heic opened from Finder. Every fixture is
+// PDF, a .mov, a .docx and a .heic opened from Finder, and the window's
+// keys (Shift+Cmd+P, Cmd+P) from every viewer. Every fixture is
 // made here, in the scratch project: a PDF with PDFKit, PNG and HEIC with
 // ImageIO, a QuickTime movie with AVAssetWriter, a .docx zipped by hand.
 #import "Harness.h"
@@ -13,6 +14,12 @@
 #import "JsonOutlineView.h"
 #import "AppSettings.h"
 #import "SqliteView.h"
+#import "HtmlPageView.h"
+#import "CompareView.h"
+#import "ChangeReviewPage.h"
+#import "PalettePanel.h"
+#import <Carbon/Carbon.h>
+#import <WebKit/WebKit.h>
 #include <sqlite3.h>
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
@@ -268,6 +275,7 @@ static void JsonSteps(void);
 static void NotebookSteps(void);
 static void SqliteSteps(void);
 static void MarkupSteps(void);
+static void ViewerKeySteps(void);
 static __weak EditorController *gPreviewsWindow;   // the suite's own window
 
 MC_GUI_SUITE(previews) {
@@ -524,6 +532,7 @@ MC_GUI_SUITE(previews) {
     NotebookSteps();
     SqliteSteps();
     MarkupSteps();
+    ViewerKeySteps();
     // The suite's own window goes with it (the harness's LEAK check): close,
     // not performClose:, so no question about what the steps left unsaved.
     __block EditorController *closing = nil;
@@ -1599,4 +1608,235 @@ static void MarkupSteps(void) {
         GCHECK(SameColor(ColorOf(tv, @"<!-- c -->", 0), [cfg syntax:TokenStyle::Comment]));
         GCHECK(SameColor(ColorOf(tv, @"version", 0), [cfg syntax:TokenStyle::Attribute]));
     });
+}
+
+// ------------------------------------------------- window keys in viewers
+// The window's commands work whatever viewer has the keyboard (round 9:
+// Shift+Cmd+P did nothing while the CSV grid had it). Each viewer is shown
+// and given the keyboard as Cmd+1 gives it (focusActiveDocument), then
+// Shift+Cmd+P and Cmd+P go the way a key press goes (the key monitor, the
+// window's views, the main menu): the palette opens, stays open, and Esc
+// closes it with the keyboard back where it was. Before that, every menu
+// item is validated against what has the keyboard, which must not throw.
+@interface EditorController (ViewerKeysChecks)
+- (void)showChangeReviewAt:(NSString *)rel staged:(BOOL)staged;
+@end
+
+namespace {
+
+NSString *RunGit(NSArray<NSString *> *args) {
+    NSTask *t = [NSTask new];
+    t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/git"];
+    t.arguments = [@[@"-c", @"user.name=Viewer Keys", @"-c", @"user.email=keys@example.invalid"]
+                   arrayByAddingObjectsFromArray:args];
+    t.currentDirectoryURL = [NSURL fileURLWithPath:Fixture(@"")];
+    NSPipe *out = [NSPipe pipe];
+    t.standardOutput = out;
+    t.standardError = [NSFileHandle fileHandleWithNullDevice];
+    if (![t launchAndReturnError:nil]) return nil;
+    NSData *d = [out.fileHandleForReading readDataToEndOfFile];
+    [t waitUntilExit];
+    if (t.terminationStatus != 0) return nil;
+    return [[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @""
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+NSString *Describe(NSResponder *r) {
+    if (!r) return @"nil";
+    if ([r isKindOfClass:NSTextView.class] && ((NSTextView *)r).isFieldEditor)
+        return [NSString stringWithFormat:@"field editor of %@",
+                NSStringFromClass([(id)((NSTextView *)r).delegate class])];
+    return NSStringFromClass(r.class);
+}
+
+void UpdateEveryMenu(NSMenu *menu) {
+    [menu update];
+    for (NSMenuItem *it in menu.itemArray)
+        if (it.submenu) UpdateEveryMenu(it.submenu);
+}
+
+// Every menu item validated against what has the keyboard, as the menu
+// bar does before it takes a key: nil, or what a validation threw. The
+// CSV grid's threw for every item it was the target of, and AppKit then
+// dropped the key (round 9).
+NSString *MenuValidationProblem(void) {
+    @try {
+        UpdateEveryMenu(NSApp.mainMenu);
+    } @catch (NSException *x) {
+        return x.reason ?: x.name;
+    }
+    return nil;
+}
+
+// One viewer: `open` shows it (NO: skipped, said why), `ready` says it is
+// on show, `focus` gives it the keyboard (nil: as Cmd+1 does).
+void PaletteKeysIn(NSString *what, BOOL (^open)(EditorController *c),
+                   BOOL (^ready)(EditorController *c), void (^focus)(EditorController *c)) {
+    __block BOOL shown = NO;
+    MCGuiStep([NSString stringWithFormat:@"%@ is shown", what], ^{
+        shown = open(MCGuiController());
+    });
+    MCGuiWait([NSString stringWithFormat:@"%@ is ready", what], 15, ^BOOL {
+        return !shown || !ready || ready(MCGuiController());
+    });
+    struct Press { unsigned short code; NSEventModifierFlags flags; const char *name, *text; };
+    static const Press presses[] = {
+        {kVK_ANSI_P, NSEventModifierFlagShift | NSEventModifierFlagCommand, "Shift+Cmd+P", ">"},
+        {kVK_ANSI_P, NSEventModifierFlagCommand, "Cmd+P", ""},
+    };
+    for (const Press &press : presses) {
+        __block NSResponder *had = nil;
+        NSString *key = @(press.name);
+        MCGuiStep([NSString stringWithFormat:@"%@ in %@", key, what], ^{
+            if (!shown) return;
+            EditorController *c = MCGuiController();
+            if (focus) focus(c);
+            else [c focusActiveDocument];
+            had = c.window.firstResponder;
+            MCGuiNote(@"%@: the keyboard is in %@", what, Describe(had));
+            GCHECK(MCCommandPaletteIn(c.window) == nil);
+            NSString *problem = MenuValidationProblem();
+            if (problem) MCGuiNote(@"%@: validating the menus threw: %@", what, problem);
+            GCHECK(problem == nil);
+            MCGuiPressKey(c.window, press.code, press.flags);
+        });
+        MCGuiWait([NSString stringWithFormat:@"the palette opens from %@", what], 5, ^BOOL {
+            return !shown || MCCommandPaletteIn(MCGuiController().window) != nil;
+        });
+        // A negative check: nothing in the viewer takes the keyboard back
+        // and closes the palette a moment later.
+        MCGuiPause(0.4);
+        MCGuiStep([NSString stringWithFormat:@"it stays, and Esc closes it (%@, %@)", key, what], ^{
+            if (!shown) return;
+            EditorController *c = MCGuiController();
+            NSView *palette = MCCommandPaletteIn(c.window);
+            MCGuiNote(@"%@ after %@: palette %@, keyboard in %@", what, key,
+                      palette ? @"open" : @"closed", Describe(c.window.firstResponder));
+            GCHECK(palette != nil);
+            if (!palette) return;
+            NSTextField *field = MCCommandPaletteField(palette);
+            GCHECK_EQ_STR(field.stringValue, @(press.text));
+            GCHECK(field.currentEditor && c.window.firstResponder == field.currentEditor);
+            [(NSTextView *)field.currentEditor doCommandBySelector:@selector(cancelOperation:)];
+            GCHECK(MCCommandPaletteIn(c.window) == nil);
+            // The keyboard goes back where it was (a cell being typed into
+            // has been committed by then, so not into its field editor).
+            NSResponder *now = c.window.firstResponder;
+            const BOOL fieldEditor =
+                [had isKindOfClass:NSTextView.class] && ((NSTextView *)had).isFieldEditor;
+            const BOOL back = now == (had ?: c.window) ||
+                              ([now isKindOfClass:NSView.class] && [had isKindOfClass:NSView.class] &&
+                               [(NSView *)now isDescendantOf:(NSView *)had]);
+            if (!back && !fieldEditor)
+                MCGuiNote(@"%@: the keyboard went back to %@, not %@", what, Describe(now), Describe(had));
+            if (!fieldEditor) GCHECK(back);
+        });
+    }
+}
+
+}  // namespace
+
+static void ViewerKeySteps(void) {
+    MCGuiStep(@"fixtures for the window's keys", ^{
+        MCGuiWriteFile(Fixture(@"keys.csv"), @"a,b,c\n1,2,3\n4,5,6\n");
+        MCGuiWriteFile(Fixture(@"keys.json"), @"{\"a\": [1, 2], \"b\": {\"c\": true}}\n");
+        MCGuiWriteFile(Fixture(@"keys.ipynb"), NotebookText());
+        MCGuiWriteFile(Fixture(@"keys.html"), @"<!doctype html><title>k</title><p>Keys</p>\n");
+        MCGuiWriteFile(Fixture(@"keys.md"), @"# Keys\n\nA page.\n");
+        GCHECK(MakeDatabase(Fixture(@"keys.db")));
+    });
+    PaletteKeysIn(@"the CSV table", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"keys.csv")] && [ActiveKind(c) isEqualToString:@"table"];
+    }, nil, nil);
+    PaletteKeysIn(@"a CSV cell being typed into", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"keys.csv")];
+    }, nil, ^(EditorController *c) {
+        NSTableView *t = Viewers(c).csv.table;
+        [c.window makeFirstResponder:t];
+        [t selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
+        [t editColumn:1 row:1 withEvent:nil select:YES];
+    });
+    PaletteKeysIn(@"the JSON outline", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"keys.json")];
+    }, ^BOOL(EditorController *c) {
+        MCJsonOutlinePane *p = Viewers(c).json;
+        return p && !p.parsing && p.outline.numberOfRows > 1;
+    }, ^(EditorController *c) {
+        [c.window makeFirstResponder:Viewers(c).json.outline];
+    });
+    PaletteKeysIn(@"the SQLite viewer", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"keys.db")];
+    }, ^BOOL(EditorController *c) { return Sqlite(c) && !Sqlite(c).busy; }, nil);
+    PaletteKeysIn(@"the SQLite viewer's rows", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"keys.db")];
+    }, ^BOOL(EditorController *c) { return Sqlite(c) && !Sqlite(c).busy; },
+       ^(EditorController *c) { [c.window makeFirstResponder:Sqlite(c).rowsTable]; });
+    PaletteKeysIn(@"a notebook", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"keys.ipynb")] && [ActiveKind(c) isEqualToString:@"notebook"];
+    }, nil, nil);
+    PaletteKeysIn(@"an image", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"picture.png")] && [ActiveKind(c) isEqualToString:@"image"];
+    }, nil, nil);
+    PaletteKeysIn(@"a PDF", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"paper.pdf")] && [ActiveKind(c) isEqualToString:@"pdf"];
+    }, nil, nil);
+    PaletteKeysIn(@"a movie", ^BOOL(EditorController *c) {
+        NSDictionary *a = [[NSFileManager defaultManager] attributesOfItemAtPath:Fixture(@"clip.mov")
+                                                                           error:nil];
+        if (a.fileSize == 0) {
+            MCGuiNote(@"no movie was written: the movie's keys are skipped");
+            return NO;
+        }
+        return [c showFile:Fixture(@"clip.mov")] && [ActiveKind(c) isEqualToString:@"media"];
+    }, nil, nil);
+    PaletteKeysIn(@"an HTML page", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"keys.html")] && [ActiveKind(c) isEqualToString:@"html"];
+    }, ^BOOL(EditorController *c) {
+        WKWebView *web = (WKWebView *)Viewers(c).html.webView;
+        return web && !web.loading;
+    }, nil);
+    PaletteKeysIn(@"a Markdown page", ^BOOL(EditorController *c) {
+        return [c showFile:Fixture(@"keys.md")] && [[c valueForKey:@"previewMode"] boolValue];
+    }, nil, nil);
+    PaletteKeysIn(@"the compare view", ^BOOL(EditorController *c) {
+        MCComparison *cmp = [MCComparison new];
+        cmp.title = @"keys.txt (compare)";
+        cmp.leftLabel = @"before";
+        cmp.rightLabel = @"after";
+        cmp.leftText = @"one\ntwo\nthree\n";
+        cmp.rightText = @"one\nTWO\nthree\n";
+        cmp.fileName = @"keys.txt";
+        [cmp prepare];
+        [c showComparison:cmp preview:NO];
+        return [ActiveKind(c) isEqualToString:@"diff"];
+    }, nil, nil);
+    // The review and commit pages need the folder to be a repository.
+    __block NSString *head = nil;
+    MCGuiStep(@"the fixtures' folder becomes a repository with a change", ^{
+        MCGuiWriteFile(Fixture(@"keys.txt"), @"one\ntwo\n");
+        if (!RunGit(@[@"init", @"-q"]) || !RunGit(@[@"add", @"keys.txt"]) ||
+            !RunGit(@[@"commit", @"-q", @"-m", @"Keys"])) {
+            MCGuiNote(@"git did not run here: the review and commit pages' keys are skipped");
+            return;
+        }
+        head = RunGit(@[@"rev-parse", @"HEAD"]);
+        MCGuiWriteFile(Fixture(@"keys.txt"), @"one\nTWO\n");
+        GCHECK(head.length == 40);
+    });
+    PaletteKeysIn(@"the review page", ^BOOL(EditorController *c) {
+        if (!head) return NO;
+        [c showChangeReviewAt:nil staged:NO];
+        return YES;
+    }, ^BOOL(EditorController *c) {
+        id page = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
+        return [page isKindOfClass:MCChangeReviewPage.class] && ((MCChangeReviewPage *)page).loaded;
+    }, nil);
+    PaletteKeysIn(@"a commit's page", ^BOOL(EditorController *c) {
+        if (!head) return NO;
+        [c showCommitReview:head title:@"Keys"];
+        return YES;
+    }, ^BOOL(EditorController *c) {
+        id page = [[c valueForKey:@"activeTab"] valueForKey:@"page"];
+        return [page isKindOfClass:MCChangeReviewPage.class] && ((MCChangeReviewPage *)page).loaded;
+    }, nil);
 }

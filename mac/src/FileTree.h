@@ -12,6 +12,7 @@
 @property(nonatomic, copy) NSString *path;
 @property(nonatomic, assign) BOOL isDir;
 @property(nonatomic, assign) BOOL isLink;
+@property(nonatomic, assign) BOOL executable;   // a regular file with an execute bit
 @property(nonatomic, assign) long long size;
 @property(nonatomic, assign) double modified;
 @property(nonatomic, assign) double created;
@@ -40,6 +41,7 @@ NSArray<NSString *> *MCTreeListedFolders(void);
 @property(nonatomic, copy)   NSString *path;
 @property(nonatomic, assign) BOOL isDir;
 @property(nonatomic, assign) BOOL isLink;        // a symbolic link (to a folder or a file)
+@property(nonatomic, assign) BOOL executable;    // a regular file with an execute bit (its icon)
 @property(nonatomic, assign) long long size;     // a file's bytes; -1 when unknown
 @property(nonatomic, assign) double modified;    // seconds since 1970; 0 when unknown
 @property(nonatomic, assign) double created;     // its birth time, the same way

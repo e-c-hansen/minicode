@@ -13,6 +13,7 @@
 // stays solid over a see-through panel.
 #pragma once
 #include "SyntaxHighlighter.h"   // TokenStyle
+#include "WrapIndent.h"
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -321,6 +322,10 @@ public:
     // editor.word-wrap: long lines wrap at the pane's edge (on, the
     // default), or run on past it with a horizontal scroll bar (off).
     bool wordWrap() const { return wordWrap_; }
+    // editor.wrapping-indent: where a wrapped line's continuation starts
+    // (WrapIndent.h): same (the default, as VS Code's editor.wrappingIndent),
+    // indent, or none.
+    WrapIndent::Mode wrappingIndent() const { return wrappingIndent_; }
     // editor.auto-close: brackets and quotes close as they are typed, are
     // typed over and deleted in pairs, by VS Code's rules for the file's
     // language (AutoClose; on, the default, as VS Code's
@@ -605,6 +610,7 @@ private:
     double tabsFontSize_ = 12;
     LineNumbers lineNumbers_ = LineNumbers::On;
     bool wordWrap_ = true;
+    WrapIndent::Mode wrappingIndent_ = WrapIndent::Mode::Same;
     bool autoClose_ = true;
     SessionHostMode sessionHostMode_ = SessionHostMode::Off;
     double sessionWebIdleMinutes_ = 60;

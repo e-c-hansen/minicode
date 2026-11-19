@@ -1,6 +1,11 @@
 // TabStrip.h — the row of open files above the editor, and of terminals
 // above the terminal dock. It only draws and reports clicks and drags; its
 // owner keeps the tabs (see EditorTabs.h for the rules the editor follows).
+// Tabs keep their natural width (EditorTabs::layoutStrip, as VS Code's
+// "fit"), so titles stay whole; a row wider than the strip scrolls, by a
+// trackpad or a wheel (vertical too), and the tab on show is scrolled into
+// view whenever it changes. A thin scroll bar shows while the pointer is
+// over a row that overflows, and the cut-off ends fade.
 #import <Cocoa/Cocoa.h>
 
 // The titles' font: tabs.font-size points (12 when unset), the same for
@@ -25,6 +30,9 @@ typedef NS_ENUM(NSInteger, MCTabAttention) {
 // What one tab shows.
 @interface MCTabStripItem : NSObject
 @property(nonatomic, copy) NSString *title;
+// Folders after the title, dimmed, that tell same-named files apart
+// (EditorTabs::tabNames); nil for none.
+@property(nonatomic, copy) NSString *hint;
 @property(nonatomic, copy) NSString *toolTip;   // the whole path
 @property(nonatomic, assign) BOOL dirty;        // a dot in place of the close button
 @property(nonatomic, assign) BOOL preview;      // a preview tab (the user's or an agent's): an italic title
@@ -56,6 +64,14 @@ typedef NS_ENUM(NSInteger, MCTabAttention) {
 // (flipped). Empty when the tab is scrolled out of sight.
 - (NSRect)rectForTab:(NSInteger)index;
 - (NSRect)closeRectForTab:(NSInteger)index;
+// What a tab draws of its title and hint at its width (EditorTabs::fitName):
+// whole for any ordinary name, cut in the middle with an ellipsis only past
+// the widest tab.
+- (NSString *)displayedTitleForTab:(NSInteger)index;
+- (NSString *)displayedHintForTab:(NSInteger)index;
+// The whole row's width, and how far it is scrolled left (0 when it fits).
+@property(nonatomic, readonly) CGFloat contentWidth;
+@property(nonatomic, readonly) CGFloat scrollOffset;
 // Where a dragged tab will go (its index after the move), or -1 when no
 // drag is under way past its first 4 points.
 @property(nonatomic, readonly) NSInteger dropTarget;
