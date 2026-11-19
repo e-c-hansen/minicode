@@ -5,6 +5,7 @@
 
 #include "ConsentBar.h"
 #include "FileSniff.h"
+#include "Question.h"
 
 #include <sys/stat.h>
 
@@ -134,30 +135,19 @@ void HtmlView::makeWeb() {
     g_signal_connect(web_, "load-changed", G_CALLBACK(+[](WebKitWebView*, WebKitLoadEvent ev, gpointer p) {
         static_cast<HtmlView*>(p)->onLoad(ev);
     }), this);
-    g_signal_connect(web_, "load-failed", G_CALLBACK(+[](WebKitWebView*, WebKitLoadEvent, char*, GError*, gpointer p) -> gboolean {
+    g_signal_connect(web_, "load-failed", G_CALLBACK(+[](WebKitWebView*, WebKitLoadEvent, char* uri, GError* error, gpointer p) -> gboolean {
         HtmlView* v = static_cast<HtmlView*>(p);
         if (!webkit_web_view_is_loading(WEBKIT_WEB_VIEW(v->web_))) v->restoring_ = false;
-        return FALSE;
+        return v->onFailed(uri, error);
     }), this);
     g_signal_connect(web_, "decide-policy", G_CALLBACK(+[](WebKitWebView*, WebKitPolicyDecision* d, WebKitPolicyDecisionType t, gpointer p) -> gboolean {
         return static_cast<HtmlView*>(p)->onPolicy(d, t);
     }), this);
-    // window.open and target=_blank: the link handler, never a window.
+    // window.open (a target=_blank meets the policy check first): never a
+    // window. The user's goes to the link handler; the page's own only as
+    // HtmlPage::policy says, else it is refused.
     g_signal_connect(web_, "create", G_CALLBACK(+[](WebKitWebView*, WebKitNavigationAction* a, gpointer p) -> GtkWidget* {
-        HtmlView* v = static_cast<HtmlView*>(p);
-        WebKitURIRequest* r = webkit_navigation_action_get_request(a);
-        const char* uri = r ? webkit_uri_request_get_uri(r) : nullptr;
-        if (uri && *uri && v->host_.openLink) {
-            std::string u = uri;
-            auto alive = v->alive_;
-            g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, +[](gpointer d) -> gboolean {
-                auto* job = static_cast<std::pair<std::function<void()>, std::shared_ptr<bool>>*>(d);
-                if (*job->second) job->first();
-                delete job;
-                return G_SOURCE_REMOVE;
-            }, new std::pair<std::function<void()>, std::shared_ptr<bool>>(
-                   [v, u] { v->host_.openLink(u); }, alive), nullptr);
-        }
+        static_cast<HtmlView*>(p)->onNewWindow(a);
         return nullptr;
     }), this);
 }
@@ -184,7 +174,23 @@ static HtmlPage::Navigation navigationFor(const char* uri) {
     return nav;
 }
 
+static HtmlPage::Navigation navigationFor(WebKitNavigationAction* a, const char* uri) {
+    HtmlPage::Navigation nav = navigationFor(uri);
+    nav.userGesture = webkit_navigation_action_is_user_gesture(a);
+    nav.kind = kindOf(webkit_navigation_action_get_navigation_type(a));
+    return nav;
+}
+
+// The policy check for a navigation (HtmlPage::policy): the page's own file,
+// about:blank and a frame's load go ahead; the user's leaves the page for the
+// link handler, asked about first when it goes to another app and refused
+// when a script clicked it (HtmlPage::follow); one the page started by
+// itself to an app's scheme is refused here, in any frame, before anything
+// loads. A target=_blank arrives here as a new window. The response check
+// follows for whatever loads.
 gboolean HtmlView::onPolicy(WebKitPolicyDecision* d, WebKitPolicyDecisionType type) {
+    if (type == WEBKIT_POLICY_DECISION_TYPE_RESPONSE)
+        return onResponse(WEBKIT_RESPONSE_POLICY_DECISION(d));
     if (type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
         type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)
         return FALSE;
@@ -193,29 +199,130 @@ gboolean HtmlView::onPolicy(WebKitPolicyDecision* d, WebKitPolicyDecisionType ty
     WebKitURIRequest* r = a ? webkit_navigation_action_get_request(a) : nullptr;
     const char* uri = r ? webkit_uri_request_get_uri(r) : nullptr;
     if (!uri) return FALSE;
-    HtmlPage::Navigation nav = navigationFor(uri);
-    nav.userGesture = webkit_navigation_action_is_user_gesture(a);
-    nav.kind = kindOf(webkit_navigation_action_get_navigation_type(a));
-    HtmlPage::Verdict v = HtmlPage::decide(nav, canonical(path_), requested_);
-    if (type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION && v == HtmlPage::Verdict::Allow)
-        v = HtmlPage::Verdict::Open;   // never a window of its own
-    if (v == HtmlPage::Verdict::Allow) {
+    const HtmlPage::Navigation nav = navigationFor(a, uri);
+    const HtmlPage::Policy v = HtmlPage::policy(
+        nav, type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION, runs_, canonical(path_), requested_);
+    if (v == HtmlPage::Policy::Load) {
         webkit_policy_decision_use(d);
         return TRUE;
     }
     webkit_policy_decision_ignore(d);
-    if (v == HtmlPage::Verdict::Open && host_.openLink) {
-        const std::string target = uri;
-        auto alive = alive_;
-        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, +[](gpointer data) -> gboolean {
-            auto* job = static_cast<std::pair<std::function<void()>, std::shared_ptr<bool>>*>(data);
-            if (*job->second) job->first();
-            delete job;
-            return G_SOURCE_REMOVE;
-        }, new std::pair<std::function<void()>, std::shared_ptr<bool>>(
-               [this, target] { host_.openLink(target); }, alive), nullptr);
-    }
+    if (v == HtmlPage::Policy::Open) hand(uri, HtmlPage::follow(nav, true));
+    else if (v == HtmlPage::Policy::Refuse) hand(uri, HtmlPage::Follow::Refuse);
     return TRUE;
+}
+
+// window.open: by the same rule as a new window's policy check.
+void HtmlView::onNewWindow(WebKitNavigationAction* a) {
+    WebKitURIRequest* r = webkit_navigation_action_get_request(a);
+    const char* uri = r ? webkit_uri_request_get_uri(r) : nullptr;
+    if (!uri || !*uri) return;
+    const HtmlPage::Navigation nav = navigationFor(a, uri);
+    const HtmlPage::Policy v = HtmlPage::policy(nav, true, runs_, canonical(path_), requested_);
+    if (v == HtmlPage::Policy::Open) hand(uri, HtmlPage::follow(nav, true));
+    else if (v == HtmlPage::Policy::Refuse) hand(uri, HtmlPage::Follow::Refuse);
+}
+
+// The main frame's answer: the one place WebKitGTK tells the main frame from
+// a frame. Every navigation the user made left at the policy check, so a
+// main-frame load away from the page's file (and not one it asked for) is
+// the page's own doing, a meta refresh or a script: it is not shown (the
+// page stays as it was, never put back by loading it again, where the
+// refresh would fire once more) and goes to followOrRefuse. Nothing the page
+// loads by itself is downloaded.
+gboolean HtmlView::onResponse(WebKitResponsePolicyDecision* d) {
+    WebKitURIRequest* r = webkit_response_policy_decision_get_request(d);
+    const char* uri = r ? webkit_uri_request_get_uri(r) : nullptr;
+    if (uri && webkit_response_policy_decision_is_main_frame_main_resource(d) && !path_.empty() &&
+        HtmlPage::started(navigationFor(uri), canonical(path_), requested_) ==
+            HtmlPage::Started::RestoreAndOpen) {
+        webkit_policy_decision_ignore(WEBKIT_POLICY_DECISION(d));
+        followOrRefuse(uri);
+        return TRUE;
+    }
+    if (!webkit_response_policy_decision_is_mime_type_supported(d)) {
+        webkit_policy_decision_ignore(WEBKIT_POLICY_DECISION(d));
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// A main-frame load that failed before any answer (no such host, nothing
+// listening, a missing file): when the page started it, away from its file,
+// it goes to followOrRefuse, and no error page replaces the page. The
+// failures this view causes itself (a stop, a policy's ignore) are not that.
+gboolean HtmlView::onFailed(const char* uri, GError* error) {
+    if (!uri || path_.empty() || !error) return FALSE;
+    if (g_error_matches(error, WEBKIT_NETWORK_ERROR, WEBKIT_NETWORK_ERROR_CANCELLED) ||
+        g_error_matches(error, WEBKIT_POLICY_ERROR,
+                        WEBKIT_POLICY_ERROR_FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE))
+        return FALSE;
+    if (HtmlPage::started(navigationFor(uri), canonical(path_), requested_) !=
+        HtmlPage::Started::RestoreAndOpen)
+        return FALSE;
+    followOrRefuse(uri);
+    return TRUE;
+}
+
+void HtmlView::followOrRefuse(const std::string& uri) {
+    // Not the user's: every navigation they made left at the policy check.
+    // mayFollow lets only a web address through, which follow Opens.
+    const HtmlPage::Navigation nav = navigationFor(uri.c_str());
+    hand(uri, HtmlPage::mayFollow(nav, runs_) ? HtmlPage::follow(nav, true) : HtmlPage::Follow::Refuse);
+}
+
+void HtmlView::hand(const std::string& uri, HtmlPage::Follow how) {
+    struct Job { HtmlView* v; std::shared_ptr<bool> alive; std::string uri; HtmlPage::Follow how; };
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, +[](gpointer p) -> gboolean {
+        std::unique_ptr<Job> j(static_cast<Job*>(p));
+        if (!*j->alive) return G_SOURCE_REMOVE;
+        if (j->how == HtmlPage::Follow::Open) j->v->openLink(j->uri);
+        else if (j->how == HtmlPage::Follow::Ask) j->v->askToOpen(j->uri);
+        else if (j->v->host_.refused) j->v->host_.refused(j->uri);
+        return G_SOURCE_REMOVE;
+    }, new Job{this, alive_, uri, how}, nullptr);
+}
+
+std::string HtmlView::appFor(const std::string& uri) {
+    char* scheme = g_uri_parse_scheme(uri.c_str());
+    GAppInfo* app = scheme ? g_app_info_get_default_for_uri_scheme(scheme) : nullptr;
+    g_free(scheme);
+    if (!app) return "";
+    const char* name = g_app_info_get_display_name(app);
+    std::string out = name ? name : "";
+    g_object_unref(app);
+    return out;
+}
+
+// The Mac's sheet (HtmlPageView.mm's askToOpen:) as a question over the
+// window, in its words and with its buttons, Open then Cancel; Return is
+// Open, Esc Cancel. The Mac's box, Refuse any more from this page, is not
+// here: only the user's own click or key asks (a script's is refused
+// unasked), so a page cannot ask over and over.
+void HtmlView::askToOpen(const std::string& uri) {
+    GtkRoot* root = web_ ? gtk_widget_get_root(web_) : nullptr;
+    if (askingToOpen_ || !GTK_IS_WINDOW(root) || !host_.openLink) {
+        if (host_.refused) host_.refused(uri);
+        return;
+    }
+    askingToOpen_ = true;
+    Question::Spec spec;
+    spec.message = HtmlPage::openAppQuestion(appFor(uri));
+    spec.detail = HtmlPage::openAppDetail(uri);
+    spec.buttons = {HtmlPage::kOpenApp, "Cancel"};
+    spec.defaultButton = 0;
+    spec.cancelButton = 1;
+    std::shared_ptr<bool> alive = alive_;
+    Question::ask(GTK_WINDOW(root), spec, [this, alive, uri](int answer) {
+        if (!*alive) return;
+        askingToOpen_ = false;
+        if (answer == 0) openLink(uri);
+    });
+}
+
+void HtmlView::openLink(const std::string& uri) {
+    if (linkSpy && !linkSpy(uri)) return;
+    if (host_.openLink) host_.openLink(uri);
 }
 
 HtmlPage::Scripts HtmlView::wanted() const {
@@ -416,9 +523,11 @@ void HtmlView::startLoad(unsigned generation) {
 void HtmlView::onLoad(WebKitLoadEvent ev) {
     if (ev == WEBKIT_LOAD_COMMITTED) {
         // Only the main frame reports a load here (at STARTED the view still
-        // names the old address, so it is read once committed). One the
-        // page's own script made, away from the file, is stopped, the page
-        // put back and the address opened as a link.
+        // names the old address, so it is read once committed). A load this
+        // page asked for earlier is stopped and the page put back. One the
+        // page made by itself, away from the file, never gets here (the
+        // response check stops it); should one, it is stopped, the page put
+        // back, and the address followed or refused (followOrRefuse).
         const char* uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(web_));
         if (!uri || path_.empty()) return;
         const HtmlPage::Started s =
@@ -426,15 +535,15 @@ void HtmlView::onLoad(WebKitLoadEvent ev) {
         if (s == HtmlPage::Started::Keep) return;
         webkit_web_view_stop_loading(WEBKIT_WEB_VIEW(web_));
         const std::string target = uri;
-        const bool open = s == HtmlPage::Started::RestoreAndOpen;
-        struct Job { HtmlView* v; std::shared_ptr<bool> alive; std::string target; bool open; unsigned g; };
+        const bool away = s == HtmlPage::Started::RestoreAndOpen;
+        struct Job { HtmlView* v; std::shared_ptr<bool> alive; std::string target; bool away; unsigned g; };
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, +[](gpointer p) -> gboolean {
             std::unique_ptr<Job> j(static_cast<Job*>(p));
             if (!*j->alive || j->g != j->v->generation_) return G_SOURCE_REMOVE;
             j->v->loadKeepingScroll(true);   // the file's page again, in its place
-            if (j->open && j->v->host_.openLink) j->v->host_.openLink(j->target);
+            if (j->away) j->v->followOrRefuse(j->target);
             return G_SOURCE_REMOVE;
-        }, new Job{this, alive_, target, open, generation_}, nullptr);
+        }, new Job{this, alive_, target, away, generation_}, nullptr);
         return;
     }
     if (ev != WEBKIT_LOAD_FINISHED) return;

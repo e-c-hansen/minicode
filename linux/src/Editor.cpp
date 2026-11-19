@@ -1061,7 +1061,10 @@ void Editor::showHtml(Document* d) {
             [this] { return settings_.htmlScripts(); },
             [this] { return htmlRoot ? htmlRoot() : std::string(); },
             [this](const std::string& v) { return htmlRemember && htmlRemember(v); },
-            [this](const std::string& url) { openMarkdownLink(url); }});
+            [this](const std::string& url) { openMarkdownLink(url); },
+            [this](const std::string& url) {
+                if (htmlRefused) htmlRefused(url);
+            }});
         gtk_stack_add_named(GTK_STACK(slot_), html_->widget(), "html");
     }
     html_->show(d->path());
@@ -2567,6 +2570,8 @@ void Editor::fitPage() {
 
 // ---------------------------------------------------------------- preview links
 
+std::function<void(const std::string& url)> Editor::launchUriHook;
+
 // "#section" scrolls to that heading; a web address, or a path relative to
 // the Markdown file (GitHub's "#L12" names a line), goes to the shell.
 void Editor::openMarkdownLink(const std::string& url) {
@@ -2584,6 +2589,8 @@ void Editor::openMarkdownLink(const std::string& url) {
             link.isUrl = true;
             link.target = url;
             if (linkHandler_) linkHandler_(link);
+        } else if (launchUriHook) {
+            launchUriHook(url);
         } else {
             GtkUriLauncher* launcher = gtk_uri_launcher_new(url.c_str());
             gtk_uri_launcher_launch(launcher, GTK_WINDOW(gtk_widget_get_root(view_)),

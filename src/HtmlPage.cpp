@@ -1,6 +1,8 @@
 // HtmlPage.cpp — see HtmlPage.h.
 #include "HtmlPage.h"
 
+#include <cctype>
+
 namespace HtmlPage {
 
 const char *const kQuestion = "This page has scripts. Run them?";
@@ -94,11 +96,65 @@ std::string openAppDetail(const std::string &url) {
     return "The link goes to " + where + ", outside mutible.";
 }
 
+Follow follow(const Navigation &nav, bool gestureKnown) {
+    if (!opensAnotherApp(nav.scheme)) return Follow::Open;
+    return !gestureKnown || nav.userGesture ? Follow::Ask : Follow::Refuse;
+}
+
 Started started(const Navigation &nav, const std::string &own,
                 const std::set<std::string> &requested) {
     if (isOwnOrBlank(nav, own)) return Started::Keep;
     if (nav.scheme == "file" && !nav.hasQuery && requested.count(nav.path)) return Started::Restore;
     return Started::RestoreAndOpen;
+}
+
+bool byUser(const Navigation &nav) {
+    return nav.kind == Navigation::Kind::Link || nav.kind == Navigation::Kind::Form ||
+           nav.userGesture;
+}
+
+static bool isWeb(const std::string &scheme) { return scheme == "http" || scheme == "https"; }
+
+bool mayFollow(const Navigation &nav, bool scriptsRun) {
+    return byUser(nav) || (scriptsRun && isWeb(nav.scheme));
+}
+
+bool loadsInFrame(const std::string &scheme) {
+    return scheme.empty() || isWeb(scheme) || scheme == "file" || scheme == "data" ||
+           scheme == "blob" || scheme == "about";
+}
+
+Policy policy(const Navigation &nav, bool newWindow, bool scriptsRun, const std::string &own,
+              const std::set<std::string> &requested) {
+    const Verdict v = decide(nav, own, requested);
+    if (v == Verdict::Drop) return Policy::Drop;
+    if (v == Verdict::Open) return Policy::Open;
+    // Allowed: the page's own file, about:blank, a frame, or the page's own
+    // doing.
+    if (newWindow) {
+        if (byUser(nav)) return Policy::Open;   // never a window of its own
+        if (nav.scheme.empty() || nav.scheme == "about") return Policy::Drop;
+        return mayFollow(nav, scriptsRun) ? Policy::Open : Policy::Refuse;
+    }
+    return byUser(nav) || loadsInFrame(nav.scheme) ? Policy::Load : Policy::Refuse;
+}
+
+std::string refusedNote(const std::string &url) {
+    std::string where = url;
+    // 79 characters and an ellipsis, cut on a character's first byte.
+    size_t chars = 0, cut = std::string::npos;
+    for (size_t i = 0; i < where.size(); i++) {
+        if (((unsigned char)where[i] & 0xC0) == 0x80) continue;
+        if (chars == 79) cut = i;
+        if (++chars > 80) break;
+    }
+    if (chars > 80 && cut != std::string::npos) where = where.substr(0, cut) + "\xE2\x80\xA6";
+    const size_t colon = url.find(':');
+    std::string scheme = colon == std::string::npos ? "" : url.substr(0, colon);
+    for (char &c : scheme) c = (char)tolower((unsigned char)c);
+    return isWeb(scheme)
+               ? "The page tried to open " + where + " by itself; with its scripts off, it was not followed"
+               : "The page tried to open " + where + " by itself; mutible did not open it";
 }
 
 }  // namespace HtmlPage

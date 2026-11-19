@@ -642,7 +642,7 @@ it after the app quits; an in-process one while the app runs.
   over a path open already: the host's live text keeps the file's tab,
   and a backup of it a process that went left is removed only when it
   holds that text, else it opens beside it as "a (unsaved copy).txt",
-  since 2026-11-19, `linux/HANDOFF.md` item 121). `Editor::attachTab`
+  since 2026-11-19, `linux/HANDOFF.md` item 124). `Editor::attachTab`
   makes the
   `Document` under the held id (`DocOpen` with an empty text: the host's
   text comes back as one insertion, which records nothing), and

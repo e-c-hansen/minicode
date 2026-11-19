@@ -61,7 +61,10 @@ public:
     // a tag of the buffer's table reported changed with no change of size
     // makes each layout showing that table's buffers throw its displays away
     // (gtk_text_tag_changed; GTK's tag_changed_cb invalidates y 0 with equal
-    // heights, which empties the cache whole).
+    // heights, which empties the cache whole). It is emptied again once the
+    // view shows the new buffer, so a display of the old one made after the
+    // first emptying cannot stay either (#165's scroll made one, and
+    // semantic_tokens crashed main's GTK job twice; `tab_close_now`).
     void setBuffer(GtkTextBuffer* buffer);
     // The same for any text view (the split editor's other group).
     static void setViewBuffer(GtkTextView* view, GtkTextBuffer* buffer);

@@ -1336,7 +1336,12 @@ What later items build on:
   disagrees is this. `CodeView::setBuffer` now puts both adjustments at 0
   while the old text is still laid out, then changes the buffer; tab places
   come back after it as before. `gutter_switch` checks it (all four rounds
-  failed without it).
+  failed without it). The scroll goes before the cache is emptied, never
+  after: scrolling asks for the caret's place, which lays the caret's line
+  out into the cache again, and a line with no height yet (the text just
+  replaced) kept its display through set_buffer (#165 did it after, and
+  `semantic_tokens` crashed main's GTK job twice; item 122). The cache is
+  now emptied again after set_buffer as well.
 
 ### 17. Sessions, backups and auto-save (done, November 2026; `PARITY.md` items 1.2 and 1.3)
 
@@ -5583,7 +5588,8 @@ script not running and then running after Run Scripts, the keyboard, the
 toggle, a write from outside keeping the scroll, a link to another file, the
 remembered answer's setting and `off`, an unnamed iframe to a local file
 (its text shows, nothing opens), and a script's `location =` (opened as a
-link, the page kept).
+link, the page kept). Item 121 changed the last: a navigation the page
+starts by itself no longer opens a file, nor another app.
 ### 87. The session's host owns each document's text and undo (done, November 2026; SESSION-DESIGN.md stage 4a)
 
 What a user meets: nothing, by design. Who owns the text changed under
@@ -7846,7 +7852,269 @@ change; GTK had all four.
   stylesheet for each theme change is the likeliest reason the race shows
   more here. `openThemeMenu` now waits for the keyboard to be off the bar.
 
-### 121. Backups by window, and UTF-8 with stray bytes kept (the Mac's #247; November 2026)
+### 121. An HTML page opens nothing by itself (the Mac's #249; round 10's documents defect 2; November 2026)
+
+On the Mac since #249, a navigation an HTML page starts by itself (a
+`<meta http-equiv="refresh">`, a script setting `location`, `window.open`
+without a click) is followed only to a web address while the page's
+scripts run; anything else is refused and the status bar names it. A meta
+refresh to `zoommtg://` had opened Zoom with no click, and `html.scripts`
+never applied, a refresh not being a script. GTK now follows the same rule.
+
+- **The core** (`src/HtmlPage.{h,cpp}`, `htmlpage:follow`):
+  `HtmlPage::mayFollow(nav, scriptsRun)` is the Mac's `MCHtmlMayFollow`
+  (the user's navigation, `byUser`: a clicked link, a submitted form, a
+  gesture, always; the page's own only to http or https, and only while
+  its scripts run). `loadsInFrame(scheme)` (http, https, file, data, blob,
+  about) and `policy(nav, newWindow, scriptsRun, own, requested)`, GTK's
+  answer at the policy check, are built on `decide`, which is unchanged,
+  as are `started` and the rest; `refusedNote(url)` is the status bar's
+  note in the Mac's words (cut to 80 characters). The Mac uses none of
+  these: its .mm keeps its own copy.
+- **Every path on GTK** (`linux/src/HtmlView.cpp`), and what it does now:
+  - The policy check (`onPolicy`, `HtmlPage::policy`). The user's leaves
+    the page for the link handler as before. One the page started by
+    itself to a scheme no frame loads (zoommtg:, smb:, mailto:) is
+    refused there, in any frame, before anything loads: WebKitGTK cannot
+    tell the main frame at this check, and no frame could load it. One a
+    frame could load is let through, as before (an iframe loads).
+  - A new window (a NEW_WINDOW_ACTION, which a target=_blank meets, and
+    the `create` signal, which `window.open` reaches): the user's opens
+    as before; the page's own is opened only as `mayFollow` says, else
+    refused, and a blank one is dropped (it used to go to the link
+    handler, and so `about:blank` to the desktop's). WebKit's own popup
+    blocker already stops `window.open` without a click
+    (`javascript-can-open-windows-automatically` is off), as the check
+    found: the script gets no window and `create` is never called.
+  - The main frame's answer (`onResponse`, the response check, the one
+    place WebKitGTK tells the main frame:
+    `webkit_response_policy_decision_is_main_frame_main_resource`). A
+    main-frame load away from the page's file that is not one it asked
+    for is the page's own doing; it is ignored there, so the page never
+    leaves and is never loaded again, and it goes to `followOrRefuse`.
+    And nothing the page loads by itself is downloaded (a response
+    WebKit cannot show is ignored; WebKitGTK's default is to download it).
+  - A main-frame load that fails before any answer (`onFailed`: nothing
+    listening, no such host, a missing file, a scheme WebKit cannot
+    show): when the page started it, away from its file, it goes to
+    `followOrRefuse` and no error page is shown. This is how a custom
+    scheme ended before: allowed at the policy check, `zoommtg://example`
+    failed with `WEBKIT_POLICY_ERROR_CANNOT_SHOW_URI` ("The URL can't be
+    shown"), the default `load-failed` handler committed its error page
+    at `zoommtg://example`, and that reached the COMMITTED path below,
+    which gave it to the link handler, so to `GtkUriLauncher`. Seen in a
+    trace (2026-11-19) with the policy check let through and `onFailed`
+    left to the default: `load-changed` COMMITTED with the view at
+    `zoommtg://example`, then, the page loaded again, the refresh asked
+    for `zoommtg://example` once more.
+  - `WEBKIT_LOAD_COMMITTED` (the old path): a load this page asked for
+    earlier still puts the page back. A load the page made by itself no
+    longer gets here; should one, it is followed or refused by the same
+    rule (it used to go to the link handler every time, and loading the
+    file again fired its refresh again, round after round).
+  - WebKitGTK itself hands no address to another app: none of its
+    library or helper processes import `g_app_info_launch*`,
+    `gtk_show_uri` or `gtk_uri_launcher_*` (`nm -D`, 2.52.6). The one way
+    out is the link handler, `Editor::openMarkdownLink`, which gives any
+    scheme but http(s) and file to `GtkUriLauncher`.
+- **Refused** ones go to `HtmlView::Host::refused`, wired in
+  `Editor::showHtml` to `Editor::htmlRefused`, which main.cpp points at
+  `flashStatus` with `HtmlPage::refusedNote`: "The page tried to open
+  zoommtg://example by itself; mutible did not open it", or, for a web
+  address with scripts off, "...; with its scripts off, it was not
+  followed".
+- **The harness**: `Editor::launchUriHook`, when set, takes what
+  `openMarkdownLink` would give the desktop's handler; the harness sets it
+  at startup to a recorder (`MCGuiLaunchedUris()`, the Mac's
+  `MCGuiOpenedURLs`), so no check starts another app. `HtmlView::linkSpy`
+  sees every address the page hands the link handler; html_page records
+  them and lets only `file:` ones through, so a followed web address
+  never loads in the browser pane.
+- **The check** (`html_page`, its new steps): with scripts off, a meta
+  refresh to `zoommtg://example` and one to `https://127.0.0.1:2/refused`
+  (nothing listens there; no network is needed) open nothing, leave the
+  page on show, and the status bar says the Mac's words; with scripts on,
+  `location = 'target.html'` (a file: the Mac's rule, the old check said
+  it opened) and `location = 'smb://x/share'` are refused and named, a
+  meta refresh to `https://127.0.0.1:2/followed` reaches the link handler
+  and nothing else does, and `window.open('zoommtg://y/meeting')` without
+  a click opens nothing; a real click (XTest) on a link, and on a
+  target=_blank link, opens its file in a tab through the link handler,
+  and the desktop's handler got nothing all along.
+  What the trace showed for each: the zoommtg refresh and the smb
+  `location =` were refused at the policy check; `location =
+  'target.html'` at the response check (`is_main_frame_main_resource`
+  true for a file); both https refreshes failed with "Connection
+  refused" and went through `onFailed`; `window.open` reached neither
+  the policy check nor `create` (the script got no window).
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7, MC_GUI_ROOT=/tmp):
+  `html_page` 81 passed, none failed (78 passed and 5 failed while the
+  web address was on port 9, below). With markdown_side,
+  markdown_side_edit, markdown_side_sync, markdown_tables, tab_viewers,
+  browser_pages, browser_tabs and browser_find: 299 passed, none failed.
+  The core's `make test` 196,924 passed (`htmlpage:follow` new);
+  `meson test --no-suite gui` and linux's `make test` (435) pass.
+- **Trap (the check): a bad port does nothing.** The web address was
+  first `https://127.0.0.1:9/`: WebKit never navigates to a port on the
+  fetch standard's bad-ports list (9, discard, is one), so the refresh
+  made no navigation at all, and nothing was followed or named. Port 2
+  is not on the list.
+- **Not changed**: a script's synthetic click on a link (`a.click()`), or
+  its `form.submit()`, counts as the user's on both platforms (WebKit
+  reports a link click or a form submission), so a page whose scripts run
+  can still open another app; scripts run only once the user says so.
+  (Item 123 closes it: such a click is refused on GTK, asked about on
+  the Mac.) A real meta refresh, an app's scheme and the look of the status bar's
+  note need the owner's eyes on the ThinkPad; a real Zoom was never
+  started (no handler for zoommtg: or smb: is installed here, and the
+  checks record the desktop's handler instead).
+
+### 122. GtkTextView's line cache emptied after set_buffer too: semantic_tokens' signal 11 on main (November 2026)
+
+- **What happened**: main's GTK job died with signal 11 in
+  `semantic_tokens` at "the servers off again; the tab closed unasked" on
+  two runs in a row, 44258729827 (ff0dcf0a, #165's merge) and 44260237099
+  (2d0e5332, #166 on top of it). No GLib critical came before it. Against
+  Ubuntu's debug symbols for CI's GTK (4.22.4+ds-0ubuntu0.2, amd64v3, from
+  debuginfod.ubuntu.com) the stack is `_gtk_text_line_get_number` under
+  `gtk_text_line_display_compare`, `g_sequence_insert_sorted`,
+  `gtk_text_line_display_cache_get`, `gtk_text_layout_snapshot` and
+  `gtk_text_view_snapshot`, from the frame clock's paint, with no frame of
+  ours: not a language server's callback after its server or document
+  went, but item 16's first trap again. A display of the closed tab's
+  buffer stayed in the view's line cache through set_buffer, and the next
+  frame sorted a display in beside it and read its freed line. #165 had
+  put the scroll to the top after the cache was emptied; the step's
+  `setText` had just replaced every line (none with a height yet) and left
+  the caret at the end, the scroll asked for the caret's place
+  (GtkTextView's `value_changed` updates the input method's spot), and that
+  line's display, of a line the view had never validated, was one
+  set_buffer does not drop. #168 (4f5a13de, merged an hour later) moved
+  the scroll before the emptying, and no run since has crashed there: no
+  main run's GTK job, no nightly soak, and no failed CI run of any branch
+  from November 17 on (76 runs, every failed GTK job's log read) failed in
+  `semantic_tokens` after 4f5a13de. #165's own PR run passed the suite,
+  so on CI the old order crashed two runs of three.
+- **Reproduced** with #165's order put back: `semantic_tokens` alone
+  crashed 4 runs of 5 under `MALLOC_PERTURB_=165`, the same frames
+  (symbolized against this machine's GTK). On main's order it passed 30
+  of 30 (ten perturb values).
+- **Change**: `CodeView::setViewBuffer` now empties the cache again once
+  the view shows the new buffer (`emptyLineCaches`, the same never-applied
+  tag, on the new buffer's table), so no display of the old buffer can
+  stay, whatever laid its lines out after the first emptying. Emptying a
+  cache whole reads none of its lines (GTK removes each display by
+  pointer, gtktextlinedisplaycache.c), so it is safe even with a line
+  already freed. With #165's order and this change, `semantic_tokens`
+  passed 5 of 5 and `tab_close_now` 5 of 5.
+- **Checked by** `tab_close_now`'s new rounds, which need no server: a
+  2,000-line file scrolled 400 px, its text set again whole, the caret at
+  its end and every tab closed in one step, then two frames drawn. With
+  #165's order they crashed 5 runs of 5 under `MALLOC_PERTURB_` (which
+  `meson test`, so CI, sets), and 3 of 3 in an AddressSanitizer build with
+  `free_fill_byte` (a plain segfault: GTK is not instrumented), where
+  `semantic_tokens` passed 3 of 3; with #168's order or this change they
+  pass. With this change, `semantic_tokens` passed 30 runs alone (5 of
+  them on one core under load), 3 under ASan with no report, and CI's
+  first half in its order up to it twice (`MC_GUI_IN_ORDER=1`, once on
+  two cores beside an ASan build); `tab_close_now` passed 18. That
+  two-core run failed `large_file`'s 60 MB stall bound (529 ms of CPU for
+  361); main's code failed the same bound beside the same build (435 for
+  346), and three runs of each, alternated, measured alike (main 238, 435,
+  345 ms; this change 165, 436, 301).
+- **Trap**: anything that lays out a line of the buffer a view is
+  leaving, after the cache is emptied (a scroll, a caret's or an iter's
+  place), leaves a display that set_buffer keeps unless the line has a
+  height. The second emptying covers it now; keep it after
+  `gtk_text_view_set_buffer`.
+
+### 123. A link to another app asks first, and a script's click to one is refused (the Mac's #254; November 2026)
+
+Item 121 left one way out: a page whose scripts run can click its own
+link (`a.click()`) or send its own form (`form.submit()`), WebKit reports
+those as a link clicked and a form sent, like the user's, and so such a
+page could still hand `zoommtg://` (any app's scheme) to the desktop with
+no click. The Mac (#254) cannot tell a script's click from the user's, so
+there every followed link to another app asks first, in a sheet naming the
+app and the address. WebKitGTK can tell
+(`webkit_navigation_action_is_user_gesture`), so GTK, agreed with the Mac
+session, asks only about the user's own and refuses the script's unasked.
+
+- **The core** (`src/HtmlPage.{h,cpp}`, `htmlpage:app-gesture`):
+  `HtmlPage::follow(nav, gestureKnown)` says what becomes of a navigation
+  the port has decided to follow: Open for a web address or a file (as
+  before), and for another app's address (`opensAnotherApp`: any scheme
+  but http, https and file) Ask when `nav.userGesture`, or always when the
+  port cannot tell (`gestureKnown` false, the Mac's case), else Refuse.
+  The question's words are #254's: `openAppQuestion(app)` ("Open in Zoom?",
+  "Open in another app?" with no app known), `openAppDetail(url)` ("The
+  link goes to zoommtg://example, outside mutible.", the address cut at
+  80 characters) and `kOpenApp` ("Open").
+- **GTK** (`linux/src/HtmlView.cpp`): the policy check's Open (`onPolicy`,
+  a link, a form, a target=_blank) and `create`'s (`onNewWindow`) go
+  through `follow(nav, true)`; `hand` now takes a `Follow`: Open to the
+  link handler as before, Refuse to `Host::refused` (the status bar's
+  `refusedNote`, "The page tried to open smb://x by itself; mutible did
+  not open it"), Ask to `askToOpen`. That puts up `Question::ask` over the
+  window (modal, transient for it) with the core's message and detail and
+  the Mac's buttons in its order, Open then Cancel; Return is Open, Esc
+  and closing it Cancel. Open hands the address to the link handler
+  (`Editor::openMarkdownLink`, so `GtkUriLauncher`, or the harness's
+  recorder); Cancel opens nothing. One question at a time: another the
+  page asks for meanwhile is refused, as on the Mac. The app is the
+  scheme's default handler (`HtmlView::appFor`:
+  `g_app_info_get_default_for_uri_scheme`, its display name), a lookup
+  that starts nothing. `followOrRefuse` (a page's own jump) goes through
+  `follow` too, though `mayFollow` already lets only web addresses by.
+- **Not ported: the Mac's box**, Refuse any more from this page. It is
+  there so a page clicking its own link in a loop cannot hold the window
+  with sheets; on GTK a script's click never asks, so only the user's own
+  clicks can.
+- **Unchanged**: http, https and file links (#253's rules, no question);
+  a Markdown preview's links, on both platforms (`openMarkdownLink` gives
+  zoommtg: to the desktop unasked, the Mac's `openURL:` the same).
+- **The check** (`html_page`, its new steps; the spy now lets every
+  address but a web one through, since the desktop's handler is the
+  recorder): with scripts on, a page whose script runs
+  `document.querySelector('a').click()` on its `smb://x` link at load,
+  and one whose script sends its form to `mailto:someone@example.com`,
+  are refused with no question (no window over the app's, `askingToOpen`
+  false), nothing reaches the link handler or the recorder, and the
+  status bar names each in the Mac's words. A desktop file for
+  `x-scheme-handler/zoommtg` named "Zoom Check" (Exec `/bin/false`) goes
+  in the scratch world's `XDG_DATA_HOME/applications`, the default in its
+  `XDG_CONFIG_HOME/mimeapps.list`, both removed at the end, and the suite
+  waits until `appFor` sees it. A real click (XTest) on a `zoommtg://example`
+  link puts up "Open in Zoom Check?" over the window, with "The link goes
+  to zoommtg://example, outside mutible." under it, Open left of Cancel,
+  and nothing opened; Cancel opens nothing; a second click answered Open
+  hands `zoommtg://example` to the link handler and the recorder once,
+  the page still the file. Real clicks on an https link (the link
+  handler, no question) and on a file link (its tab, no question) behave
+  as before, and a Markdown file's `[join](zoommtg://example/md)`, clicked
+  in its preview, reaches the recorder with no question, as before.
+  What each showed: the script's click and form reached the policy check
+  as a link and a form with `is_user_gesture` false, and the XTest click
+  as a link with it true (the question came up), so the two are told
+  apart as WebKitGTK documents. The form's address is
+  `mailto:someone@example.com?subject=hello`; the status bar names it.
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7): `html_page` 129
+  passed, none failed, with MC_GUI_ROOT=/tmp and with a long root inside
+  `linux/build` (removed after); markdown_side, markdown_side_edit,
+  markdown_side_sync, markdown_tables, tab_viewers, browser_pages,
+  browser_tabs and browser_find 218 passed, none failed. The core's
+  `make test` 197,060 passed (`htmlpage:app-gesture` new); `meson test
+  --no-suite gui` and linux's `make test` (435) pass.
+- **Trap (the check): the X focus after a question.** With no window
+  manager the X focus stays on the question once it closes, and the
+  harness says so (a LEFT line, the app's window inactive); the steps
+  after Cancel and Open give it back (`MCGuiFocusKeyWindow`).
+- **Needs the owner's eyes**: the question's look over a real window, a
+  real handler's name (Zoom, a mail app) from the desktop's defaults, and
+  Return and Esc on it by hand. No real app was started: the checks
+  record the desktop's handler.
+
+### 124. Backups by window, and UTF-8 with stray bytes kept (the Mac's #247; November 2026)
 
 The Mac's #247 (round 10's workspace items 1 and 2) on GTK, through the
 core's rules: `Backups::plan` with a window and the reserved keys,

@@ -403,7 +403,7 @@ found through that list.
   `Backups::draftPath` ("a (unsaved copy).txt", `moveID:toPath:window:`,
   never a file on disk until saved) and opens it as an untitled tab
   (`MCTab draftOf`, its own note), or removes it when its text is the
-  file's tab's. **GTK** (2026-11-19, `linux/HANDOFF.md` item 121, `backups`
+  file's tab's. **GTK** (2026-11-19, `linux/HANDOFF.md` item 124, `backups`
   suite's two-window part): `Persistence::backupKey` (made by
   `BackupStore::newId`, kept in `windowRecord`, adopted from the record in
   `newWindow` by `setBackupKey`), `writeBackup` sets `Entry::window`,
@@ -473,6 +473,6 @@ text is in place in its section.
 
 - Tabs, sessions and the disk (Mac): **Traps**: never move the mirror's layout manager with `replaceTextStorage:`, which carries every layout manager of the storage, the editor's too (`removeLayoutManager:` then `addLayoutManager:`); the mirror must let go of the editor's storage before its whole text is replaced (`MCSourceStorage willReplaceAll`, and `editorWillShowTab:` ...
 - Backups, hot exit and auto-save (Mac): Trap: the focus-change save and the delay's debounce shared a selector and `updateTitle` cancelled the save after a tab switch; nothing may cancel `autoSaveNow`.
-- Backups by window (round 10's item 1): `plan` kept the newest backup of a file and listed the rest to delete, and the first window back on a folder planned for the whole folder, so after hot exit one of two windows' unsaved text in one file was deleted unseen, and the first window took the other's other files. A backup is deleted only once its text is back or saved; a planner never lists any to delete, and a window takes only its own and those of no window still to come back. GTK had the same until linux/HANDOFF.md item 121, and there a document held by the session's host also removed a backup of its file unread; it now goes only when its text is the held document's.
+- Backups by window (round 10's item 1): `plan` kept the newest backup of a file and listed the rest to delete, and the first window back on a folder planned for the whole folder, so after hot exit one of two windows' unsaved text in one file was deleted unseen, and the first window took the other's other files. A backup is deleted only once its text is back or saved; a planner never lists any to delete, and a window takes only its own and those of no window still to come back. GTK had the same until linux/HANDOFF.md item 124, and there a document held by the session's host also removed a backup of its file unread; it now goes only when its text is the held document's.
 - Encodings (round 10's item 2): "not valid UTF-8" is not "not UTF-8". One stray byte made `readsAsWindows1252` read a whole UTF-8 file as Windows-1252, and the first character Windows-1252 lacks saved it as UTF-8, every character encoded twice. A new decoding rule must keep both directions byte for byte (`encoding:*` round-trips random bytes through `decodeFileText` and `encodeFileText`).
 - Backups, hot exit and auto-save (Mac): Trap: `keepUnsavedTabsForRestart` passed over a dirty tab it could not back up, which a quit without a question would have lost; `keepUnsavedTabsForNextLaunch` returns NO for it, and the window asks.

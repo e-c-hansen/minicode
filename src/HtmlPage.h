@@ -9,11 +9,18 @@
 //
 // A page loads from its own file only. Anything the page tries to open in
 // its main frame (a link, window.open, a script's location change) is not
-// loaded there: a local file or a web address goes to the port's link
-// handler, so the page on show is always the tab's file. A load this page
-// asked for earlier, a reload and a back or forward are dropped rather than
-// taken for a link, since a policy check for them can arrive after the tab
-// has moved to another file.
+// loaded there: a link the user clicked or a form they sent goes to the
+// port's link handler (a local file in a tab, a web address in the browser
+// pane), so the page on show is always the tab's file. One the page started
+// by itself (a meta refresh, a script) goes there only as `mayFollow` says:
+// a web address while the page's scripts run; anything else is refused and
+// named in the status bar (`refusedNote`). A followed link to another app
+// (zoommtg:, mailto:) is asked about first, or, where the port can tell a
+// script's click from the user's, refused when a script made it (`follow`).
+// A load this page asked for
+// earlier, a reload and a back or forward are dropped rather than taken for
+// a link, since a policy check for them can arrive after the tab has moved
+// to another file.
 #pragma once
 
 #include <set>
@@ -103,6 +110,18 @@ std::string openAppDetail(const std::string &url);
 extern const char *const kOpenApp;        // "Open"
 extern const char *const kRefuseMore;     // "Refuse any more from this page"
 
+// What becomes of a navigation the port has decided to follow (decide's
+// Open, policy's Open, mayFollow's yes) before it reaches the link handler.
+// One to a web address or a file is Opened as before. One to another app
+// (opensAnotherApp) is Asked about (openAppQuestion) when it came from the
+// user's own click or key; when the port can tell a real click from a
+// script's (`gestureKnown`: WebKitGTK's is_user_gesture) and it was the
+// page's script (a.click(), form.submit(), each reported as a link or form
+// like the user's), it is Refused with no question, named in the status
+// bar (refusedNote). The Mac cannot tell, so it asks about every one.
+enum class Follow { Open, Ask, Refuse };
+Follow follow(const Navigation &nav, bool gestureKnown);
+
 // The main frame has started loading `nav` (the scheme, path and query of
 // its address): Keep what is the page's own file or about:blank; otherwise
 // stop it and put the page back, and Open the address, or only restore it
@@ -110,5 +129,41 @@ extern const char *const kRefuseMore;     // "Refuse any more from this page"
 enum class Started { Keep, Restore, RestoreAndOpen };
 Started started(const Navigation &nav, const std::string &own,
                 const std::set<std::string> &requested);
+
+// Whether the user made the navigation: a clicked link, a submitted form, or
+// one a click or a key started (decide()'s test for leaving the page).
+bool byUser(const Navigation &nav);
+
+// Whether a navigation leaving the page may go to the link handler (the
+// Mac's MCHtmlMayFollow): one the user made, always; one the page started
+// by itself (a <meta http-equiv="refresh">, a script setting location,
+// window.open) only to a web address (http, https), and only while the
+// page's scripts run, since such a page acts on its own as a script would.
+// A meta refresh to zoommtg:// opened that app with no click (round 10's
+// documents defect 2): html.scripts never applied, a refresh not being a
+// script.
+bool mayFollow(const Navigation &nav, bool scriptsRun);
+
+// Whether a frame can load an address of this scheme at all: http, https,
+// file, data, blob, about (and none). Any other (zoommtg:, smb:, mailto:)
+// could only be handed to another app.
+bool loadsInFrame(const std::string &scheme);
+
+// The GTK port's answer to a navigation's policy check, where a frame cannot
+// be told from the main frame: decide()'s, except for one the page started
+// by itself. In the page's view, one to an address no frame can load is
+// Refused at once (nothing loads; the page stays as it is); one a frame
+// could load is let through, and the main frame's is caught when its answer
+// arrives (the port's response check, then `started`). In a new window
+// (window.open), it is Opened as mayFollow says, else Refused, and a blank
+// one is Dropped; the user's (a target=_blank link clicked) is Opened.
+enum class Policy { Load, Drop, Open, Refuse };
+Policy policy(const Navigation &nav, bool newWindow, bool scriptsRun, const std::string &own,
+              const std::set<std::string> &requested);
+
+// The status bar's note for a navigation the page started by itself that was
+// not followed (the Mac's htmlPageRefused: wording), the address cut to 80
+// characters.
+std::string refusedNote(const std::string &url);
 
 }  // namespace HtmlPage
