@@ -1158,6 +1158,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)applySidePreviewEdit:(NSString *)source;
 - (void)applyMarkdownSource:(NSString *)source;
 - (void)openMarkdownLink:(NSString *)href;
+- (void)htmlPageRefused:(NSURL *)url;
 - (BOOL)scrollToMarkdownAnchor:(NSString *)anchor;
 - (void)renderMarkdown:(NSString *)content;
 - (BOOL)typesetsMath;

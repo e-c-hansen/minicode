@@ -166,6 +166,9 @@ NSString *MCGuiLastAlertInformative(void);   // the last one's informative text
 // Those of them begun as sheets (beginSheetModalForWindow:, answered as
 // runModal is, the handler a turn later), with the window each was for.
 NSArray<NSString *> *MCGuiSheetsShown(void);
+// Every URL handed to NSWorkspace's openURL: (swizzled: nothing opens), in
+// order, so a check can say a page did not open another app.
+NSArray<NSURL *> *MCGuiOpenedURLs(void);
 NSWindow *MCGuiLastSheetWindow(void);
 // Writes a file (making folders), UTF-8.
 void MCGuiWriteFile(NSString *path, NSString *text);

@@ -384,6 +384,9 @@ static char kPdfOpensAtTop;
         _viewers.onOpenLink = ^(NSURL *url) {
             [weakSelf openMarkdownLink:url.absoluteString ?: @""];
         };
+        _viewers.onHtmlRefused = ^(NSURL *url) {
+            [weakSelf htmlPageRefused:url];
+        };
     }
     return _viewers;
 }
@@ -748,6 +751,17 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     view.bufferText = ^NSString * {
         EditorController *me = weakSelf;
         return weakTab ? [me pageSideBufferFor:weakTab] : nil;
+    };
+    // The tab's text wherever it is now, for the edit box's Apply: an
+    // agent's rewrite read in while the box was open is kept, never
+    // spliced at the old offsets or put back to the old text.
+    view.sourceNow = ^NSString * {
+        EditorController *me = weakSelf;
+        MCTab *t = weakTab;
+        if (!me || !t) return nil;
+        if (t == me->_activeTab && me.textView.editable && !t.showingMessage)
+            return [me.textView.string copy];
+        return t.sourceText;
     };
     [self wireLatexInputsOf:view];
     [self.rightArea addSubview:view];

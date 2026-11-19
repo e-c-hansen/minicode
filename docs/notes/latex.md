@@ -90,19 +90,50 @@ found through that list.
   through the controller's `commitPageEdit`). The button says Apply.
   `latex` checks it offscreen (posted resign and become-active
   notifications, `popoverWillClose:` by hand).
+  **Apply edits the text as it is then** (2026-11-19, round 10's
+  documents defect 3): the box keeps the text it opened on (`_editBase`,
+  an input file's `_editingSrc`), and `applyEditText:` makes the edit on
+  the tab's text now (`sourceNow`: the editor beside the page, else the
+  tab's buffer), the span (adding an entry, its list) found again by
+  `MarkdownEdit::rebaseSpan` (`mdedit:rebase`): the same offsets when the
+  change is after it, shifted when before, else the one place holding its
+  exact bytes. Not found once, nothing changes: the draft goes to the
+  clipboard and the bar says so (`keepLostEdit:file:`). `latex` has an
+  agent rewrite the file while the box is open, in the full preview and
+  beside the source, and the rewrite of the edited sentence itself.
+  **Trap**: with the box kept open across an app switch, an agent's
+  rewrite read into the clean tab had the draft spliced at the old
+  offsets (full preview) or the old text plus the edit put back over the
+  reload (beside the source), reverting the agent silently. Never splice
+  a box's edit into text other than the one it opened on without finding
+  the span again.
 - **Edits are byte splices** of the span's own LaTeX (nothing escaped or
   re-serialized), marked dirty, saved only by Cmd+S, undone through
-  `LatexView`'s own snapshot stack (50) via `undo:`/`redo:`.
+  `LatexView`'s own snapshot stack (50) via `undo:`/`redo:` in the full
+  preview. An edit beside the source pushes nothing there (it is the
+  source's undo step), and the stack is cleared when the text changes
+  from elsewhere (`setPath:source:` with other text; `stepFrom:` checks
+  `sourceNow` too). **Trap** (round 10's documents defect 8): an edit on
+  the side page pushed a snapshot, and Cmd+Z in the full preview after
+  typing in the source put that snapshot back, dropping the typing.
 - **Clicks in `\input` files** (2026-11-15, the owner's yes to saving them
   from the preview): `MCLatexSpanAtPointInFiles` tries the inputs the
   boxes under the point name, likeliest first, then the document
-  (`SyncTexIndex::tagsAtPoint`); an input is read from its tab's buffer,
-  else the disk, and parsed with `LatexDoc::parseInput` (all body text: a
-  part has no `\begin{document}`, and `parse` found nothing in it). The
+  (`SyncTexIndex::tagsAtPoint`); an input is read from the disk, as the
+  typeset read it, and parsed with `LatexDoc::parseInput` (all body text: a
+  part has no `\begin{document}`, and `parse` found nothing in it); the
+  span is then found again in its tab's buffer (`rebaseSpan`, then the
+  buffer's own parse), and the box edits that. Not there once, exactly
+  as the page shows it, the click is refused ("has unsaved changes to
+  that text ... save it"). Show in Source maps its line the same way.
+  **Trap** (round 10's documents defect 4): the input was parsed from its
+  buffer, so SyncTeX's lines (the disk's) matched against a chapter with
+  unsaved lines above the click picked another paragraph, and Return
+  edited it. The
   edit goes into that file's tab (`EditorController+LatexInputs.mm`,
   opened behind the preview when not open, `putBackText:inTab:actionName:`
   "Edit in Preview", one step of that tab's undo, not the preview's
-  stack), refused if the file changed while the box was open. The bar
+  stack), made on the file's text when applied, as the document's. The bar
   names input files with unsaved changes (tectonic reads them from disk);
   Cmd+S with the preview on show saves them (`saveLatexInputsOfActiveTab`),
   and any save of a file a preview read typesets it again
@@ -212,3 +243,6 @@ text is in place in its section.
 - LaTeX preview (read before touching it): Trap: `characterBoundsAtIndex:` drifts from `page.string`'s indices down a page; a one-character `selectionForRange:`'s bounds do not.
 - LaTeX preview (read before touching it): Trap: a synthetic `NSEvent` for Shift+Cmd+S with "s" matched Save and wrote the file, with "S" nothing;
 - LaTeX preview (read before touching it): Trap: `latexIsShowing` (undo routing, focus on a tab's showing) must stay the full preview only, or Cmd+Z beside the page steps the preview's own stack instead of the text's.
+- LaTeX preview (read before touching it): **Trap**: with the box kept open across an app switch, an agent's rewrite read into the clean tab had the draft spliced at the old offsets (full preview) or the old text plus the edit put back over the reload (beside the source), reverting the agent silently.
+- LaTeX preview (read before touching it): **Trap** (round 10's documents defect 8): an edit on the side page pushed a snapshot, and Cmd+Z in the full preview after typing in the source put that snapshot back, dropping the typing.
+- LaTeX preview (read before touching it): **Trap** (round 10's documents defect 4): the input was parsed from its buffer, so SyncTeX's lines (the disk's) matched against a chapter with unsaved lines above the click picked another paragraph, and Return edited it.

@@ -241,8 +241,14 @@ found through that list.
   fences, a table cell with newlines and pipes escaped back, a `$$` block
   whole); `applyMarkdownSource:` splices, marks dirty, registers undo,
   re-renders at the same scroll. An edit made while the buffer changed
-  underneath is not applied: its text goes to the clipboard with a status
-  note (`MCKeepLostMarkdownEdit`).
+  underneath (an agent's rewrite read in, Cmd+Z) is made on the text as
+  it is then, the block found again by `MarkdownEdit::rebaseSpan`
+  (`MCMarkdownBlockNow`, `mdedit:rebase`; round 10's documents defect 3,
+  2026-11-19); when the block's own text changed, or is there more than
+  once, it is not applied: its text goes to the clipboard with a status
+  note (`MCKeepLostMarkdownEdit`). `markdown_page` rewrites the file
+  under an open box both ways. Trap: never splice a box's edit at the
+  offsets it opened with into text that changed since.
   The box opens on the double-clicked word (2026-11-15, D2's first step):
   `MarkdownEdit::sourceOffsetFor` finds the page's word in the block's
   Markdown by the 40 characters either side (letters and digits compared,
@@ -380,7 +386,14 @@ false`) a formula shows as its TeX in the code style.
   `\begin{pagecolor}` was `\pagecolor` past the word list; an environment's
   name must be letters in braces and is checked as both words, ignoring
   case, and `\lowercase`, `\uppercase`, `\Make...`, `\UseName` and
-  `\ExpandArgs` are refused as more ways to build a word. A
+  `\ExpandArgs` are refused as more ways to build a word. **Trap**
+  (round 10's documents defect 1, `kVersion` 5): what `prepare` drops
+  (`\label{...}`, an equation environment's `\begin` and `\end`) joined
+  the letters either side into a word the check never saw
+  (`\glo\label{q}bal` is `\global`), and a Greek letter spelled as a
+  bare Latin one did the same (`\catc`, omicron, `de`); `check` now also
+  checks `prepare`'s output (inline and display), and `spellUnicode`
+  braces a letter it spells (`{o}`, `{T}`). A
   formula that still closes its box early (`{$}`: TeX closes a brace for the
   `$`) has its rest gobbled unread to `\mcsentinel` by `\mcafter`; one that
   leaves a group open makes `\mcship` (built only from `\mc` copies of the
@@ -485,6 +498,8 @@ text is in place in its section.
 - Markdown: Trap: a transient popover closes when the app loses the keyboard, and what was typed in it goes too.
 - Markdown: Traps: the TextKit 1 editor never asks for a TextKit 2 view provider (1.4.1 shipped still GIFs);
 - Math in the Markdown preview (Mac): **Trap**: `\begin{x}` runs `\csname x\endcsname` and `\end{x}` `\csname endx\endcsname`, so `\begin{pagecolor}` was `\pagecolor` past the word list; an environment's name must be letters in braces and is checked as both words, ignoring case, and `\lowercase`, `\uppercase`, `\Make...`, `\UseName` and `\ExpandArgs` are refused as more ways to build a word.
+- Markdown: Trap: never splice a box's edit at the offsets it opened with into text that changed since.
+- Math in the Markdown preview (Mac): **Trap** (round 10's documents defect 1, `kVersion` 5): what `prepare` drops (`\label{...}`, an equation environment's `\begin` and `\end`) joined the letters either side into a word the check never saw (`\glo\label{q}bal` is `\global`), and a Greek letter spelled as a bare Latin one did the same (`\catc`, omicron, `de`); `check` now also checks `prepare`'s output (inline and display), and `spellUnicode` braces a letter it spells (`{o}`, `{T}`).
 - Math in the Markdown preview (Mac): **Trap**: `\globaldefs=-1` around each formula broke every formula's fonts (LaTeX loads fonts lazily with global definitions); check a change to the batch with a real tectonic (`markdown_math` with `MC_GUI_REAL_TECTONIC`).
 - Math in the Markdown preview (Mac): Trap: an attachment glyph's location is the bottom of its frame, not the baseline.
 - Mermaid in the preview (Mac): **Trap (2026-11-16, round 8 D3)**: the SVG was handed to NSImage until then, whose SVG drawing ignores the `<style>` Mermaid puts every color in and `em` offsets on tspans: labels sat above their boxes, text and boxes were dark grey, and each curved edge, its `fill: none` lost, filled as a black wedge; never draw Mermaid's SVG with NSImage.

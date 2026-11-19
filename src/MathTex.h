@@ -23,6 +23,8 @@ constexpr double kPadPt = 1.0;
 // Nothing that outlives the formula's group may be used either (\gdef,
 // \global, \aftergroup, a counter, the batch's own \mc names, ...), since
 // a formula changed by an earlier one would be cached as a wrong picture.
+// Both the text as written and prepare()'s forms of it are checked, since
+// what prepare() drops can join two halves of a refused word.
 std::string check(const std::string& tex);
 
 // The formula as TeX is given it. What MathJax and GitHub accept but LaTeX
