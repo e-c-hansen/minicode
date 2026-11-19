@@ -577,6 +577,31 @@ SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
   from the first. The waiting dot goes when a key's commit reaches the
   shell (a key counts for 200 ms, an input method's commit coming late),
   so Ctrl+Shift+C and Ctrl+Up leave it.
+- **The GTK port's cursor and Control keys** (2026-11-18,
+  linux/HANDOFF.md item 110). The cursor is the terminal's text color
+  and the character under the block the background's, both opaque
+  (`Settings::terminalCursor` and `terminalCursorText`, as the Mac's grid
+  draws it; no built-in theme has a cursor color), set in
+  `Terminal::applyColors` after `vte_terminal_set_colors` on every
+  settings change, with the selection (`theme::editorSelection`). **Trap**:
+  `vte_terminal_set_colors` unsets the cursor, cursor text, highlight and
+  bold colors; the port set the cursor once before it, and VTE, with only
+  the cursor's text set, drew the block and the unfocused outline in the
+  cell's background: no cursor showed on any theme until then. Keys: while
+  the terminal has the keyboard, every plain Ctrl key but the Global ones
+  (Ctrl+`, 0, 1, 2, I, Tab, Page Up and Down) is no accelerator
+  (`Commands::linuxTerminalTakes`, Keys.cpp's `bound`), so readline's
+  Ctrl+W, A, E, U, K, R, L, D, C, Z, Y, P, N, B and F reach the shell, as
+  Control does on the Mac; the harness found them all reaching it before
+  item 110 too. VS Code's terminal on Linux does the same apart from its
+  `terminal.integrated.commandsToSkipShell` (Quick Open's Ctrl+P and
+  Ctrl+E, its terminal find's Ctrl+F, chords such as Ctrl+K while
+  `allowChords` is on), which mutible gives the shell. A Mac-style remapper
+  (Toshy, Kinto) turns the physical Ctrl into Super in any window it does
+  not list as a terminal, so on the owner's ThinkPad a physical Ctrl+W
+  reaches mutible as Super+W: the fix is a keymap in the remapper for
+  `ai.ible.Mutible`, never a key of mutible's. Checked by `terminal_keys`
+  and `terminal_draw` (the GTK harness).
 - **The Mac on it** (2026-11-17, with `editor.session-host` on, grid mode
   only): `TerminalView` keeps everything above (its own `TerminalStream`
   and `TerminalScreen` parse the same bytes, so the integration, nonce,
@@ -608,3 +633,4 @@ text is in place in its section.
 - The terminal: **Trap**: the panel's `closeTerminal:` and `renameTerminal:` share their selectors with the menu's actions, so with the keyboard in a terminal the panel received Ctrl+Shift+W as `closeTerminal:(NSMenuItem *)` and closed nothing (until 2026-11-08); both take a non-terminal argument as "the active one".
 - Terminals owned by the session's host (stage 5): **The host's screen answers no queries**: `takeReplies` is thrown away, since the renderer's emulator answers DA, DSR and the rest through its input, and two answers would reach the program.
 - Terminals owned by the session's host (stage 5): **Traps found by its fuzz** (`screen:replay`): a prompt mark makes the next wrap zsh's PROMPT_SP, so each written A is followed by a carriage return.
+- Terminals owned by the session's host (stage 5): **Trap**: `vte_terminal_set_colors` unsets the cursor, cursor text, highlight and bold colors; the port set the cursor once before it, and VTE, with only the cursor's text set, drew the block and the unfocused outline in the cell's background: no cursor showed on any theme until then.
