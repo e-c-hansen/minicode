@@ -179,6 +179,10 @@ std::string MCGuiReadFile(const std::string& path);      // "" when unreadable
 bool MCGuiFileExists(const std::string& path);
 void MCGuiSetSettings(const std::string& text);          // writes the file, has the app read it
 void MCGuiSetKeys(const std::string& text);              // keys.conf ($MUTIBLE_KEYS), the same
+// Every address handed to the desktop's handler (Editor::launchUriHook: a
+// link to mailto: or an app's scheme), in order. The checks record it
+// instead, so nothing they do starts another app (the Mac's MCGuiOpenedURLs).
+std::vector<std::string> MCGuiLaunchedUris();
 // The text of the editor's buffer (the newest window's).
 std::string MCGuiEditorText();
 // A picture of a widget as drawn, written as <name>.png into

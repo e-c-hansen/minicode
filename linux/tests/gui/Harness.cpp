@@ -342,6 +342,12 @@ bool MCGuiFileExists(const std::string& path) {
     return g_file_test(path.c_str(), G_FILE_TEST_EXISTS);
 }
 
+static std::vector<std::string>& launchedUris() {
+    static std::vector<std::string>* all = new std::vector<std::string>();
+    return *all;
+}
+std::vector<std::string> MCGuiLaunchedUris() { return launchedUris(); }
+
 void MCGuiSetSettings(const std::string& text) {
     MCGuiWriteFile(envOr("MUTIBLE_SETTINGS"), text);
     MCGuiReloadSettings();
@@ -1263,6 +1269,9 @@ int main(int argc, char** argv) {
     if (backtrace(warm, 1) < 0) {}
     gMainTid = (long)syscall(SYS_gettid);
     for (int s : {SIGSEGV, SIGBUS, SIGABRT, SIGFPE, SIGILL}) signal(s, reportCrash);
+    // A link to mailto: or an app's scheme is recorded, never handed to the
+    // desktop: nothing a check does starts another app.
+    Editor::launchUriHook = [](const std::string& url) { launchedUris().push_back(url); };
 
     // mutible_main's main loop picks this up; it polls until the window it
     // opens is mapped, then the suites start.

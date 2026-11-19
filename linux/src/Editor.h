@@ -521,15 +521,21 @@ public:
         int line = 0;
     };
     void setLinkHandler(std::function<void(const Link&)> h) { linkHandler_ = std::move(h); }
+    // A link to neither a file nor a web address (mailto:, an app's scheme)
+    // goes to the desktop's handler; when this is set, here instead. The GUI
+    // checks set it to a recorder, so nothing they do starts another app.
+    static std::function<void(const std::string& url)> launchUriHook;
     // Files dropped on the text (a GdkFileList): each opened through the
     // link handler, a folder shown in the tree. False with none to open.
     bool openDropped(const GValue* value);
 
     // An .html file shown as its page (HtmlView.h; browser builds). The
-    // window's folder, which the page may read, and the write of a
-    // remembered html.scripts answer, from main.cpp.
+    // window's folder, which the page may read, the write of a remembered
+    // html.scripts answer, and the status bar's note for an address the page
+    // tried to open by itself and was refused, from main.cpp.
     std::function<std::string()> htmlRoot;
     std::function<bool(const std::string& value)> htmlRemember;
+    std::function<void(const std::string& url)> htmlRefused;
     HtmlView* htmlView() const { return html_; }
 
     // Big files (LargeFileView.h): the status bar's "Large file: features off"

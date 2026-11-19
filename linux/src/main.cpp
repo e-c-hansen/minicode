@@ -65,6 +65,7 @@
 #include "FileTree.h"
 #include "HintsColumns.h"
 #include "HintsSearchBox.h"
+#include "HtmlPage.h"      // refusedNote (an HTML page's own navigation)
 #include "WindowTitle.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
 #include "FolderPicker.h"  // inScope (Add Folder to Focus…)
@@ -5460,6 +5461,9 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->editor->htmlRemember = [](const std::string& value) {
         std::string why;
         return g.settings && g.settings->writeValue("html.scripts", value, &why);
+    };
+    app->editor->htmlRefused = [app](const std::string& url) {
+        if (!app->dead) flashStatus(app, HtmlPage::refusedNote(url));
     };
     app->formatOffer = new FormatOffer(FormatOffer::Host{
         [app] { return app->rootDir; },
