@@ -681,6 +681,14 @@ static MultiCaret::Row MCRowAt(NSTextView *tv, NSUInteger p) {
 - (void)extendSoleFrom:(NSUInteger)head anchor:(NSUInteger)anchor to:(NSUInteger)t {
     NSTextView *tv = _tv;
     NSString *text = tv.string;
+    // Past the anchor, AppKit's paragraph moves stretch the selection's far
+    // end instead of crossing over ({10, 5} with the anchor at 15 became
+    // {10, 15}): start from an empty selection at the anchor, which AppKit
+    // then extends from either way.
+    if ((head < anchor && t > anchor) || (head > anchor && t < anchor)) {
+        [tv setSelectedRange:NSMakeRange(anchor, 0)];
+        head = anchor;
+    }
     NSUInteger s = 0, e = 0;
     [text getLineStart:&s end:NULL contentsEnd:&e forRange:NSMakeRange(MIN(head, text.length), 0)];
     auto headNow = [&]() {
