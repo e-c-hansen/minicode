@@ -166,7 +166,10 @@ namespace {
 
 // Text as sourceOffsetFor compares it: ASCII letters and digits lowercased,
 // every byte of a non-ASCII character kept, and each run of anything else
-// one space; `at` holds each kept byte's offset in the text.
+// one space; `at` holds each kept byte's offset in the text. Emphasis and
+// code marks and escapes (* _ ~ ` \) are left out altogether, so the
+// page's "foobar" is found in "foo**bar**" and "foo*bar*baz" (and the
+// page's "snake_case" in the source's, both "snakecase").
 struct Key {
     std::string s;
     std::vector<size_t> at;
@@ -176,6 +179,7 @@ Key keyOf(const std::string& text) {
     Key k;
     for (size_t i = 0; i < text.size(); i++) {
         const unsigned char c = (unsigned char)text[i];
+        if (c == '*' || c == '_' || c == '~' || c == '`' || c == '\\') continue;
         if (c >= 0x80 || std::isalnum(c)) {
             k.s += c < 0x80 ? (char)std::tolower(c) : (char)c;
             k.at.push_back(i);

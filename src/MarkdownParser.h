@@ -123,6 +123,14 @@ struct MdRun {
     int  detailsLine = -1;
     bool summary = false;
     bool detailsOpen = false;
+    // Which <details> tag on its line the innermost one is (0 for the
+    // first; two on one line are two blocks), and how many list levels and
+    // quotes it sits in (its tag's block's listDepth plus quoteDepth), so a
+    // writer of nested markup opens it inside them: a <details> in a list
+    // item or a quote closes with it. A port that folds by detailsLine
+    // alone opens and closes the blocks of one line together.
+    int  detailsIndex = 0;
+    int  detailsAt = 0;
     // GitHub's alerts: a quote whose first line is "[!NOTE]", "[!TIP]",
     // "[!IMPORTANT]", "[!WARNING]" or "[!CAUTION]". `alert` is its kind (1
     // note, 2 tip, 3 important, 4 warning, 5 caution; MarkdownParser::
