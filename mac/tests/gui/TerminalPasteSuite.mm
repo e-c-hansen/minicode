@@ -23,14 +23,23 @@
 //     whole; the drop focuses the terminal it is on, with a split beside
 //     it; a picture with no file goes to a PNG in $TMPDIR/Mutible-drop and
 //     its path is typed; text is typed as a paste.
+//   - A row of the file tree pressed and dragged out (mouse events through
+//     the outline's own tracking, so its drag session begins): no file
+//     opens, the drag carries the file, the terminal takes it from the
+//     tree's within-app mask as a copy and types its quoted path, and the
+//     editor's text opens it instead (on 1.6.3 the tree offered a move
+//     only, which the terminal refused, and the file opened).
 // The nonce after `exec bash` is checked in terminal_exec (LooseEndsSuite).
 #import "Harness.h"
 #import "EditorController.h"
+#import "EditorController+Private.h"
 #import "Terminal.h"
 #import "TerminalGridView.h"
 #import "TerminalPanel.h"
 #import <Carbon/Carbon.h>   // IsSecureEventInputEnabled
 #include "TermDrop.h"
+#import <objc/runtime.h>
+#include <initializer_list>
 
 namespace {
 
@@ -76,11 +85,13 @@ NSPasteboard *DragBoard(NSArray<id<NSPasteboardWriting>> *objects) {
 #pragma clang diagnostic ignored "-Wobjc-protocol-property-synthesis"
 @interface MCTerminalSuiteDrag : NSObject <NSDraggingInfo>
 @property(nonatomic, strong) NSPasteboard *board;
+@property(nonatomic, strong) id source;          // nil: from another app
+@property(nonatomic) NSDragOperation mask;
 @end
 @implementation MCTerminalSuiteDrag
-- (id)draggingSource { return nil; }
+- (id)draggingSource { return self.source; }
 - (NSPasteboard *)draggingPasteboard { return self.board; }
-- (NSDragOperation)draggingSourceOperationMask { return NSDragOperationEvery; }
+- (NSDragOperation)draggingSourceOperationMask { return self.mask; }
 - (NSWindow *)draggingDestinationWindow { return nil; }
 - (NSPoint)draggingLocation { return NSZeroPoint; }
 - (NSInteger)draggingSequenceNumber { return 1; }
@@ -92,14 +103,90 @@ namespace {
 // The drag enters the grid (the operation it shows) and is dropped there,
 // as AppKit asks: entered, prepare, perform. The operation entering, or
 // NSDragOperationNone when the drop was refused.
-NSDragOperation Drop(TerminalGridView *g, NSPasteboard *pb) {
+// From `source` with its `mask`, onto any destination view.
+NSDragOperation DropFrom(NSView *g, NSPasteboard *pb, id source, NSDragOperation mask) {
     MCTerminalSuiteDrag *drag = [MCTerminalSuiteDrag new];
     drag.board = pb;
-    const NSDragOperation op = [g draggingEntered:drag];
-    if (op == NSDragOperationNone || ![g prepareForDragOperation:drag] ||
-        ![g performDragOperation:drag])
+    drag.source = source;
+    drag.mask = mask;
+    const NSDragOperation op = [(id<NSDraggingDestination>)g draggingEntered:drag];
+    if (op == NSDragOperationNone || ![(id<NSDraggingDestination>)g prepareForDragOperation:drag] ||
+        ![(id<NSDraggingDestination>)g performDragOperation:drag])
         return NSDragOperationNone;
+    if ([g respondsToSelector:@selector(concludeDragOperation:)])
+        [(id<NSDraggingDestination>)g concludeDragOperation:drag];
     return op;
+}
+
+NSDragOperation Drop(TerminalGridView *g, NSPasteboard *pb) {
+    return DropFrom(g, pb, nil, NSDragOperationEvery);
+}
+
+NSInteger TreeRow(EditorController *c, NSString *path) {
+    for (NSInteger r = 0; r < c.outline.numberOfRows; r++)
+        if ([((FileItem *)[c.outline itemAtRow:r]).path isEqualToString:path]) return r;
+    return -1;
+}
+
+NSArray<NSString *> *TabPaths(EditorController *c) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (MCTab *t in [c valueForKey:@"tabs"]) if (t.currentPath) [out addObject:t.currentPath];
+    return out;
+}
+
+NSEvent *TreeMouse(NSWindow *w, NSEventType type, NSPoint at) {
+    return [NSEvent mouseEventWithType:type location:at modifierFlags:0
+                             timestamp:NSProcessInfo.processInfo.systemUptime
+                          windowNumber:w.windowNumber context:nil eventNumber:0 clickCount:1
+                              pressure:type == NSEventTypeLeftMouseUp ? 0 : 1];
+}
+
+// What the tree's own tracking asked to drag when a row was pressed and
+// dragged: its items and the source. The session is not begun (the window
+// is never on screen, so the window server would end it at once); the
+// destinations are then given the same pasteboard and the source's mask.
+NSArray<NSDraggingItem *> *gDragItems;
+id<NSDraggingSource> gDragSource;
+NSUInteger gDragSessions;
+
+// A press on `path`'s row, dragged right and down to `to` (window
+// coordinates) and released there, all through the outline's mouseDown:
+// and its tracking loop.
+BOOL DragTreeRow(EditorController *c, NSString *path, NSPoint to) {
+    ClickOutline *tree = c.outline;
+    const NSInteger row = TreeRow(c, path);
+    if (row < 0) return NO;
+    const NSRect r = [tree rectOfRow:row];
+    const NSPoint at = [tree convertPoint:NSMakePoint(NSMinX(r) + 40, NSMidY(r)) toView:nil];
+    NSWindow *w = c.window;
+    gDragItems = nil;
+    gDragSource = nil;
+    gDragSessions = 0;
+    SEL sel = @selector(beginDraggingSessionWithItems:event:source:);
+    Method m = class_getInstanceMethod(NSOutlineView.class, sel);
+    IMP real = method_getImplementation(m);
+    method_setImplementation(m, imp_implementationWithBlock(
+        ^NSDraggingSession *(id view, NSArray<NSDraggingItem *> *items, NSEvent *e, id source) {
+            (void)view; (void)e;
+            gDragItems = items;
+            gDragSource = source;
+            gDragSessions++;
+            return nil;
+        }));
+    for (CGFloat dx : {3.0, 8.0, 20.0, 60.0})
+        [NSApp postEvent:TreeMouse(w, NSEventTypeLeftMouseDragged, NSMakePoint(at.x + dx, at.y - dx / 4))
+                 atStart:NO];
+    [NSApp postEvent:TreeMouse(w, NSEventTypeLeftMouseDragged, to) atStart:NO];
+    [NSApp postEvent:TreeMouse(w, NSEventTypeLeftMouseUp, to) atStart:NO];
+    @try {
+        [tree mouseDown:TreeMouse(w, NSEventTypeLeftMouseDown, at)];
+    } @finally {
+        method_setImplementation(m, real);
+    }
+    // Whatever the tracking left of the drag (a drag session would take it).
+    [NSApp discardEventsMatchingMask:NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
+                         beforeEvent:nil];
+    return YES;
 }
 
 NSString *OneLine(NSString *text) { return [[text componentsSeparatedByString:@"\n"] componentsJoinedByString:@""]; }
@@ -111,7 +198,7 @@ NSString *OneLine(NSString *text) { return [[text componentsSeparatedByString:@"
 @property(nonatomic, strong) TerminalView *term, *other;
 @property(nonatomic, copy) NSString *dir;
 @property(nonatomic, strong) NSMutableData *sent;
-@property(nonatomic) NSUInteger alerts, sheets;
+@property(nonatomic) NSUInteger alerts, sheets, tabs;
 @end
 @implementation MCPasteState
 @end
@@ -388,6 +475,83 @@ MC_GUI_SUITE(terminal_paste) {
     });
     MCGuiWait(@"a fresh prompt", 10, ^BOOL {
         return s.term.atPrompt && [[s.term valueForKey:@"zleReady"] boolValue];
+    });
+
+    // ---- a row dragged from the file tree
+    MCGuiStep(@"data.csv in the project folder, listed in the tree", ^{
+        MCGuiWriteFile(MCGuiProjectFile(@"data.csv"), @"a,b\n1,2\n");
+        [s.c refreshTree:nil];
+    });
+    MCGuiWait(@"its row", 10, ^BOOL { return TreeRow(s.c, MCGuiProjectFile(@"data.csv")) >= 0; });
+    MCGuiStep(@"pressed and dragged onto the terminal: a drag of the file; nothing opens", ^{
+        NSString *csv = MCGuiProjectFile(@"data.csv");
+        s.tabs = TabPaths(s.c).count;
+        NSView *grid = Grid(s.term);
+        const NSPoint over = [grid convertPoint:NSMakePoint(NSMidX(grid.bounds), NSMidY(grid.bounds))
+                                         toView:nil];
+        GCHECK(DragTreeRow(s.c, csv, over));
+        MCGuiNote(@"drag sessions begun: %lu, items %lu, dragBegan %d", (unsigned long)gDragSessions,
+                  (unsigned long)gDragItems.count, s.c.outline.dragBegan);
+        GCHECK(gDragSessions == 1 && gDragItems.count == 1);
+        GCHECK(s.c.outline.dragBegan);
+        GCHECK(![TabPaths(s.c) containsObject:csv]);
+        GCHECK(TabPaths(s.c).count == s.tabs);
+    });
+    MCGuiStep(@"still nothing opened; the terminal takes it as a copy and types the quoted path", ^{
+        NSString *csv = MCGuiProjectFile(@"data.csv");
+        GCHECK(![TabPaths(s.c) containsObject:csv]);
+        NSPasteboard *pb = [NSPasteboard pasteboardWithUniqueName];
+        [pb clearContents];
+        NSMutableArray *writers = [NSMutableArray array];
+        for (NSDraggingItem *i in gDragItems) [writers addObject:i.item];
+        GCHECK([pb writeObjects:writers]);
+        NSDraggingSession *noSession = nil;
+        const NSDragOperation mask =
+            [gDragSource draggingSession:noSession
+                sourceOperationMaskForDraggingContext:NSDraggingContextWithinApplication];
+        MCGuiNote(@"the tree's mask within the app: %lu", (unsigned long)mask);
+        GCHECK(mask & NSDragOperationCopy);
+        GCHECK(mask & NSDragOperationMove);   // still a move onto the tree's folders
+        Grid(s.term).onInput(Bytes(@"printf '<%s>\\n' "));
+        [s.sent setLength:0];
+        GCHECK(DropFrom(Grid(s.term), pb, s.c.outline, mask) == NSDragOperationCopy);
+        NSString *want = [NSString stringWithFormat:@"\x1b[200~%@ \x1b[201~", Quoted(csv)];
+        GCHECK_EQ_STR(Str(s.sent), want);
+        GCHECK(s.c.window.firstResponder == Grid(s.term));
+        Grid(s.term).onInput(Bytes(@"\r"));
+    });
+    MCGuiWait(@"zsh reads the path back whole", 10, ^BOOL {
+        return [OneLine([s.term recentText:8]) containsString:@"/data.csv>"];
+    });
+    MCGuiWait(@"the prompt", 10, ^BOOL {
+        return s.term.atPrompt && !s.term.busy && [[s.term valueForKey:@"zleReady"] boolValue];
+    });
+    MCGuiStep(@"the same drag onto the editor opens the file, as VS Code does", ^{
+        NSString *csv = MCGuiProjectFile(@"data.csv");
+        NSPasteboard *pb = [NSPasteboard pasteboardWithUniqueName];
+        [pb clearContents];
+        [pb writeObjects:@[[NSURL fileURLWithPath:csv]]];
+        NSDraggingSession *noSession = nil;
+        const NSDragOperation mask =
+            [gDragSource draggingSession:noSession
+                sourceOperationMaskForDraggingContext:NSDraggingContextWithinApplication];
+        NSView *text = [s.c valueForKey:@"textView"];
+        GCHECK(DropFrom(text, pb, s.c.outline, mask) == NSDragOperationCopy);
+        GCHECK([TabPaths(s.c) containsObject:csv]);
+        GCHECK_EQ_STR([s.c valueForKey:@"currentPath"], csv);
+        // Text dragged onto it is still text for the text view (not opened).
+        NSPasteboard *words = [NSPasteboard pasteboardWithUniqueName];
+        [words clearContents];
+        [words setString:@"just words" forType:NSPasteboardTypeString];
+        MCTerminalSuiteDrag *drag = [MCTerminalSuiteDrag new];
+        drag.board = words;
+        drag.mask = NSDragOperationEvery;
+        GCHECK(![(id)text droppedFilePaths:drag]);
+        for (MCTab *t in [(NSArray *)[s.c valueForKey:@"tabs"] copy])
+            if ([t.currentPath isEqualToString:csv]) [s.c closeTabEverywhere:t prompt:NO];
+        GCHECK(![TabPaths(s.c) containsObject:csv]);
+        [[NSFileManager defaultManager] removeItemAtPath:csv error:nil];
+        [s.c refreshTree:nil];
     });
 
     // ---- secure keyboard entry

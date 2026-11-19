@@ -490,6 +490,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSView *)outlineView:(NSOutlineView *)ov
      viewForTableColumn:(NSTableColumn *)col
                    item:(id)item;
+// Files dropped on the editor's text open in tabs; folders show in the tree.
+- (BOOL)openDroppedPaths:(NSArray<NSString *> *)paths;
 - (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)ov
                pasteboardWriterForItem:(id)item;
 - (void)outlineView:(NSOutlineView *)ov draggingSession:(NSDraggingSession *)session
@@ -1082,6 +1084,7 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (NSTextView *)notesTextView;
 - (id)notesActiveTab;
 - (void)showPage:(id<MCEditorPage>)page;
+- (MCTab *)showPage:(id<MCEditorPage>)page preview:(BOOL)preview;
 - (void)closePageOf:(MCTab *)t;
 - (void)agentWorktreesChanged;
 - (BOOL)agentWorktreesOnShow;

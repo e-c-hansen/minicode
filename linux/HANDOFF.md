@@ -6646,7 +6646,7 @@ the editor is selected.
   `onHintsKey` (a key controller in the window's capture phase);
   `setWindowTitle` and `titleFocus`, run from `updateTitle` and
   `onFocusWidget`; `Keys::hintLabel`. The panel's columns are as they were
-  (PageMeasure::layoutHints on GTK came next: item 112).
+  (PageMeasure::layoutHints on GTK came next: item 111).
 - **Traps.** An input method types nothing for an Alt+letter
   (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`): forwarded, Alt+Z was lost and the
   box held "s" (hints_panel failed so), so the box inserts the letter
@@ -6664,7 +6664,184 @@ the editor is selected.
   (WindowTitleSuite.cpp), their headers saying what they check; the
   core's `hints:*` and `window-title:*` groups of `make test`.
 
-### 112. The shortcut hints in as many columns as fit the window (November 2026)
+### 109. A row going keeps the tree's place; file icons by type (November 2026)
+
+The owner, on this ThinkPad: "If I delete a file in the filetree panel,
+rather than simply removing it from my current view, the view resets and I
+am brought to the top of the filetree panel, which is annoying", and
+"Almost none of the different file types I have encountered in the
+filetree panel have non-default icons, which seems like a missed
+opportunity." (`../docs/notes/tree.md`, "A row going keeps the tree's
+place (GTK)" and "Icons by kind".)
+
+- **What a user meets.** Move to Trash (the row's menu, or Delete with the
+  tree's keyboard) takes out just that row: the tree stays scrolled where
+  it was, every folder stays open, and the row after it (else the one
+  before) is selected, with the keyboard when the tree had it, so Delete
+  again trashes that one, as in VS Code. The file's tab closes and the tab
+  before it comes on show without the tree going to that file. A selected
+  file deleted or renamed on disk by something else does the same; files
+  deleted or made above the view move nothing on show; Rename to a name
+  that sorts in place keeps the scroll and selects the renamed row. File
+  rows show the icon theme's picture for their type: a Python, C, C++,
+  Rust, Go, Java, Kotlin, shell or Ruby file, Markdown, HTML, CSS, JSON,
+  YAML, TOML, XML, CSV and SQL, LaTeX, a notebook, pictures, audio, video,
+  PDF, archives, fonts, programs and libraries, office documents, a
+  Makefile, CMakeLists.txt, meson.build, a Dockerfile, LICENSE, README,
+  AUTHORS, lockfiles, git's files, dotfiles and config, patches, logs,
+  keys and translations each have their own on Yaru (77 of the core's 78
+  types draw apart from plain text, in 65 pictures). Changing the icon
+  theme changes the rows on show at once.
+- **Why it jumped.** Two causes. (1) `trashNow` closed the file's tab, the
+  editor showed the tab before it, and the tree followed that tab
+  (item 107's `TreeFollow`; before it `revealActiveInTree`), scrolling to
+  its file: for a file near the top, the top of the tree. It also cleared
+  the selection. (2) GtkListView (4.22) itself put the list at its top a
+  frame or two after the row it was anchored on went (the row last
+  clicked or focused): `gtk_list_base`'s `update_adjustments` takes 0 for
+  an anchor it cannot place. A selected file deleted on disk did it with
+  no tab involved. Found with a backtrace on the scroll's value-changed:
+  the 0 came from `gtk_adjustment_configure` in the list's size-allocate.
+- **Code.** `FileTree`: `removing(path)` (the next row selected without
+  moving the keyboard; `goingRow_`, and `afterRowsGone` moves the keyboard
+  once the row is out, else the list would anchor on that row and push the
+  rows above down by one); `onItemsChanged` (the tree model's first
+  handler: the selection and the list's row widgets are still as they
+  were) notes a selected row going (`lostAt_`, `lostPath_` from
+  `onSelectionChanged`'s `selPath_`, `lostKeys_`), and `afterRowsGone`
+  selects the row in its place when its file is gone from the disk;
+  `keepRows`, `applyKeep` and `stopKeeping` keep the first row on show
+  where it was drawn when a scroll goes to 0 within 300 ms of rows going
+  (`applyKeep` on the frame clock's "layout", connected after the window's,
+  and in `afterLayout`); a press, a key, the wheel (a scroll controller), a
+  drag's edge scroll, a reveal's scroll and a window record's scroll end
+  it. `TreeFollow::quiet`: the tabs `trashNow` closes are neither revealed
+  nor selected. `main.cpp`'s `trashNow`: `removing` before the tabs close,
+  inside `quiet`, and no `clearSelection`. Icons: the core's
+  `FileIcon::Type`, `typeOf`, `typeName`, `allTypes` (FileDetails,
+  `tree:icon-types`); `src/TreeIcons.{h,cpp}` (new): each type's names
+  from the system theme, the first `gtk_icon_theme_has_icon` finds, kept
+  per theme and forgotten on its "changed"; `FileTree::setIcon` and
+  `refreshIcons` (connected after the theme's "changed"); the listing's
+  worker sets `minicode-exec` on a regular file with no extension that
+  `access(X_OK)` allows. Folders keep the tinted folder-symbolic.
+- **Differs from the Mac**: the Mac still draws `Kind`'s SF Symbols;
+  `typeOf` is in the core for it. Its tree reloads only the folders that
+  changed and never had the jump.
+- **Checks**: the `tree_edits` suite (new: a folder of about 120 rows,
+  Move to Trash twice by the key, into the scratch world's
+  `$XDG_DATA_HOME/Trash`, checked before anything is trashed; a selected
+  file deleted on disk; rows going and coming above the view; Rename; the
+  last row) and the `tree_icons` suite (rewritten: one file of each type,
+  each row's name in its type's family and the theme's answer, then Yaru
+  where installed, the main names checked, the pictures counted, three
+  snapshots). Before the fix `tree_edits` showed the tree at 0 (was 745)
+  with nothing selected after the first trash.
+- **Left for a real screen**: the icons' look at the owner's scale and in
+  Papirus-Gruvbox (the snapshots are Yaru at 1x), and whether a one-frame
+  flash of the top can show before `applyKeep` runs (it runs after the
+  layout and before the paint, so none is expected).
+
+### 110. The terminal's cursor shows, and readline's Ctrl keys reach the shell (done, November 2026)
+
+The owner's two reports from the ThinkPad (Ubuntu, GNOME, Toshy): "the
+cursor in the terminal for dark mode does not appear to exist", and
+"Ctrl+W does not delete the word to the left of the cursor".
+
+- **The cursor.** `vte_terminal_set_colors` unsets VTE's cursor, cursor
+  text, highlight and bold colors. `applyTheme` set the cursor (#AEAFAD)
+  and the selection once, then `applyColors` ran `set_colors` for the
+  app's settings and set only the cursor's text (the background). With a
+  cursor text and no cursor color, VTE takes the cell's own background for
+  the block (`determine_colors`: no swap once either is set), so the block
+  and the outline it draws without the keyboard were the background, and
+  the character under the cursor was drawn in the background too: no
+  cursor on any theme, dark or light, and a character under it vanished.
+  The terminal's selection had fallen back to VTE's reversed colors the
+  same way. Now `applyColors` sets, after `set_colors`, every time: the
+  cursor in the terminal's text color and the character under a block in
+  its background, both opaque (core `Settings::terminalCursor` and
+  `terminalCursorText`, as the Mac's grid draws it: no built-in theme
+  has a cursor color of its own), and the selection in the editor's
+  (`theme::editorSelection`, #264F78 dark, #ADD6FF light). `pal::TermCursor`
+  is gone.
+- **The keys, before and now.** Nothing changed in mutible's key model,
+  which already had what was asked: while the terminal has the keyboard,
+  every plain Ctrl key that is not Global is no accelerator
+  (`Commands::linuxTerminalTakes`, Keys.cpp's `bound`), the Linux form of
+  the Mac's rule (keys on Command, Control to the shell). The harness,
+  with no remapper, found Ctrl+W, A, E, U, K, R, L, D, C, Z, Y, P, N, B
+  and F all reaching bash as their control bytes before this item, as the
+  `keys` suite had for Ctrl+W, B, N, L, H, G, O, Q and F; Ctrl+W at a
+  prompt deleted the word. The Global plain Ctrl keys, the only ones the
+  terminal does not get, are Ctrl+`, 0, 1, 2, Tab, Page Up, Page Down
+  (ways out) and Ctrl+I (the inline agent, as VS Code's terminal chat).
+  VS Code's terminal on Linux sends keys to the shell too, apart from its
+  `terminal.integrated.commandsToSkipShell` list, which keeps Quick
+  Open's Ctrl+P and Ctrl+E and its terminal find's Ctrl+F (and chords
+  such as Ctrl+K, while `terminal.integrated.allowChords` is on);
+  mutible gives those to the shell, with Find… in the Edit menu.
+- **Toshy** (read from `~/.config/toshy/toshy_config.py` and its
+  preferences, never written). The ThinkPad's keyboard ("AT Translated
+  Set 2 keyboard") is Toshy's Windows type, with Caps Lock left as Caps.
+  mutible's window class, `ai.ible.Mutible`, is not in Toshy's
+  `terminals` list, so the "Cond modmap - GUI - Win kbd" modmap applies:
+  physical Left Ctrl becomes Left Super (and Left Alt, the Mac's Cmd,
+  Right Ctrl). A physical Ctrl+W therefore reaches mutible as Super+W,
+  which no keymap of Toshy's changes (General GUI remaps only Super+A, E,
+  B, F, N, P, K and D, to Home, End, the arrows, Shift+End Backspace and
+  Delete); VTE gets Super+W and types a plain w (a probe in the harness:
+  `echo one two` and Super+W left `echo one twow`), which is what the
+  owner saw. The fix is Toshy's: a
+  keymap in the `user_apps` slice for mutible's window that turns Super
+  and the shell's letters back into Ctrl (Super+W to C-w, and U, R, L, C,
+  Z, Y, K, D, and A, E, B, F, N, P if the shell's own meaning is wanted
+  over General GUI's), as Toshy's VS Code keymap does for Super+C and
+  Super+X. Toshy cannot tell the terminal from the editor, so in the
+  editor those keys then do what Ctrl does (Ctrl+W closes the tab, as
+  Cmd+W does). The owner's existing "User overrides MiniCode" keymap
+  (Super+Space to C-Space, completion) matches `clas="^org\\.minicode\\."`,
+  the class from before 1.6.0's rename, so it no longer applies to
+  mutible at all: its `clas` wants `^ai\\.ible\\.Mutible$`. Adding mutible
+  to Toshy's `terminals` list instead would make Cmd keys Ctrl+Shift in
+  the whole window (Cmd+S as Save As), so it is not the fix.
+- **The `agents` suite's "the same key closes the panel" (open).** It
+  failed 1 of 5 plain runs of `agents` alone here (and in several logs of
+  other branches today), never in 44 runs since: 34 with a probe of the
+  test's own (an `activate` handler on the action, key controllers on the
+  window, or only the focus read before the key) and 10 with one
+  `fprintf` in `act_toggle_agents`. What the runs showed: the keyboard is
+  not in the terminal when the key is pressed but in the editor's tab
+  strip's GtkScrolledWindow (TabStrip's `scroller_`; every failing log
+  says the same), `<Control><Shift>a` runs `win.toggleagents` then, and
+  in a passing run the action runs once per press. Whether a failing run
+  runs it no times or twice is not known, so no fix was made; the next
+  step is a failing run with the `fprintf` probe, or the focus put back in
+  the editor when the agents panel's list empties, if the scroller turns
+  out to matter.
+- **Docs.** `docs/REFERENCE.md`: the Linux column says "in the terminal
+  the program has it" for Ctrl+D, Q, C, X, V, F, N, O, S, L, B and Z, the
+  terminal's word and line deletion row has Ctrl+W and Ctrl+U, and the
+  keys.conf paragraph names Ctrl+2 and Ctrl+I among the Global keys, says
+  what VS Code does, and says what a Mac-style remapper does to Ctrl.
+  `docs/notes/terminal.md` has the trap.
+- **Checks.** `terminal_keys` (TerminalKeysSuite.cpp): no accelerator for
+  any of the fifteen with the terminal focused, each read back as its
+  byte from a raw `head` and from VTE's commit signal, no command run;
+  Ctrl+W at a bash prompt (`echo one two`, Ctrl+W, `three`); and Close
+  Tab by Ctrl+W with the editor focused. `terminal_draw`
+  (TerminalDrawSuite.cpp): the cursor cell's pixels on all nine themes,
+  the block on a character on Dark Modern and Light Modern, and the
+  outline without the keyboard. Its cell is 8x17 in the harness, at half a
+  pixel, so a block's edges and an outline are blended over two pixels;
+  the checks count over the cell and a pixel around it. Run against the
+  old `applyColors`, it found no pixel of the cursor's color on any theme,
+  the cell the background's, and the x under the cursor gone too. Core: `settings:terminal-cursor` (every
+  theme's cursor against its background, 3:1 or more, and its text
+  against the cursor), `commands:linux-terminal` (readline's fifteen are
+  the shell's whatever has them).
+
+### 111. The shortcut hints in as many columns as fit the window (November 2026)
 
 The owner's ask: "I don't know why the help window is only two columns wide
 with a scroll bar. It should be wider to show everything on one screen,

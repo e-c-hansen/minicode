@@ -2699,16 +2699,23 @@ static void trashNow(App* app, const std::string& path) {
         g_clear_error(&err);
         return;
     }
+    // Only its row goes (HANDOFF item 110): the selection moves to the row
+    // after it, the tree keeps its scroll and open folders. Its folder's
+    // listing takes the row out a moment later.
+    app->tree->removing(path);
     // The tabs of what went close, in every window, unless they hold unsaved
     // changes: those stay open, and saving writes the file again (the Mac's
-    // rule).
+    // rule). The tab shown next is not revealed in any tree: following it
+    // put the tree at that file, the top of the tree for one near it ("the
+    // view resets and I am brought to the top").
     for (App* a : g.windows) {
+        if (a->treeFollow) a->treeFollow->quiet(true);
         a->editor->pathTrashed(path);
+        if (a->treeFollow) a->treeFollow->quiet(false);
         a->nav->removed(path);   // no place to go back to
         updateTitle(a);
         refreshHints(a);
     }
-    app->tree->clearSelection();
 }
 
 static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {

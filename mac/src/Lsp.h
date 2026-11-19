@@ -84,6 +84,13 @@ BOOL MCTextViewUndoing(NSTextView *tv);
 @property(nonatomic, copy) void (^onMouseHover)(NSUInteger index);
 // The view scrolled under the pointer (a wheel or trackpad).
 @property(nonatomic, copy) void (^onScrolled)(void);
+// Files dropped on the text, from the file tree or Finder: they open, as
+// in VS Code, rather than going into the text. YES when it took them.
+// Text dropped is still text.
+@property(nonatomic, copy) BOOL (^onDropFiles)(NSArray<NSString *> *paths);
+// The file paths a drag carries that onDropFiles would take (nil when it
+// carries none, or comes from this view itself).
+- (NSArray<NSString *> *)droppedFilePaths:(id<NSDraggingInfo>)info;
 // Several carets (MultiCaretView.h): a column from Cmd+Shift+drag or
 // Option+drag, or carets added with Option+click.
 @property(nonatomic, readonly) MCMultiCarets *multiCarets;
@@ -412,6 +419,8 @@ void MCForgetFolderToolsConsent(NSString *root);
 @property(nonatomic, readonly) NSString *completionDocText;
 // The signature hint's text, or nil when hidden.
 @property(nonatomic, readonly) NSString *signatureText;
+// The list's and the signature hint's windows while they show, else nil.
+@property(nonatomic, readonly) NSWindow *completionWindow, *signatureWindow;
 @end
 
 // ---- definition, hover and Go to Symbol (Lsp+Navigation.mm)
@@ -438,8 +447,9 @@ void MCForgetFolderToolsConsent(NSString *root);
 - (void)cancelWorkspaceSymbols;
 // Open a workspace symbol's file and select it, as a reference opens.
 - (void)revealSymbol:(MCSymbolItem *)item;
-// Test hook.
+// Test hooks: the hover box shows; its window while it does.
 @property(nonatomic, readonly) BOOL hoverVisible;
+@property(nonatomic, readonly) NSWindow *hoverWindow;
 @end
 
 // ---- rename, references, quick fixes and Organize Imports (Lsp+Actions.mm)

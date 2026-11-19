@@ -18,7 +18,9 @@
 #include "FileTree.h"
 #include "Palette.h"
 #include "FileDetails.h"
+#include "FileSniff.h"
 #include "StartupLog.h"
+#include "TreeIcons.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +31,7 @@
 #include <unordered_set>
 #include <vector>
 #include <sys/stat.h>
+#include <unistd.h>
 
 // Attributes we request for every listing: the rows show a name and whether
 // it is a folder, nothing more. (A content type would have GIO read the
@@ -60,10 +63,18 @@ FileTree::FileTree(const std::string& rootDir, bool showHidden)
     gtk_box_append(GTK_BOX(box_), bar_);
     gtk_box_append(GTK_BOX(box_), scroller_);
     build();
+    // After TreeIcons' own handler, which forgets the old theme's answers.
+    if (GdkDisplay* display = gdk_display_get_default()) {
+        iconTheme_ = gtk_icon_theme_get_for_display(display);
+        g_signal_connect_after(iconTheme_, "changed", G_CALLBACK(+[](GtkIconTheme*, gpointer selfp) {
+            static_cast<FileTree*>(selfp)->refreshIcons();
+        }), this);
+    }
 }
 
 FileTree::~FileTree() {
     *activity_ = nullptr;   // folder watches still running call nothing now
+    if (iconTheme_) g_signal_handlers_disconnect_by_data(iconTheme_, this);
     unwatchFocusPath();
     if (barMenu_) gtk_widget_unparent(barMenu_);
     barMenu_ = nullptr;
@@ -88,6 +99,8 @@ FileTree::~FileTree() {
     holdRow(&lastReleaseRow_, nullptr);
     if (revealIdle_) g_source_remove(revealIdle_);
     revealIdle_ = 0;
+    if (lostIdle_) g_source_remove(lostIdle_);
+    lostIdle_ = 0;
     stopFrames();
     holdRow(&centerRow_, nullptr);
     if (barShortIdle_) g_source_remove(barShortIdle_);
@@ -99,6 +112,10 @@ FileTree::~FileTree() {
         g_signal_handlers_disconnect_by_data(listView_, this);
         if (GtkListItemFactory* f = gtk_list_view_get_factory(GTK_LIST_VIEW(listView_)))
             g_signal_handlers_disconnect_by_data(f, this);
+        if (GtkSelectionModel* sel = gtk_list_view_get_model(GTK_LIST_VIEW(listView_)))
+            g_signal_handlers_disconnect_by_data(sel, this);
+        holdRow(&keepRow_, nullptr);
+        holdRow(&goingRow_, nullptr);
         GListModel* ctrls = gtk_widget_observe_controllers(listView_);
         for (guint i = 0; i < g_list_model_get_n_items(ctrls); ++i) {
             GObject* c = static_cast<GObject*>(g_list_model_get_item(ctrls, i));
@@ -228,6 +245,16 @@ void listInThread(GTask* task, gpointer, gpointer data, GCancellable* cancel) {
         if (!name || !child) continue;
         if (job->hideWorktrees && std::strcmp(name, "worktrees") == 0) continue;
         g_file_info_set_attribute_object(info, "standard::file", G_OBJECT(child));
+        // A file with no extension that can run shows as a program
+        // (TreeIcons): asked only of those, so a listing still reads no
+        // other file's details than its type.
+        if (g_file_info_get_file_type(info) == G_FILE_TYPE_REGULAR && name[0] != '.' &&
+            FileSniff::extensionOf(name).empty()) {
+            char* p = g_file_get_path(child);
+            if (p && access(p, X_OK) == 0)
+                g_object_set_data(G_OBJECT(info), "minicode-exec", GINT_TO_POINTER(1));
+            g_free(p);
+        }
         // Names compare as they always did, case folded and collated; a name
         // that is not UTF-8 is made so first (GLib's collation refuses it).
         char* valid = g_utf8_make_valid(name, -1);
@@ -538,6 +565,7 @@ void FileTree::replaceModel() {
     holdRow(&pressRow_, nullptr);
     holdRow(&lastReleaseRow_, nullptr);
     holdRow(&centerRow_, nullptr);   // a row of the model going
+    forgetSelectedRow();
     pendingReveal_.clear();
     pendingExpand_.clear();
     endDrop();
@@ -569,6 +597,8 @@ void FileTree::build() {
     // New File likewise goes into the root until a row is picked.
     gtk_single_selection_set_autoselect(sel, FALSE);
     gtk_single_selection_set_can_unselect(sel, TRUE);
+    // The selected row's path, kept for when the row goes (onItemsChanged).
+    g_signal_connect(sel, "selection-changed", G_CALLBACK(onSelectionChanged), this);
 
     GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
     g_signal_connect(factory, "setup", G_CALLBACK(onSetup), this);
@@ -643,6 +673,21 @@ void FileTree::build() {
     }), this);
 
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller_), listView_);
+
+    // A wheel or touchpad scroll is the user's: the rows kept in place after
+    // a row went (keepRows) are let go. Capture phase, and the scroll goes
+    // on to the scrolled window.
+    GtkEventController* wheel = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+    gtk_event_controller_set_propagation_phase(wheel, GTK_PHASE_CAPTURE);
+    g_signal_connect(wheel, "scroll-begin", G_CALLBACK(+[](GtkEventControllerScroll*, gpointer selfp) {
+        static_cast<FileTree*>(selfp)->stopKeeping();
+    }), this);
+    g_signal_connect(wheel, "scroll", G_CALLBACK(+[](GtkEventControllerScroll*, double, double,
+                                                     gpointer selfp) -> gboolean {
+        static_cast<FileTree*>(selfp)->stopKeeping();
+        return FALSE;
+    }), this);
+    gtk_widget_add_controller(listView_, wheel);
 }
 
 // Popovers are children of the list view, and a widget must not be finalized
@@ -682,28 +727,6 @@ gboolean FileTree::filterVisible(gpointer item, gpointer selfp) {
     const char* name = info ? g_file_info_get_name(info) : nullptr;
     if (name && name[0] == '.') return FALSE;
     return TRUE;
-}
-
-// A file row's icon: one per kind the core names (FileIcon::kindOf, what a
-// click opens), the same grouping as the Mac's MCTreeIconSymbol. Every name
-// is in Adwaita's symbolic set, since GTK shows its missing-icon picture for
-// one the theme lacks.
-static const char* fileIconName(const char* path) {
-    switch (FileIcon::kindOf(path ? path : "")) {
-    case FileIcon::Kind::Image: return "image-x-generic-symbolic";
-    case FileIcon::Kind::Video: return "video-x-generic-symbolic";
-    case FileIcon::Kind::Audio: return "audio-x-generic-symbolic";
-    case FileIcon::Kind::Pdf: return "x-office-document-symbolic";
-    case FileIcon::Kind::Table: return "x-office-spreadsheet-symbolic";
-    case FileIcon::Kind::Notebook: return "accessories-dictionary-symbolic";
-    case FileIcon::Kind::Database: return "drive-harddisk-symbolic";
-    case FileIcon::Kind::Archive: return "package-x-generic-symbolic";
-    case FileIcon::Kind::Web: return "web-browser-symbolic";
-    case FileIcon::Kind::Bookmark: return "user-bookmarks-symbolic";
-    case FileIcon::Kind::Code: return "utilities-terminal-symbolic";
-    case FileIcon::Kind::Text: break;
-    }
-    return "text-x-generic-symbolic";
 }
 
 // ---------------------------------------------------------------- row widgets
@@ -772,17 +795,46 @@ void FileTree::onBind(GtkSignalListItemFactory* /*f*/, GObject* obj,
     g_object_set_data(G_OBJECT(label), "minicode-dir", GINT_TO_POINTER(infoIsDir(info) ? 1 : 0));
     static_cast<FileTree*>(self)->decorate(label);
 
-    // Folder vs file icon (named icons from the theme; tinted via CSS class).
-    if (infoIsDir(info)) {
+    g_object_set_data(G_OBJECT(label), "minicode-exec",
+                      info ? g_object_get_data(G_OBJECT(info), "minicode-exec") : nullptr);
+    setIcon(icon, label);
+    if (info) g_object_unref(info);
+}
+
+// A row's icon from what its label keeps (onBind): the folder's, or the
+// file's type's as the theme draws it (TreeIcons.h). The folder's is
+// symbolic, tinted by the stylesheet; a file's is the theme's, in colour.
+void FileTree::setIcon(GtkWidget* icon, GtkWidget* label) {
+    const char* path = static_cast<const char*>(g_object_get_data(G_OBJECT(label), "minicode-path"));
+    if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(label), "minicode-dir"))) {
         gtk_image_set_from_icon_name(GTK_IMAGE(icon), "folder-symbolic");
         gtk_widget_remove_css_class(icon, "minicode-file-icon");
         gtk_widget_add_css_class(icon, "minicode-dir-icon");
     } else {
-        gtk_image_set_from_icon_name(GTK_IMAGE(icon), fileIconName(path));
+        const bool exec = g_object_get_data(G_OBJECT(label), "minicode-exec") != nullptr;
+        gtk_image_set_from_icon_name(GTK_IMAGE(icon),
+                                     TreeIcons::nameFor(icon, path ? path : "", exec));
         gtk_widget_remove_css_class(icon, "minicode-dir-icon");
         gtk_widget_add_css_class(icon, "minicode-file-icon");
     }
-    if (info) g_object_unref(info);
+}
+
+// The icon theme changed (TreeIcons forgot its answers first, being
+// connected before): the rows on show take the new theme's names.
+void FileTree::refreshIcons() {
+    if (!listView_) return;
+    std::vector<GtkWidget*> todo = {listView_};
+    while (!todo.empty()) {
+        GtkWidget* w = todo.back();
+        todo.pop_back();
+        if (gtk_widget_has_css_class(w, "minicode-tree-label")) {
+            GtkWidget* icon = gtk_widget_get_prev_sibling(w);
+            if (icon && GTK_IS_IMAGE(icon)) setIcon(icon, w);
+            continue;
+        }
+        for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+            todo.push_back(c);
+    }
 }
 
 // A row's color and tooltip, from the decorator, on its name.
@@ -887,6 +939,7 @@ void FileTree::holdRow(GtkTreeListRow** slot, GtkTreeListRow* row) {
 }
 
 void FileTree::selectRow(guint pos) {
+    stopKeeping();
     gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), pos,
         (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
 }
@@ -923,6 +976,7 @@ GtkListItem* FileTree::listItemAt(double x, double y, bool* onArrow) const {
 
 void FileTree::onPrimaryPressed(GtkGestureClick* g, int, double x, double y, gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
+    self->stopKeeping();   // a hand on the tree: what it does stands
     self->pressTime_ = gtk_event_controller_get_current_event_time(GTK_EVENT_CONTROLLER(g));
     bool onArrow = false;
     GtkTreeListRow* row = self->rowObjectAt(x, y, &onArrow);
@@ -980,6 +1034,7 @@ void FileTree::onPrimaryReleased(GtkGestureClick* g, int n, double x, double y,
 gboolean FileTree::onKey(GtkEventControllerKey*, guint keyval, guint, GdkModifierType mods,
                          gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
+    self->stopKeeping();   // the list's own keys scroll as they like
     if (mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK |
                 GDK_SUPER_MASK | GDK_META_MASK))
         return FALSE;
@@ -1040,6 +1095,9 @@ void FileTree::setRoot(const std::string& rootDir) {
     holdRow(&pressRow_, nullptr);
     holdRow(&lastReleaseRow_, nullptr);
     holdRow(&centerRow_, nullptr);
+    forgetSelectedRow();
+    if (GtkSelectionModel* sel = gtk_list_view_get_model(GTK_LIST_VIEW(listView_)))
+        g_signal_handlers_disconnect_by_data(sel, this);   // build() makes another
     restoreScroll_ = -1;
     stopFrames();
     if (mapId_) g_signal_handler_disconnect(listView_, mapId_);   // build() makes another view
@@ -1162,6 +1220,199 @@ void FileTree::clearSelection() {
     gtk_selection_model_unselect_all(gtk_list_view_get_model(GTK_LIST_VIEW(listView_)));
 }
 
+// ---- rows going (HANDOFF item 110)
+//
+// A row going takes nothing else with it: its folder's listing takes out
+// just its rows (TreeRefresh::splices), the list keeps its scroll, and the
+// selection moves to the row after it and what it held, else the one
+// before, as VS Code's explorer does. That row is where the one that went
+// was, so selecting it never scrolls; the keyboard goes with it when the
+// tree had it, so Delete again takes that one. Move to Trash says so before
+// the listing comes (removing); a selected row that goes by any other hand
+// (deleted or renamed on disk) is seen going (onItemsChanged) and passes
+// the selection on once the rows are in (afterRowsGone).
+
+bool FileTree::hasKeyboard() const {
+    GtkRoot* root = listView_ ? gtk_widget_get_root(listView_) : nullptr;
+    GtkWidget* f = root ? gtk_root_get_focus(root) : nullptr;
+    return f && (f == listView_ || gtk_widget_is_ancestor(f, listView_));
+}
+
+void FileTree::selectInPlace(guint pos, bool keys) {
+    if (keys)   // the least scroll that shows it: none, it is where the other was
+        gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), pos,
+            (GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), nullptr);
+    else
+        gtk_selection_model_select_item(gtk_list_view_get_model(GTK_LIST_VIEW(listView_)), pos, TRUE);
+}
+
+void FileTree::removing(const std::string& path) {
+    GListModel* rows = G_LIST_MODEL(treeModel_);
+    const guint n = g_list_model_get_n_items(rows);
+    for (guint i = 0; i < n; ++i) {
+        GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, i);
+        if (!row) continue;
+        if (pathOfRow(row) != path) {
+            g_object_unref(row);
+            continue;
+        }
+        const guint depth = gtk_tree_list_row_get_depth(row);
+        // Past the rows it holds: the first row no deeper than it.
+        guint next = i + 1;
+        for (; next < n; ++next) {
+            GtkTreeListRow* r = gtk_tree_list_model_get_row(treeModel_, next);
+            const guint d = r ? gtk_tree_list_row_get_depth(r) : 0;
+            if (r) g_object_unref(r);
+            if (d <= depth) break;
+        }
+        pendingReveal_.clear();
+        GtkSelectionModel* model = gtk_list_view_get_model(GTK_LIST_VIEW(listView_));
+        if (next < n || i > 0) gtk_selection_model_select_item(model, next < n ? next : i - 1, TRUE);
+        else clearSelection();
+        // The keyboard follows once the row is out (afterRowsGone): moved
+        // now, the list would keep the row it moves to where it is drawn
+        // and push the rows above the one going down by a row.
+        holdRow(&goingRow_, hasKeyboard() ? row : nullptr);
+        g_object_unref(row);
+        return;
+    }
+}
+
+bool FileTree::rowHasItem(GtkTreeListRow* row) {
+    gpointer item = gtk_tree_list_row_get_item(row);   // transfer full
+    if (item) g_object_unref(item);
+    return item != nullptr;
+}
+
+// The selected row's path, kept for when the row goes: by then the row has
+// no entry to name it.
+void FileTree::onSelectionChanged(GtkSelectionModel* model, guint, guint, gpointer selfp) {
+    FileTree* self = static_cast<FileTree*>(selfp);
+    auto* now = static_cast<GtkTreeListRow*>(
+        gtk_single_selection_get_selected_item(GTK_SINGLE_SELECTION(model)));
+    self->selPath_ = now ? pathOfRow(now) : std::string();
+}
+
+void FileTree::forgetSelectedRow() {
+    selPath_.clear();
+    lostPath_.clear();
+    lostAt_ = GTK_INVALID_LIST_POSITION;
+    if (lostIdle_) g_source_remove(lostIdle_);
+    lostIdle_ = 0;
+    holdRow(&keepRow_, nullptr);
+    holdRow(&goingRow_, nullptr);
+}
+
+void FileTree::afterRowsGone() {
+    GtkSelectionModel* model = gtk_list_view_get_model(GTK_LIST_VIEW(listView_));
+    // Move to Trash's row is out: the keyboard to the row selected in its
+    // place, where it is drawn (no scroll).
+    if (goingRow_ && !rowHasItem(goingRow_)) {
+        holdRow(&goingRow_, nullptr);
+        const guint s = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model));
+        if (s != GTK_INVALID_LIST_POSITION)
+            gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), s, GTK_LIST_SCROLL_FOCUS, nullptr);
+    }
+    const guint at = lostAt_;
+    const bool keys = lostKeys_;
+    const std::string path = lostPath_;
+    lostAt_ = GTK_INVALID_LIST_POSITION;
+    lostPath_.clear();
+    if (at == GTK_INVALID_LIST_POSITION) return;
+    // Something else chose a row meanwhile (a reveal, a click), or the row
+    // went with its folder closing or hidden files hidden: it is still on
+    // disk, and nothing is chosen for it.
+    struct stat st;
+    if (gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model)) != GTK_INVALID_LIST_POSITION ||
+        !pendingReveal_.empty() || path.empty() || lstat(path.c_str(), &st) == 0)
+        return;
+    const guint n = g_list_model_get_n_items(G_LIST_MODEL(treeModel_));
+    if (n == 0) return;
+    selectInPlace(at < n ? at : n - 1, keys);
+}
+
+// GtkListView loses its place when rows go (GTK 4.22): after Move to Trash,
+// or a selected file deleted on disk, a layout a frame or two later put the
+// list at its top, its scroll anchor gone with the row (gtk_list_base's
+// update_adjustments takes 0 for an anchor it cannot place). So the tree
+// keeps its place itself: before the list sees a change that takes rows
+// out, the first row on show that stays and how far down it is drawn are
+// noted, and after each layout for a moment (kKeepUs after the last such
+// change) a scroll gone to the top is set so that row is drawn there again.
+// Only the top is undone: GTK's own shift for rows gone above is right, and
+// any other scroll is someone's; any scroll the user or the tree asks for
+// meanwhile ends it (stopKeeping).
+namespace {
+constexpr gint64 kKeepUs = 300 * 1000;
+}
+
+void FileTree::keepRows(guint pos, guint removed) {
+    if (restoreScroll_ >= 0) return;   // a window's record puts its own scroll back
+    if (!keepRow_ && listView_ && gtk_widget_get_mapped(listView_)) {
+        GtkTreeListRow* best = nullptr;
+        double bestY = 0;
+        for (GtkWidget* c = gtk_widget_get_first_child(listView_); c; c = gtk_widget_get_next_sibling(c)) {
+            GtkWidget* inner = gtk_widget_get_first_child(c);
+            auto* li = inner ? static_cast<GtkListItem*>(
+                                   g_object_get_data(G_OBJECT(inner), "minicode-list-item"))
+                             : nullptr;
+            if (!li || !gtk_widget_get_mapped(c) || !gtk_widget_get_child_visible(c)) continue;
+            // As the list has it still, before this change: rows it takes
+            // out are no mark.
+            const guint at = gtk_list_item_get_position(li);
+            if (at == GTK_INVALID_LIST_POSITION || (at >= pos && at < pos + removed)) continue;
+            gpointer item = gtk_list_item_get_item(li);
+            graphene_rect_t b;
+            if (!GTK_IS_TREE_LIST_ROW(item) || !gtk_widget_compute_bounds(c, listView_, &b) ||
+                b.size.height <= 0 || b.origin.y + b.size.height <= 0.5)
+                continue;
+            if (!best || b.origin.y < bestY) {
+                best = GTK_TREE_LIST_ROW(item);
+                bestY = b.origin.y;
+            }
+        }
+        if (best) {
+            holdRow(&keepRow_, best);
+            keepY_ = bestY;
+        }
+    }
+    if (!keepRow_) return;
+    keepUntil_ = g_get_monotonic_time() + kKeepUs;
+    scheduleFrame();
+}
+
+void FileTree::stopKeeping() { holdRow(&keepRow_, nullptr); }
+
+void FileTree::applyKeep() {
+    if (!keepRow_ || !listView_) return;
+    const guint pos = gtk_tree_list_row_get_position(keepRow_);
+    if (g_get_monotonic_time() > keepUntil_ || pos == GTK_INVALID_LIST_POSITION) {
+        stopKeeping();
+        return;
+    }
+    // Only the jump to the top is undone: GTK's own shift for rows gone
+    // above is right, and any other scroll is someone's.
+    GtkAdjustment* adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    if (gtk_adjustment_get_value(adj) > 0.5) return;
+    guint at = GTK_INVALID_LIST_POSITION;
+    GtkWidget* ref = gtk_widget_get_mapped(listView_) ? shownRow(pos, &at) : nullptr;
+    const double page = gtk_adjustment_get_page_size(adj);
+    graphene_rect_t b;
+    if (!ref || page <= 0 || !gtk_widget_compute_bounds(ref, listView_, &b) || b.size.height <= 0)
+        return;
+    // In the list's coordinates a row is drawn its scroll up; the rows are
+    // of one height, so a row the list has not made is placed from one it has.
+    const double v = gtk_adjustment_get_value(adj), h = b.size.height;
+    const double rowTop = b.origin.y + v + ((double)pos - (double)at) * h;
+    const double most = std::max(0.0, gtk_adjustment_get_upper(adj) - page);
+    const double want = std::max(0.0, std::min(rowTop - keepY_, most));
+    if (std::fabs(want - v) >= 0.5) gtk_adjustment_set_value(adj, want);
+}
+
+void FileTree::onLayout(GdkFrameClock*, gpointer selfp) {
+    static_cast<FileTree*>(selfp)->applyKeep();
+}
+
 void FileTree::revealPath(const std::string& path, bool widen) { reveal(path, widen, true); }
 
 void FileTree::reveal(const std::string& path, bool widen, bool center) {
@@ -1207,6 +1458,7 @@ bool FileTree::tryReveal() {
                                                 i, TRUE);
                 centerRow(row);
             } else {
+                stopKeeping();   // this scroll stands
                 gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), i, GTK_LIST_SCROLL_SELECT,
                                         nullptr);
             }
@@ -1225,9 +1477,35 @@ bool FileTree::tryReveal() {
 // changes. A reveal still waiting is retried from an idle, not from inside
 // the signal, since selecting while the model is mid-update is asking for
 // trouble.
-void FileTree::onItemsChanged(GListModel*, guint, guint, guint, gpointer selfp) {
+void FileTree::onItemsChanged(GListModel*, guint pos, guint removed, guint added, gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
     self->rowsChanged_ = g_get_monotonic_time();   // a restoreView waits for them to stop
+    // This handler is the tree model's first (makeTreeModel connects it
+    // before the selection model and the list view take the model), so the
+    // selection and the list's row widgets are still as they were.
+    GtkSelectionModel* sel = gtk_list_view_get_model(GTK_LIST_VIEW(self->listView_));
+    const guint selected = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(sel));
+    // The selected row goes in this change: where, its path, and whether the
+    // tree has the keyboard. Later changes above that place move it.
+    if (self->lostAt_ != GTK_INVALID_LIST_POSITION) {
+        if (pos < self->lostAt_)
+            self->lostAt_ = (guint)std::max<gint64>((gint64)pos, (gint64)self->lostAt_ + added - removed);
+    } else if (removed > 0 && selected != GTK_INVALID_LIST_POSITION && selected >= pos &&
+               selected < pos + removed) {
+        self->lostAt_ = pos;
+        self->lostPath_ = self->selPath_;
+        self->lostKeys_ = self->hasKeyboard();
+    }
+    // The rows on show stay where they are (keepRows).
+    if (removed > 0) self->keepRows(pos, removed);
+    if ((self->lostAt_ != GTK_INVALID_LIST_POSITION || (self->goingRow_ && removed > 0)) &&
+        !self->lostIdle_)
+        self->lostIdle_ = g_idle_add([](gpointer p) -> gboolean {
+            FileTree* t = static_cast<FileTree*>(p);
+            t->lostIdle_ = 0;
+            t->afterRowsGone();
+            return G_SOURCE_REMOVE;
+        }, self);
     if ((self->pendingReveal_.empty() && self->pendingExpand_.empty()) || self->revealIdle_)
         return;
     self->revealIdle_ = g_idle_add([](gpointer p) -> gboolean {
@@ -1281,6 +1559,8 @@ void FileTree::scheduleFrame() {
         stopFrames();
         frameClock_ = GDK_FRAME_CLOCK(g_object_ref(clock));
         afterPaintId_ = g_signal_connect(clock, "after-paint", G_CALLBACK(onAfterPaint), this);
+        // After the window's own layout, before the frame is painted.
+        layoutId_ = g_signal_connect_after(clock, "layout", G_CALLBACK(onLayout), this);
     }
     gdk_frame_clock_request_phase(clock, GDK_FRAME_CLOCK_PHASE_AFTER_PAINT);
 }
@@ -1288,10 +1568,11 @@ void FileTree::scheduleFrame() {
 void FileTree::stopFrames() {
     if (frameClock_) {
         if (afterPaintId_) g_signal_handler_disconnect(frameClock_, afterPaintId_);
+        if (layoutId_) g_signal_handler_disconnect(frameClock_, layoutId_);
         g_object_unref(frameClock_);
     }
     frameClock_ = nullptr;
-    afterPaintId_ = 0;
+    afterPaintId_ = layoutId_ = 0;
 }
 
 void FileTree::onAfterPaint(GdkFrameClock*, gpointer selfp) {
@@ -1324,6 +1605,10 @@ void FileTree::afterLayout() {
     const gint64 now = g_get_monotonic_time();
     bool again = false;
     GtkAdjustment* adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    // The rows on show kept first (the layout's handler has done it when it
+    // ran), so a reveal measures from where they stand.
+    applyKeep();
+    if (keepRow_) again = true;
     if (centerRow_) {
         const guint pos = gtk_tree_list_row_get_position(centerRow_);
         guint at = GTK_INVALID_LIST_POSITION;
@@ -1338,7 +1623,10 @@ void FileTree::afterLayout() {
             const double rowTop = b.origin.y + v + ((double)pos - (double)at) * h;
             const double top =
                 TreeReveal::scrollTop(rowTop, h, v, page, gtk_adjustment_get_upper(adj));
-            if (top != v) gtk_adjustment_set_value(adj, top);
+            if (top != v) {
+                gtk_adjustment_set_value(adj, top);
+                stopKeeping();   // the reveal's scroll stands
+            }
             holdRow(&centerRow_, nullptr);
         } else if (pos == GTK_INVALID_LIST_POSITION || now > centerDeadline_) {
             holdRow(&centerRow_, nullptr);   // gone, or never shown
@@ -1357,6 +1645,7 @@ void FileTree::afterLayout() {
             selectIfListed(restoreSelect_);
             const double most = gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj);
             gtk_adjustment_set_value(adj, std::max(0.0, std::min(restoreScroll_, most)));
+            stopKeeping();   // the record's scroll stands
             restoreScroll_ = -1;
             restoreSelect_.clear();
         } else {
@@ -1393,6 +1682,7 @@ void FileTree::onRightClick(GtkGestureClick* g, int, double x, double y,
                             gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
     gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+    self->stopKeeping();
     self->pendingReveal_.clear();
     holdRow(&self->centerRow_, nullptr);
 
@@ -1742,6 +2032,7 @@ void FileTree::hoverFolder(guint pos) {
 // Near the top or bottom edge the list scrolls on its own, faster the closer
 // the pointer is, so a folder off screen can still be reached.
 void FileTree::autoScroll(double y) {
+    stopKeeping();
     const double edge = 24, h = gtk_widget_get_height(listView_);
     scrollStep_ = 0;
     if (y < edge) scrollStep_ = -(2 + (edge - y) / 2);

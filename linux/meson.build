@@ -186,6 +186,8 @@ gui_sources = [
   'src/FileTree.cpp',
   # The tree following the active tab (explorer.auto-reveal).
   'src/TreeFollow.cpp',
+  # A file row's icon from the system icon theme, by the core's FileIcon::Type.
+  'src/TreeIcons.cpp',
   'src/ClickCount.cpp',
   # The editor: the view (Editor.cpp), each open file (DocumentView.cpp), the
   # tabs (Tabs.cpp) and their strip (TabStrip.cpp).

@@ -24,6 +24,8 @@
 - (void)moveSelection:(NSInteger)delta;
 - (NSInteger)selectedRow;
 - (NSRect)frame;
+// The list's window, for tests (nil before the first showing).
+- (NSWindow *)window;
 @end
 
 @interface MCHoverPopup : NSObject
@@ -32,6 +34,7 @@
 - (void)show:(NSAttributedString *)text atScreenRect:(NSRect)line parent:(NSWindow *)parent;
 - (void)close;
 - (NSRect)frame;
+- (NSWindow *)window;   // for tests
 @end
 
 // ------------------------------------------------------- MCSignaturePopup
@@ -42,4 +45,5 @@
 @property(nonatomic, readonly) NSString *text;
 - (void)show:(NSAttributedString *)text atScreenRect:(NSRect)caret parent:(NSWindow *)parent;
 - (void)close;
+- (NSWindow *)window;   // for tests
 @end

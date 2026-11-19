@@ -19,6 +19,7 @@
 #include "TerminalFrame.h"
 #include "TermLinkPath.h"
 #include "TermLinks.h"
+#include "ThemeCss.h"
 
 #include <vte/vte.h>
 #include <cmath>
@@ -1227,14 +1228,9 @@ void Terminal::scrollToEnd() {
 void Terminal::applyTheme() {
     VteTerminal* term = VTE_TERMINAL(vte_);
 
-    GdkRGBA cursor, highlight;
-    gdk_rgba_parse(&cursor,    pal::TermCursor);
-    gdk_rgba_parse(&highlight, pal::Selection);   // same blue as editor selection
     for (int i = 0; i < 16; ++i) gdk_rgba_parse(&palette_[i], kAnsiPalette[i]);
 
     applyColors(Settings::parse(""));   // the defaults until the app applies its own
-    vte_terminal_set_color_cursor(term, &cursor);
-    vte_terminal_set_color_highlight(term, &highlight);
     // Bold text picks the bright slot instead of only thickening, which is what
     // makes the usual colored shell prompts look right.
     vte_terminal_set_bold_is_bright(term, TRUE);
@@ -1272,14 +1268,23 @@ void Terminal::applyColors(const Settings& s) {
     auto gdk = [](const Rgba& c) {
         return GdkRGBA{c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, (float)c.a};
     };
-    const Rgba bgColor = s.background(Surface::Terminal);
+    VteTerminal* term = VTE_TERMINAL(vte_);
     GdkRGBA fg = gdk(s.text(Surface::Terminal));
-    GdkRGBA bg = gdk(bgColor);
-    // The block cursor's text is the background color, solid so it stays legible.
-    GdkRGBA cursorFg = gdk(Rgba::hex(bgColor.rgb()));
-    vte_terminal_set_colors(VTE_TERMINAL(vte_), &fg, &bg, palette_, 16);
+    GdkRGBA bg = gdk(s.background(Surface::Terminal));
+    // The cursor in the text color, as the Mac's grid draws it, and the
+    // character under a block cursor in the background's, both solid.
+    GdkRGBA cursor = gdk(s.terminalCursor()), cursorText = gdk(s.terminalCursorText());
+    GdkRGBA highlight = gdk(theme::editorSelection(s));   // the editor's selection
+    // vte_terminal_set_colors unsets the cursor, highlight and bold colors,
+    // so those are set after it, every time. Until item 108 the cursor's was
+    // set once before it: VTE then drew the block, and the outline while the
+    // terminal had no keyboard, in the cell's background, with the cursor's
+    // text in the background color too, and no cursor showed on any theme.
+    vte_terminal_set_colors(term, &fg, &bg, palette_, 16);
     if (frame_) terminalFrameSetBackground(frame_, bg);   // where VTE leaves the view empty
-    vte_terminal_set_color_cursor_foreground(VTE_TERMINAL(vte_), &cursorFg);
+    vte_terminal_set_color_cursor(term, &cursor);
+    vte_terminal_set_color_cursor_foreground(term, &cursorText);
+    vte_terminal_set_color_highlight(term, &highlight);
     linkColor_ = fg;   // the underline under a hovered link
 }
 

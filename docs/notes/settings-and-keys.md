@@ -140,7 +140,7 @@ found through that list.
   top. With no room for one column the text is the old one column, labels
   wrapping at their stop. `hintsText` (tests) is one column.
 - **The hints' columns on Linux** (2026-11-18, `linux/src/HintsColumns.{h,cpp}`,
-  `linux/HANDOFF.md` item 112): the same `layoutHints`, from widths
+  `linux/HANDOFF.md` item 111): the same `layoutHints`, from widths
   measured with Pango in the fonts drawn (keys in Monospace, labels in the
   desktop's family, headings at 10/12 of the size, semibold, letter-spaced
   and in capitals by a Pango text transform, so the text keeps "Windows"),
