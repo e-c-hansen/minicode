@@ -3,8 +3,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 
+#include "FileDetails.h"
 #include "QuickDiff.h"
 #include "SyntaxHighlighter.h"
 
@@ -467,6 +471,63 @@ std::string sectionTitle(Section s, size_t files) {
     return "Changes" + n;
 }
 
+// ------------------------------------------------------------ pictures
+bool imagePath(const std::string& path) {
+    const size_t slash = path.rfind('/');
+    const size_t dot = path.rfind('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return false;
+    std::string ext = path.substr(dot + 1);
+    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+    return FileIcon::isImageExtension(ext);
+}
+
+bool showAsImages(File& f, ImageSide oldSide, ImageSide newSide, double rowHeight) {
+    if (!f.binary || f.tooLarge || f.submodule || f.symlink || f.conflict || !imagePath(f.path))
+        return false;
+    if (!f.oldExists && !f.newExists) return false;
+    auto readable = [](const ImageSide& s) {
+        return s.width > 0 && s.height > 0 && (long long)s.width * s.height <= kImageMaxPixels;
+    };
+    if ((f.oldExists && !readable(oldSide)) || (f.newExists && !readable(newSide))) return false;
+    oldSide.shown = f.oldExists;
+    newSide.shown = f.newExists;
+    f.oldImage = f.oldExists ? oldSide : ImageSide();
+    f.newImage = f.newExists ? newSide : ImageSide();
+    f.image = true;
+    f.imageRows = imageRows(f, rowHeight);
+    return true;
+}
+
+double imageHeight(const ImageSide& s) {
+    if (!s.shown || s.height <= 0) return 0;
+    return std::min((double)s.height, kImageMaxHeight);
+}
+
+size_t imageRows(const File& f, double rowHeight) {
+    if (rowHeight <= 0) rowHeight = 16;
+    const double tall = std::max(imageHeight(f.oldImage), imageHeight(f.newImage));
+    // The label, the picture, and half a row's margin under it.
+    return (size_t)std::ceil((kImageLabelHeight + tall + rowHeight / 2) / rowHeight);
+}
+
+std::string byteText(size_t bytes) {
+    char buf[48];
+    if (bytes == 1) return "1 byte";
+    if (bytes < 1024) std::snprintf(buf, sizeof buf, "%zu bytes", bytes);
+    else if (bytes < 1024 * 1024) std::snprintf(buf, sizeof buf, "%.1f KB", bytes / 1024.0);
+    else std::snprintf(buf, sizeof buf, "%.1f MB", bytes / (1024.0 * 1024.0));
+    return buf;
+}
+
+std::string imageLabel(const File& f, bool newSide) {
+    const ImageSide& s = newSide ? f.newImage : f.oldImage;
+    if (!s.shown) return "";
+    const std::string size = std::to_string(s.width) + " \xC3\x97 " + std::to_string(s.height) +
+                             " pixels, " + byteText(s.bytes);
+    if (f.oldImage.shown && f.newImage.shown) return (newSide ? "After: " : "Before: ") + size;
+    return size;
+}
+
 std::string gapText(size_t hidden) {
     return hidden == 1 ? "1 unchanged line" : std::to_string(hidden) + " unchanged lines";
 }
@@ -480,7 +541,7 @@ static std::string noteFor(const FileDiff& d) {
         return "This file has conflicts. Open it to resolve them, then stage it.";
     if (f.submodule) return "A submodule: its commit changed, or it has changes inside.";
     if (f.symlink) return "A symbolic link: its target changed.";
-    if (f.binary) return "A binary file: its bytes are not shown.";
+    if (f.binary && !f.image) return "A binary file: its bytes are not shown.";
     if (f.tooLarge) return "Too large to show here. Side by Side or Open shows it.";
     return "";
 }
@@ -535,6 +596,16 @@ Page layout(const std::vector<FileDiff>& files, const Opened& opened, size_t con
             n.kind = RowKind::Note;
             n.file = fi;
             addRow(n, toU16(note));
+            continue;
+        }
+        if (f.image) {
+            // Empty rows the pictures are drawn over.
+            for (size_t k = 0; k < std::max<size_t>(f.imageRows, 2); k++) {
+                PageRow m;
+                m.kind = RowKind::Image;
+                m.file = fi;
+                addRow(m, u"");
+            }
             continue;
         }
         if (d.rows.empty()) {
@@ -758,6 +829,82 @@ size_t rowFor(const Page& p, const std::vector<FileDiff>& files, const Anchor& a
          k++)
         at++;
     return at;
+}
+
+namespace {
+// A block's place on one side: the first line of that side in the block,
+// else (a block with none on that side: lines only added, or only
+// removed) the first line of that side after it in the file, else past
+// the file's end.
+long placeOf(const Page& p, size_t row, bool newSide) {
+    const size_t fi = p.rows[row].file;
+    for (size_t r = row; r < p.rows.size(); r++) {
+        const PageRow& x = p.rows[r];
+        if (x.file != fi || x.kind == RowKind::File || x.kind == RowKind::Section) break;
+        const int line = newSide ? x.newLine : x.oldLine;
+        if (line >= 0) return line;
+        // A folded stretch is named by the new line it starts on.
+        if (newSide && x.kind == RowKind::Gap && x.gap >= 0) return x.gap;
+    }
+    return LONG_MAX;
+}
+}  // namespace
+
+ActedPlace actedPlace(const Page& p, const std::vector<FileDiff>& files, size_t row, Op op) {
+    ActedPlace a;
+    if (row >= p.rows.size()) return a;
+    const PageRow& pr = p.rows[row];
+    if (pr.file >= files.size()) return a;
+    a.fileKey = files[pr.file].file.key();
+    a.newSide = op == Op::Stage;
+    if (pr.block >= 0 && pr.kind != RowKind::File) {
+        // From the block's first row.
+        size_t first = row;
+        while (first > 0 && p.rows[first - 1].file == pr.file && p.rows[first - 1].block == pr.block &&
+               !p.rows[first].blockStart)
+            first--;
+        a.line = placeOf(p, first, a.newSide);
+    }
+    std::set<std::string> seen{a.fileKey};
+    for (size_t r = row + 1; r < p.rows.size(); r++)
+        if (p.rows[r].kind == RowKind::File && p.rows[r].file < files.size() &&
+            seen.insert(files[p.rows[r].file].file.key()).second)
+            a.after.push_back(files[p.rows[r].file].file.key());
+    for (size_t r = row; r-- > 0;)
+        if (p.rows[r].kind == RowKind::File && p.rows[r].file < files.size() &&
+            seen.insert(files[p.rows[r].file].file.key()).second)
+            a.before.push_back(files[p.rows[r].file].file.key());
+    a.valid = true;
+    return a;
+}
+
+size_t rowAfterAction(const Page& p, const std::vector<FileDiff>& files, const ActedPlace& a) {
+    if (p.rows.empty() || !a.valid) return 0;
+    const long header = fileRow(p, files, a.fileKey);
+    if (header < 0) {
+        for (const std::string& k : a.after) {
+            const long r = fileRow(p, files, k);
+            if (r >= 0) return (size_t)r;
+        }
+        for (const std::string& k : a.before) {
+            const long r = fileRow(p, files, k);
+            if (r >= 0) return (size_t)r;
+        }
+        return 0;
+    }
+    if (a.line < 0) return (size_t)header;
+    const size_t fi = p.rows[(size_t)header].file;
+    long lastBlock = -1;
+    size_t r = (size_t)header + 1;
+    for (; r < p.rows.size(); r++) {
+        const PageRow& x = p.rows[r];
+        if (x.file != fi || x.kind == RowKind::File || x.kind == RowKind::Section) break;
+        if (!x.blockStart) continue;
+        if (placeOf(p, r, a.newSide) >= a.line) return r;
+        lastBlock = (long)r;
+    }
+    if (r < p.rows.size()) return r;   // what followed the file
+    return lastBlock >= 0 ? (size_t)lastBlock : (size_t)header;
 }
 
 // ------------------------------------------------------- reading from git

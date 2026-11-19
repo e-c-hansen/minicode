@@ -33,6 +33,14 @@
 @property(nonatomic, readonly) NSColor *matchHighlight;   // findMatchHighlightBackground
 @property(nonatomic, readonly) NSColor *removedText, *insertedText;   // replace previews
 @property(nonatomic, readonly) NSColor *selection;        // list.activeSelectionBackground
+// The language server's popups by the caret (LspPopups.mm, LspPicker.mm)
+// share these colors: editorHoverWidget.* and editorSuggestWidget.*
+// default to editorWidget.*, and the rename field is an input.*.
+// widgetEdge is widgetBorder, else VS Code's editorHoverWidget.border
+// default (#454545 dark, #C8C8C8 light); textLink is textLink.foreground,
+// listHighlight list.highlightForeground (the matched letters, the
+// argument being typed), both VS Code's light or dark defaults.
+@property(nonatomic, readonly) NSColor *widgetEdge, *textLink, *listHighlight;
 @property(nonatomic, readonly) NSAppearance *appearance;
 @end
 

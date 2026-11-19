@@ -51,7 +51,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEd
 # GUI sources. Terminal.cpp / Browser.cpp / PdfView.cpp and the LaTeX preview's
 # LatexClick.cpp / Latex.cpp are always listed but compile to nothing unless
 # their feature macro is defined.
-GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/TreeFollow.cpp src/Editor.cpp src/OpacityPicker.cpp src/DocumentView.cpp src/Tabs.cpp src/SessionLink.cpp src/Groups.cpp \
+GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/TreeFollow.cpp src/TreeIcons.cpp src/Editor.cpp src/OpacityPicker.cpp src/DocumentView.cpp src/Tabs.cpp src/SessionLink.cpp src/Groups.cpp \
        src/TabStrip.cpp src/CodeView.cpp src/Gutter.cpp src/BufferLines.cpp src/Markdown.cpp src/CsvTable.cpp src/HtmlView.cpp src/SqliteView.cpp src/JsonOutlineView.cpp src/MarkdownSide.cpp \
        src/BracketView.cpp src/BracketColors.cpp src/AutoCloseInput.cpp src/BufferText.cpp \
        src/Carets.cpp src/CaretEdits.cpp src/SnippetSession.cpp src/Folds.cpp src/EditorConflicts.cpp \
@@ -71,7 +71,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/TreeFollow.cpp src/E
        src/LspSessionSymbols.cpp src/LspSessionFolding.cpp \
        src/GitPanel.cpp src/GitVerbs.cpp src/GitMenus.cpp src/GitRun.cpp src/GitTrash.cpp src/EnvLock.cpp \
        src/GitDiffView.cpp src/CompareView.cpp src/ComparePanes.cpp src/CompareDecision.cpp src/GitGutter.cpp src/TestGutter.cpp src/AgentNotes.cpp src/InlineAgentBar.cpp src/TerminalAttention.cpp src/TreeGitColors.cpp src/GitDirWatch.cpp \
-       src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp src/HintsSearchBox.cpp \
+       src/WebImageRules.cpp src/WebImages.cpp src/Mermaid.cpp src/Math.cpp src/Keys.cpp src/HintsSearchBox.cpp src/HintsColumns.cpp \
        src/BackupStore.cpp src/Persistence.cpp src/RecentList.cpp src/DockMenu.cpp src/DesktopMode.cpp src/MigrationLinux.cpp src/WindowLayout.cpp \
        src/PalettePanel.cpp \
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \

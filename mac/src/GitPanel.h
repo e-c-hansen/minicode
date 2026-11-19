@@ -89,17 +89,30 @@ extern NSNotificationName const MCGitPanelDidRefreshNotification;
 // printed (for MCGitCommitText).
 @property(nonatomic, copy) void (^onShowCommit)(NSString *title, NSData *show);
 // The same as a readable change (ChangeReviewPage.h): the commit's full
-// name and "<short hash> <subject>". When set, onShowCommit is not used.
-@property(nonatomic, copy) void (^onReviewCommit)(NSString *hash, NSString *title);
+// name and "<short hash> <subject>", in the preview tab for a single click
+// (`preview`), else in a kept tab (a double-click, Return). When set,
+// onShowCommit is not used.
+@property(nonatomic, copy) void (^onReviewCommit)(NSString *hash, NSString *title, BOOL preview);
 // A file row clicked, or Return or Open Changes on it: the review of every
 // uncommitted change (ChangeReviewPage.h) opens at that file, the path
-// relative to the top level. Without it (and from the row menu's Open as
-// git Diff) the row's raw diff goes to onShowDiff.
-@property(nonatomic, copy) void (^onReview)(NSString *path, BOOL staged);
+// relative to the top level, in the preview tab for a single click, else
+// kept, as the tree opens files (VS Code's list: arrows only move the
+// selection). Without it (and from the row menu's Open as git Diff) the
+// row's raw diff goes to onShowDiff.
+@property(nonatomic, copy) void (^onReview)(NSString *path, BOOL staged, BOOL preview);
 // The panel's "Review Changes" row, and View > Source Control > Review
 // Changes: the review from its top.
 - (void)reviewChanges;
-- (void)reviewRow:(NSInteger)row;   // a file row's click: the review at its file
+- (void)reviewRow:(NSInteger)row;   // Return, Open Changes: the review at its file, kept
+- (void)reviewRow:(NSInteger)row preview:(BOOL)preview;
+// What a press on a row of the change list (`graph` NO) or the graph does
+// once the table has tracked it, as MCGitTable's mouseDown: calls it: a
+// single click opens in the preview tab, the second click of a double-click
+// on the same row keeps it, and a Command or Shift click (choosing rows) or
+// a Control click (the menu) opens nothing. `sameRow`: the press before was
+// on this row (the window server counts clicks by time alone).
+- (void)clickedRow:(NSInteger)row graph:(BOOL)graph clickCount:(NSInteger)count
+           sameRow:(BOOL)sameRow modifiers:(NSEventModifierFlags)modifiers;
 
 // Reload the status (coalesced; runs off the main thread). Does nothing
 // while the panel is not in a window.
@@ -198,7 +211,8 @@ extern NSNotificationName const MCGitPanelDidRefreshNotification;
 @property(nonatomic, readonly, copy) NSString *graphSummary;   // "2 to push, 1 to pull ..."
 @property(nonatomic, copy) void (^onGraphLoaded)(void);        // after each graph load
 - (NSArray<NSString *> *)graphDescriptions;   // "hash lane marks subject [labels]"
-- (void)showCommitAtRow:(NSInteger)row;
+- (void)showCommitAtRow:(NSInteger)row;   // Return: kept
+- (void)showCommitAtRow:(NSInteger)row preview:(BOOL)preview;
 - (void)showMore;                             // the next 200 commits
 - (void)focusGraph;
 

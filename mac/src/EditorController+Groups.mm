@@ -125,6 +125,9 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
     if (![self holdsTab:t] && t != _activeTab) {
         [self discardBackupOf:t];
         [t.latex removeFromSuperview];
+        // A page in the preview tab (a review or a commit from Source
+        // Control) goes as a closed tab's does: its view and its reads.
+        if (t.page) [self closePageOf:t];
         [self forgetClosedTabs];
     }
     [self.lsp tabsChanged];

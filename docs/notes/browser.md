@@ -104,7 +104,7 @@ found through that list.
   (`revealPath:andOpen:NO` widens the tree's focus and, for a hidden
   path, selects the folder where the way ends).
   The session web page shows no bookmark list, so it has nothing to
-  follow. **Linux** (2026-11-18, `linux/HANDOFF.md` item 111, the
+  follow. **Linux** (2026-11-18, `linux/HANDOFF.md` item 112, the
   `bookmark_workspace` suite) does the same with the same core calls:
   `Bookmarks::places` (the root taken as the shared folder when
   `sameFolder` says so), `Bookmarks::menu(Places)` (the workspace's rows,

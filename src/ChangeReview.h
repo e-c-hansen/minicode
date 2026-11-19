@@ -36,6 +36,14 @@ namespace ChangeReview {
 // (Unstage), Changes (Stage, Discard), Plain (none: a commit, a worktree).
 enum class Section { Staged, Changes, Plain };
 
+// One version of a picture, as the page shows a binary image file: its
+// size in pixels (read by the GUI from the bytes) and in bytes.
+struct ImageSide {
+    bool shown = false;   // this version exists and is shown
+    int width = 0, height = 0;
+    size_t bytes = 0;
+};
+
 struct File {
     std::string path;         // relative to the top level
     std::string origPath;     // a rename's source, or empty
@@ -50,8 +58,46 @@ struct File {
     bool oldExists = true;    // a new file has no old version
     bool newExists = true;    // a deleted one no new version
     std::u16string oldText, newText;
+    // A binary file whose versions are pictures (showAsImages): the page
+    // shows them, side by side when both exist, in `imageRows` rows.
+    bool image = false;
+    ImageSide oldImage, newImage;
+    size_t imageRows = 0;
     std::string key() const;  // section and path: the same file in the same list
 };
+
+// ------------------------------------------------------------ pictures
+// A binary file with a picture's extension (FileIcon::isImageExtension:
+// png, jpg, gif, webp, tiff, bmp, heic, ico, icns; SVG is text, and its
+// diff is shown as text) is shown as its pictures, as VS Code shows an
+// image diff: a new file's picture, a deleted one's, or the two side by
+// side under "Before" and "After", each with its size in pixels and in
+// bytes. A picture is shown at its pixel size, never taller than
+// kImageMaxHeight points (scaled down to fit, never up), and one of more
+// than kImageMaxPixels pixels is not decoded at all: the file keeps the
+// binary file's note, as does one whose bytes did not read as a picture.
+constexpr double kImageMaxHeight = 320;
+constexpr double kImageLabelHeight = 22;   // the label line over each picture
+constexpr long long kImageMaxPixels = 64LL * 1000 * 1000;
+
+bool imagePath(const std::string& path);
+// Makes `f` a file shown as pictures when it is binary (and not too large,
+// a submodule, a link or a conflict), its path is a picture's, and each
+// version it has (oldExists, newExists) was read as a picture of at most
+// kImageMaxPixels pixels: `oldSide` and `newSide` give their sizes in
+// pixels (0 when unread) and bytes. The rows it takes follow from the
+// page's row height. True when it is now shown as pictures.
+bool showAsImages(File& f, ImageSide oldSide, ImageSide newSide, double rowHeight);
+// How tall a version is drawn, in points.
+double imageHeight(const ImageSide& s);
+// The rows the pictures of `f` take: the label line, the taller picture,
+// and a margin under it.
+size_t imageRows(const File& f, double rowHeight);
+// "Before: 640 × 480 pixels, 12.4 KB" over the old version when both are
+// shown ("After: ..." over the new); alone, "640 × 480 pixels, 12.4 KB".
+std::string imageLabel(const File& f, bool newSide);
+// "1 byte", "75 bytes", "12.4 KB", "3.1 MB" (1024 to a KB).
+std::string byteText(size_t bytes);
 
 // Why a file's changes go only whole (the header's Stage File, Discard
 // File), "" when its blocks can be taken one by one. Files git cannot
@@ -187,6 +233,7 @@ enum class RowKind {
     Gap,       // "14 unchanged lines", opened by a click
     Note,      // a line about the file: binary, a conflict, too large, ...
     Conflict,  // a line of a conflicted file's block: its `part` says which
+    Image,     // an empty row under a picture file's header: the GUI draws the pictures over them
 };
 
 struct PageRow {
@@ -241,6 +288,29 @@ Anchor anchorAt(const Page& p, const std::vector<FileDiff>& files, size_t row);
 size_t rowFor(const Page& p, const std::vector<FileDiff>& files, const Anchor& a);
 // The header row of the file with this key, or -1.
 long fileRow(const Page& p, const std::vector<FileDiff>& files, const std::string& key);
+
+// Where the eye goes after Stage, Unstage or Discard on a block (or Stage
+// File, Discard File, ... on a file's header row), so the page does not
+// jump: the GUI puts the row rowAfterAction gives where the acted-on row
+// was on screen. That row is the next block of the same file at or after
+// the acted-on block's place, counted in the lines of the side the action
+// leaves alone (the work tree's for Stage, the index's for Discard,
+// HEAD's for Unstage), so the block that followed takes its place; past
+// the file's last block, the row that followed the file (the next file's
+// header); at the page's end, the file's last block. A file that went
+// from its list (its last change staged, a whole file staged or
+// discarded) gives way to the nearest file after it that is still there,
+// else the nearest before it. Keys, not places: a staged list appearing
+// above moves every file down.
+struct ActedPlace {
+    std::string fileKey;
+    bool newSide = true;   // which side's lines `line` counts
+    long line = -1;        // the block's place on that side; -1: the whole file
+    std::vector<std::string> after, before;   // the other files' keys, nearest first
+    bool valid = false;
+};
+ActedPlace actedPlace(const Page& p, const std::vector<FileDiff>& files, size_t row, Op op);
+size_t rowAfterAction(const Page& p, const std::vector<FileDiff>& files, const ActedPlace& a);
 
 // ------------------------------------------------------ reading from git
 // The index entries and HEAD's objects of the files shown, and their blobs

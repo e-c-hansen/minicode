@@ -8,7 +8,9 @@
 #include <chrono>
 #include <initializer_list>
 #include <cstdio>
+#include <cstring>
 #include <numeric>
+#include <unordered_map>
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -519,6 +521,291 @@ Kind kindOf(const std::string &path) {
         return Kind::Text;
     if (SyntaxHighlighter::supports(ext)) return Kind::Code;
     return Kind::Text;
+}
+
+namespace {
+
+std::string lowered(std::string s) {
+    for (char &c : s)
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    return s;
+}
+
+// `name` is `stem`, or `stem` followed by '.', '-' or '_' and more
+// (LICENSE.md, LICENSE-MIT, README_ja).
+bool stemIs(const std::string &name, const char *stem) {
+    const std::size_t n = std::strlen(stem);
+    if (name.compare(0, n, stem) != 0) return false;
+    return name.size() == n || name[n] == '.' || name[n] == '-' || name[n] == '_';
+}
+
+const std::unordered_map<std::string, Type> &typesByName() {
+    static const std::unordered_map<std::string, Type> m = [] {
+        std::unordered_map<std::string, Type> t;
+        auto add = [&t](Type type, std::initializer_list<const char *> names) {
+            for (const char *n : names) t[n] = type;
+        };
+        add(Type::Makefile, {"makefile", "gnumakefile", "bsdmakefile", "makefile.am",
+                             "makefile.in", "justfile", ".justfile", "kbuild"});
+        add(Type::CMake, {"cmakelists.txt", "cmakecache.txt"});
+        add(Type::Meson, {"meson.build", "meson_options.txt", "meson.options"});
+        add(Type::Dockerfile, {"dockerfile", "containerfile", ".dockerignore",
+                               "docker-compose.yml", "docker-compose.yaml", "compose.yml",
+                               "compose.yaml"});
+        add(Type::Lockfile, {"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml",
+                             "go.sum", "packages.lock.json", "gemfile.lock", "cargo.lock",
+                             "poetry.lock", "pipfile.lock", "composer.lock", "flake.lock",
+                             "uv.lock", "yarn.lock", "bun.lockb", "bun.lock", "deno.lock",
+                             "mix.lock", "podfile.lock", "pubspec.lock", "package.resolved"});
+        add(Type::Git, {".gitignore", ".gitattributes", ".gitmodules", ".gitconfig",
+                        ".gitkeep", ".gitmessage", ".git-blame-ignore-revs", ".mailmap",
+                        ".git"});
+        add(Type::Ruby, {"gemfile", "rakefile", "podfile", "vagrantfile", "brewfile",
+                         "guardfile", "fastfile"});
+        add(Type::Python, {"sconstruct", "sconscript", "wscript"});
+        add(Type::Toml, {"pipfile"});
+        add(Type::Go, {"go.mod", "go.work"});
+        add(Type::Shell, {".bashrc", ".bash_profile", ".bash_login", ".bash_logout",
+                          ".bash_aliases", ".profile", ".zshrc", ".zshenv", ".zprofile",
+                          ".zlogin", ".zlogout", ".kshrc", ".cshrc", ".tcshrc", ".envrc",
+                          "pkgbuild"});
+        return t;
+    }();
+    return m;
+}
+
+const std::unordered_map<std::string, Type> &typesByExtension() {
+    static const std::unordered_map<std::string, Type> m = [] {
+        std::unordered_map<std::string, Type> t;
+        auto add = [&t](Type type, std::initializer_list<const char *> exts) {
+            for (const char *e : exts) t[e] = type;
+        };
+        add(Type::C, {"c"});
+        add(Type::CHeader, {"h"});
+        add(Type::Cpp, {"cpp", "cc", "cxx", "c++", "cp", "ino", "cu", "tpp", "ipp", "inl"});
+        add(Type::CppHeader, {"hpp", "hh", "hxx", "h++", "cuh"});
+        add(Type::ObjC, {"m", "mm"});
+        add(Type::CSharp, {"cs", "csx"});
+        add(Type::Python, {"py", "pyi", "pyw", "pyx", "pxd"});
+        add(Type::JavaScript, {"js", "mjs", "cjs", "jsx"});
+        add(Type::TypeScript, {"ts", "mts", "cts", "tsx"});
+        add(Type::Rust, {"rs"});
+        add(Type::Go, {"go"});
+        add(Type::Java, {"java"});
+        add(Type::Kotlin, {"kt", "kts"});
+        add(Type::Swift, {"swift"});
+        add(Type::Ruby, {"rb", "rake", "gemspec", "ru", "erb"});
+        add(Type::Php, {"php", "phtml"});
+        add(Type::Perl, {"pl", "pm", "pod"});
+        add(Type::Lua, {"lua"});
+        add(Type::Shell, {"sh", "bash", "zsh", "fish", "ksh", "csh", "tcsh", "command", "bats",
+                          "ps1", "psm1", "psd1"});
+        add(Type::Haskell, {"hs", "lhs"});
+        add(Type::Scala, {"scala", "sc"});
+        add(Type::Dart, {"dart"});
+        add(Type::R, {"r", "rmd"});
+        add(Type::Julia, {"jl"});
+        add(Type::Elixir, {"ex", "exs"});
+        add(Type::Erlang, {"erl", "hrl"});
+        add(Type::Zig, {"zig"});
+        add(Type::Nim, {"nim", "nims"});
+        add(Type::Vala, {"vala", "vapi"});
+        add(Type::Fortran, {"f", "f90", "f95", "f03", "f08", "for"});
+        add(Type::OCaml, {"ml", "mli"});
+        add(Type::Lisp, {"el", "lisp", "lsp", "scm", "ss", "rkt", "clj", "cljs", "cljc", "edn",
+                         "fnl"});
+        add(Type::Qml, {"qml"});
+        add(Type::Vue, {"vue", "svelte"});
+        add(Type::Markdown, {"md", "markdown", "mdown", "mkd", "mdx"});
+        add(Type::Html, {"html", "htm", "xhtml", "shtml"});
+        add(Type::Css, {"css"});
+        add(Type::Sass, {"scss", "sass"});
+        add(Type::Less, {"less"});
+        add(Type::Json, {"json", "jsonc", "json5", "jsonl", "ndjson", "geojson", "topojson",
+                         "webmanifest", "har"});
+        add(Type::Yaml, {"yml", "yaml"});
+        add(Type::Toml, {"toml"});
+        add(Type::Xml, {"xml", "xsd", "xsl", "xslt", "plist", "xaml", "csproj", "vbproj",
+                        "fsproj", "resx", "storyboard", "xib", "wsdl", "dtd", "xliff", "xlf",
+                        "rss", "atom"});
+        add(Type::Csv, {"csv", "tsv"});
+        add(Type::Sql, {"sql", "psql", "mysql", "pgsql", "plsql"});
+        add(Type::Latex, {"tex", "ltx", "latex", "sty", "cls", "bib", "bst", "dtx", "ins"});
+        add(Type::Notebook, {"ipynb"});
+        add(Type::Svg, {"svg", "svgz"});
+        add(Type::Video, {"mkv", "webm", "wmv", "flv", "mpg", "mpeg", "ogv"});
+        add(Type::Audio, {"mid", "midi", "wma", "aifc", "caf", "weba"});
+        add(Type::Pdf, {"pdf"});
+        add(Type::Archive, {"zip", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "zst",
+                            "7z", "rar", "jar", "war", "ear", "dmg", "iso", "deb", "rpm", "apk",
+                            "whl", "lz", "lzma", "cab", "xpi", "snap", "flatpak"});
+        add(Type::Font, {"ttf", "otf", "ttc", "woff", "woff2", "pfb", "pfa", "fon"});
+        add(Type::Executable, {"exe", "msi", "appimage", "run", "out", "elf", "bin"});
+        add(Type::Library, {"so", "dll", "dylib", "a", "lib", "o", "obj", "ko", "pyc", "class"});
+        add(Type::Database, {"sqlite", "sqlite3", "db", "db3", "s3db", "sl3", "mdb", "accdb"});
+        add(Type::Document, {"doc", "docx", "docm", "odt", "rtf", "pages"});
+        add(Type::Spreadsheet, {"xls", "xlsx", "xlsm", "xlsb", "ods", "numbers"});
+        add(Type::Presentation, {"ppt", "pptx", "pptm", "odp", "key"});
+        add(Type::Ebook, {"epub", "mobi", "azw3"});
+        add(Type::Makefile, {"mk", "mak", "make"});
+        add(Type::CMake, {"cmake"});
+        add(Type::Dockerfile, {"dockerfile", "containerfile"});
+        add(Type::Lockfile, {"lock", "lockb"});
+        add(Type::Config, {"ini", "conf", "cfg", "cnf", "config", "properties", "env", "desktop",
+                           "service", "socket", "timer", "mount", "target", "editorconfig",
+                           "reg", "inf"});
+        add(Type::Patch, {"patch", "diff", "rej"});
+        add(Type::Log, {"log"});
+        add(Type::Key, {"pem", "crt", "cer", "der", "pub", "asc", "gpg", "sig", "p12", "pfx",
+                        "csr"});
+        add(Type::Bookmark, {"url", "webloc"});
+        add(Type::Translation, {"po", "pot"});
+        add(Type::Text, {"txt", "text", "rst", "adoc", "asciidoc", "org", "nfo"});
+        return t;
+    }();
+    return m;
+}
+
+}  // namespace
+
+Type typeOf(const std::string &path, bool executable) {
+    const std::size_t slash = path.find_last_of('/');
+    const std::string name = lowered(slash == std::string::npos ? path : path.substr(slash + 1));
+    if (name.empty()) return Type::Text;
+    const auto &byName = typesByName();
+    auto n = byName.find(name);
+    if (n != byName.end()) return n->second;
+    const std::string ext = FileSniff::extensionOf(name);
+    const auto &byExt = typesByExtension();
+    auto e = ext.empty() ? byExt.end() : byExt.find(ext);
+    Type byExtension = Type::Text;
+    bool known = false;
+    if (!ext.empty()) {
+        known = true;
+        if (isImageExtension(ext)) byExtension = Type::Image;
+        else if (isVideoExtension(ext)) byExtension = Type::Video;
+        else if (isAudioExtension(ext)) byExtension = Type::Audio;
+        else if (e != byExt.end()) byExtension = e->second;
+        else known = SyntaxHighlighter::supports(ext);
+    }
+    // LICENSE, LICENSE-MIT, README.md, Dockerfile.dev: the stem names the
+    // file when what follows is no extension, a text one, or none known
+    // (license_check.py is Python, readme.png a picture).
+    const bool textual = !known || byExtension == Type::Text || byExtension == Type::Markdown;
+    if (textual) {
+        if (stemIs(name, "license") || stemIs(name, "licence") || stemIs(name, "copying") ||
+            stemIs(name, "unlicense") || stemIs(name, "copyright"))
+            return Type::License;
+        if (stemIs(name, "readme")) return Type::Readme;
+        if (stemIs(name, "authors") || stemIs(name, "contributors") || stemIs(name, "credits") ||
+            stemIs(name, "maintainers"))
+            return Type::Authors;
+        if (stemIs(name, "dockerfile") || stemIs(name, "containerfile")) return Type::Dockerfile;
+    }
+    // docker-compose.override.yml
+    if (stemIs(name, "docker-compose") && (ext == "yml" || ext == "yaml"))
+        return Type::Dockerfile;
+    if (known && byExtension != Type::Text) return byExtension;
+    if (e != byExt.end()) return e->second;   // .txt and the like
+    // A dotfile no table names is some program's settings (.env.local,
+    // .prettierrc, .npmrc).
+    if (name[0] == '.') return Type::Config;
+    if (ext.empty() && executable) return Type::Executable;
+    if (!ext.empty() && SyntaxHighlighter::supports(ext)) return Type::Code;
+    return Type::Text;
+}
+
+const char *typeName(Type t) {
+    switch (t) {
+    case Type::Text: return "text";
+    case Type::Code: return "code";
+    case Type::C: return "c";
+    case Type::CHeader: return "c-header";
+    case Type::Cpp: return "cpp";
+    case Type::CppHeader: return "cpp-header";
+    case Type::ObjC: return "objc";
+    case Type::CSharp: return "csharp";
+    case Type::Python: return "python";
+    case Type::JavaScript: return "javascript";
+    case Type::TypeScript: return "typescript";
+    case Type::Rust: return "rust";
+    case Type::Go: return "go";
+    case Type::Java: return "java";
+    case Type::Kotlin: return "kotlin";
+    case Type::Swift: return "swift";
+    case Type::Ruby: return "ruby";
+    case Type::Php: return "php";
+    case Type::Perl: return "perl";
+    case Type::Lua: return "lua";
+    case Type::Shell: return "shell";
+    case Type::Haskell: return "haskell";
+    case Type::Scala: return "scala";
+    case Type::Dart: return "dart";
+    case Type::R: return "r";
+    case Type::Julia: return "julia";
+    case Type::Elixir: return "elixir";
+    case Type::Erlang: return "erlang";
+    case Type::Zig: return "zig";
+    case Type::Nim: return "nim";
+    case Type::Vala: return "vala";
+    case Type::Fortran: return "fortran";
+    case Type::OCaml: return "ocaml";
+    case Type::Lisp: return "lisp";
+    case Type::Qml: return "qml";
+    case Type::Vue: return "vue";
+    case Type::Markdown: return "markdown";
+    case Type::Html: return "html";
+    case Type::Css: return "css";
+    case Type::Sass: return "sass";
+    case Type::Less: return "less";
+    case Type::Json: return "json";
+    case Type::Yaml: return "yaml";
+    case Type::Toml: return "toml";
+    case Type::Xml: return "xml";
+    case Type::Csv: return "csv";
+    case Type::Sql: return "sql";
+    case Type::Latex: return "latex";
+    case Type::Notebook: return "notebook";
+    case Type::Image: return "image";
+    case Type::Svg: return "svg";
+    case Type::Audio: return "audio";
+    case Type::Video: return "video";
+    case Type::Pdf: return "pdf";
+    case Type::Archive: return "archive";
+    case Type::Font: return "font";
+    case Type::Executable: return "executable";
+    case Type::Library: return "library";
+    case Type::Database: return "database";
+    case Type::Document: return "document";
+    case Type::Spreadsheet: return "spreadsheet";
+    case Type::Presentation: return "presentation";
+    case Type::Ebook: return "ebook";
+    case Type::Makefile: return "makefile";
+    case Type::CMake: return "cmake";
+    case Type::Meson: return "meson";
+    case Type::Dockerfile: return "dockerfile";
+    case Type::License: return "license";
+    case Type::Readme: return "readme";
+    case Type::Authors: return "authors";
+    case Type::Lockfile: return "lockfile";
+    case Type::Git: return "git";
+    case Type::Config: return "config";
+    case Type::Patch: return "patch";
+    case Type::Log: return "log";
+    case Type::Key: return "key";
+    case Type::Bookmark: return "bookmark";
+    case Type::Translation: return "translation";
+    }
+    return "text";
+}
+
+const std::vector<Type> &allTypes() {
+    static const std::vector<Type> all = [] {
+        std::vector<Type> v;
+        for (int i = (int)Type::Text; i <= (int)Type::Translation; i++) v.push_back((Type)i);
+        return v;
+    }();
+    return all;
 }
 
 const char *kindName(Kind k) {

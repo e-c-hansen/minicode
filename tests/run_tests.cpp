@@ -4271,6 +4271,8 @@ void testSettings() {
                 same(none.gitGutterColor(i), named.gitGutterColor(i), "change bar");
             same(none.markdownCodeBackground(), named.markdownCodeBackground(), "code background");
             same(none.terminalInputText(), named.terminalInputText(), "terminal input");
+            same(none.terminalCursor(), named.terminalCursor(), "terminal cursor");
+            same(none.terminalCursorText(), named.terminalCursorText(), "terminal cursor text");
             same(none.rulerColor(), named.rulerColor(), "ruler");
             same(none.gutterBackground(), named.gutterBackground(), "gutter");
             same(none.lineNumberColor(), named.lineNumberColor(), "line number");
@@ -4295,6 +4297,42 @@ void testSettings() {
                       named.treeGitColor((TreeGitColor)i));
             for (int i = 0; i < 3; i++)
                 CHECK(documented.gitGutterColor(i) == named.gitGutterColor(i));
+        }
+
+        GROUP("settings:terminal-cursor");
+        // The terminal's cursor stands out from its background on every
+        // built-in theme, and the character under a block cursor from the
+        // cursor (WCAG's contrast ratio, 3:1 for large shapes), both opaque
+        // whatever the terminal's opacity (linux/HANDOFF.md item 108: VTE drew
+        // the cursor in the background's color, so it never showed).
+        {
+            auto lum = [](const Rgba &c) {
+                auto ch = [](uint8_t v) {
+                    const double x = v / 255.0;
+                    return x <= 0.03928 ? x / 12.92 : std::pow((x + 0.055) / 1.055, 2.4);
+                };
+                return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+            };
+            auto ratio = [&](const Rgba &a, const Rgba &b) {
+                const double x = lum(a), y = lum(b);
+                return (std::max(x, y) + 0.05) / (std::min(x, y) + 0.05);
+            };
+            for (const Theme &t : Settings::themes()) {
+                const Settings s = parseSettings(std::string("theme = ") + t.id + "\nterminal.opacity = 60%\n");
+                const Rgba cursor = s.terminalCursor(), under = s.terminalCursorText();
+                const Rgba bg = s.background(Surface::Terminal);
+                const double againstBg = ratio(cursor, bg), againstText = ratio(under, cursor);
+                if (againstBg < 3 || againstText < 3)
+                    std::printf("    %s: cursor %s on %s (%.1f:1), its text %s (%.1f:1)\n", t.id,
+                                Settings::formatColor(cursor).c_str(), Settings::formatColor(bg).c_str(),
+                                againstBg, Settings::formatColor(under).c_str(), againstText);
+                CHECK(againstBg >= 3 && againstText >= 3);
+                CHECK(cursor.a == 1 && under.a == 1 && bg.a < 1);
+                CHECK(cursor.rgb() == s.text(Surface::Terminal).rgb() && under.rgb() == bg.rgb());
+            }
+            // A text color of the user's own is the cursor's too.
+            const Settings own = parseSettings("terminal.text = #FFCC00\n");
+            CHECK(own.terminalCursor() == Rgba::hex(0xFFCC00));
         }
 
         GROUP("settings:with-theme");

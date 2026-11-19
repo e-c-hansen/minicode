@@ -341,9 +341,31 @@ view is disposed (on `unrealize`), or dispose loops forever.
   use realpath for URIs. `initialize` gets the resolved folder (basedpyright
   found every reference twice across /tmp and /private/tmp) and `CanonicalURI`
   merges spellings.
+- **The popups' colors** (2026-11-18, the grading walker on 1.6.3: a
+  dark references list on the light theme): the hover box, the
+  completion list and its documentation, the signature hint, the picker
+  and the rename field read `PopupStyle()` (LspShared.h, which is
+  `MCFindStyle current`, FindWidget.h) at each showing, so a theme change
+  shows next time: editorWidget.background for the windows (VS Code's
+  editorHoverWidget.* and editorSuggestWidget.* default to it),
+  `widgetEdge` for borders, widget foreground and `muted` for text,
+  `selection` for the lists' selected row (`MCPopupRowView`, LspPicker.h,
+  which leaves the row's text in its own colors), `listHighlight` for the
+  argument being typed, `textLink` for links, the theme's syntax string
+  color for inline code, the find match highlight on a reference's name,
+  and input.* with focusBorder for the rename field. Checked in
+  lsp_fixes's last part, dark-modern and light-modern, each popup's
+  window background against the theme's (pictures under
+  MC_GUI_SNAPSHOTS, `lsp-popups-<theme>-<popup>`).
 - **Rename, references, quick fixes** (F2, Shift+F12, Cmd+.): prepareRename
   when offered ("This can't be renamed"); `MCRenameBox` is a key-capable child
-  panel (an NSPopover never shows for a window not on screen); references and
+  panel (an NSPopover never shows for a window not on screen) over the name
+  itself (2026-11-18; it was a box under the line that hid the next line's
+  code): the field is the line's height from just above its bottom edge, in
+  the editor's font with the old name selected, its text where the name's
+  is, the border 2 points above the line, and "Return to rename, Esc to
+  cancel" goes to the status bar (`flash:`); lsp_fixes checks the field's
+  frame meets the name's line and not the next; references and
   fixes share `MCPickerPopup`, which never takes the keyboard (keys through
   `handleCommand:`). Fixes send the diagnostics touching the caret, else the
   caret line's; an action without its edit is resolved, its edit applied, then
