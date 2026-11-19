@@ -1604,6 +1604,18 @@ These may run in parallel.
   session and the window's record keep the list. The `tree_focus` suite
   checks it. Differs from the Mac: the picker is the system's chooser,
   not a palette listing the open tabs' folders first.
+- [x] **4.12 The tree follows the active tab.** Added to the Mac on
+  2026-11-18 (#197): "The tree follows the active tab" in
+  `../docs/notes/tree.md`, the core's `TreeReveal` and `TreeFocus::shows`
+  (`tree:auto-reveal`), the setting `explorer.auto-reveal` (on). Another
+  tab on show opens its file's folders, selects its row and centers it
+  unless it is wholly in view; the keyboard stays; a file outside the
+  focus, a page or an untitled tab leaves the tree alone; a hidden tree
+  waits; a window brought back keeps its record's tree; Reveal Active File
+  and Quick Open center too. *Done 2026-11-18 (HANDOFF.md item 107)*,
+  with the window's record now keeping the tree's open folders, selection
+  and scroll; checked by the `tree_focus` suite. Differs from the Mac:
+  GtkListView nudges a clicked row cut by the edge wholly into view.
 
 ## Reported by the owner
 

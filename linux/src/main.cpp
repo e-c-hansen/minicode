@@ -86,6 +86,7 @@
 #include "FolderConsent.h"
 #include "Formatting.h"
 #include "TreeGitColors.h"
+#include "TreeFollow.h"
 #include "Lsp.h"
 #include "AgentNotes.h"
 #include "GitGutter.h"
@@ -147,6 +148,7 @@ struct App {
     Editor*   editor = nullptr;
     FindBar*  findBar = nullptr;     // the editor's find and replace bar
     FileTree* tree = nullptr;
+    TreeFollow* treeFollow = nullptr;   // the tree following the active tab
     // The sidebar is a stack: the file tree, or the Source Control panel in
     // its place, made on first use.
     GtkWidget* sidebar = nullptr;
@@ -667,11 +669,32 @@ static void confirmAllUnsaved(App* app, std::function<void()> proceed,
     }, keep);
 }
 
-// The file tree's selection follows the tab on show, as on the Mac
-// (reselectCurrentFileInTree).
-static void revealActiveInTree(App* app) {
-    const std::string& cur = app->editor->currentPath();
-    if (isInside(cur, app->rootDir)) app->tree->revealPath(cur);
+// The tree following the active tab (TreeFollow.h, explorer.auto-reveal):
+// the active tab's file as the tree lists it, or "" for none it has (a
+// diff, a comparison, a page, an untitled tab not on disk yet, a file gone
+// or outside the window's folder), as the Mac's treeFollowablePath.
+static std::string treeFollowablePath(App* app) {
+    const std::string& p = app->editor->currentPath();
+    if (p.empty() || app->editor->isDiff() || app->editor->isComparison() || p == app->rootDir ||
+        !isInside(p, app->rootDir))
+        return "";
+    struct stat st;
+    return stat(p.c_str(), &st) == 0 ? p : "";
+}
+
+// Whether the tree's rows are on screen: the sidebar open, the tree in it
+// (not Source Control, Processes or Agents), and not dragged shut (the
+// divider's position, which a sidebar just shown again keeps, where its
+// width is only known after the next layout).
+static bool treeOnShow(App* app) {
+    if (!app->layout || !app->layout->sidebarShown() || !app->sidebar ||
+        gtk_stack_get_visible_child(GTK_STACK(app->sidebar)) != app->tree->container())
+        return false;
+    return gtk_paned_get_position(GTK_PANED(app->layout->widget())) >= 1;
+}
+
+static void treeMaybeShown(App* app) {
+    if (!app->dead && app->treeFollow) app->treeFollow->treeMaybeShown();
 }
 
 // A file changed on disk while its tab has edits of its own: the Mac's
@@ -1014,6 +1037,9 @@ static void openFolder(App* app, const std::string& dir) {
     // stay on the one their shells run on.
     useSessionLink(app, dir);
     app->editor->setSessionLink(app->link);
+    // The new folder's tree as it opens, not moved to the file on show
+    // (explorer.auto-reveal, as the Mac holds it around restoreSession).
+    app->treeFollow->hold(true);
     // What the new folder's host holds for a window (stage 6, step 2).
     if (app->link && !app->link->lost()) {
         app->held = app->link->takeForWindow(app->editor->sessionWindowId());
@@ -1033,6 +1059,7 @@ static void openFolder(App* app, const std::string& dir) {
     app->persist->restoreSession();   // the new folder's tabs from last time
     backUpHeldDocuments(app);
     showHeldActive(app);
+    app->treeFollow->hold(false);
     updateTitle(app);
     refreshHints(app);
 }
@@ -3433,7 +3460,12 @@ static void showPalette(App* app, const char* text) {
     ctx.root = app->rootDir;
     ctx.useIgnoreFiles = g.settings->settings().searchUseIgnoreFiles();
     ctx.openFile = [app](const std::string& path) {
-        if (!app->dead) openFileThen(app, path, EditorTabs::OpenFrom::QuickOpen, nullptr);
+        if (app->dead) return;
+        // Selected in the tree and centered unless in view, whatever
+        // explorer.auto-reveal says (the Mac's openFileFromQuickOpen:
+        // revealPath:open:); never widening a focus.
+        if (isInside(path, app->rootDir)) app->tree->revealPath(path);
+        openFileThen(app, path, EditorTabs::OpenFrom::QuickOpen, nullptr);
     };
     ctx.documentSymbols = [app](PalettePanel::Context::SymbolsDone done) {
         return !app->dead && app->lsp && app->lsp->documentSymbols(std::move(done));
@@ -3873,6 +3905,7 @@ static void applyWindowSettings(App* app) {
             if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get())) r->applySettings();
     if (app->gitGutter) app->gitGutter->applySettings(st);
     if (app->testGutter) app->testGutter->refreshSoon();   // test.<language> may have changed
+    if (app->treeFollow) app->treeFollow->settingsApplied();   // explorer.auto-reveal
 #ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->termDock)
         for (Terminal* t : app->termDock->all()) t->applySettings(st);
@@ -4642,6 +4675,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->git = nullptr;
     delete app->layout;
     app->layout = nullptr;
+    delete app->treeFollow;
+    app->treeFollow = nullptr;
     delete app->tree;
     app->tree = nullptr;
     delete app->findBar;   // before the editor, whose view it follows
@@ -4711,6 +4746,10 @@ static App* newWindow(const std::string& root, const std::string& file,
     // Core widgets.
     app->tree = new FileTree(app->rootDir, g.showHidden);
     StartupLog::mark("window: file tree");
+    app->treeFollow = new TreeFollow(app->tree, TreeFollow::Host{
+        [app] { return treeFollowablePath(app); },
+        [app] { return treeOnShow(app); },
+        [] { return g.settings->settings().explorerAutoReveal(); }});
     app->tree->setOpenCallback(treeOpenCb, app);
     app->tree->setDropCallback([app](const std::vector<std::string>& paths,
                                      const std::string& dir, bool move) {
@@ -4780,7 +4819,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->editor->onActiveChanged = [app] {
         if (app->dead) return;
         if (app->nav) app->nav->tabDidSwitch();
-        revealActiveInTree(app);
+        app->treeFollow->activeChanged();   // the tree shows the file (explorer.auto-reveal)
         refreshHints(app);
         if (app->persist) app->persist->tabShown();
         if (app->git) app->git->updateActions();   // Discard Changes acts on the file on show
@@ -4832,6 +4871,13 @@ static App* newWindow(const std::string& root, const std::string& file,
             if (width > 0 && height > 0) {
                 w->haveFrame = true;
                 w->frame = TabSessions::Frame{0, 0, (double)width, (double)height};
+            }
+            // The tree: its open folders, its selected row and how far it
+            // was scrolled, put back by FileTree::restoreView.
+            if (app->tree) {
+                w->expanded = app->tree->openFolders();
+                w->selected = app->tree->selectedPath();
+                w->treeScroll = app->tree->scrolled();
             }
             if (!app->layout) return;
             w->sidebarHidden = !app->layout->sidebarShown();
@@ -4956,8 +5002,20 @@ static App* newWindow(const std::string& root, const std::string& file,
         else app->tree->focus();
     };
     app->layout->onChanged = [app] {
-        if (!app->dead) refreshHints(app);
+        if (app->dead) return;
+        treeMaybeShown(app);   // the sidebar back: the file that came on show meanwhile
+        refreshHints(app);
     };
+    // The tree back in the sidebar (Source Control, Processes or Agents
+    // closed), or the sidebar dragged open: the same.
+    g_signal_connect(app->sidebar, "notify::visible-child",
+                     G_CALLBACK(+[](GObject*, GParamSpec*, gpointer p) {
+                         treeMaybeShown(static_cast<App*>(p));
+                     }), app);
+    g_signal_connect(app->layout->widget(), "notify::position",
+                     G_CALLBACK(+[](GObject*, GParamSpec*, gpointer p) {
+                         treeMaybeShown(static_cast<App*>(p));
+                     }), app);
     StartupLog::mark("window: layout");
 
     // Status bar: the current path on the left, and the hint that advertises the
@@ -5347,11 +5405,16 @@ static App* newWindow(const std::string& root, const std::string& file,
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
     StartupLog::mark("window: actions and settings applied");
     // The files open here last time: the window's own when it is brought
-    // back, else the folder's.
+    // back, else the folder's. The tree comes back as the record left it,
+    // not moved to the file on show (explorer.auto-reveal; the Mac's
+    // holdTreeFollowing: and finishRestoringWindow).
+    app->treeFollow->hold(true);
     attachHeldDocuments(app);
     app->persist->restoreSession(record ? &record->tabs : nullptr);
     backUpHeldDocuments(app);
     showHeldActive(app);
+    app->treeFollow->hold(false);
+    if (record) app->tree->restoreView(record->expanded, record->selected, record->treeScroll);
 #ifdef MUTIBLE_ENABLE_BROWSER
     if (app->browser) {   // the browser's tabs, suspended; the one on show loads when the pane is
         const TabSessions::Session saved = record ? record->tabs : app->persist->savedSession();

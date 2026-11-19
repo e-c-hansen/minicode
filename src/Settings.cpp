@@ -1705,8 +1705,8 @@ const char* Settings::defaultFileText() {
 # When another tab comes on show, the tree opens its file's folders, selects
 # its row, and scrolls it to the middle unless it is already in view, as VS
 # Code's explorer.autoReveal. A file outside the focused folders leaves the
-# tree as it is. Off, the tree moves only for Reveal Active File in File
-# Tree (macOS).
+# tree as it is. Off, it moves only for Reveal Active File in File Tree,
+# Quick Open, and links.
 # explorer.auto-reveal = on
 # A file opened by a single click in the tree, a single click on a Find in
 # Folder result, or Go to Definition goes in the preview tab, its name in

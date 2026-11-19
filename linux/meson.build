@@ -181,6 +181,8 @@ core_sources = [
 main_source = 'src/main.cpp'
 gui_sources = [
   'src/FileTree.cpp',
+  # The tree following the active tab (explorer.auto-reveal).
+  'src/TreeFollow.cpp',
   'src/ClickCount.cpp',
   # The editor: the view (Editor.cpp), each open file (DocumentView.cpp), the
   # tabs (Tabs.cpp) and their strip (TabStrip.cpp).
