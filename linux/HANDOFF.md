@@ -6603,7 +6603,14 @@ active tab").
   folders open before the focus (`FileTree::tryExpand`) had opened it, so
   the close did nothing and m_deep opened after it, down to near.txt. The
   step now waits for those folders to be open and checks the close; the
-  product was right (`../docs/notes/tree.md`, the trap).
+  product was right (`../docs/notes/tree.md`, the trap). `tree_clicks` went
+  FLAKY in both CI runs from #232 on (2026-11-19, "timed out: closed",
+  passing alone; 5 of 5 local runs in CI's order failed): its folder closed and stayed closed (a probe on the row's
+  `expanded` saw one change, no reveal ran), but its wait found b.txt by
+  name, and the tree, following Find in Folder's results, had opened
+  `replace_in_folder`'s new rif4, whose b.txt the closing moved into view.
+  The suite finds every row by its path now (`MCGuiTreeRow`); the product
+  was right (the trap in `../docs/notes/tree.md`).
 - **Left for a real screen**: the look of the centering and of the scroll
   jumping (no animation), and a sidebar dragged shut and open by hand.
 

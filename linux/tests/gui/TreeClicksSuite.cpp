@@ -20,6 +20,14 @@
 //     then opened the file now at that position, the one put in. The click
 //     now acts on the row it was pressed on, kept as its row object.
 //
+// Rows are found by their paths (MCGuiTreeRow), never by their names: the
+// suites before this one leave files of the same names in folders the tree
+// has open. The last wait, for this folder's b.txt to be gone once the
+// folder closed, found replace_in_folder's rif4/b.txt instead (the tree had
+// opened rif4 following Find in Folder's results), which the closing moved
+// up into view: a FLAKY line on CI from the run rif4 came in (2026-11-19),
+// failing in the full order and passing alone, the folder closed all along.
+//
 // Real input throughout: the button is pressed and released with XTest; the
 // files come from the disk, as a build or a terminal would make them.
 #include "Harness.h"
@@ -46,15 +54,19 @@ GListModel* rows() {
     return lv ? G_LIST_MODEL(gtk_list_view_get_model(GTK_LIST_VIEW(lv))) : nullptr;
 }
 
-GtkWidget* row(const std::string& name) { return MCGuiFindLabel(MCGuiApp().tree->widget(), name); }
+// A row on show, known by its path (see the top).
+GtkWidget* row(const std::string& path) { return MCGuiTreeRow(path); }
 
-// Any mapped label showing `text`, whether laid out or not: what the harness
+// Any mapped row label for `path`, whether laid out or not: what the harness
 // used to count as on show.
-GtkWidget* anyLabel(GtkWidget* root, const std::string& text) {
+GtkWidget* anyLabel(GtkWidget* root, const std::string& path) {
     if (!root || !gtk_widget_get_mapped(root)) return nullptr;
-    if (GTK_IS_LABEL(root) && text == gtk_label_get_text(GTK_LABEL(root))) return root;
+    if (GTK_IS_LABEL(root)) {
+        const char* p = static_cast<const char*>(g_object_get_data(G_OBJECT(root), "minicode-path"));
+        return p && path == p ? root : nullptr;
+    }
     for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
-        if (GtkWidget* hit = anyLabel(c, text)) return hit;
+        if (GtkWidget* hit = anyLabel(c, path)) return hit;
     return nullptr;
 }
 
@@ -82,8 +94,8 @@ long rowIndex(const std::string& path) {
     return r ? (long)gtk_tree_list_row_get_position(r) : -1;
 }
 
-double labelY(const std::string& name) {
-    GtkWidget* label = row(name);
+double labelY(const std::string& path) {
+    GtkWidget* label = row(path);
     if (!label) return -1;
     graphene_point_t p = GRAPHENE_POINT_INIT(0, 0), out;
     if (!gtk_widget_compute_point(label, GTK_WIDGET(MCGuiApp().window), &p, &out)) return -1;
@@ -91,8 +103,8 @@ double labelY(const std::string& name) {
 }
 
 // ---- watching a row go in
-// While armed, each change to the tree's rows looks for `gWatched` at once
-// and again at the start of the next frame, before GTK lays it out.
+// While armed, each change to the tree's rows looks for `gWatched`, a path,
+// at once and again at the start of the next frame, before GTK lays it out.
 std::string gWatched;
 bool gArmed = false;
 int gLooks = 0;
@@ -105,9 +117,12 @@ void look() {
     GtkWidget* tree = MCGuiApp().tree->widget();
     GtkWidget* any = anyLabel(tree, gWatched);
     if (any && !MCGuiOnScreen(any)) gSawUnplaced = true;
-    GtkWidget* handed = MCGuiFindLabel(tree, gWatched);
-    if (handed && (gtk_widget_get_width(handed) <= 0 || gtk_widget_get_height(handed) <= 0))
-        gHandedUnplaced = true;
+    // Both ways a check finds a row: by its name (another file's placed
+    // label never counts) and by its path.
+    const std::string name = gWatched.substr(gWatched.rfind('/') + 1);
+    for (GtkWidget* handed : {MCGuiFindLabel(tree, name), row(gWatched)})
+        if (handed && (gtk_widget_get_width(handed) <= 0 || gtk_widget_get_height(handed) <= 0))
+            gHandedUnplaced = true;
 }
 
 void onRowsChanged(GListModel*, guint, guint, guint added, gpointer) {
@@ -145,19 +160,19 @@ MC_GUI_SUITE(tree_clicks) {
         if (GtkWidget* lv = listView())
             gtk_list_view_scroll_to(GTK_LIST_VIEW(lv), 0, GTK_LIST_SCROLL_NONE, nullptr);
     });
-    MCGuiWait("its row on show", 20, [] { return row("0-tree-clicks") != nullptr; });
-    MCGuiStep("a click opens it", [] { MCGuiClick(row("0-tree-clicks")); });
-    MCGuiWait("its files are on show", 20, [] { return row("b.txt") && row("d.txt"); });
+    MCGuiWait("its row on show", 20, [] { return row(dir()) != nullptr; });
+    MCGuiStep("a click opens it", [] { MCGuiClick(row(dir())); });
+    MCGuiWait("its files are on show", 20, [] { return row(at("b.txt")) && row(at("d.txt")); });
 
     // A row listed while the tree is on show is never handed to a check
     // before its first layout.
     MCGuiStep("watching, a file appears in the folder", [] {
-        gWatched = "new.txt";
+        gWatched = at("new.txt");
         gArmed = true;
         gChangedId = g_signal_connect(rows(), "items-changed", G_CALLBACK(onRowsChanged), nullptr);
         MCGuiWriteFile(at("new.txt"), "new\n");
     });
-    MCGuiWait("its row is on show", 20, [] { return row("new.txt") != nullptr; });
+    MCGuiWait("its row is on show", 20, [] { return row(at("new.txt")) != nullptr; });
     MCGuiPause(0.2);   // time is the condition: the frame after it, looked at too
     MCGuiStep("the harness never handed out the row before it had a place", [] {
         gArmed = false;
@@ -167,7 +182,7 @@ MC_GUI_SUITE(tree_clicks) {
         GCHECK(gLooks >= 2);
         GCHECK(gSawUnplaced);   // the moment the flake fell in did come
         GCHECK(!gHandedUnplaced);
-        GCHECK(MCGuiOnScreen(row("new.txt")));
+        GCHECK(MCGuiOnScreen(row(at("new.txt"))));
     });
 
     // A press on d.txt, and while the button is down a listing puts c.txt in
@@ -180,19 +195,19 @@ MC_GUI_SUITE(tree_clicks) {
         gHeldB = GTK_TREE_LIST_ROW(g_object_ref(rowObject(at("b.txt"))));
         gHeldD = GTK_TREE_LIST_ROW(g_object_ref(rowObject(at("d.txt"))));
         gPressedIndex = rowIndex(at("d.txt"));
-        gPressedY = labelY("d.txt");
-        MCGuiPress(row("d.txt"));
+        gPressedY = labelY(at("d.txt"));
+        MCGuiPress(row(at("d.txt")));
     });
     MCGuiPause(0.2);   // time is the condition: the press is in before the file appears
     MCGuiStep("another program writes c.txt, which sorts into d's place", [] {
         MCGuiWriteFile(at("c.txt"), "c\n");
     });
     MCGuiWait("c.txt is drawn above d.txt, d.txt a position further down", 20, [] {
-        const double c = labelY("c.txt"), d = labelY("d.txt");
+        const double c = labelY(at("c.txt")), d = labelY(at("d.txt"));
         return c >= 0 && d > c && rowIndex(at("d.txt")) == gPressedIndex + 1;
     });
     MCGuiStep("", [] {
-        const double c = labelY("c.txt"), d = labelY("d.txt");
+        const double c = labelY(at("c.txt")), d = labelY(at("d.txt"));
         MCGuiNote("under the pointer now: %s", std::abs(c - gPressedY) < 5   ? "c.txt"
                                                : std::abs(d - gPressedY) < 5 ? "d.txt, kept by GTK"
                                                                              : "another row");
@@ -209,13 +224,13 @@ MC_GUI_SUITE(tree_clicks) {
     });
     MCGuiStep("not c.txt", [] { GCHECK(MCGuiApp().editor->currentPath() != at("c.txt")); });
     MCGuiPause(0.5);   // the double-click interval: the next click is a new one
-    MCGuiStep("an ordinary click on c.txt opens it", [] { MCGuiClick(row("c.txt")); });
+    MCGuiStep("an ordinary click on c.txt opens it", [] { MCGuiClick(row(at("c.txt"))); });
     MCGuiWait("c.txt opens", 10, [] { return MCGuiApp().editor->currentPath() == at("c.txt"); });
     MCGuiPause(0.5);   // the double-click interval
     MCGuiStep("the tree at its top", [] {
         gtk_list_view_scroll_to(GTK_LIST_VIEW(listView()), 0, GTK_LIST_SCROLL_NONE, nullptr);
     });
-    MCGuiWait("the folder's row on show", 10, [] { return row("0-tree-clicks") != nullptr; });
-    MCGuiStep("the folder closes", [] { MCGuiClick(row("0-tree-clicks")); });
-    MCGuiWait("closed", 10, [] { return row("b.txt") == nullptr; });
+    MCGuiWait("the folder's row on show", 10, [] { return row(dir()) != nullptr; });
+    MCGuiStep("the folder closes", [] { MCGuiClick(row(dir())); });
+    MCGuiWait("closed", 10, [] { return rowIndex(at("b.txt")) < 0 && !row(at("b.txt")); });
 }
