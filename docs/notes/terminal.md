@@ -131,7 +131,14 @@ for full-screen programs. Both can be open at once.
   every 0.1 s. **Trap** (2026-11-16): the queue was one line, and a second
   `runCommand:` while the first still waited (a prompt between its 133;A
   and B) replaced it: the first never ran (terminal_reflow's flake on CI,
-  `read` missing from the screen). `busy` is
+  `read` missing from the screen). **Trap** (2026-11-18): Ctrl+C typed
+  while ZLE reads left the old B believed until zsh's SIGINT was handled,
+  and a command typed in that moment lost its `ESC [` to the dying line
+  editor and ran as `[9999~read ...` (terminal_paste's flake on CI); the
+  grid's input now clears `_zleReady` and restarts the 0.3 s clock on a
+  Ctrl+C, so the command waits for the new prompt's B. In a test, Ctrl+D
+  then Ctrl+C to end cat raced cat's exit: the C landed at precmd and cut
+  the prompt mark off; send one of them. `busy` is
   also YES while another program holds the foreground. Private keys sent only while ZLE reads: `ESC[9998~`
   beginning-of-line, 9997 end-of-line, 9996 backward-kill-line, 9995
   clear-screen (Cmd+Left, Cmd+Right, Cmd+Delete, Cmd+K); elsewhere on the main
@@ -594,6 +601,7 @@ text is in place in its section.
 
 - The terminal: Traps: paste only once the tty is raw; check reaping with `kill(pid, 0) == ESRCH`, not `waitpid`.
 - The terminal: **Trap** (2026-11-16): the queue was one line, and a second `runCommand:` while the first still waited (a prompt between its 133;A and B) replaced it: the first never ran (terminal_reflow's flake on CI, `read` missing from the screen).
+- The terminal: **Trap** (2026-11-18): Ctrl+C typed while ZLE reads left the old B believed until zsh's SIGINT was handled, and a command typed in that moment lost its `ESC [` to the dying line editor and ran as `[9999~read ...` (terminal_paste's flake on CI).
 - The terminal: Trap: the harness can run zsh; an agent's own shell may be refused it by the worktree guard.
 - The terminal: Trap: quote dropped paths with backslashes, never single quotes.
 - The terminal: Trap: a CGColor taken from a temporary NSColor can be freed before it is retained; hold the NSColor with `objc_precise_lifetime` until then.
