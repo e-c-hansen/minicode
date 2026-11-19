@@ -289,7 +289,9 @@ static NSString *const kKeepUnsavedDetail = @"Keep Unsaved leaves your changes u
 // A group's strip items, from the window's tabs and labels.
 - (NSArray<MCTabStripItem *> *)stripItemsForGroup:(int)group {
     const std::vector<Model::DocId> &ids = _win->tabs(group);
-    const std::vector<std::string> names = _win->labels(group);
+    // Names, and for files that share one the folders that tell them
+    // apart, drawn dimmed after the name (EditorTabs::tabNames).
+    const std::vector<EditorTabs::TabName> names = _win->tabNames(group);
     NSMutableArray<MCTabStripItem *> *items = [NSMutableArray array];
     for (size_t i = 0; i < ids.size(); i++) {
         MCTab *t = _docs[@(ids[i])];
@@ -302,8 +304,10 @@ static NSString *const kKeepUnsavedDetail = @"Keep Unsaved leaves your changes u
         else if (t.isDiff)
             item.title = t.diffIsCommit ? (t.diffName ?: @"Commit")
                                         : [NSString stringWithFormat:@"%@ (diff)", t.diffName ?: @""];
-        else
-            item.title = [NSString stringWithUTF8String:names[i].c_str()] ?: t.currentPath.lastPathComponent;
+        else {
+            item.title = [NSString stringWithUTF8String:names[i].name.c_str()] ?: t.currentPath.lastPathComponent;
+            if (!names[i].hint.empty()) item.hint = [NSString stringWithUTF8String:names[i].hint.c_str()];
+        }
         if (t.gone) item.title = [item.title stringByAppendingString:@" (deleted)"];
         item.toolTip = t.currentPath ?: item.title;
         item.dirty = t.dirty;
