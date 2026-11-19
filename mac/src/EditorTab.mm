@@ -152,7 +152,8 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes) {
 static_assert((int)MCTextEncodingUtf8 == (int)FolderSearch::TextEncoding::Utf8 &&
                   (int)MCTextEncodingUtf16LE == (int)FolderSearch::TextEncoding::Utf16LE &&
                   (int)MCTextEncodingUtf16BE == (int)FolderSearch::TextEncoding::Utf16BE &&
-                  (int)MCTextEncodingWindows1252 == (int)FolderSearch::TextEncoding::Windows1252,
+                  (int)MCTextEncodingWindows1252 == (int)FolderSearch::TextEncoding::Windows1252 &&
+                  (int)MCTextEncodingUtf8Raw == (int)FolderSearch::TextEncoding::Utf8Raw,
               "MCTextEncoding mirrors FolderSearch::TextEncoding");
 
 BOOL MCUtf8Bytes(NSString *text, std::string *out) {

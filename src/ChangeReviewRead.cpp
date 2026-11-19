@@ -28,6 +28,8 @@ void encodingOfBlob(const std::string& b, FolderSearch::TextEncoding* enc, bool*
         *bom = true;
     } else if (FolderSearch::readsAsWindows1252(b)) {
         *enc = FolderSearch::TextEncoding::Windows1252;
+    } else if (FolderSearch::readsAsUtf8WithStrayBytes(b)) {
+        *enc = FolderSearch::TextEncoding::Utf8Raw;
     }
 }
 

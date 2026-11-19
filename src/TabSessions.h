@@ -216,6 +216,11 @@ struct Window {
     long ownerPid = 0;
     double ownerStart = 0;
     double saved = 0;
+    // The window's name in the backups (Backups::Entry::window): kept from
+    // launch to launch, so the window brought back takes its own unsaved
+    // buffers and leaves another window's on the same folder to it. ""
+    // in a record from before 2026-11-19.
+    std::string backupKey{};
 };
 
 // Front window first. A window, or a part of one, that does not read is left
