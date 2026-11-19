@@ -64,7 +64,7 @@
 #include "TermDockRecord.h"
 #include "FileTree.h"
 #include "HintsSearchBox.h"
-#include "TitlePath.h"
+#include "WindowTitle.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
 #include "FolderPicker.h"  // inScope (Add Folder to Focus…)
 #include "Folds.h"
@@ -209,9 +209,8 @@ struct App {
     GtkWidget* hintsHint  = nullptr;
     // The box at the panel's top (HintsSearchBox.h), deleted with its widget.
     HintsSearchBox* hintsSearch = nullptr;
-    // The title shows the file's path (the editor had the keyboard last),
-    // else its name (titleShowsPath).
-    bool titlePath = false;
+    // The pane the title last spoke for (titleFocus).
+    WindowTitle::Focus titleFocus = WindowTitle::Focus::Document;   // as last titled
 
     std::string rootDir;
     // The session's host for the folder (SessionLink.h): its tabs are
@@ -351,45 +350,62 @@ static bool insideWidget(GtkWidget* w, GtkWidget* area) {
     return w && area && (w == area || gtk_widget_is_ancestor(w, area));
 }
 
-// Whether the title shows the file's path rather than its name: while the
-// editor (its text, a viewer in its slot, its tabs, its find bar) has the
-// keyboard. The palette and the hints' search box only borrow it, so the
-// title stays as it was while they have it (the box's: as where it took
-// the keyboard from).
-static bool titleShowsPath(App* app) {
+// Which pane the title speaks for (WindowTitle::Focus): the terminal's or
+// the browser's while it has the keyboard, else the document's (the editor,
+// the tree, any other pane). The palette and the hints' search box only
+// borrow the keyboard, so the title stays as it was while they have it (the
+// box's: as where it took the keyboard from).
+static WindowTitle::Focus titleFocus(App* app) {
     GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
     if (app->hintsSearch && app->hintsSearch->hasKeyboard()) focus = app->hintsSearch->previous();
     else if (app->palette && insideWidget(focus, app->palette->box())) focus = nullptr;
-    if (!focus) return app->titlePath;
-    return insideWidget(focus, app->editor->widget());
+    if (!focus) return app->titleFocus;
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (app->termDock && insideWidget(focus, app->termDock->widget())) return WindowTitle::Focus::Terminal;
+#endif
+#ifdef MUTIBLE_ENABLE_BROWSER
+    if (app->browser && insideWidget(focus, app->browser->widget())) return WindowTitle::Focus::Browser;
+#endif
+    return WindowTitle::Focus::Document;
 }
 
-// The window's title: "mutible — name", the file's path in place of its
-// name while the editor has the keyboard ("mutible — src/main.cpp", from
-// the window's folder, else "~/notes/todo.md"; TitlePath.h). Run as well
-// when the keyboard moves between panes (onFocusWidget).
+// The window's title, by the core's rule, the Mac's too (WindowTitle.h):
+// "src/main.cpp — mutible" for the document, its path from the window's
+// folder, else with ~ for home, "● " in front while it has unsaved changes
+// and its detail after (a Markdown file's tasks, a picture's size, a PDF's
+// pages); the terminal's or the page's own title while one of them has the
+// keyboard. Run as well when the keyboard moves between panes
+// (onFocusWidget).
 static void setWindowTitle(App* app) {
     if (app->dead || !app->editor) return;
-    app->titlePath = titleShowsPath(app);
-    std::string title = "mutible";
-    const std::string& p = app->editor->currentPath();
+    app->titleFocus = titleFocus(app);
+    WindowTitle::Input in;
+    in.focus = app->titleFocus;
+    in.folder = app->rootDir;
+    const char* home = g_get_home_dir();
+    in.home = home ? home : "";
     if (app->editor->isDiff()) {
-        // "name (diff)" or "<short hash> <subject>", as the Mac titles it.
-        title = "mutible — " + app->editor->diffTitle();
-    } else if (!p.empty()) {
-        auto slash = p.find_last_of('/');
-        std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
-        if (app->titlePath) {
-            const char* home = g_get_home_dir();
-            base = TitlePath::shown(p, app->rootDir, home ? home : "");
+        in.name = app->editor->diffTitle();   // "name (diff)" or "<short hash> <subject>"
+    } else {
+        in.path = app->editor->currentPath();
+        in.dirty = !in.path.empty() && app->editor->dirty();
+        if (!in.path.empty()) {
+            // A Markdown file with tasks: how many are done.
+            if (app->editor->tasksTotal() > 0)
+                in.detail = " — " + std::to_string(app->editor->tasksDone()) + " of " +
+                            std::to_string(app->editor->tasksTotal()) + " done";
+            in.detail += app->editor->titleSuffix();   // pixel size or page count
         }
-        title = "mutible — " + base + (app->editor->dirty() ? " *" : "");
-        // A Markdown file with tasks: how many are done.
-        if (app->editor->tasksTotal() > 0)
-            title += " — " + std::to_string(app->editor->tasksDone()) + " of " +
-                     std::to_string(app->editor->tasksTotal()) + " done";
-        title += app->editor->titleSuffix();   // pixel size or page count
     }
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (in.focus == WindowTitle::Focus::Terminal && app->termDock && app->termDock->active())
+        in.pane = app->termDock->active()->title();
+#endif
+#ifdef MUTIBLE_ENABLE_BROWSER
+    if (in.focus == WindowTitle::Focus::Browser && app->browser)
+        in.pane = app->browser->tabTitle(app->browser->activeTab());
+#endif
+    std::string title = WindowTitle::title(in);
     // Claude Code sessions waiting for the user, in any window (PARITY.md 3.6):
     // the count leads the title, which the task switcher shows (GTK4 has no
     // Dock badge or urgency hint to set).

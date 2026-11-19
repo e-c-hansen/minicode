@@ -71,7 +71,6 @@
 #include "FindRules.h"
 #include "PageMeasure.h"
 #include "HintsSearch.h"
-#include "TitlePath.h"
 #include "TermDrop.h"
 #include "LegacyHighlighter.h"
 #include <algorithm>
@@ -5003,26 +5002,6 @@ void testSettings() {
         // Spans come sorted by field, then place.
         m = HintsSearch::match(u"line move", line);
         CHECK(m.spans.size() == 2 && m.spans[0].start < m.spans[1].start);
-    }
-
-    GROUP("title:path");
-    {
-        const std::string root = "/home/u/code/app", home = "/home/u";
-        CHECK(TitlePath::shown("/home/u/code/app/src/main.cpp", root, home) == "src/main.cpp");
-        CHECK(TitlePath::shown("/home/u/code/app/a.txt", root + "/", home) == "a.txt");
-        CHECK(TitlePath::shown("/home/u/notes/todo.md", root, home) == "~/notes/todo.md");
-        CHECK(TitlePath::shown("/home/u/notes/todo.md", root, home + "/") == "~/notes/todo.md");
-        CHECK(TitlePath::shown("/tmp/x.txt", root, home) == "/tmp/x.txt");
-        // A folder whose name starts like the root's is not inside it.
-        CHECK(TitlePath::shown("/home/u/code/app2/b.txt", root, home) == "~/code/app2/b.txt");
-        CHECK(TitlePath::shown("/home/user2/c.txt", root, home) == "/home/user2/c.txt");
-        // No folder, no home, the root folder.
-        CHECK(TitlePath::shown("/home/u/d.txt", "", home) == "~/d.txt");
-        CHECK(TitlePath::shown("/home/u/d.txt", "", "") == "/home/u/d.txt");
-        CHECK(TitlePath::shown("/home/u/d.txt", "", "/") == "/home/u/d.txt");
-        CHECK(TitlePath::shown("/etc/hosts", "/", home) == "etc/hosts");
-        // The window on the home folder: from it, not "~".
-        CHECK(TitlePath::shown("/home/u/e.txt", home, home) == "e.txt");
     }
 
     GROUP("hints:key-labels");
