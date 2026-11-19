@@ -4060,8 +4060,8 @@ void testSettings() {
     // and editor.merge-current and editor.merge-incoming, and the four
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
-    // editor.session-web-idle-minutes.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 142);
+    // editor.session-web-idle-minutes, and editor.wrapping-indent.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 143);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4459,6 +4459,17 @@ void testSettings() {
         Settings ww = parseSettings("editor.word-wrap = bounded\n", &we);
         CHECK(we.size() == 1 && ww.wordWrap() &&
               we[0].message.find("on or off") != std::string::npos);
+        // Wrapped lines go on under their indentation by default, as
+        // VS Code's editor.wrappingIndent "same".
+        CHECK(parseSettings("").wrappingIndent() == WrapIndent::Mode::Same);
+        CHECK(parseSettings("editor.wrapping-indent = none\n").wrappingIndent() ==
+              WrapIndent::Mode::None);
+        CHECK(parseSettings("editor.wrapping-indent = Indent\n").wrappingIndent() ==
+              WrapIndent::Mode::Indent);
+        std::vector<SettingsError> wie;
+        Settings wi = parseSettings("editor.wrapping-indent = deep\n", &wie);
+        CHECK(wie.size() == 1 && wi.wrappingIndent() == WrapIndent::Mode::Same &&
+              wie[0].message.find("same, indent or none") != std::string::npos);
         // Auto-closing pairs: on by default, as in VS Code.
         CHECK(parseSettings("").autoClose());
         CHECK(!parseSettings("").sessionHost());
@@ -11473,6 +11484,7 @@ static void testMultiCaretOccurrences() {
 #include "markdown_page_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
+#include "wrap_indent_tests.inc"
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
 #include "lsp_threading_tests.inc"
@@ -11527,6 +11539,7 @@ int main() {
     testSyntaxLiterals();
     testIncrementalHighlight();
     testLargeFiles();
+    testWrapIndent();
     testTermLinks();
     benchIncrementalHighlight();
     testMarkdown();
