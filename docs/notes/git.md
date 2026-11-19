@@ -193,7 +193,11 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   NSImageView per version, at pixel size, at most 320 points tall, Before
   and After side by side), made again with each read and kept in sight on
   a sideways scroll. Commit pages and worktree pages read them the same
-  way. The bytes stay in `Extra::oldImage`/`newImage`. An action's note
+  way. The bytes stay in `Extra::oldImage`/`newImage`. The core's
+  `ChangeReview::seeImages` (ChangeReviewRead.h, given an `ImageReading`:
+  the GUI's header-only size reader and the row height; `review-read:images`)
+  does the same in `readUncommitted` and `readWorktree`, which GTK reads
+  with; the Mac keeps its own reading in ChangeReviewPage.mm. An action's note
   (`ChangeReview::ActionNote`, `noteRead:`) speaks of the files the action
   touched on the HEAD read on the queue as it ran (`act:`): it stays while
   the page shows those files as the first read shown after it did (or, for
@@ -207,8 +211,27 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   non-contiguous; tints, numbers and the buttons are drawn, the buttons
   pinned to the visible right edge (a sideways scroll redraws). New,
   deleted, binary, submodule, conflicted and `add -N` files go whole
-  (`wholeOnlyReason`). The GTK and Android panels can follow over the
-  same core. **A commit from the graph** opens the same page in commit
+  (`wholeOnlyReason`). **GTK** (2026-11-19, `linux/HANDOFF.md` item 118,
+  GUI `git_panel` and `git_review`) has the same over the same core: a file
+  row's single click opens the page at that file in the preview tab
+  (`GitPanel::clickedRow` by `EditorTabs::treeClick`, with `ClickCount`;
+  `Editor::showPage(page, preview)`, whose replaced tab takes its page with
+  it), the keyboard left in the list; a double-click, Return and Open
+  Changes keep it and give the page the keyboard; Open as git Diff shows
+  the raw diff with its hunk links; Ctrl and Shift clicks and the arrows
+  open nothing. The acted place is kept by `actedPlace`/`rowAfterAction`
+  with a read serial (`readsStarted_`, `actionPosted()` when the work goes
+  to the git thread). **Trap**: a scroll to an iter just after the page's
+  text is replaced uses line heights GTK has not measured, and the page
+  went to its top (the top-row anchor did so too); `scrollRowTo` scrolls
+  to a mark, then a tick callback (`onSettle`) puts the row right each
+  frame until it holds three, and the reveal, the acted place and the top
+  row all go through it. Pictures are sized by
+  GTK's image loaders from their headers and decoded at the size drawn,
+  on the git thread, and stand in a child anchor on the file's first
+  `RowKind::Image` row, the others tagged invisible. Not on GTK: the commit
+  page (a graph click shows `git show` in the diff tab) and animated GIFs
+  (the first frame). Android can follow over the same core. **A commit from the graph** opens the same page in commit
   mode (`initForCommitsWithRoot:`, key `commit:<root>:<hash>` since
   2026-11-18, through the panel's `onReviewCommit`): a single click shows
   it in the preview tab, a commit page already there taking the new commit
@@ -377,3 +400,4 @@ text is in place in its section.
 
 - Git panel (all three ports): **Header trap**: `StatusBranchItem.h` takes NSStrings, not `Git::StatusBranch`, because `EditorController+Private.h` imports it and every GUI suite imports that.
 - Git panel (all three ports): **Tool guard trap**: in a worktree-isolated agent session, git commands in compound or unusual forms are refused (even a filename containing "git"); use plain `cd x && git ...` lines or a script file.
+- Git panel (all three ports): **Trap**: a scroll to an iter just after the GTK review page's text is replaced uses line heights GTK has not measured, and the page went to its top (the top-row anchor did so too); `scrollRowTo` scrolls to a mark, then a tick callback (`onSettle`) puts the row right each frame until it holds three, and the reveal, the acted place and the top row all go through it.

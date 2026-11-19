@@ -3,6 +3,7 @@
 #ifdef MUTIBLE_ENABLE_PDF
 #include "PdfView.h"
 #endif
+#include "PixbufTexture.h"
 
 #include <algorithm>
 #include <cctype>
@@ -23,23 +24,6 @@ std::string lowerExt(const std::string& path) {
 // Waits this long after the last change event before reloading, so a file
 // being written in pieces is read once, when it is done.
 constexpr guint kReloadDelayMs = 150;
-
-// A GdkPixbuf frame as a texture, without the deprecated
-// gdk_texture_new_for_pixbuf. Pixbuf pixels are straight (not premultiplied)
-// RGB or RGBA, which GDK_MEMORY_R8G8B8(A8) describes exactly.
-GdkTexture* textureFromPixbuf(GdkPixbuf* pb) {
-    const int w = gdk_pixbuf_get_width(pb), h = gdk_pixbuf_get_height(pb);
-    const int stride = gdk_pixbuf_get_rowstride(pb);
-    const bool alpha = gdk_pixbuf_get_has_alpha(pb);
-    const int bpp = alpha ? 4 : 3;
-    // The last row of a pixbuf may be shorter than the stride.
-    const gsize len = (gsize)stride * (h - 1) + (gsize)w * bpp;
-    GBytes* bytes = g_bytes_new(gdk_pixbuf_read_pixels(pb), len);
-    GdkTexture* t = gdk_memory_texture_new(
-        w, h, alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8, bytes, stride);
-    g_bytes_unref(bytes);
-    return t;
-}
 
 std::string baseName(const std::string& path) {
     auto slash = path.find_last_of('/');

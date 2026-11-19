@@ -574,7 +574,7 @@ bool wholeWordAt(const std::u16string& t, size_t s, size_t len) {
 
 }  // namespace
 
-Caret wordAt(const std::u16string& text, size_t p) {
+Caret wordAt(const Text& text, size_t p) {
     const size_t n = text.size();
     if (p > n) p = n;
     if (!((p < n && isWordChar(text[p])) || (p > 0 && isWordChar(text[p - 1])))) return {p, p};

@@ -285,6 +285,53 @@ found through that list.
   The 16 to 48 ms keys in a window
   earlier suites had used were a Markdown page's text blocks (see "The
   editor's text view").
+- **A large file's text is held once** (2026-11-19, round 9's grading: a
+  259 MB log took 1.7 GB and 2.1 s to a window, VS Code and Zed under
+  0.9 GB; `PieceString.{h,mm}`, core `PieceTable`). The open held the
+  text four times (the read bytes, the tab's string, an
+  NSMutableAttributedString made to set the storage, the storage's own)
+  and copied all of it to UTF-16 for each of the two `LineIndex`es; a
+  headless run of those steps reached 1,563 MB for a 262 MB log. Now:
+  `MCReadDiskText` reads a file from 4 MB on into anonymous pages (mmap)
+  and an ASCII text becomes the NSString over them without a copy
+  (`initWithBytesNoCopy:`, the pages unmapped with the string; UTF-8 with
+  other characters becomes UTF-16, twice its bytes, the pages let go; not
+  UTF-8 goes to the ordinary read); `displaySourceEditable` in large-file
+  mode gives that string to `MCSourceStorage holdLargeText:`, whose store
+  becomes an `MCPieceAttributedString` over an `MCPieceString` (an
+  NSMutableString over the immutable original, the edits in the core's
+  `PieceTable`, attributes as runs: one for a plain file); the next
+  replacement of every character (another tab's text) puts back an
+  ordinary store. The gutter's and the folds' `LineIndex`es read the text
+  a block at a time (`reset(length, reader)`, one pass), and the folds
+  keep none while nothing needs lines (`needsLines`: no file name, server
+  ranges or folds, as in large-file mode). The same headless run: 279 MB,
+  1.07 times the file. The piece string's copy is the original while
+  unedited, else an `MCPieceSnapshot` sharing the original and the edits'
+  blocks, so `MCTab sourceText`, a tab put away and the find bar's text
+  cost no copy; `isEqualToString:` against the original (`noteEdited`'s
+  dirty check) reads only pieces that moved, and pieces typed and deleted
+  again join back into the original. An edit costs the number of pieces,
+  where the flat string moved everything after the edit. The find bar
+  searches its text a block of lines at a time (TextFind's `Reader`
+  overloads; no match spans a line, so the result is the whole text's), and
+  Cmd+F's seed reads only the word at the caret. Saves and backups encode
+  UTF-8 a block at a time (`MCUtf8Bytes`), with no NSData of all of it.
+  Return, Tab, Shift+Tab and the electric dedent leave a text over 16 M
+  units to AppKit (`kIndentTextLimit`): AutoIndent copies the whole text,
+  520 MB a key in that log. The large_file suite checks a 100 MB log grows
+  the footprint less than 1.5 times its size, shows its first screen
+  within the open's bound, saves an edit exactly, and finds its last line
+  off the main thread. Still copying whole: a clean large tab reloaded from
+  disk (`replaceSourceWithText:`'s UTF-16 diff), turning the features on
+  (an ordinary store, UTF-16), and the session's host (off by default).
+- **Trap: a freed large malloc block stays in the footprint** (macOS 27,
+  2026-11-19). Freeing a 256 MB malloc'd block left all 256 MB in
+  `phys_footprint`, `malloc_zone_pressure_relief` returned nothing, and a
+  block of another size did not reuse it; mmap'd pages munmapped go at
+  once. So every transient copy of a large text (a `std::string` read, a
+  UTF-16 copy for an index) is memory the process keeps: read such things
+  in blocks, or into pages of their own.
 - **Trap: anything that lays out all of a large text stays.** Two did on
   every open after a file with diagnostics or a preview: `needsDisplay =
   YES` on the text view, which NSTextView answers by laying out every glyph
@@ -563,6 +610,7 @@ text is in place in its section.
 - The editor's text view (Mac): Traps: NSScrollView lays a ruler out as a content inset of a clip view that still spans the width, so `PanelScrollView tile` subtracts the insets; never change `ruleThickness` inside a storage edit (tile asked for text that was gone and threw), so it changes on the next run-loop turn.
 - The editor's text view (Mac): **Trap: word wrap stays as set**, unlike VS Code: a TextKit view that does not wrap lays out all of its text in `sizeToFit` to learn its width (5.5 s for 25 MB, nine tenths of it there).
 - The editor's text view (Mac): Word wrap, wrapped lines keep their indentation: **trap**, a container that says otherwise loses non-contiguous layout (laying out near the end of 100,000 lines took 3 s, not 3 ms), and TextKit asks a simple one for every line's rect anyway.
+- The editor's text view (Mac): **Trap: a freed large malloc block stays in the footprint** (macOS 27, 2026-11-19).
 - The editor's text view (Mac): **Trap: anything that lays out all of a large text stays.** Two did on every open after a file with diagnostics or a preview: `needsDisplay = YES` on the text view, which NSTextView answers by laying out every glyph of its bounds (CodeTextView's `setNeedsDisplay:` marks only the visible and prepared rects that way, and since 2026-11-18 the bounds too with `avoidAdditionalLayout:YES`, which lays out nothing: tiles past them kept an older page's ink, see the Markdown notes; clearing ...
 - Folding (Mac): Trap: one region at a time was quadratic (6 s and 18 s for Fold All and Unfold All of 50,000); they go in as one sorted merge and one invalidation (`collapseAll`).
 - Several carets and line commands (Mac): **Trap (2026-11-06)**: the window server counts clicks by time alone (HIDClickSpace is (0,0)), so a second click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView.

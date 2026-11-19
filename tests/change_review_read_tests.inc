@@ -96,6 +96,65 @@ static void testChangeReviewRead() {
         CHECK(stageText(r, 0, blockResult(r.diffs[0], 0, Op::Unstage), run).empty());
         CHECK(run(root, {"show", ":g.txt"}, "").out == "x\n");
     }
+    // Pictures (`review-read:images`): binary files with a picture's
+    // extension whose versions the GUI's reader sizes are shown as them,
+    // their bytes kept; a version it cannot read keeps the binary note.
+    GROUP("review-read:images");
+    {
+        const std::string pics = root + "/pics";
+        CHECK(sh("mkdir pics && cd pics && git init -q . && git config user.email a@b && "
+                 "git config user.name n && printf 'PIC\\000\\004\\003one' >pic.png && "
+                 "printf 'PIC\\000\\002\\002bad' >bad.png && git add . && git commit -q -m one && "
+                 "printf 'PIC\\000\\010\\006two!' >pic.png && printf '\\000junk' >bad.png && "
+                 "printf 'PIC\\000\\002\\002' >new.png && git add new.png"));
+        int asked = 0;
+        ImageReading images;
+        images.rowHeight = 20;
+        images.size = [&](const std::string& b) {
+            asked++;
+            ImageSide s;
+            if (b.size() >= 6 && b.compare(0, 4, std::string("PIC\0", 4)) == 0) {
+                s.width = (unsigned char)b[4];
+                s.height = (unsigned char)b[5];
+            }
+            return s;
+        };
+        Read r = readUncommitted(pics, run, images);
+        auto find = [&](const Read& rd, const std::string& path) -> long {
+            for (size_t i = 0; i < rd.diffs.size(); i++)
+                if (rd.diffs[i].file.path == path) return (long)i;
+            return -1;
+        };
+        const long pic = find(r, "pic.png"), bad = find(r, "bad.png"), added = find(r, "new.png");
+        CHECK(pic >= 0 && bad >= 0 && added >= 0);
+        if (pic >= 0 && bad >= 0 && added >= 0) {
+            const File& f = r.diffs[(size_t)pic].file;
+            CHECK(f.binary && f.image && f.oldImage.shown && f.newImage.shown);
+            CHECK(f.oldImage.width == 4 && f.oldImage.height == 3 && f.oldImage.bytes == 9);
+            CHECK(f.newImage.width == 8 && f.newImage.height == 6 && f.newImage.bytes == 10);
+            CHECK(f.imageRows == imageRows(f, 20) && f.imageRows >= 2);
+            CHECK(r.extras[(size_t)pic].oldImage == std::string("PIC\0\x04\x03one", 9));
+            CHECK(r.extras[(size_t)pic].newImage == std::string("PIC\0\x08\x06two!", 10));
+            CHECK(imageLabel(f, false) == "Before: 4 \xC3\x97 3 pixels, 9 bytes");
+            // Its new version unread as a picture: the binary file's note.
+            const File& b = r.diffs[(size_t)bad].file;
+            CHECK(b.binary && !b.image && r.extras[(size_t)bad].oldImage.empty());
+            // A new file staged: its one picture, against HEAD's nothing.
+            const File& n = r.diffs[(size_t)added].file;
+            CHECK(n.section == Section::Staged && n.image && !n.oldImage.shown && n.newImage.shown);
+            CHECK(n.newImage.width == 2 && n.newImage.height == 2 && n.newImage.bytes == 6);
+            const Page page = layout(r.diffs, {});
+            size_t imageRowsLaid = 0;
+            for (const PageRow& row : page.rows)
+                if (row.kind == RowKind::Image && row.file == (size_t)pic) imageRowsLaid++;
+            CHECK(imageRowsLaid == f.imageRows);
+        }
+        // Without a reader nothing is asked and no file is a picture.
+        const int before = asked;
+        Read plain = readUncommitted(pics, run);
+        CHECK(asked == before);
+        for (const FileDiff& d : plain.diffs) CHECK(!d.file.image && plain.extras.size() == plain.diffs.size());
+    }
     // Not a repository.
     CHECK(readUncommitted("/nonexistent-mutible-review", run).error == "This folder is not in a git repository.");
     CHECK(std::system(("rm -rf " + shq(root) + " " + shq(tmpIn) + " " + shq(tmpOut) + " " + shq(tmpErr)).c_str()) == 0);

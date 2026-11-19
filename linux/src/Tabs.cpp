@@ -411,17 +411,28 @@ void Editor::showComparison(const CompareSpec& spec, std::function<void(Document
 }
 
 // A page in a tab of its own (EditorPage.h), reused by its key: a second
-// open shows the tab that has it and drops the new page.
-Document* Editor::showPage(std::shared_ptr<EditorPage> page) {
+// open shows the tab that has it and drops the new page. In preview (the
+// Mac's showPage:preview:), the page replaces the preview tab as a file
+// opened from the tree does, unless that tab has unsaved changes; a
+// replaced page's tab is deleted, and the page with it (letGo).
+Document* Editor::showPage(std::shared_ptr<EditorPage> page, bool preview) {
     for (Document* t : documentsOf(win_->tabs()))
         if (t->editorPage() && t->editorPage()->key() == page->key()) {
+            if (!preview && t->isPreviewTab()) keepPreviewTab(t);
             activate(t);
             return t;
         }
     Document* d = newDocument();
-    win_->add(d->id(), "");
+    const bool inPreview = preview && previewSettings().enabled;
+    const Model::DocId old =
+        win_->add(d->id(), "", inPreview ? Model::Preview::User : Model::Preview::None,
+                  [this](Model::DocId id) {
+                      Document* o = documentById(id);
+                      return o && o->dirty();
+                  });
     d->setEditorPage(page->title(), page);
     activate(d);
+    if (Document* o = documentById(old)) letGo(o);
     return d;
 }
 

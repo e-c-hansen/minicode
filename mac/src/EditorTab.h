@@ -70,6 +70,9 @@ MCDiskText *MCReadDiskText(NSString *path, unsigned long long maxBytes);
 // the text holds what UTF-8 cannot carry (a lone surrogate).
 BOOL MCEncodeFileText(NSString *text, MCTextEncoding encoding, BOOL bom, std::string *bytes,
                       std::string *why);
+// A text's UTF-8 a block at a time, straight into `out` (no NSData of all
+// of it on the way). NO for a lone surrogate.
+BOOL MCUtf8Bytes(NSString *text, std::string *out);
 #endif
 // The encoding a save writes `text` in: `encoding`, unless it is
 // Windows-1252 and the text holds a character Windows-1252 cannot store

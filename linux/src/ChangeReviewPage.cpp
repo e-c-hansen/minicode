@@ -2,12 +2,15 @@
 #include "ChangeReviewPage.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
 
 #include "GitPanel.h"
 #include "GitRun.h"
 #include "GitTrash.h"
 #include "MergeConflicts.h"
+#include "PixbufTexture.h"
 #include "QuickDiff.h"
 #include "SyntaxHighlighter.h"
 
@@ -56,6 +59,72 @@ struct Delivery {
     std::function<void(ChangeReviewPage*)> fn;
 };
 
+// ------------------------------------------------------------ pictures
+// A version's size in pixels from its header, as the Mac's ImageIO reads
+// it: GTK's image loaders are fed the bytes until they know the size, and
+// asked to decode no more than a pixel. 0 by 0 when they cannot read it
+// (a format whose loader is not installed: the file keeps its note).
+ChangeReview::ImageSide imageSizeOf(const std::string& bytes) {
+    struct Got {
+        int w = 0, h = 0;
+    } got;
+    GdkPixbufLoader* l = gdk_pixbuf_loader_new();
+    g_signal_connect(l, "size-prepared", G_CALLBACK(+[](GdkPixbufLoader* l, int w, int h, gpointer p) {
+        auto* g = static_cast<Got*>(p);
+        g->w = w;
+        g->h = h;
+        gdk_pixbuf_loader_set_size(l, 1, 1);
+    }), &got);
+    const size_t chunk = 4096;
+    for (size_t at = 0; at < bytes.size() && got.w <= 0; at += chunk)
+        if (!gdk_pixbuf_loader_write(l, reinterpret_cast<const guchar*>(bytes.data()) + at,
+                                     std::min(chunk, bytes.size() - at), nullptr))
+            break;
+    gdk_pixbuf_loader_close(l, nullptr);   // cut short on purpose: its complaint is not wanted
+    g_object_unref(l);
+    ChangeReview::ImageSide side;
+    side.width = std::max(0, got.w);
+    side.height = std::max(0, got.h);
+    return side;
+}
+
+// How large a version is drawn: at its pixel size, scaled down (never up)
+// to its column and to ChangeReview::kImageMaxHeight, as the Mac's
+// MCReviewImageBox lays it out.
+std::pair<int, int> drawnSize(const ChangeReview::ImageSide& s, double column) {
+    const double w = std::max(1, s.width), h = std::max(1, s.height);
+    const double scale = std::min(1.0, std::min(column / w, ChangeReview::kImageMaxHeight / h));
+    return {std::max(1, (int)std::floor(w * scale)), std::max(1, (int)std::floor(h * scale))};
+}
+
+using DrawnSize = std::pair<int, int>;   // (a comma inside G_CALLBACK splits it)
+
+// The picture decoded at the size it is drawn (a large photo never decodes
+// whole), as a texture; null when it does not decode.
+std::shared_ptr<GdkTexture> pictureOf(const std::string& bytes, std::pair<int, int> size) {
+    GdkPixbufLoader* l = gdk_pixbuf_loader_new();
+    g_signal_connect(l, "size-prepared", G_CALLBACK(+[](GdkPixbufLoader* l, int, int, gpointer p) {
+        auto* want = static_cast<DrawnSize*>(p);
+        gdk_pixbuf_loader_set_size(l, want->first, want->second);
+    }), &size);
+    const bool wrote = gdk_pixbuf_loader_write(l, reinterpret_cast<const guchar*>(bytes.data()),
+                                               bytes.size(), nullptr);
+    const bool closed = gdk_pixbuf_loader_close(l, nullptr);
+    GdkPixbuf* pb = wrote && closed ? gdk_pixbuf_loader_get_pixbuf(l) : nullptr;
+    std::shared_ptr<GdkTexture> tex;
+    if (pb) tex.reset(textureFromPixbuf(pb), [](GdkTexture* t) { g_object_unref(t); });
+    g_object_unref(l);
+    return tex;
+}
+
+// The column each version gets in a pane `width` wide.
+double columnFor(const ChangeReview::File& f, int width) {
+    const int n = (f.oldImage.shown ? 1 : 0) + (f.newImage.shown ? 1 : 0);
+    const double gap = 24, margins = 40;
+    const double w = width > 0 ? width : 900;
+    return std::max(120.0, (w - margins - gap * std::max(0, n - 1)) / std::max(1, n));
+}
+
 }  // namespace
 
 // One read: every file and its diff, and the page laid out from them.
@@ -63,6 +132,9 @@ struct ChangeReviewPage::Data {
     ChangeReview::Read read;
     ChangeReview::Page page;
     size_t fingerprint = 0;
+    unsigned serial = 0;   // which read this is, in the order started
+    // A picture file's versions as drawn (old, new), by file.
+    std::vector<std::array<std::shared_ptr<GdkTexture>, 2>> pictures;
     // A worktree's page: what it is compared with, and the main checkout.
     std::string baseRef, baseLabel, mainPath;
 };
@@ -113,6 +185,7 @@ std::string ChangeReviewPage::title() const {
 
 ChangeReviewPage::~ChangeReviewPage() {
     *alive_ = false;
+    if (settleTick_) gtk_widget_remove_tick_callback(view_, settleTick_);
     if (worktree_.empty() && panelAlive_ && *panelAlive_) {
         panel_->onReviewRefresh = nullptr;
         panel_->setReviewOpen(false);
@@ -219,6 +292,9 @@ void ChangeReviewPage::build() {
     for (const char* name : {"conflict-current-marker", "conflict-current", "conflict-base-marker",
                              "conflict-base", "conflict-incoming", "conflict-incoming-marker"})
         tag(name, nullptr, "");
+    // The picture rows after a file's first: the pictures stand in that one.
+    GtkTextTag* hidden = tag("hidden", nullptr, "");
+    g_object_set(hidden, "invisible", TRUE, nullptr);
     tag("wordremoved", "background", rgbaCss(0xF14C4C, 0.35));
     tag("wordadded", "background", rgbaCss(0x73C991, 0.35));
     GtkTextTag* bold = tag("bold", nullptr, "");
@@ -231,6 +307,16 @@ void ChangeReviewPage::build() {
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
     g_signal_connect(click, "released", G_CALLBACK(onPressed), this);
     gtk_widget_add_controller(view_, GTK_EVENT_CONTROLLER(click));
+
+    // A plain row's height, which the layout sizes a picture's rows by.
+    PangoLayout* line = gtk_widget_create_pango_layout(view_, "Xg");
+    int lw = 0, lh = 0;
+    pango_layout_get_pixel_size(line, &lw, &lh);
+    g_object_unref(line);
+    if (lh > 0) rowHeight_ = lh;
+    GtkTextIter start;
+    gtk_text_buffer_get_start_iter(buffer_, &start);
+    scrollMark_ = gtk_text_buffer_create_mark(buffer_, nullptr, &start, TRUE);
 }
 
 void ChangeReviewPage::applySettings() {
@@ -288,16 +374,33 @@ void ChangeReviewPage::reload() {
     const std::string root = root_s_;
     const ChangeReview::Opened opened = opened_;
     const std::string worktree = worktree_, mainRef = mainRef_;
-    panel_->runOnGitThread([this, root, opened, worktree, mainRef, alive = alive_] {
+    const unsigned serial = ++readsStarted_;
+    ChangeReview::ImageReading images;
+    images.size = imageSizeOf;
+    images.rowHeight = rowHeight_;
+    const int width = gtk_widget_get_width(view_);
+    panel_->runOnGitThread([this, root, opened, worktree, mainRef, serial, images, width,
+                            alive = alive_] {
         auto d = std::make_shared<Data>();
+        d->serial = serial;
         if (!worktree.empty()) {
-            ChangeReview::WorktreeRead w = ChangeReview::readWorktree(worktree, mainRef, runner);
+            ChangeReview::WorktreeRead w = ChangeReview::readWorktree(worktree, mainRef, runner, images);
             d->read = std::move(w.read);
             d->baseRef = w.baseRef;
             d->baseLabel = w.baseLabel;
             d->mainPath = w.mainPath;
         } else {
-            d->read = ChangeReview::readUncommitted(root, runner);
+            d->read = ChangeReview::readUncommitted(root, runner, images);
+        }
+        // The pictures decoded here, at the size they are drawn.
+        d->pictures.resize(d->read.diffs.size());
+        for (size_t i = 0; i < d->read.diffs.size() && i < d->read.extras.size(); i++) {
+            const ChangeReview::File& f = d->read.diffs[i].file;
+            if (!f.image) continue;
+            const double column = columnFor(f, width);
+            const ChangeReview::Extra& x = d->read.extras[i];
+            if (f.oldImage.shown) d->pictures[i][0] = pictureOf(x.oldImage, drawnSize(f.oldImage, column));
+            if (f.newImage.shown) d->pictures[i][1] = pictureOf(x.newImage, drawnSize(f.newImage, column));
         }
         d->page = ChangeReview::layout(d->read.diffs, opened);
         d->fingerprint = ChangeReview::fingerprint(d->read.diffs);
@@ -315,6 +418,11 @@ void ChangeReviewPage::reload() {
 }
 
 void ChangeReviewPage::show(std::shared_ptr<Data> d) {
+    // The first read showing an action's result keeps the acted-on place
+    // (the next block where the acted-on one was) rather than the top row,
+    // which may be another file's; reads started before it keep the top row.
+    const bool acted = actedPending_ && d->serial >= actedFrom_;
+    if (acted) actedPending_ = false;
     // The note about the last action stays while the changes are what the
     // first read after it showed, and goes when they are not.
     if (!message_.empty()) {
@@ -334,13 +442,18 @@ void ChangeReviewPage::show(std::shared_ptr<Data> d) {
         data_ = d;
         gtk_label_set_text(GTK_LABEL(messageLabel_), message_.c_str());
         updateSummary();
+        if (!revealKey_.empty() || revealTop_) applyReveal();
         return;
     }
     // Where the eye is, to put it back after the new layout.
     ChangeReview::Anchor anchor;
+    double topY = 0;   // how far above the pane's top the top row starts
     if (data_ && !data_->page.rows.empty()) {
         const long top = topRow();
-        if (top >= 0) anchor = ChangeReview::anchorAt(data_->page, data_->read.diffs, (size_t)top);
+        if (top >= 0) {
+            anchor = ChangeReview::anchorAt(data_->page, data_->read.diffs, (size_t)top);
+            topY = std::min(0.0, rowScreenY((size_t)top));
+        }
     }
     const double was = gtk_adjustment_get_value(
         gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll_)));
@@ -348,13 +461,135 @@ void ChangeReviewPage::show(std::shared_ptr<Data> d) {
     data_ = d;
     fill();
     updateSummary();
-    if (!first) {
-        if (anchor.valid)
-            scrollToRow(ChangeReview::rowFor(d->page, d->read.diffs, anchor));
-        else
+    long kept = -1;
+    if (!revealKey_.empty() || revealTop_) {
+        applyReveal();
+    } else if (acted && !d->page.rows.empty()) {
+        kept = (long)ChangeReview::rowAfterAction(d->page, d->read.diffs, acted_);
+        scrollRowTo((size_t)kept, actedY_);
+    } else if (!first) {
+        if (anchor.valid) {
+            // Through the settling scroll: one to an iter just after the
+            // fill met lines not measured yet and went to the top.
+            kept = (long)ChangeReview::rowFor(d->page, d->read.diffs, anchor);
+            scrollRowTo((size_t)kept, topY);
+        } else {
             gtk_adjustment_set_value(
                 gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll_)), was);
+        }
     }
+    // The caret (hidden) goes with the place kept, so nothing that shows it
+    // takes the page back to where the old text's offset falls in the new.
+    if (kept >= 0 && (size_t)kept < rowChar_.size()) {
+        GtkTextIter at;
+        gtk_text_buffer_get_iter_at_offset(buffer_, &at, rowChar_[(size_t)kept]);
+        gtk_text_buffer_place_cursor(buffer_, &at);
+    }
+}
+
+// ------------------------------------------------------------- places
+void ChangeReviewPage::revealFile(const std::string& rel, bool staged) {
+    if (rel.empty()) {
+        revealKey_.clear();
+        revealTop_ = true;
+    } else {
+        ChangeReview::File f;
+        f.path = rel;
+        f.section = staged ? Section::Staged : Section::Changes;
+        revealKey_ = f.key();
+        revealTop_ = false;
+    }
+    if (data_ && !loading_) applyReveal();
+    reload();
+}
+
+// The file's header at the pane's top (its section's title above it when
+// it is the section's first), or the top; then forgotten.
+void ChangeReviewPage::applyReveal() {
+    if (!data_) return;
+    const ChangeReview::Page& p = data_->page;
+    long row = -1;
+    if (!revealKey_.empty()) {
+        row = ChangeReview::fileRow(p, data_->read.diffs, revealKey_);
+        // The file is in the other list now (staged meanwhile).
+        if (row < 0 && revealKey_.size() > 2)
+            row = ChangeReview::fileRow(p, data_->read.diffs,
+                                        std::string(revealKey_.compare(0, 2, "S:") == 0 ? "W:" : "S:") +
+                                            revealKey_.substr(2));
+    }
+    if (revealTop_) row = 0;
+    if (row < 0 || p.rows.empty()) return;
+    if (row > 0 && p.rows[(size_t)row - 1].kind == RowKind::Section) row--;
+    scrollRowTo((size_t)row, 0);
+    revealKey_.clear();
+    revealTop_ = false;
+}
+
+// Through a mark, which GTK scrolls to once the lines above it are laid out
+// (a scroll to an iter just after the text changed used heights not yet
+// measured). yalign puts the row's top at that fraction of the room the
+// pane has above a row's height.
+void ChangeReviewPage::scrollRowTo(size_t row, double y) {
+    if (row >= rowChar_.size()) return;
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &it, rowChar_[row]);
+    gtk_text_buffer_move_mark(buffer_, scrollMark_, &it);
+    const double room = paneHeight() - rowHeight_;
+    const double align = room > 0 ? std::clamp(y / room, 0.0, 1.0) : 0.0;
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), scrollMark_, 0, TRUE, 0, align);
+    settleRow_ = (long)row;
+    settleY_ = y;
+    settleFrames_ = settleHeld_ = 0;
+    if (!settleTick_) settleTick_ = gtk_widget_add_tick_callback(view_, onSettle, this, nullptr);
+}
+
+// Once the view has its size, the row is put `settleY_` below the pane's
+// top on each frame it is not, until it has stayed there three frames (GTK
+// then keeps the lines on screen in place as it measures those above), or
+// for five seconds at most.
+gboolean ChangeReviewPage::onSettle(GtkWidget*, GdkFrameClock*, gpointer selfp) {
+    auto* self = static_cast<ChangeReviewPage*>(selfp);
+    const long row = self->settleRow_;
+    if (row < 0 || (size_t)row >= self->rowChar_.size() || ++self->settleFrames_ > 300) {
+        self->settleRow_ = -1;
+        self->settleTick_ = 0;
+        return G_SOURCE_REMOVE;
+    }
+    if (gtk_widget_get_height(self->view_) <= 0 || self->paneHeight() <= 0) return G_SOURCE_CONTINUE;
+    const double off = self->rowScreenY((size_t)row) - self->settleY_;
+    if (std::abs(off) <= 0.5) {
+        if (++self->settleHeld_ >= 3) {
+            self->settleRow_ = -1;
+            self->settleTick_ = 0;
+            return G_SOURCE_REMOVE;
+        }
+        return G_SOURCE_CONTINUE;
+    }
+    self->settleHeld_ = 0;
+    GtkAdjustment* adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scroll_));
+    gtk_adjustment_set_value(adj, gtk_adjustment_get_value(adj) + off);
+    return G_SOURCE_CONTINUE;
+}
+
+double ChangeReviewPage::paneHeight() const {
+    return gtk_adjustment_get_page_size(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll_)));
+}
+
+double ChangeReviewPage::rowScreenY(size_t row) const {
+    if (row >= rowChar_.size()) return -1;
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &it, rowChar_[row]);
+    GdkRectangle r;
+    gtk_text_view_get_iter_location(GTK_TEXT_VIEW(view_), &it, &r);
+    return r.y - gtk_adjustment_get_value(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroll_)));
+}
+
+void ChangeReviewPage::rememberActedRow(size_t row, Op op) {
+    if (!data_ || row >= data_->page.rows.size()) return;
+    acted_ = ChangeReview::actedPlace(data_->page, data_->read.diffs, row, op);
+    actedY_ = rowScreenY(row);
+    actionPosted();
+    actedPending_ = acted_.valid;
 }
 
 long ChangeReviewPage::topRow() const {
@@ -368,6 +603,7 @@ long ChangeReviewPage::topRow() const {
 }
 
 void ChangeReviewPage::scrollToRow(size_t row) {
+    settleRow_ = -1;   // this scroll wins over one settling
     if (row >= rowChar_.size()) return;
     GtkTextIter it;
     gtk_text_buffer_get_iter_at_offset(buffer_, &it, rowChar_[row]);
@@ -385,6 +621,7 @@ void ChangeReviewPage::fill() {
     const ChangeReview::Page& p = data_->page;
     buttons_.clear();
     tints_.clear();
+    pictures_.clear();   // their widgets go with the text
     GtkTextIter s, e;
     gtk_text_buffer_get_bounds(buffer_, &s, &e);
     // The caret to the start first: a button leaving as its anchor is
@@ -477,13 +714,36 @@ void ChangeReviewPage::fill() {
     for (const SideBySide::Span& sp : p.words) span(sp, sp.style == 0 ? "wordremoved" : "wordadded");
     applySettings();
 
+    // A picture file's rows: its first holds the pictures, the rest hidden.
+    std::vector<bool> holdsPictures(p.rows.size(), false);
+    for (size_t i = 0; i < p.rows.size(); i++) {
+        if (p.rows[i].kind != RowKind::Image) continue;
+        if (i == 0 || p.rows[i - 1].kind != RowKind::Image) {
+            holdsPictures[i] = true;
+            continue;
+        }
+        const int end = i + 1 < p.rows.size() ? base[i + 1] : ch[t.size()];
+        GtkTextIter a = iterAt(base[i]), b = iterAt(end);
+        gtk_text_buffer_apply_tag_by_name(buffer_, "hidden", &a, &b);
+    }
+
     // The buttons at the ends of their rows, last row first so the earlier
     // offsets hold; then each row's start counts the anchors before it.
     std::vector<std::vector<Act>> acts(p.rows.size());
     for (size_t i = 0; i < p.rows.size(); i++) acts[i] = actsFor(i);
     rowChar_ = base;
+    std::vector<int> anchors(p.rows.size(), 0);
     for (size_t i = p.rows.size(); i-- > 0;) {
+        if (holdsPictures[i]) {
+            if (GtkWidget* box = pictureBox(p.rows[i].file)) {
+                GtkTextIter at = iterAt(base[i]);
+                GtkTextChildAnchor* anchor = gtk_text_buffer_create_child_anchor(buffer_, &at);
+                gtk_text_view_add_child_at_anchor(GTK_TEXT_VIEW(view_), box, anchor);
+                anchors[i]++;
+            }
+        }
         if (acts[i].empty()) continue;
+        anchors[i]++;
         const int endOfText = (i + 1 < p.rows.size() ? base[i + 1] - 1 : ch[t.size()]);
         GtkTextIter at = iterAt(endOfText);
         GtkTextChildAnchor* anchor = gtk_text_buffer_create_child_anchor(buffer_, &at);
@@ -528,8 +788,54 @@ void ChangeReviewPage::fill() {
     int anchorsBefore = 0;
     for (size_t i = 0; i < p.rows.size(); i++) {
         rowChar_[i] = base[i] + anchorsBefore;
-        if (!acts[i].empty()) anchorsBefore++;
+        anchorsBefore += anchors[i];
     }
+    // Made newest first; the checks read them in page order.
+    std::reverse(pictures_.begin(), pictures_.end());
+}
+
+// A picture file's versions side by side, each its label over it (the
+// Mac's MCReviewImageBox), or null when none decoded.
+GtkWidget* ChangeReviewPage::pictureBox(size_t fi) {
+    if (!data_ || fi >= data_->read.diffs.size() || fi >= data_->pictures.size()) return nullptr;
+    const ChangeReview::File& f = data_->read.diffs[fi].file;
+    GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
+    gtk_widget_set_margin_top(row, 2);
+    gtk_widget_set_margin_bottom(row, (int)(rowHeight_ / 2));
+    std::vector<Picture> made;
+    for (int side = 0; side < 2; side++) {
+        const ChangeReview::ImageSide& is = side ? f.newImage : f.oldImage;
+        const std::shared_ptr<GdkTexture>& tex = data_->pictures[fi][side];
+        if (!is.shown || !tex) continue;
+        const std::string label = ChangeReview::imageLabel(f, side == 1);
+        GtkWidget* col = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+        GtkWidget* l = gtk_label_new(label.c_str());
+        gtk_label_set_xalign(GTK_LABEL(l), 0);
+        gtk_widget_add_css_class(l, "dim-label");
+        gtk_widget_add_css_class(l, "caption");
+        const int w = gdk_texture_get_width(tex.get()), h = gdk_texture_get_height(tex.get());
+        GtkWidget* pic = gtk_picture_new_for_paintable(GDK_PAINTABLE(tex.get()));
+        gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
+        gtk_widget_set_size_request(pic, w, h);
+        gtk_widget_set_halign(pic, GTK_ALIGN_START);
+        gtk_widget_set_tooltip_text(pic, label.c_str());
+        GtkWidget* frame = gtk_frame_new(nullptr);
+        gtk_frame_set_child(GTK_FRAME(frame), pic);
+        gtk_widget_set_halign(frame, GTK_ALIGN_START);
+        gtk_widget_set_valign(frame, GTK_ALIGN_START);
+        gtk_box_append(GTK_BOX(col), l);
+        gtk_box_append(GTK_BOX(col), frame);
+        gtk_box_append(GTK_BOX(row), col);
+        made.push_back({label, pic, w, h});
+    }
+    if (made.empty()) {
+        g_object_ref_sink(row);
+        g_object_unref(row);
+        return nullptr;
+    }
+    // Newest first, as fill() makes them from the last row up.
+    for (auto it = made.rbegin(); it != made.rend(); ++it) pictures_.push_back(*it);
+    return row;
 }
 
 void ChangeReviewPage::updateSummary() {
@@ -658,6 +964,16 @@ void ChangeReviewPage::act(Act a, size_t row) {
     const PageRow& pr = data_->page.rows[row];
     if (pr.file >= data_->read.diffs.size()) return;
     const size_t fi = pr.file;
+    switch (a) {
+    case Act::Stage:
+    case Act::StageFile:
+    case Act::MarkResolved: rememberActedRow(row, Op::Stage); break;
+    case Act::Unstage:
+    case Act::UnstageFile: rememberActedRow(row, Op::Unstage); break;
+    case Act::Discard:
+    case Act::DiscardFile: rememberActedRow(row, Op::Discard); break;
+    default: break;
+    }
     switch (a) {
     case Act::Stage: runOp(Op::Stage, fi, pr.block); break;
     case Act::Unstage: runOp(Op::Unstage, fi, pr.block); break;
@@ -790,10 +1106,14 @@ void ChangeReviewPage::runApply(std::shared_ptr<Data> d, const std::string& main
 
 void ChangeReviewPage::runOp(Op op, size_t fi, long block) {
     auto d = data_;
-    if (!d || fi >= d->read.diffs.size() || block < 0) return;
+    if (!d || fi >= d->read.diffs.size() || block < 0) {
+        actedPending_ = false;
+        return;
+    }
     const FileDiff& fd = d->read.diffs[fi];
     const GitUi::ActionPlan plan = ChangeReview::plan(fd, op, false);
     if (!plan.refusal.empty()) {
+        actedPending_ = false;   // refused: nothing moves
         finish(plan.refusal, false);
         return;
     }
@@ -811,6 +1131,7 @@ void ChangeReviewPage::runOp(Op op, size_t fi, long block) {
     // view shows, so nothing is written over it.
     const std::string path = d->read.top + "/" + fd.file.path;
     if (hasUnsavedText && hasUnsavedText(path)) {
+        actedPending_ = false;
         finish(nameOf(path) + " has unsaved changes in a tab: save or revert them first, so the "
                               "discard does not cross them.",
                false);
@@ -824,6 +1145,7 @@ void ChangeReviewPage::runOp(Op op, size_t fi, long block) {
 void ChangeReviewPage::writeIndex(std::u16string text, size_t fi, std::shared_ptr<Data> d,
                                   const GitUi::ActionPlan& plan) {
     const std::string done = plan.doneText;
+    actionPosted();
     panel_->runOnGitThread([this, text, fi, d, done, alive = alive_] {
         const std::string failure = ChangeReview::stageText(d->read, fi, text, runner);
         if (!*alive) return;
@@ -839,6 +1161,7 @@ void ChangeReviewPage::writeIndex(std::u16string text, size_t fi, std::shared_pt
 void ChangeReviewPage::writeDiscard(std::u16string text, size_t fi, std::shared_ptr<Data> d,
                                     const GitUi::ActionPlan& plan) {
     const std::string done = plan.doneText;
+    actionPosted();
     panel_->runOnGitThread([this, text, fi, d, done, alive = alive_] {
         const std::string rel = d->read.diffs[fi].file.path;
         const std::string path = d->read.top + "/" + rel;
@@ -871,6 +1194,7 @@ void ChangeReviewPage::stageFile(size_t fi, const std::string& done) {
     const ChangeReview::Extra x = d->read.extras[fi];
     const std::vector<std::string> args = GitUi::stageArgs(x.row, d->read.initial);
     const std::string top = d->read.top, name = nameOf(x.row.path);
+    actionPosted();
     panel_->runOnGitThread([this, args, top, name, done, staged = x.row.staged, alive = alive_] {
         GitResult r = runGit(top, args);
         if (!*alive) return;
@@ -942,6 +1266,7 @@ void ChangeReviewPage::sideBySide(size_t fi) {
 void ChangeReviewPage::markResolved(size_t fi) {
     if (!data_ || fi >= data_->read.diffs.size() ||
         !ChangeReview::canMarkResolved(data_->read.diffs[fi])) {
+        actedPending_ = false;
         gtk_widget_error_bell(root_);
         return;
     }
@@ -1057,6 +1382,24 @@ std::string ChangeReviewPage::rowText(size_t row) const {
 
 std::string ChangeReviewPage::rowTint(size_t row) const {
     return row < tints_.size() ? tints_[row] : std::string();
+}
+
+std::vector<std::string> ChangeReviewPage::imageLabels() const {
+    std::vector<std::string> out;
+    for (const Picture& p : pictures_) out.push_back(p.label);
+    return out;
+}
+
+std::vector<GtkWidget*> ChangeReviewPage::imageWidgets() const {
+    std::vector<GtkWidget*> out;
+    for (const Picture& p : pictures_) out.push_back(p.widget);
+    return out;
+}
+
+std::vector<std::pair<int, int>> ChangeReviewPage::imageSizes() const {
+    std::vector<std::pair<int, int>> out;
+    for (const Picture& p : pictures_) out.push_back({p.width, p.height});
+    return out;
 }
 
 int ChangeReviewPage::rowBlock(size_t row) const {

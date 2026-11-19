@@ -7523,3 +7523,126 @@ whose stat parse now carries the session id, so it follows the core.
   Ctrl+W, mac-style, closed the window; the next wait read a null dock and
   the run crashed. The step now presses Ctrl+W only while the terminal
   has the keyboard.
+
+### 118. Source control: a click opens, the review keeps its place, pictures show (the Mac's #217; November 2026)
+
+The Mac's #217 brought to GTK with the same core calls
+(`EditorTabs::treeClick`, `ChangeReview::actedPlace`, `rowAfterAction`,
+`showAsImages`, `imageLabel`; none of their logic copied). The one core
+change: `ChangeReviewRead.h` takes an `ImageReading` (the GUI's
+header-only size reader and the row height), and `seeImages` does in
+`readUncommitted` and `readWorktree` what the Mac's `SeeImages` does in
+its own reading, the bytes kept in `Extra::oldImage`/`newImage`
+(`review-read:images`, with a fake reader).
+
+- **What a user meets.** A single click on a changed file in Source
+  Control opens the review of every change at that file in the preview
+  tab (its name in italics, replaced by the next file or page opened in
+  preview), and the keyboard stays in the list; a click on another file
+  shows that file in the same tab. A double-click on the same row, Return,
+  or Open Changes in the row's menu keeps the tab and gives the page the
+  keyboard. A Ctrl or Shift click chooses rows and opens nothing, and the
+  arrows only move the selection, as before. The row menu has Open as git
+  Diff (the Mac's), which shows git's own diff with its hunk links, which
+  is what a click used to show. Review Changes opens the page at its top.
+  After Stage, Unstage or Discard on a block (or Stage File, Unstage File,
+  Discard File, Mark Resolved on a header), the next block of that file
+  takes the place on screen of the one acted on, or the next file when
+  that was the file's last, even with a staged list appearing above. A
+  binary picture (png, jpg, gif, webp, tiff, bmp, heic, ico, icns, as far
+  as GTK's image loaders read them; SVG stays text) shows its versions:
+  a new or a deleted one alone, a changed one Before and After side by
+  side, each labelled with its size in pixels and bytes, at its pixel
+  size, never taller than 320 pixels nor wider than its half of the pane
+  (as the pane was when read). Worktree pages (Compare with Main) show
+  them too.
+- **Code.** `GitPanel::clickedRow(row, graph, count, sameRow, mods)` (the
+  Mac's `clickedRow:graph:clickCount:sameRow:modifiers:`) takes every click
+  released on the row it was pressed on; the count comes from a
+  `ClickCount` per list (the tree's, by event times), `sameRow` from the
+  last released row. `onReview` is now `(path, staged, preview)`;
+  `reviewRow(row, preview)` calls it (Return, Open Changes: kept) and
+  `openRawDiff` is Open as git Diff. main.cpp's `showChangeReview(app,
+  rel, staged, preview)` shows the page with `Editor::showPage(page,
+  preview)`, which puts a new page in the preview tab through
+  `Model::Window::add(..., Preview::User)` and `letGo`s the tab it
+  replaced (its page with it, as the Mac's `letGoOfReplacedTab:` closes
+  it), and keeps a preview tab a kept open finds; then
+  `focusActiveDocument` for a kept open, and `ChangeReviewPage::
+  revealFile`. The page: reads carry a serial (`readsStarted_`); a press
+  records `actedPlace` and the row's height on screen (`rememberActedRow`),
+  `actionPosted()` marks where the work went to the git thread, and the
+  first read started after that puts `rowAfterAction`'s row there; a
+  refusal drops it. Scrolls go through a text mark (`scrollRowTo`): GTK
+  scrolls to a mark once the lines around it are laid out, where a scroll
+  to an iter just after the text was replaced used heights not measured
+  yet. The pictures are sized on the git thread by a `GdkPixbufLoader` fed
+  4 KB at a time until `size-prepared` (no pixel decoded), decoded at the
+  size drawn by another loader (`set_size`), made textures there
+  (`PixbufTexture.h`, MediaView's helper moved out), and put in a child
+  anchor on the file's first `RowKind::Image` row, a box of a label and
+  a framed `GtkPicture` per version; the other Image rows are tagged
+  invisible.
+- **Other reads keep the top row through the same settling scroll.** The
+  page's old `scrollToRow` right after `fill()` scrolled to an iter whose
+  lines GTK had not measured yet, and the page went to its top: with the
+  acted place turned off, the check below saw the first row on show 0 and
+  z2.txt's next block 5170 pixels down. The top row (`anchorAt`/`rowFor`)
+  now goes through `scrollRowTo` too, with its offset above the pane's top.
+  `scrollRowTo` scrolls to a mark at once and a tick callback (`onSettle`)
+  puts the row right on each frame it is not, until it has held three
+  frames (five seconds at most); GTK then keeps the lines on screen in
+  place as it measures those above. `scrollToRow` (the checks' scroll)
+  ends a settling scroll.
+- **Checks.** A new suite, `git_panel` (GitPanelSuite.cpp), named for the
+  Mac's: a Ctrl click and Down open nothing (negative checks, 0.8 s each);
+  a click on pic.png opens the review in the preview tab (one review tab,
+  `previewTab()` that tab) with pic.png's header on show and a.txt's (150
+  changed lines above it) not, the keyboard still in the list on that row;
+  four pictures, labelled "2 × 2 pixels, 106 bytes" (gone.png, deleted and
+  staged), "Before: 4 × 3 pixels, 107 bytes", "After: 8 × 6 pixels, 108
+  bytes" and "5 × 5 pixels, 107 bytes" (new.png, untracked), drawn at those
+  sizes, After to the right of Before on the same line, no "A binary file"
+  note (PNGs written by `gdk_texture_save_to_png`, sizes read from the
+  files); a click on b.txt shows it in the same preview tab; a
+  double-click on a.txt keeps the tab (no preview tab left) with a.txt on
+  show and the page's text view holding the keyboard; the row menu reads
+  Open File, Open Changes, Open as git Diff, and Open as git Diff shows
+  git's diff with its two hunk links, the review still open. `git_review`
+  adds the Mac's place check: m1.txt (150 lines changed), z2.txt (lines 2
+  and 30) and zz3.txt (100 lines) after the earlier steps are put back;
+  once laid out (the page taller than twice the pane), z2.txt's first
+  block is put in the middle of the pane (`scrollRowTo`), Stage on it is
+  clicked, and z2.txt's next block ("z 30") is within 4 pixels of where
+  the pressed one was, the first row on show past m1.txt's header.
+  `git_hunks` and `git_actions` open the raw diff with `RawDiff`
+  (GitChecks.h, `GitPanel::openRawDiff`, as the Mac's suites call
+  `showDiffAtRow:`) where they clicked a row for it, and `git_actions`'s
+  row menu has Open as git Diff. `review-read:images` in the core: a
+  changed, a new staged and an unreadable picture with a fake size reader;
+  none without one.
+- **Numbers** (2026-11-19, this ThinkPad, cores 0 to 3, another agent on
+  4 to 7): `git_panel` 37 checks in 6.4 s; `git_review` 41 (the place:
+  pressed at 301 or 302 pixels down a 604 pixel pane, the next block at
+  the same pixel, every run); with git_sync, git_actions, git_hunks,
+  git_verbs, git_conflicts, git_gutter, tree_git_colors, preview_tabs,
+  tabs, tab_viewers and compare, 803 checks, none failed, in 90 s;
+  git_panel, git_review, git_hunks and git_actions again with MC_GUI_ROOT
+  inside `linux/build`, 198, none failed. Seen failing without the
+  feature: the acted place turned off, `git_review` failed 3 (the next
+  block at 5170, the page at its top).
+- **Needs the owner's eyes.** The preview tab's italics and replacement
+  with real clicks, the pictures' look (tiny ones at pixel size, large and
+  transparent ones, the frame), and the place after Stage or Discard on a
+  real repository.
+- **Left out.** The commit page (`initForCommitsWithRoot:`, per-commit
+  keys, commits in the preview tab): GTK has none yet, so a click on a
+  commit still shows `git show` in the one diff tab, which the next commit
+  replaces; a Ctrl or Shift click on the graph now opens nothing, as on
+  the Mac. The right click on selected lines (where #217 also records the
+  place) and F7 are not on GTK's page. An animated GIF shows its
+  first frame (the Mac animates). The pictures are sized to the pane as
+  it was at the read, not again on a resize (the Mac lays them out again;
+  GTK scrolls sideways). heic, webp and ico need their gdk-pixbuf loaders
+  installed; without one the file keeps "A binary file: its bytes are not
+  shown."

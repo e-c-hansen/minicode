@@ -15,6 +15,11 @@
 // work tree's new text through the atomic writer. Each returns "" or why
 // nothing was done. Called off the main thread; the runner blocks.
 //
+// A binary file with a picture's extension is shown as its pictures
+// (ChangeReview::showAsImages) when the caller gives `ImageReading`: the
+// GUI reads each version's size from its header (the Mac's ImageIO, GTK's
+// image loaders), and the bytes are kept in Extra for it to draw.
+//
 // Tested in tests/change_review_read_tests.inc (`review-read:*`) against a
 // real git in a scratch repository.
 #pragma once
@@ -59,7 +64,24 @@ struct Extra {
     bool workBom = false;
     bool workRead = false;         // the work tree's file was read
     std::string workBytes;
+    // A file shown as pictures (File::image): the versions' bytes.
+    std::string oldImage, newImage;
 };
+
+// How the pictures of binary image files are read: `size` gives a
+// version's size in pixels from its bytes (its header only, never every
+// pixel: 0 by 0 when they are not a picture the GUI reads), and the rows
+// they take follow from the page's row height. Without `size`, a binary
+// file keeps the note that its bytes are not shown.
+struct ImageReading {
+    std::function<ImageSide(const std::string& bytes)> size;
+    double rowHeight = 16;
+};
+// Makes `f` a file shown as pictures when it is binary, its path is a
+// picture's and `images` reads every version it has (showAsImages), with
+// the bytes kept in `x`. True when it is now shown so.
+bool seeImages(File& f, Extra& x, const std::string& oldBytes, const std::string& newBytes,
+               const ImageReading& images);
 
 struct Read {
     std::string top;               // the repository's top level
@@ -70,7 +92,8 @@ struct Read {
 };
 
 // The staged files, then the changed ones, of the repository at `root`.
-Read readUncommitted(const std::string& root, const GitRunner& run);
+Read readUncommitted(const std::string& root, const GitRunner& run,
+                     const ImageReading& images = ImageReading());
 
 // The syntax name for a path (its extension, or a Makefile's own name).
 std::string extensionOf(const std::string& path);
@@ -104,7 +127,7 @@ struct WorktreeRead {
 // `path` is any folder of the worktree; `mainRef` the main branch (or its
 // commit when detached), which the caller knows from `worktree list`.
 WorktreeRead readWorktree(const std::string& path, const std::string& mainRef,
-                          const GitRunner& run);
+                          const GitRunner& run, const ImageReading& images = ImageReading());
 
 // The files Apply to Main would bring: every changed path (a rename's
 // source too) and the untracked ones.
