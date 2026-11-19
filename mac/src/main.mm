@@ -95,7 +95,9 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
             return nil;
         }
         EditorController *owner = [self controllerForWindow:e.window];
-        if (!owner) return e;
+        // Find in Folder and TODOs: only the Global keys (Ctrl+`), which no
+        // menu matches; the window and the menus have the rest.
+        if (!owner) return [self ownerOfWindow:e.window] && MCKeymapHandleGlobalKeyDown(e) ? nil : e;
         // The shortcut hints' search box takes typing while they show,
         // before any command or view sees it (HintsSearchBox.h).
         if ([owner hintsPanelTakesKeyDown:e]) return nil;
@@ -567,6 +569,32 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
     return [self controllerForWindow:NSApp.mainWindow] ?: self.controllers.lastObject;
 }
 
+// The controller owning a window: its own, or Find in Folder's or TODOs'.
+- (EditorController *)ownerOfWindow:(NSWindow *)w {
+    if (!w) return nil;
+    for (EditorController *c in self.controllers)
+        if ([c ownsWindow:w]) return c;
+    return nil;
+}
+
+// For a command that shows a pane of the editor window or puts the
+// keyboard in one (Toggle Terminal, Focus Terminal, Toggle Browser, the
+// sidebar's panels, the palette): run from Find in Folder or TODOs, which
+// float over the editor window and stay key, the editor window takes the
+// keyboard first, so what is typed next goes to the pane asked for, never
+// on into Search's fields (a walker's `pytest` and Return went into the
+// replace field). *fromOther says the keyboard was in such a window.
+- (EditorController *)currentForPane:(BOOL *)fromOther {
+    EditorController *c = [self current];
+    NSWindow *key = NSApp.keyWindow;
+    const BOOL other = c && key && key != c.window && !key.sheetParent && !key.parentWindow &&
+                       [c ownsWindow:key];
+    if (other) [c.window makeKeyAndOrderFront:nil];
+    if (fromOther) *fromOther = other;
+    return c;
+}
+- (EditorController *)currentForPane { return [self currentForPane:nullptr]; }
+
 // Keys that edit the file on show (Format Document, Sort Lines, Run File,
 // Toggle Comment, completion...) act only from the editor window. In Find in
 // Folder or TODOs their items are disabled, so the key reaches the field
@@ -823,11 +851,19 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)togglePlayback:(id)sender  { [[self current] togglePlayback:sender]; }
 - (void)nextTourStop:(id)sender    { [[self current] nextTourStop:sender]; }
 - (void)previousTourStop:(id)sender { [[self current] previousTourStop:sender]; }
-- (void)toggleHints:(id)sender     { [[self current] toggleHints:sender]; }
-- (void)toggleTerminal:(id)sender  { [[self current] toggleTerminal:sender]; }
-- (void)newTerminal:(id)sender     { [[self current] newTerminal:sender]; }
-- (void)splitTerminal:(id)sender   { [[self current] splitTerminal:sender]; }
-- (void)splitTerminalDown:(id)sender { [[self current] splitTerminalDown:sender]; }
+- (void)toggleHints:(id)sender     { [[self currentForPane] toggleHints:sender]; }
+// From Find in Folder or TODOs a toggle shows its pane and gives it the
+// keyboard, never hides it: VS Code's toggles hide only the view that has
+// the keyboard.
+- (void)toggleTerminal:(id)sender {
+    BOOL other = NO;
+    EditorController *c = [self currentForPane:&other];
+    if (other) [c focusTerminal:sender];
+    else [c toggleTerminal:sender];
+}
+- (void)newTerminal:(id)sender     { [[self currentForPane] newTerminal:sender]; }
+- (void)splitTerminal:(id)sender   { [[self currentForPane] splitTerminal:sender]; }
+- (void)splitTerminalDown:(id)sender { [[self currentForPane] splitTerminalDown:sender]; }
 - (void)renameTerminal:(id)sender  { [[self current] renameTerminal:sender]; }
 - (void)moveTerminalLeft:(id)sender { [[self current] moveTerminalLeft:sender]; }
 - (void)moveTerminalRight:(id)sender { [[self current] moveTerminalRight:sender]; }
@@ -838,10 +874,15 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)runCurrentFile:(id)sender  { [[self current] runCurrentFile:sender]; }
 - (void)runTestAtCursor:(id)sender { [[self current] runTestAtCursor:sender]; }
 - (void)toggleLineHistory:(id)sender { [[self current] toggleLineHistory:sender]; }
-- (void)toggleBrowser:(id)sender   { [[self current] toggleBrowser:sender]; }
-- (void)openBrowserTab:(id)sender  { [[self current] openBrowserTab:sender]; }
-- (void)toggleSidebarVisibility:(id)sender   { [[self current] toggleSidebarVisibility:sender]; }
-- (void)toggleSourceControl:(id)sender { [[self current] toggleSourceControl:sender]; }
+- (void)toggleBrowser:(id)sender {
+    BOOL other = NO;
+    EditorController *c = [self currentForPane:&other];
+    if (other) [c focusBrowser:sender];
+    else [c toggleBrowser:sender];
+}
+- (void)openBrowserTab:(id)sender  { [[self currentForPane] openBrowserTab:sender]; }
+- (void)toggleSidebarVisibility:(id)sender   { [[self currentForPane] toggleSidebarVisibility:sender]; }
+- (void)toggleSourceControl:(id)sender { [[self currentForPane] toggleSourceControl:sender]; }
 - (void)gitReviewChanges:(id)sender { [[self current] gitReviewChanges:sender]; }
 - (void)gitFetch:(id)sender { [[self current] gitFetch:sender]; }
 - (void)gitPull:(id)sender  { [[self current] gitPull:sender]; }
@@ -860,18 +901,18 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)stageChange:(id)sender    { [[self current] stageChange:sender]; }
 - (void)nextChange:(id)sender     { [[self current] nextChange:sender]; }
 - (void)previousChange:(id)sender { [[self current] previousChange:sender]; }
-- (void)toggleAgents:(id)sender    { [[self current] toggleAgents:sender]; }
-- (void)toggleProcesses:(id)sender { [[self current] toggleProcesses:sender]; }
+- (void)toggleAgents:(id)sender    { [[self currentForPane] toggleAgents:sender]; }
+- (void)toggleProcesses:(id)sender { [[self currentForPane] toggleProcesses:sender]; }
 - (void)showSessionInBrowser:(id)sender { [[self current] showSessionInBrowser:sender]; }
 - (void)copySessionBrowserLink:(id)sender { [[self current] copySessionBrowserLink:sender]; }
 - (void)showRememberedBrowsers:(id)sender { MCSessionBrowsersShowRemembered(); }
-- (void)toggleEditor:(id)sender    { [[self current] toggleEditor:sender]; }
+- (void)toggleEditor:(id)sender    { [[self currentForPane] toggleEditor:sender]; }
 - (void)toggleHiddenFiles:(id)sender { [[self current] toggleHiddenFiles:sender]; }
-- (void)requestChange:(id)sender   { [[self current] requestChange:sender]; }
+- (void)requestChange:(id)sender   { [[self currentForPane] requestChange:sender]; }
 // The palette (PalettePanel.h): commands (Shift+Cmd+P), the folder's files
 // (Cmd+P) and Go to Line (Ctrl+G) are one view, chosen by its first character.
 - (void)showPaletteWithText:(NSString *)text {
-    EditorController *c = [self current];
+    EditorController *c = [self currentForPane];
     if (!c) return;
     MCPaletteContext *ctx = [MCPaletteContext new];
     ctx.root = c.rootPath;
@@ -903,17 +944,17 @@ static BOOL MCWindowTabAction(SEL a) {
 }
 - (void)openSearch:(id)sender      { [[self current] openSearch:sender]; }
 - (void)openReplaceInFolder:(id)sender { [[self current] openReplaceInFolder:sender]; }
-- (void)focusTree:(id)sender       { [[self current] focusTree:sender]; }
-- (void)focusEditor:(id)sender     { [[self current] focusEditor:sender]; }
-- (void)focusFirstEditorGroup:(id)sender  { [[self current] focusFirstEditorGroup:sender]; }
-- (void)focusSecondEditorGroup:(id)sender { [[self current] focusSecondEditorGroup:sender]; }
+- (void)focusTree:(id)sender       { [[self currentForPane] focusTree:sender]; }
+- (void)focusEditor:(id)sender     { [[self currentForPane] focusEditor:sender]; }
+- (void)focusFirstEditorGroup:(id)sender  { [[self currentForPane] focusFirstEditorGroup:sender]; }
+- (void)focusSecondEditorGroup:(id)sender { [[self currentForPane] focusSecondEditorGroup:sender]; }
 - (void)splitEditor:(id)sender     { [[self current] splitEditor:sender]; }
 - (void)moveEditorToNextGroup:(id)sender { [[self current] moveEditorToNextGroup:sender]; }
 - (void)moveEditorToPreviousGroup:(id)sender {
     [[self current] moveEditorToPreviousGroup:sender];
 }
-- (void)focusTerminal:(id)sender   { [[self current] focusTerminal:sender]; }
-- (void)focusBrowser:(id)sender    { [[self current] focusBrowser:sender]; }
+- (void)focusTerminal:(id)sender   { [[self currentForPane] focusTerminal:sender]; }
+- (void)focusBrowser:(id)sender    { [[self currentForPane] focusBrowser:sender]; }
 - (void)selectNextTab:(id)sender     { [[self current] selectNextTab:sender]; }
 - (void)selectPreviousTab:(id)sender { [[self current] selectPreviousTab:sender]; }
 - (void)selectTabNumber:(id)sender   { [[self current] selectTabNumber:sender]; }
@@ -994,7 +1035,7 @@ static BOOL MCWindowTabAction(SEL a) {
 - (void)organizeImports:(id)sender { [[self current] organizeImports:sender]; }
 - (void)nextProblem:(id)sender     { [[self current] nextProblem:sender]; }
 - (void)previousProblem:(id)sender { [[self current] previousProblem:sender]; }
-- (void)toggleProblems:(id)sender  { [[self current] toggleProblems:sender]; }
+- (void)toggleProblems:(id)sender  { [[self currentForPane] toggleProblems:sender]; }
 - (void)showLanguageServers:(id)sender { [[self current] showLanguageServers:sender]; }
 - (void)restartLanguageServer:(id)sender { [[self current] restartLanguageServer:sender]; }
 - (void)selectPythonInterpreter:(id)sender {

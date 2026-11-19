@@ -393,6 +393,90 @@ static void testFolderSearchParallel() {
         fsys::remove_all(dir, ec);
     }
 
+    GROUP("search:dismissed");
+    {
+        // Rows dismissed from the results (the x on a row) are left alone
+        // by Replace All: a file's row the whole file, a line's row every
+        // match on it, held by its number and text so a file changed since
+        // the search is left alone whole rather than replaced elsewhere.
+        const fsys::path dir = root / "dismissed";
+        writeFile(dir / "a.txt", "cat one\ncat cat two\nno match\ncat three\n");
+        writeFile(dir / "b.txt", "a cat\n");
+        writeFile(dir / "c.txt", "cat\r\ncat keep\r\ncat\r\n");
+        FolderSearchOptions o;
+        const FolderSearchResult r = search(dir.string(), "cat", nullptr, o);
+        auto rowOf = [&](const std::string& rel, int line) -> const FolderSearchMatch* {
+            for (const FolderSearchMatch& m : r.matches)
+                if (m.relativePath == rel && m.line == line) return &m;
+            return nullptr;
+        };
+        const FolderSearchMatch* two = rowOf("a.txt", 2);
+        const FolderSearchMatch* keep = rowOf("c.txt", 2);
+        const FolderSearchMatch* b = rowOf("b.txt", 1);
+        CHECK(two && keep && b);
+        if (two && keep && b) {
+            FolderReplaceExclusions ex;
+            CHECK(ex.empty());
+            ex.dismissLine(two->path, two->line, two->text);
+            ex.dismissLine(keep->path, keep->line, keep->text);
+            ex.dismissFile(b->path);
+            FolderReplacePlan plan = planReplace(dir.string(), "cat", nullptr, o);
+            CHECK(plan.matches == 8 && plan.files.size() == 3);
+            excludeDismissed(plan, "cat", o, ex);
+            // a.txt loses line 2's two, c.txt line 2's one, b.txt its one.
+            CHECK(plan.matches == 4 && plan.dismissed == 4 && plan.files.size() == 2);
+            CHECK(plan.changedSinceSearch.empty());
+            for (const FolderReplaceFile& f : plan.files) CHECK(f.relativePath != "b.txt");
+            // The lines kept, and the replacement leaving them be.
+            std::string a, c;
+            readTextFile(two->path, o.maxFileSize, &a);
+            readTextFile(keep->path, o.maxFileSize, &c);
+            std::set<int> lines;
+            CHECK(dismissedLines(a, two->path, ex, o.maxLineChars, &lines));
+            CHECK(lines == std::set<int>{2});
+            std::size_t n = 0;
+            CHECK(replaceInText(a, "cat", "dog", o, &n, &lines) ==
+                  "dog one\ncat cat two\nno match\ndog three\n");
+            CHECK(n == 2);
+            CHECK(dismissedLines(c, keep->path, ex, o.maxLineChars, &lines));
+            CHECK(replaceInText(c, "cat", "dog", o, &n, &lines) == "dog\r\ncat keep\r\ndog\r\n");
+            CHECK(n == 2);
+            // A tab's edits, the same lines left out (UTF-16, CRLF).
+            const std::u16string c16 = u"cat\r\ncat keep\r\ncat\r\n";
+            std::vector<TextFind::Edit16> edits =
+                TextFind::replaceAll(c16, makeQuery("cat", o), u"dog");
+            CHECK(edits.size() == 3);
+            TextFind::dropEditsOnLines(c16, &edits, lines);
+            CHECK(edits.size() == 2 && edits[0].start == 0 && edits[1].start == 15);
+            CHECK(TextFind::applyEdits(c16, edits) == u"dog\r\ncat keep\r\ndog\r\n");
+            // Every kind of line end, and the empty line after the last.
+            const std::u16string mixed = u"x\ny\rx\u2029x\n";
+            std::vector<TextFind::Edit16> xs =
+                TextFind::replaceAll(mixed, makeQuery("x", FolderSearchOptions()), u"z");
+            CHECK(xs.size() == 3);
+            TextFind::dropEditsOnLines(mixed, &xs, std::set<int>{3});
+            CHECK(xs.size() == 2 && xs[0].start == 0 && xs[1].start == 6);
+            // Changed since the search: line 2 no longer reads as its row
+            // showed, so a.txt is left alone whole and named.
+            writeFile(dir / "a.txt", "new first\ncat one\ncat cat two\ncat three\n");
+            plan = planReplace(dir.string(), "cat", nullptr, o);
+            excludeDismissed(plan, "cat", o, ex);
+            CHECK(plan.changedSinceSearch == std::vector<std::string>{"a.txt"});
+            CHECK(plan.files.size() == 1 && plan.files[0].relativePath == "c.txt");
+            CHECK(plan.matches == 2);
+            readTextFile(two->path, o.maxFileSize, &a);
+            CHECK(!dismissedLines(a, two->path, ex, o.maxLineChars, &lines) && lines.empty());
+            // Nothing dismissed: the plan as it was.
+            FolderReplacePlan whole = planReplace(dir.string(), "cat", nullptr, o);
+            const std::size_t before = whole.matches;
+            excludeDismissed(whole, "cat", o, FolderReplaceExclusions());
+            CHECK(whole.matches == before && whole.dismissed == 0);
+            ex.clear();
+            CHECK(ex.empty());
+        }
+        fsys::remove_all(dir, ec);
+    }
+
     GROUP("search:context");
     {
         // With contextLines, each row carries the lines just above and

@@ -6,10 +6,18 @@
 // Then the window as VS Code's search view: the frames, the tree of files
 // with their counts, files to include and exclude, Preserve Case and the
 // replace preview, Dismiss, the TODO list in the same window, and pictures.
+// Then the keys (1.6.4, after a walker's typing went into the replace field
+// and Return rewrote a file): Return in the replace field only searches;
+// Option+Cmd+Return asks, as the button does, and Cancel writes nothing;
+// a dismissed row is left alone on disk; and Ctrl+` from the Search window
+// gives the terminal the keyboard, the editor window made key, so typing
+// reaches the shell and not the replace field.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Search.h"
 #import "FindWidget.h"
+#import "Terminal.h"
+#import "TerminalGridView.h"
 
 namespace {
 NSTextView *Text(EditorController *c) { return [c valueForKey:@"textView"]; }
@@ -301,6 +309,132 @@ MC_GUI_SUITE(replace_in_folder) {
         [want appendData:[@"$a = \"dog\"\r\nWrite-Host dog\r\n"
                              dataUsingEncoding:NSUTF16LittleEndianStringEncoding]];
         GCHECK([[NSData dataWithContentsOfFile:le] isEqualToData:want]);
+    });
+
+    // ---- the keys: Return, Option+Cmd+Return, a dismissed row, Ctrl+`
+    NSString *keys = [MCGuiScratch() stringByAppendingPathComponent:@"rifkeys"];
+    NSString *k1 = [keys stringByAppendingPathComponent:@"k1.txt"];
+    NSString *k2 = [keys stringByAppendingPathComponent:@"k2.txt"];
+    __block NSUInteger asked = 0;
+    MCGuiStep(@"two files, three cats, the replace field holding dog", ^{
+        MCGuiWriteFile(k1, @"cat a\ncat b\n");
+        MCGuiWriteFile(k2, @"cat c\n");
+        SearchPanel *p = Panel(c);
+        [p showReplace];
+        [p setScope:keys];
+        p.field.stringValue = @"cat";
+        p.replaceField.stringValue = @"dog";
+        [p runSearch:nil];
+    });
+    MCGuiWait(@"three rows", 10, ^BOOL { return !Panel(c).busy && Hits(c).count == 3; });
+    MCGuiStep(@"Return in the replace field: no question, nothing written", ^{
+        SearchPanel *p = Panel(c);
+        MCGuiSetKeyWindow(p.window);
+        [p.window makeFirstResponder:p.replaceField];
+        GCHECK(p.window.firstResponder == p.replaceField.currentEditor);
+        asked = MCGuiAlertsShown().count;
+        // No answer queued: were Return still Replace All, the unanswered
+        // question would take Replace and the files would change.
+        MCGuiSendKeyToApp(p.window, 36 /* Return */, 0, @"\r", @"\r");
+    });
+    MCGuiWait(@"the search Return ran", 10, ^BOOL { return !Panel(c).busy && Hits(c).count == 3; });
+    MCGuiStep(@"the files as they were", ^{
+        MCGuiNote(@"alerts: %@; status: %@", MCGuiAlertsShown(), Panel(c).status.stringValue);
+        GCHECK(MCGuiAlertsShown().count == asked);
+        GCHECK_EQ_STR(Disk(k1), @"cat a\ncat b\n");
+        GCHECK_EQ_STR(Disk(k2), @"cat c\n");
+        GCHECK_EQ_STR(Panel(c).replaceField.stringValue, @"dog");
+        // Option+Cmd+Return asks as the button does; Cancel.
+        MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
+        MCGuiSendKeyToApp(Panel(c).window, 36,
+                          NSEventModifierFlagCommand | NSEventModifierFlagOption, @"\r", @"\r");
+    });
+    MCGuiWait(@"asked", 10, ^BOOL { return !Panel(c).busy && MCGuiAlertsShown().count == asked + 1; });
+    MCGuiStep(@"Cancel: nothing written; then a row dismissed", ^{
+        MCGuiNote(@"asked: %@; status: %@", MCGuiAlertsShown().lastObject, Panel(c).status.stringValue);
+        GCHECK_EQ_STR(MCGuiAlertsShown().lastObject, @"Replace 3 matches in 2 files?");
+        GCHECK_EQ_STR(Disk(k1), @"cat a\ncat b\n");
+        GCHECK_EQ_STR(Disk(k2), @"cat c\n");
+        GCHECK_EQ_STR(Panel(c).status.stringValue, @"Nothing replaced");
+        // The x on k1.txt's line 2.
+        NSOutlineView *ov = (NSOutlineView *)Panel(c).table;
+        NSInteger row = -1;
+        for (NSInteger r = 0; r < ov.numberOfRows; r++) {
+            id item = [ov itemAtRow:r];
+            if ([ov levelForRow:r] == 1 && [[item valueForKey:@"path"] hasSuffix:@"/k1.txt"] &&
+                [[item valueForKey:@"line"] integerValue] == 2)
+                row = r;
+        }
+        GCHECK(row >= 0);
+        if (row < 0) return;
+        NSView *cell = [ov viewAtColumn:0 row:row makeIfNecessary:YES];
+        NSButton *dismiss = [[cell valueForKey:@"actions"] lastObject];
+        GCHECK_EQ_STR(dismiss.toolTip, @"Dismiss");
+        [NSApp sendAction:dismiss.action to:dismiss.target from:dismiss];
+        GCHECK(Hits(c).count == 2 && Panel(c).dismissedCount == 1);
+        MCGuiNote(@"after the dismiss: %@", Panel(c).status.stringValue);
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        MCGuiSendKeyToApp(Panel(c).window, 36,
+                          NSEventModifierFlagCommand | NSEventModifierFlagOption, @"\r", @"\r");
+    });
+    MCGuiWait(@"replaced, but the dismissed row", 10, ^BOOL {
+        return !Panel(c).busy && [Disk(k2) isEqualToString:@"dog c\n"];
+    });
+    MCGuiStep(@"asked for two; the dismissed line unchanged on disk", ^{
+        MCGuiNote(@"asked: %@ (%@)", MCGuiAlertsShown().lastObject, MCGuiLastAlertInformative());
+        GCHECK(MCGuiAlertsShown().count == asked + 2);
+        GCHECK_EQ_STR(MCGuiAlertsShown().lastObject, @"Replace 2 matches in 2 files?");
+        GCHECK([MCGuiLastAlertInformative() containsString:@"1 match in dismissed rows is left alone"]);
+        GCHECK_EQ_STR(Disk(k1), @"dog a\ncat b\n");
+    });
+    MCGuiWait(@"searched again", 10, ^BOOL { return !Panel(c).busy; });
+    __block TerminalView *term = nil;
+    MCGuiStep(@"Ctrl+` in the replace field: the terminal shows and has the keyboard", ^{
+        SearchPanel *p = Panel(c);
+        if ([[c valueForKey:@"terminalVisible"] boolValue]) [c toggleTerminal:nil];
+        GCHECK(![[c valueForKey:@"terminalVisible"] boolValue]);
+        MCGuiSetKeyWindow(p.window);
+        [p.window makeFirstResponder:p.replaceField];
+        p.replaceField.stringValue = @"dog";
+        MCGuiSendKeyToApp(p.window, 50 /* ` */, NSEventModifierFlagControl, @"`", @"`");
+        term = [c valueForKey:@"terminal"];
+        MCGuiNote(@"made key: %@; first responder: %@", MCGuiWindowMadeKey().title,
+                  c.window.firstResponder.className);
+        GCHECK([[c valueForKey:@"terminalVisible"] boolValue]);
+        GCHECK(MCGuiWindowMadeKey() == c.window);
+        GCHECK(term && c.window.firstResponder == [term valueForKey:@"grid"]);
+    });
+    MCGuiWait(@"its prompt", 20, ^BOOL { return term.atPrompt && !term.busy; });
+    __block NSMutableData *sent = nil;
+    MCGuiStep(@"typing goes to the shell, not the replace field", ^{
+        MCGuiSetKeyWindow(c.window);
+        sent = [NSMutableData data];
+        TerminalGridView *g = [term valueForKey:@"grid"];
+        void (^forward)(NSData *) = g.onInput;
+        g.onInput = ^(NSData *d) {
+            [sent appendData:d];
+            if (forward) forward(d);
+        };
+        MCGuiSendKeyToApp(c.window, 16 /* y */, 0, @"y", @"y");
+        MCGuiSendKeyToApp(c.window, 51 /* Delete */, 0, @"\x7f", @"\x7f");
+        g.onInput = forward;
+        NSString *got = [[NSString alloc] initWithData:sent encoding:NSUTF8StringEncoding];
+        MCGuiNote(@"the shell got %lu bytes: %@", (unsigned long)sent.length, got);
+        GCHECK([got hasPrefix:@"y"]);
+        GCHECK_EQ_STR(Panel(c).replaceField.stringValue, @"dog");
+    });
+    MCGuiStep(@"Ctrl+` from the Search window with the terminal on show: focused, not hidden", ^{
+        SearchPanel *p = Panel(c);
+        [c.window makeFirstResponder:nil];
+        MCGuiSetKeyWindow(p.window);
+        [p.window makeFirstResponder:p.replaceField];
+        MCGuiSendKeyToApp(p.window, 50, NSEventModifierFlagControl, @"`", @"`");
+        GCHECK([[c valueForKey:@"terminalVisible"] boolValue]);
+        GCHECK(MCGuiWindowMadeKey() == c.window);
+        GCHECK(c.window.firstResponder == [term valueForKey:@"grid"]);
+        GCHECK_EQ_STR(p.replaceField.stringValue, @"dog");
+        MCGuiSetKeyWindow(nil);
+        [c toggleTerminal:nil];   // hidden again
     });
 
     MCGuiStep(@"close the panel; Don't Save the tabs", ^{
