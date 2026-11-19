@@ -285,5 +285,83 @@ static void testWorktreeReview() {
     WorktreeRead q = readWorktree(base + "/quiet", "main", run);
     CHECK(q.read.error.empty() && q.read.diffs.empty());
     CHECK(!planApplyToMain(q, "main", "quiet", run).refusal.empty());
+
+    // Round 10's defect 6: the files checked are the files applied. The
+    // page read a.txt (new) and keep.txt; then the agent changed m.txt,
+    // where the user has an edit of their own in main, and made b.txt. The
+    // apply is refused, naming both, and main keeps only the user's edit.
+    GROUP("review-worktree:apply-checked");
+    CHECK(sh(mainDir, "printf '1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n' >m.txt && git add m.txt && "
+                      "git commit -q -m m && git worktree add -q -b late ../late && "
+                      "git worktree add -q -b mv ../mv"));
+    const std::string lateDir = base + "/late", mvDir = base + "/mv";
+    CHECK(sh(lateDir, "printf 'agent a\\n' >a.txt && printf 'k3\\n' >keep.txt"));
+    WorktreeRead l = readWorktree(lateDir, "main", run);
+    CHECK(l.read.error.empty() && l.read.diffs.size() == 2);
+    CHECK(planApplyToMain(l, "main", "late", run).refusal.empty());
+    CHECK(sh(lateDir, "printf '1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\nagent 9\\n' >m.txt && printf 'b\\n' >b.txt"));
+    CHECK(sh(mainDir, "printf 'mine 1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n' >m.txt"));
+    // What the diff is held to: keep.txt only, never m.txt.
+    const std::string held = run(lateDir, GitUi::worktreeDiffArgs(l.baseRef, {"keep.txt"}), "").out;
+    CHECK(held.find("keep.txt") != std::string::npos && held.find("m.txt") == std::string::npos);
+    ApplyResult stale = applyToMain(l, "main", run);
+    CHECK(!stale.ok);
+    CHECK(stale.text == GitUi::applyStaleText({"b.txt", "m.txt"}));
+    CHECK(stale.text.rfind("b.txt and m.txt were changed in the worktree after this page was read", 0) == 0);
+    CHECK(slurp(mainDir + "/m.txt") == "mine 1\n2\n3\n4\n5\n6\n7\n8\n9\n");
+    CHECK(slurp(mainDir + "/a.txt").empty() && slurp(mainDir + "/b.txt").empty());
+    CHECK(slurp(mainDir + "/keep.txt") == "k\n");
+    // The pure half: a rename's source counts, as does an untracked file.
+    {
+        ApplyFiles asked;
+        asked.paths = {"x.txt", "u.txt"};
+        asked.untracked = {"u.txt"};
+        const std::string z(40, '0');
+        std::string raw = ":100644 100644 " + z + " " + z + " M";
+        for (const char* p : {"x.txt"}) raw += std::string(1, '\0') + p + std::string(1, '\0');
+        raw += ":100644 100644 " + z + " " + z + " R100";
+        for (const char* p : {"old.txt", "new.txt"}) raw += std::string(1, '\0') + p;
+        raw += std::string(1, '\0');
+        ApplyNow n = applyNow(asked, raw, std::string("u.txt\0v.txt\0", 12));
+        CHECK((n.extra == std::vector<std::string>{"new.txt", "old.txt", "v.txt"}));
+        CHECK((n.untracked == std::vector<std::string>{"u.txt"}));
+    }
+
+    // Read again, everything in it; main's own edit put back, so the
+    // question is asked; then the user edits keep.txt in main before the
+    // answer: refused, naming it, nothing brought in.
+    CHECK(sh(mainDir, "git checkout -q -- m.txt"));
+    WorktreeRead l2 = readWorktree(lateDir, "main", run);
+    CHECK(l2.read.diffs.size() == 4);
+    CHECK(planApplyToMain(l2, "main", "late", run).refusal.empty());
+    CHECK(sh(mainDir, "printf 'k mine\\n' >keep.txt"));
+    ApplyResult busy = applyToMain(l2, "main", run);
+    CHECK(!busy.ok && busy.text.find("uncommitted changes of its own in keep.txt") != std::string::npos);
+    CHECK(slurp(mainDir + "/a.txt").empty() && slurp(mainDir + "/m.txt") == "1\n2\n3\n4\n5\n6\n7\n8\n9\n");
+    CHECK(sh(mainDir, "git checkout -q -- keep.txt"));
+    ApplyResult all = applyToMain(l2, "main", run);
+    CHECK(all.ok && all.text == GitUi::applyDoneText(4, {}, "main"));
+    CHECK(slurp(mainDir + "/m.txt") == "1\n2\n3\n4\n5\n6\n7\n8\nagent 9\n");
+    CHECK(slurp(mainDir + "/b.txt") == "b\n" && slurp(mainDir + "/a.txt") == "agent a\n");
+    CHECK(sh(mainDir, "git reset -q --hard && git clean -fdq"));
+
+    // A rename that applies cleanly beside a clash: after `apply --3way`
+    // both of its sides are unstaged, not only the new path (the source's
+    // deletion stayed staged).
+    GROUP("review-worktree:apply-rename");
+    CHECK(sh(mvDir, id + "git mv m.txt m2.txt && printf 'one\\ntwo agent\\nthree\\n' >base.txt && "
+                         "git commit -qam mv"));
+    CHECK(sh(mainDir, "printf 'one\\ntwo again\\nthree\\n' >base.txt && git commit -qam again"));
+    WorktreeRead mv = readWorktree(mvDir, "main", run);
+    CHECK(mv.read.error.empty());
+    CHECK(planApplyToMain(mv, "main", "mv", run).refusal.empty());
+    ApplyResult moved = applyToMain(mv, "main", run);
+    CHECK(moved.ok && (moved.conflicts == std::vector<std::string>{"base.txt"}));
+    const std::string cached = run(mainDir, {"diff", "--cached", "--name-only"}, "").out;
+    if (cached != "base.txt\n") std::printf("    cached after the rename: %s\n", cached.c_str());
+    CHECK(cached == "base.txt\n");
+    const std::string st = run(mainDir, {"status", "--porcelain"}, "").out;
+    CHECK(st.find(" D m.txt") != std::string::npos && st.find("?? m2.txt") != std::string::npos);
+    CHECK(slurp(mainDir + "/m2.txt") == "1\n2\n3\n4\n5\n6\n7\n8\n9\n");
     CHECK(std::system(("rm -rf " + shq(base) + " " + shq(tmpIn) + " " + shq(tmpOut) + " " + shq(tmpErr)).c_str()) == 0);
 }

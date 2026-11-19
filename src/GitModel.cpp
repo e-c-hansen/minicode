@@ -664,9 +664,12 @@ std::vector<std::string> updateIndexArgs(const IndexEntry& e, const std::string&
 }
 
 // ---------------------------------------------- a worktree's work into main
-std::vector<std::string> worktreeDiffArgs(const std::string& base) {
-    return {"-c", "core.quotePath=false", "diff", "--binary", "--no-ext-diff", "--no-color",
-            "-M", "--src-prefix=a/", "--dst-prefix=b/", base, "--"};
+std::vector<std::string> worktreeDiffArgs(const std::string& base, const std::vector<std::string>& paths) {
+    std::vector<std::string> a = {"--literal-pathspecs", "-c", "core.quotePath=false", "diff", "--binary",
+                                  "--no-ext-diff", "--no-color", "-M", "--src-prefix=a/",
+                                  "--dst-prefix=b/", base, "--"};
+    a.insert(a.end(), paths.begin(), paths.end());
+    return a;
 }
 
 std::vector<std::string> untrackedArgs() {
@@ -732,6 +735,12 @@ ApplyPlan applyToMainPlan(const std::vector<std::string>& paths, const Git::Stat
                "that does not apply cleanly comes in with conflict marks.";
     p.button = "Apply to Main";
     return p;
+}
+
+std::string applyStaleText(const std::vector<std::string>& extra) {
+    return nameList(extra) + (extra.size() == 1 ? " was" : " were") +
+           " changed in the worktree after this page was read, so nothing was brought in. The page "
+           "shows them now; look them over, then apply again.";
 }
 
 std::string applyDoneText(size_t files, const std::vector<std::string>& conflicts,
