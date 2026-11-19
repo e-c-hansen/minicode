@@ -396,17 +396,22 @@
 // `focus` gives the first page the keyboard.
 - (void)showWebAddresses:(NSArray<NSString *> *)urls focusPage:(BOOL)focus;
 // File > Save Page as Bookmark (Cmd+D in the page): the page on show as a
-// .url file in the bookmark folder (in the browser window, the tree's
-// selected folder), selected in the tree when it lists it.
+// .url file in this workspace's .mutible/bookmarks, made on the first save
+// (in the browser window, the tree's selected folder), selected in the
+// tree when it shows it. A page bookmarked here or in the shared folder
+// is not saved again.
 - (void)saveBrowserBookmark:(id)sender;
 @property(nonatomic, readonly) BOOL canSaveBrowserBookmark;
 // The browser toolbar's star: saves the page on show, or moves its
-// bookmark (already in the bookmark folder) to the Trash.
+// bookmark (this workspace's, else the shared one) to the Trash.
 - (void)toggleBrowserBookmark:(id)sender;
 // The menu bar's Bookmarks menu (Bookmarks.h): a bookmark loads in this
 // window's browser, a folder's Open All in Tabs opens each in a tab.
 - (void)openBookmarkFromMenu:(id)sender;
 - (void)openBookmarkFolderFromMenu:(id)sender;
+// Shared > Move to This Workspace: the shared bookmark (the sender's
+// representedObject) moved into this workspace's .mutible/bookmarks.
+- (void)moveBookmarkToWorkspace:(id)sender;
 // File > Save All Tabs as Bookmarks: a .url file per tab in a new folder,
 // "Tabs 2026-11-12 14.03".
 - (void)saveBrowserTabsAsBookmarks:(id)sender;
