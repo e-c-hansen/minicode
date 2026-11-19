@@ -345,6 +345,8 @@ gui_sources = [
   'src/Math.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # The shortcut hints' search box.
+  'src/HintsSearchBox.cpp',
   # The window's panes: the sidebar, and the editor, browser and terminal
   # laid out as on the Mac.
   'src/WindowLayout.cpp',

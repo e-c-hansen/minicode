@@ -107,6 +107,8 @@ void addTreeKeys(GtkWidget* widget);
 // Shift V" ("Ctrl+Shift+V" with "+"); "" when it has none.
 std::string label(const std::string& id, const char* between = " ", size_t index = 0);
 // All of them, "Ctrl Shift T, Ctrl `".
+// The key at `index` as the shortcut hints draw it (Commands::keyLabel).
+std::string hintLabel(const std::string& id, size_t index = 0);
 std::string labels(const std::string& id);
 
 }  // namespace Keys
