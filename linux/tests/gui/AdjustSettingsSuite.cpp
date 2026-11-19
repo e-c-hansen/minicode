@@ -296,9 +296,10 @@ MC_GUI_SUITE(adjust_settings) {
     });
 
     // ---- the file tree
-    rightClickChoose("the tree's src row", [] {
-        return MCGuiFindLabel(MCGuiApp().tree->widget(), "src");   // first, folders first
-    }, "tree");
+    // The project's own src, by its path: another suite's folder left open
+    // may hold one too, and a full run's hundred entries put it off screen.
+    MCGuiBringTreeRow(F("src"));
+    rightClickChoose("the tree's src row", [] { return MCGuiTreeRow(F("src")); }, "tree");
 
     // ---- the editor, on a file of source
     MCGuiStep("a file of source in the editor", [] { MCGuiOpenFileKept(F("adjust.txt")); });
@@ -332,7 +333,11 @@ MC_GUI_SUITE(adjust_settings) {
     });
 
     // ---- a tab, and the strip's empty part
-    rightClickChoose("a tab's title", [] { return ed()->strip()->titleWidget(0); }, "tabs");
+    // The active tab's, which the strip keeps in view: the new window opens
+    // the tabs earlier suites left on this folder, and the first one was off
+    // the strip's left end after go_back and maximize.
+    rightClickChoose("a tab's title", [] { return ed()->strip()->titleWidget(ed()->strip()->activeIndex()); },
+                     "tabs");
     rightClickChoose("the tab strip past the tabs", [] { return ed()->strip()->widget(); }, "tabs",
                      -20, -1);
 

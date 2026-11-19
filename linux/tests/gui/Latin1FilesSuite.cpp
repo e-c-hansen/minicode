@@ -196,6 +196,7 @@ MC_GUI_SUITE(latin1_files) {
     MCGuiStep("the editor's window", [] {
         MCGuiSetKeyWindow(nullptr);
         MCGuiFocusKeyWindow();
+        MCGuiResetFolderSearch();   // its scope is not the next suite's
     });
 
     // ---- an edit, in the encoding; then a character it cannot store
