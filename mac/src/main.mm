@@ -210,15 +210,23 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     return YES;
 }
 
-// Quitting asks about unsaved changes in every window's tabs, as closing
-// each window would; windows are not closed on the way out, so nothing
-// else would.
+// Quitting (Cmd+Q, the Dock, logout or restart) keeps every window's
+// unsaved changes for the next launch without asking (files.hot-exit =
+// on-exit, the owner's decision of 2026-11-18, VS Code's hotExit onExit):
+// each window writes its unsaved buffers to the backups now, on this
+// thread, and they come back unsaved with the window. A window whose
+// backups cannot all be written, or every window with files.hot-exit = off,
+// asks about its unsaved tabs as closing it would; windows are not closed
+// on the way out, so nothing else would.
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app {
     const BOOL restarting = self.restartApp != nil;
     NSApplicationTerminateReply reply = [self confirmQuitRestarting:restarting];
     if (reply == NSTerminateCancel) {
         self.restartApp = nil;
         self.restartRecord = nil;
+        // Nothing was let go: what each window kept for the next launch is
+        // its unsaved work again, whose backups go as a later answer says.
+        for (EditorController *c in self.controllers) [c quitWasCancelled];
     }
     return reply;
 }
@@ -234,10 +242,11 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
     if (!MCConfirmClosingRunning(running, restarting ? @"Restart mutible?" : @"Quit Mutible?",
                                  restarting ? @"Restart" : @"Quit"))
         return NSTerminateCancel;
+    const BOOL hotExit = [AppSettings shared].settings.hotExit() == Settings::HotExit::OnExit;
     for (EditorController *c in [self.controllers copy]) {
         [c commitPageEdit];   // a page edit still open is asked about too, not dropped
         if (!c.hasUnsavedChanges) continue;
-        if (restarting && [c keepUnsavedTabsForRestart]) continue;   // they come back
+        if ((restarting || hotExit) && [c keepUnsavedTabsForNextLaunch]) continue;   // they come back
         [c.window makeKeyAndOrderFront:nil];
         if (![c confirmCloseAllTabsClosing:YES]) return NSTerminateCancel;
     }
@@ -539,8 +548,15 @@ static NSString *MCPathBelow(NSString *root, NSString *path) {
 - (EditorController *)controlOpenWindowAtPath:(NSString *)dir { return [self openWindowAtPath:dir]; }
 
 // ------------------------------------------------------- window management
+// A folder no window here shows yet comes back as the window the last run
+// left on it, when it left one (VS Code reopens a folder with its editors
+// and panels); a second window on a folder, or a folder with none, opens
+// with the folder's tabs alone.
 - (EditorController *)openWindowAtPath:(NSString *)path {
-    return [self openWindowAtPath:path restoring:nil];
+    NSString *record = nil;
+    if (path.length && ![self controllerRootedAt:MCComparablePath(path)])
+        record = [EditorController windowRecordToReopenFolder:path];
+    return [self openWindowAtPath:path restoring:record];
 }
 
 // The same, brought back as the last run left it (`record`, from
