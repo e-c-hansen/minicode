@@ -7958,7 +7958,94 @@ never applied, a refresh not being a script. GTK now follows the same rule.
   its `form.submit()`, counts as the user's on both platforms (WebKit
   reports a link click or a form submission), so a page whose scripts run
   can still open another app; scripts run only once the user says so.
-  A real meta refresh, an app's scheme and the look of the status bar's
+  (Item 122 closes it: such a click is refused on GTK, asked about on
+  the Mac.) A real meta refresh, an app's scheme and the look of the status bar's
   note need the owner's eyes on the ThinkPad; a real Zoom was never
   started (no handler for zoommtg: or smb: is installed here, and the
   checks record the desktop's handler instead).
+
+### 122. A link to another app asks first, and a script's click to one is refused (the Mac's #254; November 2026)
+
+Item 121 left one way out: a page whose scripts run can click its own
+link (`a.click()`) or send its own form (`form.submit()`), WebKit reports
+those as a link clicked and a form sent, like the user's, and so such a
+page could still hand `zoommtg://` (any app's scheme) to the desktop with
+no click. The Mac (#254) cannot tell a script's click from the user's, so
+there every followed link to another app asks first, in a sheet naming the
+app and the address. WebKitGTK can tell
+(`webkit_navigation_action_is_user_gesture`), so GTK, agreed with the Mac
+session, asks only about the user's own and refuses the script's unasked.
+
+- **The core** (`src/HtmlPage.{h,cpp}`, `htmlpage:app-gesture`):
+  `HtmlPage::follow(nav, gestureKnown)` says what becomes of a navigation
+  the port has decided to follow: Open for a web address or a file (as
+  before), and for another app's address (`opensAnotherApp`: any scheme
+  but http, https and file) Ask when `nav.userGesture`, or always when the
+  port cannot tell (`gestureKnown` false, the Mac's case), else Refuse.
+  The question's words are #254's: `openAppQuestion(app)` ("Open in Zoom?",
+  "Open in another app?" with no app known), `openAppDetail(url)` ("The
+  link goes to zoommtg://example, outside mutible.", the address cut at
+  80 characters) and `kOpenApp` ("Open").
+- **GTK** (`linux/src/HtmlView.cpp`): the policy check's Open (`onPolicy`,
+  a link, a form, a target=_blank) and `create`'s (`onNewWindow`) go
+  through `follow(nav, true)`; `hand` now takes a `Follow`: Open to the
+  link handler as before, Refuse to `Host::refused` (the status bar's
+  `refusedNote`, "The page tried to open smb://x by itself; mutible did
+  not open it"), Ask to `askToOpen`. That puts up `Question::ask` over the
+  window (modal, transient for it) with the core's message and detail and
+  the Mac's buttons in its order, Open then Cancel; Return is Open, Esc
+  and closing it Cancel. Open hands the address to the link handler
+  (`Editor::openMarkdownLink`, so `GtkUriLauncher`, or the harness's
+  recorder); Cancel opens nothing. One question at a time: another the
+  page asks for meanwhile is refused, as on the Mac. The app is the
+  scheme's default handler (`HtmlView::appFor`:
+  `g_app_info_get_default_for_uri_scheme`, its display name), a lookup
+  that starts nothing. `followOrRefuse` (a page's own jump) goes through
+  `follow` too, though `mayFollow` already lets only web addresses by.
+- **Not ported: the Mac's box**, Refuse any more from this page. It is
+  there so a page clicking its own link in a loop cannot hold the window
+  with sheets; on GTK a script's click never asks, so only the user's own
+  clicks can.
+- **Unchanged**: http, https and file links (#253's rules, no question);
+  a Markdown preview's links, on both platforms (`openMarkdownLink` gives
+  zoommtg: to the desktop unasked, the Mac's `openURL:` the same).
+- **The check** (`html_page`, its new steps; the spy now lets every
+  address but a web one through, since the desktop's handler is the
+  recorder): with scripts on, a page whose script runs
+  `document.querySelector('a').click()` on its `smb://x` link at load,
+  and one whose script sends its form to `mailto:someone@example.com`,
+  are refused with no question (no window over the app's, `askingToOpen`
+  false), nothing reaches the link handler or the recorder, and the
+  status bar names each in the Mac's words. A desktop file for
+  `x-scheme-handler/zoommtg` named "Zoom Check" (Exec `/bin/false`) goes
+  in the scratch world's `XDG_DATA_HOME/applications`, the default in its
+  `XDG_CONFIG_HOME/mimeapps.list`, both removed at the end, and the suite
+  waits until `appFor` sees it. A real click (XTest) on a `zoommtg://example`
+  link puts up "Open in Zoom Check?" over the window, with "The link goes
+  to zoommtg://example, outside mutible." under it, Open left of Cancel,
+  and nothing opened; Cancel opens nothing; a second click answered Open
+  hands `zoommtg://example` to the link handler and the recorder once,
+  the page still the file. Real clicks on an https link (the link
+  handler, no question) and on a file link (its tab, no question) behave
+  as before, and a Markdown file's `[join](zoommtg://example/md)`, clicked
+  in its preview, reaches the recorder with no question, as before.
+  What each showed: the script's click and form reached the policy check
+  as a link and a form with `is_user_gesture` false, and the XTest click
+  as a link with it true (the question came up), so the two are told
+  apart as WebKitGTK documents. The form's address is
+  `mailto:someone@example.com?subject=hello`; the status bar names it.
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7): `html_page` 129
+  passed, none failed, with MC_GUI_ROOT=/tmp and with a long root inside
+  `linux/build` (removed after); markdown_side, markdown_side_edit,
+  markdown_side_sync, markdown_tables, tab_viewers, browser_pages,
+  browser_tabs and browser_find 218 passed, none failed. The core's
+  `make test` 197,060 passed (`htmlpage:app-gesture` new); `meson test
+  --no-suite gui` and linux's `make test` (435) pass.
+- **Trap (the check): the X focus after a question.** With no window
+  manager the X focus stays on the question once it closes, and the
+  harness says so (a LEFT line, the app's window inactive); the steps
+  after Cancel and Open give it back (`MCGuiFocusKeyWindow`).
+- **Needs the owner's eyes**: the question's look over a real window, a
+  real handler's name (Zoom, a mail app) from the desktop's defaults, and
+  Return and Esc on it by hand. No real app was started: the checks
+  record the desktop's handler.

@@ -23,7 +23,13 @@
 // (Host::refused). WebKitGTK cannot tell the main frame at the policy check,
 // so one to an app's scheme is refused there in any frame, and the main
 // frame's to a web address or a file is stopped at its answer (the response
-// check, or the load's failure), the page left as it was. WebKitGTK has no
+// check, or the load's failure), the page left as it was. A followed link to
+// another app (zoommtg:, smb:, mailto:; HtmlPage::follow) asks first, in a
+// question naming the app and the address (the Mac's words), when the user's
+// click or key made it; one a script made (a.click(), form.submit(), which
+// WebKit reports as a link or form like the user's) is refused with no
+// question and named in the status bar: WebKitGTK tells the two apart
+// (webkit_navigation_action_is_user_gesture), the Mac cannot. WebKitGTK has no
 // read-access folder for a file page, so pictures and stylesheets are read
 // from wherever the page names; scripts cannot read other files (file access
 // from file URLs stays off).
@@ -100,6 +106,11 @@ public:
     // Checks: when set, sees every address the page hands the link handler,
     // which then gets it only if this returns true.
     std::function<bool(const std::string& url)> linkSpy;
+    // The question asking before a link opens another app is up.
+    bool askingToOpen() const { return askingToOpen_; }
+    // The app the desktop opens an address with (its scheme's default
+    // handler), "" when it has none: the question names it.
+    static std::string appFor(const std::string& uri);
 
 private:
     struct Stamp {
@@ -129,8 +140,13 @@ private:
     // A navigation the page started by itself, away from its file: followed
     // when HtmlPage::mayFollow says, else refused.
     void followOrRefuse(const std::string& uri);
-    // To the link handler (open) or Host::refused, once the signal is done.
-    void hand(const std::string& uri, bool open);
+    // To the link handler (Open), the question first (Ask), or Host::refused
+    // (Refuse), once the signal is done.
+    void hand(const std::string& uri, HtmlPage::Follow how);
+    // The user's own link to another app: a question naming the app and the
+    // address, Open the default; Open hands it to the link handler, Cancel
+    // and Esc nothing. One at a time: another meanwhile is refused.
+    void askToOpen(const std::string& uri);
     void openLink(const std::string& uri);
 
     Host host_;
@@ -146,6 +162,7 @@ private:
     Stamp stamp_;
     bool hasScripts_ = false;
     bool runs_ = false, asking_ = false, noting_ = false;
+    bool askingToOpen_ = false;
     unsigned generation_ = 0, loads_ = 0;
     bool restoreScroll_ = false, restoring_ = false;
     double scrollX_ = 0, scrollY_ = 0;

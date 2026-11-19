@@ -14,7 +14,10 @@
 // pane), so the page on show is always the tab's file. One the page started
 // by itself (a meta refresh, a script) goes there only as `mayFollow` says:
 // a web address while the page's scripts run; anything else is refused and
-// named in the status bar (`refusedNote`). A load this page asked for
+// named in the status bar (`refusedNote`). A followed link to another app
+// (zoommtg:, mailto:) is asked about first, or, where the port can tell a
+// script's click from the user's, refused when a script made it (`follow`).
+// A load this page asked for
 // earlier, a reload and a back or forward are dropped rather than taken for
 // a link, since a policy check for them can arrive after the tab has moved
 // to another file.
@@ -106,6 +109,18 @@ std::string openAppQuestion(const std::string &app);
 std::string openAppDetail(const std::string &url);
 extern const char *const kOpenApp;        // "Open"
 extern const char *const kRefuseMore;     // "Refuse any more from this page"
+
+// What becomes of a navigation the port has decided to follow (decide's
+// Open, policy's Open, mayFollow's yes) before it reaches the link handler.
+// One to a web address or a file is Opened as before. One to another app
+// (opensAnotherApp) is Asked about (openAppQuestion) when it came from the
+// user's own click or key; when the port can tell a real click from a
+// script's (`gestureKnown`: WebKitGTK's is_user_gesture) and it was the
+// page's script (a.click(), form.submit(), each reported as a link or form
+// like the user's), it is Refused with no question, named in the status
+// bar (refusedNote). The Mac cannot tell, so it asks about every one.
+enum class Follow { Open, Ask, Refuse };
+Follow follow(const Navigation &nav, bool gestureKnown);
 
 // The main frame has started loading `nav` (the scheme, path and query of
 // its address): Keep what is the page's own file or about:blank; otherwise

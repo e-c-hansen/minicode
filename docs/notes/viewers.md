@@ -74,7 +74,22 @@ found through that list.
   `html_page` checks a page's `a.click()` at load asks and, cancelled,
   reaches no `openURL:`, and a real click (mouse down and up handed to
   the web view) asks and opens. The GTK port can tell the two apart
-  (WebKitGTK's `webkit_navigation_action_is_user_gesture`). **Scripts** (the owner's call,
+  (WebKitGTK's `webkit_navigation_action_is_user_gesture`), and does
+  (HANDOFF item 122; `HtmlPage::follow(nav, gestureKnown)`,
+  `htmlpage:app-gesture`): a followed link to another app asks only when
+  the user's click or key made it, in a `Question::ask` window over the
+  app's with the Mac's words and buttons (Open, then Cancel; Return
+  Open, Esc Cancel), and one a script made is refused unasked, named by
+  `refusedNote` in the status bar. No box: a script's click never asks,
+  so a page cannot hold the window. The app's name is its scheme's
+  default handler (`g_app_info_get_default_for_uri_scheme`; none, "Open
+  in another app?"). The GTK `html_page` checks a script's `a.click()`
+  to smb:// and `form.submit()` to mailto: (refused, no question,
+  nothing opened), a real click (XTest) on a zoommtg:// link (asks,
+  naming the desktop file the suite writes in the scratch world; Cancel
+  opens nothing, Open reaches `MCGuiLaunchedUris`), real clicks on an
+  https and a file link (no question), and a Markdown preview's
+  zoommtg:// link (unasked, as before, on both platforms). **Scripts** (the owner's call,
   2026-11-15, against "nothing runs because a file was opened"):
   `html.scripts` (ask, on, off); with ask, a page whose text
   `FileSniff::htmlMayRunScripts` flags shows with
