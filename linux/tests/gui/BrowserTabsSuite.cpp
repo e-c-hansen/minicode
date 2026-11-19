@@ -132,7 +132,11 @@ MC_GUI_SUITE(browser_tabs) {
     // view together, so the first is held at the strip's right end, which
     // scrolls the row to its end (EditorTabs::dragAutoScroll), and let go.
     MCGuiStep("the row wheeled back to its start", [] {
-        MCGuiScroll(browser()->strip()->titleWidget(0), -5);
+        // Wheeled over the row, which is always on screen: the first tab's
+        // title is off it whenever the row is scrolled, as it is when an
+        // earlier suite left the pane narrower (the soak's shuffled orders:
+        // its center reached the editor beside the pane).
+        MCGuiScroll(browser()->strip()->rowWidget(), -5);
     });
     MCGuiWait("the first tab on screen", 10, [] {
         return browser()->strip()->scrollOffset() == 0 && MCGuiOnScreen(browser()->strip()->tabWidget(0));

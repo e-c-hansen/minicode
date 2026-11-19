@@ -13,6 +13,21 @@ release" and "Verification reality", with the rest in
 `docs/notes/build.md` and `docs/notes/verification.md`) has what each job
 checks.
 
+## Which runs go on (2026-11-19)
+
+ci.yml's `concurrency` decides. A newer push to a pull request's branch
+cancels that branch's run still going, which nobody will read. **Every
+push to main gets a run of its own** (its group is `ci-push-<sha>`), so
+each commit on main has a verdict, and when main goes red after several
+merges the first red commit names the merge that did it. Until
+2026-11-19 main was one group, which keeps one run going and one
+waiting: a third push cancelled the waiting run before any of its jobs
+started, and 13 of the 52 commits merged that day got no verdict (round
+10's engineering grade, N1). A run by hand (`workflow_dispatch`) is a
+group of its own as well, so several can run on one commit. Runs on main
+now queue for the runners beside the pull requests' runs; a burst of
+merges costs a run each.
+
 ## What makes a run quick (2026-11-17)
 
 Before, a run took about 21 minutes, set by the macOS job (core tests 4.4
@@ -277,6 +292,39 @@ window, so Compare with Main's Apply to Main… and the format offer's ×
 were out of reach (agents failed even alone in a checkout under
 `.claude/worktrees`, whose path also gave a session in the project's
 own worktree the outer one: AgentIndex now takes the innermost).
+
+A third pass (2026-11-19, the soak of d1855c3, run 44518243311, seeds
+3148957826, 364479112 and 1595826833 on the Mac, 791492888, 4059859019
+and 3863698393 on GTK) found three suites that failed in two or three
+shuffled rounds, each fixed in its suite and to be called fixed after
+five soak rounds without it:
+
+- Mac `replace_in_folder`, "the search Return ran", in all three rounds:
+  the search suite, which ran before it in each of them (never in CI's
+  order: the file is linked after), closes the Search window both
+  suites use. Offscreen a
+  closed window is never ordered in again, and `[NSWindow sendEvent:]`
+  drops every key sent to it, so the Return never reached the replace
+  field (a stale expectation it was not: Return there searches since
+  #210, and the check waits for that search). The suite's `Press` now
+  hands the key to the window's first responder, as the window does
+  with a key without modifiers.
+- GTK `keys`, "the terminal has it", in two: Ctrl+` toggles the
+  terminal, and a terminal an earlier suite left shown was put away
+  instead of given the keyboard. The suite hides it first.
+- GTK `browser_tabs`, "the row wheeled back to its start", in two: the
+  wheel was aimed at the first tab's title, which is off screen
+  whenever the row is scrolled (an earlier suite left the pane
+  narrower); it is aimed at the row now.
+
+Still open from that soak:
+
+- GTK `preview_tabs`, "the tree lists them", in all three rounds; for
+  the Linux port's session.
+- Seen in one round each: Mac `organize_on_save` (an alert count off by
+  one as its servers were turned off), GTK `tree_clicks`, `tab_strip`,
+  `editor_keys`, `agents` and `attention` (issue #127 has each one's
+  first failure).
 
 - GTK `agents`, "the same key closes the panel": in one local full run
   on the ThinkPad (2026-11-17, main at b0ce717 plus a test-only change),
