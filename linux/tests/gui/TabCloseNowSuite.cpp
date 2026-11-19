@@ -9,7 +9,7 @@
 //
 // Then a tab scrolled down, its whole text replaced and its caret left at
 // the end, closed in the same step (semantic_tokens' last step, which
-// crashed main's GTK job twice after #165, linux/HANDOFF.md item 121).
+// crashed main's GTK job twice after #165, linux/HANDOFF.md item 122).
 // Scrolling the view to its top as it leaves the buffer asks GTK for the
 // caret's place, which lays out the caret's line; a line the text had just
 // gained has no height yet, so set_buffer kept its display, and the next
