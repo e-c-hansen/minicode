@@ -32,6 +32,7 @@
 #import "AppSettings.h"
 #import "Appearance.h"
 #import "EditorFont.h"
+#import "HoverHint.h"
 #import <Carbon/Carbon.h>   // kVK_* key codes, EnableSecureEventInput
 #import <CoreText/CoreText.h>
 #include <sys/stat.h>
@@ -145,6 +146,7 @@ static bool MCSameCells(const std::vector<TermCell> &a, const std::vector<TermCe
     // whether the tooltip is the hint.
     NSTimer *_restTimer;
     BOOL _restHintShown;
+    BOOL _addressHintShown;   // a hyperlink's address, shown while Cmd is held over it
     // Mouse reporting: the button held down and reported (-1 none), and the
     // cell last reported, so motion is sent once per cell.
     int _reportButton;
@@ -1591,6 +1593,7 @@ NSMenuItem *MCMenuItemForKey(NSMenu *menu, NSEvent *e) {
 }
 
 - (void)keyDown:(NSEvent *)e {
+    [self hideRestHint];
     TerminalScreen *s = self.screen;
     NSEventModifierFlags f = e.modifierFlags;
     if (!s) { [super keyDown:e]; return; }
@@ -1899,9 +1902,9 @@ static MCTermLink *MCHyperlinkFor(const std::string &uri) {
     long long lineId = kNoLine, endId = kNoLine;
     int line = 0, endLine = 0, c0 = 0, c1 = 0;
     MCTermLink *link = nil;
+    NSPoint p = NSZeroPoint;
     if ((NSEvent.modifierFlags & NSEventModifierFlagCommand) && self.window) {
-        NSPoint p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream]
-                              fromView:nil];
+        p = [self convertPoint:[self.window mouseLocationOutsideOfEventStream] fromView:nil];
         if (NSPointInRect(p, self.bounds))
             link = [self linkAtPoint:p line:&line col0:&c0 endLine:&endLine col1:&c1];
     }
@@ -1910,9 +1913,16 @@ static MCTermLink *MCHyperlinkFor(const std::string &uri) {
     BOOL changed = lineId != _linkId || endId != _linkEndId || c0 != _linkCol0 || c1 != _linkCol1;
     _link = link;
     _linkId = lineId; _linkEndId = endId; _linkCol0 = c0; _linkCol1 = c1;
-    // A hyperlink's text may say anything: its address shows as the tooltip.
+    // A hyperlink's text may say anything: its address shows beside the
+    // pointer (HoverHint.h), at once.
     NSString *tip = link ? _hyperlinkAddress : nil;
-    if (tip != self.toolTip && ![tip isEqualToString:self.toolTip]) self.toolTip = tip;
+    if (tip) {
+        if (![[MCHoverHint textInView:self] isEqualToString:tip])
+            [MCHoverHint showText:tip inView:self atPointer:p];
+    } else if (_restHintShown || _addressHintShown) {
+        [MCHoverHint hideInView:self];
+    }
+    _addressHintShown = tip != nil;
     _restHintShown = NO;
     if (link) [[NSCursor pointingHandCursor] set];
     else if (changed) [[NSCursor arrowCursor] set];
@@ -1931,7 +1941,9 @@ static MCTermLink *MCHyperlinkFor(const std::string &uri) {
                owner:self userInfo:nil]];
 }
 
-NSString *const MCTerminalLinkHint = @"Cmd+click to open";
+NSString *const MCTerminalLinkHint = @"⌘-click to open";
+
+- (NSString *)linkHintText { return [MCHoverHint textInView:self]; }
 
 // A move hides the hint and starts the wait again: the link is looked up
 // once the pointer has rested, never on every move.
@@ -1950,9 +1962,9 @@ NSString *const MCTerminalLinkHint = @"Cmd+click to open";
 - (void)hideRestHint {
     [_restTimer invalidate];
     _restTimer = nil;
-    if (_restHintShown) {
-        _restHintShown = NO;
-        self.toolTip = nil;
+    if (_restHintShown || _addressHintShown) {
+        _restHintShown = _addressHintShown = NO;
+        [MCHoverHint hideInView:self];
     }
 }
 
@@ -1968,9 +1980,10 @@ NSString *const MCTerminalLinkHint = @"Cmd+click to open";
     if (!NSPointInRect(p, self.bounds) || [self pointIsOnScrollBar:p]) return;
     int line, endLine, c0, c1;
     if (![self linkAtPoint:p line:&line col0:&c0 endLine:&endLine col1:&c1]) return;
-    self.toolTip = _hyperlinkAddress
-        ? [NSString stringWithFormat:@"%@\n%@", MCTerminalLinkHint, _hyperlinkAddress]
-        : MCTerminalLinkHint;
+    [MCHoverHint showText:_hyperlinkAddress
+                              ? [NSString stringWithFormat:@"%@\n%@", MCTerminalLinkHint, _hyperlinkAddress]
+                              : MCTerminalLinkHint
+                   inView:self atPointer:p];
     _restHintShown = YES;
 }
 
@@ -2281,6 +2294,7 @@ static BOOL IsWordCell(const TermCell &cell) {
 // for mouse events gets the wheel as buttons 4 and 5 instead (Shift keeps
 // the old behavior).
 - (void)scrollWheel:(NSEvent *)e {
+    [self hideRestHint];
     TerminalScreen *s = self.screen;
     if (!s) return;
     if ([self reportsMouse:e]) {

@@ -68,7 +68,7 @@ static char kProcessesPanelKey, kProcessesShownKey;
     const BOOL show = !self.processesVisible;
     NSView *to = show ? panel : self.sidebarScroll;
     to.frame = from.frame;
-    if (from != to) [self.splitView replaceSubview:from with:to];
+    if (from != to) [self sidebarShowPanelView:to];
     self.processesVisible = show;
     self.gitPanelVisible = NO;
     self.agentsVisible = NO;
@@ -83,6 +83,7 @@ static char kProcessesPanelKey, kProcessesShownKey;
         [self.window makeFirstResponder:self.outline];
     }
     [self treeRevealIfShown];   // the tree back: the file that came on show meanwhile
+    [self sidebarIconsUpdate];
     if (self.hintsVisible) [self updateHints];
 }
 

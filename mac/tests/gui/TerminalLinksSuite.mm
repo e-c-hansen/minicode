@@ -4,7 +4,10 @@
 // and a Cmd+click on it loads it there, the keyboard staying in the
 // terminal; 0.0.0.0 is read as localhost; an OSC 8 hyperlink printed by
 // printf opens its own address on Cmd+click (a file one in the editor),
-// shows it as the tooltip, and a javascript: one is no link at all; and a
+// shows it beside the pointer, and a javascript: one is no link at all; a
+// move over a link with Cmd held underlines it and sets the pointing hand,
+// and a rest there without Cmd shows "⌘-click to open" in a hint of the
+// grid's own (HoverHint.h), which a move off it or a press takes away; and a
 // program with mouse reporting on, which takes the plain click itself and
 // opens the page with Python's webbrowser, goes through BROWSER (the
 // helper, then `mutible open-url`) into the pane too, while Cmd still
@@ -120,6 +123,35 @@ void WithCommandHover(TerminalGridView *g, int row, int col, void (^block)(void)
     block();
     method_setImplementation(flags, oldFlags);
     method_setImplementation(mouse, oldMouse);
+}
+
+// A mouse-moved event over a cell, as the tracking area sends it.
+void Move(TerminalGridView *g, int row, int col, NSEventModifierFlags flags) {
+    NSEvent *e = [NSEvent mouseEventWithType:NSEventTypeMouseMoved location:CellPoint(g, row, col)
+                               modifierFlags:flags
+                                   timestamp:NSProcessInfo.processInfo.systemUptime
+                                windowNumber:g.window.windowNumber context:nil eventNumber:0
+                                  clickCount:0 pressure:0];
+    [g mouseMoved:e];
+}
+
+// The last cursor `block` set (-[NSCursor set]), nil for none; the real
+// cursor is the user's, so it is only recorded.
+NSCursor *CursorSetBy(void (^block)(void)) {
+    Method set = class_getInstanceMethod(NSCursor.class, @selector(set));
+    IMP old = method_getImplementation(set);
+    __block NSCursor *last = nil;
+    method_setImplementation(set, imp_implementationWithBlock(^(NSCursor *cursor) { last = cursor; }));
+    block();
+    method_setImplementation(set, old);
+    return last;
+}
+
+// The hint view on show in the grid (HoverHint.h), nil when none.
+NSView *HintView(TerminalGridView *g) {
+    for (NSView *v in g.subviews)
+        if ([NSStringFromClass(v.class) isEqualToString:@"MCHoverHint"]) return v;
+    return nil;
 }
 
 // The pointer resting on a cell with no key held, for the rest hint.
@@ -242,22 +274,56 @@ MC_GUI_SUITE(terminal_links) {
         GCHECK(row >= 0 && col >= 0);
         if (col < 0) return;
         [c.window makeFirstResponder:grid];
-        WithCommandHover(grid, row, col + 5, ^{ [grid updateLinkHover]; });
+        // A move over it with Cmd held: underlined (the span drawn), and
+        // the pointing hand.
+        __block NSCursor *cursor = nil;
+        WithCommandHover(grid, row, col + 5, ^{
+            cursor = CursorSetBy(^{ Move(grid, row, col + 5, NSEventModifierFlagCommand); });
+        });
         GCHECK([[grid valueForKey:@"linkId"] longLongValue] != LLONG_MIN);
         GCHECK([[grid valueForKey:@"linkCol0"] intValue] == col);
-        GCHECK(grid.toolTip == nil);   // a link read from the text says where it goes
-        // Resting on it without Cmd: a hint that Cmd+click opens it.
+        GCHECK(cursor == NSCursor.pointingHandCursor);
+        if (cursor != NSCursor.pointingHandCursor) MCGuiNote(@"cursor set: %@", cursor);
+        GCHECK(grid.linkHintText == nil);   // a link read from the text says where it goes
+        GCHECK(grid.toolTip == nil);        // nor does AppKit's tooltip, which never showed
+        // Cmd let go: the underline and the hand go.
         WithPlainHover(grid, row, col + 5, ^{
-            [grid updateLinkHover];
+            cursor = CursorSetBy(^{ [grid updateLinkHover]; });
+        });
+        GCHECK([[grid valueForKey:@"linkId"] longLongValue] == LLONG_MIN);
+        GCHECK(cursor == NSCursor.arrowCursor);
+        // Resting on it without Cmd: a hint beside the pointer that
+        // ⌘-click opens it, inside the grid.
+        WithPlainHover(grid, row, col + 5, ^{
+            Move(grid, row, col + 5, 0);
             [grid showRestHint];
         });
-        GCHECK_EQ_STR(grid.toolTip, MCTerminalLinkHint);
+        GCHECK_EQ_STR(grid.linkHintText, @"⌘-click to open");
+        GCHECK_EQ_STR(MCTerminalLinkHint, @"⌘-click to open");
+        NSView *hint = HintView(grid);
+        GCHECK(hint && !hint.hidden && NSContainsRect(grid.visibleRect, hint.frame) &&
+               NSWidth(hint.frame) > 20 && NSHeight(hint.frame) > 8);
+        if (hint) MCGuiNote(@"hint %@ in %@", NSStringFromRect(hint.frame),
+                            NSStringFromRect(grid.visibleRect));
+        GCHECK([[grid valueForKey:@"linkId"] longLongValue] == LLONG_MIN);   // no underline without Cmd
+        GCHECK(grid.toolTip == nil);
         // Off the address (the line's first cell, "Serving"), a move takes it away.
         WithPlainHover(grid, row, 0, ^{
-            [grid updateLinkHover];
+            Move(grid, row, 0, 0);
             [grid showRestHint];
         });
-        GCHECK(grid.toolTip == nil);
+        GCHECK(grid.linkHintText == nil && HintView(grid) == nil);
+        // Back on it, then a plain press: the hint goes, and the press
+        // selects as before (no page opens: the next step's Cmd+click is
+        // the pane's first load of this address).
+        WithPlainHover(grid, row, col + 5, ^{
+            Move(grid, row, col + 5, 0);
+            [grid showRestHint];
+        });
+        GCHECK_EQ_STR(grid.linkHintText, @"⌘-click to open");
+        Click(grid, row, col + 5, 0);
+        GCHECK(grid.linkHintText == nil);
+        GCHECK(![Pane(c).userProbe.url.description isEqualToString:Local(@"/")]);
         Click(grid, row, col + 5, NSEventModifierFlagCommand);
     });
     MCGuiWait(@"the page is in the pane, the user's", 20, ^BOOL { return PaneShows(c, @"Served"); });
@@ -301,18 +367,18 @@ MC_GUI_SUITE(terminal_links) {
         WithCommandHover(grid, row, 5, ^{ [grid updateLinkHover]; });
         GCHECK([[grid valueForKey:@"linkCol0"] intValue] == 0);
         GCHECK([[grid valueForKey:@"linkCol1"] intValue] == 12);
-        GCHECK_EQ_STR(grid.toolTip, Local(@"/osc8.html"));
+        GCHECK_EQ_STR(grid.linkHintText, Local(@"/osc8.html"));
         WithPlainHover(grid, row, 5, ^{
             [grid updateLinkHover];
             [grid showRestHint];
         });
-        GCHECK_EQ_STR(grid.toolTip, ([NSString stringWithFormat:@"%@\n%@", MCTerminalLinkHint,
-                                     Local(@"/osc8.html")]));
+        GCHECK_EQ_STR(grid.linkHintText, ([NSString stringWithFormat:@"%@\n%@", MCTerminalLinkHint,
+                                          Local(@"/osc8.html")]));
         int bad = RowStarting(s, @"Not a link");
         GCHECK(bad >= 0 && s->lineCell(bad, 0).style.link == 0);
         WithCommandHover(grid, bad, 2, ^{ [grid updateLinkHover]; });
         GCHECK([[grid valueForKey:@"linkId"] longLongValue] == LLONG_MIN);
-        GCHECK(grid.toolTip == nil);
+        GCHECK(grid.linkHintText == nil);
         Click(grid, row, 5, NSEventModifierFlagCommand);
     });
     MCGuiWait(@"its address loads in the pane", 20, ^BOOL { return PaneShows(c, @"Hyperlink"); });
@@ -346,7 +412,7 @@ MC_GUI_SUITE(terminal_links) {
             [grid updateLinkHover];
             [grid showRestHint];
         });
-        GCHECK(grid.toolTip == nil);
+        GCHECK(grid.linkHintText == nil);
         Click(grid, row, col + 3, NSEventModifierFlagCommand);
     });
     MCGuiWait(@"the address shown loads", 20, ^BOOL { return PaneShows(c, @"Cmd"); });

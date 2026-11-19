@@ -11,10 +11,12 @@ container (PanelHost, laid out by hand in layoutContainer)
 ├── blurView (NSVisualEffectView)                 window.blur
 ├── titlebarView + titleLabel                     with a custom title bar
 ├── NSSplitView (vertical)                        sidebar | right pane
-│   ├── treeScroll → ClickOutline                 file tree, MCTreeCell rows,
-│   │   a Worktrees node first; or MCGitPanel (Shift+Cmd+G), the Agents
-│   │   panel (Shift+Cmd+A) or MCProcessesPanel (View > Toggle Processes)
-│   │   swapped in with replaceSubview:
+│   ├── sidebarHost (MCSidebarHost)               the sidebar, for the window's life
+│   │   ├── iconBar (MCSidebarIconBar)            top, 28 pt: the panels' icons
+│   │   └── content: treeScroll → ClickOutline    file tree, MCTreeCell rows,
+│   │       a Worktrees node first; or MCGitPanel (Shift+Cmd+G), the Agents
+│   │       panel (Shift+Cmd+A) or MCProcessesPanel (Shift+Cmd+J), swapped
+│   │       in by sidebarShowPanelView: (was the split's replaceSubview:)
 │   └── rightArea (PanelHost, relayoutRightArea)
 │       ├── changeBar (MCChangeBar)                Request a Change, top, over all
 │       ├── tabStrip (MCTabStrip)                  top of the editor's side
@@ -67,6 +69,26 @@ container (PanelHost, laid out by hand in layoutContainer)
   (`FindWidget.mm`, `PaletteFor`), not keys of their own, and so do the
   language server's popups by the caret (`PopupStyle`, LspShared.h;
   `docs/notes/lsp.md`), read at each showing.
+- **The sidebar's icons** (2026-11-19, round 9: Source Control, Agents
+  and Processes had no visible way in; `SidebarIcons.{h,mm}`,
+  `EditorController+SidebarIcons.mm`, the `sidebar_icons` suite): the
+  split view's first subview is always `sidebarHost`, which lays out by
+  hand its row of icons (top) and the panel on show (`content`); code
+  that took `splitView.subviews.firstObject` as the sidebar still gets its
+  width. Each toggle (`toggleSourceControl:`, `toggleAgents:`,
+  `toggleProcesses:`) shows its view through `sidebarShowPanelView:` and
+  calls `sidebarIconsUpdate`, which marks the icon and sets the tips (keys
+  from keys.conf) and badges: Source Control's from the tree's git status
+  (`MCTreeGitColors changeCount`, the core's `Decorations::changeCount`;
+  the tree's `onChange` calls it, so no git runs for it), Agents' dot from
+  `MCTerminalAttention` over the window's terminals (its notification),
+  Processes' from `Procs::countServers` over `viewForWindow:` at each
+  monitor look (10 s), only while the row shows. The row paints the
+  sidebar color once as a layer color, and hides when the host is under a
+  point wide (Cmd+B; its buttons would draw past a 0-wide host, which does
+  not clip) or with workbench.sidebar-icons = off. The icons refuse the
+  keyboard; a click on the one on show is `focusTree:`. The File Tree's
+  tip has no key: Cmd+0 focuses whatever panel shows.
 - The window always uses `NSWindowStyleMaskFullSizeContentView`;
   `layoutContainer` keeps the split below the title bar with
   `contentLayoutRect`, empty before the window is shown, so `titlebarHeight`
@@ -137,3 +159,4 @@ Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
 - UI map (read this before UI work): Traps: a clip view's translucent `backgroundColor` renders opaque;
+- UI map (read this before UI work): the sidebar's icon row would draw past a 0-wide host, which does not clip, so the host hides it under a point wide.
