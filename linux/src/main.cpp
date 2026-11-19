@@ -63,6 +63,8 @@
 #include "SessionLink.h"
 #include "TermDockRecord.h"
 #include "FileTree.h"
+#include "HintsSearchBox.h"
+#include "WindowTitle.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
 #include "FolderPicker.h"  // inScope (Add Folder to Focus…)
 #include "Folds.h"
@@ -86,6 +88,7 @@
 #include "FolderConsent.h"
 #include "Formatting.h"
 #include "TreeGitColors.h"
+#include "TreeFollow.h"
 #include "Lsp.h"
 #include "AgentNotes.h"
 #include "GitGutter.h"
@@ -147,6 +150,7 @@ struct App {
     Editor*   editor = nullptr;
     FindBar*  findBar = nullptr;     // the editor's find and replace bar
     FileTree* tree = nullptr;
+    TreeFollow* treeFollow = nullptr;   // the tree following the active tab
     // The sidebar is a stack: the file tree, or the Source Control panel in
     // its place, made on first use.
     GtkWidget* sidebar = nullptr;
@@ -203,6 +207,10 @@ struct App {
     GtkWidget* hintsLabel = nullptr;
     GtkWidget* hintsScroll = nullptr;
     GtkWidget* hintsHint  = nullptr;
+    // The box at the panel's top (HintsSearchBox.h), deleted with its widget.
+    HintsSearchBox* hintsSearch = nullptr;
+    // The pane the title last spoke for (titleFocus).
+    WindowTitle::Focus titleFocus = WindowTitle::Focus::Document;   // as last titled
 
     std::string rootDir;
     // The session's host for the folder (SessionLink.h): its tabs are
@@ -336,29 +344,81 @@ static void updateMediaKey(App* app) {
     g_simple_action_set_enabled(G_SIMPLE_ACTION(a), on);
 }
 
-static void updateTitle(void* userp) {
-    App* app = static_cast<App*>(userp);
-    std::string title = "mutible";
-    const std::string& p = app->editor->currentPath();
+// `w` is `area` or inside it (through a popover too: the editor's own menu
+// is still the editor).
+static bool insideWidget(GtkWidget* w, GtkWidget* area) {
+    return w && area && (w == area || gtk_widget_is_ancestor(w, area));
+}
+
+// Which pane the title speaks for (WindowTitle::Focus): the terminal's or
+// the browser's while it has the keyboard, else the document's (the editor,
+// the tree, any other pane). The palette and the hints' search box only
+// borrow the keyboard, so the title stays as it was while they have it (the
+// box's: as where it took the keyboard from).
+static WindowTitle::Focus titleFocus(App* app) {
+    GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(app->window));
+    if (app->hintsSearch && app->hintsSearch->hasKeyboard()) focus = app->hintsSearch->previous();
+    else if (app->palette && insideWidget(focus, app->palette->box())) focus = nullptr;
+    if (!focus) return app->titleFocus;
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (app->termDock && insideWidget(focus, app->termDock->widget())) return WindowTitle::Focus::Terminal;
+#endif
+#ifdef MUTIBLE_ENABLE_BROWSER
+    if (app->browser && insideWidget(focus, app->browser->widget())) return WindowTitle::Focus::Browser;
+#endif
+    return WindowTitle::Focus::Document;
+}
+
+// The window's title, by the core's rule, the Mac's too (WindowTitle.h):
+// "src/main.cpp — mutible" for the document, its path from the window's
+// folder, else with ~ for home, "● " in front while it has unsaved changes
+// and its detail after (a Markdown file's tasks, a picture's size, a PDF's
+// pages); the terminal's or the page's own title while one of them has the
+// keyboard. Run as well when the keyboard moves between panes
+// (onFocusWidget).
+static void setWindowTitle(App* app) {
+    if (app->dead || !app->editor) return;
+    app->titleFocus = titleFocus(app);
+    WindowTitle::Input in;
+    in.focus = app->titleFocus;
+    in.folder = app->rootDir;
+    const char* home = g_get_home_dir();
+    in.home = home ? home : "";
     if (app->editor->isDiff()) {
-        // "name (diff)" or "<short hash> <subject>", as the Mac titles it.
-        title = "mutible — " + app->editor->diffTitle();
-    } else if (!p.empty()) {
-        auto slash = p.find_last_of('/');
-        std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
-        title = "mutible — " + base + (app->editor->dirty() ? " *" : "");
-        // A Markdown file with tasks: how many are done.
-        if (app->editor->tasksTotal() > 0)
-            title += " — " + std::to_string(app->editor->tasksDone()) + " of " +
-                     std::to_string(app->editor->tasksTotal()) + " done";
-        title += app->editor->titleSuffix();   // pixel size or page count
+        in.name = app->editor->diffTitle();   // "name (diff)" or "<short hash> <subject>"
+    } else {
+        in.path = app->editor->currentPath();
+        in.dirty = !in.path.empty() && app->editor->dirty();
+        if (!in.path.empty()) {
+            // A Markdown file with tasks: how many are done.
+            if (app->editor->tasksTotal() > 0)
+                in.detail = " — " + std::to_string(app->editor->tasksDone()) + " of " +
+                            std::to_string(app->editor->tasksTotal()) + " done";
+            in.detail += app->editor->titleSuffix();   // pixel size or page count
+        }
     }
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (in.focus == WindowTitle::Focus::Terminal && app->termDock && app->termDock->active())
+        in.pane = app->termDock->active()->title();
+#endif
+#ifdef MUTIBLE_ENABLE_BROWSER
+    if (in.focus == WindowTitle::Focus::Browser && app->browser)
+        in.pane = app->browser->tabTitle(app->browser->activeTab());
+#endif
+    std::string title = WindowTitle::title(in);
     // Claude Code sessions waiting for the user, in any window (PARITY.md 3.6):
     // the count leads the title, which the task switcher shows (GTK4 has no
     // Dock badge or urgency hint to set).
     if (int waiting = TerminalAttention::waitingCount())
         title = "(" + std::to_string(waiting) + " waiting) " + title;
-    gtk_window_set_title(GTK_WINDOW(app->window), title.c_str());
+    const char* now = gtk_window_get_title(GTK_WINDOW(app->window));
+    if (!now || title != now) gtk_window_set_title(GTK_WINDOW(app->window), title.c_str());
+}
+
+static void updateTitle(void* userp) {
+    App* app = static_cast<App*>(userp);
+    setWindowTitle(app);
+    const std::string& p = app->editor->currentPath();
     // Nothing to save while an image, a PDF or a binary file is shown.
     if (GAction* save = g_action_map_lookup_action(G_ACTION_MAP(app->window), "save"))
         g_simple_action_set_enabled(G_SIMPLE_ACTION(save), app->editor->canSave());
@@ -667,11 +727,32 @@ static void confirmAllUnsaved(App* app, std::function<void()> proceed,
     }, keep);
 }
 
-// The file tree's selection follows the tab on show, as on the Mac
-// (reselectCurrentFileInTree).
-static void revealActiveInTree(App* app) {
-    const std::string& cur = app->editor->currentPath();
-    if (isInside(cur, app->rootDir)) app->tree->revealPath(cur);
+// The tree following the active tab (TreeFollow.h, explorer.auto-reveal):
+// the active tab's file as the tree lists it, or "" for none it has (a
+// diff, a comparison, a page, an untitled tab not on disk yet, a file gone
+// or outside the window's folder), as the Mac's treeFollowablePath.
+static std::string treeFollowablePath(App* app) {
+    const std::string& p = app->editor->currentPath();
+    if (p.empty() || app->editor->isDiff() || app->editor->isComparison() || p == app->rootDir ||
+        !isInside(p, app->rootDir))
+        return "";
+    struct stat st;
+    return stat(p.c_str(), &st) == 0 ? p : "";
+}
+
+// Whether the tree's rows are on screen: the sidebar open, the tree in it
+// (not Source Control, Processes or Agents), and not dragged shut (the
+// divider's position, which a sidebar just shown again keeps, where its
+// width is only known after the next layout).
+static bool treeOnShow(App* app) {
+    if (!app->layout || !app->layout->sidebarShown() || !app->sidebar ||
+        gtk_stack_get_visible_child(GTK_STACK(app->sidebar)) != app->tree->container())
+        return false;
+    return gtk_paned_get_position(GTK_PANED(app->layout->widget())) >= 1;
+}
+
+static void treeMaybeShown(App* app) {
+    if (!app->dead && app->treeFollow) app->treeFollow->treeMaybeShown();
 }
 
 // A file changed on disk while its tab has edits of its own: the Mac's
@@ -1014,6 +1095,9 @@ static void openFolder(App* app, const std::string& dir) {
     // stay on the one their shells run on.
     useSessionLink(app, dir);
     app->editor->setSessionLink(app->link);
+    // The new folder's tree as it opens, not moved to the file on show
+    // (explorer.auto-reveal, as the Mac holds it around restoreSession).
+    app->treeFollow->hold(true);
     // What the new folder's host holds for a window (stage 6, step 2).
     if (app->link && !app->link->lost()) {
         app->held = app->link->takeForWindow(app->editor->sessionWindowId());
@@ -1033,6 +1117,7 @@ static void openFolder(App* app, const std::string& dir) {
     app->persist->restoreSession();   // the new folder's tabs from last time
     backUpHeldDocuments(app);
     showHeldActive(app);
+    app->treeFollow->hold(false);
     updateTitle(app);
     refreshHints(app);
 }
@@ -2607,16 +2692,23 @@ static void trashNow(App* app, const std::string& path) {
         g_clear_error(&err);
         return;
     }
+    // Only its row goes (HANDOFF item 110): the selection moves to the row
+    // after it, the tree keeps its scroll and open folders. Its folder's
+    // listing takes the row out a moment later.
+    app->tree->removing(path);
     // The tabs of what went close, in every window, unless they hold unsaved
     // changes: those stay open, and saving writes the file again (the Mac's
-    // rule).
+    // rule). The tab shown next is not revealed in any tree: following it
+    // put the tree at that file, the top of the tree for one near it ("the
+    // view resets and I am brought to the top").
     for (App* a : g.windows) {
+        if (a->treeFollow) a->treeFollow->quiet(true);
         a->editor->pathTrashed(path);
+        if (a->treeFollow) a->treeFollow->quiet(false);
         a->nav->removed(path);   // no place to go back to
         updateTitle(a);
         refreshHints(a);
     }
-    app->tree->clearSelection();
 }
 
 static void act_trash(GSimpleAction*, GVariant*, gpointer userp) {
@@ -3433,7 +3525,12 @@ static void showPalette(App* app, const char* text) {
     ctx.root = app->rootDir;
     ctx.useIgnoreFiles = g.settings->settings().searchUseIgnoreFiles();
     ctx.openFile = [app](const std::string& path) {
-        if (!app->dead) openFileThen(app, path, EditorTabs::OpenFrom::QuickOpen, nullptr);
+        if (app->dead) return;
+        // Selected in the tree and centered unless in view, whatever
+        // explorer.auto-reveal says (the Mac's openFileFromQuickOpen:
+        // revealPath:open:); never widening a focus.
+        if (isInside(path, app->rootDir)) app->tree->revealPath(path);
+        openFileThen(app, path, EditorTabs::OpenFrom::QuickOpen, nullptr);
     };
     ctx.documentSymbols = [app](PalettePanel::Context::SymbolsDone done) {
         return !app->dead && app->lsp && app->lsp->documentSymbols(std::move(done));
@@ -3528,15 +3625,9 @@ static void act_todos(GSimpleAction*, GVariant*, gpointer userp) {
 // is that panel. As on the Mac, what each row does is written here and its key
 // comes from the registry (Keys::label), so keys.conf moves it too; a command
 // keys.conf took every key from shows "—". The panel is monospace, so the key
-// column is as wide as its widest key.
-namespace {
-struct HintRow {
-    enum Kind { Heading, Row, Text } kind;
-    std::string key, text;
-};
-}  // namespace
-
-static std::string hintsText(App* app) {
+// column is as wide as its widest key. A row is a HintRow (HintsSearchBox.h),
+// which also says where the row is in the text, for the search box's marks.
+static std::vector<HintRow> hintsRows(App* app) {
     std::vector<HintRow> rows;
     auto heading = [&](const std::string& title) { rows.push_back({HintRow::Heading, "", title}); };
     auto text = [&](const std::string& line) { rows.push_back({HintRow::Text, "", line}); };
@@ -3546,7 +3637,7 @@ static std::string hintsText(App* app) {
     // The command's key at `index` (the first by default); "—" for none, and
     // nothing at all for a second key it does not have.
     auto row = [&](const char* id, const std::string& what, size_t index = 0) {
-        const std::string key = Keys::label(id, " ", index);
+        const std::string key = Keys::hintLabel(id, index);
         if (key.empty() && index > 0) return;
         plain(key.empty() ? "—" : key, what);
     };
@@ -3728,35 +3819,117 @@ static std::string hintsText(App* app) {
         for (const Commands::Key& k : Keys::keymap().keysOf(c->id))
             if (!(k.mods & (Commands::Shift | Commands::Alt)) &&
                 !Commands::linuxTerminalTakes(*c, k))
-                plain(Commands::linuxLabel(k), Commands::titleOf(*c, Commands::Platform::Linux));
+                plain(Commands::keyLabel(k, Commands::Platform::Linux), Commands::titleOf(*c, Commands::Platform::Linux));
     }
 #endif
 
     rows.push_back({HintRow::Text, "", ""});
     row("mutible.toggleShortcutHints", "Hide these hints");
+    return rows;
+}
 
+// The panel's text from its rows, each row told where it landed.
+static std::string hintsText(std::vector<HintRow>& rows) {
     size_t width = 0;
     for (const HintRow& r : rows)
         if (r.kind == HintRow::Row) width = std::max(width, (size_t)g_utf8_strlen(r.key.c_str(), -1));
     std::string s;
-    for (const HintRow& r : rows) {
+    for (HintRow& r : rows) {
         switch (r.kind) {
         case HintRow::Heading:
             if (!s.empty()) s += "\n";
-            s += r.text + "\n────────────────────────────────────────\n";
+            r.start = r.textAt = s.size();
+            s += r.text + "\n────────────────────────────────────────";
+            r.end = s.size();
+            s += "\n";
             break;
         case HintRow::Text:
-            s += r.text + "\n";
+            r.start = r.textAt = s.size();
+            s += r.text;
+            r.end = s.size();
+            s += "\n";
             break;
         case HintRow::Row:
-            s += r.key + std::string(width + 2 - (size_t)g_utf8_strlen(r.key.c_str(), -1), ' ') +
-                 r.text + "\n";
+            r.start = s.size();
+            s += r.key + std::string(width + 2 - (size_t)g_utf8_strlen(r.key.c_str(), -1), ' ');
+            r.textAt = s.size();
+            s += r.text;
+            r.end = s.size();
+            s += "\n";
             break;
         }
     }
     if (!s.empty() && s.back() == '\n') s.pop_back();
     return s;
 }
+
+// The text again, marked for the search box's query (HintsSearchBox.h):
+// what it finds marked, the rest dimmed, nothing moved. `firstHit` gets
+// the first mark's byte index, or -1.
+static void showHintsText(App* app, int* firstHit = nullptr) {
+    std::vector<HintRow> rows = hintsRows(app);
+    gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(rows).c_str());
+    PangoAttrList* marks = HintsSearchBox::attributes(
+        rows, app->hintsSearch ? app->hintsSearch->query() : std::string(), firstHit);
+    gtk_label_set_attributes(GTK_LABEL(app->hintsLabel), marks);
+    if (marks) pango_attr_list_unref(marks);
+}
+
+// The query changed: the marks again, the first one scrolled into sight
+// (the top with none), as the Mac's hintsQueryChanged.
+static void hintsQueryChanged(App* app) {
+    if (app->dead || !app->hintsPanel || !gtk_widget_get_visible(app->hintsPanel)) return;
+    int first = -1;
+    showHintsText(app, &first);
+    GtkAdjustment* adj =
+        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app->hintsScroll));
+    if (first < 0) {
+        gtk_adjustment_set_value(adj, 0);
+        return;
+    }
+    PangoRectangle at;
+    pango_layout_index_to_pos(gtk_label_get_layout(GTK_LABEL(app->hintsLabel)), first, &at);
+    int ox = 0, oy = 0;
+    gtk_label_get_layout_offsets(GTK_LABEL(app->hintsLabel), &ox, &oy);
+    const double top = oy + (double)at.y / PANGO_SCALE;
+    const double bottom = top + (double)at.height / PANGO_SCALE;
+    const double value = gtk_adjustment_get_value(adj), page = gtk_adjustment_get_page_size(adj);
+    if (top < value || bottom > value + page)
+        gtk_adjustment_set_value(adj, std::max(0.0, top - page / 3));
+}
+
+// The panel shown or hidden. Hidden, its box empties and gives the keyboard
+// back where it took it from (the editor when it cannot tell), before the
+// panel goes, so the keyboard never falls to whatever GTK picks.
+static void setHintsShown(App* app, bool showing) {
+    if (showing) {
+        // Rebuilt on every open, not once at startup: half its value is
+        // reporting which panels are currently up.
+        showHintsText(app);
+        gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(
+                                     GTK_SCROLLED_WINDOW(app->hintsScroll)), 0);
+    } else if (app->hintsSearch) {
+        const bool had = app->hintsSearch->hasKeyboard();
+        if (had && !app->hintsSearch->giveBackKeyboard())
+            gtk_widget_grab_focus(app->editor->textView());
+        app->hintsSearch->clear();
+    }
+    gtk_widget_set_visible(app->hintsPanel, showing);
+    gtk_label_set_text(GTK_LABEL(app->hintsHint), hintsHintText(showing).c_str());
+}
+
+// Every key press in the window goes by the hints' search box first, before
+// any view, and (seen on GTK 4.22, where this controller, added after the
+// window's own, runs first) before the application's accelerators: Alt+Z
+// types "z" into the box and leaves Word Wrap alone (hints_panel).
+static gboolean onHintsKey(GtkEventControllerKey* controller, guint keyval, guint,
+                           GdkModifierType state, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->dead || !app->hintsSearch || !gtk_widget_get_visible(app->hintsPanel)) return FALSE;
+    if (app->palette && app->palette->isOpen()) return FALSE;   // its own typing
+    return app->hintsSearch->takeKey(controller, keyval, state);
+}
+
 static GtkWidget* buildHintsPanel(App* app) {
     app->hintsLabel = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(app->hintsLabel), 0.0);
@@ -3777,8 +3950,23 @@ static GtkWidget* buildHintsPanel(App* app) {
     gtk_widget_add_css_class(app->hintsScroll, "minicode-scroller");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(app->hintsScroll), app->hintsLabel);
 
+    // The search box over the list (HintsSearchBox.h), and the window's
+    // keys handed to it while the panel shows.
+    app->hintsSearch = new HintsSearchBox();
+    gtk_widget_set_margin_bottom(app->hintsSearch->widget(), 10);
+    gtk_widget_set_margin_end(app->hintsSearch->widget(), 10);
+    app->hintsSearch->onChange = [app] { hintsQueryChanged(app); };
+    app->hintsSearch->onClose = [app] {
+        if (!app->dead) setHintsShown(app, false);
+    };
+    GtkEventController* keys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(onHintsKey), app);
+    gtk_widget_add_controller(app->window, keys);
+
     app->hintsPanel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(app->hintsPanel, "minicode-hints");
+    gtk_box_append(GTK_BOX(app->hintsPanel), app->hintsSearch->widget());
     gtk_box_append(GTK_BOX(app->hintsPanel), app->hintsScroll);
 
     // Float it in the top-right corner, the same corner macOS puts it in, and
@@ -3800,22 +3988,12 @@ static GtkWidget* buildHintsPanel(App* app) {
 // four places (EditorController.mm).
 static void refreshHints(App* app) {
     if (app->dead || !app->layout) return;
-    if (app->hintsPanel && gtk_widget_get_visible(app->hintsPanel))
-        gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
+    if (app->hintsPanel && gtk_widget_get_visible(app->hintsPanel)) showHintsText(app);
 }
 
 static void act_toggle_hints(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
-    const bool showing = !gtk_widget_get_visible(app->hintsPanel);
-    // Rebuilt on every open, not once at startup: half its value is reporting
-    // which panels are currently up.
-    if (showing) {
-        gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(app).c_str());
-        gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(
-                                     GTK_SCROLLED_WINDOW(app->hintsScroll)), 0);
-    }
-    gtk_widget_set_visible(app->hintsPanel, showing);
-    gtk_label_set_text(GTK_LABEL(app->hintsHint), hintsHintText(showing).c_str());
+    setHintsShown(app, !gtk_widget_get_visible(app->hintsPanel));
 }
 
 // ---------------------------------------------------------------- settings
@@ -3873,6 +4051,7 @@ static void applyWindowSettings(App* app) {
             if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get())) r->applySettings();
     if (app->gitGutter) app->gitGutter->applySettings(st);
     if (app->testGutter) app->testGutter->refreshSoon();   // test.<language> may have changed
+    if (app->treeFollow) app->treeFollow->settingsApplied();   // explorer.auto-reveal
 #ifdef MUTIBLE_ENABLE_TERMINAL
     if (app->termDock)
         for (Terminal* t : app->termDock->all()) t->applySettings(st);
@@ -4067,6 +4246,7 @@ static void updateKeyPlace() {
 static void onFocusWidget(GObject*, GParamSpec*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     updateKeyPlace();
+    setWindowTitle(app);   // the file's path while the editor has the keyboard
     updateMediaKey(app);
     if (!app->dead && app->editor)   // focus outside the editor closes the inline agent's bar
         app->editor->inlineAgent()->focusMoved(gtk_root_get_focus(GTK_ROOT(app->window)));
@@ -4642,6 +4822,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->git = nullptr;
     delete app->layout;
     app->layout = nullptr;
+    delete app->treeFollow;
+    app->treeFollow = nullptr;
     delete app->tree;
     app->tree = nullptr;
     delete app->findBar;   // before the editor, whose view it follows
@@ -4711,6 +4893,10 @@ static App* newWindow(const std::string& root, const std::string& file,
     // Core widgets.
     app->tree = new FileTree(app->rootDir, g.showHidden);
     StartupLog::mark("window: file tree");
+    app->treeFollow = new TreeFollow(app->tree, TreeFollow::Host{
+        [app] { return treeFollowablePath(app); },
+        [app] { return treeOnShow(app); },
+        [] { return g.settings->settings().explorerAutoReveal(); }});
     app->tree->setOpenCallback(treeOpenCb, app);
     app->tree->setDropCallback([app](const std::vector<std::string>& paths,
                                      const std::string& dir, bool move) {
@@ -4780,7 +4966,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->editor->onActiveChanged = [app] {
         if (app->dead) return;
         if (app->nav) app->nav->tabDidSwitch();
-        revealActiveInTree(app);
+        app->treeFollow->activeChanged();   // the tree shows the file (explorer.auto-reveal)
         refreshHints(app);
         if (app->persist) app->persist->tabShown();
         if (app->git) app->git->updateActions();   // Discard Changes acts on the file on show
@@ -4832,6 +5018,13 @@ static App* newWindow(const std::string& root, const std::string& file,
             if (width > 0 && height > 0) {
                 w->haveFrame = true;
                 w->frame = TabSessions::Frame{0, 0, (double)width, (double)height};
+            }
+            // The tree: its open folders, its selected row and how far it
+            // was scrolled, put back by FileTree::restoreView.
+            if (app->tree) {
+                w->expanded = app->tree->openFolders();
+                w->selected = app->tree->selectedPath();
+                w->treeScroll = app->tree->scrolled();
             }
             if (!app->layout) return;
             w->sidebarHidden = !app->layout->sidebarShown();
@@ -4956,8 +5149,20 @@ static App* newWindow(const std::string& root, const std::string& file,
         else app->tree->focus();
     };
     app->layout->onChanged = [app] {
-        if (!app->dead) refreshHints(app);
+        if (app->dead) return;
+        treeMaybeShown(app);   // the sidebar back: the file that came on show meanwhile
+        refreshHints(app);
     };
+    // The tree back in the sidebar (Source Control, Processes or Agents
+    // closed), or the sidebar dragged open: the same.
+    g_signal_connect(app->sidebar, "notify::visible-child",
+                     G_CALLBACK(+[](GObject*, GParamSpec*, gpointer p) {
+                         treeMaybeShown(static_cast<App*>(p));
+                     }), app);
+    g_signal_connect(app->layout->widget(), "notify::position",
+                     G_CALLBACK(+[](GObject*, GParamSpec*, gpointer p) {
+                         treeMaybeShown(static_cast<App*>(p));
+                     }), app);
     StartupLog::mark("window: layout");
 
     // Status bar: the current path on the left, and the hint that advertises the
@@ -5347,11 +5552,16 @@ static App* newWindow(const std::string& root, const std::string& file,
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
     StartupLog::mark("window: actions and settings applied");
     // The files open here last time: the window's own when it is brought
-    // back, else the folder's.
+    // back, else the folder's. The tree comes back as the record left it,
+    // not moved to the file on show (explorer.auto-reveal; the Mac's
+    // holdTreeFollowing: and finishRestoringWindow).
+    app->treeFollow->hold(true);
     attachHeldDocuments(app);
     app->persist->restoreSession(record ? &record->tabs : nullptr);
     backUpHeldDocuments(app);
     showHeldActive(app);
+    app->treeFollow->hold(false);
+    if (record) app->tree->restoreView(record->expanded, record->selected, record->treeScroll);
 #ifdef MUTIBLE_ENABLE_BROWSER
     if (app->browser) {   // the browser's tabs, suspended; the one on show loads when the pane is
         const TabSessions::Session saved = record ? record->tabs : app->persist->savedSession();

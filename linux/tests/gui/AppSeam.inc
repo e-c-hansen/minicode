@@ -27,6 +27,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.hintsPanel = a->hintsPanel;
     w.hintsLabel = a->hintsLabel;
     w.hintsHint = a->hintsHint;
+    w.hintsSearch = a->hintsSearch ? a->hintsSearch->widget() : nullptr;
     w.palette = a->palette;
     w.nav = a->nav;
     w.consentBar = a->consentBar;

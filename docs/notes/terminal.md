@@ -571,7 +571,7 @@ SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
   shell (a key counts for 200 ms, an input method's commit coming late),
   so Ctrl+Shift+C and Ctrl+Up leave it.
 - **The GTK port's cursor and Control keys** (2026-11-18,
-  linux/HANDOFF.md item 108). The cursor is the terminal's text color
+  linux/HANDOFF.md item 110). The cursor is the terminal's text color
   and the character under the block the background's, both opaque
   (`Settings::terminalCursor` and `terminalCursorText`, as the Mac's grid
   draws it; no built-in theme has a cursor color), set in
@@ -586,7 +586,7 @@ SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
   (`Commands::linuxTerminalTakes`, Keys.cpp's `bound`), so readline's
   Ctrl+W, A, E, U, K, R, L, D, C, Z, Y, P, N, B and F reach the shell, as
   Control does on the Mac; the harness found them all reaching it before
-  item 108 too. VS Code's terminal on Linux does the same apart from its
+  item 110 too. VS Code's terminal on Linux does the same apart from its
   `terminal.integrated.commandsToSkipShell` (Quick Open's Ctrl+P and
   Ctrl+E, its terminal find's Ctrl+F, chords such as Ctrl+K while
   `allowChords` is on), which mutible gives the shell. A Mac-style remapper

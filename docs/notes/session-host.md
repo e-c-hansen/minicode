@@ -170,6 +170,20 @@ top of a turn, never inside a text system callback.
 
 ## Traps
 
+- **Cookies are not kept apart by port** (the browser view, 2026-11-18):
+  a cookie for 127.0.0.1 goes to every port of it, so a view's credential
+  is named for its port and scoped to its own path (`/v/ID/`); scoped to
+  `/` it would reach any dev server the page frames in its browser pane.
+  And `SameSite=Strict` is not sent on a navigation from another site, so
+  the browser's id (only a name) is Lax, or a link clicked in a chat page
+  would make the browser look new and forget that it was remembered.
+- **`history.replaceState` runs first in the page's script**, before the
+  socket opens; the page's own requests use `viewBase` (`{{BASE}}`), never a
+  path relative to the address, which changes under them.
+- **A page's socket is taken whatever its credential's state** and told
+  `waiting`, `denied` or `expired`: refused at the upgrade, a page cannot
+  tell why and reconnects every 2 s for ever. Only a socket with no
+  credential cookie at all is refused (403).
 - **A tree listing runs on the host's thread**, between typing messages;
   hence `kMaxListed`. Stage 7's bigger reads belong on a worker.
 - **GtkStack moves the keyboard to a tab's first pane** when it shows
@@ -1085,22 +1099,27 @@ rules, the views as data) and `src/SessionWebPage.cpp` (the one page, its
 CSS and script, no third-party code). The user's side is REFERENCE.md's
 "Remote sessions (early)".
 
-- **Access.** A socket on 127.0.0.1 (never `INADDR_ANY`), and a token of 48
-  hex digits from /dev/urandom made at start, printed once in the address
-  (`http://127.0.0.1:PORT/?t=TOKEN`). `Web::answer` refuses, in this order:
-  anything but GET (405), a Host that is not 127.0.0.1, localhost or [::1]
-  with any port (403; two Host or two Origin headers make the request bad),
-  an Origin that is not the page's own (`sameOrigin`: http:// and the
-  Host the request came under, so a page on another port or under the
-  other loopback name is refused too) and a socket upgrade with no Origin
-  at all (403; since 8b, when pages can edit), no token or a wrong
-  one (403, compared with `IdeLink::sameSecret`), then serves `/` (the page)
-  or `/ws` (the WebSocket upgrade, IdeLink's accept key and frames), else
-  404. The token is in the query of both because a browser's WebSocket
-  cannot send headers; the page has `Referrer-Policy: no-referrer` and
+- **Access.** A socket on 127.0.0.1 (never `INADDR_ANY`). Every address is
+  under the view's own path, `/v/ID/` (`Access::base`, 16 hex digits made
+  at start): the page at `/v/ID/`, the socket at `/v/ID/ws`, files at
+  `/v/ID/file/PATH`. A link (`http://127.0.0.1:PORT/v/ID/?t=TOKEN`, a token
+  of 48 hex digits from /dev/urandom) is good for one exchange, and the
+  page, the socket, files and reloads carry a credential in a cookie
+  instead (below, "Links, credentials and the Mac's question").
+  `Web::answer` refuses, in this order: anything but GET (405), a Host that
+  is not 127.0.0.1, localhost or [::1] with any port (403; two Host or two
+  Origin headers make the request bad), an Origin that is not the page's
+  own (`sameOrigin`: http:// and the Host the request came under, so a page
+  on another port or under the other loopback name is refused too) and a
+  socket upgrade with no Origin at all (403; since 8b, when pages can
+  edit), a path outside `/v/ID/` (404), then for the page a link's token
+  (exchanged) or the credential, for files the credential (allowed), for
+  the socket any credential cookie (an unknown one is taken and told
+  `expired`), else 403. The page has `Referrer-Policy: no-referrer` and
   fetches nothing else. The page's Content-Security-Policy allows one
-  script by a nonce made per response (`{{NONCE}}` in the page), inline
-  styles, data: pictures, and WebSockets to 127.0.0.1 and localhost.
+  script by a nonce made per response (`{{NONCE}}` in the page; `{{BASE}}`
+  is the view's path), inline styles, data: pictures, and WebSockets to
+  127.0.0.1 and localhost.
 - **A renderer that only reads.** The server attaches to the host's Unix
   socket as a `Client` with `setReadOnly(true)` (Hello flag 1) while at
   least one browser is connected, and detaches when the last goes, so a
@@ -1176,6 +1195,140 @@ document, and the view detaching when the browsers go). `make guitest
 SUITES=session_web` loads the page in a WKWebView that is in no window
 against a host in the guitest process: lines and colored spans, typing and
 terminal output followed, a wrong token refused.
+
+### Links, credentials and the Mac's question (2026-11-18)
+
+The owner's three (approved 2026-11-18): the token leaves the address bar
+and the history, a page left idle expires, and the Mac asks before a new
+browser connects. The logic is the core's `src/SessionWebAccess.{h,cpp}`
+(`Web::Access`, every method safe from any thread, the clock passed in);
+`Web::answer` and the server use it.
+
+- **Links are single use.** `Access::newLink` makes a token good until it
+  is exchanged once (we picked single use over "until exchanged", which is
+  the same rule: a token that was never exchanged works, one that was is
+  refused with "this link was used already", the last 64 spent ones
+  remembered for that message). At most 8 unspent links live; the oldest
+  goes. They do not expire: the headless host prints its first one at
+  start and may be opened hours later. `Server::url()`/`token()` give the
+  newest unspent link, made when none is; `Server::newLink()` a fresh one
+  (the Mac's Show and Copy each call it). `Options::nextLink` (the CLI)
+  hears a fresh address after each exchange, and `mutible host --web`
+  prints it ("that address has been used; the next browser opens:").
+- **The exchange** is the page's load: `GET /v/ID/?t=TOKEN` spends the
+  token and answers the page with `Set-Cookie: mutible-view-PORT=CRED;
+  Path=/v/ID/; HttpOnly; SameSite=Strict` (no Max-Age: gone when the
+  browser quits). Cookies are not kept apart by port, so the name carries
+  the port and the path is the view's own: a dev server on another
+  127.0.0.1 port that the page frames in its browser pane never gets it.
+  The page's script runs `history.replaceState(null, "", "/v/ID/")`
+  before anything else, so the address bar and the history entry lose
+  the token; a reload is `GET /v/ID/` with the cookie. A request with a
+  live credential and a spent or wrong token gets the page through the
+  credential (the same browser opening its link again). A live token is
+  exchanged even when a credential came too, so a new link replaces a
+  refused credential.
+- **The browser's id** (`mutible-browser`, 32 hex digits, `Path=/v/;
+  HttpOnly; SameSite=Lax; Max-Age` 400 days) is set at a browser's first
+  exchange, shared by every view on the machine so a remembered browser
+  is known again on another port (the Mac's port changes with each
+  server). Lax, so a link followed from another site (a chat page) still
+  sends it; it is only a name, worth nothing without a link's token. A
+  value that is not 32 lowercase hex digits is replaced.
+- **Idle expiry.** A credential ends after `Access::idle` with nothing
+  from its browser: an HTTP request carrying it (`touch` in `answer`) or
+  any message on its socket (`handleMessage` touches before anything
+  else; what the server sends does not count). The page sends `alive` at
+  most once a minute while it is visible and someone used it (keys,
+  pointer, wheel, touch), so a person reading and scrolling keeps it, and
+  a forgotten tab does not. The idle time is `Options::idleMinutes`
+  (fractions allowed; < 0, the default, takes
+  `editor.session-web-idle-minutes` from the settings file the palette
+  comes from, read at each change of the file; 60 by default, 0 for
+  ever). `lookAtAccess`, every turn of the server's loop (the poll's
+  timeout at most a quarter of the idle time), sweeps (`expire`) at most
+  every second (a quarter of the idle time when shorter) and tells each
+  page of a credential gone `expired {text}` (kExpiredText, "This view has
+  expired; open a new link from mutible.") and closes it. A reload with
+  that cookie is refused with the sentence alone as its body.
+- **The Mac's question.** With `Options::ask` set (the Mac), an exchange
+  from a browser `Options::remembered` does not know makes a Pending
+  credential and a question (`Access::Question`: id, the browser's id,
+  `browserSummary` of its User-Agent, the peer address and port). The
+  page loads; its socket gets `waiting {text}` instead of hello (it is not
+  counted in `browsers()`, attaches nothing, and every message from it is
+  dropped). `lookAtAccess` hands the oldest unanswered question to
+  `Options::ask` (once: `asked_`), and the next only once that one is
+  answered (`Server::answer`, any thread) or its credential expired.
+  Allow welcomes the waiting socket (hello and state); Deny sends `denied
+  {text}` and closes, and a reload of a denied credential is the page,
+  told `denied` at once, never asked again. **Rate limit**: at most
+  `kMaxWaiting` (3) questions unanswered and `kMaxQuestions` (10) put in
+  `kQuestionWindow` (10 minutes); past either the exchange answers 429
+  and the link is kept for later. Since every question costs a fresh link
+  that only the person at the Mac makes, no page can make the Mac ask in a
+  loop. Without `Options::ask` (`mutible host --web`, GTK until it
+  follows through the Linux session) the link alone admits: Allowed at
+  once.
+- **The Mac's side** (`MCSessionBrowser`): `o.ask` looks up on the
+  server's thread where the connection comes from (`MCSessionBrowserPeer`:
+  libproc over the user's processes for the TCP socket from the peer's
+  port to the server's; when that is `sshd`'s, the far end of its
+  established connection, "ADDRESS, through an SSH tunnel"; else "this
+  Mac"), then on the main queue begins a sheet on the window: "Allow
+  BROWSER to open this window's session?", Allow (Return), Deny (Escape),
+  Always Allow. The answer goes to the server that asked (a generation
+  per server started). Always Allow stores `{id, browser, address, since}`
+  under `MCSessionBrowsersRemembered` in the app's defaults, which
+  `o.remembered` reads (any thread). View > Remembered Browsers…
+  (`mutible.rememberedSessionBrowsers`, AppDelegate's
+  `showRememberedBrowsers:`, `MCSessionBrowsersShowRemembered`) lists them
+  in an alert with Done and Forget All. `MCSessionBrowserAskDelay` holds a
+  sheet back for checks. A window not active also bounces the Dock icon
+  once (`requestUserAttention:` informational).
+- **The page**: `#gate`, a plain sentence over the whole page, for
+  `waiting`, `denied` and `expired` (the last two end it: no reconnecting,
+  the viewer and the browser frame emptied). File addresses are
+  `/v/ID/file/PATH` with nothing secret in them (`fileTarget(base, rel)`).
+
+#### Checks
+
+`sessionweb:access`: cookies read and set, `browserSummary` over ten
+agents; a link exchanged once then Spent, a wrong and an empty one, the
+live link made afresh, the eight-link cap, browser ids kept or replaced
+(four malformed); idle expiry to the millisecond, a touch that comes too
+late, `expire`, 0 for ever; the question for a browser not remembered,
+one waiting its turn, a remembered one never asked, Allow and Deny, three
+waiting then Busy with the link kept, ten in ten minutes then Busy, one
+more after the window, a question whose page went quiet no longer
+answerable. `sessionweb:access-server` over the wire: a headless view
+(no one asked, a 1.8 s idle time): the exchange's two cookies, the next
+link said once, the spent link refused without the cookie and served
+with it, a reload with nothing set and the page's own path in it, a file
+through the cookie, `alive` keeping the page past its idle time, then
+`expired` and the socket closed, a reload's sentence, files refused, the
+socket told `expired`, a fresh link opening it again; then the Mac's
+kind: the page `waiting` with nothing of the session and no file, a
+second browser waiting its turn unasked, Allow (hello, and the list sent
+while waiting dropped), the next question put, Deny (`denied`, closed,
+its reload told at once and not asked again), a remembered browser
+straight in. `sessionweb:refusals` and `sessionweb:files` check the rules
+above as pure functions (the Set-Cookie lines, the old `/?t=` and
+`/file/TOKEN/` forms gone, no file without the cookie). GUI:
+`session_web` (the address after the page loads is `/v/ID/` with no
+token, nothing behind it in the history; a reload through the cookie; the
+same link in a second WKWebView refused as used; a 0.05-minute idle
+written to the settings file, then the page's "This view has expired"
+and its socket closed; the reload's sentence) and `session_browser` (the
+link Show opened and the one Copy made differ, both under `/v/ID/`; the
+plain request's Set-Cookie, the link refused the second time; the
+window's sheet for that browser, its words and window; a scripted
+browser Always Allowed and remembered; the WebKit page "Waiting for
+approval in mutible" while the sheet is held, its address without the
+token, then Allow; a picture's address with no secret; both windows'
+scripted browsers, remembered, let in with no sheet; an unknown browser
+Denied, seeing nothing; Remembered Browsers… listing it and Forget All).
+The sheet's wording and the expired page need the owner's eyes.
 
 ### The Mac's own host in a browser (View > Show Session in Browser…)
 
@@ -1478,9 +1631,11 @@ the browser shows them with its own viewers.
   was checked is what is read), at most `kMaxReadBytes` (4 MB) a read, on
   the host's thread. `length` 0 gives the size alone.
 - **HTTP, not the socket.** `<img>`, `<video>` and the PDF viewer need an
-  address, and video needs Range. `/file/TOKEN/PATH`: the token is the
-  path's first name, not the query, so an HTML page's relative pictures
-  and style sheets resolve to addresses that carry it (`answer()` gives
+  address, and video needs Range. `/v/ID/file/PATH` (it was
+  `/file/TOKEN/PATH` until the credential's cookie, 2026-11-18; above,
+  "Links, credentials and the Mac's question"): the browser sends the
+  cookie with each, so an HTML page's relative pictures and style sheets
+  are served too (`answer()` gives
   `Answer::File` with the path decoded by `pathDecode`: '+' kept, a NUL
   refused; the Host and Origin checks come first, as for the page). The
   server needs a page's socket open (the session is attached only then):
@@ -1540,8 +1695,8 @@ the browser shows them with its own viewers.
   `mcSessionView.file()` says what shows, for the GUI check. A kind the
   browser cannot show (database, archive, bookmark) says it opens in the
   window, as before.
-- **Not done in this slice**: SQLite, notebooks, the LaTeX preview, and
-  git and review pages; the window's viewer tabs (a picture's tab) are
+- **Not done in this slice**: SQLite and notebooks (the second slice,
+  below), the LaTeX preview, and git and review pages; the window's viewer tabs (a picture's tab) are
   still not reported to the page (the Mac reports only tabs with a
   document on the host), so the page shows a picture only from its tree,
   and does not follow the window to one.
@@ -1564,7 +1719,7 @@ sandboxed, PDF not, a 5 MB video whole (three pieces) and in four
 ranges with a 416, the tree's views, a CSV's rows over the socket and
 two refusals, and 503 again once the page has gone; the page's CSP.
 GUI: `session_browser` clicks a PNG in the editable page's tree (the
-page shows it in a tab of its own at the token's /file/ address, decoded
+page shows it in a tab of its own at the view's /file/ address, decoded
 at its real width, and the window opens it) and a CSV (the page's table
 has the core's rows, and the window opens it); then a PNG in the
 read-only page's tree (its own tab, the window opening nothing, its ×
@@ -1574,6 +1729,101 @@ whose script did not run, an HTML page with its relative style sheet and
 picture and its script not run, Chrome's PDF viewer in the frame, the
 table, a WAV's duration read and a page fetch of a range answered 206.
 The look in Safari, video seeking, and a phone need the owner's eyes.
+
+### Notebooks, databases and Markdown in the page (R3, second slice)
+
+What the core can render without the Mac: a notebook, a SQLite database,
+and (already there) a Markdown file's page.
+
+- **Read here, not through the host.** `notebook {path}` and `db {path,
+  table, offset}` (any page: neither changes anything) are answered by
+  `Web::notebookJson` and `Web::databaseJson` (`src/SessionWebViewers.cpp`),
+  which read from `Options::folder` as `readfile` does: SQLite needs a
+  path, not bytes, and a notebook may be past the host read's 4 MB.
+  Both go through `openLocalFile`, the checks `localFileJson` made, now
+  shared: `confinedPath`, no dotfile name unless the tree shows them,
+  `O_NONBLOCK` and `fstat` as a regular file (a FIFO refused, never
+  blocked on). `fileType` names `notebook` (.ipynb) and `database`
+  (.sqlite, .sqlite3, .db, .db3) with no mime, so `/file/` serves neither
+  as bytes (404) and the tree's entries carry the `view`.
+- **A notebook** (at most `kMaxNotebookBytes`, 32 MB) is
+  `Notebook::parse`, `toMarkdown` and `MarkdownHtml::page`, the window's
+  own preview's Markdown: every text escaped, pictures data: images (SVG
+  base64'd, so it is an `<img>` and runs nothing), links only relative,
+  #, http, https and mailto, made valid UTF-8 (`SqliteRead::validUtf8`)
+  because a WebSocket text frame that is not ends the connection.
+  `MarkdownHtml` now writes a fence's label (the rest of its info string)
+  as `<div class="code-label">` above the block, so Jupyter's "In [3]" and
+  "Out [3]" show as in the window (Export as HTML gains it too; the
+  corpus golden has the one CSS line). The page puts it in an `<iframe
+  sandbox="" srcdoc>` with the palette's Markdown CSS (`withPalette`, as
+  the Markdown frame; redrawn on `palette`): no scripts, an opaque origin,
+  and the parent's CSP inherited (data: pictures only, nothing fetched).
+- **A database** (`src/SqliteRead.{h,cpp}`, the core's one use of the
+  system libsqlite3, now linked by the tests and `mutible-cli`; Linux
+  already linked it): the header's 16 magic bytes checked first (a text
+  file named .db is not opened), then `sqlite3_open_v2` at the file's
+  `realpath` with `SQLITE_OPEN_READONLY | SQLITE_OPEN_URI`
+  (`SQLITE_OPEN_NOFOLLOW` where defined) and `file:...?mode=ro`; a WAL
+  database with no `-shm` or no `-wal` beside it (its writers closed)
+  opens with `&immutable=1` at once, since a read-only connection makes
+  them where the folder lets it (SQLite 3.22 on; the Mac's viewer tries
+  `mode=ro` first and falls back on failure), `PRAGMA query_only`, the defensive flag,
+  `TRUSTED_SCHEMA` off, no extensions, `SQLITE_LIMIT_ATTACHED` 0,
+  `SQLITE_LIMIT_LENGTH` 16 MB (one row cannot take the memory), a 250 ms
+  busy timeout, and an authorizer allowing only READ, SELECT, FUNCTION and
+  RECURSIVE. The only statements are the schema's list and `SELECT * FROM
+  "name" LIMIT ? OFFSET ?` for a name the schema listed (quoted, compared
+  exactly; nothing of the page's becomes SQL). A progress handler stops
+  each call at 2 s (`kTimeLimit`): a recursive view, a huge OFFSET. The
+  connection is opened per request and closed at once, so no lock is held
+  between reads; a writer waits at most one statement. A page is
+  `kDbPageRows` (100) rows or about 4 MB of text; a text cell cut at 2,000
+  bytes comes as {text, bytes}, a blob as {blob: size}, NULL as null.
+- **The page**: `drawNotebook` and `drawDb` in `#fileview`, a viewer tab
+  of the page's own like a picture (no "Open in a new tab": there is no
+  address). The database bar has a `<select>` of tables and views
+  (option values and text set as properties), "Rows 1–100, more after",
+  Previous, Next and a Read-only label; the rows a `<table>` with a
+  sticky header of the column names. Every name and cell goes in by
+  `textContent`, so markup in a table or column name is text.
+- **Markdown** was already the page (`MarkdownHtml::page` in the sandboxed
+  `#md` frame) with `#modebtn` flipping to the lines; its label is now
+  Show Source on a page that cannot edit (Edit Source stays for one that
+  can), Show Page going back.
+- **Not here**: the LaTeX preview (needs tectonic) and git and review
+  pages (the Mac's views); no query box (the Mac's viewer has one).
+
+#### Checks
+
+`sessionweb:viewers`: `fileType` for the new kinds, `SqliteRead`'s pieces
+(the header, WAL, `quoteName`, `uriFor`, `validUtf8` over good, cut,
+surrogate and overlong bytes), a Latin-1 CSV's cell made valid; a
+notebook rendered (heading, emphasis, In and Out labels, the picture);
+a hostile notebook (script in Markdown, code, stream, error and HTML
+outputs, a picture's data leaving its attribute, an SVG with onload and
+script, javascript: and an iframe) with no `<script`, `<iframe`,
+`onerror="`, `onload` or `javascript:` left and the page valid UTF-8;
+nine notebook refusals (links and paths out, a dotfile, a folder,
+missing, another kind) with nothing of the outside file sent, and 32 MB
+refused; a database with hostile table and column names (`<script>`,
+quotes) as text, NULL, blobs, a cut cell, bytes not UTF-8, reals; paging
+over 250 rows; four names not in the schema refused (an injection
+among them); a recursive view stopped at a 200 ms deadline in bounded
+CPU; the byte cap; the file's bytes, mtime and the folder's names
+unchanged; a writer mid-transaction not blocked (it commits after the
+read); a WAL database closed (opened immutable, no -wal or -shm made) and
+live; nine database refusals; then over the wire with a headless host.
+GUI: `session_browser`, on the read-only page, clicks a hostile notebook
+(the sandboxed frame's html has no `<script` and `window.pwned` stays
+undefined), a hostile database (its names and cells as text), picks
+another table, presses Next, and checks the file's bytes unchanged; and
+a Markdown file's Show Source and Show Page. Checked by hand in headless
+Chrome over CDP against `mutible host --web` (not committed): both
+notebooks drawn, the hostile one running nothing; the database's tables,
+cells, paging, and a recursive view stopped after 2 s; Show Source; the
+database bar at 390 px; the file's hash unchanged. The look in Safari and
+on a phone needs the owner's eyes.
 
 ### The window's browser tabs in the page (R4)
 
@@ -1741,6 +1991,6 @@ panes and the ×s needs the owner's eyes.
 - The tree does not follow the disk by itself: the host watches nothing
   yet. Stage 7's watching should send the page a folder's listing when it
   changes. A headless host's page cannot open text files (no window
-  decides tabs); it shows pictures, PDFs, media, HTML and tables (R3).
-  SQLite, notebooks, LaTeX and git pages in the page are R3's later
+  decides tabs); it shows pictures, PDFs, media, HTML, tables, notebooks
+  and databases (R3). LaTeX and git pages in the page are R3's later
   slices.

@@ -51,6 +51,9 @@ core_sources = [
   # A browser's read-only view of a host (`mutible host --web`, stage 6b).
   core_dir / 'SessionWeb.cpp',
   core_dir / 'SessionWebPage.cpp',
+  core_dir / 'SessionWebViewers.cpp',
+  core_dir / 'SessionWebAccess.cpp',
+  core_dir / 'SqliteRead.cpp',
   core_dir / 'SessionFiles.cpp',
   # The terminals' ptys belong to the host too (stage 5): a pty per shell,
   # and a headless screen with scrollback fed its bytes, whose marks give
@@ -181,6 +184,10 @@ core_sources = [
 main_source = 'src/main.cpp'
 gui_sources = [
   'src/FileTree.cpp',
+  # The tree following the active tab (explorer.auto-reveal).
+  'src/TreeFollow.cpp',
+  # A file row's icon from the system icon theme, by the core's FileIcon::Type.
+  'src/TreeIcons.cpp',
   'src/ClickCount.cpp',
   # The editor: the view (Editor.cpp), each open file (DocumentView.cpp), the
   # tabs (Tabs.cpp) and their strip (TabStrip.cpp).
@@ -340,6 +347,8 @@ gui_sources = [
   'src/Math.cpp',
   # The menu bar, the accelerators and the tree's keys, from the registry.
   'src/Keys.cpp',
+  # The shortcut hints' search box.
+  'src/HintsSearchBox.cpp',
   # The window's panes: the sidebar, and the editor, browser and terminal
   # laid out as on the Mac.
   'src/WindowLayout.cpp',

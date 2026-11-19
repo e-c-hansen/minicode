@@ -33,6 +33,7 @@
     };
     self.terminalPanel.onEmpty = ^{ [weakSelf terminalPanelEmptied]; };
     self.terminalPanel.onChanged = ^{ [weakSelf sessionDockChanged]; };
+    self.terminalPanel.onTitlesChanged = ^{ [weakSelf windowTitlePaneChanged]; };
     self.terminalPanel.onNote = ^(NSString *note) { [weakSelf showStatusNote:note]; };
     self.terminalPanel.onShowInProcesses = ^(TerminalView *t, pid_t job) {
         [weakSelf showProcessesForTerminal:t job:job];
@@ -318,6 +319,7 @@
     self.browser = [[BrowserView alloc] initWithHomeURL:home];
     __weak EditorController *weakSelf = self;
     self.browser.onEmpty = ^{ [weakSelf browserEmptied]; };
+    self.browser.onTitlesChanged = ^{ [weakSelf windowTitlePaneChanged]; };
     self.browser.folderForAddresses = ^NSString *{ return weakSelf.rootPath; };
     [self.rightArea addSubview:self.browser];
     self.browserDivider = [[DragBar alloc] initWithFrame:NSZeroRect];

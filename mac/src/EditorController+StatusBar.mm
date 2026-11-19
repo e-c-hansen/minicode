@@ -228,9 +228,9 @@
     return [self.hintsSearchBox takeKeyDown:event];
 }
 
-// Fill the panel for the room the window has: two columns when they fit
-// side by side, else one, never a row broken in the middle; as tall as the
-// text, or the room, with a scroll bar. Anchored to the top right.
+// Fill the panel for the room the window has: as many columns as fit side
+// by side, never a row broken in the middle; as tall as the text, or the
+// room, with a scroll bar. Anchored to the top right.
 - (void)updateHints {
     NSTextView *tv = self.hintsTextView;
     NSView *container = self.hintsPanel.superview;
@@ -253,14 +253,16 @@
     const CGFloat boxTop = round(inset * 0.75);
     const CGFloat header = box ? boxTop + boxH : 0;   // the text's own inset is the gap
     PageMeasure::HintsLayout layout;
-    NSAttributedString *text = [self hintsTextForRows:rows room:roomW layout:&layout];
+    NSAttributedString *text = [self hintsTextForRows:rows room:roomW maxColumns:kHintsMaxColumns
+                                               layout:&layout];
     CGFloat textH = [self hintsHeightOf:text width:layout.textWidth];
     const BOOL scrolls = textH + 2 * inset + header > roomH;
     if (scrolls && bar > 0) {
-        text = [self hintsTextForRows:rows room:roomW - bar layout:&layout];
+        text = [self hintsTextForRows:rows room:roomW - bar maxColumns:kHintsMaxColumns
+                               layout:&layout];
         textH = [self hintsHeightOf:text width:layout.textWidth];
     }
-    self.hintsColumns = layout.columns;
+    self.hintsColumns = layout.count();
     const CGFloat pw = ceil(layout.textWidth + 2 * inset + (scrolls ? bar : 0));
     const CGFloat ph = ceil(MIN(textH + 2 * inset + header, roomH));
     self.hintsPanel.frame = NSMakeRect(W - pw - margin, top - ph, pw, ph);
@@ -286,14 +288,18 @@
 
 // The hints are laid out on tab stops, never with spaces: the key glyphs
 // (⌘ ⇧ ⌃ ⌫ ⏎) have different widths even in a monospaced font, so padding with
-// spaces leaves every column ragged. A row holds one or two shortcuts:
-//   key | label | key | label       (two shortcuts)
-//   key | label | state             (a pane, with whether it is open)
-// The stops come from the widest key and label of each column as drawn
-// (PageMeasure::layoutHints), at the editor's zoom (MCZoomScale), so no
-// row breaks in the middle; a window too narrow for two columns gets one,
-// a shortcut a row.
+// spaces leaves every column ragged. The rows are read as one list of
+// shortcuts (a pair is two), cut into as many columns as fit the window
+// side by side, their heights balanced and a heading kept with its first
+// shortcut (PageMeasure::layoutHints, from the widths as drawn at the
+// editor's zoom, MCZoomScale). Each line of the text is one paragraph of
+// uniform height holding that line of every column, at the column's stops:
+//   key | label [| state]   key | label   HEADING   ...
+// A heading has a blank line above it except at a column's top. A window
+// too narrow for one column wraps labels under themselves.
 static const CGFloat kHintsPad = 16;
+// The most columns, for the widest screens at the smallest zoom.
+static const int kHintsMaxColumns = 16;
 
 static std::u16string MCU16(NSString *s) {
     std::u16string out(s.length, u'\0');
@@ -301,18 +307,21 @@ static std::u16string MCU16(NSString *s) {
     return out;
 }
 
-// A shortcut of a row (1: key1, label1 and a state; 2: key2 and label2)
-// as fields the core searches, in the order the row shows them.
-static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int which) {
+// One item of the hints as drawn: a heading, a gap, or a shortcut (key,
+// label, and a pane's state).
+struct MCHintEntry {
+    PageMeasure::HintItem::Kind kind = PageMeasure::HintItem::Shortcut;
+    NSString *key = @"", *label = @"", *state = nil;   // a heading's title in label
+    HintsSearch::Match found;
+    bool lit = true;   // a heading with something found under it
+};
+
+// A shortcut's parts as fields the core searches, in the order shown.
+static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
     std::vector<HintsSearch::Field> f;
-    if (which == 1) {
-        f.push_back({MCU16(row[@"key1"] ?: @""), true});
-        f.push_back({MCU16(row[@"label1"] ?: @""), false});
-        if (row[@"state"] && !row[@"key2"]) f.push_back({MCU16(row[@"state"]), false});
-    } else {
-        f.push_back({MCU16(row[@"key2"] ?: @""), true});
-        f.push_back({MCU16(row[@"label2"] ?: @""), false});
-    }
+    f.push_back({MCU16(e.key), true});
+    f.push_back({MCU16(e.label), false});
+    if (e.state) f.push_back({MCU16(e.state), false});
     return f;
 }
 
@@ -338,9 +347,12 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
     [s addObject:row];
 }
 
-// The rows as text for `room` points of width, and where its stops went.
+// The rows as text for `room` points of width in at most `maxColumns`
+// columns, and where they went.
 - (NSAttributedString *)hintsTextForRows:(NSArray<NSDictionary *> *)rows room:(CGFloat)room
+                              maxColumns:(int)maxColumns
                                   layout:(PageMeasure::HintsLayout *)layoutOut {
+    using Kind = PageMeasure::HintItem::Kind;
     const CGFloat z = MCZoomScale();
     NSFont *keyFont = MCMonoFont(round(12 * z * 2) / 2, NSFontWeightMedium);
     NSFont *labelFont = [NSFont systemFontOfSize:round(12 * z * 2) / 2];
@@ -352,83 +364,88 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
     auto width = [](NSString *t, NSDictionary *a) -> double {
         return t.length ? ceil([t sizeWithAttributes:a].width) : 0;
     };
-    std::vector<PageMeasure::HintRow> measured;
+    NSLayoutManager *metrics = [NSLayoutManager new];
+    const CGFloat lineH = ceil(MAX([metrics defaultLineHeightForFont:keyFont],
+                                   [metrics defaultLineHeightForFont:labelFont]) + round(3 * z));
+
+    // The rows as one list, a pair's shortcuts one after the other.
+    std::vector<MCHintEntry> entries;
     for (NSDictionary *row in rows) {
-        PageMeasure::HintRow m;
+        MCHintEntry e;
         if (row[@"heading"]) {
-            m.heading = true;
-            m.key1 = width(row[@"heading"], headingMeasure);
+            e.kind = Kind::Heading;
+            e.label = row[@"heading"];
+            entries.push_back(e);
         } else if (row[@"gap"]) {
-            m.heading = true;
+            e.kind = Kind::Gap;
+            entries.push_back(e);
         } else {
-            m.key1 = width(row[@"key1"], keyMeasure);
-            m.label1 = width(row[@"label1"], labelMeasure);
+            e.key = row[@"key1"];
+            e.label = row[@"label1"];
+            e.state = row[@"key2"] ? nil : row[@"state"];
+            entries.push_back(e);
             if (row[@"key2"]) {
-                m.hasKey2 = true;
-                m.key2 = width(row[@"key2"], keyMeasure);
-                m.label2 = width(row[@"label2"], labelMeasure);
-            } else if (row[@"state"]) {
-                m.hasState = true;
-                m.state = width(row[@"state"], labelMeasure);
+                MCHintEntry e2;
+                e2.key = row[@"key2"];
+                e2.label = row[@"label2"];
+                entries.push_back(e2);
             }
         }
-        measured.push_back(m);
     }
-    const PageMeasure::HintsLayout layout =
-        PageMeasure::layoutHints(measured, MAX(room, 40), 12 * z, 28 * z);
-    if (layoutOut) *layoutOut = layout;
-
-    auto tab = [](CGFloat at) {
-        return [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:at options:@{}];
-    };
-    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
-    ps.lineSpacing = round(3 * z);
-    ps.headIndent = layout.label1;   // a label that must wrap stays in its column
-    ps.lineBreakMode = NSLineBreakByWordWrapping;
-    if (layout.columns == 2)
-        ps.tabStops = @[tab(layout.label1), tab(layout.key2), tab(layout.label2)];
-    else if (!layout.wraps)
-        ps.tabStops = @[tab(layout.label1), tab(layout.state)];
-    else
-        ps.tabStops = @[tab(layout.label1)];
-    NSDictionary *keyAttr = @{NSFontAttributeName: keyFont,
-                              NSForegroundColorAttributeName: Hex(0x4EA1F7),
-                              NSParagraphStyleAttributeName: ps};
-    NSDictionary *labelAttr = @{NSFontAttributeName: labelFont,
-                                NSForegroundColorAttributeName: Hex(0xE0E0E0),
-                                NSParagraphStyleAttributeName: ps};
-    NSDictionary *stateAttr = @{NSFontAttributeName: labelFont,
-                                NSForegroundColorAttributeName: Hex(0x9D9D9D),
-                                NSParagraphStyleAttributeName: ps};
-    NSMutableAttributedString *s = [NSMutableAttributedString new];
-    void (^add)(NSString *, NSDictionary *) = ^(NSString *t, NSDictionary *a) {
-        [s appendAttributedString:[[NSAttributedString alloc] initWithString:t attributes:a]];
-    };
 
     // The search box's query (HintsSearch.h): each shortcut found or not,
     // and where. A heading dims when nothing under it is found.
     const std::vector<HintsSearch::Word> words =
         HintsSearch::parse(MCU16(self.hintsSearchBox.query ?: @""));
     const bool searching = !words.empty();
-    std::vector<std::pair<HintsSearch::Match, HintsSearch::Match>> found(rows.count);
-    std::vector<bool> headingLit(rows.count, true);
     if (searching) {
-        for (NSUInteger i = 0; i < rows.count; i++) {
-            NSDictionary *row = rows[i];
-            if (row[@"heading"] || row[@"gap"]) continue;
-            found[i].first = HintsSearch::match(words, MCHintsFields(row, 1));
-            if (row[@"key2"]) found[i].second = HintsSearch::match(words, MCHintsFields(row, 2));
-            else found[i].second.matches = false;
-        }
-        for (NSUInteger i = 0; i < rows.count; i++) {
-            if (!rows[i][@"heading"]) continue;
+        for (MCHintEntry &e : entries)
+            if (e.kind == Kind::Shortcut) e.found = HintsSearch::match(words, MCHintsFields(e));
+        for (size_t i = 0; i < entries.size(); i++) {
+            if (entries[i].kind != Kind::Heading) continue;
             bool lit = false;
-            for (NSUInteger j = i + 1; j < rows.count && !rows[j][@"heading"]; j++)
-                if (!rows[j][@"gap"] && (found[j].first.matches || found[j].second.matches))
-                    lit = true;
-            headingLit[i] = lit;
+            for (size_t j = i + 1; j < entries.size() && entries[j].kind != Kind::Heading; j++)
+                if (entries[j].kind == Kind::Shortcut && entries[j].found.matches) lit = true;
+            entries[i].lit = lit;
         }
     }
+
+    std::vector<PageMeasure::HintItem> measured;
+    for (const MCHintEntry &e : entries) {
+        PageMeasure::HintItem m;
+        m.kind = e.kind;
+        if (e.kind == Kind::Heading) {
+            m.key = width(e.label, headingMeasure);
+            m.height = lineH;
+            m.spaceBefore = lineH;
+        } else if (e.kind == Kind::Gap) {
+            m.spaceBefore = lineH;
+        } else {
+            m.key = width(e.key, keyMeasure);
+            m.label = width(e.label, labelMeasure);
+            m.hasState = e.state != nil;
+            m.state = width(e.state, labelMeasure);
+            m.height = lineH;
+        }
+        measured.push_back(m);
+    }
+    const PageMeasure::HintsLayout layout =
+        PageMeasure::layoutHints(measured, MAX(room, 40), 12 * z, 28 * z, maxColumns);
+    if (layoutOut) *layoutOut = layout;
+
+    NSDictionary *keyAttr = @{NSFontAttributeName: keyFont,
+                              NSForegroundColorAttributeName: Hex(0x4EA1F7)};
+    NSDictionary *labelAttr = @{NSFontAttributeName: labelFont,
+                                NSForegroundColorAttributeName: Hex(0xE0E0E0)};
+    NSDictionary *stateAttr = @{NSFontAttributeName: labelFont,
+                                NSForegroundColorAttributeName: Hex(0x9D9D9D)};
+    NSDictionary *headingAttr = @{NSFontAttributeName: headingFont,
+                                  NSForegroundColorAttributeName: Hex(0x9D9D9D),
+                                  NSKernAttributeName: @(0.6 * z)};
+    NSMutableAttributedString *s = [NSMutableAttributedString new];
+    void (^add)(NSString *, NSDictionary *) = ^(NSString *t, NSDictionary *a) {
+        [s appendAttributedString:[[NSAttributedString alloc] initWithString:t attributes:a]];
+    };
     NSColor *hitColor = [NSColor colorWithSRGBRed:0.918 green:0.361 blue:0 alpha:0.5];
     // Adds one field of a shortcut: dimmed when the shortcut was not found,
     // the stretches found marked.
@@ -451,58 +468,110 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
                 [s addAttribute:MCHintsMatchAttribute value:@YES range:r];
             }
         };
-
-    BOOL first = YES;
-    NSUInteger index = 0;
-    for (NSDictionary *row in rows) {
-        const HintsSearch::Match &m1 = found[index].first;
-        const HintsSearch::Match &m2 = found[index].second;
-        const bool lit = headingLit[index];
-        index++;
-        if (row[@"heading"]) {
-            NSMutableParagraphStyle *hp = [NSMutableParagraphStyle new];
-            hp.paragraphSpacingBefore = first ? 0 : round(10 * z);
-            hp.paragraphSpacing = round(4 * z);
-            NSMutableDictionary *ha = [@{
-                NSFontAttributeName: headingFont,
-                NSForegroundColorAttributeName: Hex(0x9D9D9D),
-                NSKernAttributeName: @(0.6 * z),
-                NSParagraphStyleAttributeName: hp,
-            } mutableCopy];
-            if (!lit) {
-                ha[NSForegroundColorAttributeName] = [Hex(0x9D9D9D) colorWithAlphaComponent:0.3];
-                ha[MCHintsDimmedAttribute] = @YES;
-            }
-            add([row[@"heading"] stringByAppendingString:@"\n"], ha);
-        } else if (row[@"gap"]) {
-            add(@"\n", @{NSFontAttributeName: [NSFont systemFontOfSize:round(6 * z)]});
-        } else if (layout.columns == 2 || !row[@"key2"]) {
-            addField(row[@"key1"], keyAttr, m1, 0);
-            add(@"\t", labelAttr);
-            addField(row[@"label1"], labelAttr, m1, 1);
-            if (row[@"key2"]) {
-                add(@"\t", labelAttr);
-                addField(row[@"key2"], keyAttr, m2, 0);
-                add(@"\t", labelAttr);
-                addField(row[@"label2"], labelAttr, m2, 1);
-            } else if (row[@"state"]) {
-                // At its stop; when even one column wraps, after its label.
-                add(layout.wraps ? @" " : @"\t", stateAttr);
-                addField(row[@"state"], stateAttr, m1, 2);
-            }
-            add(@"\n", labelAttr);
-        } else {
-            // One column: the pair's shortcuts on rows of their own.
-            addField(row[@"key1"], keyAttr, m1, 0);
-            add(@"\t", labelAttr);
-            addField(row[@"label1"], labelAttr, m1, 1);
-            add(@"\n", labelAttr);
-            addField(row[@"key2"], keyAttr, m2, 0);
-            add(@"\t", labelAttr);
-            addField(row[@"label2"], labelAttr, m2, 1);
-            add(@"\n", labelAttr);
+    void (^addHeading)(const MCHintEntry &) = ^(const MCHintEntry &e) {
+        if (e.lit) {
+            add(e.label, headingAttr);
+            return;
         }
-        first = NO;
+        NSMutableDictionary *ha = [headingAttr mutableCopy];
+        ha[NSForegroundColorAttributeName] = [Hex(0x9D9D9D) colorWithAlphaComponent:0.3];
+        ha[MCHintsDimmedAttribute] = @YES;
+        add(e.label, ha);
+    };
+    auto tab = [](CGFloat at) {
+        return [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft location:at options:@{}];
+    };
+    // A paragraph style on every character of the paragraph begun at `from`.
+    void (^styleFrom)(NSUInteger, NSParagraphStyle *) = ^(NSUInteger from, NSParagraphStyle *ps) {
+        [s addAttribute:NSParagraphStyleAttributeName value:ps
+                  range:NSMakeRange(from, s.length - from)];
+    };
+
+    if (layout.wraps) {
+        // One column too narrow for its rows: a paragraph a shortcut, its
+        // label wrapping at the label's stop, a state after its label.
+        const PageMeasure::HintsColumn &col = layout.columns[0];
+        NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+        ps.lineSpacing = round(3 * z);
+        ps.headIndent = col.label;
+        ps.lineBreakMode = NSLineBreakByWordWrapping;
+        ps.tabStops = @[tab(col.label)];
+        BOOL first = YES;
+        for (const MCHintEntry &e : entries) {
+            const NSUInteger from = s.length;
+            if (e.kind == Kind::Heading) {
+                NSMutableParagraphStyle *hp = [NSMutableParagraphStyle new];
+                hp.paragraphSpacingBefore = first ? 0 : round(10 * z);
+                hp.paragraphSpacing = round(4 * z);
+                addHeading(e);
+                add(@"\n", headingAttr);
+                styleFrom(from, hp);
+            } else if (e.kind == Kind::Gap) {
+                add(@"\n", @{NSFontAttributeName: [NSFont systemFontOfSize:round(6 * z)]});
+            } else {
+                addField(e.key, keyAttr, e.found, 0);
+                add(@"\t", labelAttr);
+                addField(e.label, labelAttr, e.found, 1);
+                if (e.state) {
+                    add(@" ", stateAttr);
+                    addField(e.state, stateAttr, e.found, 2);
+                }
+                add(@"\n", labelAttr);
+                styleFrom(from, ps);
+            }
+            first = NO;
+        }
+    } else {
+        // Each column's lines: an item, or a blank line (-1) above a heading
+        // or a gap that is not at the column's top. A gap draws nothing.
+        std::vector<std::vector<long>> lines;
+        size_t count = 0;
+        for (const PageMeasure::HintsColumn &col : layout.columns) {
+            std::vector<long> cells;
+            for (size_t i = col.first; i < col.end; i++) {
+                if (i != col.first && measured[i].spaceBefore > 0) cells.push_back(-1);
+                if (entries[i].kind != Kind::Gap) cells.push_back((long)i);
+            }
+            count = std::max(count, cells.size());
+            lines.push_back(cells);
+        }
+        for (size_t line = 0; line < count; line++) {
+            const NSUInteger from = s.length;
+            NSMutableArray<NSTextTab *> *stops = [NSMutableArray array];
+            BOOL begun = NO;   // anything on the line yet
+            for (size_t c = 0; c < layout.columns.size(); c++) {
+                const PageMeasure::HintsColumn &col = layout.columns[c];
+                const long i = line < lines[c].size() ? lines[c][line] : -1;
+                if (i < 0) continue;
+                const MCHintEntry &e = entries[(size_t)i];
+                // To the column's left edge (the first column's is the margin).
+                if (begun || col.x > 0) {
+                    [stops addObject:tab(col.x)];
+                    add(@"\t", labelAttr);
+                }
+                begun = YES;
+                if (e.kind == Kind::Heading) {
+                    addHeading(e);
+                    continue;
+                }
+                addField(e.key, keyAttr, e.found, 0);
+                [stops addObject:tab(col.x + col.label)];
+                add(@"\t", labelAttr);
+                addField(e.label, labelAttr, e.found, 1);
+                if (e.state) {
+                    [stops addObject:tab(col.x + col.state)];
+                    add(@"\t", stateAttr);
+                    addField(e.state, stateAttr, e.found, 2);
+                }
+            }
+            add(@"\n", labelAttr);
+            NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+            ps.minimumLineHeight = lineH;
+            ps.maximumLineHeight = lineH;
+            ps.lineBreakMode = NSLineBreakByWordWrapping;
+            ps.tabStops = stops;
+            styleFrom(from, ps);
+        }
     }
     // No trailing newline, or the panel sizes itself one empty line too tall.
     if ([s.string hasSuffix:@"\n"]) [s deleteCharactersInRange:NSMakeRange(s.length - 1, 1)];
@@ -533,9 +602,9 @@ static std::vector<HintsSearch::Field> MCHintsFields(NSDictionary *row, int whic
     return [NSString stringWithFormat:@"%@  (also %@)", title, [rest componentsJoinedByString:@", "]];
 }
 
-// The shortcut list as text for the widest panel (tests read it).
+// The shortcut list as text in one column (tests read it).
 - (NSAttributedString *)hintsText {
-    return [self hintsTextForRows:[self hintsRows] room:CGFLOAT_MAX layout:NULL];
+    return [self hintsTextForRows:[self hintsRows] room:CGFLOAT_MAX maxColumns:1 layout:NULL];
 }
 
 // Context-aware shortcut list: headings and rows (appendHintsRow:).

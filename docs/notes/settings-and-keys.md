@@ -113,9 +113,57 @@ found through that list.
   lets the key go (Option+] types ‘ with no tour). A language command runs
   from here too, first, where it applies; a typing key is looked up only
   while the editor has the keyboard.
+- **The hints panel** (Shift+Cmd+H, `EditorController+StatusBar.mm`;
+  2026-11-18). Its keys are symbols, from one core function,
+  `Commands::keyLabel(key, Platform)`: on the Mac `glyphs()`, Apple's
+  ⌃⌥⇧⌘ before ⏎ ⌫ ⌦ ⇥ ⎋ ↑ ↓ ← → (`MCKeymapGlyphs` calls it); on Linux the
+  modifiers in words joined by "+", in GTK's and VS Code's order, and the
+  same symbols for the keys that have one: "Ctrl+Shift+P", "Ctrl+⏎",
+  "Shift+⇥", "⎋" (Home, End, Page Up, Page Down, Space and Menu keep their
+  names; a Linux user reads ⇞ less readily than Page Up). Words for the
+  modifiers on Linux, because Ctrl and Alt have no symbol a PC keyboard
+  prints, and "Ctrl+⇧+P" mixes the two ways in one key. It is not
+  `linuxLabel()`, which docs/REFERENCE.md's Linux column and the status bar
+  keep. Menus draw their own keys. `HintsSearch::parse(query, Spelling)`
+  finds keys by name in either spelling ("return" ⏎, "shift+ctrl+h"
+  Ctrl+Shift+H, "control" Ctrl on Linux). The rows are read as one list,
+  a pair's two shortcuts one after the other, and
+  `PageMeasure::layoutHints(items, room, gap, columnGap, maxColumns)` cuts
+  it into as many columns as fit the room (16 at most): the tallest column
+  as short as can be, then the heights as even as can be, a heading or the
+  gap before "Hide these hints" kept with the item after it, each column's
+  stops from its own widest key and label (`measure:hints`). The Mac draws
+  every line of the text as one paragraph of uniform height
+  (minimum = maximum line height) holding that line of each column, with
+  that line's own tab stops, so a short label never sends a tab to the
+  wrong column; a heading has a blank line above it except at a column's
+  top. With no room for one column the text is the old one column, labels
+  wrapping at their stop. `hintsText` (tests) is one column.
 - **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified"
   check had sent the event to the menu directly. Test such keys through
   `[window sendEvent:]` or `MCGuiSendKeyToApp`, never the menu alone.
+- **The hints' search box on Linux** (2026-11-18, `linux/src/HintsSearchBox.{h,cpp}`,
+  `linux/HANDOFF.md` item 108): the Mac's box (CLAUDE.md, "Its search box")
+  as a GtkSearchEntry at the panel's top, matched by the core's
+  `HintsSearch` with `Spelling::Linux` (the panel draws keys with
+  `Commands::keyLabel(key, Platform::Linux)`, `Keys::hintLabel`: "Ctrl+Shift+H",
+  "Ctrl+⏎", so "control", "opt", "return" and "shift+ctrl+h" find them). "Without Command or
+  Control" is without Ctrl or Super there. main.cpp's key controller in the
+  window's capture phase (`onHintsKey`) hands every key press to
+  `HintsSearchBox::takeKey` while the panel shows and the palette is
+  closed: it takes the keyboard at the first key (remembering where from,
+  given back on close, the editor when a click put it there), forwards the
+  key to the entry's GtkText (`gtk_event_controller_key_forward`), and types
+  an Alt+letter's letter itself. Marks and dims are Pango attributes on the
+  label (a background, a foreground alpha), so the text and its size never
+  change. The controller, added to the window after GTK's own, runs before
+  the application's accelerators on GTK 4.22: Alt+Z reached the box and
+  left Word Wrap alone with nothing unbound (checked by taking Keys out of
+  it; the accelerators of Ctrl keys and function keys run because the box
+  lets those go). **Trap**: an input method types nothing for Alt+letter
+  (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`), so a forwarded Alt+Z was lost
+  (hints_panel's "both are the box's" failed with "s"); the box inserts
+  the letter itself.
 
 ## Traps
 
@@ -124,3 +172,4 @@ text is in place in its section.
 
 - Settings, themes and Adjust Settings: Trap: an NSTextView with `usesFontPanel` sets the shared NSColorPanel to the color under the caret when the selection moves, and the panel forwarded that to `colorPicked:`, so every pick became the text color; the editor sets `usesFontPanel = NO`.
 - Keys: the registry, keys.conf and the key monitor: **Trap (1.5.0 and 1.5.1)**: Shift+Option+F typed Ï, because the "verified" check had sent the event to the menu directly.
+- Keys: the registry, keys.conf and the key monitor: **Trap** (the hints' search box on Linux): an input method types nothing for Alt+letter (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`), so a forwarded Alt+Z was lost.

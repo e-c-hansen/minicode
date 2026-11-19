@@ -6543,7 +6543,206 @@ The last terminal item of "Left before the default flips"
 - **Checks**: `host_splits` (HostSplitsSuite.cpp; its header says what it
   checks) and the `termdock:*` groups of `make test`.
 
-### 108. The terminal's cursor shows, and readline's Ctrl keys reach the shell (done, November 2026)
+### 107. The tree follows the active tab, centered (explorer.auto-reveal; November 2026)
+
+The owner's request ("I have to hunt for the file that I am already
+using"), the Mac's #197 (`../docs/notes/tree.md`, "The tree follows the
+active tab").
+
+- **What a user meets.** Whenever another tab comes on show (a click on
+  its tab, Alt+1 to 9, the next or previous tab, a click into the other
+  editor group, closing the tab before it, Quick Open, a definition, a
+  search result), the tree opens the file's folders, selects its row and
+  scrolls it to the middle; a row already wholly in view is selected and
+  the tree stays where it is. The editor keeps the keyboard. A file
+  outside the focused folders leaves the tree alone (only Reveal Active
+  File in File Tree widens). Pages, comparisons, untitled tabs and files
+  outside the window's folder are not revealed. With the sidebar closed or
+  Source Control, Processes or Agents in the tree's place nothing moves,
+  and the file on show is revealed once when the tree comes back.
+  `explorer.auto-reveal = off` stops it (the row is still selected when it
+  is listed already); turned on again, the file on show is revealed at
+  once, as on the Mac. Reveal Active File and Quick Open center the same
+  way, Quick Open whatever the setting. A window brought back at launch
+  has its tree's open folders, selected row and scroll as it was left,
+  with no jump to its file (new: the record kept none before), and
+  opening a folder leaves its tree as it opens, as the Mac holds it.
+- **Code.** `src/TreeFollow.{h,cpp}` (new): the Mac's
+  `EditorController+TreeReveal.mm` rules over three hooks (the active
+  tab's file the tree can show, whether the tree is on show, the setting)
+  and the core's `TreeReveal::Follower`; `activeChanged`,
+  `treeMaybeShown`, `hold`, `settingsApplied`. `FileTree`: `revealPath`
+  selects without `gtk_list_view_scroll_to` and `centerRow` sets the
+  scroll from `TreeReveal::scrollTop` in the frame clock's after-paint
+  (`scheduleFrame`, `afterLayout`; a row the list has not made is placed
+  from one it has, the rows being of one height); `reveal(path, widen,
+  center)` keeps the edge scroll for the tree's own reveals;
+  `selectIfListed`; `opening()` around the open callback in `actOnRow`;
+  `openFolders`, `scrolled` and `restoreView` (the record's folders
+  opened as their listings come, those outside the focus remembered, the
+  selection and scroll put back once the rows stop coming for 150 ms,
+  3 s at most); `showsPath` through the core's `TreeFocus::shows`.
+  `main.cpp`: `treeFollowablePath`, `treeOnShow` (the sidebar shown, the
+  tree the stack's child, the divider above 0), `onActiveChanged` calls
+  the follower (`revealActiveInTree` is gone), `layout->onChanged`, the
+  stack's `notify::visible-child` and the divider's `notify::position`
+  call `treeMaybeShown`, `applyWindowSettings` calls `settingsApplied`,
+  the hold is around `attachHeldDocuments` to `showHeldActive` in
+  `newWindow` and `openFolder`, the record's `windowState` writes
+  `expanded`, `selected` and `treeScroll`, and `newWindow` calls
+  `restoreView` with them. Settings text: the setting's comment no longer
+  says macOS. REFERENCE.md: the paragraph is the Mac's and Linux's
+  (Alt+1 to 9 on Linux), and a window brought back on Linux has its tree.
+- **Differs from the Mac**: GtkListView brings the row a click focuses
+  wholly into view by itself, so a click on a row cut by the edge nudges
+  it in by the part cut off (the follower adds nothing; never centered).
+- **Checks**: the `tree_focus` suite's last part (its header says what it
+  checks), in a folder of 6,000 files.
+- **Left for a real screen**: the look of the centering and of the scroll
+  jumping (no animation), and a sidebar dragged shut and open by hand.
+
+### 108. The hints panel's search box, and the file's path in the title (November 2026)
+
+The owner's two asks on the ThinkPad: "I cannot search within the help
+panel like I can on mac mutible", and the file's path in the title while
+the editor is selected.
+
+- **What a user meets.** With the shortcut hints up (Ctrl+Shift+H), a box
+  at the panel's top, "Type to search the shortcuts". Every key without
+  Ctrl or Super, save a function key and the Menu key, types into it
+  wherever the keyboard was (the editor, the tree, the terminal, a field),
+  an Alt+letter as its letter, and no command or view sees it: Alt+Z
+  types "z", it does not toggle Word Wrap. A shortcut matches when every
+  word is found in its key or its words; the places found are marked (the
+  Mac's orange behind the text) and the rest dimmed, a heading with
+  nothing found under it too, never hidden, so the list keeps its layout
+  and scrolls to the first mark. Keys go by name ("control" finds Ctrl,
+  "opt" Alt, "return" Enter) and as combinations in any order
+  ("shift+ctrl+h" finds Ctrl+Shift+H). Esc empties the box, then closes the
+  panel, the keyboard back where it was; Return and Tab do nothing; a
+  click puts the keyboard in the box; Ctrl keys run their commands (Ctrl+B,
+  Ctrl+Shift+H closing the panel and emptying it), F1 still opens the
+  palette, and the palette's typing stays its own. The keys are drawn as
+  the core's `Commands::keyLabel(key, Platform::Linux)` draws them
+  ("Ctrl+Shift+P", "Ctrl+⏎", "⎋"; `Keys::hintLabel`), the Mac's work
+  (12d7a32c). The title follows the core's rule, the Mac's too
+  (`src/WindowTitle.h`, #200): "src/main.cpp — mutible" (the path from the
+  window's folder, "~/notes/todo.md" for a file in the home folder outside
+  it, the full path outside both, "● " in front while unsaved, the folder's
+  name with no tab) while a document pane (the editor, the tree, any pane
+  but the terminal and the browser) has the keyboard, and the terminal's
+  or the page's own title while one of those has it; it follows the
+  keyboard between panes and the tab on show. The palette and the hints'
+  box only borrow the keyboard, so the title stays as it was while they
+  have it.
+- **Code.** Core: none of its own; the search is `HintsSearch` with
+  `Spelling::Linux` and the title `WindowTitle::title`, both the Mac
+  session's. GTK:
+  `linux/src/HintsSearchBox.{h,cpp}` (the GtkSearchEntry, `takeKey`,
+  `giveBackKeyboard`, `attributes`: Pango background and foreground-alpha
+  attributes on the label); main.cpp's `hintsRows` (was `hintsText`, the
+  rows unchanged), `hintsText` (the same layout, each `HintRow` told where
+  it landed), `showHintsText`, `hintsQueryChanged`, `setHintsShown`,
+  `onHintsKey` (a key controller in the window's capture phase);
+  `setWindowTitle` and `titleFocus`, run from `updateTitle` and
+  `onFocusWidget`; `Keys::hintLabel`. The panel's columns are as they were
+  (PageMeasure::layoutHints on GTK is next).
+- **Traps.** An input method types nothing for an Alt+letter
+  (`GDK_MODIFIER_INTENT_NO_TEXT_INPUT`): forwarded, Alt+Z was lost and the
+  box held "s" (hints_panel failed so), so the box inserts the letter
+  itself; other keys are forwarded to the entry's GtkText
+  (`gtk_event_controller_key_forward`) after the box takes the keyboard,
+  so input methods and Backspace work as in any field. `onHintsKey`, added
+  to the window after GTK's own controllers, runs before the application's
+  accelerators on GTK 4.22: with no accelerator unbound, Alt+Z still
+  reached the box and Word Wrap stayed as it was (an unbinding like
+  `updateShellKeys`'s was tried and taken out as needless); a GTK that ran
+  them first would let Alt keys' commands run while the panel shows. The
+  keyboard is given back before the panel hides, or GTK puts it wherever
+  it likes.
+- **Checks**: `hints_panel` (HintsPanelSuite.cpp) and `window_title`
+  (WindowTitleSuite.cpp), their headers saying what they check; the
+  core's `hints:*` and `window-title:*` groups of `make test`.
+
+### 109. A row going keeps the tree's place; file icons by type (November 2026)
+
+The owner, on this ThinkPad: "If I delete a file in the filetree panel,
+rather than simply removing it from my current view, the view resets and I
+am brought to the top of the filetree panel, which is annoying", and
+"Almost none of the different file types I have encountered in the
+filetree panel have non-default icons, which seems like a missed
+opportunity." (`../docs/notes/tree.md`, "A row going keeps the tree's
+place (GTK)" and "Icons by kind".)
+
+- **What a user meets.** Move to Trash (the row's menu, or Delete with the
+  tree's keyboard) takes out just that row: the tree stays scrolled where
+  it was, every folder stays open, and the row after it (else the one
+  before) is selected, with the keyboard when the tree had it, so Delete
+  again trashes that one, as in VS Code. The file's tab closes and the tab
+  before it comes on show without the tree going to that file. A selected
+  file deleted or renamed on disk by something else does the same; files
+  deleted or made above the view move nothing on show; Rename to a name
+  that sorts in place keeps the scroll and selects the renamed row. File
+  rows show the icon theme's picture for their type: a Python, C, C++,
+  Rust, Go, Java, Kotlin, shell or Ruby file, Markdown, HTML, CSS, JSON,
+  YAML, TOML, XML, CSV and SQL, LaTeX, a notebook, pictures, audio, video,
+  PDF, archives, fonts, programs and libraries, office documents, a
+  Makefile, CMakeLists.txt, meson.build, a Dockerfile, LICENSE, README,
+  AUTHORS, lockfiles, git's files, dotfiles and config, patches, logs,
+  keys and translations each have their own on Yaru (77 of the core's 78
+  types draw apart from plain text, in 65 pictures). Changing the icon
+  theme changes the rows on show at once.
+- **Why it jumped.** Two causes. (1) `trashNow` closed the file's tab, the
+  editor showed the tab before it, and the tree followed that tab
+  (item 107's `TreeFollow`; before it `revealActiveInTree`), scrolling to
+  its file: for a file near the top, the top of the tree. It also cleared
+  the selection. (2) GtkListView (4.22) itself put the list at its top a
+  frame or two after the row it was anchored on went (the row last
+  clicked or focused): `gtk_list_base`'s `update_adjustments` takes 0 for
+  an anchor it cannot place. A selected file deleted on disk did it with
+  no tab involved. Found with a backtrace on the scroll's value-changed:
+  the 0 came from `gtk_adjustment_configure` in the list's size-allocate.
+- **Code.** `FileTree`: `removing(path)` (the next row selected without
+  moving the keyboard; `goingRow_`, and `afterRowsGone` moves the keyboard
+  once the row is out, else the list would anchor on that row and push the
+  rows above down by one); `onItemsChanged` (the tree model's first
+  handler: the selection and the list's row widgets are still as they
+  were) notes a selected row going (`lostAt_`, `lostPath_` from
+  `onSelectionChanged`'s `selPath_`, `lostKeys_`), and `afterRowsGone`
+  selects the row in its place when its file is gone from the disk;
+  `keepRows`, `applyKeep` and `stopKeeping` keep the first row on show
+  where it was drawn when a scroll goes to 0 within 300 ms of rows going
+  (`applyKeep` on the frame clock's "layout", connected after the window's,
+  and in `afterLayout`); a press, a key, the wheel (a scroll controller), a
+  drag's edge scroll, a reveal's scroll and a window record's scroll end
+  it. `TreeFollow::quiet`: the tabs `trashNow` closes are neither revealed
+  nor selected. `main.cpp`'s `trashNow`: `removing` before the tabs close,
+  inside `quiet`, and no `clearSelection`. Icons: the core's
+  `FileIcon::Type`, `typeOf`, `typeName`, `allTypes` (FileDetails,
+  `tree:icon-types`); `src/TreeIcons.{h,cpp}` (new): each type's names
+  from the system theme, the first `gtk_icon_theme_has_icon` finds, kept
+  per theme and forgotten on its "changed"; `FileTree::setIcon` and
+  `refreshIcons` (connected after the theme's "changed"); the listing's
+  worker sets `minicode-exec` on a regular file with no extension that
+  `access(X_OK)` allows. Folders keep the tinted folder-symbolic.
+- **Differs from the Mac**: the Mac still draws `Kind`'s SF Symbols;
+  `typeOf` is in the core for it. Its tree reloads only the folders that
+  changed and never had the jump.
+- **Checks**: the `tree_edits` suite (new: a folder of about 120 rows,
+  Move to Trash twice by the key, into the scratch world's
+  `$XDG_DATA_HOME/Trash`, checked before anything is trashed; a selected
+  file deleted on disk; rows going and coming above the view; Rename; the
+  last row) and the `tree_icons` suite (rewritten: one file of each type,
+  each row's name in its type's family and the theme's answer, then Yaru
+  where installed, the main names checked, the pictures counted, three
+  snapshots). Before the fix `tree_edits` showed the tree at 0 (was 745)
+  with nothing selected after the first trash.
+- **Left for a real screen**: the icons' look at the owner's scale and in
+  Papirus-Gruvbox (the snapshots are Yaru at 1x), and whether a one-frame
+  flash of the top can show before `applyKeep` runs (it runs after the
+  layout and before the paint, so none is expected).
+
+### 110. The terminal's cursor shows, and readline's Ctrl keys reach the shell (done, November 2026)
 
 The owner's two reports from the ThinkPad (Ubuntu, GNOME, Toshy): "the
 cursor in the terminal for dark mode does not appear to exist", and

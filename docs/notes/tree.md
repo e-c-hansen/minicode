@@ -63,7 +63,41 @@ found through that list.
   Symbol (`MCTreeIconSymbol`, TreeDetails.mm), each image made once
   (`MCTreeSymbolImage`, which falls back to doc.text for a symbol the
   system lacks: cylinder is macOS 12). Folders and worktree rows keep
-  theirs; the git colors tint the name, not the icon. GTK not yet.
+  theirs; the git colors tint the name, not the icon. **Icons by type**
+  (2026-11-18, the owner on the GTK port: "almost none of the different
+  file types ... have non-default icons"; `linux/HANDOFF.md` item 109):
+  the core's `FileIcon::typeOf` (FileDetails, `tree:icon-types`) is finer
+  than `Kind`: 78 types (C, C header, C++, Python, Rust, Go, ... YAML,
+  TOML, LaTeX, fonts, executables, lockfiles, git's files, config,
+  Makefile, Dockerfile, LICENSE, README), by the whole name first
+  (`typesByName`, then the stems LICENSE, README, AUTHORS and Dockerfile
+  when what follows is no extension or a text one, so license_check.py
+  stays Python), then the extension (`typesByExtension`), then a dotfile
+  is Config and a file with no extension the caller found executable is
+  Executable, else Code or Text as `kindOf` would say. `Kind` stays what a
+  click opens (the session web page's "kind" reads it). The GTK port maps
+  each type to icon names from the system theme (`linux/src/TreeIcons.cpp`:
+  the freedesktop mimetype names first, text-x-python, application-json,
+  text-x-makefile, then broader ones, text-x-script, then text-x-generic),
+  the first the display's theme has (`gtk_icon_theme_has_icon`, answers
+  kept per theme and forgotten on its "changed", when `FileTree::
+  refreshIcons` gives the rows on show the new names). File icons are the
+  theme's in colour; folders keep the tinted folder-symbolic. On Yaru 77
+  of the 78 types draw apart from plain text, in 65 pictures (the
+  `tree_icons` suite counts them by the image file each name draws); on
+  Adwaita, GTK's default and the harness's, 17 names cover them (it lacks
+  the languages: they fall back to text-x-script). Names no theme on the
+  ThinkPad has: Swift, Julia, Elixir, Erlang, Zig and OCaml exist in
+  Papirus only; a lockfile is Yaru's legacy object-locked, git's files
+  Papirus's git or else text-x-patch, config Yaru's and Papirus's
+  configure. The GTK listing asks `access(X_OK)` of a regular file with no
+  extension only (on its worker thread: `minicode-exec` on the GFileInfo),
+  so a listing still reads no other file's details; a chmod +x shows when
+  the row is listed anew. The Mac still maps `Kind`; `typeOf` is there for
+  it. Trap (GTK): a name the icon theme lacks draws GTK's missing-image
+  picture (no fallback by dropping parts of the name), so every name is
+  checked with `gtk_icon_theme_has_icon` and each type's list ends with
+  text-x-generic.
 - **Columns** (`MCTreeColumns` bitmask, `toggleTreeColumn:`): size, saved and
   created (`st_birthtimespec`) on their own keys, the rightmost dropped first
   on a narrow row; switching one on widens a narrow sidebar
@@ -149,8 +183,8 @@ found through that list.
   folder's parent see it deleted or renamed; `revealPath(path, widen)`
   and `showsPath` are the Mac's reveal rule; Persistence keeps the focus
   through its `treeFocus` and `restoreTreeFocus` hooks. The breadcrumb is
-  labels laid out by `TreeFocus::fit` in a `GtkCustomLayout`. It keeps no
-  open folders in a window's record, so a window brought back opens none.
+  labels laid out by `TreeFocus::fit` in a `GtkCustomLayout`. Since item 107
+  a window's record keeps its open folders (`FileTree::restoreView`).
 - **Add to Focus, several folders** (2026-11-18, the owner: "what if I'm
   jumping between two different subdirectories"; the same files, core
   `tree:focus-set`, `tab-sessions:put`, the `tree_focus` suite's second
@@ -228,7 +262,8 @@ found through that list.
   GTK port has no palette folder picker), its answer held to that folder
   by `FolderPicker::inScope` (FolderPicker.cpp is in the Linux build for
   it). Persistence keeps the whole list. A drop below several roots is
-  refused, as on the Mac. It keeps no open folders in a window's record.
+  refused, as on the Mac. A window's record keeps the open folders inside
+  and outside the roots (item 107).
 
 - **The tree follows the active tab** (2026-11-18, the owner: "I have to
   hunt for the file that I am already using"; `EditorController+TreeReveal.mm`,
@@ -260,7 +295,75 @@ found through that list.
   the active tab must not scroll for the row a click in the tree opens
   (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`),
   or a click on a row cut by the edge jumps the tree and a restored window
-  loses its scroll. The GTK port does not follow yet.
+  loses its scroll. **The GTK port follows too** (2026-11-18,
+  `linux/HANDOFF.md` item 107, `linux/src/TreeFollow.{h,cpp}`, the
+  `tree_focus` suite's last part): `TreeFollow` holds the Mac's
+  TreeReveal category's rules (the core's `TreeReveal::Follower`, the
+  hold, the setting turned on) over three hooks from `main.cpp`
+  (`treeFollowablePath`, `treeOnShow`, the setting); the editor's
+  `onActiveChanged` calls `activeChanged` where it called
+  `revealActiveInTree`. `FileTree::revealPath` centers: it selects the row
+  without `gtk_list_view_scroll_to` (which only scrolls to the edge) and
+  `centerRow` reads the row's place in the frame clock's after-paint and
+  sets the scroll from `TreeReveal::scrollTop`; the tree's own reveals (a
+  focus changed, hidden files shown, a root's label) keep the edge scroll
+  (`reveal(path, widen, false)`, the Mac's `scrollRowToVisible` there).
+  `FileTree::selectIfListed` is `reselectCurrentFileInTree`, and
+  `opening()` is `treeOpensPath:` (set around the open callback in
+  `actOnRow`). `showsPath` uses `TreeFocus::shows`. Hidden is the sidebar
+  closed, another panel the sidebar stack's child, or the divider at 0;
+  `layout->onChanged`, the stack's `notify::visible-child` and the
+  divider's `notify::position` call `treeMaybeShown`. The hold is around
+  `newWindow`'s and `openFolder`'s `attachHeldDocuments` to
+  `showHeldActive`, and the window's record now keeps the tree's open
+  folders, selected row and scroll (`openFolders`, `scrolled`), which
+  `FileTree::restoreView` puts back once the listings have stopped
+  coming. Quick Open reveals before it opens, whatever the setting, as the
+  Mac's `openFileFromQuickOpen:`. One difference: GtkListView itself
+  scrolls the row a click focuses wholly into view, so a click on a row
+  cut by the edge nudges it in by the part cut off (never centered).
+  Trap (GTK): a row's place is only right after the layout that holds the
+  rows just put in, which comes after a frame's tick callbacks and may
+  come after a low-priority idle, so `centerRow` reads it in the frame
+  clock's after-paint, where no listing can have moved the rows since.
+
+- **A row going keeps the tree's place (GTK)** (2026-11-18, the owner: "If
+  I delete a file in the filetree panel, rather than simply removing it
+  from my current view, the view resets and I am brought to the top";
+  `linux/HANDOFF.md` item 109, `./build/mutible-guitest tree_edits`). Two
+  causes, both fixed. Move to Trash closed the file's tab, the tab before
+  it came on show, and the tree followed it (`TreeFollow`, item 107; before
+  it `revealActiveInTree`): to a file near the top, the top of the tree;
+  `trashNow` also cleared the selection. Now `trashNow` calls
+  `FileTree::removing(path)` (the row after the one going and the rows it
+  holds is selected, else the one before) and closes the tabs inside
+  `TreeFollow::quiet`, which neither reveals nor selects. And GtkListView
+  itself (GTK 4.22) put the list at its top a frame or two after a row went
+  that it was anchored on (the row last clicked or focused): its
+  `update_adjustments` takes 0 for an anchor it cannot place. A selected
+  file deleted on disk did it alone. `FileTree::keepRows`, from
+  `onItemsChanged` (the tree model's first handler, so the list's row
+  widgets and the selection are still as they were), notes the first row
+  on show that stays and how far down it is drawn, and for 300 ms after a
+  change that takes rows out `applyKeep` (the frame clock's "layout",
+  connected after the window's, so before the paint, and `afterLayout`)
+  sets a scroll gone to 0 back so that row is drawn there again. Only 0 is
+  undone (GTK's shift for rows gone above is right; anything else is
+  someone's scroll), and a press, a key, the wheel, a drag's edge scroll, a
+  reveal's scroll or a window's record putting its own back end it
+  (`stopKeeping`). The keyboard moves to the selected row only once the
+  trashed row is out (`goingRow_`, `afterRowsGone`): moved before, the list
+  anchors on that row where it is drawn and pushes the rows above the one
+  going down by a row. A selected row that goes by any other hand (deleted
+  or renamed on disk) passes the selection on the same way
+  (`lostAt_`, `afterRowsGone`, only when its file is gone from the disk, so
+  a folder closing or hidden files hidden choose nothing). Rename keeps the
+  scroll too: the renamed row, revealed, is in view. Trap (GTK):
+  GtkListView puts the list at its top a frame or two after the row it is
+  anchored on goes, so `keepRows` undoes a scroll gone to 0 after rows go,
+  and the keyboard moves to the next row only once the row is out; and the
+  tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or
+  the tree goes to the next tab's file.
 
 ## Traps
 
@@ -270,3 +373,6 @@ text is in place in its section.
 - The file tree (Mac): Trap: NSTableCellView moves its textField to the cell's width without a layout pass, so `MCTreeCell` places its fields again in `viewWillDraw`.
 - The file tree (Mac): Trap: `NSTableViewLastColumnOnlyAutoresizingStyle` moves the column only by the change in the outline's frame, so a width lost once stayed lost and a reload cut every name off; `fitTreeColumn` fits it after each reload and frame change.
 - The file tree (Mac): Trap: the tree following the active tab must not scroll for the row a click in the tree opens (`treeOpensPath:`), nor during a window's restore (`holdTreeFollowing:`).
+- The file tree (GTK): Trap: a row's place is only right after the layout that holds the rows just put in, which comes after a frame's tick callbacks and may come after a low-priority idle, so `centerRow` reads it in the frame clock's after-paint, where no listing can have moved the rows since.
+- The file tree (GTK): Trap: a name the icon theme lacks draws GTK's missing-image picture (no fallback by dropping parts of the name), so every name is checked with `gtk_icon_theme_has_icon` and each type's list ends with text-x-generic.
+- The file tree (GTK): Trap: GtkListView puts the list at its top a frame or two after the row it is anchored on goes, so `keepRows` undoes a scroll gone to 0 after rows go, and the keyboard moves to the next row only once the row is out; and the tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or the tree goes to the next tab's file.

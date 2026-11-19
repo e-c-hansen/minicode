@@ -102,7 +102,8 @@
 // served read-only on 127.0.0.1 and opened in the default browser; with
 // editor.session-host off, an alert offers to turn it on.
 - (void)showSessionInBrowser:(id)sender;
-// View > Copy Session Browser Link: the same page's address, with its token.
+// View > Copy Session Browser Link: a fresh link to the same page, good for
+// one browser.
 - (void)copySessionBrowserLink:(id)sender;
 // The window's server, nil until one of the two was chosen (checks).
 @property(nonatomic, readonly) MCSessionBrowser *sessionBrowser;

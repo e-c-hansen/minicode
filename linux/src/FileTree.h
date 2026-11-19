@@ -148,6 +148,13 @@ public:
     // space), so the context menu's actions read the row that was clicked.
     std::string selectedPath() const;
     void clearSelection();
+    // `path`'s row is about to go (Move to Trash, the file already gone from
+    // the disk, its folder's listing still to come): the row after it and
+    // the rows it holds, else the one before, is selected now, with the
+    // keyboard when the tree has it, and nothing scrolls (VS Code's rule).
+    // A selected row that goes by any other hand (deleted or renamed on
+    // disk) passes the selection on the same way when its rows go.
+    void removing(const std::string& path);
 
     // Select the row for `path`, expanding the folders above it. Folders load
     // asynchronously and a file just created appears only once the directory
@@ -155,8 +162,29 @@ public:
     // of seconds, rather than failing on the first pass. Outside a focused
     // folder, `widen` widens the focus first (showsPath); without it the
     // tree is left as it is (the tree following the tab on show, a file
-    // opened from Quick Open or a link).
+    // opened from Quick Open or a link). Found, the row is scrolled to the
+    // middle unless it is wholly in view already (centerRow), so a row on
+    // show never moves; the keyboard stays where it is.
     void revealPath(const std::string& path, bool widen = false);
+    // The row for `path` selected when the tree lists it now, no folder
+    // opened and nothing scrolled (the Mac's reselectCurrentFileInTree).
+    void selectIfListed(const std::string& path);
+    // The file a click or Enter in the tree is opening, while the open
+    // callback runs ("" otherwise): its row is the one clicked, which the
+    // tree following the tab selects without scrolling (the Mac's
+    // treeOpensPath:), so a click on a row cut by the edge never jumps.
+    const std::string& opening() const { return opening_; }
+    // The tree's view for a window's record (TabSessions::Window): the
+    // folders open, those remembered outside the focus too, and how far it
+    // is scrolled.
+    std::vector<std::string> openFolders() const;
+    double scrolled() const;
+    // A window's record back (the Mac's finishRestoringWindow): `open`
+    // opened again as their listings arrive (those outside the focus
+    // remembered for when it widens), `selected` selected, and the scroll
+    // put back once the rows have stopped coming, as far as they go.
+    void restoreView(const std::vector<std::string>& open, const std::string& selected,
+                     double scroll);
 
     // Called on every change any of the tree's folder monitors reports, a
     // file's contents included, with the path that changed. The Source
@@ -174,6 +202,9 @@ public:
     // The decorator's answers changed: the rows on show ask again, nothing
     // else of them changes.
     void redecorate();
+    // The rows on show take their icons again (TreeIcons.h): run when the
+    // display's icon theme changes.
+    void refreshIcons();
 
     // The right-click menu. Its items name window actions ("win.rename"),
     // which resolve because the menu is parented inside the window.
@@ -234,7 +265,24 @@ private:
     static void onFocusPathChanged(GFileMonitor* m, GFile* file, GFile* other,
                                    GFileMonitorEvent ev, gpointer self);
     void dropPopovers();                    // before the list view is replaced
+    // revealPath, with the row centered (`center`) or only selected, as
+    // the tree's own reveals keep it (a focus changed, hidden files shown,
+    // a root's label clicked: the Mac's scrollRowToVisible there).
+    void reveal(const std::string& path, bool widen, bool center);
     bool tryReveal();
+    // Scrolls `row` to the middle unless it is wholly in view
+    // (TreeReveal::scrollTop), measured once the list is laid out with it
+    // (afterLayout, which also puts a waiting restoreView's scroll back).
+    void centerRow(GtkTreeListRow* row);
+    // The frame clock's after-paint, asked for once (scheduleFrame): the
+    // rows' places are those of the model as it is then.
+    void scheduleFrame();
+    void stopFrames();
+    static void onAfterPaint(GdkFrameClock* clock, gpointer self);
+    void afterLayout();
+    // A row the list shows now, and its position: `pos` itself when it
+    // shows, else the first.
+    GtkWidget* shownRow(guint pos, guint* shownPos) const;
     void tryExpand();
     bool rowBounds(guint pos, graphene_rect_t* out) const;
     static void onItemsChanged(GListModel* m, guint pos, guint removed, guint added,
@@ -261,6 +309,38 @@ private:
     void selectRow(guint pos);
     // Keeps `row` (a reference of its own) in one of the click slots below.
     static void holdRow(GtkTreeListRow** slot, GtkTreeListRow* row);
+
+    // Rows going (removing, "rows going" in FileTree.cpp): whether the
+    // keyboard is in the tree; row `pos` selected where it is, with the
+    // keyboard when `keys`; the selected row's path kept
+    // (onSelectionChanged) and, once the row went (onItemsChanged), the row
+    // now in its place selected (afterRowsGone) when its file is gone from
+    // the disk.
+    bool hasKeyboard() const;
+    void selectInPlace(guint pos, bool keys);
+    static void onSelectionChanged(GtkSelectionModel* model, guint pos, guint n, gpointer self);
+    void afterRowsGone();
+    void forgetSelectedRow();
+    static bool rowHasItem(GtkTreeListRow* row);   // false once its entry went
+    GtkTreeListRow* goingRow_ = nullptr;   // removing's row, the keyboard to follow (a reference)
+    std::string selPath_;                  // the selected row's path
+    std::string lostPath_;                 // the selected row that went
+    guint       lostAt_ = GTK_INVALID_LIST_POSITION;   // where it went
+    bool        lostKeys_ = false;         // the tree had the keyboard then
+    guint       lostIdle_ = 0;
+    // The rows on show kept in place while rows go and come (keepRows, from
+    // onItemsChanged): the first row on show that stays, how far down the
+    // view it was drawn, and till when. applyKeep puts the scroll back after
+    // each layout (onLayout, and afterLayout); stopKeeping lets go, for any
+    // scroll the user or the tree itself asks for.
+    void keepRows(guint pos, guint removed);
+    void applyKeep();
+    void stopKeeping();
+    static void onLayout(GdkFrameClock* clock, gpointer self);
+    GtkTreeListRow* keepRow_ = nullptr;    // a reference
+    double      keepY_ = 0;
+    gint64      keepUntil_ = 0;
+    gulong      layoutId_ = 0;             // on frameClock_
 
     // Drag and drop (see "drag and drop" in FileTree.cpp).
     static GdkContentProvider* onDragPrepare(GtkDragSource* s, double x, double y,
@@ -338,14 +418,33 @@ private:
     double      scrollStep_ = 0;           // pixels per tick, signed
 
     std::string pendingReveal_;            // revealPath target still to be found
+    bool        revealCenters_ = true;     // and whether its row is centered
     gint64      revealDeadline_ = 0;       // monotonic µs; give up after this
     guint       revealIdle_ = 0;
+    std::string opening_;                  // opening(): the row a click opens
+    // The row to center after the next layout (a reference), till when.
+    GtkTreeListRow* centerRow_ = nullptr;
+    gint64      centerDeadline_ = 0;
+    // restoreView's selection and scroll waiting for the rows (scroll < 0:
+    // none), till when, and when the rows last changed.
+    std::string restoreSelect_;
+    double      restoreScroll_ = -1;
+    gint64      restoreDeadline_ = 0;
+    gint64      rowsChanged_ = 0;
+    // The frame clock asked for an after-paint (a reference), its handler,
+    // and the list view's map, waited for while it has no clock.
+    GdkFrameClock* frameClock_ = nullptr;
+    gulong      afterPaintId_ = 0;
+    gulong      mapId_ = 0;
     // Folders to open again after the dotfile filter changed (setShowHidden).
     std::unordered_set<std::string> pendingExpand_;
     // Shared with every folder's watch, which may outlive the tree briefly.
     std::shared_ptr<ActivityCb> activity_ = std::make_shared<ActivityCb>();
     Decorator decorator_;
     void decorate(GtkWidget* label) const;
+    // A row's icon from its label's path, folder flag and executable flag.
+    static void setIcon(GtkWidget* icon, GtkWidget* label);
+    GtkIconTheme* iconTheme_ = nullptr;   // the display's, watched for changes
     bool worktreeText(const std::string& path, std::string* text, std::string* tip) const;
     WorktreeTextCb worktreeTextCb_;
     GMenuModel* worktreeModel_ = nullptr;

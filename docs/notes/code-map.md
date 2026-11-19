@@ -88,7 +88,12 @@ goes here first, with tests; the GUI only displays it.
   `hostserver:*`; docs/notes/session-host.md), and `SessionFiles` (stage
   7's first read: `FsRead` lists one folder of the session's, confined to
   it by `confinedPath`, with the apps' trees' dotfile, order and ignore
-  rules, for the browser's tree; `host:fs-list`). The wire
+  rules, for the browser's tree; `host:fs-list`), `SessionWebViewers`
+  (what the browser's page renders itself: a notebook as a page, a SQLite
+  database's tables and rows; `sessionweb:viewers`), and `SessionWebAccess`
+  (who may use the browser's view: single-use links, the credential's
+  cookie, idle expiry, the app's question before a new browser and its
+  rate limit; `sessionweb:access*`). The wire
   unit is the renderer's (Hello says which); the host converts at the
   edge. A UTF-16 renderer must never split a surrogate pair (a renderer
   counting code points could not follow). `host:*`: the edit loop, undo
@@ -133,7 +138,9 @@ goes here first, with tests; the GUI only displays it.
   conflict blocks, and what keeping a side or both makes of the text).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
   (the folder picker's paths, rows and completion), `HintsSearch.h`
-  (the shortcut hints' search, header only), `SymbolOutline`
+  (the shortcut hints' search, header only), `WindowTitle.h` (the
+  window's title: the file's path from the folder, ~ outside it, the
+  terminal's or the page's title while it has the keyboard; header only), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
   line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking
@@ -155,6 +162,8 @@ goes here first, with tests; the GUI only displays it.
   status line, undo, the log);
   `ProcessTable` (processes and ports per folder: tracking, groups, Stop's plan).
 - Files: `FileSniff` (how a file is shown), `Csv`, `JsonOutline`, `Notebook`,
+  `SqliteRead` (a SQLite database read-only, with a deadline: tables and a
+  page of rows; the system libsqlite3, the one library the core links),
   `WebBookmark` (web bookmarks as .url and .webloc files: reading, writing,
   names, which addresses may open).
 
@@ -233,7 +242,7 @@ goes here first, with tests; the GUI only displays it.
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
 Tabs (tabs, closed tabs, saving), Session (the session host's hooks), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
-files changed outside), TreeFocus (Focus on Folder and Add to Focus), TreeReveal (the tree following the active tab), Rendering (what the editor's slot shows), Highlighting,
+files changed outside), TreeFocus (Focus on Folder and Add to Focus), TreeReveal (the tree following the active tab), WindowTitle (the window's title and representedURL, by who has the keyboard), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,
 editing hooks), Bookmarks (web bookmarks, the browser window), Navigation,
 LanguageServers, Agents (inline agent, Request a

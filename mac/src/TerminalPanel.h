@@ -38,6 +38,9 @@ typedef NS_ENUM(NSInteger, MCPaneDirection) {
 // closed or given the keyboard, a share moved from the keyboard, or a bar's
 // drag ended (not each step of it). Told after the change.
 @property(nonatomic, copy) void (^onChanged)(void);
+// The strip was drawn again: a tab's title may have changed (the window's
+// title follows the active terminal's while it has the keyboard).
+@property(nonatomic, copy) void (^onTitlesChanged)(void);
 // A passing note for the status bar (a queued command dropped by a close).
 @property(nonatomic, copy) void (^onNote)(NSString *note);
 // A bar across the panel under its strip, above the terminals (the offer

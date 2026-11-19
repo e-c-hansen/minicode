@@ -12,6 +12,11 @@
 // ("sh" is only text, "shi" is ⇧ too). A word joined with "+" is one key
 // as the hints spell it, its modifiers in Apple's order whatever order they
 // were typed in: "cmd+shift+h" finds ⇧⌘H.
+//
+// The keys are spelled as Commands::keyLabel spells them for the platform
+// (Spelling): the Mac's in symbols, "⇧⌘H"; Linux's with its modifiers in
+// words, "Ctrl+Shift+H", "Ctrl+⏎", "Shift+Page Up". With Linux's spelling
+// "control" finds Ctrl, "option" Alt, and "shift+ctrl+h" Ctrl+Shift+H.
 #pragma once
 
 #include <algorithm>
@@ -20,8 +25,11 @@
 
 namespace HintsSearch {
 
+// How the keys being searched are spelled (Commands::keyLabel).
+enum class Spelling { Mac, Linux };
+
 // One word of the query: its text in lower case, and what it is as a key
-// (glyph spellings, looked for in keys only).
+// (spellings, looked for in keys only).
 struct Word {
     std::u16string text;
     std::vector<std::u16string> keys;
@@ -92,6 +100,26 @@ inline int modifierRank(char16_t g) {
     }
 }
 
+// A key's glyph as the hints spell it (folded): the glyph on the Mac; on
+// Linux a modifier's word ("ctrl"), and Home, End, Page Up and Page Down by
+// name, as Commands::keyLabel writes them.
+inline std::u16string spelled(char16_t glyph, Spelling sp) {
+    if (sp == Spelling::Linux) {
+        switch (glyph) {
+            case u'⌃': return u"ctrl";
+            case u'⌥': return u"alt";
+            case u'⇧': return u"shift";
+            case u'⌘': return u"cmd";
+            case u'↖': return u"home";
+            case u'↘': return u"end";
+            case u'⇞': return u"page up";
+            case u'⇟': return u"page down";
+            default: break;
+        }
+    }
+    return std::u16string(1, glyph);
+}
+
 // The glyphs a word names: exactly, or as the first three letters or more
 // of a name.
 inline std::vector<char16_t> glyphsNamed(const std::u16string& w) {
@@ -106,9 +134,10 @@ inline std::vector<char16_t> glyphsNamed(const std::u16string& w) {
     return out;
 }
 
-// "cmd+shift+h" as the hints spell it, "⇧⌘h" (compared folded); empty when
-// a part is no key ("+" alone, "a++b").
-inline std::u16string combination(const std::u16string& w) {
+// "cmd+shift+h" as the hints spell it, "⇧⌘h" on the Mac and "shift+cmd+h"
+// on Linux (compared folded); empty when a part is no key ("+" alone,
+// "a++b").
+inline std::u16string combination(const std::u16string& w, Spelling sp = Spelling::Mac) {
     std::vector<std::u16string> parts;
     std::u16string part;
     for (size_t i = 0; i < w.size(); ++i) {
@@ -132,19 +161,22 @@ inline std::u16string combination(const std::u16string& w) {
         } else if (!rest.empty()) {
             return u"";   // two keys that are not modifiers
         } else {
-            rest = other ? std::u16string(1, other) : p;
+            rest = other ? spelled(other, sp) : p;
         }
     }
     std::sort(mods.begin(), mods.end(),
               [](char16_t a, char16_t b) { return modifierRank(a) < modifierRank(b); });
-    return std::u16string(mods.begin(), mods.end()) + rest;
+    if (sp == Spelling::Mac) return std::u16string(mods.begin(), mods.end()) + rest;
+    std::u16string out;
+    for (char16_t m : mods) out += spelled(m, sp) + u"+";
+    return out + rest;
 }
 
 inline bool isSpace(char16_t c) {
     return c == u' ' || c == u'\t' || c == u'\n' || c == u'\r' || c == 0xA0 || c == 0x3000;
 }
 
-inline std::vector<Word> parse(const std::u16string& query) {
+inline std::vector<Word> parse(const std::u16string& query, Spelling sp = Spelling::Mac) {
     std::vector<Word> words;
     std::u16string q = folded(query);
     size_t i = 0;
@@ -155,8 +187,8 @@ inline std::vector<Word> parse(const std::u16string& query) {
         if (j > i) {
             Word w;
             w.text = q.substr(i, j - i);
-            for (char16_t g : glyphsNamed(w.text)) w.keys.push_back(std::u16string(1, g));
-            const std::u16string combo = combination(w.text);
+            for (char16_t g : glyphsNamed(w.text)) w.keys.push_back(spelled(g, sp));
+            const std::u16string combo = combination(w.text, sp);
             if (!combo.empty()) w.keys.push_back(combo);
             words.push_back(std::move(w));
         }
@@ -212,8 +244,9 @@ inline Match match(const std::vector<Word>& words, const std::vector<Field>& fie
     return m;
 }
 
-inline Match match(const std::u16string& query, const std::vector<Field>& fields) {
-    return match(parse(query), fields);
+inline Match match(const std::u16string& query, const std::vector<Field>& fields,
+                   Spelling sp = Spelling::Mac) {
+    return match(parse(query, sp), fields);
 }
 
 }  // namespace HintsSearch
