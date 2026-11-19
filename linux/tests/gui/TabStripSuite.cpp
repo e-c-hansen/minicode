@@ -209,7 +209,13 @@ MC_GUI_SUITE(tab_strip) {
         gScroll = strip()->scrollOffset();
         MCGuiScroll(strip()->titleWidget(N - 1), -2);
     });
-    MCGuiWait("the row scrolled toward its start", 5, [] { return strip()->scrollOffset() < gScroll; });
+    // The bar and the fades are set as the strip is laid out after the
+    // scroll, a frame after the offset moves: waited for, not read at once
+    // (a FLAKY line on CI read them a frame early).
+    MCGuiWait("the row scrolled toward its start, the bar and both fades shown", 5, [] {
+        return strip()->scrollOffset() < gScroll && shown("minicode-tabs-bar") &&
+               shown("minicode-tabs-fade-left") && shown("minicode-tabs-fade-right");
+    });
     MCGuiStep("by two notches, choosing nothing; the bar shows under the pointer", [] {
         MCGuiNote("scrolled from %.0f to %.0f", gScroll, strip()->scrollOffset());
         GCHECK(std::abs(strip()->scrollOffset() - (gScroll - 2 * 48)) < 1);
