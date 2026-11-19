@@ -199,6 +199,16 @@ top of a turn, never inside a text system callback.
   is held inside the folder by its `realpath` (symlinks followed) and
   must not hold "..", ".", empty names or a leading '/'; the Mac's `open`
   trusts that check.
+- **A typeset is kept by the document's real path, not served by it**
+  (R3's third slice): the app may publish a typeset for any file, one
+  outside the folder too, so `/typeset/` checks the request's path with
+  `openLocalFile` before it looks the PDF up; never serve an entry
+  because the key matched.
+- **A preview made in code typesets at once.** `LatexView`'s init runs
+  `compileNow` before its caller can set `onTypeset`, so the first
+  "working" is never heard: whoever makes one says its state afterwards
+  (`typesetOf:view:`), and `typesetting` counts the typing debounce, or a
+  page told "failed" would wait for a typeset already due.
 
 - **Never edit the storage from the hook.** `willReplaceCharacters` runs
   inside the storage's edit: it records and sends a message, nothing else
@@ -1718,7 +1728,7 @@ the browser shows them with its own viewers.
   browser cannot show (database, archive, bookmark) says it opens in the
   window, as before.
 - **Not done in this slice**: SQLite and notebooks (the second slice,
-  below), the LaTeX preview, and git and review pages; the window's viewer tabs (a picture's tab) are
+  below), the LaTeX preview (the third), and git and review pages; the window's viewer tabs (a picture's tab) are
   still not reported to the page (the Mac reports only tabs with a
   document on the host), so the page shows a picture only from its tree,
   and does not follow the window to one.
@@ -1813,8 +1823,8 @@ and (already there) a Markdown file's page.
   `#md` frame) with `#modebtn` flipping to the lines; its label is now
   Show Source on a page that cannot edit (Edit Source stays for one that
   can), Show Page going back.
-- **Not here**: the LaTeX preview (needs tectonic) and git and review
-  pages (the Mac's views); no query box (the Mac's viewer has one).
+- **Not here**: the LaTeX preview (the third slice, below) and git and
+  review pages (the Mac's views); no query box (the Mac's viewer has one).
 
 #### Checks
 
@@ -1846,6 +1856,126 @@ notebooks drawn, the hostile one running nothing; the database's tables,
 cells, paging, and a recursive view stopped after 2 s; Show Source; the
 database bar at 390 px; the file's hash unchanged. The look in Safari and
 on a phone needs the owner's eyes.
+
+### The LaTeX preview in the page (R3, third slice)
+
+The owner's ask (R3): the LaTeX preview did not show in the browser view.
+Now a LaTeX document on the page shows the PDF the window's own preview
+typeset, and the new one each time the window typesets again; the page
+never starts a typeset of its own when the window's PDF is current.
+
+- **Text first.** A `.tex`, `.ltx` or `.latex` file (`typesetSource`, the
+  Mac's list) stays text: a document's `doc` and a page's own `filetext`
+  carry `latex: true` (`DocView::snapshot`), the tree gives it no `view`,
+  and `/file/` does not serve it. The page opens it on its pages
+  (`D.mode` "page", on an editable page too, as the window opens it in
+  its preview), and `#modebtn` flips to the lines (Show Source, or Edit
+  Source on an editable page) and back, as for Markdown.
+- **The app typesets, the server keeps.** `Web::Typesets`
+  (`src/SessionWebTypeset.cpp`) keeps, by the document's real path, the
+  state (working, ready, failed), the last PDF that worked (kept while
+  another runs and through a failure), the failure's text (64 KB, valid
+  UTF-8), a version for every change and a `pdfVersion` for every new
+  PDF; ready with the same bytes changes nothing. At most 64 entries, the
+  one changed longest ago going first; a PDF over 512 MB is a failure.
+  `Server::typesetWorking`, `typesetReady` and `typesetFailed` (any
+  thread) change it and wake the server, whose loop (`sendTypesets`)
+  sends each page showing that document a new `latex` message.
+- **A page asks.** `latex {path}` (any page: the app typesets from a copy
+  and changes nothing of the user's) takes a path from the folder or a
+  document's path under it (`relativeInFolder`: as spelled, else both
+  resolved), refuses anything `openLocalFile` refuses (outside the
+  folder, a link out, a dotfile unless the tree shows them, not a regular
+  file) or that is not LaTeX, with `state: "refused"` and the app never
+  asked; else it remembers the document on the connection, calls
+  `Options::typeset(abs)` and answers with `typesetJson`: `state` (ready,
+  working, failed, none, refused), `url` (`typesetTarget` plus `?v=` the
+  `pdfVersion`, so a new PDF is a new address the frame loads), `text`
+  (the log, or what to do). With no `Options::typeset` (a headless host)
+  a document with nothing published is "none", and its text says the
+  window's own page shows the pages.
+- **`/v/ID/typeset/PATH`.** The credential's cookie as for `/file/`
+  (`Answer::typeset`), then `beginTypeset`: LaTeX only, a page's socket
+  open (503 before), `openLocalFile` again (so a typeset kept for a file
+  outside the folder is never served through a link), a PDF kept (404
+  before), then the PDF's head (no sandbox CSP: Chrome's viewer will not
+  run in one; nosniff, no-store), 206 and 416 by `byteRange`, and the
+  bytes from memory 2 MB at a time as the connection takes them
+  (`FileSend::mem`, counted among the 32 files at once).
+- **The Mac.** `LatexView` announces each typeset (`onTypeset(path, pdf,
+  error)`: both nil as it starts; tectonic missing or the copy not
+  written are failures too) and keeps what a page asks about
+  (`typesetting`, which counts the typing debounce, `typesetPdf`,
+  `typesetFailure`). `makeLatexPreview` calls `wireSessionTypesetOf:`
+  (the SessionBrowser category), which forwards each to the window's
+  `MCSessionBrowser` (`typesetOf:pdf:error:`, nothing while no server
+  runs). The server's `Options::typeset` runs `typesetForSessionPage:` on
+  the main thread: a tab of the window on that file (paths compared
+  resolved) with a preview gives what the preview has
+  (`typesetOf:view:`: its last PDF, then working or its failure), and
+  never typesets again; otherwise the `MCSessionBrowser` keeps a preview
+  of its own (`typesetInBackground:source:`, a `LatexView` in no window,
+  at most four, stopped with the server) typeset from the tab's text, or
+  the disk's for a file the window has not open, and again only when that
+  text changed (`setPath:source:`). Its hidden sibling and output folder
+  are the preview's usual ones (latex.md), gone when it ends.
+- **The page.** `showMode` shows `#tex` (`#texnote`, the `#texframe`
+  iframe, `#texlog`) for a LaTeX document on its pages and asks
+  `latex` each time (the path as it knows it: a tab of its own by its
+  path from the folder, a document by the session's path), again after a
+  reconnect; `onLatex` sets the frame's address when it changed (ready,
+  or working with the last PDF: "Typesetting again…"), shows the log for
+  a failure ("The document did not typeset. tectonic said:"), and the
+  text for none or refused. Leaving the pages (another tab, Show Source,
+  a viewer, a note) empties the frame. `mcSessionView.typeset()` says
+  what shows, for the GUI check.
+- **Not done**: a new PDF reloads the frame, so the browser's viewer
+  starts again at the top (the window keeps the reader's place); no
+  click to the source, no edit box, no forward search, and no Warnings
+  list on the page; a page's typing (an editable page) reaches the PDF
+  when the window's preview typesets it, as the window's own typing does,
+  so beside the source it waits for a save; an `\input` file typesets
+  alone (as the window's preview of it would), not as its main document.
+  Linux's port does not publish its previews yet (it has no session
+  browser).
+
+#### Checks
+
+`sessionweb:typeset`: `typesetSource` over ten names, `typesetTarget`'s
+encoding, `relativeInFolder` (relative, under the folder, through a link
+either way, outside, a sibling folder's prefix); `Typesets` (working
+once, ready, the same bytes again nothing new, working keeping the PDF,
+ready again with the same address, a new PDF a new one, the same file by
+a link's spelling, failure keeping the PDF, the failure's cap and
+UTF-8, an empty failure, a null PDF, the 64-entry cap); `typesetJson` in
+each state; `latex` on a document and a page's own file and not on
+others; `answer()` for /typeset/ (decoded, the credential, a NUL, a near
+miss, POST); then over the wire with a headless host and a stand-in app
+that records what it was asked: 503 before a page, a published PDF
+ready at once and the app asked with the file's path, its bytes, a
+range and a 416, working with the last address, a 5 MB PDF at a new
+address in pieces and a suffix range, the same bytes again sending
+nothing, a failure's log, a document's absolute path taken as the same
+file, one with nothing yet "working" and 404 until it is published,
+nine refusals (outside, a link out, "..", a dotfile, not LaTeX, an
+absolute path elsewhere, missing, a folder) with nothing of the outside
+file sent and the app never asked, seven refused addresses (404) though
+a typeset is kept for the outside file, no cookie 403, `/file/` not
+serving the .tex, the file unchanged, and 503 once the page has gone.
+GUI: `session_browser`, on the read-only page with a stand-in tectonic:
+the window opens a document in its preview, the page follows it and
+shows the pages at its /typeset/ address, a fetch from the page gets the
+window's PDF byte for byte, Show Source shows the text; an agent's
+rewrite read by the window (`checkTabsOnDisk`) typesets again and the
+page's frame moves to a new address holding the new PDF; a document the
+window has not open, clicked in the page's tree, shows in a tab of the
+page's own typeset by the server's own preview, the window opening
+nothing, the file unchanged and no sibling left. Checked by hand in
+headless Chrome over CDP against a host with a scripted app (not
+committed): the click, "Typesetting…", the frame in Chrome's PDF viewer,
+a fetch of 200 application/pdf, the second PDF at ?v=2, Show Source and
+Show Page. The look in Safari, the viewer's place after a re-typeset,
+and a phone need the owner's eyes.
 
 ### The window's browser tabs in the page (R4)
 
@@ -2014,5 +2144,6 @@ panes and the ×s needs the owner's eyes.
   yet. Stage 7's watching should send the page a folder's listing when it
   changes. A headless host's page cannot open text files (no window
   decides tabs); it shows pictures, PDFs, media, HTML, tables, notebooks
-  and databases (R3). LaTeX and git pages in the page are R3's later
-  slices.
+  and databases (R3), and a LaTeX document's text, saying the window's
+  own page shows its pages (it typesets nothing). Git and review pages
+  are R3's next slice.

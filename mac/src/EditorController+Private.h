@@ -806,6 +806,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 @interface EditorController (SessionBrowserRecord)
 - (NSDictionary *)sessionBrowserPanes;
 - (NSDictionary *)sessionBrowserTabs;
+// A tab's LaTeX preview, made (makeLatexPreview): its typesets go to the
+// window's page in a browser (R3's third slice).
+- (void)wireSessionTypesetOf:(LatexView *)view;
 @end
 
 // EditorController+Groups.mm: two editor groups side by side (Split Editor),

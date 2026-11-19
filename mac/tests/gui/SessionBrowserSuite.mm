@@ -40,7 +40,15 @@
 // hostile cells escaped, nothing run), and a SQLite database as its tables
 // (hostile names as text) and its rows a page at a time, Next going on,
 // the file unchanged; and a Markdown file as its page, Show Source flipping
-// to its text and Show Page back.
+// to its text and Show Page back. A LaTeX document (with a stand-in
+// tectonic): the window opens it in its preview, and the read-only page,
+// following the window, shows the PDF the window's preview typeset, the
+// bytes at its /typeset/ address the window's own; Show Source shows its
+// text; an agent's rewrite that the window reads and typesets again
+// reaches the page as a new PDF at a new address; a document the window
+// does not have open, clicked in the page's tree, is typeset by the
+// server's own preview, the window opening nothing and no file left
+// beside it.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 #import "EditorController.h"
@@ -336,6 +344,8 @@ NSString *const kRead =
     @" file: window.mcSessionView ? window.mcSessionView.file() : null,"
     @" pwned: String(window.pwned),"
     @" mode: document.getElementById('modebtn').classList.contains('hidden') ? '' : document.getElementById('modebtn').textContent,"
+    @" typeset: window.mcSessionView ? window.mcSessionView.typeset() : null,"
+    @" fetched: window.__typesetFetch || null,"
     @" mdShown: !document.getElementById('md').classList.contains('hidden')})";
 
 // Script run in the page (a click on its controls), its failure noted.
@@ -422,6 +432,50 @@ NSString *Typed(NSString *s) {
                            [parts addObject:[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]];
                        }];
     return [parts componentsJoinedByString:@","];
+}
+
+// A PDF of one word, as the stand-in tectonic "typesets" it.
+NSData *WordPDF(NSString *word) {
+    NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 300, 80)];
+    tv.string = word;
+    tv.font = [NSFont systemFontOfSize:24];
+    return [tv dataWithPDFInsideRect:tv.bounds];
+}
+
+// The bytes' sum, as the page's fetch adds them up.
+uint32_t ByteSum(NSData *d) {
+    uint32_t s = 0;
+    const unsigned char *b = (const unsigned char *)d.bytes;
+    for (NSUInteger i = 0; i < d.length; i++) s += b[i];
+    return s;
+}
+
+// The page fetches its typeset frame's address, as its frame does: the
+// answer's status, type, length and byte sum in window.__typesetFetch.
+// What was read before is dropped: Read() answers later, so a wait
+// looking at gSeen at once saw the last fetch's answer (CI, PR #261).
+void FetchTypeset(void) {
+    gSeen = nil;
+    Eval(@"(() => { window.__typesetFetch = null; const src = window.mcSessionView.typeset().src;"
+         @" if (!src) return false;"
+         @" fetch(src).then(r => r.arrayBuffer().then(b => { const a = new Uint8Array(b); let s = 0;"
+         @" for (const x of a) s = (s + x) >>> 0;"
+         @" window.__typesetFetch = {status: r.status, type: r.headers.get('content-type') || '',"
+         @" length: a.length, sum: s, src: src}; }))"
+         @" .catch(e => { window.__typesetFetch = {error: String(e)}; });"
+         @" return true; })()");
+}
+
+NSDictionary *SeenTypeset(void) {
+    return [gSeen[@"typeset"] isKindOfClass:NSDictionary.class] ? gSeen[@"typeset"] : nil;
+}
+NSDictionary *SeenFetch(void) {
+    return [gSeen[@"fetched"] isKindOfClass:NSDictionary.class] ? gSeen[@"fetched"] : nil;
+}
+// A fetch of the frame's address now on show has answered.
+BOOL FetchedShown(void) {
+    NSString *src = SeenTypeset()[@"src"];
+    return src.length && [SeenFetch()[@"src"] isEqualToString:src];
 }
 
 NSTextView *TV(EditorController *c) { return [c valueForKey:@"textView"]; }
@@ -1159,6 +1213,146 @@ MC_GUI_SUITE(session_browser) {
     MCGuiWait(@"back to the window's tab once more", 20, ^BOOL {
         Read();
         return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:@"notes.md"];
+    });
+    // A LaTeX document (R3's third slice): the window's preview's PDF on
+    // the page, and a new one when the window typesets again.
+    NSString *texPath = [dir stringByAppendingPathComponent:@"paper.tex"];
+    NSString *soloPath = [dir stringByAppendingPathComponent:@"solo.tex"];
+    NSString *alphaTex = @"\\documentclass{article}\\begin{document}ALPHA\\end{document}\n";
+    NSString *betaTex = @"\\documentclass{article}\\begin{document}BETA\\end{document}\n";
+    NSString *soloTex = @"\\documentclass{article}\\begin{document}SOLO\\end{document}\n";
+    __block MCTab *texTab = nil;
+    __block NSData *firstPdf = nil, *secondPdf = nil;
+    __block NSString *firstSrc = nil;
+    __block NSUInteger texTabsBefore = 0;
+    MCGuiStep(@"a stand-in tectonic and two LaTeX documents; the window opens one", ^{
+        NSString *pdfs = [MCGuiScratch() stringByAppendingPathComponent:@"typeset-pdfs"];
+        [NSFileManager.defaultManager createDirectoryAtPath:pdfs withIntermediateDirectories:YES
+                                                  attributes:nil error:nil];
+        [WordPDF(@"ALPHA") writeToFile:[pdfs stringByAppendingPathComponent:@"alpha.pdf"] atomically:YES];
+        [WordPDF(@"BETA, a longer page") writeToFile:[pdfs stringByAppendingPathComponent:@"beta.pdf"] atomically:YES];
+        [WordPDF(@"SOLO") writeToFile:[pdfs stringByAppendingPathComponent:@"solo.pdf"] atomically:YES];
+        // "Typesets" by copying the PDF its text names.
+        NSString *script = [NSString stringWithFormat:
+            @"#!/bin/sh\n"
+            @"out=''; prev=''; input=''\n"
+            @"for a in \"$@\"; do [ \"$prev\" = --outdir ] && out=\"$a\"; prev=\"$a\"; input=\"$a\"; done\n"
+            @"stem=$(basename \"$input\" .tex)\n"
+            @"if grep -q ALPHA \"$input\"; then cp '%@/alpha.pdf' \"$out/$stem.pdf\";\n"
+            @"elif grep -q BETA \"$input\"; then cp '%@/beta.pdf' \"$out/$stem.pdf\";\n"
+            @"else cp '%@/solo.pdf' \"$out/$stem.pdf\"; fi\n",
+            pdfs, pdfs, pdfs];
+        NSString *tool = [MCGuiScratch() stringByAppendingPathComponent:@"typeset-tectonic"];
+        MCGuiWriteFile(tool, script);
+        chmod(tool.fileSystemRepresentation, 0755);
+        MCSetEnv("MUTIBLE_LATEX_WORK", [MCGuiScratch() stringByAppendingPathComponent:@"typeset-work"].UTF8String);
+        MCSetEnv("MUTIBLE_TECTONIC", tool.UTF8String);
+        GCHECK_EQ_STR(MCTectonicPath(), tool);
+        MCGuiWriteFile(texPath, alphaTex);
+        MCGuiWriteFile(soloPath, soloTex);
+        texTabsBefore = [gC tabs].count;
+        [gC openFileAtPath:texPath];
+        texTab = MCTabNamed(gC, @"paper.tex");
+        GCHECK(texTab != nil && texTab.isLatex && texTab.previewMode && texTab.latex != nil && texTab.session != nil);
+        Eval(@"(() => { document.getElementById('refresh').click(); return 1; })()");
+    });
+    MCGuiWait(@"the window's preview typesets it", 20, ^BOOL {
+        return texTab.latex.typesetPdf != nil && !texTab.latex.typesetting;
+    });
+    MCGuiWait(@"the read-only page follows the window to it and shows its pages", 30, ^BOOL {
+        Read();
+        NSDictionary *x = SeenTypeset();
+        return [x[@"state"] isEqualToString:@"ready"] && [x[@"src"] containsString:@"/typeset/paper.tex?v="] &&
+               [x[@"frame"] boolValue] && [x[@"shown"] boolValue] && [gSeen[@"mode"] isEqualToString:@"Show Source"];
+    });
+    MCGuiStep(@"the page fetches its frame's address", ^{
+        MCGuiNote(@"typeset: %@", SeenTypeset());
+        GCHECK_EQ_STR(gSeen[@"local"], @"");   // the window's tab, not one of the page's own
+        firstPdf = texTab.latex.typesetPdf;
+        firstSrc = SeenTypeset()[@"src"];
+        FetchTypeset();
+    });
+    MCGuiWait(@"fetched", 20, ^BOOL {
+        Read();
+        return FetchedShown();
+    });
+    MCGuiStep(@"the bytes are the window's PDF; then Show Source", ^{
+        NSDictionary *f = SeenFetch();
+        MCGuiNote(@"fetched: %@", f);
+        GCHECK([f[@"status"] intValue] == 200);
+        GCHECK_EQ_STR(f[@"type"], @"application/pdf");
+        GCHECK([f[@"length"] unsignedIntegerValue] == firstPdf.length);
+        GCHECK([f[@"sum"] unsignedIntValue] == ByteSum(firstPdf));
+        Eval(@"(() => { document.getElementById('modebtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"its text, and Show Page to go back", 20, ^BOOL {
+        Read();
+        return ![SeenTypeset()[@"shown"] boolValue] && [gSeen[@"lines"] hasPrefix:@"\\documentclass"] &&
+               [gSeen[@"lines"] containsString:@"ALPHA"] && [gSeen[@"mode"] isEqualToString:@"Show Page"];
+    });
+    MCGuiStep(@"Show Page; an agent rewrites the file, and the window reads it", ^{
+        Eval(@"(() => { document.getElementById('modebtn').click(); return 1; })()");
+        GCHECK(!texTab.dirty);
+        MCGuiWriteFile(texPath, betaTex);
+        [gC checkTabsOnDisk];
+    });
+    MCGuiWait(@"the window typesets the new text, and the page's frame has a new address", 30, ^BOOL {
+        Read();
+        NSDictionary *x = SeenTypeset();
+        NSData *now = texTab.latex.typesetPdf;
+        return now && ![now isEqualToData:firstPdf] && !texTab.latex.typesetting &&
+               [x[@"state"] isEqualToString:@"ready"] && [x[@"shown"] boolValue] &&
+               [x[@"src"] containsString:@"/typeset/paper.tex?v="] && ![x[@"src"] isEqualToString:firstSrc];
+    });
+    MCGuiStep(@"fetched again", ^{
+        secondPdf = texTab.latex.typesetPdf;
+        FetchTypeset();
+    });
+    MCGuiWait(@"the new bytes", 20, ^BOOL {
+        Read();
+        return FetchedShown();
+    });
+    MCGuiStep(@"they are the window's new PDF; a document the window has not open, clicked in the tree", ^{
+        NSDictionary *f = SeenFetch();
+        MCGuiNote(@"fetched: %@", f);
+        GCHECK([f[@"length"] unsignedIntegerValue] == secondPdf.length);
+        GCHECK([f[@"sum"] unsignedIntValue] == ByteSum(secondPdf));
+        GCHECK([gSeen[@"tree"] containsString:@"solo.tex"]);
+        texTabsBefore = [gC tabs].count;
+        ClickRow(@"solo.tex");
+    });
+    MCGuiWait(@"in a tab of the page's own, typeset by the server's own preview", 30, ^BOOL {
+        Read();
+        NSDictionary *x = SeenTypeset();
+        return [gSeen[@"local"] isEqualToString:@"solo.tex"] && [x[@"state"] isEqualToString:@"ready"] &&
+               [x[@"src"] containsString:@"/typeset/solo.tex?v="] && [x[@"frame"] boolValue];
+    });
+    MCGuiStep(@"the window opened nothing; fetched", ^{
+        GCHECK([gC tabs].count == texTabsBefore);
+        GCHECK(MCTabNamed(gC, @"solo.tex") == nil);
+        FetchTypeset();
+    });
+    MCGuiWait(@"its bytes", 20, ^BOOL {
+        Read();
+        return FetchedShown();
+    });
+    MCGuiStep(@"the stand-in's PDF; the file unchanged and nothing left beside it; both closed", ^{
+        NSDictionary *f = SeenFetch();
+        NSData *solo = [NSData dataWithContentsOfFile:
+            [[MCGuiScratch() stringByAppendingPathComponent:@"typeset-pdfs"] stringByAppendingPathComponent:@"solo.pdf"]];
+        GCHECK([f[@"length"] unsignedIntegerValue] == solo.length && [f[@"sum"] unsignedIntValue] == ByteSum(solo));
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:soloPath encoding:NSUTF8StringEncoding error:nil], soloTex);
+        for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil])
+            GCHECK(![name hasSuffix:@".mutible.tex"]);
+        CloseTab(@"solo.tex");
+        GCHECK([gC closeTabEverywhere:texTab prompt:YES]);
+        MCSetEnv("MUTIBLE_TECTONIC", nullptr);
+        MCSetEnv("MUTIBLE_LATEX_WORK", nullptr);
+    });
+    MCGuiWait(@"back to the window's tab, the pages gone", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && ![SeenTypeset()[@"shown"] boolValue] &&
+               ![gSeen[@"tabs"] containsString:@"solo.tex"] && ![gSeen[@"tabs"] containsString:@"paper.tex"];
     });
     MCGuiStep(@"the window closes, and the server with it", ^{
         GCHECK([gC tabs].count == tabsBefore);

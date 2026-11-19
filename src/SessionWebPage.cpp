@@ -22,7 +22,11 @@
 // or TSV file as a table of the rows the server parsed (R3); a notebook as
 // the page the server rendered, in a frame sandboxed with no scripts, and a
 // SQLite database as its tables and a page of rows at a time, read-only
-// (R3's second slice); an editable page opens it in the window too. "{{NONCE}}" is the response's script nonce. Every
+// (R3's second slice); an editable page opens it in the window too. A
+// LaTeX document shows as the PDF the app's own LaTeX preview typeset,
+// served at the server's /typeset/ address and drawn again each time the
+// app typesets it, Show Source flipping to its lines (R3's third slice).
+// "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
 #include "SessionWeb.h"
@@ -164,6 +168,11 @@ body:not(.editable) #caret { display: none; }
                 text-indent: -4.5em; }
 #code.wrap .l::before { text-indent: 0; }
 #md { flex: 1; border: 0; width: 100%; background: var(--bg); min-height: 0; }
+#tex { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#texnote { flex: none; margin: 0; padding: 4px 10px; color: var(--muted); font-size: 12px; }
+#texframe { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
+#texlog { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 8px 12px; white-space: pre-wrap;
+          font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
 #note { padding: 2em 1em; color: var(--muted); }
 #fileopen { color: var(--accent); flex: none; font-size: 12px; }
 #fileview { flex: 1; min-height: 0; overflow: auto; display: flex; }
@@ -246,6 +255,7 @@ body:not(.editable) #caret { display: none; }
     <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
+    <div id="tex" class="hidden"><p id="texnote" class="hidden"></p><iframe id="texframe" class="hidden" title="Typeset pages"></iframe><pre id="texlog" class="hidden"></pre></div>
     <div id="note" class="hidden"></div>
     <div id="fileview" class="hidden"></div>
     <p id="filemore" class="hidden"></p>
@@ -639,13 +649,15 @@ body:not(.editable) #caret { display: none; }
     D.indent = f.indent || D.indent;
     D.flight = null; D.queue = []; D.undo = 0; D.save = false;
     D.html = f.html || "";
+    D.latex = !!f.latex;
     D.a = D.h = 0; D.goal = null; D.moved = true;
-    D.mode = f.kind === "markdown" ? "page" : "code";
+    D.mode = f.kind === "markdown" || D.latex ? "page" : "code";
     $("code").scrollTop = 0;
     $("docpath").textContent = inFolder(f.abs) + " (on this page only)";
     if (f.kind === "large") {
       D.shadow = []; D.lines = []; reindex(); render();
       $("code").classList.add("hidden"); $("md").classList.add("hidden"); $("modebtn").classList.add("hidden");
+      hideTex();
       const n = $("note"); n.textContent = f.note; n.classList.remove("hidden");
       drawSelection();
     } else {
@@ -700,6 +712,7 @@ body:not(.editable) #caret { display: none; }
     D.id = 0; D.kind = ""; D.editable = false; D.flight = null; D.queue = [];
     $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
     $("modebtn").classList.add("hidden"); $("note").classList.add("hidden");
+    hideTex();
     $("docpath").textContent = rel + " (on this page only)";
     drawSelection();
     const box = $("fileview"), url = fileUrl(rel), open = $("fileopen");
@@ -1115,7 +1128,7 @@ body:not(.editable) #caret { display: none; }
   const D = { id: 0, kind: "", path: "", version: 0, editable: false,
               indent: { tabs: false, width: 4 }, shadow: [], lines: [], starts: [0],
               flight: null, queue: [], a: 0, h: 0, goal: null, moved: true,
-              undo: 0, save: false, switchTo: 0, mode: "code", html: "" };
+              undo: 0, save: false, switchTo: 0, mode: "code", html: "", latex: false };
   let seq = 0;
   function lineOf(l) { return { t: l[0], s: l[1] || [], b: l.length > 2 ? kBreaks[l[2]] : "\n" }; }
   function pending() { return D.flight ? [D.flight].concat(D.queue) : D.queue; }
@@ -1771,6 +1784,7 @@ body:not(.editable) #caret { display: none; }
   // ---- documents on show
   function showNote(text) {
     hideViewer();
+    hideTex();
     $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
     $("modebtn").classList.add("hidden");
     const n = $("note"); n.textContent = text; n.classList.remove("hidden");
@@ -1780,15 +1794,62 @@ body:not(.editable) #caret { display: none; }
   }
   function showMode() {
     const code = $("code"), md = $("md");
-    const page = D.kind === "markdown" && D.mode === "page";
-    $("modebtn").classList.toggle("hidden", D.kind !== "markdown");
+    // A Markdown document's page is the core's HTML; a LaTeX document's
+    // the app's typeset PDF.
+    const tex = D.kind === "code" && D.latex;
+    const page = (D.kind === "markdown" || tex) && D.mode === "page";
+    $("modebtn").classList.toggle("hidden", D.kind !== "markdown" && !tex);
     $("modebtn").textContent = page ? (D.editable ? "Edit Source" : "Show Source") : "Show Page";
     $("note").classList.add("hidden");
     code.classList.toggle("hidden", page);
-    md.classList.toggle("hidden", !page);
-    if (page) setMarkdown(D.html);
+    md.classList.toggle("hidden", !page || tex);
+    if (page && !tex) setMarkdown(D.html);
     else { md.removeAttribute("srcdoc"); mdHtml = null; }
+    if (page && tex) showTex(L.on || D.path);
+    else hideTex();
     drawSelection();
+  }
+  // ---- a LaTeX document's pages (R3's third slice): the PDF the app's own
+  // LaTeX preview typeset, at the server's /typeset/ address. Asked for
+  // each time the page shows it (`latex`, the path as this page knows it:
+  // a tab of its own by its path from the folder, a document by the
+  // session's path), and drawn again when the server says the app
+  // typeset it anew (a new address, so the frame loads the new PDF).
+  const X = { asked: "", m: null };
+  function texNote(text) { const n = $("texnote"); n.textContent = text || ""; n.classList.toggle("hidden", !text); }
+  function showTex(path) {
+    $("tex").classList.remove("hidden");
+    if (X.asked !== path) {
+      X.asked = path; X.m = null;
+      $("texframe").removeAttribute("src"); $("texframe").classList.add("hidden");
+      $("texlog").textContent = ""; $("texlog").classList.add("hidden");
+      texNote("Typesetting…");
+    }
+    post({ t: "latex", path: path });
+  }
+  function hideTex() {
+    X.asked = ""; X.m = null;
+    $("tex").classList.add("hidden");
+    $("texframe").removeAttribute("src");   // nothing left loading
+    $("texlog").textContent = "";
+  }
+  function onLatex(m) {
+    if (!X.asked || m.path !== X.asked) return;
+    X.m = m;
+    const frame = $("texframe"), log = $("texlog");
+    const failed = m.state === "failed" || m.state === "refused";
+    if (m.url && !failed) {
+      if (frame.getAttribute("src") !== m.url) frame.setAttribute("src", m.url);
+      frame.classList.remove("hidden");
+    } else {
+      frame.removeAttribute("src"); frame.classList.add("hidden");
+    }
+    log.textContent = m.state === "failed" ? m.text || "" : "";
+    log.classList.toggle("hidden", m.state !== "failed");
+    if (m.state === "ready") texNote("");
+    else if (m.state === "working") texNote(m.url ? "Typesetting again…" : "Typesetting…");
+    else if (m.state === "failed") texNote("The document did not typeset. tectonic said:");
+    else texNote(m.text || "");
   }
   function onDoc(m) {
     if (m.id !== want.doc) return;
@@ -1799,15 +1860,18 @@ body:not(.editable) #caret { display: none; }
     D.indent = m.indent || D.indent;
     D.flight = null; D.queue = []; D.undo = 0; D.save = false;
     D.html = m.html || "";
+    D.latex = !!m.latex;
     if (!same) {
       D.a = D.h = 0; D.goal = null; D.moved = true;
-      D.mode = m.kind === "markdown" && !D.editable ? "page" : "code";
+      // A LaTeX document opens on its pages, as the window's does.
+      D.mode = (m.kind === "markdown" && !D.editable) || (m.kind === "code" && D.latex) ? "page" : "code";
       $("code").scrollTop = 0;
     }
     $("docpath").textContent = inFolder(m.path);
     if (m.kind === "large") {
       D.shadow = []; D.lines = []; reindex(); render();
       $("code").classList.add("hidden"); $("md").classList.add("hidden"); $("modebtn").classList.add("hidden");
+      hideTex();
       const n = $("note"); n.textContent = m.note; n.classList.remove("hidden");
       drawSelection();
       return;
@@ -1995,7 +2059,7 @@ body:not(.editable) #caret { display: none; }
         case "waiting": gate(m.text); setStatus("waiting"); break;
         case "denied": case "expired":
           ended = true; gate(m.text); setStatus(m.t === "denied" ? "refused" : "expired");
-          hideViewer(); $("web").setAttribute("src", "about:blank");
+          hideViewer(); hideTex(); $("web").setAttribute("src", "about:blank");
           break;
         case "hello":
           gate("");
@@ -2019,6 +2083,9 @@ body:not(.editable) #caret { display: none; }
           // rows on show stay until the answers replace them).
           T.err.clear();
           refreshTree();
+          // A LaTeX document's pages on show: asked for again on the new
+          // connection, which knows nothing of the last one's.
+          if (X.asked) post({ t: "latex", path: X.asked });
           break;
         case "palette": applyPalette(m.palette); break;
         case "state": onState(m); break;
@@ -2042,6 +2109,7 @@ body:not(.editable) #caret { display: none; }
         case "table": onTable(m); break;
         case "notebook": onNotebook(m); break;
         case "db": onDb(m); break;
+        case "latex": onLatex(m); break;
         case "closing": if (!m.ok) toast(m.why || "That tab was not closed."); break;
       }
     };
@@ -2189,6 +2257,13 @@ body:not(.editable) #caret { display: none; }
                html: el && el.tagName === "IFRAME" ? el.srcdoc || "" : "",
                note: ($("filenote") || {}).textContent || "" };
     },
+    // A LaTeX document's pages: what the page asked for, the server's
+    // last answer, and what is drawn.
+    typeset: () => ({ shown: !$("tex").classList.contains("hidden"), asked: X.asked,
+                      state: X.m ? X.m.state : "", url: X.m && X.m.url ? X.m.url : "",
+                      src: $("texframe").getAttribute("src") || "",
+                      frame: !$("texframe").classList.contains("hidden"),
+                      note: $("texnote").textContent, log: $("texlog").textContent }),
     windowPanes: () => windowPanes(),
     gate: () => ($("gate").classList.contains("hidden") ? "" : $("gate").textContent),
   };

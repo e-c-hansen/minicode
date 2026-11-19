@@ -616,19 +616,21 @@ Answer answer(const Request& r, Access& access, const std::string& page, const C
     const std::string credential = cookieValue(cookies, credentialCookie(from.serverPort));
     const Access::State held = access.state(credential, from.now);
 
-    // A file for a viewer: the credential only (an <img> or <video> sends
-    // no header of the page's).
-    if (rest.compare(0, 5, "file/") == 0) {
+    // A file for a viewer, or a LaTeX document's typeset PDF: the
+    // credential only (an <img> or <video> sends no header of the page's).
+    const bool typeset = rest.compare(0, 8, "typeset/") == 0;
+    if (typeset || rest.compare(0, 5, "file/") == 0) {
         if (credential.empty())
             return refuse(403, "Forbidden", "no credential: open the address mutible printed");
         if (held != Access::State::Allowed) return refuse(403, "Forbidden", notAllowed(held));
         std::string rel;
-        if (!pathDecode(rest.substr(5), &rel))
+        if (!pathDecode(rest.substr(typeset ? 8 : 5), &rel))
             return refuse(400, "Bad Request", "a file's address that does not decode");
         access.touch(credential, from.now);
         Answer a;
         a.kind = Answer::File;
         a.status = 200;
+        a.typeset = typeset;
         a.file = std::move(rel);
         a.credential = credential;
         a.state = held;
@@ -1131,6 +1133,8 @@ Json DocView::snapshot() const {
                            std::to_string(text_.size()) + " characters)."));
     } else {
         if (k == "markdown") j.set("html", Json(html()));
+        // A LaTeX document's page is the app's typeset (R3's third slice).
+        if (typesetSource(path_)) j.set("latex", Json(true));
         j.set("lines", allLines());
         const AutoIndent::Unit u = AutoIndent::detect(text_, path_);
         Json indent = Json::object();
@@ -1273,6 +1277,8 @@ struct Server::FileSend {
     bool sized = false;           // the head is out
     std::uint64_t next = 0;       // the next byte to read
     std::uint64_t left = 0;       // bytes still to send
+    // A typeset PDF sent from memory instead of read from the host.
+    std::shared_ptr<const std::string> mem;
 };
 
 struct Server::Conn {
@@ -1294,6 +1300,11 @@ struct Server::Conn {
     int peerPort = 0;
     Clock::time_point opened;     // its request's deadline runs from here
     std::unique_ptr<FileSend> file;   // a file for a viewer, being sent
+    // The LaTeX document it shows the typeset of (`latex`): the path as it
+    // asked, from the folder, its key in the typesets, and the entry's
+    // version it was last sent.
+    std::string latexAsked, latexRel, latexKey;
+    std::uint64_t latexSent = 0;
 };
 
 struct Server::Session : Client::Listener, Client::TermListener {
@@ -1632,7 +1643,9 @@ void Server::handleHttp(Conn& c) {
     if (a.kind == Answer::File) {
         c.in.clear();
         auto range = r.headers.find("range");
-        beginFile(c, a.file, range == r.headers.end() ? nullptr : &range->second);
+        const std::string* rangeHeader = range == r.headers.end() ? nullptr : &range->second;
+        if (a.typeset) beginTypeset(c, a.file, rangeHeader);
+        else beginFile(c, a.file, rangeHeader);
         return;
     }
     c.out += a.response;
@@ -1764,6 +1777,9 @@ void Server::handleMessage(Conn& c, const std::string& text) {
                                      j["table"].asString(), j["offset"].asInt()));
         return;
     }
+    // A LaTeX document's typeset (R3's third slice): any page, since the
+    // app typesets from a copy and changes nothing of the user's.
+    if (t == "latex") return onLatex(c, j);
     // The rest changes the session or the window: only from a page that
     // may (each says so to one that only reads).
     if (t == "open") onOpen(c, j);
@@ -2180,6 +2196,21 @@ void Server::beginFile(Conn& c, const std::string& rel, const std::string* range
 
 void Server::pumpFile(Conn& c) {
     FileSend& f = *c.file;
+    if (f.mem) {
+        // From memory: the next piece once the connection has taken most
+        // of the last.
+        if (c.out.size() < kFilePiece) {
+            const std::size_t n = (std::size_t)std::min<std::uint64_t>(f.left, kFilePiece);
+            c.out.append(*f.mem, (std::size_t)f.next, n);
+            f.next += n;
+            f.left -= n;
+        }
+        if (!f.left) {
+            c.closeAfterWrite = true;
+            c.file.reset();
+        }
+        return;
+    }
     Client& client = *session_->client;
     if (f.req) {
         Json a;
@@ -2248,6 +2279,105 @@ void Server::pumpFiles() {
     if (!session_) return;
     for (auto& c : conns_)
         if (c->file && !c->dead) pumpFile(*c);
+}
+
+void Server::beginTypeset(Conn& c, const std::string& rel, const std::string* range) {
+    auto refuse = [&](int status, const std::string& why) {
+        c.out += fileRefusal(status, why);
+        c.closeAfterWrite = true;
+    };
+    if (!typesetSource(rel)) return refuse(404, "only a LaTeX document has a typeset");
+    if (!session_) return refuse(503, "the session's page is not open");
+    int sending = 0;
+    for (auto& o : conns_)
+        if (o->file) sending++;
+    if (sending >= kMaxFileSends) return refuse(503, "too many files at once");
+    // The document held inside the folder as every read of the page's is;
+    // its typeset is the app's, kept by its real path.
+    std::string abs, why;
+    const int fd = openLocalFile(opt_.folder, rel, opt_.showHidden, &abs, nullptr, &why);
+    if (fd < 0) return refuse(404, why);
+    ::close(fd);
+    const Typesets::Entry e = typesets_.get(abs);
+    if (!e.pdf) return refuse(404, "that document has not been typeset");
+    FileType type;
+    type.view = "pdf";
+    type.mime = "application/pdf";
+    type.sandbox = false;   // Chrome's PDF viewer will not run sandboxed
+    const std::uint64_t size = e.pdf->size();
+    const ByteRange r = byteRange(range, size);
+    c.out += fileHead(type, size, r);
+    if (r.kind == ByteRange::Unsatisfiable || size == 0) {
+        c.closeAfterWrite = true;
+        return;
+    }
+    auto f = std::make_unique<FileSend>();
+    f->rel = rel;
+    f->type = type;
+    f->sized = true;
+    f->mem = e.pdf;
+    f->next = r.start;
+    f->left = r.length();
+    c.file = std::move(f);
+    pumpFile(c);
+}
+
+void Server::onLatex(Conn& c, const Json& j) {
+    if (!j["path"].isString()) return;
+    const std::string asked = j["path"].asString();
+    c.latexAsked = asked;
+    c.latexRel.clear();
+    c.latexKey.clear();
+    c.latexSent = 0;
+    auto refuse = [&](const std::string& why) {
+        Json m = Json::object();
+        m.set("t", Json("latex"));
+        m.set("path", Json(asked));
+        m.set("state", Json("refused"));
+        m.set("text", Json(why));
+        sendJson(c, m);
+    };
+    std::string rel;
+    if (!relativeInFolder(opt_.folder, asked, &rel))
+        return refuse("That file is not one of this session's folder's, so this page has no typeset of it.");
+    if (!typesetSource(rel)) return refuse("Only a LaTeX document has a typeset.");
+    std::string abs, why;
+    const int fd = openLocalFile(opt_.folder, rel, opt_.showHidden, &abs, nullptr, &why);
+    if (fd < 0) return refuse(why);
+    ::close(fd);
+    c.latexRel = rel;
+    c.latexKey = Typesets::key(abs);
+    // The app says what its preview has, or typesets: its answer comes
+    // through typesetReady and the rest, and to this page from there.
+    if (opt_.typeset) opt_.typeset(abs);
+    const Typesets::Entry e = typesets_.get(c.latexKey);
+    c.latexSent = e.version;
+    sendJson(c, typesetJson(asked, rel, e, base(), (bool)opt_.typeset));
+}
+
+void Server::sendTypesets() {
+    const std::uint64_t now = typesets_.changes();
+    if (now == typesetsSeen_) return;
+    typesetsSeen_ = now;
+    for (auto& c : conns_) {
+        if (!c->welcomed || c->latexKey.empty()) continue;
+        const Typesets::Entry e = typesets_.get(c->latexKey);
+        if (e.version == c->latexSent) continue;
+        c->latexSent = e.version;
+        sendJson(*c, typesetJson(c->latexAsked, c->latexRel, e, base(), (bool)opt_.typeset));
+    }
+}
+
+void Server::typesetWorking(const std::string& path) {
+    if (typesets_.working(path)) wake();
+}
+
+void Server::typesetReady(const std::string& path, std::shared_ptr<const std::string> pdf) {
+    if (typesets_.ready(path, std::move(pdf))) wake();
+}
+
+void Server::typesetFailed(const std::string& path, const std::string& error) {
+    if (typesets_.failed(path, error)) wake();
 }
 
 void Server::onOpen(Conn& c, const Json& j) {
@@ -2709,6 +2839,7 @@ bool Server::run() {
             takeOutcomes();
             takeReads();
             pumpFiles();
+            sendTypesets();
             if (session_->closed) {
                 Json e = Json::object();
                 e.set("t", Json("ended"));

@@ -4,6 +4,7 @@
 #import "AppSettings.h"
 #import "EditorTab.h"
 #import "FileTree.h"   // gShowHidden
+#import "Latex.h"
 #import "SessionLink.h"
 #import "SessionWindow.h"
 #import "TreeDetails.h"   // MCAppDefaults
@@ -156,6 +157,10 @@ NSString *MCSessionBrowserPeer(int peerPort, int serverPort) {
     id _settingsObserver;
     NSUInteger _generation;   // one per server started: an answer reaches only the one that asked
     NSString *_url;
+    // Previews of the server's own, for LaTeX documents no tab previews,
+    // by path, the oldest used first in the order.
+    NSMutableDictionary<NSString *, LatexView *> *_typesetViews;
+    NSMutableArray<NSString *> *_typesetOrder;
 }
 
 - (instancetype)initWithWindow:(NSWindow *)window session:(MCSessionWindow *)session {
@@ -301,6 +306,17 @@ NSString *MCSessionBrowserPeer(int peerPort, int serverPort) {
             return true;
         };
     }
+    // A page showing a LaTeX document: the window says what it has
+    // (any page: a typeset reads a copy and changes nothing of the user's).
+    if (_typeset) {
+        void (^typeset)(NSString *) = _typeset;
+        o.typeset = [typeset](const std::string &path) {
+            NSString *p = [NSFileManager.defaultManager stringWithFileSystemRepresentation:path.c_str()
+                                                                                    length:path.size()];
+            if (!p) return;
+            dispatch_async(dispatch_get_main_queue(), ^{ typeset(p); });
+        };
+    }
     // A browser this Mac does not remember waits for the window's sheet.
     const NSUInteger generation = ++_generation;
     __weak MCSessionBrowser *weakSelf = self;
@@ -355,7 +371,62 @@ NSString *MCSessionBrowserPeer(int peerPort, int serverPort) {
     if (_server) _server->lookNow();
 }
 
+// ---- the LaTeX preview's typesets (R3's third slice)
+
+- (void)typesetOf:(NSString *)path pdf:(NSData *)pdf error:(NSString *)error {
+    if (!_server || !path.length) return;
+    const std::string p = path.fileSystemRepresentation;
+    if (pdf) _server->typesetReady(p, std::make_shared<const std::string>((const char *)pdf.bytes, pdf.length));
+    else if (error) _server->typesetFailed(p, error.UTF8String ?: "");
+    else _server->typesetWorking(p);
+}
+
+- (void)typesetOf:(NSString *)path view:(LatexView *)view {
+    NSData *pdf = view.typesetPdf;
+    NSString *failure = view.typesetFailure;
+    // The last PDF first, so a page has it to show while another runs.
+    if (pdf) [self typesetOf:path pdf:pdf error:nil];
+    if (view.typesetting || (!pdf && !failure)) [self typesetOf:path pdf:nil error:nil];
+    else if (failure) [self typesetOf:path pdf:nil error:failure];
+}
+
+- (void)typesetInBackground:(NSString *)path source:(NSString *)source {
+    if (!_server || !path.length) return;
+    if (!_typesetViews) {
+        _typesetViews = [NSMutableDictionary dictionary];
+        _typesetOrder = [NSMutableArray array];
+    }
+    LatexView *v = _typesetViews[path];
+    [_typesetOrder removeObject:path];
+    if (!v) {
+        while (_typesetOrder.count >= 4) {
+            NSString *old = _typesetOrder.firstObject;
+            [_typesetViews[old] stopPreview];
+            [_typesetViews removeObjectForKey:old];
+            [_typesetOrder removeObjectAtIndex:0];
+        }
+        // Typesets at once, as a tab's preview does when it is made.
+        v = [[LatexView alloc] initWithPath:path source:source ?: @""];
+        __weak MCSessionBrowser *weakSelf = self;
+        v.onTypeset = ^(NSString *p, NSData *pdf, NSString *error) {
+            [weakSelf typesetOf:p pdf:pdf error:error];
+        };
+        _typesetViews[path] = v;
+    } else {
+        [v setPath:path source:source ?: @""];   // typesets again only when the text changed
+    }
+    [_typesetOrder addObject:path];
+    [self typesetOf:path view:v];
+}
+
+- (void)stopTypesetViews {
+    for (LatexView *v in _typesetViews.allValues) [v stopPreview];
+    _typesetViews = nil;
+    _typesetOrder = nil;
+}
+
 - (void)stop {
+    [self stopTypesetViews];
     [_timer invalidate];
     _timer = nil;
     if (_server) {

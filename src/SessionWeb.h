@@ -39,7 +39,11 @@
 // Csv (`file` -> `table`); so do a Jupyter notebook, as Notebook's Markdown
 // rendered by MarkdownHtml for a frame sandboxed with no scripts
 // (`notebook`), and a SQLite database's tables and a page of rows, opened
-// read-only by SqliteRead (`db`).
+// read-only by SqliteRead (`db`). A LaTeX document opens as text marked
+// `latex`, and the page shows the PDF the app's own LaTeX preview typeset
+// for it (`latex`), served from memory at /v/ID/typeset/PATH under the
+// same rules as /file/: the app publishes its typesets to the server,
+// which runs no tectonic of its own (Options::typeset, Typesets).
 //
 // Access (SessionWebAccess.h): every address is under the view's own path,
 // /v/ID/. A link, http://127.0.0.1:PORT/v/ID/?t=TOKEN with a random token
@@ -94,13 +98,15 @@
 //           has `browser` {tabs: [{url, title, web, loopback}], active},
 //           and a window that says which panes it shows has `panes`
 //           {browser, terminal, browserShare} (panesViewJson)
-//   doc     {id, path, kind, version, editable, indent, lines, html | note}:
+//   doc     {id, path, kind, version, editable, indent, lines, html | note,
+//           latex}:
 //           the document the browser shows, whole: kind "code" (lines, each
 //           [text, spans] or [text, spans, break], spans [[start, length,
 //           style], ...] in UTF-16 units, styles by TokenStyle, break 0 for
 //           none (the last line), 2 "\r\n", 3 "\r", 4 U+2029, left out for
 //           "\n"), "markdown" (lines, and html, MarkdownHtml's page) or
-//           "large" (note: too large to show here yet); indent {tabs, width}
+//           "large" (note: too large to show here yet); indent {tabs, width};
+//           `latex` true for a LaTeX document, whose page is its typeset
 //   lines   {id, version, edits: [[at, del, lines], ...] | all: lines, ops,
 //           seq, fix, sel}: one version of the document: the line list's
 //           splices (or every line), and the change itself, `ops` [[pos,
@@ -142,6 +148,9 @@
 //   notebook {path, html | error}: a notebook as a page (notebookJson)
 //   db      {path, tables, moreTables, table, columns, rows, offset, more
 //           | error}: a database's tables and a page of rows (databaseJson)
+//   latex   {path, rel, state, version, url, text}: a LaTeX document's
+//           typeset (typesetJson), for a `latex`, and again each time the
+//           app's typeset of it changes
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
 //   alive   {}: someone is using the page (sent at most once a minute
@@ -156,6 +165,9 @@
 //   notebook {path}: a notebook of the folder as a page (any page)
 //   db      {path, table, offset}: a database's tables and rows from
 //           `offset` of `table` (any page; nothing in it can change)
+//   latex   {path}: the typeset of the LaTeX document it shows (a path from
+//           the folder, or a document's path under it), the app asked for
+//           one; any page
 // and, only when editable:
 //   open    {path, keep}: a file the tree's row names, opened as a tab in
 //           the window (Options::open); a page that only reads is refused
@@ -197,6 +209,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -248,6 +261,7 @@ struct Answer {
     int status = 403;
     std::string response, why;
     std::string file;   // File: the path from the folder, decoded, not yet checked
+    bool typeset = false;   // File: a LaTeX document's typeset PDF (/typeset/), not its bytes
     // The request's credential (Page, Socket, File), and its state: a
     // socket is taken whatever the state, so its page can be told.
     std::string credential;
@@ -396,6 +410,78 @@ constexpr std::size_t kDbPageRows = 100;
 constexpr std::size_t kDbPageBytes = std::size_t(4) << 20;
 Json databaseJson(const std::string& folder, const std::string& rel, bool hidden,
                   const std::string& table, std::int64_t offset);
+
+// ---- the LaTeX preview's typeset (R3, third slice; SessionWebTypeset.cpp)
+// A LaTeX document is text: it opens as a tab (a document's `doc`, or a
+// page's own `filetext`), marked `latex`, and the page shows the PDF the
+// app's own LaTeX preview typeset for it, Show Source flipping to its
+// lines. Nothing here runs tectonic: the app publishes each typeset of its
+// previews (Server::typesetWorking, typesetReady, typesetFailed), and a
+// page's `latex` asks it for one (Options::typeset) only when it has none
+// current. The PDF is kept in memory and served at /v/ID/typeset/PATH
+// (PATH the document's path from the folder, as /file/ spells it), only
+// for a document held inside the folder as the page's other reads are
+// (openLocalFile), with a PDF's head (no sandbox: Chrome's viewer will not
+// run in one) and ranges.
+// Whether `path` is a LaTeX document by its extension (.tex, .ltx, .latex,
+// any case), as the Mac's preview takes them.
+bool typesetSource(const std::string& path);
+// The address a document's typeset PDF is served at: the view's path
+// (`base`), "typeset/" and `rel`'s names percent-encoded.
+std::string typesetTarget(const std::string& base, const std::string& rel);
+// `path` as a path from `folder`: a relative path as it is, an absolute one
+// under the folder (as spelled, else both resolved) with the folder taken
+// off; false for an absolute path elsewhere. The answer is not yet checked
+// (confinedPath does that).
+bool relativeInFolder(const std::string& folder, const std::string& path, std::string* rel);
+
+// The app's typesets, by the document's resolved path (any thread).
+class Typesets {
+public:
+    enum class State { None, Working, Ready, Failed };
+    struct Entry {
+        State state = State::None;
+        std::shared_ptr<const std::string> pdf;   // the last that worked, kept while another runs
+        std::string error;                        // Failed: why (tectonic's log), cut
+        std::uint64_t version = 0;                // counts every change of the entry
+        std::uint64_t pdfVersion = 0;             // counts changes of `pdf` alone
+    };
+    // The most kept: past it the entry changed longest ago goes.
+    static constexpr std::size_t kMaxEntries = 64;
+    // The most of a failure's text kept, cut on a character.
+    static constexpr std::size_t kMaxErrorBytes = 64u << 10;
+    // A PDF over this is not kept (the page says it is too large).
+    static constexpr std::size_t kMaxPdfBytes = std::size_t(512) << 20;
+    // Each true when the entry changed. Ready with the same bytes as the
+    // PDF kept changes nothing (no new version, no reload on the page).
+    bool working(const std::string& path);
+    bool ready(const std::string& path, std::shared_ptr<const std::string> pdf);
+    bool failed(const std::string& path, const std::string& error);
+    Entry get(const std::string& path) const;
+    // Counts every change of any entry.
+    std::uint64_t changes() const;
+    std::size_t size() const;
+    // The key a path is kept under: its real path, else the path.
+    static std::string key(const std::string& path);
+
+private:
+    struct Kept {
+        Entry entry;
+        std::uint64_t changed = 0;   // `changes_` when it last changed
+    };
+    mutable std::mutex mutex_;
+    std::map<std::string, Kept> kept_;
+    std::uint64_t changes_ = 0, pdfVersions_ = 0;
+    Kept& at(const std::string& key);   // with the mutex held
+};
+// What the page gets for a document's typeset: {t: "latex", path (as the
+// page asked), rel, state: "ready" | "working" | "failed" | "none" |
+// "refused", version, url (whenever a PDF is kept: typesetTarget with
+// "?v=" its pdfVersion, so a new PDF is a new address), text (failed:
+// the log; none: what to do; refused: why)}. `canTypeset`: the app makes
+// typesets (Options::typeset), so a document with none is "working".
+Json typesetJson(const std::string& asked, const std::string& rel, const Typesets::Entry& e,
+                 const std::string& base, bool canTypeset);
 
 // An address a page may frame, or ask the window to open: http or https
 // (any case), a host, no user name or password before it, no space or
@@ -586,6 +672,16 @@ struct Options {
     // false when it cannot. Unset (a headless host, which has no browser
     // pane): a page's `browse` says so, and the hello's canBrowse is false.
     std::function<bool(const std::string& url)> browse;
+    // Asks the app for a typeset of a LaTeX document of the folder (the
+    // path held inside it, spelled under `folder`), for a page that shows
+    // it (`latex`, any page: a typeset changes nothing of the user's). The
+    // app answers through typesetWorking, typesetReady and typesetFailed,
+    // from any thread: with what its own preview of the file has (never
+    // typesetting again when that is current), else a typeset of its own.
+    // Called on the server's thread each time a page asks. Unset (a
+    // headless host, which typesets nothing): the page says the window's
+    // preview makes it, and shows what was published, if anything.
+    std::function<void(const std::string& path)> typeset;
     // Dotfiles in the tree (the window's Show Hidden Files).
     bool showHidden = false;
     int port = 0;             // 0: any free port (checks)
@@ -662,6 +758,14 @@ public:
     // The palette the pages were last sent (the server's thread, or before
     // run()).
     const Json& palette() const { return palette_; }
+    // A typeset of the LaTeX document at `path` began, worked (`pdf`, the
+    // bytes tectonic wrote), or failed (`error`, its log or why it did not
+    // run), as the app's preview saw it (any thread). A page showing that
+    // document hears of it at once.
+    void typesetWorking(const std::string& path);
+    void typesetReady(const std::string& path, std::shared_ptr<const std::string> pdf);
+    void typesetFailed(const std::string& path, const std::string& error);
+    const Typesets& typesets() const { return typesets_; }
 
 private:
     struct Conn;
@@ -714,11 +818,19 @@ private:
     void onClose(Conn& c, const Json& j);
     void onBrowse(Conn& c, const Json& j);
     void onFile(Conn& c, const Json& j);
+    // A page shows a LaTeX document (`latex {path}`): what is published of
+    // it now, the app asked for a typeset, and every change after.
+    void onLatex(Conn& c, const Json& j);
+    void sendTypesets();
+    Typesets typesets_;
+    std::uint64_t typesetsSeen_ = 0;
     void takeReads();
     // A file for a viewer over HTTP: begun on its request, then read from
     // the host a piece at a time while the connection keeps up.
     struct FileSend;
     void beginFile(Conn& c, const std::string& rel, const std::string* range);
+    // A typeset PDF, from memory, a piece at a time as for a file.
+    void beginTypeset(Conn& c, const std::string& rel, const std::string* range);
     void pumpFiles();
     void pumpFile(Conn& c);
     // At most this many files served at once; each holds at most two
