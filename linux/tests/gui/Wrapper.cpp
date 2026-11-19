@@ -184,6 +184,8 @@ void stopProcess(pid_t pid) {
 // Starts Xvfb with the display number left to the server (-displayfd), the
 // one way two runs at the same moment cannot pick the same number. The server
 // writes the number to the pipe once it is ready for clients.
+// The screen is a wide one (2560x1600), as GTK keeps a window inside its
+// monitor: hints_panel's 2000 pixel window was 1280 on a 1280x1024 screen.
 pid_t startXvfb(const std::string& log, std::string* display) {
     int fds[2];
     if (pipe(fds) != 0) return -1;
@@ -201,7 +203,7 @@ pid_t startXvfb(const std::string& log, std::string* display) {
         int in = open("/dev/null", O_RDONLY);
         if (in >= 0) dup2(in, 0);
         const std::string fd = std::to_string(fds[1]);
-        execlp("Xvfb", "Xvfb", "-displayfd", fd.c_str(), "-screen", "0", "1280x1024x24",
+        execlp("Xvfb", "Xvfb", "-displayfd", fd.c_str(), "-screen", "0", "2560x1600x24",
                "-nolisten", "tcp", "-noreset", (char*)nullptr);
         _exit(127);
     }

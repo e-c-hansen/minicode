@@ -63,6 +63,7 @@
 #include "SessionLink.h"
 #include "TermDockRecord.h"
 #include "FileTree.h"
+#include "HintsColumns.h"
 #include "HintsSearchBox.h"
 #include "WindowTitle.h"
 #include "FileDetails.h"   // TreeFocus (Focus on Folder)
@@ -116,6 +117,7 @@
 #include "Rename.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <deque>
 #include <map>
@@ -204,9 +206,14 @@ struct App {
 
     // The floating shortcut list and the status-bar label that advertises it.
     GtkWidget* hintsPanel = nullptr;
-    GtkWidget* hintsLabel = nullptr;
     GtkWidget* hintsScroll = nullptr;
     GtkWidget* hintsHint  = nullptr;
+    // Its list in columns (HintsColumns.h), deleted with its widget; the
+    // width it was laid out for, and a relayout waiting for the window's
+    // new width.
+    HintsColumns* hintsColumns = nullptr;
+    double hintsRoom = -1;
+    guint hintsRelayout = 0;
     // The box at the panel's top (HintsSearchBox.h), deleted with its widget.
     HintsSearchBox* hintsSearch = nullptr;
     // The pane the title last spoke for (titleFocus).
@@ -3624,9 +3631,9 @@ static void act_todos(GSimpleAction*, GVariant*, gpointer userp) {
 // status bar, because nothing else in the UI tells you the bindings exist. This
 // is that panel. As on the Mac, what each row does is written here and its key
 // comes from the registry (Keys::label), so keys.conf moves it too; a command
-// keys.conf took every key from shows "—". The panel is monospace, so the key
-// column is as wide as its widest key. A row is a HintRow (HintsSearchBox.h),
-// which also says where the row is in the text, for the search box's marks.
+// keys.conf took every key from shows "—". A row is a HintRow
+// (HintsSearchBox.h), which HintsColumns lays out in as many columns as the
+// window's width holds and tells where it landed, for the search box's marks.
 static std::vector<HintRow> hintsRows(App* app) {
     std::vector<HintRow> rows;
     auto heading = [&](const std::string& title) { rows.push_back({HintRow::Heading, "", title}); };
@@ -3640,6 +3647,11 @@ static std::vector<HintRow> hintsRows(App* app) {
         const std::string key = Keys::hintLabel(id, index);
         if (key.empty() && index > 0) return;
         plain(key.empty() ? "—" : key, what);
+    };
+    // A pane's row, its state ("open") drawn muted at a stop of its own.
+    auto pane = [&](const char* id, const std::string& what, const std::string& state) {
+        const std::string key = Keys::hintLabel(id, 0);
+        rows.push_back({HintRow::Row, key.empty() ? "—" : key, what, state});
     };
 
     heading("Keyboard Shortcuts");
@@ -3709,8 +3721,7 @@ static std::vector<HintRow> hintsRows(App* app) {
     row("editor.action.fontZoomIn", "Zoom in");
     row("editor.action.fontZoomOut", "Zoom out");
     row("editor.action.fontZoomReset", "Reset zoom");
-    row("editor.action.toggleWordWrap",
-        std::string("Word wrap   (") + (Zoom::wordWrap() ? "on" : "off") + ")");
+    pane("editor.action.toggleWordWrap", "Word wrap", Zoom::wordWrap() ? "on" : "off");
 
     heading("Tabs");
     row("workbench.action.nextEditor", "Next tab");
@@ -3733,8 +3744,7 @@ static std::vector<HintRow> hintsRows(App* app) {
     row("explorer.newFolder", "New folder");
     row("renameFile", "Rename (in the tree)");
     row("moveFileToTrash", "Move to Trash (in the tree)");
-    row("mutible.toggleHiddenFiles",
-        std::string("Hidden files (") + (g.showHidden ? "shown" : "hidden") + ")");
+    pane("mutible.toggleHiddenFiles", "Hidden files", g.showHidden ? "shown" : "hidden");
 
     heading("Language servers");
     row("editor.action.triggerSuggest", "Complete");
@@ -3744,31 +3754,24 @@ static std::vector<HintRow> hintsRows(App* app) {
     row("editor.action.goToReferences", "Find all references");
     row("editor.action.quickFix", "Quick fix");
     row("editor.action.organizeImports", "Organize imports");
-    row("workbench.actions.view.problems",
-        std::string("Problems    (") + (app->problems && app->problems->shown() ? "shown" : "hidden") +
-            ")");
+    pane("workbench.actions.view.problems", "Problems",
+         app->problems && app->problems->shown() ? "shown" : "hidden");
     row("editor.action.marker.next", "Next problem");
     row("editor.action.marker.prev", "Previous problem");
 
     heading("Panes");
     row("workbench.action.toggleSidebarVisibility", "Sidebar");
-    row("mutible.toggleEditor",
-        std::string("Editor      (") + (app->layout->editorShown() ? "shown" : "collapsed") + ")");
-    row("mutible.toggleMaximizedPane",
-        std::string("Maximize    (") + (app->layout->maximized() ? "maximized" : "off") + ")");
+    pane("mutible.toggleEditor", "Editor", app->layout->editorShown() ? "shown" : "collapsed");
+    pane("mutible.toggleMaximizedPane", "Maximize", app->layout->maximized() ? "maximized" : "off");
 #ifdef MUTIBLE_ENABLE_TERMINAL
-    row("workbench.action.terminal.toggleTerminal",
-        std::string("Terminal    (") +
-            (app->layout->terminalShown() ? "open" : "hidden") + ")");
+    pane("workbench.action.terminal.toggleTerminal", "Terminal",
+         app->layout->terminalShown() ? "open" : "hidden");
     row("workbench.action.terminal.toggleTerminal", "Terminal, too", 1);
 #endif
 #ifdef MUTIBLE_ENABLE_BROWSER
-    row("mutible.toggleBrowser",
-        std::string("Browser     (") +
-            (app->layout->browserShown() ? "open" : "hidden") + ")");
+    pane("mutible.toggleBrowser", "Browser", app->layout->browserShown() ? "open" : "hidden");
 #endif
-    row("workbench.view.scm",
-        std::string("Git panel   (") + (app->gitShown ? "open" : "hidden") + ")");
+    pane("workbench.view.scm", "Git panel", app->gitShown ? "open" : "hidden");
     if (app->gitShown) {
         plain("Enter", "Show the diff or commit");
         plain("Space", "Stage or unstage");
@@ -3778,8 +3781,7 @@ static std::vector<HintRow> hintsRows(App* app) {
         plain("Right click", "Push, pull, stage all, discard, stash");
     }
     if (app->editor->isMarkdown()) {
-        row("markdown.showPreview", std::string("Markdown    (") +
-                                        (app->editor->inPreview() ? "rendered" : "source") + ")");
+        pane("markdown.showPreview", "Markdown", app->editor->inPreview() ? "rendered" : "source");
         if (app->editor->inPreview()) {
             plain("Click a box", "Check or clear a task");
         } else {
@@ -3788,8 +3790,7 @@ static std::vector<HintRow> hintsRows(App* app) {
         }
     }
     if (app->editor->isLatex()) {
-        row("markdown.showPreview", std::string("LaTeX       (") +
-                                        (app->editor->inPreview() ? "preview" : "source") + ")");
+        pane("markdown.showPreview", "LaTeX", app->editor->inPreview() ? "preview" : "source");
         row("mutible.latex.exportPDF", "Export PDF");
         row("latex-workshop.synctex", "Show the caret's line in the PDF");
     }
@@ -3828,74 +3829,48 @@ static std::vector<HintRow> hintsRows(App* app) {
     return rows;
 }
 
-// The panel's text from its rows, each row told where it landed.
-static std::string hintsText(std::vector<HintRow>& rows) {
-    size_t width = 0;
-    for (const HintRow& r : rows)
-        if (r.kind == HintRow::Row) width = std::max(width, (size_t)g_utf8_strlen(r.key.c_str(), -1));
-    std::string s;
-    for (HintRow& r : rows) {
-        switch (r.kind) {
-        case HintRow::Heading:
-            if (!s.empty()) s += "\n";
-            r.start = r.textAt = s.size();
-            s += r.text + "\n────────────────────────────────────────";
-            r.end = s.size();
-            s += "\n";
-            break;
-        case HintRow::Text:
-            r.start = r.textAt = s.size();
-            s += r.text;
-            r.end = s.size();
-            s += "\n";
-            break;
-        case HintRow::Row:
-            r.start = s.size();
-            s += r.key + std::string(width + 2 - (size_t)g_utf8_strlen(r.key.c_str(), -1), ' ');
-            r.textAt = s.size();
-            s += r.text;
-            r.end = s.size();
-            s += "\n";
-            break;
-        }
-    }
-    if (!s.empty() && s.back() == '\n') s.pop_back();
-    return s;
+// The width the hints' text may take: the panes' (the overlay the panel
+// floats over) less the panel's margins, 18 a side as the Mac's, its
+// padding and border (ThemeCss.cpp's .minicode-hints: 18 and 1 a side) and
+// the room kept for the scroll bar drawn over the text (10).
+static double hintsRoom(App* app) {
+    GtkWidget* over = app->hintsPanel ? gtk_widget_get_parent(app->hintsPanel) : nullptr;
+    int w = over ? gtk_widget_get_width(over) : 0;
+    if (w <= 0) w = gtk_widget_get_width(app->window);
+    if (w <= 0) w = 1100;
+    return std::max(120.0, w - 2.0 * 18) - 2 * 18 - 2 - 10;
 }
 
-// The text again, marked for the search box's query (HintsSearchBox.h):
-// what it finds marked, the rest dimmed, nothing moved. `firstHit` gets
-// the first mark's byte index, or -1.
-static void showHintsText(App* app, int* firstHit = nullptr) {
+// The rows laid out for the window's width at the editor's zoom, in as
+// many columns as fit (HintsColumns.h), marked for the search box's query:
+// what it finds marked, the rest dimmed, nothing moved.
+static void showHintsText(App* app) {
     std::vector<HintRow> rows = hintsRows(app);
-    gtk_label_set_text(GTK_LABEL(app->hintsLabel), hintsText(rows).c_str());
-    PangoAttrList* marks = HintsSearchBox::attributes(
-        rows, app->hintsSearch ? app->hintsSearch->query() : std::string(), firstHit);
-    gtk_label_set_attributes(GTK_LABEL(app->hintsLabel), marks);
-    if (marks) pango_attr_list_unref(marks);
+    app->hintsRoom = hintsRoom(app);
+    // The desktop's size at the editor's zoom, to the half point (the Mac's
+    // 12 * MCZoomScale, rounded so).
+    const double scale = Zoom::previewScale();
+    app->hintsColumns->show(rows, app->hintsRoom, std::round(Zoom::desktopPoints() * scale * 2) / 2,
+                            scale, app->hintsSearch ? app->hintsSearch->query() : std::string());
 }
 
-// The query changed: the marks again, the first one scrolled into sight
-// (the top with none), as the Mac's hintsQueryChanged.
+// The query changed: the marks again, the layout as it was, the highest
+// mark scrolled into sight (the top with none), as the Mac's
+// hintsQueryChanged.
 static void hintsQueryChanged(App* app) {
     if (app->dead || !app->hintsPanel || !gtk_widget_get_visible(app->hintsPanel)) return;
-    int first = -1;
-    showHintsText(app, &first);
+    const double top =
+        app->hintsColumns->mark(app->hintsSearch ? app->hintsSearch->query() : std::string());
     GtkAdjustment* adj =
         gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app->hintsScroll));
-    if (first < 0) {
+    if (top < 0) {
         gtk_adjustment_set_value(adj, 0);
         return;
     }
-    PangoRectangle at;
-    pango_layout_index_to_pos(gtk_label_get_layout(GTK_LABEL(app->hintsLabel)), first, &at);
-    int ox = 0, oy = 0;
-    gtk_label_get_layout_offsets(GTK_LABEL(app->hintsLabel), &ox, &oy);
-    const double top = oy + (double)at.y / PANGO_SCALE;
-    const double bottom = top + (double)at.height / PANGO_SCALE;
+    const double bottom = top + app->hintsColumns->lineHeight();
     const double value = gtk_adjustment_get_value(adj), page = gtk_adjustment_get_page_size(adj);
     if (top < value || bottom > value + page)
-        gtk_adjustment_set_value(adj, std::max(0.0, top - page / 3));
+        gtk_adjustment_set_value(adj, std::max(0.0, std::round(top - page / 3)));
 }
 
 // The panel shown or hidden. Hidden, its box empties and gives the keyboard
@@ -3918,6 +3893,24 @@ static void setHintsShown(App* app, bool showing) {
     gtk_label_set_text(GTK_LABEL(app->hintsHint), hintsHintText(showing).c_str());
 }
 
+// The overlay places the panel whenever the window's size changes: when
+// its width is not the one the list was laid out for, the list is laid out
+// again for it, once the window's layout is done (not in the middle of it).
+static gboolean onHintsPlaced(GtkOverlay*, GtkWidget* child, GdkRectangle*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->dead || child != app->hintsPanel || !gtk_widget_get_visible(child)) return FALSE;
+    if (app->hintsRelayout || std::fabs(hintsRoom(app) - app->hintsRoom) < 0.5) return FALSE;
+    app->hintsRelayout = g_idle_add(
+        +[](gpointer userp) -> gboolean {
+            App* app = static_cast<App*>(userp);
+            app->hintsRelayout = 0;
+            if (!app->dead && gtk_widget_get_visible(app->hintsPanel)) showHintsText(app);
+            return G_SOURCE_REMOVE;
+        },
+        app);
+    return FALSE;
+}
+
 // Every key press in the window goes by the hints' search box first, before
 // any view, and (seen on GTK 4.22, where this controller, added after the
 // window's own, runs first) before the application's accelerators: Alt+Z
@@ -3931,15 +3924,17 @@ static gboolean onHintsKey(GtkEventControllerKey* controller, guint keyval, guin
 }
 
 static GtkWidget* buildHintsPanel(App* app) {
-    app->hintsLabel = gtk_label_new("");
-    gtk_label_set_xalign(GTK_LABEL(app->hintsLabel), 0.0);
+    app->hintsColumns = new HintsColumns();
+    GtkWidget* text = app->hintsColumns->widget();
+    gtk_widget_set_halign(text, GTK_ALIGN_START);
+    gtk_widget_set_valign(text, GTK_ALIGN_START);
     // Room for the scrollbar, which is drawn over the content.
-    gtk_widget_set_margin_end(app->hintsLabel, 10);
+    gtk_widget_set_margin_end(text, 10);
 
-    // The list is taller than a laptop's window once the terminal's keys and a
-    // file's own are in it, so it scrolls. The scrolled window asks for the
-    // label's whole size, GtkOverlay never gives an overlay child more than the
-    // overlay has, and what does not fit is a wheel turn away.
+    // As many columns as the window's width holds (HintsColumns.h); when even
+    // those are taller than the window, the list scrolls. The scrolled window
+    // asks for the text's whole size, GtkOverlay never gives an overlay child
+    // more than the overlay has, and what does not fit is a wheel turn away.
     app->hintsScroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(app->hintsScroll),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -3948,7 +3943,7 @@ static GtkWidget* buildHintsPanel(App* app) {
     gtk_scrolled_window_set_propagate_natural_height(
         GTK_SCROLLED_WINDOW(app->hintsScroll), TRUE);
     gtk_widget_add_css_class(app->hintsScroll, "minicode-scroller");
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(app->hintsScroll), app->hintsLabel);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(app->hintsScroll), text);
 
     // The search box over the list (HintsSearchBox.h), and the window's
     // keys handed to it while the panel shows.
@@ -5224,6 +5219,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     GtkWidget* overlay = gtk_overlay_new();
     gtk_overlay_set_child(GTK_OVERLAY(overlay), app->layout->widget());
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), buildHintsPanel(app));
+    g_signal_connect(overlay, "get-child-position", G_CALLBACK(onHintsPlaced), app);
     // The palette over the panes and the hints, hidden until opened.
     app->palette = new PalettePanel(GTK_WINDOW(app->window), GTK_OVERLAY(overlay), app->editor);
     // What it previews is no jump; Go to Line and a symbol are, from where
