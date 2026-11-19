@@ -26,7 +26,7 @@ static NSAttributedString *MCCompletionDoc(const Lsp::CompletionItem &item) {
         [s appendAttributedString:[[NSAttributedString alloc]
             initWithString:NS(item.detail)
                 attributes:@{NSFontAttributeName: DocFont(YES, NO, NO, 11.5),
-                             NSForegroundColorAttributeName: LHex(0xD4D4D4)}]];
+                             NSForegroundColorAttributeName: PopupStyle().widgetForeground}]];
     NSString *doc = [NS(item.documentation) stringByTrimmingCharactersInSet:
                                                [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (doc.length) {
@@ -49,19 +49,20 @@ static NSString *FirstParagraph(const std::string &doc, bool markdown) {
 }
 
 static NSAttributedString *MCSignatureText(const Lsp::SignatureHelp &help) {
+    MCFindStyle *style = PopupStyle();
     const Lsp::SignatureInfo &sig = help.signatures[(size_t)help.activeSignature];
     NSString *label = NS(sig.label);
     NSMutableAttributedString *s = [[NSMutableAttributedString alloc]
         initWithString:label
             attributes:@{NSFontAttributeName: DocFont(YES, NO, NO, 12),
-                         NSForegroundColorAttributeName: LHex(0xD4D4D4)}];
+                         NSForegroundColorAttributeName: style.widgetForeground}];
     int ap = help.activeParameter;
     if (ap >= 0 && (size_t)ap < sig.params.size()) {
         std::pair<int, int> r = sig.params[(size_t)ap];
         if (r.first >= 0 && r.second > r.first && (NSUInteger)r.second <= label.length) {
             NSRange range = NSMakeRange((NSUInteger)r.first, (NSUInteger)(r.second - r.first));
             [s addAttributes:@{NSFontAttributeName: DocFont(YES, YES, NO, 12),
-                               NSForegroundColorAttributeName: LHex(0x4EA1F7)}
+                               NSForegroundColorAttributeName: style.listHighlight}
                        range:range];
         }
     }
@@ -70,7 +71,7 @@ static NSAttributedString *MCSignatureText(const Lsp::SignatureHelp &help) {
             initWithString:[NSString stringWithFormat:@"   %d of %zu",
                                help.activeSignature + 1, help.signatures.size()]
                 attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                             NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
+                             NSForegroundColorAttributeName: style.muted}]];
     NSString *doc = nil;
     if (ap >= 0 && (size_t)ap < sig.paramDocs.size() && !sig.paramDocs[(size_t)ap].empty())
         doc = FirstParagraph(sig.paramDocs[(size_t)ap], true);
@@ -80,7 +81,7 @@ static NSAttributedString *MCSignatureText(const Lsp::SignatureHelp &help) {
         [s appendAttributedString:[[NSAttributedString alloc]
             initWithString:[@"\n" stringByAppendingString:doc]
                 attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:11],
-                             NSForegroundColorAttributeName: LHex(0x9D9D9D)}]];
+                             NSForegroundColorAttributeName: style.muted}]];
     return s;
 }
 
@@ -1012,5 +1013,7 @@ static const NSTimeInterval kResolveAfterAccept = 1.0;
 }
 
 - (NSString *)signatureText { return _signature.visible ? _signature.text : nil; }
+- (NSWindow *)completionWindow { return _popup.visible ? _popup.window : nil; }
+- (NSWindow *)signatureWindow { return _signature.visible ? _signature.window : nil; }
 
 @end

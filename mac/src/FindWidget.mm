@@ -90,6 +90,7 @@ NSColor *Opt(uint32_t rgba) { return rgba ? Hexa(rgba) : nil; }
     NSColor *_badgeBackground, *_badgeForeground;
     NSColor *_sideBarBackground, *_sideBarForeground, *_muted;
     NSColor *_matchHighlight, *_removedText, *_insertedText, *_selection;
+    NSColor *_widgetEdge, *_textLink, *_listHighlight;
 }
 
 + (MCFindStyle *)current {
@@ -123,6 +124,9 @@ NSColor *Opt(uint32_t rgba) { return rgba ? Hexa(rgba) : nil; }
     s->_removedText = Hexa(0xFF000033);
     s->_insertedText = dark ? Hexa(0x9CCC2C33) : Hexa(0x9CCC2C40);
     s->_selection = Hexa(p.selection);
+    s->_widgetEdge = s->_widgetBorder ?: (dark ? Hex(0x454545) : Hex(0xC8C8C8));
+    s->_textLink = dark ? Hex(0x4EA1F7) : Hex(0x005FB8);
+    s->_listHighlight = dark ? Hex(0x2AAAFF) : Hex(0x0066BF);
     return s;
 }
 
@@ -152,6 +156,9 @@ NSColor *Opt(uint32_t rgba) { return rgba ? Hexa(rgba) : nil; }
 - (NSColor *)removedText { return _removedText; }
 - (NSColor *)insertedText { return _insertedText; }
 - (NSColor *)selection { return _selection; }
+- (NSColor *)widgetEdge { return _widgetEdge; }
+- (NSColor *)textLink { return _textLink; }
+- (NSColor *)listHighlight { return _listHighlight; }
 - (NSAppearance *)appearance {
     return [NSAppearance appearanceNamed:_dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
 }

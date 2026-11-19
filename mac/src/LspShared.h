@@ -8,6 +8,7 @@
 #import "Terminal.h"   // MCTerminalCommandDidFinishNotification
 #import "MultiCaretView.h"
 #import "FoldView.h"
+#import "FindWidget.h"   // MCFindStyle, the popups' colors
 #import "LspPicker.h"
 #include "Formatter.h"
 #include "InstallHints.h"
@@ -31,6 +32,13 @@ static inline NSColor *LHex(unsigned int rgb) {
                                 blue:(rgb & 0xFF) / 255.0
                                alpha:1.0];
 }
+
+// The theme's colors for the popups by the caret (hover, completion, its
+// documentation, the signature hint, references, quick fixes, the rename
+// field): VS Code's editorWidget.*, editorHoverWidget.*,
+// editorSuggestWidget.* and input.*, read afresh at each showing so a
+// theme changed meanwhile shows (MCFindStyle, FindWidget.h).
+static inline MCFindStyle *PopupStyle(void) { return [MCFindStyle current]; }
 
 static inline NSString *NS(const std::string &s) {
     return [[NSString alloc] initWithBytes:s.data() length:s.size()
