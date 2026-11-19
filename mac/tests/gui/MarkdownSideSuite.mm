@@ -269,7 +269,15 @@ MC_GUI_SUITE(markdown_side) {
         GCHECK([c showFile:other]);
         GCHECK(![c sidePreviewShowing] && Side(c).scrollView.hidden && Side(c).divider.hidden);
         GCHECK(Page(c).length == 0);   // the page went with its tab
-        GCHECK(![c canToggleSidePreview]);   // not a Markdown file
+        GCHECK(![c canToggleSidePreview]);   // no page to put beside it
+        // Nor is the menu item on, whoever answers for it.
+        NSMenuItem *item = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            for (NSMenuItem *i in top.submenu.itemArray)
+                if (i.action == @selector(toggleSidePreview:)) item = i;
+        GCHECK(item != nil);
+        GCHECK(![(id<NSMenuItemValidation>)c validateMenuItem:item]);
+        GCHECK(![(id<NSMenuItemValidation>)NSApp.delegate validateMenuItem:item]);
         GCHECK([c showFile:md]);
         GCHECK([c sidePreviewShowing] && SideBySide(c));
         GCHECK([Page(c) containsString:@"Side heading"]);

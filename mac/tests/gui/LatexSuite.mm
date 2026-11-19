@@ -34,7 +34,13 @@
 // double-click on an \input file's text opens its source in a box titled
 // with its name, and the edit goes into that file's tab, opened behind the
 // preview, unsaved, which the bar names until Cmd+S on the preview saves
-// it and the page typesets again.
+// it and the page typesets again. A Command-click on the page (and Show
+// in Source) puts the caret on the clicked word, in an \input file's tab
+// for its text; Shift+Cmd+V from the page lands on the line it showed, and
+// back on the page at the caret's line; Open Preview to the Side puts the
+// page beside the source (a Command-click there moves the caret, a
+// double-click's edit is one undo step of the source, and the page
+// typesets on save, not on typing); a file with no page has the item off.
 #import "Harness.h"
 #import "Lsp.h"   // MCDiagnosticColor
 #import "EditorController.h"
@@ -47,6 +53,16 @@
 #include <string>
 #include <sys/sysctl.h>
 #include <unistd.h>
+
+// The preview's own steps, driven as a double-click and the popover's Apply
+// would drive them (docs/notes/latex.md, "Headless").
+@interface LatexView (LatexSuite)
+- (void)openEditorForPage:(PDFPage *)page point:(NSPoint)pagePoint;
+- (void)commitEdit:(id)sender;
+- (void)toggleWarnings:(id)sender;
+- (void)cancelEdit:(id)sender;
+- (void)popoverWillClose:(NSNotification *)note;
+@end
 
 namespace {
 
@@ -134,18 +150,76 @@ BOOL FirstPageTopInView(LatexView *v, NSString **why) {
     return top >= NSMinY(seen) - 0.5 && top <= NSMaxY(seen) + 0.5;
 }
 
+// Where `word` is on the preview's pages: its page and the middle of its
+// box, in page space. NO unless it is there once.
+BOOL WordOnPage(LatexView *v, NSString *word, PDFPage **page, NSPoint *mid) {
+    NSArray<PDFSelection *> *hits = [[v latexPDFView].document findString:word withOptions:0];
+    if (hits.count != 1) return NO;
+    *page = hits[0].pages.firstObject;
+    const NSRect box = [hits[0] boundsForPage:*page];
+    *mid = NSMakePoint(NSMidX(box), NSMidY(box));
+    return *page != nil;
+}
+
+// A Command-click at a point of a page, as the PDF view receives one, the
+// point scrolled into view first.
+void CommandClick(LatexView *v, PDFPage *page, NSPoint pt) {
+    PDFView *pdf = [v latexPDFView];
+    [pdf layoutDocumentView];
+    [pdf goToRect:NSMakeRect(pt.x - 2, pt.y - 2, 4, 4) onPage:page];
+    const NSPoint inWindow = [pdf convertPoint:[pdf convertPoint:pt fromPage:page] toView:nil];
+    NSEvent *e = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                    location:inWindow
+                               modifierFlags:NSEventModifierFlagCommand
+                                   timestamp:0
+                                windowNumber:pdf.window.windowNumber
+                                     context:nil
+                                 eventNumber:0
+                                  clickCount:1
+                                    pressure:1];
+    [pdf mouseDown:e];
+}
+
+// The app going to the background and coming back, as AppKit says so.
+void SwitchAppAndBack(void) {
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc postNotificationName:NSApplicationWillResignActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationDidResignActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationWillBecomeActiveNotification object:NSApp];
+    [nc postNotificationName:NSApplicationDidBecomeActiveNotification object:NSApp];
+}
+
+// The edit box opened on `word` of the preview's page, its text view.
+NSTextView *OpenBoxOn(LatexView *v, NSString *word) {
+    PDFPage *page = nil;
+    NSPoint mid = NSZeroPoint;
+    if (!WordOnPage(v, word, &page, &mid)) return nil;
+    [v openEditorForPage:page point:mid];
+    return [v valueForKey:@"editText"];
+}
+
+// View > Open Preview to the Side.
+NSMenuItem *SideItem(void) {
+    for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+        for (NSMenuItem *i in top.submenu.itemArray)
+            if (i.action == @selector(toggleSidePreview:)) return i;
+    return nil;
+}
+
+NSInteger CaretLine(EditorController *c) {
+    NSTextView *tv = c.textView;
+    return [c lineOfCharacter:tv.selectedRange.location inString:tv.string] + 1;
+}
+
 NSString *const kStale = @"stale/.old.mutible.tex";    // a dead process's copy
 NSString *const kMine = @"stale/.mine.mutible.tex";    // the user's, changed since
 NSString *const kLive = @"stale/.live.mutible.tex";    // a running process's
 
 }  // namespace
 
-// The preview's own steps, driven as a double-click and the popover's Save
-// would drive them (docs/notes/latex.md, "Headless").
-@interface LatexView (LatexSuite)
-- (void)openEditorForPage:(PDFPage *)page point:(NSPoint)pagePoint;
-- (void)commitEdit:(id)sender;
-- (void)toggleWarnings:(id)sender;
+
+@interface NSObject (LatexSuiteMenus)
+- (BOOL)validateMenuItem:(NSMenuItem *)item;
 @end
 
 @interface NSObject (LatexSuiteWindows)
@@ -867,6 +941,255 @@ MC_GUI_SUITE(latex) {
         GCHECK([c closeTab:tabP prompt:NO]);
         tabP = nil;
         MCGuiWriteFile(chapter, ReadText(Fixtures(@"fixtures/chapter.tex")));
+    });
+
+    // The page to the source, on the committed fixture: a Command-click
+    // (SyncTeX's inverse search) puts the caret on the clicked word in the
+    // source, an \input file's in that file's tab; Shift+Cmd+V from the
+    // page lands on the line the page shows, and back on the page at the
+    // caret's line; and Open Preview to the Side puts the page beside the
+    // source, where a Command-click moves the caret, a double-click's edit
+    // is one undo step of the source, and the page typesets on save only.
+    __block MCTab *tabS = nil;
+    MCGuiStep(@"the fixture document, for the page and its source", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c showFile:mainTex]);
+        tabS = Active(c);
+        GCHECK(tabS.isLatex && tabS.latex != nil && c.previewMode);
+    });
+    MCGuiWait(@"and typesets", 20, ^BOOL {
+        return ![[tabS.latex valueForKey:@"compiling"] boolValue] &&
+               [tabS.latex latexPDFView].document.pageCount == 2;
+    });
+    MCGuiStep(@"the bar says how to reach the source", ^{
+        NSString *status = [tabS.latex valueForKeyPath:@"statusLabel.stringValue"];
+        MCGuiNote(@"status: %@", status);
+        GCHECK([status containsString:@"\u2318-click to show it in the source"]);
+    });
+    // The page's edit box keeps what was typed (as the Markdown page's
+    // does since #223): a switch to another app leaves it open with its
+    // text, AppKit closing it applies the text as one undoable edit, Esc
+    // drops it, the tab leaving applies it, and its button says Apply.
+    __block NSString *untouched = nil;
+    MCGuiStep(@"the edit box survives a switch to another app; its button says Apply", ^{
+        untouched = [tabS.sourceText copy];
+        NSTextView *box = OpenBoxOn(tabS.latex, @"heron");
+        GCHECK(box != nil);
+        if (!box) return;
+        NSPopover *pop = [tabS.latex valueForKey:@"popover"];
+        MCGuiNote(@"popover behavior %ld", (long)pop.behavior);
+        GCHECK(pop.behavior == NSPopoverBehaviorSemitransient);
+        NSMutableArray<NSString *> *buttons = [NSMutableArray array];
+        for (NSView *sub in pop.contentViewController.view.subviews)
+            if ([sub isKindOfClass:NSButton.class]) [buttons addObject:((NSButton *)sub).title];
+        MCGuiNote(@"buttons %@", buttons);
+        GCHECK([buttons containsObject:@"Apply"] && ![buttons containsObject:@"Save"]);
+        [box insertText:@"egret" replacementRange:[box.string rangeOfString:@"heron"]];
+        GCHECK(tabS.latex.editPending);
+        SwitchAppAndBack();
+        GCHECK(tabS.latex.editPending);
+        GCHECK([[[tabS.latex valueForKey:@"editText"] string] containsString:@"patient egret"]);
+        GCHECK_EQ_STR(tabS.sourceText, untouched);   // not applied yet
+    });
+    MCGuiStep(@"closed by AppKit (a click elsewhere), it applies the edit, one undo step", ^{
+        NSPopover *pop = [tabS.latex valueForKey:@"popover"];
+        [tabS.latex popoverWillClose:[NSNotification
+            notificationWithName:NSPopoverWillCloseNotification object:pop]];
+        GCHECK([tabS.sourceText containsString:@"the patient egret"]);
+        GCHECK(tabS.dirty && !tabS.latex.editPending);
+        GCHECK_EQ_STR(ReadText(mainTex), untouched);   // applied, not saved
+        GCHECK([tabS.latex canUndoEdit]);
+        [tabS.latex undoEdit];
+        GCHECK_EQ_STR(tabS.sourceText, untouched);
+    });
+    MCGuiStep(@"Esc drops it", ^{
+        NSTextView *box = OpenBoxOn(tabS.latex, @"heron");
+        GCHECK(box != nil);
+        if (!box) return;
+        box.string = @"Dropped on purpose.";
+        [tabS.latex cancelEdit:nil];
+        GCHECK(!tabS.latex.editPending);
+        GCHECK_EQ_STR(tabS.sourceText, untouched);
+    });
+    MCGuiStep(@"another tab showing applies it to this one", ^{
+        EditorController *c = MCGuiController();
+        NSTextView *box = OpenBoxOn(tabS.latex, @"heron");
+        GCHECK(box != nil);
+        if (!box) return;
+        [box insertText:@"egret" replacementRange:[box.string rangeOfString:@"heron"]];
+        NSString *other = Project(@"latex-fx/other.txt");
+        MCGuiWriteFile(other, @"another file\n");
+        GCHECK([c showFile:other]);
+        GCHECK([tabS.sourceText containsString:@"the patient egret"]);
+        GCHECK([c closeTab:Active(c) prompt:NO]);
+        GCHECK([c showFile:mainTex] && Active(c) == tabS);
+        [tabS.latex undoEdit];
+        GCHECK_EQ_STR(tabS.sourceText, untouched);
+    });
+    MCGuiWait(@"(typeset again as it was)", 20, ^BOOL {
+        return ![[tabS.latex valueForKey:@"compiling"] boolValue];
+    });
+    MCGuiStep(@"Command-click on \"heron\": the source, the caret on the word", ^{
+        EditorController *c = MCGuiController();
+        PDFPage *page = nil;
+        NSPoint mid = NSZeroPoint;
+        GCHECK(WordOnPage(tabS.latex, @"heron", &page, &mid));
+        if (!page) return;
+        CommandClick(tabS.latex, page, mid);
+        GCHECK(Active(c) == tabS && !c.previewMode);
+        NSString *text = c.textView.string;
+        MCGuiNote(@"caret at %lu, line %ld", (unsigned long)c.textView.selectedRange.location,
+                  (long)CaretLine(c));
+        GCHECK(CaretLine(c) == 6);
+        GCHECK(c.textView.selectedRange.location == [text rangeOfString:@"heron"].location);
+        GCHECK(c.window.firstResponder == c.textView);
+    });
+    MCGuiStep(@"Show in Source on the chapter's \"marmot\" opens the chapter at the word", ^{
+        EditorController *c = MCGuiController();
+        [c togglePreview:nil];
+        GCHECK(c.previewMode);
+        PDFPage *page = nil;
+        NSPoint mid = NSZeroPoint;
+        GCHECK(WordOnPage(tabS.latex, @"marmot", &page, &mid));
+        if (!page) return;
+        GCHECK([tabS.latex showSourceForPage:page point:mid]);
+        GCHECK([c.currentPath isEqualToString:chapter] && !c.previewMode);
+        MCGuiNote(@"caret on line %ld of %@", (long)CaretLine(c), c.currentPath.lastPathComponent);
+        GCHECK(CaretLine(c) == 3);
+        GCHECK(c.textView.selectedRange.location ==
+               [c.textView.string rangeOfString:@"marmot"].location);
+        GCHECK([c closeTab:Active(c) prompt:NO]);
+        GCHECK([c showFile:mainTex] && Active(c) == tabS);
+    });
+    __block NSInteger shown = 0;
+    MCGuiStep(@"the page, at its second page", ^{
+        EditorController *c = MCGuiController();
+        if (!c.previewMode) [c togglePreview:nil];
+        GCHECK(c.previewMode);
+        PDFView *pdf = [tabS.latex latexPDFView];
+        [pdf goToPage:[pdf.document pageAtIndex:1]];
+    });
+    MCGuiWait(@"(the second page's text at the top)", 5, ^BOOL {
+        shown = [tabS.latex sourceLineOnScreen];
+        return shown >= 9;
+    });
+    MCGuiStep(@"Shift+Cmd+V: the source at the line the page showed, not line 1", ^{
+        EditorController *c = MCGuiController();
+        GCHECK(![tabS.latex sourceLineIsOnScreen:4]);
+        [c togglePreview:nil];   // Shift+Cmd+V's action
+        GCHECK(!c.previewMode);
+        MCGuiNote(@"the page showed line %ld; the caret is on line %ld", (long)shown,
+                  (long)CaretLine(c));
+        GCHECK(CaretLine(c) == shown);
+    });
+    MCGuiStep(@"the caret on the walrus's line, and Shift+Cmd+V", ^{
+        EditorController *c = MCGuiController();
+        [c goToLine:4 column:0];
+        GCHECK(CaretLine(c) == 4);
+        [c togglePreview:nil];
+        GCHECK(c.previewMode);
+    });
+    MCGuiWait(@"the page shows that line", 5, ^BOOL {
+        return [tabS.latex sourceLineIsOnScreen:4];
+    });
+
+    MCGuiStep(@"Open Preview to the Side (Control+Command+V): the source with its page beside it", ^{
+        EditorController *c = MCGuiController();
+        NSMenuItem *item = SideItem();
+        GCHECK(item && [c validateMenuItem:item] && [(id)NSApp.delegate validateMenuItem:item]);
+        GCHECK(MCGuiPerformMenuKey(c.window, 9 /* V */,
+                                   NSEventModifierFlagControl | NSEventModifierFlagCommand, nil, nil));
+        GCHECK(!c.previewMode && [c pageSideShowing] && tabS.sidePreview);
+        NSView *src = c.editorScroll, *page = tabS.latex;
+        MCGuiNote(@"source %@, page %@", NSStringFromRect(src.frame), NSStringFromRect(page.frame));
+        GCHECK(!src.hidden && !page.hidden && page.superview == src.superview);
+        GCHECK(NSMinX(page.frame) >= NSMaxX(src.frame) - 1);
+        GCHECK(NSWidth(src.frame) >= 150 && NSWidth(page.frame) >= 150);
+        GCHECK(c.textView.editable && c.window.firstResponder == c.textView);
+        GCHECK(item.state == NSControlStateValueOn || ([c validateMenuItem:item] &&
+                                                       item.state == NSControlStateValueOn));
+    });
+    MCGuiStep(@"a Command-click on the page beside it moves the caret; the page stays", ^{
+        EditorController *c = MCGuiController();
+        [c goToLine:1 column:0];
+        PDFPage *page = nil;
+        NSPoint mid = NSZeroPoint;
+        GCHECK(WordOnPage(tabS.latex, @"walrus", &page, &mid));
+        if (!page) return;
+        CommandClick(tabS.latex, page, mid);
+        GCHECK(!c.previewMode && [c pageSideShowing]);
+        GCHECK(c.textView.selectedRange.location ==
+               [c.textView.string rangeOfString:@"walrus"].location);
+        GCHECK(c.window.firstResponder == c.textView);
+    });
+    MCGuiStep(@"a double-click's edit on that page goes into the source, one undo step", ^{
+        EditorController *c = MCGuiController();
+        PDFPage *page = nil;
+        NSPoint mid = NSZeroPoint;
+        GCHECK(WordOnPage(tabS.latex, @"heron", &page, &mid));
+        if (!page) return;
+        NSString *before = [c.textView.string copy];
+        [tabS.latex openEditorForPage:page point:mid];
+        NSTextView *edit = [tabS.latex valueForKey:@"editText"];
+        NSString *span = [edit.string copy] ?: @"";
+        MCGuiNote(@"the span: \"%@\"", span);
+        GCHECK([span containsString:@"heron"]);
+        edit.string = [span stringByReplacingOccurrencesOfString:@"heron" withString:@"egret"];
+        [tabS.latex commitEdit:nil];
+        GCHECK([c.textView.string containsString:@"the patient egret"]);
+        GCHECK(tabS.dirty && [c pageSideShowing] && !c.previewMode);
+        GCHECK_EQ_STR(tabS.undoManager.undoActionName, @"Edit in Preview");
+        [tabS.undoManager undo];
+        GCHECK_EQ_STR(c.textView.string, before);
+    });
+    MCGuiWait(@"(its typeset done)", 20, ^BOOL {
+        return ![[tabS.latex valueForKey:@"compiling"] boolValue];
+    });
+    __block NSUInteger typesets = 0;
+    MCGuiStep(@"typed in the source beside the page", ^{
+        EditorController *c = MCGuiController();
+        typesets = [[tabS.latex valueForKey:@"generation"] unsignedIntegerValue];
+        NSTextView *tv = c.textView;
+        const NSRange at = NSMakeRange([tv.string rangeOfString:@"The closing line"].location, 0);
+        GCHECK(at.location != NSNotFound);
+        if (at.location == NSNotFound) return;
+        MCGuiUndoGroup(tv.undoManager, ^{ [tv insertText:@"Typed words. " replacementRange:at]; });
+    });
+    // A negative check: time is the condition (a typeset would start 0.6 s
+    // after an edit).
+    MCGuiPause(1.2);
+    MCGuiStep(@"the page waits for a save; saved, it typesets", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([[tabS.latex valueForKey:@"generation"] unsignedIntegerValue] == typesets);
+        [c saveCurrentFile:nil];
+        GCHECK([ReadText(mainTex) containsString:@"Typed words. The closing line"]);
+    });
+    MCGuiWait(@"(typeset)", 20, ^BOOL {
+        return [[tabS.latex valueForKey:@"generation"] unsignedIntegerValue] > typesets &&
+               ![[tabS.latex valueForKey:@"compiling"] boolValue];
+    });
+    MCGuiStep(@"Control+Command+V again: the source has the slot", ^{
+        EditorController *c = MCGuiController();
+        [c toggleSidePreview:nil];
+        GCHECK(![c pageSideShowing] && !tabS.sidePreview);
+        GCHECK(tabS.latex.hidden && !c.editorScroll.hidden && !c.previewMode);
+    });
+    MCGuiStep(@"a file with no page to show has the item off", ^{
+        EditorController *c = MCGuiController();
+        NSString *notes = Project(@"latex-fx/notes.txt");
+        MCGuiWriteFile(notes, @"plain notes\n");
+        GCHECK([c showFile:notes]);
+        NSMenuItem *item = SideItem();
+        GCHECK(!c.canToggleSidePreview);
+        GCHECK(item && ![c validateMenuItem:item]);
+        GCHECK(![(id)NSApp.delegate validateMenuItem:item]);
+        GCHECK([c closeTab:Active(c) prompt:NO]);
+    });
+    MCGuiStep(@"close the fixture document, as it was", ^{
+        EditorController *c = MCGuiController();
+        GCHECK([c closeTab:tabS prompt:NO]);
+        tabS = nil;
+        MCGuiWriteFile(mainTex, ReadText(Fixtures(@"fixtures/main.tex")));
     });
 
     // MC_GUI_REAL_TECTONIC=<a tectonic> (with TECTONIC_CACHE_DIR at a scratch

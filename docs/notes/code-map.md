@@ -207,7 +207,9 @@ goes here first, with tests; the GUI only displays it.
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
 - Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownMedia`, `MarkdownEditPanel`,
   `FileViewers`, `QuickLook`, `CsvTable`, `JsonOutlineView`, `SqliteView`,
-  `HtmlPage`, `CompareView`.
+  `HtmlPage`, `CompareView`, `MarkdownSidePreview` (Markdown's page beside
+  its source), `PageSidePane` (the split for a LaTeX or HTML page beside
+  its source).
 - `EditorMirror` (the split editor's group without the keyboard).
 - `Browser` (with `MCKeyboardWindow`), `Bookmarks` (the bookmark folder,
   reading and writing bookmark files), `TabStrip`, `Search` (Find in Folder and
@@ -254,7 +256,9 @@ Change, control channel, agent work), Processes (the Processes panel's
 hooks, its state in associated objects), LargeFile (large-file mode, its
 status bar note, the 1 GB question), Tests (the ▶ beside each test, Run
 Test at Cursor), LineHistory (Show Line History's host), Markdown and
-MarkdownRender. Rules, so it
+MarkdownRender, LatexInputs (a LaTeX document's \input files, as its
+preview edits them), and PageSide (Open Preview to the Side for LaTeX and
+HTML files, over `PageSidePane`). Rules, so it
 stays warning-free:
 
 - `EditorController+Private.h` holds the class extension (ivars in its ivar

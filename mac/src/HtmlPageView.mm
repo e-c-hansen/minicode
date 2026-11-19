@@ -49,6 +49,7 @@ static NSURL *WithoutFragment(NSURL *url) {
     double _scrollX, _scrollY;
     NSTextField *_question;
     NSMutableSet<NSString *> *_requested;   // files this page was asked to load
+    NSString *_text;          // the buffer shown (showText:), nil for the file itself
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -213,11 +214,29 @@ static NSURL *WithoutFragment(NSURL *url) {
         self.noting = NO;
     }
     self.path = path;
+    _text = nil;
+    [self loadKeepingScroll:same];
+}
+
+- (void)showText:(NSString *)text path:(NSString *)path {
+    if (!path) return;
+    text = text ?: @"";
+    const BOOL same = self.webView && [path isEqualToString:self.path];
+    if (same && _text && [text isEqualToString:_text]) {
+        [self followScriptsRule];
+        return;
+    }
+    if (!same) {
+        _restoreScroll = NO;
+        self.noting = NO;
+    }
+    self.path = path;
+    _text = [text copy];
     [self loadKeepingScroll:same];
 }
 
 - (void)reloadIfChanged {
-    if (self.path && self.webView) [self showFile:self.path];
+    if (self.path && self.webView && !_text) [self showFile:self.path];
 }
 
 // Reads the file's text for the scripts question, decides, and loads,
@@ -226,7 +245,9 @@ static NSURL *WithoutFragment(NSURL *url) {
     NSString *path = self.path;
     if (!path) return;
     _stamp = MCStampOfFile(path);
-    NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
+    NSData *data = _text ? [_text dataUsingEncoding:NSUTF8StringEncoding]
+                         : [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe
+                                                    error:nil];
     _hasScripts = FileSniff::htmlMayRunScripts(
         data ? std::string((const char *)data.bytes, data.length) : std::string());
     BOOL run = NO, ask = NO;
@@ -288,6 +309,17 @@ static NSURL *WithoutFragment(NSURL *url) {
     self.loads++;
     if (!_requested) _requested = [NSMutableSet set];
     [_requested addObject:self.path.stringByStandardizingPath];
+    // The buffer: the file itself when it holds just that, else the text
+    // with the file's address, so relative addresses resolve the same.
+    if (_text) {
+        NSString *disk = [NSString stringWithContentsOfFile:self.path encoding:NSUTF8StringEncoding
+                                                      error:nil];
+        if ([disk isEqualToString:_text])
+            [self.webView loadFileURL:file allowingReadAccessToURL:[NSURL fileURLWithPath:access]];
+        else
+            [self.webView loadHTMLString:_text baseURL:file];
+        return;
+    }
     // From the origin each time, so a changed stylesheet or picture beside
     // it is read again too.
     if ([WithoutFragment(self.webView.URL) isEqual:file]) [self.webView reloadFromOrigin];
@@ -416,6 +448,7 @@ static NSURL *WithoutFragment(NSURL *url) {
     [self.webView removeFromSuperview];
     self.webView = nil;
     self.path = nil;
+    _text = nil;
     _stamp = nil;
     self.asking = NO;
     self.noting = NO;

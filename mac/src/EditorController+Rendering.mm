@@ -692,6 +692,7 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
         [self displaySourceEditable];
         [self showLatexProblemMarks];
         [self refreshSidePreview];   // a Markdown tab's page beside it, if it wants one
+        [self refreshPageSide];      // a LaTeX or HTML tab's
         // A CSV's text on show: where its typing started (togglePreview:).
         if (MCViewerKindOverText(self.viewerKind) && !_activeTab.textSessionStart)
             _activeTab.textSessionStart = self.sourceText ?: @"";
@@ -737,6 +738,16 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     };
     view.onOpenProblem = ^(NSString *path, NSInteger line) {
         [weakSelf openLatexProblemAt:path line:line];
+    };
+    // Command-click on the page: the source line behind it.
+    view.onShowSource = ^(NSString *path, NSInteger line, NSInteger column) {
+        [weakSelf latexShowSource:path line:line column:column];
+    };
+    // Beside the source, the page typesets on save: a double-click on a
+    // page older than the buffer typesets the buffer first.
+    view.bufferText = ^NSString * {
+        EditorController *me = weakSelf;
+        return weakTab ? [me pageSideBufferFor:weakTab] : nil;
     };
     [self wireLatexInputsOf:view];
     [self.rightArea addSubview:view];
@@ -796,12 +807,31 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     if (main) {
         if (![self showFile:main]) { NSBeep(); return; }
     }
+    // The page beside the source shows it there, the source keeping the
+    // keyboard.
+    if (!main && [self pageSideShowsLatex]) {
+        [self.latex revealSourceLine:line];
+        return;
+    }
     if (!self.previewMode) [self togglePreview:nil];
     else [self revealEditor];
     if (!self.latex) return;
     [self.window makeFirstResponder:self.latex];
     if (main) [self.latex revealSourceLine:line inFile:part];
     else [self.latex revealSourceLine:line];
+}
+
+// Inverse search, Command-click on the page (or Show in Source): the
+// source at the clicked word's line, lit for a moment (goToLine:, which
+// leaves the full preview, and which Go Back undoes). `path` nil is the
+// document itself; an \input file opens in its tab.
+- (void)latexShowSource:(NSString *)path line:(NSInteger)line column:(NSInteger)column {
+    if (line <= 0) return;
+    if (path.length && ![path isEqualToString:self.currentPath]) {
+        if (![self showFile:path]) return;
+        if (![self.currentPath isEqualToString:path]) return;   // refused
+    }
+    [self goToLine:(int)line column:(int)MAX(0, column)];
 }
 
 // The document a .tex file is part of, for forward search: the one a
@@ -877,11 +907,18 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
 // text view handles undo itself whenever it has focus, so this only runs when
 // the responder chain got as far as the window's delegate.
 - (BOOL)latexIsShowing {
-    return self.latex != nil && !self.latex.isHidden;
+    return self.latex != nil && !self.latex.isHidden && self.previewMode;
 }
 
 // An edit made in the PDF preview leaves the buffer dirty, like any typing.
+// Made on the page beside the source, it goes into the source on show as
+// one undo step there.
 - (void)latexDidEditSource:(NSString *)newSource {
+    if ([self pageSideShowsLatex] && self.textView.editable) {
+        if (![newSource isEqualToString:self.textView.string])
+            [self putBackText:newSource inTab:_activeTab actionName:@"Edit in Preview"];
+        return;
+    }
     if ([newSource isEqualToString:self.sourceText]) return;
     self.sourceText = newSource;
     [self noteEdited];

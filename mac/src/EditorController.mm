@@ -13,6 +13,7 @@
 #import "EditorController+LargeFileIvars.h"
 #import "EditorController+LayoutIvars.h"
 #import "EditorController+MarkdownIvars.h"
+#import "EditorController+PageSideIvars.h"
 #import "EditorController+PersistenceIvars.h"
 #import "EditorController+TabsIvars.h"
 #import "EditorController+TestsIvars.h"
@@ -148,12 +149,18 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     [self autoSaveOnFocusChange];
 }
 
+// With the LaTeX page beside the source holding the keyboard, Cmd+Z is the
+// source's (an edit made on the page is one step there).
 - (void)undo:(id)sender {
     if ([self latexIsShowing]) [self.latex undoEdit];
+    else if ([self pageSideShowsLatex] && _activeTab.undoManager.canUndo)
+        [_activeTab.undoManager undo];
     else NSBeep();
 }
 - (void)redo:(id)sender {
     if ([self latexIsShowing]) [self.latex redoEdit];
+    else if ([self pageSideShowsLatex] && _activeTab.undoManager.canRedo)
+        [_activeTab.undoManager redo];
     else NSBeep();
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
@@ -217,7 +224,8 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (item.action == @selector(openBookmarkAsText:)) return self.canOpenBookmarkAsText;
     if (item.action == @selector(showLineInPDF:)) return self.canShowLineInPDF;
     if (item.action == @selector(toggleSidePreview:)) {
-        item.state = [self sidePreviewShowing] ? NSControlStateValueOn : NSControlStateValueOff;
+        item.state = [self sidePreviewShowing] || [self pageSideShowing] ? NSControlStateValueOn
+                                                                          : NSControlStateValueOff;
         return self.canToggleSidePreview;
     }
     if (item.action == @selector(togglePlayback:)) return self.canTogglePlayback;
@@ -250,9 +258,11 @@ MC_TAB_PROPERTY(BOOL, diffIsCommit, setDiffIsCommit)
     if (item.action == @selector(performTextFinderAction:))
         return !self.editorScroll.hidden && [_editorFind validateFindAction:item.tag];
     if (item.action == @selector(undo:))
-        return [self latexIsShowing] && [self.latex canUndoEdit];
+        return [self latexIsShowing] ? [self.latex canUndoEdit]
+                                     : [self pageSideShowsLatex] && _activeTab.undoManager.canUndo;
     if (item.action == @selector(redo:))
-        return [self latexIsShowing] && [self.latex canRedoEdit];
+        return [self latexIsShowing] ? [self.latex canRedoEdit]
+                                     : [self pageSideShowsLatex] && _activeTab.undoManager.canRedo;
     return YES;
 }
 
