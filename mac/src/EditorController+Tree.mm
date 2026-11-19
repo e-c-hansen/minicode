@@ -363,6 +363,16 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
             [weakSelf refreshTreeCells];
             [weakSelf sidebarIconsUpdate];   // the Source Control badge
         };
+        // The status bar's branch reads the same status.
+        _gitColors.onBranchChange = ^{
+            EditorController *s = weakSelf;
+            if (!s) return;
+            const Git::StatusBranch b = s->_gitColors.statusBranch;
+            NSString *(^ns)(const std::string &) = ^NSString *(const std::string &t) {
+                return [NSString stringWithUTF8String:t.c_str()] ?: @"";
+            };
+            [s showStatusBranchName:b.shown ? ns(b.name) : nil counts:ns(b.counts) tip:ns(b.tip)];
+        };
     }
     [_gitColors setRoot:path];
     FSEventStreamContext ctx = {0, (__bridge void *)self, NULL, NULL, NULL};

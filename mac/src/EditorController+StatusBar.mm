@@ -1,4 +1,4 @@
-// EditorController+StatusBar.mm — EditorController: the status bar, its notes and "Saved ...", and the shortcut hints.
+// EditorController+StatusBar.mm — EditorController: the status bar, its branch, its notes and "Saved ...", and the shortcut hints.
 #import "EditorController+Private.h"
 #import "EditorFont.h"
 #import "PalettePanel.h"
@@ -18,6 +18,7 @@
     self.statusBar.wantsLayer = YES;   // colors set in applySettings
     self.statusBar.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
     self.statusBar.menu = MCAdjustSettingsMenu(@"statusbar", self.statusBar);
+    __weak EditorController *weakSelf = self;
 
     NSTextField *label = [NSTextField labelWithString:@"⇧⌘H  Shortcuts"];
     label.font = [NSFont systemFontOfSize:11];
@@ -50,6 +51,15 @@
     self.settingsLabel = errors;
     [self.statusBar addSubview:errors];
 
+    // The left end: the branch, as VS Code's bottom left (StatusBranchItem.h);
+    // its name switches branch, its counts sync.
+    MCStatusBranchItem *branch = [[MCStatusBranchItem alloc]
+        initWithFrame:NSMakeRect(12, 1, 0, 20)];
+    branch.onSwitchBranch = ^{ [weakSelf gitCheckout:nil]; };
+    branch.onSync = ^{ [weakSelf gitSync:nil]; };
+    self.statusBranchItem = branch;
+    [self.statusBar addSubview:branch];
+
     // Left of them, with the tree's last-saved column on
     // (Option+Shift+Cmd+I): when the file on show was last saved.
     NSTextField *saved = [NSTextField labelWithString:@""];
@@ -67,7 +77,6 @@
     lsp.lineBreakMode = NSLineBreakByTruncatingHead;
     lsp.frame = NSMakeRect(container.bounds.size.width - 150 - 340, 3, 340, 16);
     lsp.autoresizingMask = NSViewMinXMargin;
-    __weak EditorController *weakSelf = self;
     // A missing server: how to install it. Otherwise every server.
     lsp.onClick = ^{
         EditorController *s = weakSelf;
@@ -963,11 +972,23 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
     [self updateEncodingLabel];
 }
 
-// The left of the status bar: "Saved ..." then any settings problem.
+// The branch at the status bar's left end, from the tree's git status.
+- (void)showStatusBranchName:(NSString *)name counts:(NSString *)counts tip:(NSString *)tip {
+    if ([self.statusBranchItem showName:name counts:counts tip:tip]) [self layoutStatusLabels];
+}
+
+// The left of the status bar: the branch, "Saved ...", then any settings
+// problem (or a passing note).
 - (void)layoutStatusLabels {
     if (!self.statusBar) return;
     const CGFloat W = self.statusBar.bounds.size.width;
     CGFloat x = 12;
+    if (!self.statusBranchItem.hidden) {
+        // At most a third of the bar; the name truncates first.
+        const CGFloat w = MIN(self.statusBranchItem.fittingWidth, MAX(60, W / 3));
+        self.statusBranchItem.frame = NSMakeRect(x, 1, w, 20);
+        x += w + 14;
+    }
     if (!self.savedLabel.hidden) {
         const CGFloat w = MIN(ceil(self.savedLabel.fittingSize.width) + 2, 220);
         self.savedLabel.frame = NSMakeRect(x, 3, w, 16);

@@ -377,6 +377,30 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   from session X" (left out until it can be exact), and a gap between
   git's and LineDiff's alignment of blank lines around an insertion (one
   may read "Not committed" or the commit where the other reads the session).
+- **The status bar's branch** (Mac, 2026-11-19, round 9's "no branch and
+  no git button"; `StatusBranchItem.{h,mm}`, core `Git::statusBranch`,
+  `git:status-branch`; GUI `git_panel`): VS Code's bottom left, at the
+  status bar's left end before "Saved ...": SF Symbols'
+  `arrow.triangle.branch`, the branch (HEAD's short hash when detached)
+  with "*" for any status entry (untracked too), then "↑2 ↓1" only when
+  `# branch.ab` came (an upstream git compares with; "↑0 ↓0" when level,
+  so there is always something to click to sync). The name runs
+  `gitCheckout:` (the palette's branch picker), the counts `gitSync:`
+  (the panel's runSync, which asks nothing, as the button); one tooltip
+  on both names the two clicks. **No git of its own**: `Git::decorationArgs`
+  gained `--branch`, so the tree's colors' one status per change on disk
+  (`MCTreeGitColors`, which already looks after writes to .git's index,
+  HEAD and refs, and skips objects and logs) carries the headers, and
+  `onBranchChange` fires when `statusBranch` differs. Hidden when the
+  status fails or the folder leaves a repository (`setRoot:` clears it).
+  A root below the top level sees no .git events, so a commit made in a
+  terminal there shows at the next change under the root, as the tree's
+  colors do. At most a third of the bar; the name truncates, the counts
+  never. The GTK port can show the same `StatusBranch`. **Header trap**:
+  `StatusBranchItem.h` takes NSStrings, not `Git::StatusBranch`, because
+  `EditorController+Private.h` imports it and every GUI suite imports
+  that; a suite's own `Git(c)` helper then clashed with `namespace Git`
+  ("reference to 'Git' is ambiguous", CI's first run).
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
   plain `cd x && git ...` lines or a script file.
@@ -386,6 +410,7 @@ setprop log.tag.MutibleGit DEBUG` on Android.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- Git panel (all three ports): **Header trap**: `StatusBranchItem.h` takes NSStrings, not `Git::StatusBranch`, because `EditorController+Private.h` imports it and every GUI suite imports that.
 - Git panel (all three ports): **Tool guard trap**: in a worktree-isolated agent session, git commands in compound or unusual forms are refused (even a filename containing "git"); use plain `cd x && git ...` lines or a script file.
 - Git panel (all three ports): **Trap**: a scroll to an iter just after the GTK review page's text is replaced uses line heights GTK has not measured, and the page went to its top (the top-row anchor did so too); `scrollRowTo` scrolls to a mark, then a tick callback (`onSettle`) puts the row right each frame until it holds three, and the reveal, the acted place and the top row all go through it.
 - Git panel (all three ports): **Apply to Main checks and applies the same files** (round 10's defect 6, 2026-11-19): the check ran on the page's read and the apply on a fresh `git diff <base>` with no pathspec, so a file the agent changed after the read was patched into main over the user's own edit, unchecked, and an untracked file made since was dropped; the apply reads the worktree again and refuses anything new, checks main again, and holds the diff to the paths asked about. And after `apply --3way` a rename is one status entry: restoring only its new path left the source's deletion staged; unstage `origPath` too.

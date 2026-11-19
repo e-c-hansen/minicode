@@ -41,7 +41,8 @@ container (PanelHost, laid out by hand in layoutContainer)
 │       │   +, ◫, TerminalViews side by side, MCTerminalFindBar
 │       ├── browserDivider (DragBar, vertical)
 │       └── termDivider (DragBar)                  kept topmost
-├── status bar                                    Saved..., settings and keys
+├── status bar                                    the branch (StatusBranchItem),
+│                                                 Saved..., settings and keys
 │                                                 errors, problem counts, server
 │                                                 item, ↻ restart, hints key
 ├── hintsPanel                                    Shift+Cmd+H
