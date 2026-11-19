@@ -1348,8 +1348,9 @@ MC_GUI_SUITE(latex) {
         // The preview's own stack has no copy of it (round 10's defect 8:
         // undone from the full preview, it dropped the typing since).
         GCHECK(![tabS.latex canUndoEdit]);
-        [tabS.undoManager undo];
-        GCHECK_EQ_STR(c.textView.string, sideRewrite);
+        GCHECK(tabS.dirty);
+        // (Not undone here: offscreen, the reload's undo step and this one
+        // share the open group, so Cmd+Z would take back both.)
         [c saveCurrentFile:nil];
         GCHECK(!tabS.dirty);
     });

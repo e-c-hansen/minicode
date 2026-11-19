@@ -635,21 +635,25 @@ MC_GUI_SUITE(markdown_page) {
         MCGuiNote(@"text now: %@", c.sourceText);
         GCHECK_EQ_STR(c.sourceText, [rewrite stringByReplacingOccurrencesOfString:@"wrod"
                                                                        withString:@"word"]);
-        // Undone, the agent's text, not the one the box opened on.
-        [[[c valueForKey:@"textView"] undoManager] undo];
-        GCHECK_EQ_STR(c.sourceText, rewrite);
+        // Saved, so the tab follows the disk again for the next step.
+        rewrite = [c.sourceText copy];
+        [c saveCurrentFile:nil];
+        GCHECK(!c.dirty);
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:agentDoc encoding:NSUTF8StringEncoding
+                                                   error:nil], rewrite);
     });
     MCGuiStep(@"the box open again, the agent rewrites that very paragraph", ^{
         GCHECK(!c.dirty);
         NSTextView *tv = [c valueForKey:@"textView"];
-        const NSRange word = [tv.string rangeOfString:@"wrod"];
+        const NSRange word = [tv.string rangeOfString:@"closing"];
         GCHECK(word.location != NSNotFound);
         if (word.location == NSNotFound) return;
         const NSRect r = [c textRectForCharacter:word.location + 1];
         GCHECK([c editMarkdownAtCharacter:word.location + 1 point:NSMakePoint(NSMidX(r), NSMidY(r))]);
-        [EditBox(c) insertText:@"word" replacementRange:[EditBox(c).string rangeOfString:@"wrod"]];
-        rewrite = [rewrite stringByReplacingOccurrencesOfString:@"A paragraph with a wrod."
-                                                     withString:@"A paragraph the agent fixed."];
+        GCHECK_EQ_STR(EditBox(c).string, @"And a closing line.");
+        [EditBox(c) insertText:@"final" replacementRange:[EditBox(c).string rangeOfString:@"closing"]];
+        rewrite = [rewrite stringByReplacingOccurrencesOfString:@"And a closing line."
+                                                     withString:@"The agent's last line."];
         MCGuiWriteFile(agentDoc, rewrite);
         [c checkTabsOnDisk];
     });
@@ -660,7 +664,7 @@ MC_GUI_SUITE(markdown_page) {
         GCHECK_EQ_STR(c.sourceText, rewrite);
         GCHECK(!c.dirty);
         GCHECK_EQ_STR([NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString],
-                      @"A paragraph with a word.");
+                      @"And a final line.");
         NSString *note = [[c valueForKey:@"settingsLabel"] stringValue];
         MCGuiNote(@"status: %@", note);
         GCHECK([note containsString:@"your edit was not applied"]);
