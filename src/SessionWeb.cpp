@@ -1292,6 +1292,7 @@ struct Server::Conn {
     std::string credential;       // the page's (its cookie's)
     std::string peer;             // the connection's address
     int peerPort = 0;
+    Clock::time_point opened;     // its request's deadline runs from here
     std::unique_ptr<FileSend> file;   // a file for a viewer, being sent
 };
 
@@ -1543,17 +1544,29 @@ void Server::acceptAll() {
             if (errno == EINTR) continue;
             return;
         }
+        // Past the cap: closed at once, unread (accepted, so the listening
+        // socket does not stay ready and spin the loop).
+        if ((int)conns_.size() >= std::max(1, opt_.maxConnections)) {
+            ::close(fd);
+            continue;
+        }
         setNonBlocking(fd);
         auto c = std::make_unique<Conn>();
         c->fd = fd;
         c->id = ++nextConn_;
+        c->opened = Clock::now();
         char addr[INET_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET, &peer.sin_addr, addr, sizeof addr);
         c->peerPort = ntohs(peer.sin_port);
         c->peer = std::string(addr) + ":" + std::to_string(c->peerPort);
         conns_.push_back(std::move(c));
+        connections_ = (int)conns_.size();
     }
 }
+
+// A connection held to the request deadline: neither a page's socket nor
+// a file being sent.
+static bool heldToDeadline(bool socket, bool file) { return !socket && !file; }
 
 void Server::sendText(Conn& c, const std::string& text) {
     if (c.dead || !c.socket || c.closeAfterWrite) return;
@@ -2652,6 +2665,11 @@ bool Server::run() {
             const long long idle = (long long)access_.idle().count();
             if (idle > 0) timeout = (int)std::max(50LL, std::min<long long>(timeout, idle / 4));
         }
+        for (auto& c : conns_)
+            if (heldToDeadline(c->socket, c->file != nullptr)) {
+                const long long left = opt_.requestDeadlineMs - msSince(c->opened);
+                timeout = (int)std::max(0LL, std::min<long long>(timeout, left + 1));
+            }
         if (session_) {
             const long long toLook = opt_.pollMs - msSince(session_->lastLook);
             timeout = (int)std::max(0LL, std::min<long long>(timeout, toLook));
@@ -2715,6 +2733,12 @@ bool Server::run() {
             if (!c->out.empty() && !c->dead) writeTo(*c);
         // A file's connection that took what it had asks for the next piece.
         pumpFiles();
+        // A request not sent (or its answer not taken) in time: closed, so
+        // idle connections cannot pile up (round 10's defect 10).
+        for (auto& c : conns_)
+            if (!c->dead && heldToDeadline(c->socket, c->file != nullptr) &&
+                msSince(c->opened) >= opt_.requestDeadlineMs)
+                c->dead = true;
         // Connections gone; the session goes with the last browser.
         bool lostBrowser = false;
         for (auto it = conns_.begin(); it != conns_.end();) {
@@ -2731,6 +2755,7 @@ bool Server::run() {
                 ++it;
             }
         }
+        connections_ = (int)conns_.size();
         if (lostBrowser && browsers_ == 0) detach();
     }
 }

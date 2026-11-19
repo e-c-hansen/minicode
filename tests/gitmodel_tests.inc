@@ -357,7 +357,15 @@ static void testGitModel() {
         CHECK(Git::timeoutFor(applyToMainArgs(true)) == 120);
         CHECK((applyToMainArgs(false) == std::vector<std::string>{"apply", "--whitespace=nowarn", "-"}));
         CHECK(applyToMainArgs(true)[1] == "--3way");
-        CHECK(worktreeDiffArgs("abc")[9] == "abc" && worktreeDiffArgs("abc").back() == "--");
+        CHECK(worktreeDiffArgs("abc", {})[10] == "abc" && worktreeDiffArgs("abc", {}).back() == "--");
+        CHECK(worktreeDiffArgs("abc", {})[0] == "--literal-pathspecs");
+        CHECK(Git::timeoutFor(worktreeDiffArgs("abc", {})) == 30);
+        // Held to the files asked about (round 10's defect 6).
+        const std::vector<std::string> held = worktreeDiffArgs("abc", {"a.txt", "*.c"});
+        CHECK(held.size() == 14 && held[11] == "--" && held[12] == "a.txt" && held[13] == "*.c");
+        CHECK(applyStaleText({"late.txt"}) ==
+              "late.txt was changed in the worktree after this page was read, so nothing was brought in. "
+              "The page shows them now; look them over, then apply again.");
         CHECK(newFilePatchArgs("-n.txt").back() == "-n.txt" &&
               newFilePatchArgs("x")[newFilePatchArgs("x").size() - 3] == "--");
         CHECK((unstageArgs({"a", "b"}) ==

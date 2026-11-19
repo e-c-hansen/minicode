@@ -147,10 +147,34 @@ struct ApplyResult {
     std::string text;                    // what to tell the user, as the Mac does
     std::vector<std::string> conflicts;  // files that came in with conflict marks
 };
-// Step two, after the user said yes: the worktree's patch against the merge
-// base plus one for each untracked file, given to main's `apply` (all or
-// nothing), else `apply --3way`, whose cleanly applied files are then
-// unstaged so everything arrives as unstaged changes. Never a commit.
+// What Apply to Main brings: where the page read it, and the files the
+// user was asked about (`files`); `fileCount` is the page's file count.
+struct ApplySource {
+    std::string top, baseRef, mainPath;
+    ApplyFiles files;
+    size_t fileCount = 0;
+};
+ApplySource applySource(const WorktreeRead& w);
+
+// The worktree now (`rawDiff`, worktreeRawArgs' output; `untrackedOut`,
+// GitUi::untrackedArgs') against the files asked about: `extra` lists what
+// git shows now that is not among them (a file changed or made since the
+// read, a rename's either side), and `untracked` those of them that are
+// untracked now, each to come as a new file's patch.
+struct ApplyNow {
+    std::vector<std::string> extra, untracked;
+};
+ApplyNow applyNow(const ApplyFiles& asked, const std::string& rawDiff, const std::string& untrackedOut);
+
+// Step two, after the user said yes. The worktree is read again: anything
+// it changed since the page's read refuses the whole (GitUi::applyStaleText),
+// and main's status is checked again (a change of the user's own in one of
+// the files since the question refuses it too). Then the worktree's patch
+// against the merge base, held to the files asked about, plus one for each
+// untracked file, given to main's `apply` (all or nothing), else
+// `apply --3way`, whose cleanly applied files are then unstaged (a rename's
+// source too) so everything arrives as unstaged changes. Never a commit.
+ApplyResult applyToMain(const ApplySource& s, const std::string& mainName, const GitRunner& run);
 ApplyResult applyToMain(const WorktreeRead& w, const std::string& mainName, const GitRunner& run);
 
 }  // namespace ChangeReview

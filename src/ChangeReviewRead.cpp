@@ -415,42 +415,105 @@ GitUi::ApplyPlan planApplyToMain(const WorktreeRead& w, const std::string& mainN
     return plan;
 }
 
-ApplyResult applyToMain(const WorktreeRead& w, const std::string& mainName, const GitRunner& run) {
+ApplySource applySource(const WorktreeRead& w) {
+    ApplySource s;
+    s.top = w.read.top;
+    s.baseRef = w.baseRef;
+    s.mainPath = w.mainPath;
+    s.files = applyFiles(w);
+    s.fileCount = w.read.diffs.size();
+    return s;
+}
+
+ApplyNow applyNow(const ApplyFiles& asked, const std::string& rawDiff, const std::string& untrackedOut) {
+    ApplyNow now;
+    auto isAsked = [&](const std::string& p) {
+        return std::find(asked.paths.begin(), asked.paths.end(), p) != asked.paths.end();
+    };
+    auto extra = [&](const std::string& p) {
+        if (!p.empty() && !isAsked(p) && std::find(now.extra.begin(), now.extra.end(), p) == now.extra.end())
+            now.extra.push_back(p);
+    };
+    for (const RawChange& c : parseRawDiff(rawDiff)) {
+        extra(c.path);
+        extra(c.origPath);
+    }
+    for (const std::string& p : nulPaths(untrackedOut)) {
+        if (isAsked(p)) now.untracked.push_back(p);
+        else extra(p);
+    }
+    std::sort(now.extra.begin(), now.extra.end());
+    return now;
+}
+
+ApplyResult applyToMain(const ApplySource& s, const std::string& mainName, const GitRunner& run) {
     ApplyResult res;
-    const ApplyFiles files = applyFiles(w);
     auto failed = [&](const GitOut& o) {
         return GitUi::applyFailureText(o.status < 0 ? 1 : o.status, o.out, o.err);
     };
     std::string failure, patch;
-    GitOut d = run(w.read.top, GitUi::worktreeDiffArgs(w.baseRef), "");
-    if (!d.ok) failure = failed(d);
-    else patch = d.out;
-    for (size_t i = 0; failure.empty() && i < files.untracked.size(); i++) {
-        GitOut n = run(w.read.top, GitUi::newFilePatchArgs(files.untracked[i]), "");
+    // The worktree again: what it changed since the read is not what the
+    // user was asked about, so nothing comes in (round 10's defect 6: the
+    // patch was the whole of a fresh diff, checked against the old list).
+    ApplyNow now;
+    GitOut raw = run(s.top, worktreeRawArgs(s.baseRef), "");
+    GitOut un = raw.ok ? run(s.top, GitUi::untrackedArgs(), "") : GitOut();
+    if (!raw.ok) failure = failed(raw);
+    else if (!un.ok) failure = failed(un);
+    else {
+        now = applyNow(s.files, raw.out, un.out);
+        if (!now.extra.empty()) failure = GitUi::applyStaleText(now.extra);
+    }
+    // Main again: the user may have changed one of the files while asked.
+    if (failure.empty()) {
+        GitOut st = run(s.mainPath, GitUi::statusArgs(), "");
+        if (!st.ok) failure = failed(st);
+        else
+            failure = GitUi::applyToMainPlan(s.files.paths, Git::parseStatus(st.out), mainName, "The worktree")
+                          .refusal;
+    }
+    if (failure.empty()) {
+        GitOut d = run(s.top, GitUi::worktreeDiffArgs(s.baseRef, s.files.paths), "");
+        if (!d.ok) failure = failed(d);
+        else patch = d.out;
+    }
+    for (size_t i = 0; failure.empty() && i < now.untracked.size(); i++) {
+        GitOut n = run(s.top, GitUi::newFilePatchArgs(now.untracked[i]), "");
         if (n.ok || n.status == 1) patch += n.out;
         else failure = failed(n);
     }
     if (failure.empty() && patch.empty()) failure = "There was nothing to bring into the main checkout.";
     if (failure.empty()) {
-        GitOut plain = run(w.mainPath, GitUi::applyToMainArgs(false), patch);
+        GitOut plain = run(s.mainPath, GitUi::applyToMainArgs(false), patch);
         if (!plain.ok) {
-            GitOut three = run(w.mainPath, GitUi::applyToMainArgs(true), patch);
-            GitOut st = run(w.mainPath, GitUi::statusArgs(), "");
+            GitOut three = run(s.mainPath, GitUi::applyToMainArgs(true), patch);
+            GitOut st = run(s.mainPath, GitUi::statusArgs(), "");
             std::vector<std::string> staged;
+            auto isAsked = [&](const std::string& p) {
+                return std::find(s.files.paths.begin(), s.files.paths.end(), p) != s.files.paths.end();
+            };
             if (st.ok)
                 for (const Git::Entry& e : Git::parseStatus(st.out).entries) {
-                    if (std::find(files.paths.begin(), files.paths.end(), e.path) == files.paths.end())
-                        continue;
+                    if (!isAsked(e.path)) continue;
                     if (e.unmerged) res.conflicts.push_back(e.path);
-                    else if (e.staged != '.') staged.push_back(e.path);
+                    else if (e.staged != '.') {
+                        staged.push_back(e.path);
+                        // A rename's staged deletion of its source, or it
+                        // stays staged when only the new path is restored.
+                        if (!e.origPath.empty()) staged.push_back(e.origPath);
+                    }
                 }
             if (!three.ok && res.conflicts.empty()) failure = failed(three);
-            else if (!staged.empty()) run(w.mainPath, GitUi::unstageArgs(staged), "");
+            else if (!staged.empty()) run(s.mainPath, GitUi::unstageArgs(staged), "");
         }
     }
     res.ok = failure.empty();
-    res.text = res.ok ? GitUi::applyDoneText(w.read.diffs.size(), res.conflicts, mainName) : failure;
+    res.text = res.ok ? GitUi::applyDoneText(s.fileCount, res.conflicts, mainName) : failure;
     return res;
+}
+
+ApplyResult applyToMain(const WorktreeRead& w, const std::string& mainName, const GitRunner& run) {
+    return applyToMain(applySource(w), mainName, run);
 }
 
 }  // namespace ChangeReview
