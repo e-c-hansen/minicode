@@ -166,6 +166,7 @@ struct Box {
     bool ordered = false;
     char delim = 0;   // an ordered list's "." or ")": another one starts another list
     int alert = 0;    // a quote that is one of GitHub's alerts (MdRun::alert)
+    long next = 0;    // an open ordered list's next number
 };
 
 std::vector<Box> pathFor(const MdRun& r) {
@@ -258,11 +259,19 @@ public:
                 i++;
                 continue;
             }
+            // A unit is in one <details> (two on one line are two), and in
+            // its summary or out of it.
             size_t end = i;
             while (end < runs_.size() && !endsUnit(runs_[end]) && !runs_[end].gap &&
-                   !runs_[end].codeBlock && runs_[end].tableId == 0)
+                   !runs_[end].codeBlock && runs_[end].tableId == 0 &&
+                   runs_[end].details == r.details && runs_[end].detailsLine == r.detailsLine &&
+                   runs_[end].detailsIndex == r.detailsIndex && runs_[end].summary == r.summary)
                 end++;
-            unit(i, end);
+            size_t shown = end;   // the line break before another <details> ends the unit
+            while (shown > i && runs_[shown - 1].hardBreak && end < runs_.size() &&
+                   !endsUnit(runs_[end]) && !runs_[end].gap)
+                shown--;
+            unit(i, shown);
             i = end < runs_.size() && endsUnit(runs_[end]) ? end + 1 : end;
         }
         closeTo(0);
@@ -280,28 +289,68 @@ private:
     std::vector<Box> open_;
     bool inNotes_ = false;
     std::set<std::string> anchors_;   // the heading anchors given
-    std::vector<int> details_;        // the <details> open, by their tags' lines
+    // The <details> open: their tags' lines and indexes there, and how many
+    // of open_ were open around each (it closes before they do).
+    struct Open {
+        int line, index;
+        size_t base;
+    };
+    std::vector<Open> details_;
 
     // Opens and closes <details> to put the writer in the ones `r` is in.
-    // They hold whole blocks, so lists and quotes close around them.
+    // A block sits inside the lists and quotes its tag was in (detailsAt)
+    // and holds whatever opens after it.
     void details(const MdRun& r) {
         const size_t d = (size_t)std::max(0, r.details);
         size_t keep = std::min(details_.size(), d);
-        if (d > 0 && keep == d && details_[d - 1] != r.detailsLine) keep = d - 1;
+        if (d > 0 && keep == d &&
+            (details_[d - 1].line != r.detailsLine || details_[d - 1].index != r.detailsIndex))
+            keep = d - 1;
         if (keep == details_.size() && d == details_.size()) return;
-        closeTo(0);
         while (details_.size() > keep) {
+            closeTo(details_.back().base);
             details_.pop_back();
             out_ += "</details>\n";
         }
         while (details_.size() < d) {
-            details_.push_back(details_.size() + 1 == d ? r.detailsLine : -1);
-            out_ += details_.size() == d && r.detailsOpen ? "<details open>\n" : "<details>\n";
+            enterAround(r, r.detailsAt);
+            const bool last = details_.size() + 1 == d;
+            details_.push_back({last ? r.detailsLine : -1, last ? r.detailsIndex : 0, open_.size()});
+            out_ += last && r.detailsOpen ? "<details open>\n" : "<details>\n";
+        }
+    }
+
+    // Puts the writer in the first `levels` list items and quotes of `r`'s
+    // boxes, closing what else is open.
+    void enterAround(const MdRun& r, int levels) {
+        const std::vector<Box> path = pathFor(r);
+        size_t want = 0;
+        for (int seen = 0; want < path.size() && seen < levels; want++)
+            if (path[want].kind != Box::List) seen++;
+        size_t keep = 0;
+        while (keep < open_.size() && keep < want && open_[keep].kind == path[keep].kind &&
+               open_[keep].alert == path[keep].alert)
+            keep++;
+        closeTo(keep);
+        for (size_t k = keep; k < want; k++) {
+            const Box& b = path[k];
+            if (b.kind == Box::Quote)
+                out_ += b.alert ? std::string("<div class=\"markdown-alert markdown-alert-") +
+                                      MarkdownParser::alertName(b.alert) + "\">\n"
+                                : "<blockquote>\n";
+            else
+                out_ += b.kind == Box::List ? "<ul>\n" : "<li>";
+            open_.push_back(b);
         }
     }
 
     void closeTo(size_t keep) {
         while (open_.size() > keep) {
+            // A <details> opened inside this box closes first.
+            while (!details_.empty() && details_.back().base >= open_.size()) {
+                details_.pop_back();
+                out_ += "</details>\n";
+            }
             const Box b = open_.back();
             open_.pop_back();
             if (b.kind == Box::Item) out_ += "</li>\n";
@@ -333,6 +382,10 @@ private:
             if (last && b.kind == Box::Item) break;                       // a new item
             if (last && b.kind == Box::List && (a.ordered != b.ordered || a.delim != b.delim))
                 break;   // another list
+            // The parser counts a list's items on from its first, so a
+            // number that is not the next one starts another list (after
+            // a comment or a link definition that ended the first).
+            if (last && b.kind == Box::List && a.ordered && start != a.next) break;
             keep++;
         }
         closeTo(keep);
@@ -361,6 +414,7 @@ private:
             }
             open_.push_back(b);
         }
+        if (newItem && open_.size() >= 2) open_[open_.size() - 2].next = start + 1;
     }
 
     void unit(size_t from, size_t to) {

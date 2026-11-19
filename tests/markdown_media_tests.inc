@@ -129,6 +129,40 @@ static void testMarkdownMedia() {
                         "<strong>bold</strong>.</p>\n</details>\n<p>After</p>") != std::string::npos);
         CHECK(MarkdownHtml::page("<details open>\n<summary>S</summary>\n\nB\n\n</details>\n", "t")
                   .find("<details open>") != std::string::npos);
+        // Round 10: two on one line are two blocks, each with its triangle,
+        // and two <details> in the export.
+        auto pair = P::parse("<details><summary>A</summary>one</details><details><summary>B"
+                             "</summary>two</details>\n\nafter\n");
+        CHECK(mdRun(pair, "A").detailsIndex == 0 && mdRun(pair, "B").detailsIndex == 1);
+        CHECK(mdRun(pair, "B").detailsLine == 0 && mdRun(pair, "two").detailsIndex == 1);
+        CHECK(mdText(P::fold(pair, shut)) == "\xE2\x96\xB8 A\n\xE2\x96\xB8 B\n\nafter\n");
+        const std::string pairHtml = MarkdownHtml::page(
+            "<details><summary>A</summary>one</details><details><summary>B</summary>two"
+            "</details>\n", "t");
+        CHECK(pairHtml.find("<details>\n<summary><strong>A</strong></summary>\n<p>one</p>\n"
+                            "</details>\n<details>\n<summary><strong>B</strong></summary>\n"
+                            "<p>two</p>\n</details>") != std::string::npos);
+        // In a quote: the summary is the block's own (no made-up "Details"
+        // beside it), and the export puts <details> inside the quote.
+        auto quoted = P::parse("> <details><summary>S</summary>\n>\n> body\n>\n> </details>\n"
+                               "\nafter\n");
+        CHECK(mdRun(quoted, "S").summary && mdRun(quoted, "S").quote &&
+              mdRun(quoted, "S").detailsAt == 1);
+        CHECK(mdRun(quoted, "body").details == 1 && mdRun(quoted, "after").details == 0);
+        CHECK(mdText(P::fold(quoted, shut)) == "\xE2\x96\xB8 S\n\nafter\n");
+        const std::string quotedHtml = MarkdownHtml::page(
+            "> <details><summary>S</summary>\n>\n> body\n>\n> </details>\n", "t");
+        CHECK(quotedHtml.find("<blockquote>\n<details>\n<summary><strong>S</strong></summary>"
+                              "\n<p>body</p>\n</details>\n</blockquote>") != std::string::npos);
+        // Left open in the quote, it ends with the quote.
+        auto unquoted = P::parse("> <details><summary>S</summary>\n>\n> body\n\nafter\n");
+        CHECK(mdRun(unquoted, "body").details == 1 && mdRun(unquoted, "after").details == 0);
+        // One around a quote and a list holds them both.
+        const std::string around = MarkdownHtml::page(
+            "<details><summary>S</summary>\n\n> q\n\n- i\n\n</details>\n", "t");
+        CHECK(around.find("<details>\n<summary><strong>S</strong></summary>\n<blockquote>\n"
+                          "<p>q</p>\n</blockquote>\n<ul>\n<li>i</li>\n</ul>\n</details>") !=
+              std::string::npos);
         // Unbalanced and deep tags stay cheap and harmless.
         std::string deep;
         for (int k = 0; k < 5000; k++) deep += "<details><summary>s</summary>\n";
