@@ -365,7 +365,13 @@ view is disposed (on `unrealize`), or dispose loops forever.
   the editor's font with the old name selected, its text where the name's
   is, the border 2 points above the line, and "Return to rename, Esc to
   cancel" goes to the status bar (`flash:`); lsp_fixes checks the field's
-  frame meets the name's line and not the next; references and
+  frame meets the name's line and not the next. The panel losing the
+  keyboard cancels (a click elsewhere), except between
+  NSApplicationWillResignActive and DidBecomeActive (`waitingForApp`):
+  switching apps keeps the box and its typing (D2 on 1.6.3), the panel
+  does not hide on deactivate, and it takes the keyboard back a turn after
+  the app returns, if its window has it or nothing does; lsp_fixes posts
+  those notifications around a typed name. References and
   fixes share `MCPickerPopup`, which never takes the keyboard (keys through
   `handleCommand:`). Fixes send the diagnostics touching the caret, else the
   caret line's; an action without its edit is resolved, its edit applied, then

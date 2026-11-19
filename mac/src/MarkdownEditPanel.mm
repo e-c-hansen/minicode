@@ -2,7 +2,7 @@
 #import "MarkdownEditPanel.h"
 #import "EditorFont.h"
 
-// Return commits, Shift+Return types a newline, Escape cancels.
+// Return applies, Shift+Return types a newline, Escape cancels.
 @interface MCMarkdownEditText : NSTextView
 @property(nonatomic, copy) void (^onCommit)(void);
 @property(nonatomic, copy) void (^onCancel)(void);
@@ -32,6 +32,12 @@
     void (^_commit)(NSString *);
     void (^_addItem)(NSString *);
     BOOL _adding;
+    // The text the box opened with, and whether its draft has been dealt
+    // with (applied, or dropped by Esc or Cancel): a popover closed any
+    // other way (a click elsewhere in the window, its window closing)
+    // applies what was typed rather than losing it (popoverWillClose:).
+    NSString *_original;
+    BOOL _settled;
     __weak NSView *_view;
     NSRect _rect;
     CGFloat _width;
@@ -42,7 +48,17 @@
 - (BOOL)shown { return _popover.shown; }
 
 - (void)close {
+    _settled = YES;
     [_popover performClose:nil];
+}
+
+- (BOOL)edited {
+    return _editor && !_settled && ![_editor.string isEqualToString:_original ?: @""];
+}
+
+- (void)commitEditing {
+    if ([self edited]) [self save:nil];
+    else [self close];
 }
 
 - (void)showText:(NSString *)text
@@ -129,7 +145,9 @@
     editor.onCommit = ^{ [weakSelf save:nil]; };
     editor.onCancel = ^{ [weakSelf close]; };
 
-    NSButton *save = [NSButton buttonWithTitle:@"Save" target:self action:@selector(save:)];
+    // Apply, not Save: the edit goes into the document, which Cmd+S (or
+    // auto-save) then writes, as typing in the source would.
+    NSButton *save = [NSButton buttonWithTitle:@"Apply" target:self action:@selector(save:)];
     save.bezelStyle = NSBezelStyleRounded;
     save.keyEquivalent = @"\r";
     save.frame = NSMakeRect(width - 92, 10, 80, 26);
@@ -152,11 +170,17 @@
 
     NSViewController *vc = [[NSViewController alloc] init];
     vc.view = content;
+    _settled = YES;   // the box this one replaces: its draft was dealt with
     [_popover performClose:nil];
     _popover = [[NSPopover alloc] init];
     _popover.contentViewController = vc;
-    _popover.behavior = NSPopoverBehaviorTransient;
+    // Semi-transient: a click elsewhere in the window closes it, but
+    // switching to another app and back does not (transient did, and what
+    // was typed went with it: D2 on 1.6.3).
+    _popover.behavior = NSPopoverBehaviorSemitransient;
     _popover.delegate = self;
+    _original = [text copy] ?: @"";
+    _settled = NO;
     NSView *view = _view;
     if (!view) return;
     _anchor = [self anchorForWidth:width inView:view];
@@ -198,15 +222,28 @@ static const CGFloat kEdgeGap = 4;
 
 - (void)save:(id)sender {
     NSString *text = [_editor.string copy] ?: @"";
-    const BOOL adding = _adding;
-    void (^commit)(NSString *) = _commit;
-    void (^addItem)(NSString *) = _addItem;
     [self close];
-    if (adding) {
-        if (text.length && addItem) addItem(text);
-    } else if (commit) {
-        commit(text);
+    [self apply:text];
+}
+
+- (void)apply:(NSString *)text {
+    if (_adding) {
+        if (text.length && _addItem) _addItem(text);
+    } else if (_commit) {
+        _commit(text);
     }
+}
+
+// AppKit closing the box on its own (a click elsewhere in the window, the
+// window closing): what was typed is applied, one undoable edit, never
+// dropped unseen. Esc, Cancel, Apply and a box replacing this one have
+// settled it first.
+- (void)popoverWillClose:(NSNotification *)note {
+    if (note.object != _popover || _settled) return;
+    const BOOL edited = [self edited];
+    NSString *text = [_editor.string copy] ?: @"";
+    _settled = YES;
+    if (edited) [self apply:text];
 }
 
 - (void)popoverDidClose:(NSNotification *)note {

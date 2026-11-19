@@ -233,6 +233,7 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
                                  restarting ? @"Restart" : @"Quit"))
         return NSTerminateCancel;
     for (EditorController *c in [self.controllers copy]) {
+        [c commitPageEdit];   // a page edit still open is asked about too, not dropped
         if (!c.hasUnsavedChanges) continue;
         if (restarting && [c keepUnsavedTabsForRestart]) continue;   // they come back
         [c.window makeKeyAndOrderFront:nil];
