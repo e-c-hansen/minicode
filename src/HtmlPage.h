@@ -84,6 +84,25 @@ enum class Verdict {
 Verdict decide(const Navigation &nav, const std::string &own,
                const std::set<std::string> &requested);
 
+// Whether following an address of this scheme hands it to another app (any
+// scheme but http, https and file: zoommtg:, smb:, mailto:, an app's own).
+// A link the user clicked to one is still asked about first (the Mac's sheet,
+// `openAppQuestion`): a page whose scripts run can click its own links and
+// send its own forms (a.click(), form.submit()), WebKit reports those as the
+// user's (LinkActivated, FormSubmitted), and the Mac has no public sign of a
+// real click to tell them apart. WebKitGTK has one, is_user_gesture.
+bool opensAnotherApp(const std::string &scheme);
+
+// The question asked before a link opens another app, naming the app
+// ("Open in zoom.us?"; "Open in another app?" when none is known), the line
+// under it naming the address (cut to 80 characters), and its buttons and
+// box (the box refuses, unasked, the page's later ones until it loads again,
+// so a page clicking its own link over and over cannot hold the window).
+std::string openAppQuestion(const std::string &app);
+std::string openAppDetail(const std::string &url);
+extern const char *const kOpenApp;        // "Open"
+extern const char *const kRefuseMore;     // "Refuse any more from this page"
+
 // The main frame has started loading `nav` (the scheme, path and query of
 // its address): Keep what is the page's own file or about:blank; otherwise
 // stop it and put the page back, and Open the address, or only restore it

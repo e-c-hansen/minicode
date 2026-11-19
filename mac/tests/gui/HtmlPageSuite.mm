@@ -8,8 +8,9 @@
 // source and back; a save, and a write from outside, load the page again
 // with its scroll kept; a link opens its file in a tab of its own; a meta
 // refresh to zoommtg:// never reaches openURL:, nor one to https:// the
-// browser pane while scripts are off; a page with no scripts is never
-// asked about. Open Preview to the Side puts the
+// browser pane while scripts are off; a link to another app asks first,
+// whether the page's script clicked it or the user did; a page with no
+// scripts is never asked about. Open Preview to the Side puts the
 // page beside the editable source, follows the typing before any save
 // (its stylesheet and picture still the folder's), and closes again.
 //
@@ -321,6 +322,90 @@ MC_GUI_SUITE(html_page) {
             GCHECK_EQ_STR(v, @"yes");
             done();
         });
+    });
+    // A page whose scripts run can click its own link (a.click()) or send
+    // its own form, and WebKit reports those as the user's (LinkActivated,
+    // FormSubmitted), so a link to another app was opened with no click.
+    // Every link to another app now asks first: the page's own click,
+    // answered Cancel, opens nothing; a real click (mouse down and up handed
+    // to the web view) asks again, and Open hands it to openURL:.
+    __block NSUInteger sheetsBefore = 0;
+    NSString *const appLink = @"zoommtg://zoom.us/join?confno=2";
+    MCGuiStep(@"a page whose script clicks its own zoommtg:// link at load", ^{
+        openedBefore = MCGuiOpenedURLs().count;
+        sheetsBefore = MCGuiSheetsShown().count;
+        MCGuiAnswerAlerts(@[ @(NSAlertSecondButtonReturn) ]);   // Cancel
+        MCGuiWriteFile(F(@"click.html"),
+                       [NSString stringWithFormat:
+                           @"<html><head><title>Click</title></head><body style='margin:0'>"
+                           @"<a id=app href='%@' style='display:block;margin:40px;width:300px;"
+                           @"height:80px;font-size:30px;background:#ddd'>join</a>"
+                           @"<script>document.getElementById('app').click();"
+                           @"document.body.dataset.clicked = 'yes';</script></body></html>",
+                           appLink]);
+        GCHECK([c showFile:F(@"click.html")]);
+        GCHECK(Page(c).runsScripts);
+    });
+    MCGuiWait(@"loads, and asks before opening another app", 20, ^BOOL {
+        return Loaded(c, @"click.html", 1) && MCGuiSheetsShown().count > sheetsBefore;
+    });
+    // Time is the condition: the sheet's answer (Cancel) has had its turn.
+    MCGuiPause(0.3);
+    MCGuiStep(@"the page's own click, cancelled, reached no openURL:", ^{
+        MCGuiNote(@"asked \"%@\" (%@); opened %@", MCGuiSheetsShown().lastObject,
+                  MCGuiLastAlertInformative(), MCGuiOpenedURLs());
+        GCHECK(MCGuiSheetsShown().count == sheetsBefore + 1);
+        GCHECK([MCGuiSheetsShown().lastObject hasPrefix:@"Open in "]);
+        GCHECK([MCGuiLastAlertInformative() containsString:appLink]);
+        GCHECK(MCGuiLastSheetWindow() == c.window);
+        GCHECK(MCGuiOpenedURLs().count == openedBefore);
+        GCHECK([c.currentPath hasSuffix:@"/click.html"] && c.viewerKind == MCViewerHtml);
+    });
+    __block NSRect linkBox = NSZeroRect;
+    MCGuiAsync(@"where the link is on the page", 10, ^(MCGuiDone done) {
+        Ask(c, @"(function () { var r = document.getElementById('app').getBoundingClientRect();"
+               @" return [r.left, r.top, r.width, r.height, document.body.dataset.clicked || 'no']; })()",
+            ^(id v) {
+                NSArray *a = [v isKindOfClass:NSArray.class] ? v : nil;
+                GCHECK(a.count == 5);
+                if (a.count == 5) {
+                    linkBox = NSMakeRect([a[0] doubleValue], [a[1] doubleValue], [a[2] doubleValue],
+                                         [a[3] doubleValue]);
+                    GCHECK_EQ_STR(a[4], @"yes");
+                }
+                done();
+            });
+    });
+    MCGuiStep(@"a real click on the link, answered Open", ^{
+        sheetsBefore = MCGuiSheetsShown().count;
+        MCGuiAnswerAlerts(@[ @(NSAlertFirstButtonReturn) ]);   // Open
+        WKWebView *w = Web(c);
+        NSPoint inView = NSMakePoint(NSMidX(linkBox), NSMidY(linkBox));
+        if (!w.isFlipped) inView.y = NSHeight(w.bounds) - inView.y;
+        const NSPoint at = [w convertPoint:inView toView:nil];
+        MCGuiNote(@"link %@, clicked at %@ in the window", NSStringFromRect(linkBox),
+                  NSStringFromPoint(at));
+        const NSTimeInterval t = NSProcessInfo.processInfo.systemUptime;
+        NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:at
+                                      modifierFlags:0 timestamp:t
+                                       windowNumber:c.window.windowNumber context:nil
+                                        eventNumber:0 clickCount:1 pressure:1];
+        NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:at
+                                    modifierFlags:0 timestamp:t + 0.05
+                                     windowNumber:c.window.windowNumber context:nil
+                                      eventNumber:0 clickCount:1 pressure:0];
+        [w mouseDown:down];
+        [w mouseUp:up];
+    });
+    MCGuiWait(@"asks, and Open hands the address to openURL:", 20, ^BOOL {
+        for (NSURL *u in MCGuiOpenedURLs())
+            if ([u.absoluteString isEqualToString:appLink]) return YES;
+        return NO;
+    });
+    MCGuiStep(@"(one question for the click, one address opened, the page still the file)", ^{
+        GCHECK(MCGuiSheetsShown().count == sheetsBefore + 1);
+        GCHECK(MCGuiOpenedURLs().count == openedBefore + 1);
+        GCHECK([c.currentPath hasSuffix:@"/click.html"] && c.viewerKind == MCViewerHtml);
     });
     MCGuiStep(@"html.scripts = off: never run, never asked", ^{
         MCGuiSetSettings(@"lsp.enabled = false\nhtml.scripts = off\n");
