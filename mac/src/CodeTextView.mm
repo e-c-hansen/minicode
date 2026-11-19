@@ -174,18 +174,23 @@ struct Counting {
 // needsDisplay = YES asks to redraw the whole view, and NSTextView's
 // setNeedsDisplayInRect: lays out every glyph in the rect it is given:
 // clearing a file's squiggles laid out all of a 25 MB file (2.5 s), after
-// which every keystroke walked every line fragment. So the whole view is
-// marked without that layout (TextKit marks a new text's column the same
-// way, the document's whole height at once; only what is drawn costs).
-// It was the visible and prepared rects until 2026-11-18, and that left
-// ink: NSTextView marks itself whole this way when its inset changes (a
-// page's centered margins, as the pane widens), and the layer keeps
-// drawn tiles past those rects, whose column the new layout's marks
-// redrew while their margins kept an older page (the owner's STATUS.md:
-// a second, narrower copy of the page in the left margin, cut off where
-// the page's column starts).
+// which every keystroke walked every line fragment. So only what shows,
+// and what AppKit drew ahead of the scroll (the prepared rect), is marked
+// that way, laid out as before. The rest of the view is marked without
+// layout (as TextKit marks a new text's column, the document's whole
+// height at once; only what is drawn costs): NSTextView marks itself whole
+// this way when its inset changes (a page's centered margins, as the pane
+// widens), and the layer keeps drawn tiles past the visible and prepared
+// rects, whose column the new layout's marks redrew while their margins
+// kept an older page (the owner's STATUS.md, 2026-11-18: a second,
+// narrower copy of the page in the left margin, cut off where the page's
+// column starts). The layout of what shows stays: an inset that changes
+// while the page is being laid out (a scroll bar appearing) stops
+// ensureLayoutForTextContainer short, and this is what laid the screen
+// out again (markdown_preview's picture sizes).
 - (void)setNeedsDisplay:(BOOL)flag {
     if (!flag) { [super setNeedsDisplay:NO]; return; }
+    [self setNeedsDisplayInRect:NSUnionRect(self.visibleRect, self.preparedContentRect)];
     [self setNeedsDisplayInRect:self.bounds avoidAdditionalLayout:YES];
 }
 

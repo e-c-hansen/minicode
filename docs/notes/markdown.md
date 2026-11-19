@@ -131,7 +131,11 @@ found through that list.
   margins. Both now mark `bounds` with `avoidAdditionalLayout:YES` (no
   layout, as TextKit's own column marks; only what is drawn costs), and
   `applyMarkdownMeasure` calls `redrawWholePane` whenever the inset
-  moves. A tab read again from disk while its page shows
+  moves. `setNeedsDisplay:` still marks what shows with layout first: an
+  inset that changes during layout (a legacy scroll bar appearing as a
+  page goes in) stops `ensureLayoutForTextContainer` short, and that mark
+  laid the screen out again (without it markdown_preview read a picture's
+  size as -1 by -1). A tab read again from disk while its page shows
   (`refreshDisplayKeepingPage`, from `takeDiskRead:`, `takeDiskText:` and
   `putBackText:`) is rendered at the same height down the pane, clamped
   to the new end; it went back to the top on every reload until then.
