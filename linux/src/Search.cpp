@@ -646,16 +646,25 @@ void SearchPanel::runSearch() {
     const std::string raw = gtk_editable_get_text(GTK_EDITABLE(entry_));
     const std::string query = todos ? std::string() : raw;
     lastQuery_ = query;
+    // Every row goes now and the new ones come with the results, so the
+    // keyboard, when it is in the list, waits on the window's box until
+    // then (giveKeyboardBack). Left on its row, it went with the row: a
+    // frame before the results (the worker's thread waiting for a CPU, or
+    // Alt+C's redraw) left the window no focus at all, so the next key did
+    // nothing and a Down only put it back on the first row.
+    if (ListKeyboard::hold(listView_, keyboardHolder())) keyboardHeld_ = true;
     clearResults();
     found_.clear();
     dismissed_.clear();   // a new search shows every row again, as VS Code's does
     if (todos && scope_.empty()) {
         searching_ = false;
         setStatus("");
+        giveKeyboardBack();
         return;
     }
     if (!todos && (!FolderSearch::isSearchable(query, opts) || scope_.empty())) {
         searching_ = false;
+        giveKeyboardBack();
         setStatus(!note.empty() ? note
                   : FolderSearch::normalizeQuery(query).empty() ? ""
                                                                 : "Type at least 2 characters");
@@ -777,6 +786,29 @@ void SearchPanel::showRows() {
     ptrs.push_back(nullptr);
     gtk_string_list_splice(rows_, 0,
                            g_list_model_get_n_items(G_LIST_MODEL(rows_)), ptrs.data());
+    giveKeyboardBack();
+}
+
+// The box around the fields and the list: focusable only while it holds the
+// keyboard for the list (a box takes the focus itself; the scroller would
+// pass it to the list's row).
+GtkWidget* SearchPanel::keyboardHolder() const {
+    return gtk_widget_get_parent(gtk_widget_get_parent(listView_));
+}
+
+// The keyboard runSearch took off the list, back on the first row of the
+// new results (the query's field when none came), unless something else
+// took it meanwhile.
+void SearchPanel::giveKeyboardBack() {
+    if (!keyboardHeld_) return;
+    keyboardHeld_ = false;
+    GtkWidget* holder = keyboardHolder();
+    GtkRoot* root = gtk_widget_get_root(holder);
+    if (root && gtk_root_get_focus(root) == holder) {
+        if (!hits_.empty()) focusFirstResult();
+        else gtk_widget_grab_focus(entry_);
+    }
+    gtk_widget_set_focusable(holder, FALSE);
 }
 
 // ------------------------------------------------------------------ replace
@@ -1150,7 +1182,7 @@ void SearchPanel::dismissFileOf(guint row) {
 // until then lost (ListKeyboard.h), so the window's box holds it meanwhile
 // (a box takes the focus itself; the scroller would pass it to the list).
 void SearchPanel::removeRows(const std::function<bool(const FolderSearchMatch&)>& gone) {
-    GtkWidget* holder = gtk_widget_get_parent(gtk_widget_get_parent(listView_));
+    GtkWidget* holder = keyboardHolder();
     const bool had = ListKeyboard::hold(listView_, holder);
     guint first = GTK_INVALID_LIST_POSITION;
     for (guint end = (guint)hits_.size(); end > 0;) {

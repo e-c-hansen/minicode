@@ -11,8 +11,10 @@
 // Enter in the replacement never replaces (it goes into the results, no
 // question, no file written); the results take the keyboard (the arrows
 // move between rows, a click selects its row and previews it with the
-// search window still the active one); a row's ×, its right click menu's
-// Dismiss File and Delete dismiss a line, a file and a line, and Replace
+// search window still the active one, and a search run from the list, or
+// Alt+C there, gives the keyboard to the new first row); a row's ×, its
+// right click menu's Dismiss File and Delete dismiss a line, a file and a
+// line, and Replace
 // All (Ctrl+Alt+Enter) then counts them out and leaves them unchanged; and
 // Ctrl+` in the search window brings the editor window up with the
 // keyboard in its terminal, and never hides it from there.
@@ -314,11 +316,20 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiWriteFile(d4("b.txt"), "a cat\n");
         MCGuiWriteFile(d4("c.txt"), "cat c\n");
         MCGuiWriteFile(d4("d.txt"), "cat d\n");
+        // The query emptied first, so that setScope searches nothing: with
+        // "cat" still in it from above, its search listed these six rows at
+        // once, the wait below passed on them, and the typed "cat" was
+        // searched 0.35 s later, after Enter had gone into the results.
+        gtk_editable_set_text(GTK_EDITABLE(panel()->queryEntry()), "");
         panel()->setScope(dir4());
         MCGuiSetKeyWindow(panelWindow());
         typeInto(panel()->queryEntry(), "cat");
     });
-    MCGuiWait("six rows", 10, [] { return idle() && panel()->matches().size() == 6; });
+    // The typed query's own search ("ca", searched in a pause between
+    // keys, lists the same six rows).
+    MCGuiWait("six rows", 10, [] {
+        return idle() && panel()->matches().size() == 6 && panel()->searchedQuery() == "cat";
+    });
     MCGuiStep("\"dog\" typed in the replacement, then Enter", [] {
         GCHECK_EQ_STR(panel()->statusText(), "7 matches in 4 files");
         typeInto(panel()->replaceEntry(), "dog");
@@ -345,6 +356,35 @@ MC_GUI_SUITE(replace_in_folder) {
     MCGuiWait("the second row", 10, [] { return keyboardInResults() && selected() == 1; });
     MCGuiStep("Down again", [] { MCGuiKey("down"); });
     MCGuiWait("the third row", 10, [] { return keyboardInResults() && selected() == 2; });
+
+    // ---- a search while the keyboard is in the results keeps it there
+    MCGuiStep("the search run again from the third row", [] {
+        panel()->runSearch();
+        // Held by the window while the list is empty, never by the removed
+        // row (whose window had no focus at all after its next frame).
+        GtkWidget* f = gtk_root_get_focus(GTK_ROOT(panelWindow()));
+        GCHECK(f && gtk_widget_get_root(f) == GTK_ROOT(panelWindow()));
+        GCHECK(panel()->searching());
+    });
+    MCGuiWait("the keyboard on the first row of the new results", 10, [] {
+        return idle() && panel()->matches().size() == 6 && keyboardInResults() && selected() == 0;
+    });
+    MCGuiStep("Down", [] { MCGuiKey("down"); });
+    MCGuiWait("the second row, not the first again", 10, [] {
+        return keyboardInResults() && selected() == 1;
+    });
+    MCGuiStep("Alt+C from the results: Match Case, a search", [] { MCGuiKey("alt+c"); });
+    MCGuiWait("the keyboard on the first row again", 10, [] {
+        return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(panel()->caseButton())) && idle() &&
+               panel()->matches().size() == 6 && keyboardInResults() && selected() == 0;
+    });
+    MCGuiStep("Alt+C again", [] { MCGuiKey("alt+c"); });
+    MCGuiWait("Match Case off, the keyboard on the first row", 10, [] {
+        return !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(panel()->caseButton())) && idle() &&
+               panel()->matches().size() == 6 && keyboardInResults() && selected() == 0;
+    });
+    MCGuiStep("Down", [] { MCGuiKey("down"); });
+    MCGuiWait("the second row", 10, [] { return keyboardInResults() && selected() == 1; });
     MCGuiStep("the keyboard back in the replacement; a click on b.txt's row", [] {
         MCGuiClick(panel()->replaceEntry());
     });
