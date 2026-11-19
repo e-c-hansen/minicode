@@ -27,7 +27,11 @@
 // nothing to undo, and the status bar says so when the tab is first shown,
 // and whether the file has gone or changed since (then the tab asks Keep
 // Mine or Reload when shown, as for any change on disk). At launch a window
-// opens for every folder with backups no running window holds.
+// opens for every folder with backups no running window holds. Backups are
+// per window: each names its window's key, a launch bringing windows back
+// leaves each window's backups to it, and a second backup of a file the
+// window brings back (another window's unsaved text in it) comes back
+// beside it as "a (unsaved copy).txt", never deleted unseen.
 //
 // Auto-save (editor.auto-save, Settings.h). after-delay writes every tab
 // with unsaved changes once typing has paused for editor.auto-save-delay;
@@ -128,8 +132,17 @@ public:
     // The window is going: another window on the folder saves instead, or
     // this one does; nothing is written for it after this.
     void saveSessionClosing();
-    // This window's record: folder, own tabs, size and panels.
+    // This window's record: folder, own tabs, size and panels, and its
+    // backup key.
     TabSessions::Window windowRecord();
+    // The window's name in the backups (Backups::Entry::window), kept in its
+    // record (TabSessions::Window::backupKey): made when first asked for,
+    // and a window brought back from a record takes its record's before it
+    // restores, so it gets its own unsaved buffers back and leaves another
+    // window's on the same folder to that window (round 10's workspace item
+    // 1, the Mac's backupKey).
+    const std::string& backupKey();
+    void setBackupKey(const std::string& key);
     // The folder's tabs back in this window (or `own`, a window's own tabs
     // from its record), with any backups of its files no running process
     // holds.
@@ -163,11 +176,17 @@ private:
     // since the backup was taken (it is then asked about when shown).
     bool takeBackup(Document* d, const std::string& id, const Backups::Entry& e,
                     const std::string& text);
+    // Backups of files this window brought back from another backup (or
+    // holds from the session's host): each a tab of its own beside the file,
+    // "a (unsaved copy).txt" (Backups::draftPath), or removed when its text
+    // is the file's tab's. A note for the status bar when any came back.
+    std::string restoreConflicts(const std::vector<Backups::Restore::Item>& conflicts);
     Settings::AutoSave autoSaveMode() const;
     bool takesAutoSave(Document* d) const;
 
     Editor* editor_;
     std::string key_;
+    std::string backupKey_;
     Host host_;
     bool closing_ = false;
     // When backups, auto-saves and the session are written (SavePlan.h), on

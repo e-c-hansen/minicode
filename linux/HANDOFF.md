@@ -8113,3 +8113,72 @@ session, asks only about the user's own and refuses the script's unasked.
   real handler's name (Zoom, a mail app) from the desktop's defaults, and
   Return and Esc on it by hand. No real app was started: the checks
   record the desktop's handler.
+
+### 124. Backups by window, and UTF-8 with stray bytes kept (the Mac's #247; November 2026)
+
+The Mac's #247 (round 10's workspace items 1 and 2) on GTK, through the
+core's rules: `Backups::plan` with a window and the reserved keys,
+`Backups::draftPath`, `TabSessions::Window::backupKey`, and
+`FolderSearch::decodeFileText`'s `Utf8Raw`. `../docs/notes/sessions.md`
+has the rules ("Backups by window", "UTF-8 with stray bytes").
+
+- **Before** (the new checks run against the GTK code without this
+  change). Two windows on one folder, each with different unsaved text
+  in a.txt, then killed: every GTK window planned with no key, so the
+  first window back took the newest a.txt and every other backup of the
+  folder, whichever window's they were; which text a window got followed
+  their ages and the order the windows came back in, not the window that
+  wrote it (the backups named no window). Until #247 the older a.txt was
+  deleted unseen (`r.discard`); with #247's stopgap in `BackupStore` it
+  waited on disk and the next window took it. A launch with one window on
+  the folder got the newest a.txt and left the other on disk unshown:
+  Don't Save asked about two files and the third backup stayed behind
+  (and later suites' launches opened a window for it). A held document from the session's
+  host removed any backup of its file a process that went had left,
+  unread. A mostly-UTF-8 file with a stray byte read whole as
+  Windows-1252 (`readsAsWindows1252`, item 102) until #247's core change;
+  GTK took that change through `Document::readText` (the new
+  `latin1_files` part passed against the old GTK code too), and this item
+  adds its tooltip and Replace in Folder's note.
+- **Now.** Every backup names its window (`Persistence::backupKey`, a
+  `BackupStore::newId` kept in the window's record and taken back from it
+  by `setBackupKey` in `newWindow`; `writeBackup` sets `Entry::window`).
+  `restoreOpenWindows` reserves every record's key
+  (`BackupStore::reserveWindowKeys`) before the first window opens, and
+  `planForRoot(root, files, window)` hands the window and the reserved
+  keys to `Backups::plan`: each window gets its own back, and nothing of
+  another's. A second backup of a file the window brings back (a
+  `Restore::conflicts` entry, or a backup of a file it holds from the
+  session's host whose text differs from the held document's) opens after
+  the session's tabs as "a (unsaved copy).txt" (`Backups::draftPath`):
+  `Persistence::restoreConflicts`, the Mac's `restoreConflictingBackups:`,
+  rewrites the backup under that name first (`BackupStore::move`, on the
+  store's thread, `diskExisted` false, held by this process for the
+  window), so it is never without a copy on disk, then makes the tab
+  (`addTab`, `takeBackup`): unsaved, not on disk until Ctrl+S, never
+  auto-saved (`autoSaveNow` now skips a buffer that was never on disk, as
+  the Mac's untitled tabs). Its note when shown is "Unsaved changes to
+  a.txt from another window, kept apart in a (unsaved copy).txt", and the
+  window says the same once its tab on show is up. The only backup removed
+  is one whose text is already the file's tab's.
+  A UTF-8 file with stray bytes opens as UTF-8, its label the core's
+  ("UTF-8, bad bytes kept", with a tooltip saying the bytes are saved back
+  as they were), a backup records `file-encoding: utf8raw`, and a save,
+  edited or not, writes the stray bytes back unchanged. Replace in Folder
+  leaves such a file alone and now says "has bytes that are not UTF-8"
+  (`notUtf8Reason`, Search.cpp).
+- **Checks**: `backups` (its new part and three children:
+  `_backups_two_writer` opens two windows on one folder, types different
+  text into a.txt in both and b.txt in the second, and is SIGKILLed;
+  `_backups_two_restore`, launched with no path, finds both windows back,
+  each with its own tabs and text and no copy, all three backups still on
+  disk, and is SIGKILLed in turn; `_backups_two_copy`, opened on the
+  folder, gets a.txt with one text and "a (unsaved copy).txt" with the
+  other, not on disk, its backup moved under that name, the note, and
+  Don't Save leaves nothing); `latin1_files` (a UTF-8 file with 0xFF and
+  0x80 opens as UTF-8 with the label, an unchanged save and an edit
+  elsewhere both keep the file's bytes, the edit's arrow written once).
+- **Left**: the copy tab is a plain unsaved tab (the Mac marks it
+  `draftOf`); Find in Folder's streamed read of a large file still
+  switches to Windows-1252 at the first piece that is not UTF-8 (round 10
+  item 3, open on both ports).

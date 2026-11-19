@@ -448,17 +448,24 @@ static void updateTitle(void* userp) {
                        : p.empty()           ? "Ready"
                                              : p.c_str());
     // The file's encoding, when it is not plain UTF-8 (the Mac's
-    // updateEncodingLabel): a Windows-1252 file opened as text, UTF-16, or
-    // UTF-8 with its mark.
+    // updateEncodingLabel): a Windows-1252 file opened as text, UTF-16,
+    // UTF-8 with its mark, or UTF-8 with stray bytes kept ("UTF-8, bad
+    // bytes kept", FolderSearch::encodingLabel's).
     if (app->encodingLabel) {
         const std::string enc = app->editor->encodingLabel();
+        const Document* shown = app->editor->active();
+        const FolderSearch::TextEncoding how =
+            shown ? shown->fileEncoding().encoding : FolderSearch::TextEncoding::Utf8;
         gtk_label_set_text(GTK_LABEL(app->encodingLabel), enc.c_str());
         gtk_widget_set_tooltip_text(
             app->encodingLabel,
             enc.empty() ? nullptr
-            : enc == "Windows-1252"
+            : how == FolderSearch::TextEncoding::Windows1252
                 ? "The file's encoding, kept when it is saved; a character Windows-1252 cannot "
                   "store has it saved as UTF-8"
+            : how == FolderSearch::TextEncoding::Utf8Raw
+                ? "UTF-8 with bytes that are not UTF-8, shown as boxes and saved back as they "
+                  "were"
                 : "The file's encoding, kept when it is saved");
         gtk_widget_set_visible(app->encodingLabel, !enc.empty());
     }
@@ -4374,11 +4381,21 @@ static bool launchedFromDesktop(const std::string& cwd) {
 static bool restoreOpenWindows() {
     if (Bench::active()) return false;
     const std::vector<TabSessions::Window> list = Persistence::savedWindows();
+    auto there = [](const TabSessions::Window& w) {
+        struct stat st;
+        return stat(w.root.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+    };
+    // Each window's unsaved buffers wait for it: the first window back on a
+    // folder no longer takes another's (round 10's workspace item 1, the
+    // Mac's windowsToRestore).
+    std::vector<std::string> keys;
+    for (const TabSessions::Window& w : list)
+        if (there(w)) keys.push_back(w.backupKey);
+    BackupStore::shared().reserveWindowKeys(keys);
     App* front = nullptr;
     // Opened back to front, so the first ends up in front.
     for (auto it = list.rbegin(); it != list.rend(); ++it) {
-        struct stat st;
-        if (stat(it->root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        if (!there(*it)) continue;
         front = newWindow(it->root, "", &*it);
     }
     if (front) gtk_window_present(GTK_WINDOW(front->window));
@@ -5212,6 +5229,9 @@ static App* newWindow(const std::string& root, const std::string& file,
             app->tree->restoreFocus(saved);
             updateTreeFocusActions(app);
         }});
+    // A window brought back is the same window in the backups: its own
+    // unsaved buffers come back to it (Persistence::backupKey).
+    if (record) app->persist->setBackupKey(record->backupKey);
     app->editor->onDocumentsChanged = [app](Document* d) {
         if (!app->dead && app->persist) app->persist->changed(d);
     };
