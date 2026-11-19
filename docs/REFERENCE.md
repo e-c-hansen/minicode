@@ -478,13 +478,13 @@ cmd+k = -workbench.action.terminal.clear
 
 The menus, the command palette and the shortcut hints follow the file as soon as it is saved. A key given to a command is taken from whatever had it before, unless the two never work in the same place: one only in the editor and the other only in the terminal, say, or one only in a web page or a PDF and the other everywhere else, or the terminals' zoom and the editor's. Two lines giving one key to two commands are a mistake, and the status bar says so, as it does for the settings file. The few keys the editor and the terminal handle themselves, such as moving lines with <kbd>⌥↑</kbd> and <kbd>⌥↓</kbd>, are listed at the end of the file and cannot be changed yet.
 
-On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit menu opens it, written the first time with the commands mutible for Linux has. Its modifiers are ctrl, alt, and shift; a line with cmd, from a Mac's file, is refused. While the terminal has the keyboard, plain <kbd>Ctrl</kbd> keys, function keys, and <kbd>Alt</kbd> with a letter (as Meta) go to the program in it, except <kbd>Ctrl+&#96;</kbd>, <kbd>Ctrl+0</kbd>, <kbd>Ctrl+1</kbd>, <kbd>Ctrl+Tab</kbd>, <kbd>Ctrl+Page Down</kbd>, and <kbd>Ctrl+Page Up</kbd>, the ways out of it, and <kbd>Ctrl+=</kbd>, <kbd>Ctrl+-</kbd>, and <kbd>Ctrl+Alt+0</kbd>, which zoom the terminals. Other keys with <kbd>Shift</kbd> or <kbd>Ctrl+Alt</kbd> still work there, except <kbd>Ctrl+Shift+C</kbd> and <kbd>Ctrl+Shift+V</kbd>, the terminal's copy and paste, <kbd>Ctrl+Shift+G</kbd>, <kbd>Ctrl+Shift+Space</kbd>, and <kbd>Ctrl+Shift+-</kbd>, which a shell reads as <kbd>Ctrl+G</kbd>, <kbd>Ctrl+Space</kbd>, and <kbd>Ctrl+_</kbd>, and the editor's own commands, such as folding, the line commands, and the task key, which are not bound there at all.
+On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit menu opens it, written the first time with the commands mutible for Linux has. Its modifiers are ctrl, alt, and shift; a line with cmd, from a Mac's file, is refused. While the terminal has the keyboard, plain <kbd>Ctrl</kbd> keys, function keys, and <kbd>Alt</kbd> with a letter (as Meta) go to the program in it, except <kbd>Ctrl+&#96;</kbd>, <kbd>Ctrl+0</kbd>, <kbd>Ctrl+1</kbd>, <kbd>Ctrl+2</kbd>, <kbd>Ctrl+Tab</kbd>, <kbd>Ctrl+Page Down</kbd>, and <kbd>Ctrl+Page Up</kbd>, the ways out of it, <kbd>Ctrl+I</kbd>, the inline agent, and <kbd>Ctrl+=</kbd>, <kbd>Ctrl+-</kbd>, and <kbd>Ctrl+Alt+0</kbd>, which zoom the terminals. So a shell's own keys work there as on the Mac, where mutible's keys are on <kbd>⌘</kbd>: <kbd>Ctrl+W</kbd> deletes the word before the cursor rather than closing the tab, and <kbd>Ctrl+A</kbd>, E, U, K, R, L, D, C, Z, Y, P, N, B, and F reach the shell too. VS Code's terminal on Linux sends keys to the shell the same way, apart from its terminal.integrated.commandsToSkipShell, which keeps Quick Open's <kbd>Ctrl+P</kbd> and <kbd>Ctrl+E</kbd> and its terminal find's <kbd>Ctrl+F</kbd> for itself; mutible leaves those to the shell, and Find… in the Edit menu finds in the terminal. Other keys with <kbd>Shift</kbd> or <kbd>Ctrl+Alt</kbd> still work there, except <kbd>Ctrl+Shift+C</kbd> and <kbd>Ctrl+Shift+V</kbd>, the terminal's copy and paste, <kbd>Ctrl+Shift+G</kbd>, <kbd>Ctrl+Shift+Space</kbd>, and <kbd>Ctrl+Shift+-</kbd>, which a shell reads as <kbd>Ctrl+G</kbd>, <kbd>Ctrl+Space</kbd>, and <kbd>Ctrl+_</kbd>, and the editor's own commands, such as folding, the line commands, and the task key, which are not bound there at all. A Mac-style key remapper, such as Toshy or Kinto, turns the physical <kbd>Ctrl</kbd> key into Super in every window it does not list as a terminal, mutible's among them, so its terminal gets Super+W rather than <kbd>Ctrl+W</kbd>; a keymap of the remapper's own for mutible's window (its class is ai.ible.Mutible) that turns Super and a letter back into <kbd>Ctrl</kbd> and that letter gives the shell its keys again, in the editor as well, where they then do what <kbd>Ctrl</kbd> does.
 
 | Action | macOS | Linux | Android |
 | --- | --- | --- | --- |
 | Add a cursor on the line below or above each cursor, at the same column | <kbd>⌥⌘↓</kbd>, <kbd>⌥⌘↑</kbd> | <kbd>Ctrl+Shift+Down</kbd>, <kbd>Ctrl+Shift+Up</kbd> |  |
 | Add a cursor, or take one away, to type in several places at once | <kbd>⌥</kbd>-click | <kbd>Alt</kbd>-click |  |
-| Add the next place the selected text occurs to the selection, or select the word at the cursor | <kbd>⌘D</kbd> | <kbd>Ctrl+D</kbd> |  |
+| Add the next place the selected text occurs to the selection, or select the word at the cursor | <kbd>⌘D</kbd> | <kbd>Ctrl+D</kbd> (in the terminal the program has it) |  |
 | Ask the inline agent: change the file at the cursor, write a terminal command, or hand a task to Claude Code | <kbd>⌘I</kbd> | <kbd>Ctrl+I</kbd> (edits in the editor so far) |  |
 | Browse the file tree and open the selected file | <kbd>↑</kbd>, <kbd>↓</kbd>, <kbd>⏎</kbd> | <kbd>Up</kbd>, <kbd>Down</kbd>, <kbd>Enter</kbd>; <kbd>Left</kbd> and <kbd>Right</kbd> close and open folders |  |
 | Clear the terminal's last command and its output, as Terminal.app's Clear to Previous Mark does; again for the one before | <kbd>⌘L</kbd> in the terminal (Select Line in the editor) |  |  |
@@ -492,23 +492,23 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Close an agent's note (`mutible open --note`) in the editor | <kbd>⎋</kbd>, or its × |  |  |
 | Close every tab but the one on show | <kbd>⌥⌘T</kbd> | Close Other Tabs in the File menu or the tab's right click menu |  |
 | Close the active terminal | <kbd>⌃⇧W</kbd> | <kbd>Ctrl+Alt+Shift+W</kbd> |  |
-| Close the application | <kbd>⌘Q</kbd> | <kbd>Ctrl+Q</kbd> |  |
+| Close the application | <kbd>⌘Q</kbd> | <kbd>Ctrl+Q</kbd> (in the terminal the program has it) |  |
 | Close the tab, the terminal the keyboard is in, or the browser's tab when it has the keyboard (the browser panel with its last tab) | <kbd>⌘W</kbd> | <kbd>Ctrl+W</kbd> or <kbd>Ctrl+F4</kbd> (the browser panel when it has the keyboard, the window when no tab is open; in the terminal the shell has them) |  |
 | Close the window | <kbd>⇧⌘W</kbd> | <kbd>Ctrl+Shift+W</kbd> |  |
 | Comment or uncomment the selected lines | <kbd>⌘/</kbd> | <kbd>Ctrl+/</kbd> |  |
 | Complete the word at the cursor, with a language server | <kbd>⌃Space</kbd>, or <kbd>⌥⎋</kbd> | <kbd>Ctrl+Space</kbd> | <kbd>N</kbd>, or <kbd>Ctrl+N</kbd> |
-| Copy or cut the line the cursor is on when nothing is selected, and paste such a line above the cursor's line | <kbd>⌘C</kbd>, <kbd>⌘X</kbd>, then <kbd>⌘V</kbd> | <kbd>Ctrl+C</kbd>, <kbd>Ctrl+X</kbd>, then <kbd>Ctrl+V</kbd> |  |
+| Copy or cut the line the cursor is on when nothing is selected, and paste such a line above the cursor's line | <kbd>⌘C</kbd>, <kbd>⌘X</kbd>, then <kbd>⌘V</kbd> | <kbd>Ctrl+C</kbd>, <kbd>Ctrl+X</kbd>, then <kbd>Ctrl+V</kbd> (in the terminal the program has them, and <kbd>Ctrl+Shift+V</kbd> pastes) |  |
 | Copy the line, or the selected lines, below or above | <kbd>⌥⇧↓</kbd>, <kbd>⌥⇧↑</kbd> | <kbd>Shift+Alt+Down</kbd>, <kbd>Shift+Alt+Up</kbd> |  |
 | Copy what the terminal's last command printed | Copy Last Command Output in the Terminal menu, or the command palette |  |  |
 | Delete the line, or every line the selection touches, at every cursor | <kbd>⌃⇧K</kbd> | <kbd>Ctrl+Shift+K</kbd> |  |
 | Delete to the start of the line, at every cursor | <kbd>⌘⌫</kbd> |  |  |
-| Delete the word before the cursor in the terminal's input line, or everything before it | <kbd>⌃W</kbd>, <kbd>⌃U</kbd> |  |  |
+| Delete the word before the cursor in the terminal's input line, or everything before it | <kbd>⌃W</kbd>, <kbd>⌃U</kbd> | <kbd>Ctrl+W</kbd>, <kbd>Ctrl+U</kbd>, the shell's own, which reach it while the terminal has the keyboard (with the editor focused <kbd>Ctrl+W</kbd> closes the tab) |  |
 | Edit a column: a cursor on every line between two points, so typing adds the same text to each | <kbd>⇧⌘</kbd>-click at one end and <kbd>⇧⌘</kbd>-click (or drag) to the other; <kbd>⌥⇧</kbd>-click (or drag) for a column from the cursor, as in VS Code; <kbd>⌥</kbd>-drag, or a middle-button drag; <kbd>⎋</kbd> goes back to one cursor | <kbd>Shift+Alt</kbd>-click (or drag) for a column from the cursor, as in VS Code; <kbd>Alt</kbd>-drag, or a middle-button drag (a middle click still pastes the primary selection); <kbd>Escape</kbd> goes back to one cursor |  |
 | Export a Markdown file as a standalone HTML page | Export as HTML in the File menu, or the command palette |  |  |
 | Export the typeset PDF of a LaTeX file | <kbd>⇧⌘S</kbd> | <kbd>Ctrl+Shift+S</kbd> |  |
 | Find across the whole folder | <kbd>⇧⌘F</kbd> | <kbd>Ctrl+Shift+F</kbd> |  |
 | Find every reference to the name at the cursor, with a language server | <kbd>⇧F12</kbd> | <kbd>Shift+F12</kbd> |  |
-| Find in the current file, every match highlighted, <kbd>⏎</kbd> and <kbd>⇧⏎</kbd> for the next and previous one | <kbd>⌘F</kbd> | <kbd>Ctrl+F</kbd> |  |
+| Find in the current file, every match highlighted, <kbd>⏎</kbd> and <kbd>⇧⏎</kbd> for the next and previous one | <kbd>⌘F</kbd> | <kbd>Ctrl+F</kbd> (in the terminal the program has it) |  |
 | Find with match case, whole word, or a regular expression, in the find bar or Find in Folder | <kbd>⌥⌘C</kbd>, <kbd>⌥⌘W</kbd>, <kbd>⌥⌘R</kbd> | <kbd>Alt+C</kbd>, <kbd>Alt+W</kbd>, <kbd>Alt+R</kbd> |  |
 | Find only in the selected text, while the find bar has the keyboard | <kbd>⌥⌘L</kbd> | <kbd>Alt+L</kbd> |  |
 | Find in the browser's page, while the browser has the keyboard (<kbd>⏎</kbd> and <kbd>⇧⏎</kbd> for the next and previous match, <kbd>⎋</kbd> to close) | <kbd>⌘F</kbd>, then <kbd>⌘G</kbd>, and <kbd>⇧⌘G</kbd> while the find bar has the keyboard |  |  |
@@ -554,7 +554,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Move to the previous or next command in the terminal, its prompt at the top | <kbd>⌘↑</kbd>, <kbd>⌘↓</kbd>, in the terminal | <kbd>Ctrl+Up</kbd>, <kbd>Ctrl+Down</kbd>, in the terminal |  |
 | Move to the start or end of the line at the terminal's prompt, or delete back to its start | <kbd>⌘←</kbd>, <kbd>⌘→</kbd>, <kbd>⌘⌫</kbd> |  |  |
 | New agent task: Claude Code on a fresh worktree of the folder's repository, from a prompt | <kbd>⌥⇧⌘A</kbd> |  |  |
-| New file | <kbd>⌘N</kbd> | <kbd>Ctrl+N</kbd> | New file in the ⋮ menu |
+| New file | <kbd>⌘N</kbd> | <kbd>Ctrl+N</kbd> (in the terminal the program has it) | New file in the ⋮ menu |
 | New folder | <kbd>⇧⌘N</kbd>, in the file tree | <kbd>Ctrl+Alt+N</kbd> |  |
 | New tab in the browser, while it has the keyboard (View > New Browser Tab anywhere) | <kbd>⌘T</kbd>, or the + at the end of its tabs | <kbd>Ctrl+T</kbd>, or the button at the end of its tabs |  |
 | New window | <kbd>⇧⌘N</kbd> (outside the file tree) or <kbd>⌥⌘N</kbd> | <kbd>Ctrl+Shift+N</kbd> |  |
@@ -562,7 +562,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Open a file of the folder by typing part of its name, recently opened files first | <kbd>⌘P</kbd> | <kbd>Ctrl+P</kbd> (in the terminal the program has it) |  |
 | Open a file or URL named in the terminal, such as src/main.cpp:42:7 | <kbd>⌘</kbd>-click it | <kbd>Ctrl</kbd>-click it | Tap it |
 | Open a file from the file tree in a tab of its own, not the preview tab | Double-click it, or <kbd>⌘</kbd>-click it | Double-click it, <kbd>Ctrl</kbd>-click it, or select it and press <kbd>Enter</kbd> |  |
-| Open a folder | <kbd>⌘O</kbd> | <kbd>Ctrl+O</kbd> | <kbd>O</kbd>, or <kbd>Ctrl+O</kbd> |
+| Open a folder | <kbd>⌘O</kbd> | <kbd>Ctrl+O</kbd> (in the terminal the program has it) | <kbd>O</kbd>, or <kbd>Ctrl+O</kbd> |
 | Open a folder opened before, in this window | <kbd>⌃R</kbd> (File > Open Recent lists them too) | <kbd>Ctrl+R</kbd> (the File menu lists them too; in the terminal the program has it) |  |
 | Open a new terminal in a new tab | <kbd>⌃⇧&#96;</kbd>, or <kbd>⌘T</kbd> in the terminal | <kbd>Ctrl+Shift+&#96;</kbd> |  |
 | Open the command palette, to find any menu command by name and run it | <kbd>⇧⌘P</kbd>, or <kbd>F1</kbd> | <kbd>Ctrl+Shift+P</kbd>, or <kbd>F1</kbd> (in the terminal only <kbd>Ctrl+Shift+P</kbd>) |  |
@@ -587,7 +587,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Run the open file in the terminal | <kbd>⇧⌘⏎</kbd> | <kbd>Ctrl+Shift+Enter</kbd> |  |
 | Run the test the cursor is in, or every test in the file when the cursor is above the first (the ▶ beside a test runs that one) | Run Test at Cursor in the Terminal menu, or the command palette | Run Test at Cursor in the Terminal menu, or the command palette |  |
 | Run the selected lines, or the cursor's line, in a Python REPL in a terminal tab of its own | <kbd>⇧⏎</kbd>, in a Python file |  |  |
-| Save | <kbd>⌘S</kbd> | <kbd>Ctrl+S</kbd> | <kbd>S</kbd>, or <kbd>Ctrl+S</kbd> |
+| Save | <kbd>⌘S</kbd> | <kbd>Ctrl+S</kbd> (in the terminal the program has it) | <kbd>S</kbd>, or <kbd>Ctrl+S</kbd> |
 | Save every tab with unsaved changes | <kbd>⌥⌘S</kbd> | <kbd>Ctrl+Alt+S</kbd> |  |
 | Save the browser's page as a bookmark, while the browser has the keyboard (the toolbar's star, or File > Save Page as Bookmark anywhere) | <kbd>⌘D</kbd> | <kbd>Ctrl+D</kbd> |  |
 | Save the file under another name, the tab then showing the new file | Save As in the File menu (<kbd>⇧⌘S</kbd> is Export PDF) |  |  |
@@ -596,7 +596,7 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Select a line, or every line dragged over, by its number | Click or drag in the line numbers, <kbd>⇧</kbd>-click to extend | Click or drag in the line numbers, <kbd>Shift</kbd>-click to extend |  |
 | Select all the text | <kbd>⌘A</kbd> |  |  |
 | Select every place the selected text, or the word at the cursor, occurs | <kbd>⇧⌘L</kbd> | <kbd>Ctrl+Shift+L</kbd>; in the find bar, <kbd>Alt+Enter</kbd> selects its matches |  |
-| Select the cursor's line, and the next line with each press after | <kbd>⌘L</kbd> | <kbd>Ctrl+L</kbd> |  |
+| Select the cursor's line, and the next line with each press after | <kbd>⌘L</kbd> | <kbd>Ctrl+L</kbd> (in the terminal the program has it, and a shell clears the screen) |  |
 | Select the terminal's commands and what they printed, back to the previous command or on to the next | <kbd>⇧⌘↑</kbd>, <kbd>⇧⌘↓</kbd>, in the terminal |  |  |
 | Show or hide dotfiles | <kbd>⇧⌘.</kbd> | <kbd>Ctrl+Shift+.</kbd> |  |
 | Show or hide the on-screen keyboard, for symbols the phone's keyboard lacks |  |  | <kbd>Y</kbd>, or the keyboard button in the title bar |
@@ -620,14 +620,14 @@ On Linux the same file holds the Linux keys: Keyboard Shortcuts… in the Edit m
 | Toggle the fold on the cursor's line | <kbd>⌃⌘L</kbd> | Toggle Fold in the View menu's Folding submenu or the palette (no key) |  |
 | Toggle the browser | <kbd>⇧⌘B</kbd> | <kbd>Ctrl+Shift+B</kbd> | <kbd>B</kbd>, or <kbd>Ctrl+Shift+B</kbd> |
 | Toggle the editor, giving its space to the terminal and browser | <kbd>⇧⌘E</kbd> | <kbd>Ctrl+Shift+E</kbd> |  |
-| Toggle the file list or sidebar | <kbd>⌘B</kbd> | <kbd>Ctrl+B</kbd> | <kbd>F</kbd>, or <kbd>Ctrl+B</kbd> or <kbd>Ctrl+F</kbd> |
+| Toggle the file list or sidebar | <kbd>⌘B</kbd> | <kbd>Ctrl+B</kbd> (in the terminal the program has it) | <kbd>F</kbd>, or <kbd>Ctrl+B</kbd> or <kbd>Ctrl+F</kbd> |
 | Toggle the pane with the keyboard (the editor, the browser or the terminal) filling the whole of the right side | <kbd>⌃⌘M</kbd> | <kbd>Ctrl+Alt+M</kbd> |  |
 | Toggle the preview of a Markdown or LaTeX file, the table of a CSV file, the outline of a JSON file, a rendered notebook, or an HTML file's page | <kbd>⇧⌘V</kbd> | <kbd>Ctrl+Shift+V</kbd> (in the terminal it pastes) | <kbd>P</kbd>, or <kbd>Ctrl+P</kbd> |
 | Toggle the shortcut hints | <kbd>⇧⌘H</kbd> | <kbd>Ctrl+Shift+H</kbd> | <kbd>H</kbd>, or <kbd>Ctrl+H</kbd> |
 | Toggle the source control panel in place of the file tree | <kbd>⇧⌘G</kbd> (outside a find bar), or <kbd>⌃⇧G</kbd> | <kbd>Ctrl+Shift+G</kbd> | <kbd>V</kbd>, or <kbd>Ctrl+Shift+G</kbd> |
 | Toggle the terminal | <kbd>⇧⌘T</kbd>, <kbd>⌘J</kbd>, or <kbd>⌃&#96;</kbd> | <kbd>Ctrl+Shift+T</kbd>, or <kbd>Ctrl+&#96;</kbd> | <kbd>T</kbd>, or <kbd>Ctrl+T</kbd> |
 | Toggle word wrap in the editor, so long lines wrap at the pane's edge or run past it (editor.word-wrap sets it for good) | <kbd>⌥Z</kbd> | <kbd>Alt+Z</kbd> |  |
-| Undo, redo | <kbd>⌘Z</kbd>, <kbd>⇧⌘Z</kbd> | <kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Shift+Z</kbd> | <kbd>U</kbd>, <kbd>R</kbd>, or <kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Shift+Z</kbd> (<kbd>Ctrl+U</kbd>, <kbd>Ctrl+R</kbd> also work) |
+| Undo, redo | <kbd>⌘Z</kbd>, <kbd>⇧⌘Z</kbd> | <kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Shift+Z</kbd> (in the terminal <kbd>Ctrl+Z</kbd> is the program's) | <kbd>U</kbd>, <kbd>R</kbd>, or <kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Shift+Z</kbd> (<kbd>Ctrl+U</kbd>, <kbd>Ctrl+R</kbd> also work) |
 | Use the selected text as what to find | <kbd>⌘E</kbd> |  |  |
 | Wrap the selected text in brackets or quotes, at every cursor | Type <kbd>(</kbd> <kbd>[</kbd> <kbd>{</kbd> <kbd>"</kbd> <kbd>'</kbd> or <kbd>&#96;</kbd> with text selected (in Markdown also <kbd>*</kbd> <kbd>_</kbd> <kbd>~</kbd> <kbd>$</kbd> and <kbd>&lt;</kbd>) | Type an opening bracket, a quote, or a backtick with text selected (in Markdown also an asterisk, an underscore, a tilde, a dollar sign, or an opening angle bracket) |  |
 | Zoom a PDF or the LaTeX preview in or out while it shows, or the browser's page while the browser has the keyboard |  | <kbd>Ctrl++</kbd> (or <kbd>Ctrl+=</kbd>), <kbd>Ctrl+-</kbd>, <kbd>Ctrl</kbd> with the scroll wheel, or a pinch on the touchpad (a PDF) |  |

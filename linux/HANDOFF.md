@@ -6542,3 +6542,102 @@ The last terminal item of "Left before the default flips"
   gives it to the tab's active pane and ignores focus-ins meanwhile.
 - **Checks**: `host_splits` (HostSplitsSuite.cpp; its header says what it
   checks) and the `termdock:*` groups of `make test`.
+
+### 108. The terminal's cursor shows, and readline's Ctrl keys reach the shell (done, November 2026)
+
+The owner's two reports from the ThinkPad (Ubuntu, GNOME, Toshy): "the
+cursor in the terminal for dark mode does not appear to exist", and
+"Ctrl+W does not delete the word to the left of the cursor".
+
+- **The cursor.** `vte_terminal_set_colors` unsets VTE's cursor, cursor
+  text, highlight and bold colors. `applyTheme` set the cursor (#AEAFAD)
+  and the selection once, then `applyColors` ran `set_colors` for the
+  app's settings and set only the cursor's text (the background). With a
+  cursor text and no cursor color, VTE takes the cell's own background for
+  the block (`determine_colors`: no swap once either is set), so the block
+  and the outline it draws without the keyboard were the background, and
+  the character under the cursor was drawn in the background too: no
+  cursor on any theme, dark or light, and a character under it vanished.
+  The terminal's selection had fallen back to VTE's reversed colors the
+  same way. Now `applyColors` sets, after `set_colors`, every time: the
+  cursor in the terminal's text color and the character under a block in
+  its background, both opaque (core `Settings::terminalCursor` and
+  `terminalCursorText`, as the Mac's grid draws it: no built-in theme
+  has a cursor color of its own), and the selection in the editor's
+  (`theme::editorSelection`, #264F78 dark, #ADD6FF light). `pal::TermCursor`
+  is gone.
+- **The keys, before and now.** Nothing changed in mutible's key model,
+  which already had what was asked: while the terminal has the keyboard,
+  every plain Ctrl key that is not Global is no accelerator
+  (`Commands::linuxTerminalTakes`, Keys.cpp's `bound`), the Linux form of
+  the Mac's rule (keys on Command, Control to the shell). The harness,
+  with no remapper, found Ctrl+W, A, E, U, K, R, L, D, C, Z, Y, P, N, B
+  and F all reaching bash as their control bytes before this item, as the
+  `keys` suite had for Ctrl+W, B, N, L, H, G, O, Q and F; Ctrl+W at a
+  prompt deleted the word. The Global plain Ctrl keys, the only ones the
+  terminal does not get, are Ctrl+`, 0, 1, 2, Tab, Page Up, Page Down
+  (ways out) and Ctrl+I (the inline agent, as VS Code's terminal chat).
+  VS Code's terminal on Linux sends keys to the shell too, apart from its
+  `terminal.integrated.commandsToSkipShell` list, which keeps Quick
+  Open's Ctrl+P and Ctrl+E and its terminal find's Ctrl+F (and chords
+  such as Ctrl+K, while `terminal.integrated.allowChords` is on);
+  mutible gives those to the shell, with Find… in the Edit menu.
+- **Toshy** (read from `~/.config/toshy/toshy_config.py` and its
+  preferences, never written). The ThinkPad's keyboard ("AT Translated
+  Set 2 keyboard") is Toshy's Windows type, with Caps Lock left as Caps.
+  mutible's window class, `ai.ible.Mutible`, is not in Toshy's
+  `terminals` list, so the "Cond modmap - GUI - Win kbd" modmap applies:
+  physical Left Ctrl becomes Left Super (and Left Alt, the Mac's Cmd,
+  Right Ctrl). A physical Ctrl+W therefore reaches mutible as Super+W,
+  which no keymap of Toshy's changes (General GUI remaps only Super+A, E,
+  B, F, N, P, K and D, to Home, End, the arrows, Shift+End Backspace and
+  Delete); VTE gets Super+W and types a plain w (a probe in the harness:
+  `echo one two` and Super+W left `echo one twow`), which is what the
+  owner saw. The fix is Toshy's: a
+  keymap in the `user_apps` slice for mutible's window that turns Super
+  and the shell's letters back into Ctrl (Super+W to C-w, and U, R, L, C,
+  Z, Y, K, D, and A, E, B, F, N, P if the shell's own meaning is wanted
+  over General GUI's), as Toshy's VS Code keymap does for Super+C and
+  Super+X. Toshy cannot tell the terminal from the editor, so in the
+  editor those keys then do what Ctrl does (Ctrl+W closes the tab, as
+  Cmd+W does). The owner's existing "User overrides MiniCode" keymap
+  (Super+Space to C-Space, completion) matches `clas="^org\\.minicode\\."`,
+  the class from before 1.6.0's rename, so it no longer applies to
+  mutible at all: its `clas` wants `^ai\\.ible\\.Mutible$`. Adding mutible
+  to Toshy's `terminals` list instead would make Cmd keys Ctrl+Shift in
+  the whole window (Cmd+S as Save As), so it is not the fix.
+- **The `agents` suite's "the same key closes the panel" (open).** It
+  failed 1 of 5 plain runs of `agents` alone here (and in several logs of
+  other branches today), never in 44 runs since: 34 with a probe of the
+  test's own (an `activate` handler on the action, key controllers on the
+  window, or only the focus read before the key) and 10 with one
+  `fprintf` in `act_toggle_agents`. What the runs showed: the keyboard is
+  not in the terminal when the key is pressed but in the editor's tab
+  strip's GtkScrolledWindow (TabStrip's `scroller_`; every failing log
+  says the same), `<Control><Shift>a` runs `win.toggleagents` then, and
+  in a passing run the action runs once per press. Whether a failing run
+  runs it no times or twice is not known, so no fix was made; the next
+  step is a failing run with the `fprintf` probe, or the focus put back in
+  the editor when the agents panel's list empties, if the scroller turns
+  out to matter.
+- **Docs.** `docs/REFERENCE.md`: the Linux column says "in the terminal
+  the program has it" for Ctrl+D, Q, C, X, V, F, N, O, S, L, B and Z, the
+  terminal's word and line deletion row has Ctrl+W and Ctrl+U, and the
+  keys.conf paragraph names Ctrl+2 and Ctrl+I among the Global keys, says
+  what VS Code does, and says what a Mac-style remapper does to Ctrl.
+  `docs/notes/terminal.md` has the trap.
+- **Checks.** `terminal_keys` (TerminalKeysSuite.cpp): no accelerator for
+  any of the fifteen with the terminal focused, each read back as its
+  byte from a raw `head` and from VTE's commit signal, no command run;
+  Ctrl+W at a bash prompt (`echo one two`, Ctrl+W, `three`); and Close
+  Tab by Ctrl+W with the editor focused. `terminal_draw`
+  (TerminalDrawSuite.cpp): the cursor cell's pixels on all nine themes,
+  the block on a character on Dark Modern and Light Modern, and the
+  outline without the keyboard. Its cell is 8x17 in the harness, at half a
+  pixel, so a block's edges and an outline are blended over two pixels;
+  the checks count over the cell and a pixel around it. Run against the
+  old `applyColors`, it found no pixel of the cursor's color on any theme,
+  the cell the background's, and the x under the cursor gone too. Core: `settings:terminal-cursor` (every
+  theme's cursor against its background, 3:1 or more, and its text
+  against the cursor), `commands:linux-terminal` (readline's fifteen are
+  the shell's whatever has them).

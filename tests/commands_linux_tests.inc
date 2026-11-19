@@ -297,6 +297,19 @@ static void testLinuxTerminalKeys() {
     CHECK((plain == std::set<std::string>{"ctrl+`", "ctrl+0", "ctrl+1", "ctrl+2", "ctrl+tab",
                                            "ctrl+pagedown", "ctrl+pageup", "ctrl+=", "ctrl+-",
                                            "ctrl+numpad0", "ctrl+i", "ctrl+up", "ctrl+down"}));
+    // So readline's keys reach the shell whatever has them elsewhere: Close
+    // Tab's Ctrl+W (the owner's report, linux/HANDOFF.md item 108), Open
+    // Recent's Ctrl+R, Select Line's Ctrl+L, and the rest.
+    CHECK(takes("workbench.action.closeActiveEditor", "ctrl+w"));
+    for (const char *l = "waeukrldczypnbf"; *l; l++) {
+        const Key k = K((std::string("ctrl+") + *l).c_str());
+        for (const LinuxRow &r : linuxRows())
+            for (const Key &own : d.keysOf(r.id))
+                if (format(own) == format(k) && !linuxTerminalTakes(*find(r.id), k)) {
+                    std::printf("    %s keeps %s in the terminal\n", r.id, format(k).c_str());
+                    CHECK(false);
+                }
+    }
     // Alt with a letter alone is Meta to the program: the find bar's
     // options leave it its word keys; Alt with a digit (the tabs) and with
     // Ctrl stays the app's.
@@ -528,12 +541,13 @@ static void testLinuxCommandsReadme() {
     // command has; and since item 1.9 its clipboard keys, word moves and
     // scrolling by a line, Escape back to one caret, and the find bar's
     // Alt+Enter (Carets.h), which act on the view's own signals; and since
-    // item 2.5 the completion list's Shift+Enter (a new line instead).
+    // item 2.5 the completion list's Shift+Enter (a new line instead); and
+    // since item 108 the shell's Ctrl+U, which the terminal hands on.
     const std::set<std::string> own = {"ctrl+z", "ctrl+shift+z", "tab", "shift+tab", "up",
                                        "down", "left", "right", "enter", "shift+enter",
                                        "ctrl+c", "ctrl+x", "ctrl+v", "escape", "alt+enter",
                                        "ctrl+left", "ctrl+right", "ctrl+backspace", "ctrl+delete",
-                                       "ctrl+up", "ctrl+down"};
+                                       "ctrl+up", "ctrl+down", "ctrl+u"};
     for (const std::string &k : listed) {
         Key key;
         parseKey(k, &key);
