@@ -239,6 +239,28 @@ std::string glyphs(const Key& k) {
     return s + n;
 }
 
+std::string keyLabel(const Key& k, Platform p) {
+    if (p == Platform::Mac) return glyphs(k);
+    std::string s;
+    if (k.mods & Ctrl) s += "Ctrl+";
+    if (k.mods & Alt) s += "Alt+";
+    if (k.mods & Shift) s += "Shift+";
+    if (k.mods & Cmd) s += "Cmd+";
+    const std::string& n = k.name;
+    static const struct { const char* name; const char* label; } kLabels[] = {
+        {"up", "↑"}, {"down", "↓"}, {"left", "←"}, {"right", "→"}, {"home", "Home"},
+        {"end", "End"}, {"pageup", "Page Up"}, {"pagedown", "Page Down"}, {"enter", "⏎"},
+        {"tab", "⇥"}, {"space", "Space"}, {"escape", "⎋"}, {"backspace", "⌫"},
+        {"delete", "⌦"}, {"contextmenu", "Menu"},
+    };
+    for (const auto& l : kLabels)
+        if (n == l.name) return s + l.label;
+    if (n.size() == 7 && n.compare(0, 6, "numpad") == 0) return s + "Keypad " + n.substr(6);
+    if (n.size() >= 2 && n[0] == 'f') return s + "F" + n.substr(1);
+    if (n.size() == 1) return s + std::string(1, (char)std::toupper((unsigned char)n[0]));
+    return s + n;
+}
+
 bool isFunctionKey(const Key& k) {
     const std::string& n = k.name;
     if (n == "contextmenu") return true;
