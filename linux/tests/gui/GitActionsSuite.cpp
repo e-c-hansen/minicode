@@ -250,9 +250,9 @@ MC_GUI_SUITE(git_actions) {
         std::string all;
         for (const std::string& s : l) all += s + " | ";
         MCGuiNote("row menu: %s", all.c_str());
-        GCHECK(l == std::vector<std::string>({"Open File", "Open Changes", "Stage Changes",
-                                              "Discard (Move to Trash)…", "Reveal in File Tree",
-                                              "Adjust Settings…"}));
+        GCHECK(l == std::vector<std::string>({"Open File", "Open Changes", "Open as git Diff",
+                                              "Stage Changes", "Discard (Move to Trash)…",
+                                              "Reveal in File Tree", "Adjust Settings…"}));
         MCGuiKey("escape");
     });
     MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
@@ -377,16 +377,9 @@ MC_GUI_SUITE(git_actions) {
         MCGuiKey("escape");
     });
     MCGuiWait("closed", 10, [] { return !Panel()->menu() || !gtk_widget_get_mapped(Panel()->menu()); });
-    ClickRow("W M lib");   // its diff, the keyboard in the list
-    // A click made while the menu just closed is lost now and then in a full
-    // run: clicked again after 3 s (a second click then is no double-click).
-    auto polls = std::make_shared<int>(0);
-    MCGuiWait("its diff", 10, [polls] {
-        if (DiffOnShow() && Diff()->text().find("Subproject commit") != std::string::npos)
-            return true;
-        if (++*polls == 60)
-            if (GtkWidget* w = RowWidget("W M lib")) MCGuiClick(w, -1, -1, 1);
-        return false;
+    RawDiff("W M lib");   // its diff (a click opens the review)
+    MCGuiWait("its diff", 10, [] {
+        return DiffOnShow() && Diff()->text().find("Subproject commit") != std::string::npos;
     });
     MCGuiStep("no hunk links on a gitlink's diff", [] {
         GCHECK(Diff()->links().empty());

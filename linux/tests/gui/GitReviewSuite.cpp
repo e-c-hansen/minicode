@@ -8,8 +8,10 @@
 // that line alone and the first stays in the work tree); Discard asks,
 // Cancel changes nothing, and Discard Change puts the first block back as
 // the index has it with the file as it was in the Trash; Undo Discard on the
-// page brings it back; Stage File on the untracked file stages it; and a
-// change made outside, with the panel hidden, shows on the page by itself.
+// page brings it back; Stage File on the untracked file stages it; a change
+// made outside, with the panel hidden, shows on the page by itself; and
+// Stage on a block in the middle of a page taller than the pane leaves the
+// file's next block where the staged one was on screen (the Mac's #217).
 #include "GitChecks.h"
 
 #include "ChangeReviewPage.h"
@@ -22,12 +24,19 @@ namespace {
 std::string R() { return MCGuiScratch() + "/gitreview"; }
 int gActions = 0;
 std::string gBefore;   // the page's text before an action
+double gPressedY = 0;  // where the pressed row was on screen
 
 ChangeReviewPage* Page() {
     Editor* e = RepoWindow().editor;
     return e ? dynamic_cast<ChangeReviewPage*>(e->currentPage()) : nullptr;
 }
 bool Ready() { return Page() && Page()->loaded() && Page()->blockCount() > 0; }
+// The row of the first block after a row, or -1.
+long NextBlockAfter(long row) {
+    for (size_t b = 0; Page() && row >= 0 && b < Page()->blockCount(); b++)
+        if (Page()->rowOfBlock(b) > row) return Page()->rowOfBlock(b);
+    return -1;
+}
 
 // The page's rows as the core lays them out for the repository as it is
 // now, read by the same git (a check's own read, never the page's).
@@ -184,5 +193,72 @@ MC_GUI_SUITE(git_review) {
         return Page() && Page()->pageText().find("Z") != std::string::npos;
     });
     MCGuiStep("what the core lays out now", [] { GCHECK_EQ_STR(Page()->pageText(), CoreText()); });
+
+    // ------------------------------- the place after Stage (the Mac's #217)
+    // m1.txt's one long block, z2.txt's two blocks, then zz3.txt's long
+    // block below: Stage on z2.txt's first block puts its second block where
+    // the first was on screen, though a staged list now stands above
+    // everything (the walker's page jumped from summary.py up to models.py).
+    Shell("all put back; m1.txt, z2.txt and zz3.txt committed, then changed",
+          "set -e; cd '" + R() + "'; " + G() + " reset -q; " + G() + " checkout -q -- .; rm -f n.txt; "
+          "seq 1 150 | sed 's/^/m /' > m1.txt; seq 1 80 | sed 's/^/z /' > z2.txt; "
+          "seq 1 100 | sed 's/^/zz /' > zz3.txt; " + G() + " add m1.txt z2.txt zz3.txt; " + G() +
+              " commit -qm three; seq 1 150 | sed 's/^/M /' > m1.txt; "
+              "seq 1 80 | sed 's/^/z /' | sed -e 's/^z 2$/z TWO/' -e 's/^z 30$/z THIRTY/' > z2.txt; "
+              "seq 1 100 | sed 's/^/ZZ /' > zz3.txt");
+    MCGuiWait("three files, four blocks", 30, [] {
+        ChangeReviewPage* p = Page();
+        return p && p->blockCount() == 4 && p->fileCount() == 3 && p->rowOfFile("z2.txt", false) >= 0;
+    });
+    // GTK measures a new text's lines in idle slices: until then the page
+    // is as tall as the lines measured so far.
+    MCGuiWait("laid out, taller than twice the pane", 15, [] {
+        ChangeReviewPage* p = Page();
+        GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(p->textView()));
+        return p->paneHeight() > 0 && gtk_adjustment_get_upper(adj) > 2 * p->paneHeight();
+    });
+    MCGuiStep("z2.txt's first block in the middle of the pane", [] {
+        ChangeReviewPage* p = Page();
+        const long block = p->rowOfBlock(1);   // m1.txt's is the first
+        GCHECK(block > p->rowOfFile("z2.txt", false));
+        GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(p->textView()));
+        MCGuiNote("page %.0f tall, pane %.0f", gtk_adjustment_get_upper(adj), p->paneHeight());
+        p->scrollRowTo((size_t)block, std::floor(p->paneHeight() / 2));
+    });
+    MCGuiWait("there, its Stage on screen", 10, [] {
+        ChangeReviewPage* p = Page();
+        const size_t block = (size_t)p->rowOfBlock(1);
+        return std::abs(p->rowScreenY(block) - std::floor(p->paneHeight() / 2)) <= 1 &&
+               MCGuiOnScreen(p->buttonWidget("Stage", block));
+    });
+    MCGuiStep("Stage on it", [] {
+        ChangeReviewPage* p = Page();
+        const size_t block = (size_t)p->rowOfBlock(1);
+        gPressedY = p->rowScreenY(block);
+        MCGuiNote("pressed on z2.txt's first block at %.0f", gPressedY);
+        GCHECK(gPressedY > 0 && gPressedY < p->paneHeight());
+        gBefore = p->pageText();
+        MCGuiClick(p->buttonWidget("Stage", block));
+    });
+    MCGuiWait("staged, and shown", 15, [] {
+        return Page()->messageText() == "Staged a change to z2.txt." && Page()->pageText() != gBefore &&
+               Page()->rowOfFile("z2.txt", true) >= 0;
+    });
+    MCGuiWait("z2.txt's other block where the staged one was", 10, [] {
+        const long next = NextBlockAfter(Page()->rowOfFile("z2.txt", false));
+        return next >= 0 && std::abs(Page()->rowScreenY((size_t)next) - gPressedY) <= 4;
+    });
+    MCGuiStep("there, z2.txt still in sight, not the staged list at the top", [] {
+        ChangeReviewPage* p = Page();
+        const long header = p->rowOfFile("z2.txt", false);
+        const long next = NextBlockAfter(header);
+        const double y = next >= 0 ? p->rowScreenY((size_t)next) : -1;
+        MCGuiNote("after Stage: z2.txt's next block at %.0f (pressed at %.0f), first row on show %ld", y,
+                  gPressedY, p->firstVisibleRow());
+        GCHECK(header >= 0 && next > header);
+        GCHECK_EQ_STR(p->rowText((size_t)next), "z 30");
+        GCHECK(std::abs(y - gPressedY) <= 4);
+        GCHECK(p->firstVisibleRow() > p->rowOfFile("m1.txt", false));
+    });
     CloseRepoWindow();
 }

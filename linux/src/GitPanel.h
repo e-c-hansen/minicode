@@ -1,8 +1,10 @@
 // GitPanel.h — the Source Control panel on Linux, the GTK counterpart of the
 // Mac's src/GitPanel.mm. Ctrl+Shift+G puts it in the sidebar in place of the
 // file tree (main.cpp); it shows the branch, the staged and unstaged changes,
-// a commit message box and the commit graph, and asks the window to show a
-// file's diff or a commit in the editor's slot (GitDiffView, held by Editor).
+// a commit message box and the commit graph, and asks the window to show
+// the review of every change at a file (a click: ChangeReviewPage.h, in the
+// preview tab for a single one), a file's raw diff (Open as git Diff) or a
+// commit in the editor's slot (GitDiffView, held by Editor).
 //
 // It is made with its window, as the Mac's is (EditorController+Git.mm's
 // ensureGitPanel), so autofetch and the commands work before it is first
@@ -36,6 +38,7 @@
 #include <string>
 #include <vector>
 
+#include "ClickCount.h"
 #include "GitDiffView.h"
 #include "GitModel.h"
 #include "GitRun.h"
@@ -116,10 +119,28 @@ public:
     void layout(int width, int height);
 
     // ---- the review page (ChangeReviewPage.h)
-    // Review Changes: the button, View > Source Control and the palette. The
-    // window shows the page (every uncommitted change in one tab).
-    std::function<void()> onReview;
+    // The window shows the page (every uncommitted change in one tab) at a
+    // file, its path from the top level ("" for the page's top), in the
+    // preview tab for a single click on its row (`preview`), else kept: the
+    // Mac's onReview. Review Changes (the button, View > Source Control and
+    // the palette) opens it at its top; a file row's click, Return and Open
+    // Changes at that file. Without it a row shows its raw diff.
+    std::function<void(const std::string& path, bool staged, bool preview)> onReview;
     void reviewChanges();
+    // Return, Open Changes (kept), and a click (`preview` for a single one).
+    void reviewRow(int row, bool preview = false);
+    // What a click released on a row of the change list (`graph` false) or
+    // the graph does, as the Mac's clickedRow:graph:clickCount:sameRow:
+    // modifiers: a single click opens the file's review in the preview tab,
+    // the second click of a double-click on the same row keeps it
+    // (EditorTabs::treeClick), and a Ctrl or Shift click (choosing rows)
+    // opens nothing. A commit has no page of its own here yet: a click shows
+    // it in the diff tab, as Return does. `sameRow`: the press before was on
+    // this row.
+    void clickedRow(int row, bool graph, int count, bool sameRow, GdkModifierType mods);
+    // A row's raw diff, with its hunk links (GitDiffView.h): its menu's Open
+    // as git Diff.
+    void openRawDiff(int row) { showDiff(row); }
     // The page open (any window's tab for this panel): the panel keeps
     // reading the repository while it is hidden, and tells the page after
     // each status (`onReviewRefresh`), so the page follows a change made
@@ -384,6 +405,9 @@ private:
     GtkStringList* graphModel_ = nullptr;
     GtkSingleSelection* graphSel_ = nullptr;
     int pressRow_ = -1;                  // where a click began, in its list
+    ClickCount listClicks_, graphClicks_;  // double-clicks by the presses' times
+    int lastClickRow_ = -1;              // the row the click before was released on
+    GtkWidget* lastClickView_ = nullptr; // and its list
     Rgba text_ = Rgba::hex(0xCCCCCC);
     Rgba panelBg_ = Rgba::hex(0x252526);
 };
