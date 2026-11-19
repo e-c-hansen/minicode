@@ -4061,8 +4061,8 @@ void testSettings() {
     // test.<language> commands, and editor.spell-check with its color, and
     // editor.session-host, and explorer.auto-reveal, and
     // editor.session-web-idle-minutes, and editor.wrapping-indent, and
-    // files.hot-exit.
-    CHECK(std::count(keys.begin(), keys.end(), '\n') == 144);
+    // terminal.mac-style-keys, and files.hot-exit.
+    CHECK(std::count(keys.begin(), keys.end(), '\n') == 145);
     {
         GROUP("settings:key-table");
         // Every key of the table is documented in the default file (a new
@@ -4140,6 +4140,7 @@ void testSettings() {
           d.terminalScrollback() == 10000);
     CHECK(un.terminalOptionAsMeta() == d.terminalOptionAsMeta() &&
           d.terminalOptionAsMeta());
+    CHECK(un.terminalMacStyleKeys() == d.terminalMacStyleKeys() && !d.terminalMacStyleKeys());
     CHECK(un.developCommand() == d.developCommand() && d.developCommand() == "claude");
     CHECK(un.developSource().empty() && d.developSource().empty());
     CHECK(un.agentCommand() == d.agentCommand() && d.agentCommand() == "claude");
@@ -4541,16 +4542,20 @@ void testSettings() {
                                    "terminal.option-as-meta = false\n", &te);
         CHECK(te.empty() && t.terminalLineMode() && t.terminalScrollback() == 0 &&
               !t.terminalOptionAsMeta());
+        // Linux's Mac-style keys in the terminal (Commands::linuxMacStyleKey).
+        CHECK(parseSettings("terminal.mac-style-keys = true").terminalMacStyleKeys());
+        CHECK(!parseSettings("terminal.mac-style-keys = false").terminalMacStyleKeys());
         CHECK(!parseSettings("terminal.mode = GRID").terminalLineMode());
         CHECK(parseSettings("terminal.scrollback = 100000").terminalScrollback() == 100000);
         for (const char *bad : {"terminal.mode = tty", "terminal.scrollback = -1",
                                 "terminal.scrollback = 100001", "terminal.scrollback = 1e3",
-                                "terminal.option-as-meta = left", "terminal.colour = red"}) {
+                                "terminal.option-as-meta = left", "terminal.colour = red",
+                                "terminal.mac-style-keys = toshy"}) {
             std::vector<SettingsError> be;
             Settings b = parseSettings(bad, &be);
             CHECK(be.size() == 1);
             CHECK(!b.terminalLineMode() && b.terminalScrollback() == 10000 &&
-                  b.terminalOptionAsMeta());
+                  b.terminalOptionAsMeta() && !b.terminalMacStyleKeys());
         }
         // The surface keys under terminal. still work beside them.
         CHECK(parseSettings("terminal.text = #FF0000\nterminal.mode = line")

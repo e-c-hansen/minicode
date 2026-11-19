@@ -1223,6 +1223,8 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return true;),
         MC_KEY("terminal.option-as-meta", Word, false,
                return boolValue(v, s.terminalOptionAsMeta_, e);),
+        MC_KEY("terminal.mac-style-keys", Word, false,
+               return boolValue(v, s.terminalMacStyleKeys_, e);),
         MC_KEY("terminal.activate-venv", Word, false,
                return boolValue(v, s.terminalActivateVenv_, e);),
         MC_KEY("terminal.multiline-paste-warning", Word, false,
@@ -1903,6 +1905,16 @@ const char* Settings::defaultFileText() {
 # Option+F move by words). false lets Option type what your keyboard layout
 # puts on it, such as @ and { on many European layouts.
 # terminal.option-as-meta = true
+# Linux only, for a Mac-style key remapper such as Toshy or Kinto, which
+# sends the key beside the space bar (the Mac's Cmd) as Ctrl and the
+# physical Ctrl as Super. With true, the terminal takes them as the Mac's
+# Terminal does: Ctrl+W closes the terminal, Ctrl+C and Ctrl+V copy and
+# paste, and Ctrl+F, Ctrl+S, Ctrl+P and the rest run their commands, with
+# no Ctrl key reaching the program; Super+C, Super+W, Super+R and the other
+# Super keys reach it as Ctrl+C, Ctrl+W and Ctrl+R (Super+Alt too, for the
+# keys the remapper or the desktop take). false: plain Ctrl keys go to the
+# program, as in any Linux terminal.
+# terminal.mac-style-keys = false
 # A new terminal starts with the folder's Python environment active, as
 # after source .venv/bin/activate: the interpreter Run File uses (the
 # folder's choice, python.interpreter, or the folder's own .venv once you

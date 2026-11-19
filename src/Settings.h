@@ -448,6 +448,13 @@ public:
     double terminalFontSize() const { return terminalFontSize_; }
     int terminalScrollback() const { return terminalScrollback_; }
     bool terminalOptionAsMeta() const { return terminalOptionAsMeta_; }
+    // terminal.mac-style-keys (Linux only, false by default): for a
+    // Mac-style remapper (Toshy, Kinto), which sends the key beside the
+    // space bar, the Mac's Cmd, as Ctrl and the physical Ctrl as Super.
+    // While the terminal has the keyboard, Ctrl keys are mutible's, as Cmd
+    // keys are in the Mac's Terminal, and Super keys go to the program as
+    // their Ctrl key (Commands::linuxMacStyleKey).
+    bool terminalMacStyleKeys() const { return terminalMacStyleKeys_; }
     // terminal.activate-venv: a new terminal starts with the folder's Python
     // environment active, as VS Code's shellStartup activation does: its
     // bin first on PATH, VIRTUAL_ENV set, its name before the prompt and a
@@ -642,6 +649,7 @@ private:
     int terminalScrollback_ = 10000;
     double terminalFontSize_ = 12;
     bool terminalOptionAsMeta_ = true;
+    bool terminalMacStyleKeys_ = false;
     bool terminalActivateVenv_ = true;
     std::string terminalPasteWarning_ = "auto";
     std::string terminalCursorStyle_ = "block";

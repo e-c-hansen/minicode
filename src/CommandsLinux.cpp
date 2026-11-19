@@ -439,8 +439,11 @@ bool linuxTerminalOwnKey(const Key& k) {
     return isKey(k, Ctrl | Shift, "c") || isKey(k, Ctrl | Shift, "v");
 }
 
-bool linuxTerminalTakes(const Command& c, const Key& k) {
+bool linuxTerminalTakes(const Command& c, const Key& k, bool macStyle) {
     if (linuxTerminalOwnKey(k)) return true;
+    // Mac-style keys: Ctrl is the Mac's Cmd, and the program has its Ctrl
+    // keys from Super (linuxMacStyleKey), so none of Ctrl's is its.
+    if (macStyle && (k.mods & Ctrl)) return false;
     // A terminal sends these as Ctrl+G, Ctrl+Space and Ctrl+_, which Emacs
     // and readline use (keyboard-quit, set-mark, undo).
     if (isKey(k, Ctrl | Shift, "g") || isKey(k, Ctrl | Shift, "space") ||
@@ -455,6 +458,48 @@ bool linuxTerminalTakes(const Command& c, const Key& k) {
         return !(flagsOf(c, Platform::Linux) & Global);
     if (k.mods & (Shift | Alt | Cmd)) return false;
     return !(flagsOf(c, Platform::Linux) & Global);
+}
+
+int terminalControlByte(char32_t ch) {
+    if (ch >= 'a' && ch <= 'z') return (int)(ch - 'a' + 1);
+    if (ch >= 'A' && ch <= 'Z') return (int)(ch - 'A' + 1);
+    switch (ch) {
+    case ' ': case '@': case '2': return 0x00;
+    case '[': case '{': case '3': return 0x1B;
+    case '\\': case '|': case '4': return 0x1C;
+    case ']': case '}': case '5': return 0x1D;
+    case '^': case '~': case '6': return 0x1E;
+    case '_': case '-': case '/': case '7': return 0x1F;
+    case '8': case '?': return 0x7F;
+    default: return -1;
+    }
+}
+
+MacStyleRoute linuxMacStyleKey(unsigned mods, bool super, char32_t ch) {
+    MacStyleRoute r;
+    if (ch == 0) return r;   // arrows, F keys, Return...: VTE's either way
+    if (super) {
+        // Super with Ctrl is the Mac's Ctrl+Cmd: nothing of the program's.
+        if (mods & Ctrl) return r;
+        const int b = terminalControlByte(ch);
+        if (b < 0) return r;
+        r.action = MacStyleAction::Send;
+        r.bytes.assign(1, (char)b);
+        return r;
+    }
+    if (!(mods & Ctrl)) return r;   // Alt alone is Meta; a plain key types
+    const char32_t lower = ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch;
+    if (mods == Ctrl) {
+        if (lower == 'c') r.action = MacStyleAction::Copy;
+        else if (lower == 'v') r.action = MacStyleAction::Paste;
+        else if (lower == 'a') r.action = MacStyleAction::SelectAll;
+        else r.action = MacStyleAction::Drop;
+        return r;
+    }
+    // VTE's own copy and paste (the terminal's shortcuts) keep theirs.
+    if (mods == (Ctrl | Shift) && (lower == 'c' || lower == 'v')) return r;
+    r.action = MacStyleAction::Drop;
+    return r;
 }
 
 namespace {

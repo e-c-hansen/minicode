@@ -603,8 +603,62 @@ SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
   (Toshy, Kinto) turns the physical Ctrl into Super in any window it does
   not list as a terminal, so on the owner's ThinkPad a physical Ctrl+W
   reaches mutible as Super+W: the fix is a keymap in the remapper for
-  `ai.ible.Mutible`, never a key of mutible's. Checked by `terminal_keys`
+  `ai.ible.Mutible`, or the setting below. Checked by `terminal_keys`
   and `terminal_draw` (the GTK harness).
+- **Mac-style keys in the GTK terminal** (2026-11-19, linux/HANDOFF.md
+  item 113): `terminal.mac-style-keys` (Linux only, off by default) is for
+  a Mac-style remapper (Toshy, Kinto), which sends the key beside the
+  space bar, the Mac's Cmd, as Ctrl and the physical Ctrl as Super in any
+  window it does not list as a terminal. With it on, while the terminal
+  has the keyboard, the keys do what they do in the Mac's Terminal:
+  - **Ctrl is the Mac's Cmd.** `Commands::linuxTerminalTakes(c, k, true)`
+    gives no key with Ctrl to the terminal but VTE's Ctrl+Shift+C and V,
+    so Keys.cpp's `bound` (told by `Keys::setTerminalMacStyle`, from
+    `onSettingsChanged` and at startup) binds every Ctrl key of a command
+    that applies there: Ctrl+W, F, S, P, N, O, B, Q, R, T, comma,
+    Ctrl+Shift+G and Ctrl+Shift+Space too. Close Tab with the terminal's
+    keyboard closes that pane (`act_close_tab`, as the Mac's
+    `closeFocusedTerminal`: a running program asks first, the last tab
+    hides the dock), only with the setting on, so the File menu's Close
+    Tab is unchanged with it off. What no accelerator took reaches the
+    terminal's capture controller (`Terminal::macStyleKey`, core
+    `Commands::linuxMacStyleKey`): Ctrl+C copies the selection (nothing
+    without one), Ctrl+V pastes as Ctrl+Shift+V does
+    (`Terminal::pasteClipboard`), Ctrl+A selects all, as the Mac's grid
+    does for Cmd+C, V and A; any other Ctrl key that types a character
+    (Shift or Alt with it too) is dropped, so it never reaches the
+    program. Ctrl with a key that types nothing (Ctrl+Left, Ctrl+Backspace,
+    Ctrl+F4 once unbound) goes on to VTE as before, and Ctrl+Up and
+    Ctrl+Down still move between commands, as Cmd+Up and Down do.
+  - **Super is the program's Ctrl.** Super with a character sends the byte
+    VTE sends for Ctrl with it (`Commands::terminalControlByte`), through
+    `vte_terminal_feed_child`, so it goes by VTE's commit to the host as a
+    key does, counted as typing: every letter (Super+W ^W, Super+C ^C,
+    Super+R ^R), with Shift the same (a terminal sends one byte for Ctrl
+    and Ctrl+Shift with a letter), Super+[ Esc, Super+] ^], Super+\ ^\,
+    Super+Shift+- ^_, Super+Space and Super+Shift+2 NUL, Super+Shift+6
+    ^^, Super+/ ^_, Super+3 to 8 Esc, ^\, ^], ^^, ^_ and DEL, each what
+    VTE itself sends for Ctrl with the key (terminal_keys reads VTE's
+    bytes for all fourteen with the setting off). Super with Alt
+    and a letter sends the same: Toshy's general keymap turns Super+A, E,
+    B, F, N, P, K and D into Home, End, the arrows, Shift+End Backspace and
+    Delete (so the physical Ctrl+A, E, B, F, N and P arrive as keys
+    readline takes the same way, never as Super), and GNOME grabs Super+L
+    to lock the screen, so Toshy's keymap for VS Code's terminal sends the
+    physical Ctrl+K, D and L as Super+Alt+K, D and L, and a keymap for
+    mutible's window can do the same. Super with Ctrl (the Mac's
+    Ctrl+Cmd), or with a key that types nothing, goes on to VTE.
+  - The hints panel's "In the terminal" part says so while it is on. The
+    editor, the other panes and the hints search box (which never takes a
+    key with Super) are the same with it on or off, and so is everything
+    with it off (`terminal_keys`'s first half runs with it off,
+    unchanged).
+  Checked by `terminal_keys` (VTE's own bytes for Ctrl with readline's
+  punctuation against `terminalControlByte`; with the setting on Super's
+  bytes from a raw `head` and VTE's commit, the dropped Ctrl keys, Super+W
+  at a prompt, Super+Alt+K, Super+C on `sleep 100`, Ctrl+A, C and V
+  through the clipboard, Ctrl+W on a terminal tab and on an editor tab,
+  the hints, and off again) and core `commands:linux-terminal`.
 - **The Mac on it** (2026-11-17, with `editor.session-host` on, grid mode
   only): `TerminalView` keeps everything above (its own `TerminalStream`
   and `TerminalScreen` parse the same bytes, so the integration, nonce,
