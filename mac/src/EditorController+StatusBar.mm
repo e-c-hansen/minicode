@@ -203,22 +203,12 @@
     [container addSubview:self.hintsPanel];
 }
 
-// The box's query changed: the rows again, the first hit scrolled to.
+// The box's query changed: the rows again, scrolled to the top, where
+// the matches are (an empty query, the whole list's top).
 - (void)hintsQueryChanged {
     if (!self.hintsVisible) return;
     [self updateHints];
-    NSTextView *tv = self.hintsTextView;
-    NSTextStorage *ts = tv.textStorage;
-    __block NSRange first = NSMakeRange(NSNotFound, 0);
-    [ts enumerateAttribute:MCHintsMatchAttribute inRange:NSMakeRange(0, ts.length) options:0
-                usingBlock:^(id value, NSRange r, BOOL *stop) {
-        if (value) { first = r; *stop = YES; }
-    }];
-    if (first.location != NSNotFound) {
-        [tv scrollRangeToVisible:first];
-    } else {
-        [tv scrollPoint:NSZeroPoint];
-    }
+    [self.hintsTextView scrollPoint:NSZeroPoint];
 }
 
 - (BOOL)hintsPanelTakesKeyDown:(NSEvent *)event {
@@ -230,7 +220,10 @@
 
 // Fill the panel for the room the window has: as many columns as fit side
 // by side, never a row broken in the middle; as tall as the text, or the
-// room, with a scroll bar. Anchored to the top right.
+// room, with a scroll bar. Anchored to the top right. While the box holds
+// a query the matches come first (HintsSearch::bubbleMatches) in the
+// columns the whole list has, and the panel keeps the whole list's size:
+// a search never adds a column or shrinks the panel.
 - (void)updateHints {
     NSTextView *tv = self.hintsTextView;
     NSView *container = self.hintsPanel.superview;
@@ -254,21 +247,36 @@
     const CGFloat header = box ? boxTop + boxH : 0;   // the text's own inset is the gap
     PageMeasure::HintsLayout layout;
     NSAttributedString *text = [self hintsTextForRows:rows room:roomW maxColumns:kHintsMaxColumns
-                                               layout:&layout];
+                                               search:NO layout:&layout];
     CGFloat textH = [self hintsHeightOf:text width:layout.textWidth];
-    const BOOL scrolls = textH + 2 * inset + header > roomH;
+    BOOL scrolls = textH + 2 * inset + header > roomH;
+    CGFloat room = roomW;
     if (scrolls && bar > 0) {
-        text = [self hintsTextForRows:rows room:roomW - bar maxColumns:kHintsMaxColumns
-                               layout:&layout];
+        room = roomW - bar;
+        text = [self hintsTextForRows:rows room:room maxColumns:kHintsMaxColumns
+                               search:NO layout:&layout];
         textH = [self hintsHeightOf:text width:layout.textWidth];
     }
+    CGFloat textW = layout.textWidth;
+    if (self.hintsSearchBox.query.length) {
+        // The matches first, in the whole list's columns; the panel no
+        // smaller than the whole list's.
+        PageMeasure::HintsLayout found;
+        text = [self hintsTextForRows:rows room:room maxColumns:layout.count()
+                               search:YES layout:&found];
+        const CGFloat foundH = [self hintsHeightOf:text width:found.textWidth];
+        textW = MAX(textW, found.textWidth);
+        textH = MAX(textH, foundH);
+        scrolls = scrolls || textH + 2 * inset + header > roomH;
+        layout = found;
+    }
     self.hintsColumns = layout.count();
-    const CGFloat pw = ceil(layout.textWidth + 2 * inset + (scrolls ? bar : 0));
+    const CGFloat pw = ceil(textW + 2 * inset + (scrolls ? bar : 0));
     const CGFloat ph = ceil(MIN(textH + 2 * inset + header, roomH));
     self.hintsPanel.frame = NSMakeRect(W - pw - margin, top - ph, pw, ph);
     box.field.frame = NSMakeRect(inset, ph - boxTop - boxH, MAX(40, pw - 2 * inset), boxH);
     self.hintsScroll.frame = NSMakeRect(1, 1, pw - 2, MAX(0, ph - 2 - header));
-    tv.textContainer.size = NSMakeSize(layout.textWidth, CGFLOAT_MAX);
+    tv.textContainer.size = NSMakeSize(textW, CGFLOAT_MAX);
     [tv.textStorage setAttributedString:text];
     [tv sizeToFit];
     [self.hintsScroll tile];
@@ -313,7 +321,8 @@ struct MCHintEntry {
     PageMeasure::HintItem::Kind kind = PageMeasure::HintItem::Shortcut;
     NSString *key = @"", *label = @"", *state = nil;   // a heading's title in label
     HintsSearch::Match found;
-    bool lit = true;   // a heading with something found under it
+    bool withNext = false;   // a pair's first half
+    bool lit = true;         // a heading over matches (all, with no query)
 };
 
 // A shortcut's parts as fields the core searches, in the order shown.
@@ -348,9 +357,11 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
 }
 
 // The rows as text for `room` points of width in at most `maxColumns`
-// columns, and where they went.
+// columns, and where they went. With `search` and a query in the box, the
+// matching sections first (each heading over its matches), then the rest,
+// dimmed; without, the whole list in its own order, nothing marked.
 - (NSAttributedString *)hintsTextForRows:(NSArray<NSDictionary *> *)rows room:(CGFloat)room
-                              maxColumns:(int)maxColumns
+                              maxColumns:(int)maxColumns search:(BOOL)search
                                   layout:(PageMeasure::HintsLayout *)layoutOut {
     using Kind = PageMeasure::HintItem::Kind;
     const CGFloat z = MCZoomScale();
@@ -383,6 +394,7 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
             e.key = row[@"key1"];
             e.label = row[@"label1"];
             e.state = row[@"key2"] ? nil : row[@"state"];
+            e.withNext = row[@"key2"] != nil;
             entries.push_back(e);
             if (row[@"key2"]) {
                 MCHintEntry e2;
@@ -394,20 +406,37 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
     }
 
     // The search box's query (HintsSearch.h): each shortcut found or not,
-    // and where. A heading dims when nothing under it is found.
-    const std::vector<HintsSearch::Word> words =
-        HintsSearch::parse(MCU16(self.hintsSearchBox.query ?: @""));
+    // and where; then the matching sections first, each heading over its
+    // matching shortcuts (a pair's halves together), and the rest after
+    // them, dimmed, headings too (HintsSearch::bubbleMatches).
+    const std::vector<HintsSearch::Word> words = search
+        ? HintsSearch::parse(MCU16(self.hintsSearchBox.query ?: @""))
+        : std::vector<HintsSearch::Word>();
     const bool searching = !words.empty();
     if (searching) {
-        for (MCHintEntry &e : entries)
-            if (e.kind == Kind::Shortcut) e.found = HintsSearch::match(words, MCHintsFields(e));
-        for (size_t i = 0; i < entries.size(); i++) {
-            if (entries[i].kind != Kind::Heading) continue;
-            bool lit = false;
-            for (size_t j = i + 1; j < entries.size() && entries[j].kind != Kind::Heading; j++)
-                if (entries[j].kind == Kind::Shortcut && entries[j].found.matches) lit = true;
-            entries[i].lit = lit;
+        std::vector<HintsSearch::Item> items;
+        for (MCHintEntry &e : entries) {
+            HintsSearch::Item it;
+            it.kind = e.kind == Kind::Heading ? HintsSearch::Item::Heading
+                    : e.kind == Kind::Gap     ? HintsSearch::Item::Gap
+                                              : HintsSearch::Item::Shortcut;
+            if (e.kind == Kind::Shortcut) {
+                e.found = HintsSearch::match(words, MCHintsFields(e));
+                it.matches = e.found.matches;
+                it.withNext = e.withNext;
+            }
+            items.push_back(it);
         }
+        const HintsSearch::Bubbled bubbled = HintsSearch::bubbleMatches(items);
+        std::vector<MCHintEntry> ordered;
+        ordered.reserve(bubbled.order.size());
+        for (size_t k = 0; k < bubbled.order.size(); k++) {
+            MCHintEntry e = entries[bubbled.order[k]];
+            e.lit = k < bubbled.rest;
+            if (!e.lit) e.found = HintsSearch::Match{false, {}};   // all dimmed
+            ordered.push_back(e);
+        }
+        entries.swap(ordered);
     }
 
     std::vector<PageMeasure::HintItem> measured;
@@ -604,7 +633,8 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
 
 // The shortcut list as text in one column (tests read it).
 - (NSAttributedString *)hintsText {
-    return [self hintsTextForRows:[self hintsRows] room:CGFLOAT_MAX maxColumns:1 layout:NULL];
+    return [self hintsTextForRows:[self hintsRows] room:CGFLOAT_MAX maxColumns:1 search:YES
+                           layout:NULL];
 }
 
 // Context-aware shortcut list: headings and rows (appendHintsRow:).

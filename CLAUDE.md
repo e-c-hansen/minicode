@@ -254,7 +254,11 @@ adding a file or looking for where something lives.
   nothing. A shortcut (key, label, state; a pair is two) matches when every
   word is found in it, keys also by name ("cmd", "shift+cmd+h"); matches
   are marked (`MCHintsMatchAttribute`) and the rest dimmed
-  (`MCHintsDimmedAttribute`), never hidden, so the layout stays. Prefer
+  (`MCHintsDimmedAttribute`), never hidden. Since 2026-11-19 (both
+  systems, `HintsSearch::bubbleMatches`) a query puts each section's
+  matches first under its heading and the rest after them, dimmed, in the
+  unfiltered panel's columns and size, scrolled to the top; an empty
+  query gives back the layout exactly. Prefer
   menu items with key equivalents to the key monitor: they work in every pane
   and for shifted variants.
 - No third-party dependencies, ever; new capabilities use system frameworks.
