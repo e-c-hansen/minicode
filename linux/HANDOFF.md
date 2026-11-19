@@ -7374,3 +7374,18 @@ Enter, no Dismiss at all, and a search window no accelerator reached.
 - **Needs the owner's eyes:** the × on hover, the right click menu's look,
   and the click-then-arrows feel with a real window manager, which keeps
   the transient search window over the editor's.
+- **A FLAKY line, then a fix (2026-11-19).** CI printed `FLAKY
+  [replace_in_folder] ... the second row`: a search remade the rows while
+  the keyboard was in them, and a frame before its results left the search
+  window no focus at all, so the first Down only put the keyboard back on
+  row 0 (`docs/notes/find.md`'s trap). Alt+C from the results lost it the
+  same way on most runs. `runSearch` now holds the keyboard on the
+  window's box while the list is empty and `giveKeyboardBack` gives it to
+  the new first row. The suite empties the query before `setScope`, whose
+  search of the same query had passed the wait for six rows while the
+  typed one came 0.35 s later, after Enter; it waits for
+  `searchedQuery()`, and checks a search and Alt+C from the third row
+  (the keyboard on the new first row, Down to the second). Before: 3 of 30
+  runs failed on one core shared with two busy loops, and every run with a
+  50 ms sleep in the worker; the new checks failed without the fix with or
+  without the sleep. After: 30 of 30 under the same load.
