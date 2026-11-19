@@ -139,6 +139,9 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
 @property(nonatomic, copy) void (^onLayout)(void);
 // Cmd+G and Shift+Cmd+G anywhere in the window: the next or previous result.
 @property(nonatomic, copy) void (^onStep)(BOOL forward);
+// Option+Cmd+Return anywhere in the window: Replace All, as VS Code's
+// search view has it (the Edit menu's Replace All is the editor's).
+@property(nonatomic, copy) void (^onReplaceAll)(void);
 @property(nonatomic, strong) NSColor *background;
 @end
 @implementation MCSearchContent
@@ -159,6 +162,11 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
         (mods == NSEventModifierFlagCommand ||
          mods == (NSEventModifierFlagCommand | NSEventModifierFlagShift))) {
         self.onStep(!(mods & NSEventModifierFlagShift));
+        return YES;
+    }
+    if (self.onReplaceAll && (e.keyCode == 36 || e.keyCode == 76) /* Return, keypad Enter */ &&
+        mods == (NSEventModifierFlagCommand | NSEventModifierFlagOption)) {
+        self.onReplaceAll();
         return YES;
     }
     return [super performKeyEquivalent:e];
@@ -363,6 +371,9 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     BOOL _replacing;
     NSString *_afterNote;           // what a replace did, shown with the next results
     BOOL _afterNoteError;
+    // The rows dismissed since the last search, which Replace All and
+    // Replace in This File leave alone (FolderReplaceExclusions).
+    FolderReplaceExclusions _dismissed;
     id _settingsObserver;
 }
 @property(nonatomic, strong) NSWindow *window;
@@ -446,6 +457,7 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     __weak SearchPanel *weakSelf = self;
     _content.onLayout = ^{ [weakSelf layoutContent]; };
     _content.onStep = ^(BOOL forward) { [weakSelf stepResult:forward]; };
+    if (!_todos) _content.onReplaceAll = ^{ [weakSelf replaceAllFromKey]; };
     self.window.contentView = _content;
 
     // The title bar's actions, as the view's title bar has them in VS Code.
@@ -482,7 +494,7 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
                       toggles:_todos ? @[] : @[_case, _word, _regex]];
     if (!_todos) {
         _replaceInput = [self input:@"Replace" toggles:@[_preserve]];
-        _replaceAll = [MCFindButton button:MCFindIconReplaceAll tip:@"Replace All (⏎ in the field)"
+        _replaceAll = [MCFindButton button:MCFindIconReplaceAll tip:@"Replace All (⌥⌘⏎)"
                                     target:self action:@selector(replaceAll:)];
         [_content addSubview:_replaceAll];
     }
@@ -792,16 +804,28 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     _replaceInput.needsDisplay = YES;
 }
 
-// Return in the query searches now; in the replace field it is Replace All
-// (it asks first).
+// Return in any field searches now, the replace field's too, as in VS
+// Code's search view: Replace All is its button or Option+Cmd+Return, and
+// asks first. (Return there was Replace All until 1.6.4, and text typed
+// into the window by mistake, then Return, rewrote files.)
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
     (void)tv;
+    (void)control;
     if (sel == @selector(insertNewline:)) {
-        if (control == _replaceInput.field) [self replaceAll:nil];
-        else [self runSearch:nil];
+        [self runSearch:nil];
         return YES;
     }
     return NO;
+}
+
+// Option+Cmd+Return: Replace All while the replace row shows (its field
+// is what replaces; hidden, it is not shown text to write).
+- (void)replaceAllFromKey {
+    if (!_replaceShown) {
+        NSBeep();
+        return;
+    }
+    [self replaceAll:nil];
 }
 
 - (BOOL)busy { return _replacing || _cancel != nullptr; }
@@ -1079,6 +1103,7 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     const FolderSearchOptions options = [self options];
     [self setResults:@[]];
     [self setSkippedNote:nil tooltip:nil];
+    _dismissed.clear();   // a new search shows every row again, as VS Code's does
     if (!FolderSearch::isSearchable(SStd(query), options)) {
         NSString *trimmed = [query stringByTrimmingCharactersInSet:
                              [NSCharacterSet whitespaceCharacterSet]];
@@ -1297,16 +1322,43 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     [self dismissItem:[self.outline itemAtRow:[self rowForAction]]];
 }
 
-// VS Code's Dismiss: the row leaves the results (a file with its lines).
+// VS Code's Dismiss: the row leaves the results (a file with its lines),
+// and Replace All and Replace in This File leave what it held alone until
+// the next search.
 - (void)dismissItem:(id)item {
+    if (_replacing) return;
     NSMutableArray<SearchHit *> *left = [_hits mutableCopy];
-    if ([item isKindOfClass:[SearchFile class]])
-        [left removeObjectsInArray:((SearchFile *)item).hits];
-    else if (item)
-        [left removeObjectIdenticalTo:item];
-    else
+    if ([item isKindOfClass:[SearchFile class]]) {
+        SearchFile *f = item;
+        [left removeObjectsInArray:f.hits];
+        _dismissed.dismissFile(SStd(f.path));
+    } else if ([item isKindOfClass:[SearchHit class]]) {
+        SearchHit *h = item;
+        [left removeObjectIdenticalTo:h];
+        if (!_todos) _dismissed.dismissLine(SStd(h.path), (int)h.line, SStd(h.text));
+    } else {
         return;
+    }
     [self setResults:left];
+    if (!_todos) [self showDismissedStatus];
+}
+
+// The status line after a dismiss: what is left to replace.
+- (void)showDismissedStatus {
+    NSUInteger matches = 0;
+    for (SearchFile *f in _files) matches += f.count;
+    [self setStatus:[NSString stringWithFormat:@"%@ %@ in %@ %@ (dismissed rows are left alone)",
+                                               MCGrouped(matches), matches == 1 ? @"match" : @"matches",
+                                               MCGrouped(_files.count),
+                                               _files.count == 1 ? @"file" : @"files"]
+              error:NO];
+}
+
+// For tests: the dismissed rows.
+- (NSUInteger)dismissedCount {
+    std::size_t n = _dismissed.files.size();
+    for (const auto &kv : _dismissed.lines) n += kv.second.size();
+    return n;
 }
 
 // Cmd+G and Shift+Cmd+G: the next or previous line in the results, in the
@@ -1393,9 +1445,15 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     const std::string q = SStd(self.field.stringValue);
     const FolderSearchOptions o = [self options];
     NSString *with = self.replaceField.stringValue;
+    const FolderReplaceExclusions dismissed = _dismissed;
     __weak SearchPanel *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         FolderReplacePlan plan = FolderSearch::planReplace(root, q, nullptr, o);
+        // The rows dismissed from the results stay as they are.
+        FolderSearch::excludeDismissed(plan, q, o, dismissed);
+        const size_t dismissedMatches = plan.dismissed;
+        NSMutableArray<NSString *> *changed = [NSMutableArray array];
+        for (const std::string &rel : plan.changedSinceSearch) [changed addObject:SNS(rel)];
         NSMutableArray<NSString *> *paths = [NSMutableArray array];
         NSMutableArray<NSNumber *> *counts = [NSMutableArray array];
         NSMutableSet<NSString *> *outside = [NSMutableSet set];
@@ -1453,6 +1511,12 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
                                                   "that are not UTF-8 (read as Windows-1252), "
                                                   "which Replace in Folder leaves alone (%@)",
                                                  [legacy componentsJoinedByString:@", "]]
+                    : changed.count
+                    ? [NSString stringWithFormat:@"Nothing replaced: files with dismissed rows "
+                                                  "changed after the search (%@); search again",
+                                                 [changed componentsJoinedByString:@", "]]
+                    : dismissedMatches
+                    ? @"Nothing replaced: every match left is in a dismissed row"
                     : @"Nothing to replace";
                 [s setStatus:why error:error != nil];
                 return;
@@ -1479,9 +1543,21 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
                 [info appendFormat:@" Left alone, since they are not UTF-8 (read as "
                                     "Windows-1252): %@.",
                                    [legacy componentsJoinedByString:@", "]];
+            if (dismissedMatches)
+                [info appendFormat:@" %zu %@ in dismissed rows %@ left alone.", dismissedMatches,
+                                   dismissedMatches == 1 ? @"match" : @"matches",
+                                   dismissedMatches == 1 ? @"is" : @"are"];
+            if (changed.count)
+                [info appendFormat:@" Left alone, since they changed after the search and "
+                                    "have dismissed rows: %@.",
+                                   [changed componentsJoinedByString:@", "]];
             alert.informativeText = info;
             [alert addButtonWithTitle:@"Replace"];
             [alert addButtonWithTitle:@"Cancel"];
+            // Only a key pressed once the question shows answers it: keys
+            // typed while the matches were counted (text meant for another
+            // window, a second Return) are dropped, not taken as Replace.
+            [NSApp discardEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp beforeEvent:nil];
             if ([alert runModal] != NSAlertFirstButtonReturn) {
                 s->_replacing = NO;
                 [s setStatus:@"Nothing replaced" error:NO];
@@ -1525,9 +1601,12 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     const std::string expected = hit ? SStd(hit.text) : std::string();
     // One file under two names (a symlink, a hard link) is replaced once.
     std::set<std::pair<uint64_t, uint64_t>> seen;
+    // Every match of a file, but those in rows dismissed from the results.
+    const FolderReplaceExclusions dismissed = hit ? FolderReplaceExclusions() : _dismissed;
     for (NSString *path in paths) {
         const FolderSearch::FileStamp st = FolderSearch::stampOf(path.fileSystemRepresentation);
         if (st.exists && !seen.insert({st.device, st.inode}).second) continue;
+        if (dismissed.excludesFile(SStd(path))) continue;
         MCOpenFileState state = self.openState ? self.openState(path) : MCOpenFileNone;
         if (state == MCOpenFileConflict) {
             [skipped addObject:path.lastPathComponent];
@@ -1548,7 +1627,16 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
                 TextFind::replaceOneAt(u, query, with16, (int)hit.line, hit.byteColumn, &e))
                 edits.push_back(e);
         } else {
+            std::set<int> keep;
+            if (!FolderSearch::dismissedLines(SStd(text), SStd(path), dismissed, o.maxLineChars,
+                                              &keep)) {
+                [problems addObject:[NSString stringWithFormat:
+                            @"%@ changed after the search and has dismissed rows: left alone",
+                            path.lastPathComponent]];
+                continue;
+            }
             edits = TextFind::replaceAll(u, query, with16);
+            TextFind::dropEditsOnLines(u, &edits, keep);
         }
         if (edits.empty()) continue;
         NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
@@ -1610,7 +1698,15 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
                                                      &expected))
                     n = 1;
             } else {
-                out = FolderSearch::replaceInText(content, q, with8, o, &n);
+                std::set<int> keep;
+                if (!FolderSearch::dismissedLines(content, SStd(path), dismissed, o.maxLineChars,
+                                                  &keep)) {
+                    [failed addObject:[NSString stringWithFormat:
+                                @"%@ changed after the search and has dismissed rows: left alone",
+                                path.lastPathComponent]];
+                    continue;
+                }
+                out = FolderSearch::replaceInText(content, q, with8, o, &n, &keep);
             }
             if (n == 0 || out == content) continue;
             if (!FolderSearch::writeFileAtomically(p, FolderSearch::encodeText(out, encoding),

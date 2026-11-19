@@ -187,7 +187,8 @@ goes here first, with tests; the GUI only displays it.
   (documents and watched files), `Lsp+Diagnostics`, `Lsp+Completion`,
   `Lsp+Navigation` (definition, hover, symbols), `Lsp+Actions` (rename,
   references, code actions), `Lsp+Semantic` (semantic tokens),
-  `Lsp+WorkspaceEdit`, `Lsp+InlayHints`; `Lsp+Private.h` and the
+  `Lsp+WorkspaceEdit`, `Lsp+InlayHints`, `Lsp+JsonCheck` (JSON no server
+  has, checked by the editor); `Lsp+Private.h` and the
   `Lsp+<Concern>Ivars.h` follow the rules below), `LspServer`
   (processes), `LspPopups` (completion, hover, signature), `SnippetSession`
   (a snippet's tab stops in the view), `LspShared.h` (only

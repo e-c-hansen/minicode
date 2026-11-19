@@ -2,7 +2,8 @@
 // fixes of 2026-11-05, against the scripted server (build/fakelsp), so they
 // run anywhere: diagnostics for an old version dropped, every tab's file
 // open on the server with its unsaved text, completion with
-// additionalTextEdits as one undo step, rename across an unsaved tab, a
+// additionalTextEdits as one undo step, rename across an unsaved tab (its
+// box kept, with the name typed, through a switch to another app), a
 // rename that cannot be made changing nothing, and Ruff's second server:
 // which server answers what, its quick fixes, a command's
 // workspace/applyEdit, and Organize Imports preferring Ruff's.
@@ -208,8 +209,29 @@ MC_GUI_SUITE(lsp_fixes) {
         MCRenameBox *box = [Lsp(c) valueForKey:@"rename"];
         GCHECK(box.visible);
         GCHECK_EQ_STR(Lsp(c).renameField.stringValue, @"helper");
+        // The new name typed, then a look at another app and back (D2 on
+        // 1.6.3: the box closed as its panel lost the keyboard, and the
+        // name typed was gone): the box stays, with the name.
+        NSTextField *field = Lsp(c).renameField;
+        field.stringValue = @"assist";
+        NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+        [nc postNotificationName:NSApplicationWillResignActiveNotification object:NSApp];
+        GCHECK(box.waitingForApp);
+        // The panel gives up the keyboard as the app goes.
+        [nc postNotificationName:NSWindowDidResignKeyNotification object:field.window];
+        [nc postNotificationName:NSApplicationDidResignActiveNotification object:NSApp];
+        GCHECK(box.visible);
+        [nc postNotificationName:NSApplicationDidBecomeActiveNotification object:NSApp];
+        MCGuiNote(@"after the switch: visible %d, field \"%@\", waiting %d", box.visible,
+                  Lsp(c).renameField.stringValue, box.waitingForApp);
+        GCHECK(box.visible && !box.waitingForApp);
+        GCHECK_EQ_STR(Lsp(c).renameField.stringValue, @"assist");
+        // A click elsewhere in the window, with the app in front, still
+        // cancels.
+        NSWindow *panel = field.window;
+        [nc postNotificationName:NSWindowDidResignKeyNotification object:panel];
+        GCHECK(!box.visible);
         if (box.onCommit) box.onCommit(@"assist");
-        [box close];
     });
     MCGuiWait(@"renamed", 10, ^BOOL { return [Lsp(c).lastNote hasPrefix:@"Renamed"]; });
     MCGuiStep(@"both files renamed, b.py at its unsaved places, nothing saved", ^{

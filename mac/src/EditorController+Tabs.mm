@@ -501,7 +501,7 @@ static NSString *const kKeepUnsavedDetail = @"Keep Unsaved leaves your changes u
     [_layoutCatchUp cancel];   // the text goes; its place is read from what is laid out
     [self saveBeforeLeavingFormatSave];   // Cmd+S is never lost to a tab switch
     NSTextView *tv = self.textView;
-    [self.markdownEditPanel close];
+    [self.markdownEditPanel commitEditing];   // a page edit typed goes into this tab, not lost
     MCMarkdownMediaStopAll(self.window);   // a Markdown page's video or audio stops with its tab
     [self sidePreviewTabWillLeave:t];   // the page beside the source: where it was
     [_viewers commitEditing];   // a CSV cell typed into lands in this tab's file
@@ -842,6 +842,7 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 - (BOOL)confirmCloseAllTabs { return [self confirmCloseAllTabsClosing:NO]; }
 
 - (BOOL)confirmCloseAllTabsClosing:(BOOL)closing {
+    [self commitPageEdit];   // a page edit still open is one of the changes asked about
     [self saveBeforeLeavingFormatSave];   // a Cmd+S still waiting for its formatter
     [self autoSaveNow];   // auto-save's writes first, so only what it skips is asked about
     if (closing) [self sessionDropOnClose:nil];
@@ -985,6 +986,7 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
     // Open in the other group too: only this group's tab goes, unasked, and
     // the document stays as it is there.
     const BOOL elsewhere = [self otherGroupHoldsTab:t];
+    if (t == _activeTab) [self commitPageEdit];   // asked about with the rest, never lost
     if (t == _activeTab) [self saveBeforeLeavingFormatSave];   // saved, so not asked about
     if (!elsewhere && prompt && ![self confirmCloseTab:t]) return NO;
     if (!elsewhere) [self discardBackupOf:t];   // saved, or let go
@@ -1175,6 +1177,8 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 }
 
 - (void)saveCurrentFile:(id)sender {
+    // Cmd+S with a page edit open writes it too (the box's Apply, then the save).
+    if (sender) [self commitPageEdit];
     // A message (welcome, binary file) is not the file's contents, nor is a
     // viewer's empty text view.
     if (![self tabHasTextToWrite:_activeTab]) return;

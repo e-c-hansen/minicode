@@ -258,6 +258,17 @@ NSHashTable<LspSession *> *MCLspAllSessions(void);
 - (void)paintDiagnostics;
 @end
 
+@interface LspSession (JsonCheck)
+// The file on show's canonical URI while the editor checks it as JSON
+// itself (no language server has it), else nil.
+- (NSString *)jsonCheckedUri;
+- (void)jsonCheckDocument;
+- (void)jsonDocumentClosed;
+- (void)checkJsonAfter:(NSTimeInterval)delay;
+- (NSString *)jsonTabPathForURI:(NSString *)uri;
+- (void)forgetJsonChecksOfClosedTabs;
+@end
+
 @interface LspSession (Completion)
 - (void)serverMayComplete:(MCLspServer *)server;
 - (void)forgetCompletionRequests;

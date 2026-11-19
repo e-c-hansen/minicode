@@ -526,11 +526,20 @@ static const NSUInteger kMirrorColorLimit = 2u << 20;
 // three its line). The press itself is not handed on: the rest of it
 // (drags, the release) comes to the view it began in, so a drag there
 // would select from the character to wherever the other group's view
-// maps the pointer.
+// maps the pointer. A double-click on a Markdown page (the group shows it
+// as a picture) opens the block editor at once, on the page now under the
+// pointer: the first press is not spent focusing the group (D2 on 1.6.3,
+// where the first double-click only made the group active).
 - (void)otherGroupPressed:(NSEvent *)e character:(NSUInteger)c {
     if (!_win->split()) return;
     [self focusEditorGroup:1 - _win->focused()];
     const BOOL text = [self editorShowsEditableText] && !self.editorScroll.hidden;
+    if (e.type == NSEventTypeLeftMouseDown && e.clickCount == 2 && c == NSNotFound) {
+        [self focusActiveDocument];
+        [self.window layoutIfNeeded];
+        [self editPageAtWindowPoint:e.locationInWindow];
+        return;
+    }
     if (!text || c == NSNotFound || e.type != NSEventTypeLeftMouseDown) {
         [self focusActiveDocument];
         return;

@@ -309,10 +309,21 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
 
 // A double-click on rendered Markdown opens the block behind it (a
 // paragraph, heading, list item, quote, code block or table cell) in a
-// popover holding its Markdown; saving splices just those bytes back into
+// popover holding its Markdown; applying splices just those bytes back into
 // the buffer, which is then dirty until Cmd+S, as typing leaves it.
 - (BOOL)editMarkdownAtCharacter:(NSUInteger)index point:(NSPoint)point {
     if (!self.isMarkdown || !self.previewMode) return NO;
+    // A box still open with an edit in it goes in first; the page is then
+    // rendered again, so the character is read anew under the point.
+    if (self.markdownEditPanel.edited) {
+        NSString *was = self.sourceText;
+        [self.markdownEditPanel commitEditing];
+        if (self.sourceText != was && ![self.sourceText isEqualToString:was]) {
+            NSTextView *tv = self.textView;
+            [tv.layoutManager ensureLayoutForTextContainer:tv.textContainer];
+            index = [tv characterIndexForInsertionAtPoint:point];
+        }
+    }
     return [self editMarkdownIn:self.textView atCharacter:index point:point];
 }
 
@@ -321,8 +332,27 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
 // typing it there would (applySidePreviewEdit:).
 - (BOOL)editSidePreviewAtCharacter:(NSUInteger)index point:(NSPoint)point {
     if (![self sidePreviewShowing] || !self.textView.editable) return NO;
+    // A box still open with an edit in it goes in first (the page then
+    // catches up, below).
+    if (self.markdownEditPanel.edited) [self.markdownEditPanel commitEditing];
     if ([self catchUpSidePage]) return YES;
     return [self editMarkdownIn:_sidePreview.textView atCharacter:index point:point];
+}
+
+- (BOOL)editPageAtWindowPoint:(NSPoint)at {
+    NSMutableArray<NSTextView *> *pages = [NSMutableArray array];
+    if ([self showsRenderedMarkdown] && self.isMarkdown) [pages addObject:self.textView];
+    if ([self sidePreviewShowing] && _sidePreview.textView) [pages addObject:_sidePreview.textView];
+    for (NSTextView *page in pages) {
+        if (!page.window || page.hiddenOrHasHiddenAncestor) continue;
+        const NSPoint p = [page convertPoint:at fromView:nil];
+        if (!NSPointInRect(p, page.visibleRect)) continue;
+        [page.layoutManager ensureLayoutForTextContainer:page.textContainer];
+        const NSUInteger i = [page characterIndexForInsertionAtPoint:p];
+        return page == self.textView ? [self editMarkdownAtCharacter:i point:p]
+                                     : [self editSidePreviewAtCharacter:i point:p];
+    }
+    return NO;
 }
 
 // Whether the page beside the source was rendered from the buffer as it is
@@ -378,7 +408,7 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
                                        @"Quote", @"Code block", @"Table cell", @"Table row",
                                        @"Formula", @"HTML"};
     NSString *title = [titles[block.kind] stringByAppendingString:
-        @" (Markdown; Return saves, Shift+Return for a new line)"];
+        @" (Markdown; Return applies, Shift+Return for a new line)"];
     NSString *text = [NSString stringWithUTF8String:
         src.substr(block.start, block.end - block.start).c_str()] ?: @"";
 
@@ -452,6 +482,10 @@ static void MCKeepLostMarkdownEdit(EditorController *me, NSString *text) {
         }
         addItem:addItem];
     return YES;
+}
+
+- (void)commitPageEdit {
+    if (self.markdownEditPanel.edited) [self.markdownEditPanel commitEditing];
 }
 
 - (void)applyMarkdownEdit:(NSString *)source side:(BOOL)side {

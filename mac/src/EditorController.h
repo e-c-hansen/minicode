@@ -516,6 +516,10 @@
 @property(nonatomic, readonly) BOOL canExportMarkdownHtml;
 - (void)exportMarkdownHtml:(id)sender;
 - (BOOL)writeMarkdownHtmlTo:(NSString *)path;
+// A page edit still open with a change in it goes into its document (one
+// undo step), as Apply would: before a save, a close or a quit asks about
+// unsaved changes, so what was typed there is never dropped unasked.
+- (void)commitPageEdit;
 @end
 // Where Export as HTML… writes, given the suggested path (the file's own,
 // as .html): nil asks with a save panel. The GUI checks answer here.

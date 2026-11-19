@@ -37,6 +37,8 @@ static const NSUInteger kMirrorMinDigits = 3;
 
 @implementation MCMirrorPictureView
 - (BOOL)acceptsFirstResponder { return NO; }
+// A press in a window that is not key acts at once too, as in the text.
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
 - (BOOL)isFlipped { return YES; }
 - (void)mouseDown:(NSEvent *)event {
     if (self.onPress) self.onPress(event);
