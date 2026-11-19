@@ -960,6 +960,15 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return boolValue(v, s.enablePreview_, e);),
         MC_KEY("workbench.enable-preview-from-quick-open", Word, false,
                return boolValue(v, s.enablePreviewFromQuickOpen_, e);),
+        MC_KEY("explorer.auto-reveal", Word, false,
+               const std::string w = lower(v);
+               bool on = true;
+               if (!parseBool(w, on)) {
+                   e = "'" + v + "' is not on or off";
+                   return false;
+               }
+               s.explorerAutoReveal_ = on;
+               return true;),
         MC_KEY("editor.auto-save", Word, false,
                const std::string w = lower(v);
                if (w == "off" || w == "false" || w == "none") s.autoSave_ = AutoSave::Off;
@@ -1693,6 +1702,12 @@ const char* Settings::defaultFileText() {
 # tree.git-deleted = #C74E39
 # tree.git-ignored = #8C8C8C
 # tree.git-conflict = #E4676B
+# When another tab comes on show, the tree opens its file's folders, selects
+# its row, and scrolls it to the middle unless it is already in view, as VS
+# Code's explorer.autoReveal. A file outside the focused folders leaves the
+# tree as it is. Off, the tree moves only for Reveal Active File in File
+# Tree (macOS).
+# explorer.auto-reveal = on
 # A file opened by a single click in the tree, a single click on a Find in
 # Folder result, or Go to Definition goes in the preview tab, its name in
 # italics, which the next such file replaces, as in VS Code. Editing or

@@ -548,7 +548,33 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // andOpen: and revealPath:open:from: widen exactly when they do not open.
 - (void)revealPath:(NSString *)path open:(BOOL)open from:(EditorTabs::OpenFrom)from
              widen:(BOOL)widen;
+// Opens the tree's folders down to `path`, listing only those on the way,
+// and gives the deepest row reached (`path`'s, or the folder where the way
+// ends); nil when the path is left out of the tree (outside the focus,
+// `widen` unset).
+- (FileItem *)treeOpenFoldersTo:(NSString *)path widen:(BOOL)widen;
 - (void)reloadTreeKeepingState:(BOOL)rescan alsoExpanding:(NSSet<NSString *> *)more;
+@end
+
+// EditorController+TreeReveal.mm: the tree follows the active tab
+// (explorer.auto-reveal). Its state is in EditorController+TreeRevealIvars.h.
+@interface EditorController (TreeReveal)
+// Another tab is on show (activateTab:): its file revealed in the tree,
+// centered unless in view, or kept for when the tree shows again.
+- (void)treeFollowActiveTab;
+// The tree may have come on show (the sidebar opened, the tree back in
+// it): a file that came on show while it was hidden is revealed, once.
+- (void)treeRevealIfShown;
+// Scrolls the tree to `row`: not at all when it is wholly in view, else
+// with it in the middle.
+- (void)scrollTreeRowIntoView:(NSInteger)row;
+// A click or Return in the tree opens `path` (nil when done): its row is
+// selected as clicked, and the tree does not scroll.
+- (void)treeOpensPath:(NSString *)path;
+// Held while a window's tabs come back: its tree is put back as it was.
+- (void)holdTreeFollowing:(BOOL)hold;
+// applySettings: explorer.auto-reveal turned on reveals the file on show.
+- (void)treeAutoRevealSettingsApplied;
 @end
 
 // EditorController+TreeFocus.mm: Focus on Folder and Add to Focus

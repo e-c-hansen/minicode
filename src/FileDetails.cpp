@@ -694,6 +694,12 @@ int rootOf(const Set &set, const std::string &rel) {
     return -1;
 }
 
+bool shows(const Set &set, const std::string &rel) {
+    if (set.empty()) return true;
+    if (set.size() == 1) return rel != normalize(set[0]) && contains(set[0], rel);
+    return rootOf(set, rel) >= 0;
+}
+
 Set revealed(const Set &set, const std::string &rel) {
     if (set.empty()) return set;
     if (set.size() == 1) {
@@ -759,3 +765,37 @@ std::vector<double> shared(const std::vector<double> &widths, double available) 
 }
 
 }  // namespace TreeFocus
+
+namespace TreeReveal {
+
+double scrollTop(double rowTop, double rowHeight, double viewTop, double viewHeight,
+                 double contentHeight) {
+    if (viewHeight <= 0) return viewTop;   // no view to show it in (a collapsed sidebar)
+    if (rowTop >= viewTop && rowTop + rowHeight <= viewTop + viewHeight) return viewTop;
+    double top = rowTop + rowHeight / 2 - viewHeight / 2;
+    const double most = contentHeight - viewHeight;
+    if (top > most) top = most;
+    if (top < 0) top = 0;
+    return top;
+}
+
+bool Follower::activeChanged(const std::string &path, bool treeOnShow) {
+    if (treeOnShow) {
+        pending_ = false;
+        file_.clear();
+        return !path.empty();
+    }
+    pending_ = true;
+    file_ = path;
+    return false;
+}
+
+std::string Follower::treeShown() {
+    if (!pending_) return "";
+    pending_ = false;
+    std::string out;
+    out.swap(file_);
+    return out;
+}
+
+}  // namespace TreeReveal

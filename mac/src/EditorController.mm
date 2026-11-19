@@ -20,6 +20,7 @@
 #import "EditorController+TreeIvars.h"
 #import "EditorController+TreeDetailsIvars.h"
 #import "EditorController+TreeFocusIvars.h"
+#import "EditorController+TreeRevealIvars.h"
 #import "IdeLinkServer.h"
 
 // Every window's tabs (Model::Window), one of each per editor window.

@@ -82,6 +82,7 @@ static char kProcessesPanelKey, kProcessesShownKey;
     } else {
         [self.window makeFirstResponder:self.outline];
     }
+    [self treeRevealIfShown];   // the tree back: the file that came on show meanwhile
     if (self.hintsVisible) [self updateHints];
 }
 

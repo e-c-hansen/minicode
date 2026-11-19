@@ -492,4 +492,48 @@ static void testFileDetails() {
         CHECK((shared({10, 10}, 0) == std::vector<double>{0, 0}));
         CHECK(shared({}, 10).empty());
     }
+
+    GROUP("tree:auto-reveal");
+    {
+        using TreeFocus::shows;
+        // No focus: every file of the folder shows.
+        CHECK(shows({}, "mac/src/a.mm") && shows({}, "README.md"));
+        // One focused folder is the root, no row: inside it shows, the
+        // folder itself and anything outside leave the tree as it is.
+        CHECK(shows({"mac/src"}, "mac/src/a.mm") && shows({"mac/src"}, "mac/src/deep/d.txt"));
+        CHECK(!shows({"mac/src"}, "mac/src") && !shows({"mac/src"}, "src/core.cpp"));
+        CHECK(!shows({"mac/src"}, "mac/srcx/a"));   // a name, not a prefix
+        CHECK(!shows({"mac/src"}, "README.md"));
+        // Several: each is a root row, so the folder itself shows too.
+        CHECK(shows({"mac/src", "linux/src"}, "linux/src/x.cpp"));
+        CHECK(shows({"mac/src", "linux/src"}, "mac/src"));
+        CHECK(!shows({"mac/src", "linux/src"}, "src/core.cpp"));
+
+        using TreeReveal::scrollTop;
+        // Rows 20 tall, a view 200 tall at 400 over 2000 of content.
+        CHECK(scrollTop(400, 20, 400, 200, 2000) == 400);   // the first row in view: no move
+        CHECK(scrollTop(580, 20, 400, 200, 2000) == 400);   // the last whole row: no move
+        CHECK(scrollTop(590, 20, 400, 200, 2000) == 500);   // cut by the bottom: centered
+        CHECK(scrollTop(390, 20, 400, 200, 2000) == 300);   // cut by the top: centered
+        CHECK(scrollTop(1500, 20, 400, 200, 2000) == 1410);
+        CHECK(scrollTop(20, 20, 400, 200, 2000) == 0);      // near the start: held at 0
+        CHECK(scrollTop(1980, 20, 0, 200, 2000) == 1800);   // near the end: held at the end
+        CHECK(scrollTop(100, 20, 0, 200, 150) == 0);        // content shorter than the view
+        CHECK(scrollTop(10, 20, 0, 0, 2000) == 0);          // no view at all
+
+        TreeReveal::Follower f;
+        CHECK(f.activeChanged("/r/a.cpp", true));            // on show: revealed now
+        CHECK(f.treeShown().empty());                        // nothing waits
+        CHECK(!f.activeChanged("", true));                   // a page: nothing to reveal
+        CHECK(!f.activeChanged("/r/b.cpp", false));          // hidden: kept
+        CHECK(!f.activeChanged("/r/c.cpp", false));          // the last one wins
+        CHECK(f.treeShown() == "/r/c.cpp");
+        CHECK(f.treeShown().empty());                        // once
+        CHECK(!f.activeChanged("/r/d.cpp", false));
+        CHECK(!f.activeChanged("", false));                  // then a page: nothing to reveal
+        CHECK(f.treeShown().empty());
+        CHECK(!f.activeChanged("/r/e.cpp", false));
+        CHECK(f.activeChanged("/r/f.cpp", true));            // on show again first: nothing waits
+        CHECK(f.treeShown().empty());
+    }
 }

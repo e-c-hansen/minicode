@@ -433,8 +433,7 @@ BOOL MCPathAtOrBelow(NSString *path, FileItem *folder) {
     const TreeFocus::Set set = MCFocusSet(_treeFocusPaths);
     const std::string r = Utf8String(rel);
     // One folder is the tree's root, no row of its own; several are rows.
-    if (set.size() == 1 ? r != set[0] && TreeFocus::contains(set[0], r) : TreeFocus::rootOf(set, r) >= 0)
-        return YES;
+    if (TreeFocus::shows(set, r)) return YES;
     if (!widen) return NO;
     // A reveal: one folder widens to the nearest folder that shows it as a
     // row; several take in the path's folder.

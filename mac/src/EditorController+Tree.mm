@@ -281,9 +281,11 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
     // A single click opens the file in the preview tab; a double-click on
     // it, or Cmd+click, in a kept tab (EditorTabs::treeClick).
     ClickOutline *tree = self.outline;
+    [self treeOpensPath:node.path];   // the row clicked: the tree does not scroll for it
     [self openFileAtPath:node.path
                     from:EditorTabs::treeClick((int)tree.clickCount, tree.sameRowAsLastPress,
                                                tree.commandClick)];
+    [self treeOpensPath:nil];
 }
 
 // Keyboard activation (Return in the tree): open a file, or toggle a folder.
@@ -300,7 +302,9 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
     }
     // A bookmark's page takes the keyboard instead of the editor.
     if ([self openBookmarkAtPath:node.path focusPage:YES]) return;
+    [self treeOpensPath:node.path];
     [self openFileAtPath:node.path from:EditorTabs::OpenFrom::TreeReturn];
+    [self treeOpensPath:nil];
     [self focusEditor:nil];   // opened it to work on it: kept
 }
 
@@ -963,6 +967,34 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 // is left as it is and the file only opened.
 - (void)revealPath:(NSString *)path open:(BOOL)open from:(EditorTabs::OpenFrom)from
              widen:(BOOL)widen {
+    FileItem *node = [self treeOpenFoldersTo:path widen:widen];
+    if (!node) {   // left out of the tree: a file is only opened
+        BOOL isDir = NO;
+        if (open && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
+            [self openFileAtPath:path from:from];
+        return;
+    }
+    NSInteger row = [self.outline rowForItem:node];
+    if (row >= 0) {
+        [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:row]
+                  byExtendingSelection:NO];
+        [self scrollTreeRowIntoView:row];   // centered, unless it is in view
+    }
+    if (open && !node.isDir) {
+        [self openFileAtPath:node.path from:from];
+    } else if (open && ![node.path isEqualToString:path]) {
+        // Not in the tree (a dotfile it hides): a file is opened anyway.
+        BOOL isDir = NO;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
+            [self openFileAtPath:path from:from];
+    }
+}
+
+// Opens the folders down to `path`, listing only those on the way (no
+// reload), and gives the deepest row reached: `path`'s own, or the folder
+// where the way ends (a dotfile the tree hides). nil when the path is left
+// out of the tree (outside the focus, `widen` unset).
+- (FileItem *)treeOpenFoldersTo:(NSString *)path widen:(BOOL)widen {
     // From the tree's root, or with several focused folders from the one
     // that holds the path (a root row, opened to show what is inside).
     FileItem *top = nil, *base = nil;
@@ -970,12 +1002,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         top = [self treeTop];
         base = top ?: [self treeRootFor:path];
     }
-    if (!base) {   // left out of the tree: a file is only opened
-        BOOL isDir = NO;
-        if (open && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
-            [self openFileAtPath:path from:from];
-        return;
-    }
+    if (!base) return nil;
     NSArray<NSString *> *rootParts = base.path.pathComponents;
     NSArray<NSString *> *parts = path.pathComponents;
     FileItem *node = base;
@@ -1009,20 +1036,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         if (next.isDir && i < parts.count - 1) [self.outline expandItem:next];
         node = next;
     }
-    NSInteger row = [self.outline rowForItem:node];
-    if (row >= 0) {
-        [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:row]
-                  byExtendingSelection:NO];
-        [self.outline scrollRowToVisible:row];
-    }
-    if (open && !node.isDir) {
-        [self openFileAtPath:node.path from:from];
-    } else if (open && ![node.path isEqualToString:path]) {
-        // Not in the tree (a dotfile it hides): a file is opened anyway.
-        BOOL isDir = NO;
-        if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
-            [self openFileAtPath:path from:from];
-    }
+    return node;
 }
 
 // revealPath: opens only what the tree lists, and the tree leaves dotfiles

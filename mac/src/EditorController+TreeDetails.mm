@@ -189,6 +189,7 @@ static NSString *MCGroupedCount(long long n) {
 - (void)sidebarFrameChanged:(NSNotification *)note {
     (void)note;
     [self fitTreeColumn];
+    [self treeRevealIfShown];   // dragged open: a file that waited for it
 }
 
 // Folder totals arrived. Sorted by size, the rows move if their order
