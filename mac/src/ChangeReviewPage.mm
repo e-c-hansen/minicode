@@ -1097,6 +1097,10 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     // "Staged a change" never outlives the staged change.
     ChangeReview::ActionNote _note;
     BOOL _messageSettled;     // _note.settled, for the checks
+    // The next say: is about an action whose result is the read after it,
+    // not the one on show (a refused Apply to Main, which shows the
+    // worktree as it is now): its note settles on that read.
+    BOOL _noteSettlesOnNextRead;
     std::string _actionHead;  // HEAD as the last action ran, read on the queue
     BOOL _actionHeadKnown;
     size_t _lastConflicts;
@@ -1731,7 +1735,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     _actionHeadKnown = NO;
     // A worktree's page is what it compares, which no action of its own
     // changes: the result is on show already.
-    if ((!ran || _worktree) && _data && _data->error.empty()) _note.settle(_data->diffs);
+    if ((!ran || _worktree) && !_noteSettlesOnNextRead && _data && _data->error.empty())
+        _note.settle(_data->diffs);
+    _noteSettlesOnNextRead = NO;
     _messageSettled = _note.settled;
     _messageLabel.stringValue = text ?: @"";
     _messageLabel.toolTip = text;
@@ -2438,6 +2444,12 @@ NSDictionary *ButtonAttrs(NSColor *color) {
                 s->_appliedPrint = data->fingerprint;
                 s->_appliedMain = mainPath;
             }
+            // A refusal (a file changed in the worktree since this page's
+            // read, main with changes of its own) is said over the read
+            // that follows it, which shows the worktree as it is now: settled
+            // on the page as it was, the note went as soon as that read
+            // came (CI on main, 2026-11-19: "late.txt was changed..." gone).
+            s->_noteSettlesOnNextRead = !r.ok;
             [s finish:NS8(r.text) ok:r.ok about:{} ran:YES];
         });
     }];
