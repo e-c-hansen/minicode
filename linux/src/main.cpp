@@ -3482,8 +3482,10 @@ static void act_toggle_agents(GSimpleAction*, GVariant*, gpointer userp) {
 // A Find in Folder match, a TODO or a definition: open the file (a single
 // click on a result in the preview tab, a double-click or Enter kept, a
 // definition's file in preview), then go to the match. If the file did not
-// end up open (it could not be read), there is nowhere to go.
-static void openMatch(App* app, const FolderSearchMatch& m, EditorTabs::OpenFrom from) {
+// end up open (it could not be read), there is nowhere to go. `present`
+// brings the editor window up, giving it the keyboard.
+static void openMatch(App* app, const FolderSearchMatch& m, EditorTabs::OpenFrom from,
+                      bool present = true) {
     const std::string path = m.path;
     const int line = m.line;
     const std::size_t column = m.byteColumn, length = m.byteLength;
@@ -3495,12 +3497,16 @@ static void openMatch(App* app, const FolderSearchMatch& m, EditorTabs::OpenFrom
             refreshHints(app);   // a Markdown preview may have switched to source
         });
     });
-    gtk_window_present(GTK_WINDOW(app->window));
+    if (present) gtk_window_present(GTK_WINDOW(app->window));
 }
 
+// Find in Folder's and TODOs' rows: a single click shows the match in the
+// preview tab and leaves the keyboard in the results (the Mac's
+// previewHandler, VS Code's search view), where the arrows go on; a
+// double-click or Enter keeps it, and the editor window comes up.
 static void openSearchMatch(const FolderSearchMatch& m, bool kept, void* userp) {
     openMatch(static_cast<App*>(userp), m,
-              kept ? EditorTabs::OpenFrom::SearchOpen : EditorTabs::OpenFrom::SearchClick);
+              kept ? EditorTabs::OpenFrom::SearchOpen : EditorTabs::OpenFrom::SearchClick, kept);
 }
 
 // Language servers (Lsp.h). Each acts on the editor, so only when it has the
@@ -3667,12 +3673,37 @@ static void act_go_to_bracket(GSimpleAction*, GVariant*, gpointer userp) {
         gtk_widget_error_bell(app->editor->textView());
 }
 
+// A pane command pressed in Find in Folder or TODOs (SearchPanel's
+// kPaneCommands): the editor window takes the keyboard first, so what is
+// typed next goes to the pane asked for, never on into the search window's
+// fields; a toggle of the terminal or the browser shows its pane and
+// focuses it, never hides it, as VS Code's toggles hide only the view with
+// the keyboard (the Mac's currentForPane:, #210).
+static void runPaneCommandFromSearch(App* app, const std::string& id) {
+    if (app->dead) return;
+    gtk_window_present(GTK_WINDOW(app->window));
+    if (id == "workbench.action.terminal.toggleTerminal") {
+        if (!app->layout->terminalShown()) app->layout->toggleTerminal();
+        else if (app->layout->focusTerminal) app->layout->focusTerminal();
+        return;
+    }
+    if (id == "mutible.toggleBrowser") {
+        if (!app->layout->browserShown()) app->layout->toggleBrowser();
+        else if (app->layout->focusBrowser) app->layout->focusBrowser();
+        return;
+    }
+    if (const Keys::Action* a = Keys::actionFor(id))
+        gtk_widget_activate_action(app->window, a->action, nullptr);
+}
+
 // Find in Folder: search the folder selected in the tree, or else the open
 // folder, which is what the Mac's Shift+Cmd+F does.
 static SearchPanel* findInFolderPanel(App* app) {
     if (!app->search) {
         app->search = new SearchPanel(GTK_WINDOW(app->window));
         app->search->setOpenCallback(openSearchMatch, app);
+        app->search->setPaneCommand(
+            [app](const std::string& id) { runPaneCommandFromSearch(app, id); });
         // Replace in Folder looks at every window's tabs, and edits this
         // window's (Search.h).
         app->search->setEditors([] {
@@ -3705,6 +3736,8 @@ static void act_todos(GSimpleAction*, GVariant*, gpointer userp) {
     if (!app->todos) {
         app->todos = new SearchPanel(GTK_WINDOW(app->window), SearchPanel::Mode::Todos);
         app->todos->setOpenCallback(openSearchMatch, app);
+        app->todos->setPaneCommand(
+            [app](const std::string& id) { runPaneCommandFromSearch(app, id); });
     }
     app->todos->setRoot(app->rootDir);
     const std::string dir = app->tree->selectedDir();
@@ -3793,6 +3826,8 @@ static std::vector<HintRow> hintsRows(App* app) {
     row("editor.action.copyLinesUpAction", "Copy line up");
     row("cursorTop", "Start of the file");
     row("cursorBottom", "End of the file");
+    row("cursorHome", "Start of the line");
+    row("cursorEnd", "End of the line (Shift selects)");
 
     heading("Navigation");
     row("workbench.action.showCommands", "Command palette");
@@ -5079,8 +5114,10 @@ static App* newWindow(const std::string& root, const std::string& file,
     Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
     app->zoomListener = Zoom::listen([app](const std::string& what) {
         if (app->dead) return;
-        if (what == "editor") Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
-        else if (what == "terminal") applyTerminalZoom(app);
+        if (what == "editor") {
+            Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
+            app->editor->wrapIndentGeometryChanged();   // a space's width, once restyled
+        } else if (what == "terminal") applyTerminalZoom(app);
         else if (what == "wrap") app->editor->applyWordWrap();
         refreshHints(app);
     });

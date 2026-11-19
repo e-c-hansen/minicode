@@ -6603,7 +6603,14 @@ active tab").
   folders open before the focus (`FileTree::tryExpand`) had opened it, so
   the close did nothing and m_deep opened after it, down to near.txt. The
   step now waits for those folders to be open and checks the close; the
-  product was right (`../docs/notes/tree.md`, the trap).
+  product was right (`../docs/notes/tree.md`, the trap). `tree_clicks` went
+  FLAKY in both CI runs from #232 on (2026-11-19, "timed out: closed",
+  passing alone; 5 of 5 local runs in CI's order failed): its folder closed and stayed closed (a probe on the row's
+  `expanded` saw one change, no reveal ran), but its wait found b.txt by
+  name, and the tree, following Find in Folder's results, had opened
+  `replace_in_folder`'s new rif4, whose b.txt the closing moved into view.
+  The suite finds every row by its path now (`MCGuiTreeRow`); the product
+  was right (the trap in `../docs/notes/tree.md`).
 - **Left for a real screen**: the look of the centering and of the scroll
   jumping (no animation), and a sidebar dragged shut and open by hand.
 
@@ -7081,3 +7088,438 @@ they do in Terminal.app.
   window, as item 110 read them, and whether its Super+Alt keymap for
   mutible is wanted), and GNOME on Wayland, where the harness's X11 Super
   (Mod4) cannot speak for GDK's Super mask.
+
+### 114. Home and End as VS Code's, JSON errors in Problems, and wrapped lines keeping their indentation (November 2026)
+
+The Mac's #213 and #214 brought to GTK with the same core calls
+(`MultiCaret::homeTarget`, `endTarget`, `homeCarets`, `endCarets`;
+`JsonOutline::checksAsJson`, `problems`, `allowsComments`;
+`WrapIndent::leadingColumns`, `continuationIndent`; none of their logic
+copied).
+
+- **Home and End.** Before, GTK's own: Home and End went to the display
+  line's start and end, so Home never stopped at the first non-blank
+  character. Now `Carets::onMoveCursor` takes
+  `GTK_MOVEMENT_DISPLAY_LINE_ENDS` (Home, End, the keypad's, with Shift)
+  in source text at one caret or several (`Carets::homeOrEnd`): Home to
+  the first non-blank character, then the line's start, then back; End to
+  the line's end; on a wrapped line End goes to the row's end first
+  (before the space it broke at, so the caret is drawn on that row) and
+  Home on a later row to its start first. A row is GTK's display line
+  (`Carets::rowAt`: `gtk_text_view_backward_display_line_start`, then
+  `forward_display_line` for the next one's start); not wrapping, the
+  whole line. GtkTextBuffer keeps the anchor itself (the selection bound),
+  so Shift needs none of the Mac's head-finding: Shift+Home then
+  Shift+Right gives a character back. A Markdown page, a message or the
+  welcome text keep GTK's. The registry's `cursorHome`, `cursorHomeSelect`,
+  `cursorEnd` and `cursorEndSelect` are Linux rows (home, shift+home, end,
+  shift+end), listed, not actions, like Ctrl+Home; the hints panel has
+  "Start of the line" and "End of the line (Shift selects)", and
+  REFERENCE.md's Linux column the keys.
+- **Trap: a long line read in blocks.** The core reads the text through
+  `MultiCaret::Text`, which asked `CaretText::text()` for 1,024-character
+  blocks; each block's `gtk_text_buffer_get_iter_at_offset` found its place
+  in a 5 MB line from the line's start, so End there took 49 s of CPU
+  (large_file's stall check). `CaretText::textNear(offsets)` reads the
+  carets' lines whole, once each, and serves the core's blocks from them:
+  92 ms for that End now (the bound is 250). `moveAll` (the arrows, and End
+  at several carets before this item) still reads through `text()`.
+- **JSON in Problems** (`LspSessionJsonCheck.cpp`, the Mac's
+  Lsp+JsonCheck.mm): a file `JsonOutline::checksAsJson` names that no
+  server has (`server_` and `alsoServer_` null, which servers off
+  includes) is parsed on a detached thread when it comes on show
+  (`documentChanged`) and 0.3 s after typing (`textEdited`); the answer
+  comes back through `lspui::afterMs` under `life_` and a generation, and
+  goes into the diagnostics store as the list of a server of its own,
+  `mutible.json`, source "json". Painting and F8 use `shownUri()` (the
+  server's URI, else the check's), `problemsKnown` holds while a file is
+  checked (so a valid one says "No problems"), `tabsChanged` drops the
+  lists of files no tab has, and a server taking the file erases the
+  editor's list. Over 8 MB: no check. JSON with comments (tsconfig.json,
+  .jsonc, .vscode's files) allows comments and trailing commas.
+- **Wrapped lines keep their indentation** (`WrapIndentTags.{h,cpp}`,
+  `editor.wrapping-indent`): GtkTextView has nothing like TextKit's line
+  fragment rects, but a paragraph's `indent` taken negative is a hanging
+  indent. Each source line with leading spaces or tabs and something after
+  them carries one tag of the shared tag table, `mutible-wrap-<columns>`
+  (columns by `WrapIndent::leadingColumns`, tabs to Pango's 8-column
+  stops), over the whole line and its break, so alike neighbours join up.
+  Each tag's pixels are `-continuationIndent(columns × space, mode, 4 ×
+  space, room)`, set by `WrapIndentTable::configure` from
+  `Editor::updateWrapIndent` (the setting through `applySettings`; a space
+  measured as the ruler measures, in the view's font, only while it shows
+  source; the room the text window less its margins), run in an idle after
+  each allocation (`CodeView::onAllocated`) and after a zoom; only tags
+  whose pixels change are set, so a zoom or a resize past the half-room
+  fall back re-lays lines out, and typing never does. `WrapIndentTags` (one
+  a document) retags the lines an edit touched, in the buffer's
+  `insert-text` and `delete-range` after-handlers: a space typed into the
+  indentation took 0.02 to 0.03 ms of CPU there in a file of 20,000
+  wrapped lines, and nothing changes when the leading width stays (the
+  line's first character's tags are read with `gtk_text_iter_get_tags`;
+  only they count, as GTK takes a paragraph's attributes from there). More
+  than 1,000 lines (a file opening, a big paste) get the lines on screen
+  at once and the rest in idle slices of 5 ms, the waiting range carried
+  through edits (`noteLines`). A paste from another buffer brings its
+  tags; `apply-tag` refuses wrap tags from anyone else, as the
+  highlighter's. On only for text, not in large-file mode (no wrapping
+  there) and not with none, decided in `Document::wrapIndentSettingChanged`
+  (from `startHighlighting`, so each load, rename and large-file switch,
+  and from `Editor::applySettings`); tags left from before keep 0 px with
+  none. Nothing reaches the text, its undo, a copy or a server. Left: the
+  first source file shown after the welcome text may draw one frame with
+  0 px (the space is measured in an idle once the view's font is the
+  source's).
+- **The CSV grid's menu keys** (#214's other half): the Mac's grid
+  swallowed every menu key; GTK's never did (its key controller takes only
+  Ctrl+Z and Ctrl+Y, and the window's accelerators run), now checked.
+- **Checks**: `editor_keys` (new, EditorKeysSuite.cpp: Home and End
+  first and second presses, End Left Left, Shift with Shift+Right and
+  Shift+End past the anchor, two carets plain and with Shift, and a
+  wrapped line's rows: End to the first row's end, drawn on that row, then
+  the line's end; Home on the second row to its start, then the line's;
+  Shift+End to the row's end; two carets on two rows); `problems` (a
+  package.json with a trailing comma: one error drawn on the comma, the
+  list's rows "# package.json — 1 error | E 3:21 Trailing comma [json]",
+  the status bar's "1 error"; Delete takes it away, "No problems"; typed
+  back, back; tsconfig.json's comment and trailing comma none; its tab
+  closed, gone); `word_wrap` (the continuations of an 8-space line and a
+  tab line at the first non-blank character's x by
+  `gtk_text_view_get_iter_location`, none at the edge, indent 4 spaces
+  further in, a space typed into the indentation moving them, a line
+  indented past half the pane at the edge, and 20,000 such lines settled
+  in idle time with a typed space's retag bounded at 2 ms of CPU);
+  `csv_table` (Ctrl+Shift+P in the grid opens the palette). The core's
+  `commands:linux-defaults` checks the four rows.
+
+### 115. Tabs: whole names and a scrolling row, as VS Code's tabSizing "fit" (November 2026)
+
+The Mac's #211 brought to GTK with the same core calls
+(`EditorTabs::tabNames` through `Model::Window::tabNames`, `layoutStrip`,
+`clampScroll`, `revealScroll`, `wheelScroll`, `dragAutoScroll`,
+`clipped`, `fitName` and its `fitMiddle`; none of their logic copied).
+
+- **What a user meets.** A tab keeps its natural width, its whole title,
+  80 to 320 pixels, and is never squeezed: before this, every title had a
+  30-character cap and Pango's middle ellipsis. Only a title wider than
+  the widest tab is cut, in the middle ("a_rather_long_modul…_their_
+  summaries.py"). A row wider than the strip scrolls sideways by the wheel,
+  vertical too, or a touchpad, with a thin bar along the bottom while the
+  pointer is over it and fades over the cut-off ends; the tab on show
+  comes into view whenever it is another tab (a new active index, a row of
+  another length, its title or path changed by a preview replaced) and
+  when the strip gets a new width, never for an unsaved-changes dot. Files
+  of one name show the name and, after it, smaller and dimmed, the
+  folders that tell them apart ("index.ts app", "index.ts lib"), where
+  "one/README.md" was one label. A tab still drags along its row, and
+  held near either end the row scrolls under it each frame. The terminal
+  dock's and the browser's strips are the same class and behave the same;
+  their titles have no hints.
+- **Code.** `linux/src/TabStrip.{h,cpp}`: the scrolled window and its
+  inner box are gone. The tabs are children of `row_`, a GtkBox whose
+  layout is a `gtk_custom_layout_new` (as `Groups.cpp`'s), clipped
+  (`GTK_OVERFLOW_HIDDEN`), asking no width and only its natural height as
+  the scroller did. `rowAllocate` places each tab at `layoutStrip`'s x
+  less the scroll, at its width, then the two fades and the bar, which
+  never take a click (`gtk_widget_set_child_visible` by `clipped` and the
+  pointer). A tab's natural width is GTK's measure of its box less its
+  names box (`chrome`: padding, the gap, the close button) plus its whole
+  title and hint measured with Pango in each label's own font (the CSS's
+  italics and sizes), so it never depends on what the labels show cut, and
+  `fitTitles` puts `fitName`'s result in the labels in `setItems`, and
+  again from an idle when a layout finds the fonts changed since
+  (`tabs.font-size`, a strip not yet on screen). The tabs are measured
+  only when GTK asked the row's size again (`rowMeasure` marks it), never
+  for a scroll. The wheel is a `GtkEventControllerScroll` on the row,
+  both axes, its deltas negated (GTK's point the way the view goes, the
+  core's the way the content goes), a notch 48 pixels, a touchpad's
+  pixels as they are where GDK says they are pixels
+  (`GDK_SCROLL_UNIT_SURFACE`, Wayland; X11 gives a touchpad fractional
+  notches); over a row that fits it lets the event go.
+  A capture-phase motion controller on the row sees a held tab's pointer
+  (the tab's click gesture keeps the drag) and starts a tick callback
+  scrolling by `dragAutoScroll` (28 pixels from an end, 14 a frame). The
+  press and release places are the tab's left edge in the whole row plus
+  the pointer's x in the tab, so a row scrolled meanwhile drops right
+  (`dropIndex` over the core's widths, not the allocations). Each tab is
+  a names box (the title, then the hint with a 5 pixel margin, on one
+  baseline) and the close label; the names box expands, so at 80 pixels
+  the close button stays at the right end. `Tabs.cpp`'s `refreshStrip`
+  and `Groups.cpp`'s `refreshMirror` take `tabNames` (a diff keeps its
+  title); `ThemeCss.cpp` adds `.minicode-tab-hint` (92%, opacity 0.55),
+  the fades in the strip's color and the bar in the sidebar text's at
+  0.45. Checks read `displayedTitle`, `displayedHint`, `hintWidget`,
+  `rowWidget`, `tabLeft`, `tabWidth`, `contentWidth` and `scrollOffset`
+  (as last laid out: read right after a title changed, it can be the old
+  layout's, even past the end).
+- **Trap: a reveal waiting for its frame undid a wheel.** `setItems`
+  only marks the reveal; the layout does it. In `browser_tabs` (two runs
+  in eight) the page's title came in, so the active tab's title changed,
+  and the wheel clicks arrived before the next frame: they scrolled the
+  row, and the layout after them revealed the active tab again, back at
+  the end. `settle()` now does the layout's pending work (measuring anew
+  if GTK has not, the reveal) before a wheel, a drag's press and each
+  auto-scroll frame, so the user's scroll goes on from where the row is
+  about to be. `tab_strip` sends Alt+1 and two wheel clicks in one step
+  and wants the row two notches from its start; with `settle` emptied it
+  failed three runs in three, and it passed eight browser_tabs runs in
+  eight after.
+- **The old strip squeezed.** The scrolled window gave its row the
+  view's width whenever the tabs' smallest widths (an ellipsis each) fit,
+  so its tabs shrank instead of scrolling, and `browser_tabs` clicked the
+  first tab and dragged it onto the last with five tabs in a 378 pixel
+  pane. They are 88 pixels each now, a row of 440 scrolled to the last;
+  the suite wheels the row back to its start before clicking the first,
+  and drags it by holding it at the strip's right end until the row has
+  scrolled to its end, then letting go.
+- **Checks.** `tab_strip` (TabStripSuite.cpp, 130 checks): seventeen
+  files (the Mac's fifteen, a.c and a 75-character name) in an 851 pixel
+  strip, a row of 2116; every title whole but the long one, which keeps
+  its first and last eight bytes around "…", and no label ellipsized by
+  Pango; widths 80 (a.c) to 320 (the long one), end to end, each where
+  GTK allocated it; the last tab in view at the row's end with the left
+  fade only; Alt+1 back to 0 with the right fade only, Ctrl+Page Up to
+  the end again; two wheel clicks up 96 pixels with the bar and both fades
+  and nothing chosen, one down 48; typing in a tab scrolled half out of
+  view put its dot there without moving the row, undone; the index.ts
+  tabs' hints, after the title, 12.3 pt to its 13.3; summary.py dragged
+  past config.json; a tab held at the strip's right end scrolling the row
+  to its end and dropped last; Alt+1 with two wheel clicks at once (the
+  trap above). With the reveal taken out 14 checks failed; with a reveal
+  on every `setItems`, the dot's. `tabs` now also checks the README.md
+  tabs' name and hint, and `browser_tabs` scrolls its row (above). With
+  `tabs`, `preview_tabs`, `tab_viewers`,
+  `split_editor`, `sessions`, `window_title`, `go_back`, `terminal_tabs`,
+  `terminal_splits`, `layout`, `adjust_settings`, `backups`,
+  `browser_tabs`, `themes`, `compare` and `owner_reports` passing. The
+  core's `tabs:names`, `tabs:strip-widths`, `tabs:strip-scroll` and
+  `tabs:fit-title` groups of `make test` are the Mac's.
+- **Needs a person:** a real touchpad's feel (its smooth deltas go in as
+  pixels, with no kinetic glide after the fingers lift, as the Mac's
+  strip) and a real wheel's notch size on the owner's mouse.
+
+### 116. Find in Folder: Enter never replaces, the panes take the keyboard, dismissed rows stay out of Replace All (the Mac's #210; November 2026)
+
+On the Mac (1.6.3) a walker's `python3 -m pytest -q` and Enter landed in
+the Search window's replace field, where Enter was Replace All, and a file
+was rewritten; a row's Dismiss took it out of the list, but Replace All
+re-planned the folder and replaced it anyway. #210 fixed both there and
+added the core's `FolderReplaceExclusions`, `excludeDismissed`,
+`dismissedLines`, skip lines in `replaceInText` and
+`TextFind::dropEditsOnLines` (`search:dismissed`). GTK had the same
+Enter, no Dismiss at all, and a search window no accelerator reached.
+`linux/src/Search.{h,cpp}` and `main.cpp`, with the core's functions only:
+
+- **Enter in the replacement** (`fieldReturn`) does what Enter in the
+  query does: it searches, or, when the list already answers the query,
+  goes into the results on the first row. It never replaces. (The Mac's
+  Enter always searches again; GTK's query had gone into the list since
+  September 2026, and kept that, so Enter after a dismiss keeps the
+  dismissals while rows are left.) Replace All is its button or
+  Ctrl+Alt+Enter, only while the replace row shows (else the bell, the
+  Mac's `replaceAllFromKey`); the button's tooltip no longer says Enter.
+- **The results take the keyboard.** A single click on a row selects it,
+  gives the list the keyboard and shows the match in the preview tab
+  without presenting the editor window (`openMatch(..., present)`; it
+  had presented it, so the keyboard left the results at every click),
+  as the Mac's `previewHandler` and VS Code's search view do; the arrows
+  then move between rows and Enter opens one kept, as a double-click
+  does, both presenting the editor window.
+- **Pane keys from the search window.** The Find in Folder and TODOs
+  windows are no application windows, so Ctrl+`, Ctrl+Shift+P and the
+  rest did nothing there and what was typed next stayed in the fields.
+  `runPaneKey` matches the keys of `kPaneCommands` (the commands the
+  Mac's `currentForPane:` serves: terminal, browser, hints, sidebar
+  panels, problems, palette, focus commands) against the key with
+  `gtk_shortcut_trigger_trigger` over `Commands::linuxAccelerators`, so
+  keys.conf moves them, and main.cpp's `runPaneCommandFromSearch`
+  presents the editor window and runs the action; Toggle Terminal and
+  Toggle Browser show and focus their pane, never hide it.
+- **Dismiss.** GTK's results are lines without file rows, so: a row's ×
+  (shown on `:hover` and `:selected`, `installRowCss`; not focusable),
+  Delete in the list (VS Code's Linux key for Dismiss; the Mac has none)
+  and the right click menu's Dismiss take the line, and the menu's Dismiss
+  File every line of its file (the Mac's Dismiss on a file's row). The
+  rows leave the list a run at a time (`removeRows`, the scroll kept), the
+  keyboard held on the window's box meanwhile (`ListKeyboard::hold`; a
+  scroller would pass the focus to the list's removed row) and given to
+  the row now in the first one's place; the status says what is left
+  ("3 matches in 2 files (dismissed rows are left alone)"). Replace All
+  copies the dismissals into its plan job (`excludeDismissed` on the
+  worker, so a search while it counts cannot change them), the question
+  says how many matches they keep, and `replaceInPaths` skips dismissed
+  files and lines in tabs (`dropEditsOnLines`) and on disk
+  (`replaceInText` with skip lines); a file whose dismissed line changed
+  since the search is left alone whole and named. A new search clears
+  them. In the TODOs window the same keys and menu take rows out of the
+  list (and out of its filter's source).
+- **Left out:** the Mac's file rows (Replace All in This File, a file
+  row's own ×), which GTK's flat list never had; Cmd+G stepping through
+  the results; and #210's discarding of keys queued before the question,
+  which GTK does not need: a key the X server sent while the search window
+  had the focus goes to that window, where Enter now only searches.
+- **Checks.** `replace_in_folder` (46 checks): its four Enter-as-Replace-All
+  presses became Ctrl+Alt+Enter and the button; new steps on four files
+  (seven matches, six rows) check Enter in the replacement moving into the
+  results with no question and every file unchanged after a second's
+  wait, Down and Down moving the selection, a click on a row from the
+  replace field previewing it with the list holding the keyboard and the
+  search window still active, Up from there, a line dismissed by its ×,
+  a file by the menu's Dismiss File, a line by Delete (the keyboard still
+  in the list, Up working after), the status each time, Ctrl+Alt+Enter
+  asking "Replace 3 matches in 2 files?" with "4 matches in dismissed rows
+  are left alone.", the dismissed line, file and row unchanged on disk and
+  in the preview tab while the rest is replaced, every row back after;
+  then Ctrl+` from the replace field making the editor window active with
+  its terminal shown and holding the keyboard, and Ctrl+` again from the
+  search window leaving it shown. The suite now gives the X focus back
+  when it closes the window (it had printed a LEFT line). Seen failing
+  without the feature: Enter as Replace All failed at the first new wait
+  (the question up); presenting on a single click failed the active
+  window checks; Replace All without the dismissals failed the question
+  and the files (a.txt's line 2 and d.txt replaced, b.txt's tab changed).
+- **Needs the owner's eyes:** the × on hover, the right click menu's look,
+  and the click-then-arrows feel with a real window manager, which keeps
+  the transient search window over the editor's.
+- **A FLAKY line, then a fix (2026-11-19).** CI printed `FLAKY
+  [replace_in_folder] ... the second row`: a search remade the rows while
+  the keyboard was in them, and a frame before its results left the search
+  window no focus at all, so the first Down only put the keyboard back on
+  row 0 (`docs/notes/find.md`'s trap). Alt+C from the results lost it the
+  same way on most runs. `runSearch` now holds the keyboard on the
+  window's box while the list is empty and `giveKeyboardBack` gives it to
+  the new first row. The suite empties the query before `setScope`, whose
+  search of the same query had passed the wait for six rows while the
+  typed one came 0.35 s later, after Enter; it waits for
+  `searchedQuery()`, and checks a search and Alt+C from the third row
+  (the keyboard on the new first row, Down to the second). Before: 3 of 30
+  runs failed on one core shared with two busy loops, and every run with a
+  50 ms sleep in the worker; the new checks failed without the fix with or
+  without the sleep. After: 30 of 30 under the same load.
+
+### 117. `exit` closes the terminal; a detached job is its terminal's (November 2026)
+
+The Mac's #224 brought to GTK with the same core calls
+(`TerminalExit::fromWaitStatus` and `decide`, `Settings::
+terminalCloseOnExit`; none of their logic copied). The Processes half
+needed no GTK code: the panel's `Procs::Tracker` samples `ProcFs::Source`,
+whose stat parse now carries the session id, so it follows the core.
+
+- **What a user meets.** `exit`, or Ctrl+D at an empty prompt, closes
+  the terminal, as Terminal.app, VS Code, Zed and the Mac do: a split's
+  pane alone, the tab with its last pane, and the dock with the last tab
+  (a fresh terminal then waits, its shell started when the dock shows
+  again), nobody asked. Any exit code closes; `exit 1` too, as on the
+  Mac. terminal.close-on-exit = off keeps the terminal, saying "Process
+  exited. Press Return to start a new shell." (with "(code 3)" when not
+  0). A shell killed by a signal never closes its terminal: "The shell
+  ended (signal 9). Press Return to start a new one.", in red. A shell
+  that ends before its first prompt (a ~/.bashrc that exits) says "The
+  shell exited as it started (code 4). Press Return to try again." and
+  waits, where it used to restart three times in a second and then stop.
+  While a terminal waits, only Return reaches anything (it starts the
+  new shell); Run File, `mutible term --run` and Run in Terminal start
+  one and run their line in it. Before this a shell that exited printed
+  "[shell exited — restarting]" and started again, so `exit` closed
+  nothing. With terminal.mac-style-keys on, Close Tab (Ctrl+W) closes a
+  waiting terminal unasked (nothing runs in it), and Super+D at an empty
+  prompt sends ^D, which ends the shell and closes the terminal as
+  Ctrl+D does with the setting off.
+- **Processes.** A job detached with `( server & )`, or nohup and disown
+  just before `exit`, is the subreaper's (systemd's, or the GUI harness's)
+  before any look sees it under the shell. It now shows under the
+  terminal that started it, by its session (the host's child calls
+  `setsid`, so the shell leads the pty's session and the job keeps it),
+  and as an orphan of the window once `exit` closes that terminal. Before
+  it was "not started here".
+- **Code.** `Terminal::shellExited(status, error)` (linux/src/Terminal.cpp)
+  takes the host's TermExited status (`Client::TermListener::termExited`'s
+  `status`, ignored until now) after `vteCaughtUp`, as before, so the
+  host's last word on the shell, and its prompt count, are applied first.
+  `prompted` is `seenPrompt_` (a TermShell with prompts, or a held shell
+  attached, which ran before), the host's prompt count, or 2 s since the
+  spawn (a shell without the integration). On Close, `onShellExit` is
+  called from an idle (`exitIdle_`, removed by the destructor), not from
+  inside the host listener's call, and only while no shell started again
+  meanwhile; the idle calls a copy of the callback, since the call
+  deletes the terminal. `TerminalDock::hook` sets it to `closePane(t,
+  false)`, so the close is the same code as Close Terminal's and Close
+  Tab's: `removePane` gives the keyboard to the neighbour, `remove`
+  leaves a fresh terminal and calls `onEmpty`, and `onChanged` reports
+  the session record. The dock clears `onShellExit` wherever it clears
+  `onFocusIn`. Waiting (`awaitReturn_`, `waitingForReturn()` for the
+  checks), `onCommit` sends nothing to a host (there is no pty) and a
+  Return calls `startAgain`; `typeText` and `runLine` call it too. A
+  line `runLine` or `typeText` still holds when the shell ends gets a new
+  shell, not a close, as the Mac's waiting `runCommand:`. Before the note
+  VTE is fed the alternate screen's end, a soft reset and bracketed paste
+  and mouse reports off, as the Mac's grid is. `rapidExits_` is gone.
+  `feedNotice` takes an `error` flag (bright red, ANSI 91, the Mac's
+  0xF48771 in this palette).
+- **The session host.** Every GTK terminal is on it: the host reaps the
+  shell and sends TermExited with its wait status after the output before
+  it, and has ended its terminal by then, so `hostTerm_` goes to 0 and
+  the destructor closes nothing. A held terminal attached by a later
+  window closes on `exit` too (`seenPrompt_` set in `attachShell`). The
+  host going away is not a shell's exit: the lost listener's note, and
+  no Return restart, as before.
+- **Checks.** A new suite, `terminal_exit` (TerminalExitSuite.cpp), with
+  real keys: `exit` in the second of two tabs closes it, nobody asked,
+  the first active with the keyboard and the dock shown; Ctrl+D in a
+  third does the same; in a split, `exit 1` closes only that pane, the
+  other keeping its shell and the keyboard; `exit` in the last terminal
+  hides the dock, and showing it starts a new shell; `kill -9 $$` keeps
+  the terminal with the signal's line, and Return starts a new shell; a
+  ~/.bashrc with `exit 4` says so, stays 1.5 s with no shell (a negative
+  check), and Return with the file mended starts one; with
+  close-on-exit off, `exit 3` and `exit` each say so and stay, Return
+  starts a shell, and `runLine` on a waiting terminal starts a shell and
+  runs the line; with mac-style keys on, Ctrl+W closes a waiting
+  terminal unasked and Super+D at an empty prompt closes the last
+  terminal and the dock. `processes` adds the detached job:
+  `( (trap '' HUP; exec sleep 623) & echo $! > file )` in a terminal of
+  its own, whose parent is then not the shell but whose session is,
+  shows under that terminal in the panel (its row's terminal id), `exit`
+  closes the terminal, and the job is in the panel's orphans; the suite
+  then kills it. `host_reattach`'s in-process part ends the reattached
+  (held) shell with ^C and `exit` instead of closing its pane by hand: the
+  terminal closes and a fresh one waits. The crash is SIGKILL, not
+  SIGSEGV: a segfaulting bash
+  would leave a core or an apport report outside the scratch world, and
+  `bash -c 'kill -SEGV $$'` typed at the prompt kills a child, not the
+  terminal's shell, which only prints "Segmentation fault".
+- **Numbers** (2026-11-19, this ThinkPad, cores 0 to 3): `terminal_exit`
+  42 checks in 3.8 s alone; with `terminal_tabs`, `terminal_splits`,
+  `terminal_keys`, `terminal_marks`, `processes`, `host_reattach`,
+  `host_splits` and `shell_integration`, 454 checks, none failed, in
+  53 s. Seen failing without the feature: the dock's `onShellExit` made
+  a no-op, `terminal_exit` failed 35 checks (nothing closed); the
+  session id blanked in `ProcFs::Source::list`, `processes` failed 2
+  (the job neither under its terminal nor an orphan). The detached job's
+  parent was the harness's subreaper, its session the shell's pid.
+- **Not this change: `processes` and a long scratch path.** Run with
+  MC_GUI_ROOT inside this worktree's `linux/build`, the second window's
+  "the command is at the prompt" failed every time (and passed with
+  /tmp, and with an equally long root under /tmp): bash's prompt there
+  (`user@host:` and the 110-character project path) plus `(trap '' HUP;
+  exec sleep` is exactly 160 characters, two full rows of the hidden
+  terminal's 80 columns, and VTE's screen text ends at "sleep", the rest
+  of the line never drawn on a third row. A line that fills its rows
+  exactly is worth a look in the port (readline's wrap, VTE fed by the
+  host while hidden); the check is unchanged.
+- **Trap: suites restarted the shell with `exit`.** `shell_integration`
+  (its `startShell`, for a new `$SHELL`, and its last step) and
+  `terminal_marks` (a bash with no earlier suite's commands) typed `exit`
+  and waited for the restarted shell; with `exit` closing the terminal
+  they waited 30 s for a prompt that never came and failed 31 and 19
+  checks. Each now makes a new terminal and closes the dock's others
+  (`newTerminal`, then `close(0, false)` until one is left), as
+  `terminal_tabs` and `terminal_splits` start; shell_integration carries
+  its `onShellStateChanged` counter over to the new one. A new suite
+  wanting a fresh shell does the same.
+- **Not the product: a Ctrl+W that missed the terminal.** With the dock's
+  close turned off to see `terminal_exit` fail (35 failed checks: no tab,
+  pane or dock closed), the keyboard never reached the ended terminal and
+  Ctrl+W, mac-style, closed the window; the next wait read a null dock and
+  the run crashed. The step now presses Ctrl+W only while the terminal
+  has the keyboard.

@@ -158,6 +158,49 @@ found through that list.
   (Toggle Terminal, Toggle Browser) from there shows and focuses its pane,
   as VS Code's toggles hide only the focused view. The key monitor runs
   Global keys (Ctrl+`) for those windows too (`MCKeymapHandleGlobalKeyDown`).
+- **The same on Linux** (2026-11-19, `linux/HANDOFF.md` item 116,
+  `linux/src/Search.cpp`). Enter in the replace field is `fieldReturn`,
+  what Enter in the query does (search, or into the results when they
+  answer the query; GTK's query did that before #210); Replace All is the
+  button or Ctrl+Alt+Enter (`editor.action.replaceAll`, `onWindowKey`),
+  only while the replace row shows, else the bell. GTK's results are a
+  flat list of lines (no file rows), so a row's × (CSS-shown on `:hover`
+  and `:selected`), Delete in the list, and the right click menu's Dismiss
+  take a line, and the menu's Dismiss File every line of its file; both
+  record into `FolderReplaceExclusions`, Replace All copies them into its
+  plan job (`excludeDismissed` on the worker) and on into
+  `replaceInPaths` (`dismissedLines`, `replaceInText` with skip lines,
+  `dropEditsOnLines` in a tab), and `runSearch` clears them. A single
+  click on a row previews it without presenting the editor window
+  (`openMatch(..., present = false)`), the list taking the keyboard, as
+  the Mac's `previewHandler`; a double-click or Enter keeps it and
+  presents. The search window is no application window, so no
+  accelerator reached it: `runPaneKey` matches the keys of
+  `kPaneCommands` (the Mac's `currentForPane:` callers) with
+  `gtk_shortcut_trigger_trigger` and main.cpp's
+  `runPaneCommandFromSearch` presents the editor window and runs the
+  action, Toggle Terminal and Toggle Browser showing and focusing their
+  pane, never hiding it. Checked in the GTK `replace_in_folder` suite.
+- **Trap: a GTK search under the keyboard** (2026-11-19, a FLAKY
+  `replace_in_folder` line in CI). A search clears the list at once
+  (`clearResults`) and its rows come later from the worker, and the row
+  that had the keyboard goes with its row; when a frame falls between the
+  two, GTK's deferred focus move finds the list empty and leaves the
+  window no focus at all, so the next key did nothing and a Down only put
+  the keyboard back on the first row (GtkListView's arrows, from no
+  focused row, start at its focus position, which the new rows reset to
+  0). Alt+C from the results did it on most runs (the toggle's redraw is
+  a frame), the worker's thread waiting for a CPU under load. `runSearch`
+  holds the keyboard on the window's box while the list is empty
+  (`ListKeyboard::hold`, as `removeRows` did) and `giveKeyboardBack` gives
+  it to the first new row, or to the query when none came, unless
+  something else took it meanwhile. The suite's own race: `setScope`
+  searches the query already in the field, so a wait for rows passed on
+  that search, and the same query typed after it was searched 0.35 s
+  later (GtkSearchEntry's delay), after Enter had gone into the results;
+  "ca", searched in a pause between keys, lists the rows "cat" does. The
+  suite empties the query before `setScope` and waits for
+  `searchedQuery()`.
 
 ## Traps
 
@@ -167,3 +210,4 @@ text is in place in its section.
 - Find and replace (Mac): Traps: libc++ and libstdc++ each break JavaScript's repetition rules in places (groups unset per repetition, empty repetitions not counting), libc++ finds no `\b` at a line's end once a search starts past 0, and libc++ throws error_complexity (a silent "no match") on short exponential patterns rather than hanging, while ...
 - Find and replace (Mac): Trap: CALayer copies `shadowPath`, so release the path you made, never the one the getter returns (that crashed in the next CA commit).
 - Find in Folder's keys: the Search window floats over the editor window and stays key, so a command run from it through AppDelegate's `[self current]` changed the editor window's panes (Toggle Terminal showed the terminal and called `focusInput`) while every key typed after still went to Search: a walker's `python3 -m pytest -q` and Return landed in the replace field, where Return was Replace All, and a file was rewritten. A command that shows a pane must make the editor window key (`currentForPane:`), Return in a field of that window must never write files, and Dismiss must reach Replace All, which re-plans the whole folder and had ignored the rows taken out of the results.
+- A GTK search under the keyboard: a search clears the list at once (`clearResults`) and its rows come later from the worker, and the row that had the keyboard goes with its row; when a frame falls between the two, GTK's deferred focus move finds the list empty and leaves the window no focus at all, so the next key did nothing and a Down only put the keyboard back on the first row (GtkListView's arrows, from no focused row, start at its focus position, which the new rows reset to 0).

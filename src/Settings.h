@@ -466,7 +466,7 @@ public:
     // the terminal (on, the default, as Terminal.app, VS Code and Zed do);
     // off leaves it saying "Process exited" until Return starts a new
     // shell. A shell killed by a signal never closes its terminal
-    // (TerminalExit.h). The Mac's terminals.
+    // (TerminalExit.h). The Mac's terminals and the GTK port's.
     bool terminalCloseOnExit() const { return terminalCloseOnExit_; }
     // terminal.multiline-paste-warning: auto (the default), always or
     // never; when a paste of several lines asks first

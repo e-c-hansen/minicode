@@ -115,7 +115,13 @@ found through that list.
   none. JSONC files (allowsComments) parse leniently. A server attaching
   (attachDocument) erases the editor's list; a closed tab's goes in
   `tabsChanged`; `stopAllServers` clears the store, and documentOpened
-  checks again. Over 8 M characters: no check.
+  checks again. Over 8 M characters: no check. **Linux** (2026-11-19,
+  `linux/src/LspSessionJsonCheck.cpp`, HANDOFF item 114): the same, with
+  the check on a detached thread whose answer comes back by `afterMs`
+  under the session's `life_` and a generation; `documentChanged` checks
+  when neither `server_` nor `alsoServer_` has the file (servers off
+  included), `shownUri()` stands for `uri_` in painting and F8, and the
+  GTK `problems` suite checks it through the Problems list's rows.
   Every row is one line of constant height (2026-11-18): the label and the
   summary go through `JsonOutline::oneLine` (line breaks, tabs and other
   control characters as `\n`, `\t`, `\u2028` escapes the Mac draws dimmed,

@@ -313,9 +313,9 @@ release. With the setting off nothing changes, MCPty included.
 - **What other screens see.** Every renderer of the host sees every
   terminal on it (the state's `terminals`); the browser's view of one
   window (`SessionBrowser`) shows only that window's, which the window
-  reports with its tabs (below, "One window's terminals"). Notes the panel writes
-  on the screen itself ("[shell exited — restarting]") are only on the
-  Mac's screen. Terminal size follows the renderer that last typed
+  reports with its tabs (below, "One window's terminals"). Notes a renderer
+  writes on its own screen ("Process exited", the shell's end) are only on
+  that screen. Terminal size follows the renderer that last typed
   (stage 6's **Size**, and **Size** above): the browser's view says the
   size of the page that typed there last (`tsize`, below), so a page that
   only looks never shrinks the window's terminal.

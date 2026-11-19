@@ -17,6 +17,7 @@
 #include "SessionLink.h"
 #include "StartupLog.h"
 #include "TerminalAttention.h"
+#include "TerminalExit.h"
 #include "TerminalFrame.h"
 #include "TermLinkPath.h"
 #include "TermLinks.h"
@@ -555,6 +556,8 @@ void Terminal::attachShell() {
     nonce_ = comm == "zsh" || bashShell_ ? std::string("held") : std::string();
     popOwed_ = 0;
     shellSpoke_ = true;   // at its prompt or running: nothing to wait for
+    seenPrompt_ = true;   // it ran before: its `exit` closes the terminal
+    awaitReturn_ = false;
     lastSpawn_ = g_get_monotonic_time();
     hostTerm_ = id;
     shellPid_ = heldPid_;
@@ -586,7 +589,6 @@ void Terminal::rehost(std::shared_ptr<SessionLink::Link> link) {
         if (vte_ && had) feedNotice("[the session's host went away, and this terminal's shell with it]");
     });
     hostGone_ = false;
-    rapidExits_ = 0;
     if (!vte_) return;   // its shell starts when it is first shown
     feedNotice("[the session's host is back: a new shell]");
     spawnShell();
@@ -749,6 +751,7 @@ Terminal::~Terminal() {
     link_->removeLostListener(lostListener_);
     if (ackIdle_) g_source_remove(ackIdle_);
     if (catchUpTimer_) g_source_remove(catchUpTimer_);
+    if (exitIdle_) g_source_remove(exitIdle_);
     if (sizeTick_ && vte_) gtk_widget_remove_tick_callback(vte_, sizeTick_);
     if (userInputIdle_) g_source_remove(userInputIdle_);
     g_signal_handlers_disconnect_by_data(root_, this);
@@ -1337,40 +1340,70 @@ void Terminal::applyColors(const Settings& s) {
 
 // Write a status line of our own into the terminal, in the palette's green —
 // the same color and register the macOS panel uses for these
-// (Terminal.mm, THex(0x6A9955), which is now ANSI slot 2).
-void Terminal::feedNotice(const std::string& text) {
-    const std::string line = "\r\n\033[32m" + text + "\033[0m\r\n";
+// (Terminal.mm, THex(0x6A9955), which is now ANSI slot 2); an error in its
+// bright red (the Mac's 0xF48771).
+void Terminal::feedNotice(const std::string& text, bool error) {
+    const std::string line = std::string("\r\n\033[") + (error ? "91" : "32") + "m" + text + "\033[0m\r\n";
     vte_terminal_feed(VTE_TERMINAL(vte_), line.c_str(), (gssize)line.size());
 }
 
-// The shell exiting used to leave a dead rectangle until the app was
-// restarted: Ctrl+D and the panel was finished. The macOS build restarts it
-// (Terminal.mm -startShell), so this does too. `error`: it never started.
-void Terminal::shellExited(const std::string& error) {
+// The shell ended (the host's TermExited, after the output before it). As
+// the Mac's shellExited:status: (Terminal.mm), the decision is the core's
+// (TerminalExit.h): `exit` or Ctrl+D closes the terminal
+// (terminal.close-on-exit), told to onShellExit on a later turn, so the
+// host's message is done with before the dock deletes this; a signal, an
+// end before the first prompt, or the setting off leaves it saying so until
+// Return starts a new shell. Until November 2026 it restarted the shell at
+// once (three quick deaths stopped the loop), so `exit` never closed
+// anything. `error`: it never started.
+void Terminal::shellExited(int status, const std::string& error) {
+    // Whether it got as far as a prompt (the host counts the marks; a shell
+    // without them ran long enough that it must have), before anything
+    // here resets it.
+    const bool prompted = seenPrompt_ || host_.prompts > 0 ||
+                          g_get_monotonic_time() - lastSpawn_ > 2 * G_USEC_PER_SEC;
     shellPid_ = -1;
     hostTerm_ = 0;
     navLine_ = -1;
-    if (!error.empty()) {
-        // Without this the panel just sits there blank and there is nothing
-        // to tell you why.
-        feedNotice("[could not start the shell: " + error + "]");
+    if (!error.empty()) feedNotice("[could not start the shell: " + error + "]", true);
+    const TerminalExit::Outcome o =
+        TerminalExit::decide(TerminalExit::fromWaitStatus(error.empty() ? status : -1), prompted,
+                             settings_ ? settings_->terminalCloseOnExit() : true);
+    if (o.action == TerminalExit::Action::Close && (runTimer_ || !pendingType_.empty())) {
+        // A line still waits to be typed (runLine, Run in Terminal): a new
+        // shell takes it.
+        feedNotice("[shell exited — a new one runs the waiting command]");
+        spawnShell();
         return;
     }
-
-    // A shell that dies the instant it starts — $SHELL uninstalled, a profile
-    // that exits, a bad interpreter — would otherwise respawn in a tight loop
-    // and peg a core. Three fast deaths in a row is taken as "not coming back".
-    const gint64 now = g_get_monotonic_time();
-    if (now - lastSpawn_ < 1000000) {   // under a second counts as fast
-        if (++rapidExits_ >= 3) {
-            feedNotice("[shell keeps exiting immediately — not restarting]");
-            return;
-        }
-    } else {
-        rapidExits_ = 0;
+    if (o.action == TerminalExit::Action::Close && onShellExit) {
+        if (exitIdle_) g_source_remove(exitIdle_);
+        exitIdle_ = g_idle_add(+[](gpointer p) -> gboolean {
+            Terminal* self = static_cast<Terminal*>(p);
+            self->exitIdle_ = 0;
+            // A shell started again meanwhile keeps the terminal.
+            if (self->hostTerm_ || self->heldTerm_ || self->shellPid_ > 0 || self->awaitReturn_)
+                return G_SOURCE_REMOVE;
+            // A copy: the call deletes the terminal and its members with it.
+            const std::function<void(Terminal*)> close = self->onShellExit;
+            if (close) close(self);   // nothing of `self` after this
+            return G_SOURCE_REMOVE;
+        }, this);
+        return;
     }
+    // Out of whatever the shell's last program left on: the alternate
+    // screen, its modes (a soft reset), bracketed paste, mouse reports.
+    static const char kOut[] = "\033[?1049l\033[!p\033[?2004l\033[?1000l\033[?1002l\033[?1003l\033[?1006l";
+    vte_terminal_feed(VTE_TERMINAL(vte_), kOut, (gssize)(sizeof kOut - 1));
+    awaitReturn_ = true;
+    feedNotice(o.note.empty() ? std::string("Process exited. Press Return to start a new shell.") : o.note,
+               o.error);
+}
 
-    feedNotice("[shell exited — restarting]");
+// A new shell where one ended (Return, Run in Terminal, runLine).
+void Terminal::startAgain() {
+    if (!awaitReturn_ || !vte_) return;
+    awaitReturn_ = false;
     spawnShell();
 }
 
@@ -1430,6 +1463,7 @@ void Terminal::HostListener::termShell(Shared::TermId id, const Shared::TermShel
 void Terminal::applyShell(const Shared::TermShell& s) {
     Terminal* t = this;
     t->host_ = s;
+    if (s.prompts > 0) seenPrompt_ = true;
     followPtySize(s.cols, s.rows);
     if (t->nonce_.empty() || !s.known) return;
     ShellIntegration::ShellState& sh = t->shell_;
@@ -1511,10 +1545,10 @@ void Terminal::applyMarks(const std::vector<Shared::TermMark>& m) {
     }
 }
 
-void Terminal::HostListener::termExited(Shared::TermId id, int, const std::string& error) {
+void Terminal::HostListener::termExited(Shared::TermId id, int status, const std::string& error) {
     if (id != t->hostTerm_) return;
     t->vteCaughtUp();   // what the host said before the exit, in its order
-    t->shellExited(error);
+    t->shellExited(status, error);
 }
 
 void Terminal::sendSize() {
@@ -1625,6 +1659,8 @@ void Terminal::spawnShell() {
         feedNotice("[the session's host went away: no shell can start here]");
         return;
     }
+    awaitReturn_ = false;
+    seenPrompt_ = false;
     shellSpoke_ = false;   // a text to type waits for this shell's prompt
     std::string shellText;
     {
@@ -1786,6 +1822,7 @@ int Terminal::foregroundJob() const {
 
 bool Terminal::typeText(const std::string& text) {
     makeTerminal();
+    startAgain();   // a shell that ended: a new one, as the Mac's typeCommand:
     if (busy()) return false;
     pendingType_ = text;
     typeTries_ = 0;
@@ -1866,6 +1903,8 @@ std::string Terminal::runBlocker(bool* wait) const {
 
 void Terminal::runLine(const std::string& line, std::function<void(const std::string&)> done) {
     makeTerminal();
+    if (awaitReturn_ && !line.empty() && line.find_first_of("\r\n") == std::string::npos && !runTimer_)
+        startAgain();   // a shell that ended: a new one runs it, as the Mac's runCommand:
     if (line.empty() || line.find_first_of("\r\n") != std::string::npos) {
         done("the command must be one line");
         return;
@@ -1962,6 +2001,12 @@ void Terminal::onCommit(VteTerminal*, char* text, guint size, gpointer selfp) {
     // typing, so they leave the pty's size where it is (Client::
     // terminalInput's `answer`): what comes with no key pressed and reads
     // as one.
+    // No shell since one ended: Return starts a new one (as the Mac's
+    // grid), and nothing else goes anywhere.
+    if (self->awaitReturn_) {
+        if (memchr(text, '\r', size)) self->startAgain();
+        return;
+    }
     std::string bytes(text, size);
     const bool answer = !self->userInput_ && Shared::termLooksLikeAnswer(bytes);
     if (self->hostTerm_) self->link_->client().terminalInput(self->hostTerm_, std::move(bytes), answer);

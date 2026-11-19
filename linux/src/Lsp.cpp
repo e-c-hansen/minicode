@@ -59,7 +59,8 @@ LspSession::LspSession(Editor* editor, const std::string& root, const Settings& 
       nav_(std::make_unique<NavState>()),
       act_(std::make_unique<ActionsState>()), tools_(std::make_unique<FolderToolsState>()),
       watch_(std::make_unique<WatchState>()), sem_(std::make_unique<SemanticState>()),
-      sym_(std::make_unique<SymbolsState>()), fold_(std::make_unique<FoldingState>()) {
+      sym_(std::make_unique<SymbolsState>()), fold_(std::make_unique<FoldingState>()),
+      json_(std::make_unique<JsonCheckState>()) {
     lspAllSessions().push_back(this);
     signature_ = settingsSignature(settings);
     useBuffer(editor->sourceBuffer());
@@ -145,6 +146,7 @@ LspSession::~LspSession() {
     if (sem_->timer) g_source_remove(sem_->timer);
     sem_->timer = 0;
     forgetFoldingRanges();
+    jsonDocumentClosed();
     stopWatchingFiles();
     dropPopovers();
 }

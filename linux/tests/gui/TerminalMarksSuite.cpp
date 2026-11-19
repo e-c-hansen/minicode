@@ -19,6 +19,7 @@
 #include "Json.h"
 #include "Terminal.h"
 #include "TerminalAttention.h"
+#include "TerminalDock.h"
 #include "WindowLayout.h"
 
 #include <vte/vte.h>
@@ -132,7 +133,14 @@ MC_GUI_SUITE(terminal_marks) {
         EnvLock::envSet("SHELL", "/bin/bash");
         if (!MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
         gOldTerm = term()->made() ? term()->hostTerminal() : 0;
-        if (gOldTerm) typeLine("exit");   // restarted as bash, with no commands of earlier suites
+        // A new terminal in place of the others: bash, with no commands of
+        // earlier suites. (`exit` restarted the shell until it closed the
+        // terminal, linux/HANDOFF.md item 117.)
+        if (gOldTerm) {
+            TerminalDock* d = MCGuiApp().termDock;
+            d->newTerminal();
+            while (d->count() > 1) d->close(0, false);
+        }
         term()->focus();
     });
     MCGuiWait("a new bash at its prompt", 30, [] {

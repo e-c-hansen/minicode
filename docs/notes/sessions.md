@@ -61,8 +61,15 @@ found through that list.
   extra folders) drawn dimmed a point smaller after it
   (`MCTabStripItem.hint`); the terminals' and the browser's strips are
   the same class and scroll the same way. `displayedTitleForTab:`,
-  `contentWidth` and `scrollOffset` are for the checks. GTK still
-  shows `labels` (linux/src/Tabs.cpp) and has yet to take these. The strips' titles are `tabs.font-size` points (12 unset; `MCTabStripFont`) in every strip, editor, split group, browser and terminals, and a strip is `MCTabStripHeight()` tall (30, more for a bigger font), which the owners read on every layout and lay out again on a settings change. A tab's
+  `contentWidth` and `scrollOffset` are for the checks. GTK's
+  `TabStrip` (2026-11-19, `linux/HANDOFF.md` item 115, `tab_strip`)
+  does the same by the same calls, in every strip (both editor groups,
+  the terminal dock's, the browser's): a GtkBox with a custom layout
+  places each tab at `layoutStrip`'s place less the scroll, the title cut
+  by `fitName` (a label for the name, one for the hint), the wheel and a
+  touchpad by `wheelScroll`, a held drag's frames by `dragAutoScroll`,
+  the fades by `clipped`; the editor's owners take `tabNames`
+  (Tabs.cpp, Groups.cpp). The strips' titles are `tabs.font-size` points (12 unset; `MCTabStripFont`) in every strip, editor, split group, browser and terminals, and a strip is `MCTabStripHeight()` tall (30, more for a bigger font), which the owners read on every layout and lay out again on a settings change. A tab's
   right click (`menuForTabAtIndex:`) has the close commands, copy paths,
   reveal, rename and trash; the File menu repeats them for the active tab so
   the palette finds them.

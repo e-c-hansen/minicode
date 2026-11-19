@@ -400,8 +400,10 @@ const std::vector<LinuxRow>& linuxRows() {
         // ---- the editor's own keys (PARITY.md 1.9). Move and Copy Line
         // are VS Code's (see Add Cursor above), in the Edit menu here, which
         // the Mac's are not. Ctrl+Home and Ctrl+End are GtkTextView's own
-        // with one caret and Carets.cpp's with several; listed, not
-        // actions, so they never leave an entry or the terminal.
+        // with one caret and Carets.cpp's with several, Home and End
+        // (VS Code's cursorHome and cursorEnd, since #213's port) Carets.cpp's
+        // with one or several; listed, not actions, so they never leave an
+        // entry or the terminal.
         {"editor.action.moveLinesDownAction", "alt+down", 0, nullptr, "Edit"},
         {"editor.action.moveLinesUpAction", "alt+up", 0, nullptr, "Edit"},
         {"editor.action.copyLinesDownAction", "alt+shift+down", 0, nullptr, "Edit"},
@@ -410,6 +412,10 @@ const std::vector<LinuxRow>& linuxRows() {
         {"cursorTopSelect", "ctrl+shift+home", 0, nullptr, nullptr},
         {"cursorBottom", "ctrl+end", 0, nullptr, nullptr},
         {"cursorBottomSelect", "ctrl+shift+end", 0, nullptr, nullptr},
+        {"cursorHome", "home", 0, nullptr, nullptr},
+        {"cursorHomeSelect", "shift+home", 0, nullptr, nullptr},
+        {"cursorEnd", "end", 0, nullptr, nullptr},
+        {"cursorEndSelect", "shift+end", 0, nullptr, nullptr},
         // Between the commands the shell integration marked (the host reads
         // the marks from the pty, SESSION-DESIGN.md stage 5): VS Code's
         // Linux keys, the terminal's own (Terminal.cpp), so the editor keeps
