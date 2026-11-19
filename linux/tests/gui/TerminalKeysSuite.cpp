@@ -31,6 +31,7 @@
 //     Mac, and in the editor still closes the editor's tab;
 //   - with the setting off again, Ctrl+W is the shell's once more.
 #include "Harness.h"
+#include "HintsColumns.h"
 #include "AppSeam.h"
 #include "Commands.h"
 #include "Editor.h"
@@ -299,9 +300,12 @@ MC_GUI_SUITE(terminal_keys) {
     MCGuiWait("the app took it", 10, [] { return Keys::terminalMacStyle(); });
     MCGuiStep("the shortcut hints, from the terminal", [] { MCGuiKey("ctrl+shift+h"); });
     MCGuiWait("they say what Ctrl and Super do there", 10, [] {
-        return gtk_widget_get_visible(MCGuiApp().hintsPanel) &&
-               std::string(gtk_label_get_text(GTK_LABEL(MCGuiApp().hintsLabel)))
-                       .find("Super keys go to the program as Ctrl") != std::string::npos;
+        if (!gtk_widget_get_visible(MCGuiApp().hintsPanel) || !MCGuiApp().hintsColumns) return false;
+        // Every column's text (HintsColumns.h, as the keys suite reads it).
+        std::string hints;
+        const HintsColumns* columns = MCGuiApp().hintsColumns;
+        for (int c = 0; c < columns->count(); ++c) hints += columns->text(c) + "\n";
+        return hints.find("Super keys go to the program as Ctrl") != std::string::npos;
     });
     MCGuiStep("hidden again", [] { MCGuiKey("ctrl+shift+h"); });
     MCGuiWait("they are", 10, [] { return !gtk_widget_get_visible(MCGuiApp().hintsPanel); });
