@@ -155,8 +155,29 @@ public:
     // of seconds, rather than failing on the first pass. Outside a focused
     // folder, `widen` widens the focus first (showsPath); without it the
     // tree is left as it is (the tree following the tab on show, a file
-    // opened from Quick Open or a link).
+    // opened from Quick Open or a link). Found, the row is scrolled to the
+    // middle unless it is wholly in view already (centerRow), so a row on
+    // show never moves; the keyboard stays where it is.
     void revealPath(const std::string& path, bool widen = false);
+    // The row for `path` selected when the tree lists it now, no folder
+    // opened and nothing scrolled (the Mac's reselectCurrentFileInTree).
+    void selectIfListed(const std::string& path);
+    // The file a click or Enter in the tree is opening, while the open
+    // callback runs ("" otherwise): its row is the one clicked, which the
+    // tree following the tab selects without scrolling (the Mac's
+    // treeOpensPath:), so a click on a row cut by the edge never jumps.
+    const std::string& opening() const { return opening_; }
+    // The tree's view for a window's record (TabSessions::Window): the
+    // folders open, those remembered outside the focus too, and how far it
+    // is scrolled.
+    std::vector<std::string> openFolders() const;
+    double scrolled() const;
+    // A window's record back (the Mac's finishRestoringWindow): `open`
+    // opened again as their listings arrive (those outside the focus
+    // remembered for when it widens), `selected` selected, and the scroll
+    // put back once the rows have stopped coming, as far as they go.
+    void restoreView(const std::vector<std::string>& open, const std::string& selected,
+                     double scroll);
 
     // Called on every change any of the tree's folder monitors reports, a
     // file's contents included, with the path that changed. The Source
@@ -234,7 +255,24 @@ private:
     static void onFocusPathChanged(GFileMonitor* m, GFile* file, GFile* other,
                                    GFileMonitorEvent ev, gpointer self);
     void dropPopovers();                    // before the list view is replaced
+    // revealPath, with the row centered (`center`) or only selected, as
+    // the tree's own reveals keep it (a focus changed, hidden files shown,
+    // a root's label clicked: the Mac's scrollRowToVisible there).
+    void reveal(const std::string& path, bool widen, bool center);
     bool tryReveal();
+    // Scrolls `row` to the middle unless it is wholly in view
+    // (TreeReveal::scrollTop), measured once the list is laid out with it
+    // (afterLayout, which also puts a waiting restoreView's scroll back).
+    void centerRow(GtkTreeListRow* row);
+    // The frame clock's after-paint, asked for once (scheduleFrame): the
+    // rows' places are those of the model as it is then.
+    void scheduleFrame();
+    void stopFrames();
+    static void onAfterPaint(GdkFrameClock* clock, gpointer self);
+    void afterLayout();
+    // A row the list shows now, and its position: `pos` itself when it
+    // shows, else the first.
+    GtkWidget* shownRow(guint pos, guint* shownPos) const;
     void tryExpand();
     bool rowBounds(guint pos, graphene_rect_t* out) const;
     static void onItemsChanged(GListModel* m, guint pos, guint removed, guint added,
@@ -338,8 +376,24 @@ private:
     double      scrollStep_ = 0;           // pixels per tick, signed
 
     std::string pendingReveal_;            // revealPath target still to be found
+    bool        revealCenters_ = true;     // and whether its row is centered
     gint64      revealDeadline_ = 0;       // monotonic µs; give up after this
     guint       revealIdle_ = 0;
+    std::string opening_;                  // opening(): the row a click opens
+    // The row to center after the next layout (a reference), till when.
+    GtkTreeListRow* centerRow_ = nullptr;
+    gint64      centerDeadline_ = 0;
+    // restoreView's selection and scroll waiting for the rows (scroll < 0:
+    // none), till when, and when the rows last changed.
+    std::string restoreSelect_;
+    double      restoreScroll_ = -1;
+    gint64      restoreDeadline_ = 0;
+    gint64      rowsChanged_ = 0;
+    // The frame clock asked for an after-paint (a reference), its handler,
+    // and the list view's map, waited for while it has no clock.
+    GdkFrameClock* frameClock_ = nullptr;
+    gulong      afterPaintId_ = 0;
+    gulong      mapId_ = 0;
     // Folders to open again after the dotfile filter changed (setShowHidden).
     std::unordered_set<std::string> pendingExpand_;
     // Shared with every folder's watch, which may outlive the tree briefly.

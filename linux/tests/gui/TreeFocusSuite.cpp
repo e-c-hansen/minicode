@@ -27,19 +27,32 @@
 // the window's record (a folder gone since dropped) and with the folder's
 // session, and a focused folder deleted on disk drops out alone.
 //
+// The tree follows the active tab (explorer.auto-reveal, HANDOFF.md item
+// 107), in a folder of 6,000 files: a deep file in folders never listed,
+// opened, is selected with its folders open and centered; another tab
+// shows its row and back again; a row already in view is selected without
+// the tree moving; a real click on a row cut by the bottom opens it without
+// scrolling; the editor keeps the keyboard throughout; a file outside the
+// focused folder leaves the tree alone; with the setting off nothing moves,
+// and turning it on shows the file; with the sidebar closed nothing moves
+// until it opens again; and a window brought back from its record has the
+// record's open folders, selection and scroll, not moved to its file.
+//
 // The clicks on the breadcrumb, the × and the rows' right clicks are real
 // (XTest); the command is the window's action, as the menu bar and the
-// palette run it. The GTK port keeps no open folders in a window's record
-// (the Mac does), so a window brought back opens none.
+// palette run it.
 #include "Harness.h"
 
 #include "Editor.h"
 #include "FileTree.h"
 #include "Persistence.h"
 #include "TabSessions.h"
+#include "WindowLayout.h"
 #include "FileDetails.h"   // TreeFocus::shortLabels
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -88,9 +101,28 @@ GtkTreeListRow* RowObject(FileTree* t, const std::string& path) {
     return nullptr;
 }
 bool HasRow(FileTree* t, const std::string& path) { return RowObject(t, path) != nullptr; }
+// A row the list does not show has no owner but the caller's reference:
+// these two hold it while they use it.
 bool Expanded(FileTree* t, const std::string& path) {
-    GtkTreeListRow* r = RowObject(t, path);
-    return r && gtk_tree_list_row_get_expanded(r);
+    GListModel* m = Rows(t);
+    for (guint i = 0; m && i < g_list_model_get_n_items(m); i++) {
+        auto* r = GTK_TREE_LIST_ROW(g_list_model_get_item(m, i));
+        const bool hit = PathOf(r) == path, open = hit && gtk_tree_list_row_get_expanded(r);
+        g_object_unref(r);
+        if (hit) return open;
+    }
+    return false;
+}
+void SetExpanded(FileTree* t, const std::string& path, bool open) {
+    GListModel* m = Rows(t);
+    for (guint i = 0; m && i < g_list_model_get_n_items(m); i++) {
+        auto* r = GTK_TREE_LIST_ROW(g_list_model_get_item(m, i));
+        const bool hit = PathOf(r) == path;
+        if (hit) gtk_tree_list_row_set_expanded(r, open);
+        g_object_unref(r);
+        if (hit) return;
+    }
+    GCHECK(!"no row to open or close");
 }
 
 // The names of the rows at the top of the tree, in order.
@@ -253,6 +285,93 @@ void OpenRepoWindow(const std::string& what) {
         MCGuiSetKeyWindow(nullptr);
     });
     MCGuiWait("drawn", 10, [] { return Win().window && gtk_widget_get_mapped(GTK_WIDGET(Win().window)); });
+}
+
+// ---- the tree following the active tab
+constexpr int kBigFiles = 3000;
+const char* const kTarget = "m_deep/a/b/c/d/e/target.txt";
+const char* const kNear = "m_deep/a/b/c/d/e/near.txt";
+const char* const kCut = "z_big/f00040.txt";
+std::string gSettingsBefore, gSelected;
+double gTop = 0;
+
+GtkAdjustment* Adj(FileTree* t) {
+    return gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(t->widget()));
+}
+GtkWidget* ListView(FileTree* t) { return gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(t->widget())); }
+double TreeTop(FileTree* t) { return gtk_adjustment_get_value(Adj(t)); }
+bool Near(double a, double b) { return std::fabs(a - b) < 1; }
+
+// The label inside `w` naming `path`, mapped or not.
+GtkWidget* LabelIn(GtkWidget* w, const std::string& path) {
+    if (GTK_IS_LABEL(w) && gtk_widget_has_css_class(w, "minicode-tree-label")) {
+        const char* p = static_cast<const char*>(g_object_get_data(G_OBJECT(w), "minicode-path"));
+        return p && path == p ? w : nullptr;
+    }
+    for (GtkWidget* c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = LabelIn(c, path)) return hit;
+    return nullptr;
+}
+// The list's row widget for `path` while the list has one laid out, and
+// any row widget it has.
+GtkWidget* RowWidget(FileTree* t, const std::string& path) {
+    for (GtkWidget* c = gtk_widget_get_first_child(ListView(t)); c; c = gtk_widget_get_next_sibling(c))
+        if (gtk_widget_get_mapped(c) && gtk_widget_get_child_visible(c) && LabelIn(c, path)) return c;
+    return nullptr;
+}
+// A row's whole height, its padding in (gtk_widget_get_height leaves it
+// out): the rows' stride.
+double RowHeight(FileTree* t) {
+    graphene_rect_t b;
+    for (GtkWidget* c = gtk_widget_get_first_child(ListView(t)); c; c = gtk_widget_get_next_sibling(c))
+        if (gtk_widget_get_mapped(c) && gtk_widget_get_child_visible(c) && !GTK_IS_POPOVER(c) &&
+            gtk_widget_compute_bounds(c, ListView(t), &b) && b.size.height > 0)
+            return b.size.height;
+    return 0;
+}
+// Where `path`'s row is drawn in the list view (its top and height).
+bool RowRect(FileTree* t, const std::string& path, double* y, double* h) {
+    GtkWidget* r = RowWidget(t, path);
+    graphene_rect_t b;
+    if (!r || !gtk_widget_compute_bounds(r, ListView(t), &b)) return false;
+    *y = b.origin.y;
+    *h = b.size.height;
+    return *h > 0;
+}
+// How far a row's middle is from the tree's, in rows.
+double RowsFromMiddle(FileTree* t, const std::string& path) {
+    double y = 0, h = 0;
+    if (!RowRect(t, path, &y, &h)) return 1e9;
+    return std::fabs(y + h / 2 - gtk_adjustment_get_page_size(Adj(t)) / 2) / h;
+}
+bool WhollyInView(FileTree* t, const std::string& path) {
+    double y = 0, h = 0;
+    return RowRect(t, path, &y, &h) && y >= -0.5 && y + h <= gtk_adjustment_get_page_size(Adj(t)) + 0.5;
+}
+int PositionOf(FileTree* t, const std::string& path) {
+    GListModel* m = Rows(t);
+    for (guint i = 0; m && i < g_list_model_get_n_items(m); i++) {
+        auto* r = GTK_TREE_LIST_ROW(g_list_model_get_item(m, i));
+        const bool hit = PathOf(r) == path;
+        g_object_unref(r);
+        if (hit) return (int)i;
+    }
+    return -1;
+}
+// The top of `path`'s row in the tree's scroll, placed from `known`'s,
+// which shows (the rows all have one height).
+double RowTopFrom(FileTree* t, const std::string& known, const std::string& path) {
+    double y = 0, h = 0;
+    if (!RowRect(t, known, &y, &h)) return 0;
+    return y + TreeTop(t) + (PositionOf(t, path) - PositionOf(t, known)) * h;
+}
+bool EditorHasKeyboard() {
+    return gtk_root_get_focus(GTK_ROOT(Win().window)) == Win().editor->textView();
+}
+void Activate(const std::string& path) {
+    Editor* e = Win().editor;
+    GCHECK(e->documentFor(path) != nullptr);
+    e->activate(e->documentFor(path));
 }
 
 void CloseRepoWindows(const std::string& what) {
@@ -746,4 +865,226 @@ MC_GUI_SUITE(tree_focus) {
         MCGuiAnswerFolderChooser(nullptr);
     });
     CloseRepoWindows("the window closes");
+
+    // ---- the tree follows the active tab (explorer.auto-reveal)
+    MCGuiStep("a folder of 6,000 files: a_big and z_big, m_deep/a/b/c/d/e between", [] {
+        gRepo = MCGuiScratch() + "/revealrepo";
+        for (const char* big : {"a_big", "z_big"}) {
+            std::filesystem::create_directories(F(big));
+            for (int i = 0; i < kBigFiles; i++) {
+                char name[32];
+                snprintf(name, sizeof name, "/f%05d.txt", i);
+                if (FILE* f = fopen((F(big) + name).c_str(), "w")) fclose(f);
+            }
+        }
+        MCGuiWriteFile(F(kTarget), "target\n");
+        MCGuiWriteFile(F(kNear), "near\n");
+        MCGuiWriteFile(F("readme.txt"), "readme\n");
+        gSettingsBefore = MCGuiReadFile(g_getenv("MUTIBLE_SETTINGS"));
+    });
+    OpenRepoWindow("a window on it");
+    MCGuiWait("its rows", 10, [] { return TopRows(Tree()) == "a_big m_deep z_big readme.txt"; });
+    MCGuiStep("a_big and z_big open", [] {
+        for (const char* big : {"a_big", "z_big"})
+            SetExpanded(Tree(), F(big), true);
+    });
+    MCGuiWait("their rows", 20, [] { return g_list_model_get_n_items(Rows(Tree())) == 2 * kBigFiles + 4; });
+    MCGuiStep("m_deep never listed; readme.txt opened first", [] {
+        GCHECK(!Expanded(Tree(), F("m_deep")));
+        GCHECK(gtk_adjustment_get_page_size(Adj(Tree())) > 100);
+        MCGuiOpenFileKept(F("readme.txt"));
+        MCGuiOpenFileKept(F("a_big/f00001.txt"));
+        Win().editor->focusActiveDocument();
+    });
+    MCGuiWait("a_big/f00001.txt selected, in view", 10, [] {
+        return Tree()->selectedPath() == F("a_big/f00001.txt") && WhollyInView(Tree(), F("a_big/f00001.txt"));
+    });
+    MCGuiStep("a deep file opened", [] {
+        GCHECK(EditorHasKeyboard());
+        MCGuiOpenFileKept(F(kTarget));
+    });
+    MCGuiWait("its folders open, its row selected and centered", 10, [] {
+        return Tree()->selectedPath() == F(kTarget) && Expanded(Tree(), F("m_deep/a/b/c/d/e")) &&
+               RowsFromMiddle(Tree(), F(kTarget)) <= 1;
+    });
+    MCGuiStep("the editor kept the keyboard; nothing else closed", [] {
+        MCGuiNote("rows from the middle: %.2f, the tree at %.0f", RowsFromMiddle(Tree(), F(kTarget)),
+                  TreeTop(Tree()));
+        GCHECK_EQ_STR(Win().editor->currentPath(), F(kTarget));
+        GCHECK(EditorHasKeyboard());
+        GCHECK(Expanded(Tree(), F("a_big")) && Expanded(Tree(), F("z_big")));
+        MCGuiSnapshot(Tree()->widget(), "tree-follow-centered");
+    });
+    MCGuiStep("another tab", [] { Activate(F("a_big/f00001.txt")); });
+    MCGuiWait("the selection follows and the row shows", 10, [] {
+        return Tree()->selectedPath() == F("a_big/f00001.txt") && WhollyInView(Tree(), F("a_big/f00001.txt"));
+    });
+    MCGuiStep("back again", [] {
+        GCHECK(!WhollyInView(Tree(), F(kTarget)));
+        Activate(F(kTarget));
+    });
+    MCGuiWait("centered again", 10, [] {
+        return Tree()->selectedPath() == F(kTarget) && RowsFromMiddle(Tree(), F(kTarget)) <= 1;
+    });
+    MCGuiStep("a row in view: near.txt opened", [] {
+        GCHECK(EditorHasKeyboard());
+        GCHECK(WhollyInView(Tree(), F(kNear)));
+        gTop = TreeTop(Tree());
+        MCGuiOpenFileKept(F(kNear));
+    });
+    MCGuiWait("selected", 10, [] { return Tree()->selectedPath() == F(kNear); });
+    // The scroll, if any, comes a frame later: a pause for a negative check.
+    MCGuiPause(0.3);
+    MCGuiStep("the tree did not move; back to the target", [] {
+        GCHECK(Near(TreeTop(Tree()), gTop));
+        Activate(F(kTarget));
+    });
+    MCGuiWait("selected", 10, [] { return Tree()->selectedPath() == F(kTarget); });
+    MCGuiPause(0.3);   // a negative check, as above
+    MCGuiStep("the tree did not move; the editor kept the keyboard", [] {
+        GCHECK(Near(TreeTop(Tree()), gTop));
+        GCHECK(EditorHasKeyboard());
+    });
+
+    MCGuiStep("z_big/f00040.txt's row cut by the bottom of the tree", [] {
+        const double h = RowHeight(Tree());
+        const double top = RowTopFrom(Tree(), F(kTarget), F(kCut));
+        GCHECK(h > 0);
+        // Two thirds of it on show, its label's top among them.
+        gtk_adjustment_set_value(Adj(Tree()), top + 2 * h / 3 - gtk_adjustment_get_page_size(Adj(Tree())));
+    });
+    MCGuiWait("on screen, cut", 10, [] {
+        return RowWidget(Tree(), F(kCut)) && !WhollyInView(Tree(), F(kCut)) && RowLabel(Tree(), F(kCut));
+    });
+    MCGuiStep("a click on it", [] {
+        gTop = TreeTop(Tree());
+        double y = 0, h = 0;
+        RowRect(Tree(), F(kCut), &y, &h);
+        MCGuiNote("the row at %.1f, %.1f tall, the tree %.1f tall", y, h,
+                  gtk_adjustment_get_page_size(Adj(Tree())));
+        MCGuiClick(RowLabel(Tree(), F(kCut)), -1, 3);
+    });
+    MCGuiWait("it opens", 10, [] {
+        return Win().editor->currentPath() == F(kCut) && Tree()->selectedPath() == F(kCut);
+    });
+    MCGuiPause(0.3);   // a negative check: no scroll a frame later
+    MCGuiStep("the tree was not scrolled to the row clicked", [] {
+        // GtkListView itself brings the row a click focuses wholly into
+        // view (here the third of it under the edge); the tree following
+        // the tab adds nothing, where centering it would move it half the
+        // tree's height.
+        MCGuiNote("the tree at %.0f, was %.0f; a row is %.0f", TreeTop(Tree()), gTop, RowHeight(Tree()));
+        GCHECK(std::fabs(TreeTop(Tree()) - gTop) < RowHeight(Tree()) / 2);
+        GCHECK(WhollyInView(Tree(), F(kCut)));
+        GCHECK(RowsFromMiddle(Tree(), F(kCut)) > 3);
+    });
+
+    MCGuiStep("focused on z_big", [] { GCHECK(Tree()->setFocus("z_big")); });
+    MCGuiWait("its rows, z_big/f00040.txt still selected and on show", 10, [] {
+        return g_list_model_get_n_items(Rows(Tree())) == kBigFiles &&
+               Tree()->selectedPath() == F(kCut) && WhollyInView(Tree(), F(kCut));
+    });
+    MCGuiStep("the target's tab", [] {
+        Win().editor->focusActiveDocument();
+        gSelected = Tree()->selectedPath();
+        gTop = TreeTop(Tree());
+        Activate(F(kTarget));
+    });
+    MCGuiPause(0.3);   // a negative check: nothing moves
+    MCGuiStep("a file outside the focused folder leaves the tree as it is", [] {
+        GCHECK_EQ_STR(Win().editor->currentPath(), F(kTarget));
+        GCHECK_EQ_STR(Tree()->focusPath(), "z_big");   // never widened
+        GCHECK_EQ_STR(Tree()->selectedPath(), gSelected);
+        GCHECK(Near(TreeTop(Tree()), gTop));
+        GCHECK(EditorHasKeyboard());
+        MCGuiOpenFileKept(F("z_big/f02000.txt"));   // inside it, the tree follows
+    });
+    MCGuiWait("z_big/f02000.txt selected, centered", 10, [] {
+        return Tree()->selectedPath() == F("z_big/f02000.txt") &&
+               RowsFromMiddle(Tree(), F("z_big/f02000.txt")) <= 1;
+    });
+    MCGuiStep("the whole folder again", [] { GCHECK(Tree()->setFocus("")); });
+    MCGuiWait("its rows", 10, [] { return TopRows(Tree()) == "a_big m_deep z_big readme.txt"; });
+
+    MCGuiStep("explorer.auto-reveal = off, m_deep closed, near.txt's tab", [] {
+        MCGuiSetSettings(gSettingsBefore + "\nexplorer.auto-reveal = off\n");
+        SetExpanded(Tree(), F("m_deep"), false);
+        Win().editor->focusActiveDocument();
+        Activate(F(kNear));
+    });
+    MCGuiPause(0.3);   // a negative check: nothing opens
+    MCGuiStep("nothing moved", [] {
+        GCHECK_EQ_STR(Win().editor->currentPath(), F(kNear));
+        GCHECK(!Expanded(Tree(), F("m_deep")));
+        GCHECK(!HasRow(Tree(), F(kNear)));
+        MCGuiSetSettings(gSettingsBefore);
+    });
+    MCGuiWait("turned on, the file shows, centered", 10, [] {
+        return Expanded(Tree(), F("m_deep/a/b/c/d/e")) && Tree()->selectedPath() == F(kNear) &&
+               RowsFromMiddle(Tree(), F(kNear)) <= 1;
+    });
+    MCGuiStep("the editor kept the keyboard", [] { GCHECK(EditorHasKeyboard()); });
+
+    MCGuiStep("the tree at its top, m_deep closed, the sidebar closed, the target's tab", [] {
+        SetExpanded(Tree(), F("m_deep"), false);
+        gtk_adjustment_set_value(Adj(Tree()), 0);
+        Run("togglesidebar");
+        GCHECK(!Win().layout->sidebarShown());
+        Activate(F(kTarget));
+    });
+    MCGuiPause(0.3);   // a negative check: nothing opens while hidden
+    MCGuiStep("nothing moved; the sidebar opened", [] {
+        GCHECK(!Expanded(Tree(), F("m_deep")));
+        GCHECK(Near(TreeTop(Tree()), 0));
+        Run("togglesidebar");
+        GCHECK(Win().layout->sidebarShown());
+    });
+    MCGuiWait("the file shows, centered (it was out of view)", 10, [] {
+        return Expanded(Tree(), F("m_deep/a/b/c/d/e")) && Tree()->selectedPath() == F(kTarget) &&
+               RowsFromMiddle(Tree(), F(kTarget)) <= 1;
+    });
+    MCGuiStep("the editor kept the keyboard", [] {
+        MCGuiNote("open %d, selected %s, rows from the middle %.2f", Expanded(Tree(), F("m_deep/a/b/c/d/e")),
+                  Tree()->selectedPath().c_str(), RowsFromMiddle(Tree(), F(kTarget)));
+        GCHECK(EditorHasKeyboard());
+    });
+
+    // ---- brought back: the record's tree, not moved to the file on show
+    MCGuiStep("the tree scrolled into a_big, the target out of view: the window's record", [] {
+        gtk_adjustment_set_value(Adj(Tree()), 50 * RowHeight(Tree()));
+    });
+    MCGuiWait("scrolled", 10, [] { return !RowWidget(Tree(), F(kTarget)) || !WhollyInView(Tree(), F(kTarget)); });
+    MCGuiStep("the record keeps the open folders, the selection and the scroll", [] {
+        gTop = TreeTop(Tree());
+        gRecord = MCGuiWindowRecord(Win().window);
+        const std::vector<TabSessions::Window> w = TabSessions::decodeWindows(gRecord);
+        GCHECK(w.size() == 1);
+        if (w.size() != 1) return;
+        MCGuiNote("the record: scroll %.0f, %zu folders open, %s selected", w[0].treeScroll,
+                  w[0].expanded.size(), w[0].selected.c_str());
+        GCHECK(Near(w[0].treeScroll, gTop));
+        GCHECK(Has(w[0].expanded, F("a_big")) && Has(w[0].expanded, F("m_deep/a/b/c/d/e")));
+        GCHECK_EQ_STR(w[0].selected, F(kTarget));
+        const EditorTabs::Session tabs = TabSessions::files(w[0].tabs);
+        GCHECK(tabs.active >= 0 && tabs.files[(size_t)tabs.active] == F(kTarget));
+        MCGuiOpenWindowRestoring(gRepo, gRecord);
+        MCGuiSetKeyWindow(nullptr);
+    });
+    MCGuiWait("a window brought back from it, its tree as it was", 20, [] {
+        FileTree* back = MCGuiApp().tree;
+        return MCGuiAppWindows().size() == gWindowsBefore + 2 && back->selectedPath() == F(kTarget) &&
+               Expanded(back, F("m_deep/a/b/c/d/e")) && Near(TreeTop(back), gTop);
+    });
+    MCGuiPause(0.5);   // a negative check: no reveal jumps it afterwards
+    MCGuiStep("its scroll kept: the target's tab on show, its row not centered", [] {
+        FileTree* back = MCGuiApp().tree;
+        MCGuiNote("the tree at %.0f, the record's %.0f", TreeTop(back), gTop);
+        GCHECK_EQ_STR(MCGuiApp().editor->currentPath(), F(kTarget));
+        GCHECK(Near(TreeTop(back), gTop));
+        GCHECK(!RowWidget(back, F(kTarget)) || RowsFromMiddle(back, F(kTarget)) > 1);
+        gtk_window_close(MCGuiApp().window);
+    });
+    MCGuiWait("closed", 10, [] { return MCGuiAppWindows().size() == gWindowsBefore + 1; });
+    CloseRepoWindows("the folder of 6,000 files closes");
+    MCGuiStep("its files go", [] { std::filesystem::remove_all(gRepo); });
 }

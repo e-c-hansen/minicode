@@ -88,6 +88,8 @@ FileTree::~FileTree() {
     holdRow(&lastReleaseRow_, nullptr);
     if (revealIdle_) g_source_remove(revealIdle_);
     revealIdle_ = 0;
+    stopFrames();
+    holdRow(&centerRow_, nullptr);
     if (barShortIdle_) g_source_remove(barShortIdle_);
     if (barRemoveIdle_) g_source_remove(barRemoveIdle_);
     barShortIdle_ = barRemoveIdle_ = 0;
@@ -535,6 +537,7 @@ GtkTreeListModel* FileTree::makeTreeModel() {
 void FileTree::replaceModel() {
     holdRow(&pressRow_, nullptr);
     holdRow(&lastReleaseRow_, nullptr);
+    holdRow(&centerRow_, nullptr);   // a row of the model going
     pendingReveal_.clear();
     pendingExpand_.clear();
     endDrop();
@@ -864,7 +867,14 @@ void FileTree::actOnRow(GtkTreeListRow* row, EditorTabs::OpenFrom from) {
     } else if (openCb_) {
         if (GFile* file = fileOfInfo(info)) {
             char* path = g_file_get_path(file);
-            if (path) { openCb_(path, from, openUser_); g_free(path); }
+            if (path) {
+                // The row clicked: the tree following the tab selects it
+                // and does not scroll (opening()).
+                opening_ = path;
+                openCb_(path, from, openUser_);
+                opening_.clear();
+                g_free(path);
+            }
         }
     }
     if (info) g_object_unref(info);
@@ -956,6 +966,7 @@ void FileTree::onPrimaryReleased(GtkGestureClick* g, int n, double x, double y,
         holdRow(&self->lastReleaseRow_, pressed);
         if (clicks != 2 || from == EditorTabs::OpenFrom::TreeDoubleClick) {
             self->pendingReveal_.clear();   // the user picked a row; an older reveal gives way
+            holdRow(&self->centerRow_, nullptr);   // and so does its scroll
             self->actOnRow(pressed, from);
         }
     }
@@ -982,6 +993,7 @@ gboolean FileTree::onKey(GtkEventControllerKey*, guint keyval, guint, GdkModifie
     const guint pos = gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model));
     if (pos == GTK_INVALID_LIST_POSITION) return FALSE;
     self->pendingReveal_.clear();
+    holdRow(&self->centerRow_, nullptr);
     if (enter) {
         if (GtkTreeListRow* row = gtk_tree_list_model_get_row(self->treeModel_, pos)) {
             self->actOnRow(row, EditorTabs::OpenFrom::TreeReturn);
@@ -1027,6 +1039,11 @@ void FileTree::setRoot(const std::string& rootDir) {
     updateFocusBar();
     holdRow(&pressRow_, nullptr);
     holdRow(&lastReleaseRow_, nullptr);
+    holdRow(&centerRow_, nullptr);
+    restoreScroll_ = -1;
+    stopFrames();
+    if (mapId_) g_signal_handler_disconnect(listView_, mapId_);   // build() makes another view
+    mapId_ = 0;
     pendingReveal_.clear();
     pendingExpand_.clear();
     endDrop();
@@ -1077,7 +1094,7 @@ void FileTree::setShowHidden(bool show) {
         const std::size_t slash = selected.find_last_of('/');
         const bool hiddenNow = !show && slash != std::string::npos &&
                                selected.compare(slash + 1, 1, ".") == 0;
-        if (!hiddenNow) revealPath(selected);
+        if (!hiddenNow) reveal(selected, false, false);
     }
 }
 
@@ -1145,11 +1162,28 @@ void FileTree::clearSelection() {
     gtk_selection_model_unselect_all(gtk_list_view_get_model(GTK_LIST_VIEW(listView_)));
 }
 
-void FileTree::revealPath(const std::string& path, bool widen) {
+void FileTree::revealPath(const std::string& path, bool widen) { reveal(path, widen, true); }
+
+void FileTree::reveal(const std::string& path, bool widen, bool center) {
     if (!showsPath(path, widen)) return;   // outside the focus, left as it is
     pendingReveal_ = path;
+    revealCenters_ = center;
     revealDeadline_ = g_get_monotonic_time() + 3 * G_USEC_PER_SEC;
     tryReveal();
+}
+
+void FileTree::selectIfListed(const std::string& path) {
+    if (path.empty()) return;
+    GListModel* rows = G_LIST_MODEL(treeModel_);
+    for (guint i = 0; i < g_list_model_get_n_items(rows); ++i) {
+        GtkTreeListRow* row = gtk_tree_list_model_get_row(treeModel_, i);
+        if (!row) continue;
+        const bool hit = pathOfRow(row) == path;
+        g_object_unref(row);
+        if (!hit) continue;
+        gtk_selection_model_select_item(gtk_list_view_get_model(GTK_LIST_VIEW(listView_)), i, TRUE);
+        return;
+    }
 }
 
 // One pass over the visible rows: select the target if it is there, and
@@ -1167,9 +1201,16 @@ bool FileTree::tryReveal() {
         const std::string p = pathOfRow(row);
         if (p == target) {
             pendingReveal_.clear();
+            if (revealCenters_) {
+                // Selected where it is; scrolled, if at all, once laid out.
+                gtk_selection_model_select_item(gtk_list_view_get_model(GTK_LIST_VIEW(listView_)),
+                                                i, TRUE);
+                centerRow(row);
+            } else {
+                gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), i, GTK_LIST_SCROLL_SELECT,
+                                        nullptr);
+            }
             g_object_unref(row);
-            gtk_list_view_scroll_to(GTK_LIST_VIEW(listView_), i,
-                                    GTK_LIST_SCROLL_SELECT, nullptr);
             return true;
         }
         if (!p.empty() && target.compare(0, p.size() + 1, p + "/") == 0 &&
@@ -1186,6 +1227,7 @@ bool FileTree::tryReveal() {
 // trouble.
 void FileTree::onItemsChanged(GListModel*, guint, guint, guint, gpointer selfp) {
     FileTree* self = static_cast<FileTree*>(selfp);
+    self->rowsChanged_ = g_get_monotonic_time();   // a restoreView waits for them to stop
     if ((self->pendingReveal_.empty() && self->pendingExpand_.empty()) || self->revealIdle_)
         return;
     self->revealIdle_ = g_idle_add([](gpointer p) -> gboolean {
@@ -1195,6 +1237,134 @@ void FileTree::onItemsChanged(GListModel*, guint, guint, guint, gpointer selfp) 
         t->tryReveal();
         return G_SOURCE_REMOVE;
     }, self);
+}
+
+// ---- a row centered (the Mac's scrollTreeRowIntoView:)
+//
+// GtkListView scrolls a row into view only as far as its edge
+// (gtk_list_view_scroll_to), so the tree sets its scroll itself, from the
+// core's TreeReveal::scrollTop: nothing when the row is wholly in view, else
+// its middle at the view's middle, held to the rows' ends. Where the row is
+// can only be read once the list is laid out with it in: its folders may
+// have opened just now, their rows put in above it. So it is read in the
+// frame clock's after-paint, which comes after the frame's layout with no
+// turn of the main loop in between (a listing arriving then would move the
+// rows again); a tick callback runs before the layout and would read the
+// rows as they were. The rows all have one height, so a row the list has
+// not made yet (far down) is placed from one it has.
+
+void FileTree::centerRow(GtkTreeListRow* row) {
+    holdRow(&centerRow_, row);
+    // A record's view still waiting gives way to the newer reveal.
+    restoreScroll_ = -1;
+    restoreSelect_.clear();
+    centerDeadline_ = g_get_monotonic_time() + 3 * G_USEC_PER_SEC;
+    scheduleFrame();
+}
+
+void FileTree::scheduleFrame() {
+    if (!listView_) return;
+    GdkFrameClock* clock = gtk_widget_get_frame_clock(listView_);
+    if (!clock || !gtk_widget_get_mapped(listView_)) {
+        // Not on screen (a window still opening, the sidebar hidden): once
+        // it is, with no frames asked for meanwhile.
+        if (!mapId_)
+            mapId_ = g_signal_connect(listView_, "map", G_CALLBACK(+[](GtkWidget* w, gpointer selfp) {
+                FileTree* self = static_cast<FileTree*>(selfp);
+                g_signal_handler_disconnect(w, self->mapId_);
+                self->mapId_ = 0;
+                self->scheduleFrame();
+            }), this);
+        return;
+    }
+    if (clock != frameClock_) {
+        stopFrames();
+        frameClock_ = GDK_FRAME_CLOCK(g_object_ref(clock));
+        afterPaintId_ = g_signal_connect(clock, "after-paint", G_CALLBACK(onAfterPaint), this);
+    }
+    gdk_frame_clock_request_phase(clock, GDK_FRAME_CLOCK_PHASE_AFTER_PAINT);
+}
+
+void FileTree::stopFrames() {
+    if (frameClock_) {
+        if (afterPaintId_) g_signal_handler_disconnect(frameClock_, afterPaintId_);
+        g_object_unref(frameClock_);
+    }
+    frameClock_ = nullptr;
+    afterPaintId_ = 0;
+}
+
+void FileTree::onAfterPaint(GdkFrameClock*, gpointer selfp) {
+    static_cast<FileTree*>(selfp)->afterLayout();
+}
+
+GtkWidget* FileTree::shownRow(guint pos, guint* shownPos) const {
+    GtkWidget* first = nullptr;
+    for (GtkWidget* c = gtk_widget_get_first_child(listView_); c; c = gtk_widget_get_next_sibling(c)) {
+        GtkWidget* inner = gtk_widget_get_first_child(c);
+        auto* li = inner ? static_cast<GtkListItem*>(
+                               g_object_get_data(G_OBJECT(inner), "minicode-list-item"))
+                         : nullptr;
+        if (!li || !gtk_widget_get_mapped(c) || !gtk_widget_get_child_visible(c)) continue;
+        const guint at = gtk_list_item_get_position(li);
+        if (at == GTK_INVALID_LIST_POSITION) continue;
+        if (at == pos) {
+            *shownPos = at;
+            return c;
+        }
+        if (!first) {
+            first = c;
+            *shownPos = at;
+        }
+    }
+    return first;
+}
+
+void FileTree::afterLayout() {
+    const gint64 now = g_get_monotonic_time();
+    bool again = false;
+    GtkAdjustment* adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_));
+    if (centerRow_) {
+        const guint pos = gtk_tree_list_row_get_position(centerRow_);
+        guint at = GTK_INVALID_LIST_POSITION;
+        GtkWidget* ref = pos == GTK_INVALID_LIST_POSITION || !gtk_widget_get_mapped(listView_)
+                             ? nullptr
+                             : shownRow(pos, &at);
+        graphene_rect_t b;
+        const double page = gtk_adjustment_get_page_size(adj);
+        if (ref && page > 0 && gtk_widget_compute_bounds(ref, listView_, &b) && b.size.height > 0) {
+            // In the list's coordinates a row is drawn its scroll up.
+            const double v = gtk_adjustment_get_value(adj), h = b.size.height;
+            const double rowTop = b.origin.y + v + ((double)pos - (double)at) * h;
+            const double top =
+                TreeReveal::scrollTop(rowTop, h, v, page, gtk_adjustment_get_upper(adj));
+            if (top != v) gtk_adjustment_set_value(adj, top);
+            holdRow(&centerRow_, nullptr);
+        } else if (pos == GTK_INVALID_LIST_POSITION || now > centerDeadline_) {
+            holdRow(&centerRow_, nullptr);   // gone, or never shown
+        } else {
+            again = true;   // not laid out yet (hidden, or a window opening)
+        }
+    }
+    if (restoreScroll_ >= 0) {
+        // Once the folders are open and their rows have stopped coming for a
+        // moment: a scroll put back while rows still arrive above it would
+        // show other rows. Only on screen (a window brought back with its
+        // sidebar hidden puts it back when the sidebar shows).
+        const bool mapped = gtk_widget_get_mapped(listView_);
+        const bool settled = pendingExpand_.empty() && now - rowsChanged_ > 150 * 1000;
+        if (mapped && (settled || now > restoreDeadline_)) {
+            selectIfListed(restoreSelect_);
+            const double most = gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj);
+            gtk_adjustment_set_value(adj, std::max(0.0, std::min(restoreScroll_, most)));
+            restoreScroll_ = -1;
+            restoreSelect_.clear();
+        } else {
+            again = true;
+        }
+    }
+    if (again) scheduleFrame();
+    else stopFrames();
 }
 
 // Where row `pos` is drawn, in the list view's coordinates, if it is on screen.
@@ -1224,6 +1394,7 @@ void FileTree::onRightClick(GtkGestureClick* g, int, double x, double y,
     FileTree* self = static_cast<FileTree*>(selfp);
     gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
     self->pendingReveal_.clear();
+    holdRow(&self->centerRow_, nullptr);
 
     GtkListItem* li = nullptr;
     for (GtkWidget* w = gtk_widget_pick(self->listView_, x, y, GTK_PICK_DEFAULT);
@@ -1826,7 +1997,7 @@ void FileTree::applyFocus(const std::vector<std::string>& set, bool lost) {
     std::string select;
     if (!selected.empty() && shows(selected)) select = selected;
     else if (!widenedFrom.empty()) select = widenedFrom;
-    if (!select.empty()) revealPath(select);
+    if (!select.empty()) reveal(select, false, false);
     updateFocusBar();
     watchFocusPath();
 }
@@ -1857,18 +2028,54 @@ bool FileTree::showsPath(const std::string& path, bool widen) {
     std::string rel;
     if (!relative(path, &rel)) return true;   // outside the window's folder: as before
     // One folder is the tree's root, no row of its own; several are rows.
-    if (foci_.size() == 1 ? rel != foci_[0] && TreeFocus::contains(foci_[0], rel)
-                          : TreeFocus::rootOf(foci_, rel) >= 0)
-        return true;
+    if (TreeFocus::shows(foci_, rel)) return true;
     if (!widen) return false;
     // A reveal: one folder widens to the nearest folder that shows it as a
     // row; several take in the path's folder.
     return setFocusFolders(TreeFocus::revealed(foci_, rel));
 }
 
+std::vector<std::string> FileTree::openFolders() const {
+    std::unordered_set<std::string> all = focusExpanded_;
+    for (const std::string& p : expandedNow()) all.insert(p);
+    std::vector<std::string> out(all.begin(), all.end());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+double FileTree::scrolled() const {
+    return gtk_adjustment_get_value(
+        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller_)));
+}
+
+void FileTree::restoreView(const std::vector<std::string>& open, const std::string& selected,
+                           double scroll) {
+    // Under the tops as they are now (restoreFocus came first) opened, the
+    // rest remembered for when the tree widens, as applyFocus keeps them.
+    std::vector<std::string> tops;
+    for (const std::string& f : foci_) tops.push_back(joinPath(root_, f));
+    if (tops.empty()) tops.push_back(root_);
+    const bool several = foci_.size() > 1;
+    for (const std::string& p : open) {
+        bool under = false;
+        for (const std::string& t : tops)
+            under = under || (several ? atOrBelow(p, t) : inside(p, t));
+        if (under) pendingExpand_.insert(p);
+        else focusExpanded_.insert(p);
+    }
+    const gint64 now = g_get_monotonic_time();
+    expandDeadline_ = now + 3 * G_USEC_PER_SEC;
+    tryExpand();
+    restoreSelect_ = selected;
+    restoreScroll_ = std::max(0.0, scroll);
+    restoreDeadline_ = now + 3 * G_USEC_PER_SEC;
+    rowsChanged_ = now;
+    scheduleFrame();
+}
+
 void FileTree::selectRoot(const std::string& rel) {
     if (foci_.size() < 2 || std::find(foci_.begin(), foci_.end(), rel) == foci_.end()) return;
-    revealPath(joinPath(root_, rel));
+    reveal(joinPath(root_, rel), false, false);
 }
 
 // ---- the row across the top
