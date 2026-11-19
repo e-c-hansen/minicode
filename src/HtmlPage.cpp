@@ -67,6 +67,33 @@ Verdict decide(const Navigation &nav, const std::string &own,
     return byUser ? Verdict::Open : Verdict::Allow;
 }
 
+const char *const kOpenApp = "Open";
+const char *const kRefuseMore = "Refuse any more from this page";
+
+bool opensAnotherApp(const std::string &scheme) {
+    std::string s = scheme;
+    for (char &ch : s)
+        if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+    return !s.empty() && s != "http" && s != "https" && s != "file";
+}
+
+std::string openAppQuestion(const std::string &app) {
+    return app.empty() ? "Open in another app?" : "Open in " + app + "?";
+}
+
+std::string openAppDetail(const std::string &url) {
+    // 79 characters and an ellipsis past 80, cut on a character's first byte.
+    std::string where = url;
+    size_t chars = 0, cut = std::string::npos;
+    for (size_t i = 0; i < where.size(); i++) {
+        if (((unsigned char)where[i] & 0xC0) == 0x80) continue;
+        if (chars == 79) cut = i;
+        if (++chars > 80) break;
+    }
+    if (chars > 80 && cut != std::string::npos) where = where.substr(0, cut) + "\xE2\x80\xA6";
+    return "The link goes to " + where + ", outside mutible.";
+}
+
 Started started(const Navigation &nav, const std::string &own,
                 const std::set<std::string> &requested) {
     if (isOwnOrBlank(nav, own)) return Started::Keep;
