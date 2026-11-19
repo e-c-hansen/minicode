@@ -195,10 +195,17 @@ std::vector<SessionRate> sessionRates(const std::vector<Entry> &sortedEntries, d
 // One status line reading. A percent is -1 when Claude Code did not give
 // that window (an API key's session, before the first reply, or after it
 // reset); a reset time is Unix seconds.
+//
+// Each Claude Code session runs its own status line with the percentages
+// of its own last reply, so a session that has been idle for an hour
+// reports an hour-old reading when its status line runs again (the user
+// types into it). `time` is when the line was logged; the reading itself
+// is as old as the session's last reply, which `readingTimes` finds.
 struct Sample {
     double time = 0;
     double fivePct = -1, fiveReset = 0;
     double weekPct = -1, weekReset = 0;
+    std::string session;   // the status line's session_id; empty when not given
     bool hasFive() const { return fivePct >= 0 && fiveReset > 0; }
     bool hasWeek() const { return weekPct >= 0 && weekReset > 0; }
 };
@@ -208,26 +215,48 @@ struct Sample {
 bool sampleFromStatusJson(const std::string &json, double now, Sample *out);
 
 // The log's line for a sample (no newline): "v1 <time> <5h %> <5h reset>
-// <week %> <week reset>", "-" for a missing window. Times are whole seconds,
-// percents up to two decimals.
+// <week %> <week reset> [<session>]", "-" for a missing window. Times are
+// whole seconds, percents up to two decimals; the session (letters, digits,
+// '-', '_' and '.', at most 64) only when known.
 std::string formatSample(const Sample &s);
 // A log line back; false for anything else (another version, a torn line).
 bool parseSample(const std::string &line, Sample *out);
 // Every sample in a log's text, oldest first, bad lines skipped.
 std::vector<Sample> parseLog(const std::string &text);
 
-// Should `next` be logged after `last` (the log's last line)? When a
-// window's percent or reset changed, or `minGap` seconds have gone by.
+// Is `next` an older reading than `last`: in some window it has an earlier
+// reset, or the same reset and a lower percent (a plan's percent only
+// rises until its window resets), and in none is it newer? That is a
+// second session's stale reading, not news.
+bool olderReading(const Sample &last, const Sample &next);
+
+// Should `next` be logged after `last` (the log's last line)? Not when it
+// is an older reading (`olderReading`); else when a window's percent or
+// reset changed, or `minGap` seconds have gone by.
 bool worthLogging(const Sample &last, const Sample &next, double minGap = 60);
+
+// The samples at their readings' own times, oldest first: a sample with a
+// session is as old as that session's last reply at or before it was
+// logged (the newest of `sortedEntries` with its session id), and a
+// session's sample that repeats a reading already logged is dropped. A
+// sample whose session has no entries keeps its logged time. The fit and
+// the forecast read samples through this, so an idle session's stale
+// reading sorts in where it was taken instead of after the busy session's
+// newer ones.
+std::vector<Sample> readingTimes(const std::vector<Sample> &samples,
+                                 const std::vector<Entry> &sortedEntries);
 
 // ------------------------------------------------------------- the forecast
 enum class Window { FiveHour, Week };
 double windowLength(Window w);   // 5 h or 7 d, in seconds
 
-// The plan percent one cost unit is worth in a window, from the samples.
-// Each window (one reset time) is cut into readings: from its start (reset
-// minus the window's length) to its first sample, then on from sample to
-// sample until the cost or the percent has moved enough to measure. Each
+// The plan percent one cost unit is worth in a window, from the samples
+// (at their readings' times, `readingTimes`; a reading older than one
+// before it, `olderReading`'s rule, is left out rather than starting the
+// window over). Each window (one reset time) is cut into readings: from
+// its start (reset minus the window's length) to its first sample, then on
+// from sample to sample until the cost or the percent has moved enough to
+// measure. Each
 // reading gives percent over cost; the scale is their median weighted by
 // cost. A reading's percent above scale times cost is unseen usage.
 struct Fit {

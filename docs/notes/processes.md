@@ -43,7 +43,16 @@ found through that list.
   process row shows a Stop button at its right while hovered (a tracking
   area) or selected (`outlineViewSelectionDidChange:` sets each row view's
   `selected`), which runs `stopRow:` with its questions; the memory figure
-  moves left for it.
+  moves left for it. **The row menu** (2026-11-19, round 10's agents
+  Medium 1) captures the `MCProcItem` it was opened on, never the row
+  number: the list reloads every 2 s while the panel shows, the menu's
+  tracking included, so the row could hold another process by the time
+  Stop is chosen (an orphan, stopped without a question). Stop finds the
+  item again by pid and start time (`currentItemFor:`, the whole tree,
+  collapsed groups too) and, gone or exited, beeps and notes "<name>
+  (process N) has exited; nothing was stopped"; Reveal Origin uses the
+  captured item. The `processes` suite checks both (a sleep that exits
+  under its menu, and one that moves up a row under it).
 - **Mac**: `MCProcessMonitor` starts itself at launch (`+load` observes
   didFinishLaunching), samples on its own serial queue every 10 s, 2 s while
   a panel shows; at each look it asks AppDelegate's `controlControllers` for

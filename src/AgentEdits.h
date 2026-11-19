@@ -5,9 +5,11 @@
 // A session's transcript (AgentTranscript.h) records every Edit, MultiEdit,
 // Write and NotebookEdit call with its input: the text it replaced and the
 // text it put there, or a whole file. `collect` reads those calls for one
-// file, in order, with whether each was refused (an error result, which
-// Claude Code did not apply) and whether a Write made the file. `analyze`
-// then holds them against the file as it is now, last first:
+// file, in order, with whether each was answered and refused (an error
+// result, which Claude Code did not apply) and whether a Write made the
+// file. `analyze` then holds them against the file as it is now, last
+// first, leaving out refused calls and calls with no result yet (one may be
+// waiting at Claude Code's permission prompt, so it is not made yet):
 //
 // - an edit stands when the text it put in is still there; it is gone when
 //   something changed that text since (the user, another session);
@@ -81,7 +83,7 @@ FileHistory collect(const Fs &fs, const std::string &transcript, const std::stri
 bool samePath(const Fs &fs, const std::string &a, const std::string &b);
 
 struct Result {
-    std::vector<Change> changes;     // standing filled in; refused ones as they were
+    std::vector<Change> changes;     // standing filled in; refused and unanswered ones Unknown
     bool rebuilt = false;            // `before` is the file before the session
     bool existedBefore = true;       // false: the session's Write made it
     std::string before;

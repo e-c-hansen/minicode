@@ -17,6 +17,7 @@
 // 200 processes on the machine. Every process here is one this suite
 // started, and only those are signalled.
 #import "Harness.h"
+#include <algorithm>
 #import "SessionLink.h"
 #import "ControlCommands.h"
 #import "EditorController.h"
@@ -55,6 +56,12 @@
 @property(nonatomic) BOOL extraStarted;   // the sleeps outside the folder are up
 @property(nonatomic) NSUInteger listed;
 @property(nonatomic) NSUInteger alerts, windows;
+// The row menu's checks: the process it was opened on, its row then, and
+// the process that takes that row once the list reloads.
+@property(nonatomic) int menuPid, nextPid, abovePid;
+@property(nonatomic) NSInteger menuRow;
+@property(nonatomic, strong) NSMenu *menu;
+@property(nonatomic, strong) NSMutableArray<NSString *> *notes;
 @end
 @implementation MCProcsState
 @end
@@ -281,6 +288,37 @@ void Sample(NSString *name) {
     MCGuiAsync(name, 10, ^(MCGuiDone done) { [[MCProcessMonitor shared] sampleNow:done]; });
 }
 
+// The second terminal's running sleeps but its first one, by row: each
+// row with its pid, in order, from the panel as it is drawn now.
+std::vector<std::pair<NSInteger, int>> SleepRows(MCProcsState *s) {
+    [s.panel expandAll];
+    std::vector<std::pair<NSInteger, int>> out;
+    for (int p : PidsNamed(s, s.termB, "sleep")) {
+        if (p == s.sleepPid) continue;
+        const NSInteger r = [s.panel rowForPid:p];
+        if (r >= 0) out.push_back({r, p});
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// The first of `n` sleeps in consecutive rows; -1 for none.
+long ConsecutiveSleeps(const std::vector<std::pair<NSInteger, int>> &rows, size_t n) {
+    for (size_t k = 0; k + n <= rows.size(); k++) {
+        bool run = true;
+        for (size_t j = 1; j < n && run; j++) run = rows[k + j].first == rows[k].first + (NSInteger)j;
+        if (run) return (long)k;
+    }
+    return -1;
+}
+
+// Chooses a menu's item by its title, as a click on it does.
+void ChooseItem(NSMenu *menu, NSString *title) {
+    NSMenuItem *it = [menu itemWithTitle:title];
+    GCHECK(it != nil && it.enabled);
+    if (it) [menu performActionForItemAtIndex:[menu indexOfItem:it]];
+}
+
 }  // namespace
 
 MC_GUI_SUITE(processes) {
@@ -483,6 +521,84 @@ MC_GUI_SUITE(processes) {
         NSView *cell = [o viewAtColumn:0 row:1 makeIfNecessary:YES];
         GCHECK(NSMaxX(cell.frame) <= NSWidth(o.enclosingScrollView.frame));
     });
+    // ------------------------------------------- the row menu's own process
+    // A menu is made for a row, and the list reloads under it every 2 s
+    // while the panel shows, so by the time an item is chosen the row can
+    // hold another process. Its items act on the process it was opened on,
+    // by pid and start time (round 10's agents Medium 1: Stop stopped
+    // whatever had moved into the row).
+    MCGuiStep(@"a menu on a sleep's row; that sleep exits before Stop is chosen", ^{
+        std::vector<std::pair<NSInteger, int>> rows = SleepRows(s);
+        const long k = ConsecutiveSleeps(rows, 2);
+        GCHECK(k >= 0);
+        if (k < 0) return;
+        s.menuRow = rows[(size_t)k].first;
+        s.menuPid = rows[(size_t)k].second;
+        s.nextPid = rows[(size_t)k + 1].second;
+        s.menu = [s.panel menuForRow:s.menuRow];
+        GCHECK([s.menu itemWithTitle:@"Stop…"].enabled);
+        kill(s.menuPid, SIGTERM);
+    });
+    MCGuiWait(@"it ends", 5, ^BOOL { return !Alive(s.menuPid); });
+    Sample(@"a look sees it exit");
+    MCGuiStep(@"the list reloads: the next sleep is in its row now", ^{
+        [s.panel reload];
+        [s.panel expandAll];
+        GCHECK([s.panel rowForPid:s.nextPid] == s.menuRow);
+        GCHECK([s.panel rowForPid:s.menuPid] < 0);
+    });
+    MCGuiStep(@"Stop from the menu asks nothing, stops nothing, and says it exited", ^{
+        s.notes = [NSMutableArray array];
+        void (^was)(NSString *) = s.panel.onNote;
+        NSMutableArray<NSString *> *notes = s.notes;
+        s.panel.onNote = ^(NSString *text) {
+            [notes addObject:text ?: @""];
+            if (was) was(text);
+        };
+        s.alerts = MCGuiAlertsShown().count;
+        ChooseItem(s.menu, @"Stop…");
+        s.panel.onNote = was;
+        GCHECK(MCGuiAlertsShown().count == s.alerts);
+        NSString *want = [NSString stringWithFormat:@"sleep (process %d) has exited", s.menuPid];
+        MCGuiNote(@"notes: %@", [s.notes componentsJoinedByString:@" | "]);
+        GCHECK(s.notes.count == 1 && [s.notes.firstObject hasPrefix:want]);
+    });
+    // A pause before a negative check: the sleep now in that row must still
+    // be running, and no condition says "nothing will happen".
+    MCGuiPause(0.5);
+    MCGuiStep(@"the sleep in that row runs on", ^{ GCHECK(Alive(s.nextPid)); });
+    MCGuiStep(@"a menu on another sleep's row; the sleep above it exits", ^{
+        std::vector<std::pair<NSInteger, int>> rows = SleepRows(s);
+        const long k = ConsecutiveSleeps(rows, 3);
+        GCHECK(k >= 0);
+        if (k < 0) return;
+        // rows k, k + 1, k + 2: the menu on k + 1's, then k exits, so k + 1
+        // moves up a row and k + 2 takes the menu's row.
+        s.menuRow = rows[(size_t)k + 1].first;
+        s.menuPid = rows[(size_t)k + 1].second;
+        s.nextPid = rows[(size_t)k + 2].second;
+        s.menu = [s.panel menuForRow:s.menuRow];
+        s.abovePid = rows[(size_t)k].second;
+        kill(s.abovePid, SIGTERM);
+    });
+    MCGuiWait(@"the one above ends", 5, ^BOOL { return !Alive(s.abovePid); });
+    Sample(@"a look sees it exit");
+    MCGuiStep(@"the list reloads; Stop from the menu names its own sleep, not the row's", ^{
+        [s.panel reload];
+        [s.panel expandAll];
+        GCHECK([s.panel rowForPid:s.nextPid] == s.menuRow);
+        GCHECK([s.panel rowForPid:s.menuPid] == s.menuRow - 1);
+        s.alerts = MCGuiAlertsShown().count;
+        MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
+        ChooseItem(s.menu, @"Stop…");
+        GCHECK(MCGuiAlertsShown().count == s.alerts + 1);
+        NSString *pid = [NSString stringWithFormat:@"(process %d)", s.menuPid];
+        MCGuiNote(@"asked: %@", MCGuiLastAlertInformative());
+        GCHECK([MCGuiLastAlertInformative() containsString:pid]);
+    });
+    MCGuiWait(@"that sleep ends", 5, ^BOOL { return !Alive(s.menuPid); });
+    MCGuiStep(@"the sleep in the menu's row runs on", ^{ GCHECK(Alive(s.nextPid)); });
+
     MCGuiStep(@"the forty go (this suite started them)", ^{
         for (int p : PidsNamed(s, s.termB, "sleep"))
             if (p != s.sleepPid) kill(p, SIGTERM);
