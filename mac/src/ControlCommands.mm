@@ -477,6 +477,10 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
                     cmp.leftLabel = shortPath;
                     cmp.rightLabel = shortOther;
                     cmp.path = other;
+                    cmp.leftPath = path;   // both read from disk again with the tab
+                    cmp.leftRev = @"";
+                    cmp.rightPath = other;
+                    cmp.rightRev = @"";
                     cmp.title = [NSString stringWithFormat:@"%@ ↔ %@", path.lastPathComponent,
                                  other.lastPathComponent];
                 }
@@ -493,6 +497,10 @@ void MCControlRegisterCommands(Dispatcher &d, id<MCControlAppHost> hostIn) {
                                             : [NSString stringWithFormat:@"%@: %@", ref, shortPath];
                     cmp.rightLabel = [NSString stringWithFormat:@"%@ (working copy)", shortPath];
                     cmp.path = path;
+                    cmp.leftPath = path;   // git's at the revision and the disk's, again with the tab
+                    cmp.leftRev = ref;
+                    cmp.rightPath = path;
+                    cmp.rightRev = @"";
                     cmp.title = [NSString stringWithFormat:@"%@ (%@ ↔ working copy)",
                                  path.lastPathComponent, ref];
                 }

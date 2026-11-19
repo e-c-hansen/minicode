@@ -88,7 +88,17 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
     TabSessions::Session session;
     std::set<std::string> have;
     for (MCTab *t in [self tabs]) {
-        // A diff is not reopened, nor an agent's preview tab (its note is gone).
+        // The review, a commit's page and a comparison that can be made
+        // again come back made again (EditorController+PageTabs.mm); a
+        // plain diff is not reopened, nor an agent's preview tab (its note
+        // is gone).
+        TabSessions::PageTab page;
+        if ([self pageTabOf:t into:&page]) {
+            page.at = (int)(session.tabs.size() + session.pages.size());
+            if (t == _activeTab) session.activePage = (int)session.pages.size();
+            session.pages.push_back(page);
+            continue;
+        }
         if (!t.currentPath || t.agentPreview) continue;
         TabSessions::Tab tab;
         tab.path = Utf8String(t.currentPath);
@@ -184,6 +194,8 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
     NSSet *besides = nil;   // the files whose page was beside their source
     NSDictionary *groups = nil;
     std::map<std::string, TabSessions::Tab> places;   // where each was, for a window brought back
+    std::vector<TabSessions::PageTab> pages;   // the tabs that show no file
+    int activePage = -1;
     TabSessions::Window record;
     TabSessions::Session folder;
     const BOOL restoring = [self restoringWindow:&record];
@@ -203,6 +215,8 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
         }
         besides = side;
         if (ws.split) groups = MCGroupsState(ws.groups);
+        pages = ws.pages;
+        activePage = ws.activePage;
     }
     // Unsaved buffers kept from a crash, a force quit or a restart: a file of
     // the session with a backup comes back even if it is gone from disk, and
@@ -226,7 +240,7 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
     });
     const std::string previewFile = r.preview >= 0 ? r.files[(size_t)r.preview] : "";
     for (const std::string &f : extra) r.files.push_back(f);
-    if (r.files.empty()) return;
+    if (r.files.empty() && pages.empty()) return;
     if (r.active < 0) r.active = 0;
     for (const std::string &f : r.files) {
         auto b = backupFor.find(f);
@@ -262,8 +276,27 @@ static std::vector<std::string> MCTreeFocusList(NSArray<NSString *> *folders) {
         }
         [self groupAppendTab:t preview:preview ? Model::Preview::User : Model::Preview::None];
     }
-    NSArray<MCTab *> *tabs = [self tabs];
-    if (tabs.count == 0) return;
+    NSArray<MCTab *> *tabs = [self tabs];   // the files', for the one on show
+    // The review, a commit's page, a comparison: made again where they
+    // were among the tabs (EditorController+PageTabs.mm).
+    MCTab *pageShown = nil;
+    for (size_t i = 0; i < pages.size(); i++) {
+        MCTab *t = [self tabForRestoredPage:pages[i]];
+        if (!t) continue;
+        [self groupInsertTab:t atIndex:(NSUInteger)MAX(0, pages[i].at)];
+        if ((int)i == activePage) pageShown = t;
+    }
+    if (pageShown) {
+        [self holdTreeFollowing:YES];
+        [self activateTab:pageShown];
+        if (groups) [self restoreEditorGroups:groups];
+        [self holdTreeFollowing:NO];
+        return;
+    }
+    if (tabs.count == 0) {
+        if ([self tabs].count) [self activateTab:[self tabs].firstObject];
+        return;
+    }
     if (r.active >= (int)tabs.count) r.active = (int)tabs.count - 1;
     // The tab on show is read now, while the window opens. One holding a
     // file too big for that (it held up every launch) or no plain file at
@@ -357,6 +390,21 @@ static NSDictionary *MCGroupsState(const EditorTabs::GroupsSession &g) {
     return out;
 }
 
+// A folder opened by name (the command line, Finder, `open -a Mutible
+// dir`, a window per folder with backups) while no window here shows it:
+// the window the last run left on it, as it was (its tabs with their
+// places, the review and commit pages, the terminal dock with fresh
+// shells, the panels, the tree and the frame), as VS Code reopens a
+// folder with its editors and panels; nil when there is none, and the
+// folder's session alone brings its tabs back, as before.
++ (NSString *)windowRecordToReopenFolder:(NSString *)root {
+    if (!MCSessionsEnabled() || !root.length) return nil;
+    TabSessions::Window w;
+    if (!MCSessionsWindowToReopen(root, &w)) return nil;
+    w.root = Utf8String(root);   // as this launch spells it
+    return @(TabSessions::encodeWindows({w}).c_str());
+}
+
 // The app's open windows, the one in front first, then as they are stacked
 // (the order they come back in).
 + (NSArray<EditorController *> *)openWindowsFrontFirst {
@@ -431,6 +479,13 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
         else if (shown != _activeTab && t.lastActive > shown.lastActive) shown = t;
     }
     for (MCTab *t in [self tabs]) {
+        TabSessions::PageTab page;   // the review, a commit, a comparison: made again
+        if ([self pageTabOf:t into:&page]) {
+            page.at = (int)(s.tabs.size() + s.pages.size());
+            if (t == _activeTab) s.activePage = (int)s.pages.size();
+            s.pages.push_back(page);
+            continue;
+        }
         if (!t.currentPath || t.agentPreview) continue;
         TabSessions::Tab tab;
         tab.path = Utf8String(t.currentPath);
@@ -608,10 +663,11 @@ static void MCWriteOpenWindows(const std::vector<TabSessions::Window> &list) {
 // A tab whose buffer differs from disk has it written to the backup store
 // (BackupStore) a second after typing stops, and at least every five seconds
 // while it goes on; the backup goes as soon as the tab is clean again or is
-// closed. Quitting still asks about unsaved tabs, and Don't Save deletes
-// their backups; a crash, a force quit or a power loss leaves them, and the
-// folder's next window brings them back as unsaved tabs. Request a Change's
-// restart writes them at once and asks nothing about them.
+// closed. Quitting writes them at once and asks nothing about them (hot
+// exit, files.hot-exit = on-exit; off asks, and Don't Save deletes them),
+// as Request a Change's restart does; a crash, a force quit or a power loss
+// leaves them too, and the folder's next window brings them back as unsaved
+// tabs.
 // When is the core's (SavePlan::Planner, _plan): 1 s after typing stops,
 // at most 5 s after the first change not yet written, ticked by one timer
 // (_planTimer) on the monotonic clock, with auto-save's times beside them.
@@ -742,17 +798,22 @@ static NSString *MCTabEncodingName(MCTab *t) {
     t.backedUpPath = nil;
 }
 
-// Request a Change's restart: every unsaved buffer written now, so the new
-// build brings them back. NO when backups are off or one could not be
-// written, and the usual question is asked instead.
-- (BOOL)keepUnsavedTabsForRestart {
+// Quitting with hot exit (files.hot-exit = on-exit) and Request a Change's
+// restart: every unsaved buffer written now, on this thread, so the next
+// launch brings it back unsaved and nothing need be asked. NO when backups
+// are off, a tab with unsaved changes has no text to keep, or a write
+// fails: the usual question is asked instead, so quitting never loses
+// what was typed. Each tab costs one synchronous write (F_FULLFSYNC).
+- (BOOL)keepUnsavedTabsForNextLaunch {
+    _unsavedKeptForNextLaunch = NO;
     MCBackupStore *store = [MCBackupStore shared];
     if (!store || ![self sessionsEnabled]) return NO;
     [self saveBeforeLeavingFormatSave];
     if (self.textView.editable && _activeTab && !_activeTab.showingMessage)
         self.sourceText = self.textView.string;
     for (MCTab *t in [self tabs]) {
-        if (!t.dirty || ![self tabTakesBackup:t]) continue;
+        if (!t.dirty) continue;
+        if (![self tabTakesBackup:t]) return NO;   // nothing to keep it by: ask
         if (!t.backupID) t.backupID = [store newID];
         if (![store writeNowID:t.backupID path:t.currentPath root:[self sessionKey]
                       diskDate:t.fileModDate inode:t.fileID
@@ -762,21 +823,27 @@ static NSString *MCTabEncodingName(MCTab *t) {
         t.backedUpPath = t.currentPath;
         t.hasBackup = YES;
     }
+    // No question, so nothing is dropped on the session's host either: a
+    // headless host keeps the documents as Keep Unsaved would, and the
+    // next window takes them over these backups (restoreSession).
+    [self sessionDropOnClose:nil];
     [self saveSession];
+    _unsavedKeptForNextLaunch = YES;
     return YES;
 }
 
-// Quitting: the questions were asked (applicationShouldTerminate), so what
-// is still unsaved was let go with Don't Save, and its backups go. A restart
-// keeps them (keepUnsavedTabsForRestart wrote them).
+- (void)quitWasCancelled {
+    _unsavedKeptForNextLaunch = NO;
+}
+
+// Quitting: what quitting kept (keepUnsavedTabsForNextLaunch) stays for the
+// next launch; in a window that asked instead, what is still unsaved was
+// let go with Don't Save, and its backups go.
 - (void)backupsAppWillTerminate:(NSNotification *)note {
     MCBackupStore *store = [MCBackupStore shared];
     if (!store) return;
-    id app = NSApp.delegate;
-    SEL restartApp = NSSelectorFromString(@"restartApp");
-    const BOOL restarting = [app respondsToSelector:restartApp] && [app valueForKey:@"restartApp"];
     [self stopSavePlan];
-    if (!restarting)
+    if (!_unsavedKeptForNextLaunch)
         for (MCTab *t in [self tabs]) [self discardBackupOf:t];
     [store flush];
 }
@@ -807,6 +874,10 @@ static NSString *MCTabEncodingName(MCTab *t) {
     }
     MCDiskStamp *a = MCStampOfFile(t.currentPath);
     t.gone = e.diskExisted && !a;
+    // A buffer that never had a file (an untitled one the session's host
+    // held, kept by quitting) is untitled again: unsaved, not "(deleted)",
+    // never auto-saved, and Cmd+S makes its file.
+    t.untitled = !e.diskExisted && !a;
     // Unchanged since: the disk's own date, exactly, so a save in the
     // background does not take a rounding for a change made outside.
     if (e.diskExisted && a && fabs(a.modDate.timeIntervalSince1970 - e.diskMtime) < 0.001 &&

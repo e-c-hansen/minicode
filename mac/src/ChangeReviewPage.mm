@@ -1847,6 +1847,25 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         c.rightText = NS16(f.newText);
     }
     c.fileName = path;
+    // How it is made again with its tab (a conflict's sides and a
+    // worktree's are not): the index, HEAD, the commit and its parent, or
+    // the file on disk, as the page read them.
+    NSString *top = NS8(data->top);
+    if (top.length && !(f.conflict && !fd.conflicts.empty()) && !(f.section == Section::Plain && _worktree)) {
+        c.leftPath = [top stringByAppendingPathComponent:oldPath];
+        c.rightPath = [top stringByAppendingPathComponent:path];
+        if (f.section == Section::Plain) {
+            const Git::CommitDetail &cd = data->commit;
+            c.leftRev = cd.parents.empty() ? [NS8(cd.hash) stringByAppendingString:@"^"] : NS8(cd.parents[0]);
+            c.rightRev = NS8(cd.hash);
+        } else if (staged) {
+            c.leftRev = @"HEAD";
+            c.rightRev = @":";
+        } else {
+            c.leftRev = @":";
+            c.rightRev = @"";
+        }
+    }
     // (Neither side of a conflict's comparison is the file on disk.)
     if ((f.section == Section::Changes && !(f.conflict && !fd.conflicts.empty())) ||
         (f.section == Section::Plain && _worktree && f.newExists))

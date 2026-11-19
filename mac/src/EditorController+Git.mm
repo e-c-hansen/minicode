@@ -72,39 +72,58 @@
 // The review of every uncommitted change (ChangeReviewPage.h), one tab per
 // window, at a file (a click on its row in the panel) or from its top.
 - (void)showChangeReviewAt:(NSString *)rel staged:(BOOL)staged {
-    MCGitPanel *panel = [self ensureGitPanel];
     NSString *key = [@"review:" stringByAppendingString:_root.path ?: @""];
     MCChangeReviewPage *page = nil;
     for (MCTab *t in [self tabs])
         if ([t.page isKindOfClass:MCChangeReviewPage.class] && [t.page.pageKey isEqualToString:key])
             page = (MCChangeReviewPage *)t.page;
-    if (!page) {
-        page = [[MCChangeReviewPage alloc] initWithRoot:_root.path panel:panel];
-        __weak EditorController *weakSelf = self;
-        page.onOpenFile = ^(NSString *path, NSInteger line) {
-            EditorController *s = weakSelf;
-            NSString *mine = [s gitPathInRoot:path];
-            [s openFileAtPath:mine];
-            if (line > 0 && [s.currentPath isEqualToString:mine]) [s goToLine:(int)line column:0];
-        };
-        page.onShowComparison = ^(MCComparison *c) { [weakSelf showComparison:c preview:NO]; };
-        page.hasUnsavedText = ^BOOL(NSString *path) {
-            EditorController *s = weakSelf;
-            NSString *mine = [s gitPathInRoot:path];
-            for (MCTab *t in [s tabs])
-                if (t.dirty && ([t.currentPath isEqualToString:mine] || [t.currentPath isEqualToString:path]))
-                    return YES;
-            return NO;
-        };
-    }
+    if (!page) page = [self newChangeReviewPage];
     [self showPage:page];
     [page revealFile:rel staged:staged];
+}
+
+// The window's review page, new, with its hooks (a tab brought back with
+// its window makes one too: EditorController+PageTabs.mm).
+- (MCChangeReviewPage *)newChangeReviewPage {
+    MCGitPanel *panel = [self ensureGitPanel];
+    MCChangeReviewPage *page = [[MCChangeReviewPage alloc] initWithRoot:_root.path panel:panel];
+    __weak EditorController *weakSelf = self;
+    page.onOpenFile = ^(NSString *path, NSInteger line) {
+        EditorController *s = weakSelf;
+        NSString *mine = [s gitPathInRoot:path];
+        [s openFileAtPath:mine];
+        if (line > 0 && [s.currentPath isEqualToString:mine]) [s goToLine:(int)line column:0];
+    };
+    page.onShowComparison = ^(MCComparison *c) { [weakSelf showComparison:c preview:NO]; };
+    page.hasUnsavedText = ^BOOL(NSString *path) {
+        EditorController *s = weakSelf;
+        NSString *mine = [s gitPathInRoot:path];
+        for (MCTab *t in [s tabs])
+            if (t.dirty && ([t.currentPath isEqualToString:mine] || [t.currentPath isEqualToString:path]))
+                return YES;
+        return NO;
+    };
+    return page;
+}
+
+// The window's commit page, new, with its hooks, showing no commit yet.
+- (MCChangeReviewPage *)newCommitReviewPage {
+    MCGitPanel *panel = [self ensureGitPanel];
+    MCChangeReviewPage *page = [[MCChangeReviewPage alloc] initForCommitsWithRoot:_root.path panel:panel];
+    __weak EditorController *weakSelf = self;
+    page.onOpenFile = ^(NSString *path, NSInteger line) {
+        EditorController *s = weakSelf;
+        NSString *mine = [s gitPathInRoot:path];
+        [s openFileAtPath:mine];
+        if (line > 0 && [s.currentPath isEqualToString:mine]) [s goToLine:(int)line column:0];
+    };
+    page.onShowComparison = ^(MCComparison *c) { [weakSelf showComparison:c preview:NO]; };
+    return page;
 }
 
 // A commit from the graph as a readable change: one page per window, which
 // each commit shown replaces, as the diff tab did.
 - (void)showCommitReview:(NSString *)hash title:(NSString *)title {
-    MCGitPanel *panel = [self ensureGitPanel];
     NSString *key = [@"commit:" stringByAppendingString:_root.path ?: @""];
     MCChangeReviewPage *page = nil;
     MCTab *tab = nil;
@@ -113,17 +132,7 @@
             page = (MCChangeReviewPage *)t.page;
             tab = t;
         }
-    if (!page) {
-        page = [[MCChangeReviewPage alloc] initForCommitsWithRoot:_root.path panel:panel];
-        __weak EditorController *weakSelf = self;
-        page.onOpenFile = ^(NSString *path, NSInteger line) {
-            EditorController *s = weakSelf;
-            NSString *mine = [s gitPathInRoot:path];
-            [s openFileAtPath:mine];
-            if (line > 0 && [s.currentPath isEqualToString:mine]) [s goToLine:(int)line column:0];
-        };
-        page.onShowComparison = ^(MCComparison *c) { [weakSelf showComparison:c preview:NO]; };
-    }
+    if (!page) page = [self newCommitReviewPage];
     [page showCommit:hash title:title];
     if (tab) {
         tab.diffName = page.pageTitle;

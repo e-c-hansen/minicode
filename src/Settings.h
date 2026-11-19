@@ -287,6 +287,13 @@ public:
     enum class AutoSave { Off, AfterDelay, FocusChange };
     AutoSave autoSave() const { return autoSave_; }
     int autoSaveDelay() const { return autoSaveDelay_; }
+    // files.hot-exit (the Mac's, 2026-11-18): on-exit (the default) quits
+    // without asking about unsaved changes, which are kept in the backups
+    // and come back unsaved with their windows at the next launch, as VS
+    // Code's files.hotExit onExit; off asks Save, Don't Save or Cancel at
+    // quit, as before. Closing a tab or a window asks either way.
+    enum class HotExit { Off, OnExit };
+    HotExit hotExit() const { return hotExit_; }
     // editor.ruler: the columns a thin vertical line marks in the editor,
     // ascending ({100} by default; empty for off). editor.ruler-color is the
     // line's color.
@@ -589,6 +596,7 @@ private:
     int gitAutoFetchPeriod_ = 180;
     AutoSave autoSave_ = AutoSave::Off;
     int autoSaveDelay_ = 1000;
+    HotExit hotExit_ = HotExit::OnExit;
     std::vector<int> rulers_ = {100};
     std::optional<Rgba> rulerColor_;
     double editorFontSize_ = 13;

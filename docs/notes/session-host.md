@@ -1023,8 +1023,13 @@ place on its link, and `EditorController+Session.mm` the window's hooks.
   starting a new host with everything typed unsaved there and a new
   shell; Don't Save. The harness ends what closed windows left between
   suites (`MCSession::endDetached`).
-- **Not yet:** quitting asks Keep Unsaved on a headless host but Restart
-  keeps its backups as before.
+- **Quitting** (hot exit, 2026-11-18, `docs/notes/sessions.md`): with
+  `files.hot-exit = on-exit` quitting asks nothing, on a headless host
+  too: each document detaches as Keep Unsaved leaves it (nothing is
+  dropped, `sessionDropOnClose:nil`), and the Mac's backups are written
+  besides, as a restart's always were; the next window takes the host's
+  documents and removes the backups of their paths. With `off` quitting
+  asks Keep Unsaved as before.
 
 ### The Mac's half of step 3
 

@@ -450,6 +450,84 @@ static void testTabSessions() {
         CHECK(mixed.folders.size() == 1 && mixed.windows.size() == 1 && mixed.windows[0].root == "/r");
     }
 
+    GROUP("tab-sessions:pages");
+    {
+        // Tabs that show no file: the review, a commit's page, a comparison,
+        // each with its place among the tabs; the one on show.
+        Session s;
+        s.tabs = {tab("/p/a.txt", 0, 0, false, 0, 0), tab("/p/b.txt", 0, 0, false, 0, 0)};
+        s.active = 1;
+        PageTab review;
+        review.kind = "review";
+        review.at = 1;
+        PageTab commit;
+        commit.kind = "commit";
+        commit.at = 3;
+        commit.ref = "0123456789abcdef0123456789abcdef01234567";
+        commit.title = "0123456 First";
+        PageTab cmp;
+        cmp.kind = "compare";
+        cmp.at = 4;
+        cmp.title = "a.txt (side by side)";
+        cmp.fileName = "/p/a.txt";
+        cmp.left = ComparedSide{"/p/a.txt", ":", "Staged or HEAD: a.txt"};
+        cmp.right = ComparedSide{"/p/a.txt", "", "a.txt"};
+        s.pages = {review, commit, cmp};
+        s.activePage = 1;
+        Sessions all;
+        put(all, "/p", s, 5);
+        const Sessions back = decode(encode(all));
+        CHECK(back.count("/p") == 1);
+        if (back.count("/p")) {
+            const Session &q = back.at("/p");
+            CHECK(q.tabs.size() == 2 && q.active == 1);
+            CHECK(q.pages.size() == 3 && q.activePage == 1);
+            if (q.pages.size() == 3) {
+                CHECK(q.pages[0].kind == "review" && q.pages[0].at == 1 && q.pages[0].ref.empty());
+                CHECK(q.pages[1].kind == "commit" && q.pages[1].at == 3 && q.pages[1].ref == commit.ref &&
+                      q.pages[1].title == "0123456 First");
+                CHECK(q.pages[2].kind == "compare" && q.pages[2].left.rev == ":" &&
+                      q.pages[2].left.label == "Staged or HEAD: a.txt" && q.pages[2].right.rev.empty() &&
+                      q.pages[2].right.path == "/p/a.txt" && q.pages[2].fileName == "/p/a.txt");
+            }
+        }
+        // A window's record keeps them too.
+        Window w;
+        w.root = "/p";
+        w.tabs = s;
+        const std::vector<Window> ws = decodeWindows(encodeWindows({w}));
+        CHECK(ws.size() == 1 && ws[0].tabs.pages.size() == 3 && ws[0].tabs.activePage == 1);
+        // A session of pages alone is kept; none at all removes the folder.
+        Session only;
+        only.pages = {review};
+        put(all, "/q", only, 6);
+        CHECK(decode(encode(all)).count("/q") == 1);
+        // Pages that do not read are left out, and the one on show follows
+        // what is kept: an unknown kind, a commit that is no hash (it would
+        // reach git), a revision that could be an option, a relative path.
+        const Sessions bad = decode(
+            "{\"/p\": {\"tabs\": [], \"activePage\": 4, \"pages\": ["
+            "{\"kind\": \"evidence\"}, {\"kind\": \"commit\", \"ref\": \"--output=x\"},"
+            "{\"kind\": \"compare\", \"left\": {\"path\": \"/p/a\", \"rev\": \"--x\"}, "
+            "\"right\": {\"path\": \"/p/a\"}},"
+            "{\"kind\": \"compare\", \"left\": {\"path\": \"a\"}, \"right\": {\"path\": \"/p/a\"}},"
+            "{\"kind\": \"review\", \"at\": 2}, 7]}}");
+        CHECK(bad.count("/p") == 1 && bad.at("/p").pages.size() == 1 &&
+              bad.at("/p").pages[0].kind == "review" && bad.at("/p").pages[0].at == 2);
+        CHECK(bad.count("/p") == 1 && bad.at("/p").pages.size() == 1 && bad.at("/p").activePage == 0);
+        // A mutible from before reads only the files: no page key in a
+        // session that has none.
+        Session plain;
+        plain.tabs = s.tabs;
+        Sessions p2;
+        put(p2, "/p", plain, 7);
+        CHECK(encode(p2).find("\"pages\"") == std::string::npos);
+        CHECK(isComparedRev("HEAD") && isComparedRev("HEAD~1") && isComparedRev("abc123") &&
+              isComparedRev(":") && isComparedRev("") && isComparedRev("origin/main"));
+        CHECK(!isComparedRev("-p") && !isComparedRev("a..b") && !isComparedRev("/etc") &&
+              !isComparedRev("a b") && !isComparedRev(std::string("a\0b", 3)) && !isComparedRev(".x"));
+    }
+
     GROUP("tab-sessions:after-closing");
     {
         Window a, b;
@@ -542,6 +620,22 @@ static void testTabSessions() {
         CHECK(roots(toRestore(stored, me, isRunning, &running)) == "/last /old /self ");
         running.live = {};
         CHECK(roots(toRestore(stored, me, isRunning, &running)) == "/other /last /old /self ");
+
+        // A folder opened by name comes back as the window the last run
+        // left on it, never one another running mutible holds open nor one
+        // of this process's own.
+        GROUP("tab-sessions:to-reopen");
+        const std::vector<Window> left = {win("/p", other.pid, other.start, 4500),
+                                          win("/p", last.pid, last.start, 900),
+                                          win("/q", 0, 0, 0), win("/s", me.pid, me.start, 5001)};
+        running.live = {other};
+        CHECK(toReopen(left, "/p", me, isRunning, &running) == 1);
+        CHECK(toReopen(left, "/q", me, isRunning, &running) == 2);
+        CHECK(toReopen(left, "/s", me, isRunning, &running) == -1);
+        CHECK(toReopen(left, "/none", me, isRunning, &running) == -1);
+        CHECK(toReopen(left, "", me, isRunning, &running) == -1);
+        running.live = {};
+        CHECK(toReopen(left, "/p", me, isRunning, &running) == 0);
     }
 
     GROUP("tab-sessions:fit-frame");
