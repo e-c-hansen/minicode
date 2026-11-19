@@ -385,6 +385,94 @@ bool allowsComments(const std::string &path) {
     return parent == ".vscode" || parent == ".devcontainer";
 }
 
+bool checksAsJson(const std::string &path) {
+    const size_t slash = path.rfind('/');
+    const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    const size_t dot = name.rfind('.');
+    if (dot == std::string::npos || dot == 0) return false;
+    std::string ext = name.substr(dot + 1);
+    for (char &c : ext) c = (char)std::tolower((unsigned char)c);
+    return ext == "json" || ext == "jsonc" || ext == "geojson" || ext == "har" ||
+           ext == "webmanifest" || ext == "code-workspace";
+}
+
+namespace {
+
+// A byte offset's zero-based line and UTF-16 column, lines broken by \n,
+// \r\n or a lone \r (LSP's rule), from a known earlier place.
+struct Place {
+    size_t byte = 0, line = 0, column = 0;
+};
+Place advance(const std::string &s, Place at, size_t to) {
+    to = std::min(to, s.size());
+    while (at.byte < to) {
+        const unsigned char c = (unsigned char)s[at.byte];
+        if (c == '\n' || (c == '\r' && !(at.byte + 1 < s.size() && s[at.byte + 1] == '\n'))) {
+            at.line++;
+            at.column = 0;
+        } else if (c != '\r' && (c & 0xC0) != 0x80) {
+            at.column += c >= 0xF0 ? 2 : 1;
+        }
+        at.byte++;
+    }
+    return at;
+}
+
+bool blankByte(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+
+}  // namespace
+
+std::vector<Problem> problems(const Outline &o, const std::string &s) {
+    if (o.ok || o.truncated) return {};
+    // No value at all: blank, or only comments.
+    if (o.nodes.empty() && o.errorOffset >= s.size()) return {};
+    const size_t at = std::min(o.errorOffset, s.size());
+    size_t from = at, to = at;
+    std::string message = o.error;
+    const char c = at < s.size() ? s[at] : '\0';
+    size_t back = at;
+    while (back > 0 && blankByte(s[back - 1])) back--;
+    if ((c == '}' || c == ']') && back > 0 && s[back - 1] == ',') {
+        from = back - 1;
+        to = back;
+        message = "Trailing comma";
+    } else if (c == '/' && at + 1 < s.size() && (s[at + 1] == '/' || s[at + 1] == '*') &&
+               o.error != "Unterminated comment") {
+        if (s[at + 1] == '/') {
+            to = at;
+            while (to < s.size() && s[to] != '\n' && s[to] != '\r') to++;
+        } else {
+            const size_t close = s.find("*/", at + 2);
+            to = close == std::string::npos ? s.size() : close + 2;
+        }
+        message = "Comments are not permitted in JSON";
+    } else if (at < s.size() && c != '\n' && c != '\r') {
+        // The token there: a word (a misspelled true, a bare key) whole,
+        // else one character.
+        auto wordByte = [](char b) {
+            return std::isalnum((unsigned char)b) || b == '_' || b == '-' || b == '+' ||
+                   b == '.' || (unsigned char)b >= 0x80;
+        };
+        to = at + 1;
+        if (wordByte(c))
+            while (to < s.size() && wordByte(s[to])) to++;
+        while (to < s.size() && ((unsigned char)s[to] & 0xC0) == 0x80) to++;
+    }
+    const Place a = advance(s, Place{}, from);
+    const Place b = advance(s, a, to);
+    Problem p;
+    p.line = a.line;
+    p.column = a.column;
+    p.endLine = b.line;
+    p.endColumn = b.column;
+    p.message = message;
+    return {p};
+}
+
+std::vector<Problem> problems(const std::string &text, bool jsonc) {
+    return problems(parse(text, SIZE_MAX, jsonc), text);
+}
+
 long nodeAt16(const Outline &o, size_t offset16) {
     if (o.nodes.empty()) return -1;
     const Node &root = o.nodes[0];

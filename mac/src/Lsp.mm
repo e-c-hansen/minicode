@@ -18,6 +18,7 @@
 #import "Lsp+CompletionIvars.h"
 #import "Lsp+DiagnosticsIvars.h"
 #import "Lsp+InlayHintsIvars.h"
+#import "Lsp+JsonCheckIvars.h"
 #import "Lsp+NavigationIvars.h"
 #import "Lsp+SemanticIvars.h"
 #import "Lsp+ServersIvars.h"

@@ -70,12 +70,14 @@ static double MCThreadCpuMs() {
         [self paintDiagnostics];
         [self scheduleInlayHints:0];
     }
+    [self jsonCheckDocument];   // a server that came up takes over the editor's check
 }
 
 // Leaves the file on its server: the tab is still open. syncOpenDocuments
 // closes it there once its tab goes.
 - (void)closeDocument {
     [self detachDocument];
+    [self jsonDocumentClosed];
     _path = nil;
     _langKey = nil;
     _alsoKey = nil;
@@ -108,12 +110,14 @@ static double MCThreadCpuMs() {
             [self applyPythonInterpreterForSwitch:YES];
     } else {
         [self syncOpenDocuments];   // a tab that closed or stopped showing text
+        [self jsonCheckDocument];   // JSON, which no server has
     }
     [self changed];
 }
 
 - (void)tabsChanged {
     [self syncOpenDocuments];
+    [self forgetJsonChecksOfClosedTabs];
 }
 
 // ---- folding ranges: the server's, when it offers them, take the place of
@@ -243,7 +247,7 @@ static double MCThreadCpuMs() {
 - (NSString *)tabPathForURI:(NSString *)uri {
     for (MCLspDoc *d in _docs.allValues)
         if ([d.uri isEqualToString:uri]) return d.path;
-    return nil;
+    return [self jsonTabPathForURI:uri];   // a JSON file the editor checks itself
 }
 
 - (void)documentSaved {
@@ -496,6 +500,7 @@ static double MCThreadCpuMs() {
         [self noteEditForPendingAccepts:er.location];
         [self closeHover];
         [self closePicker];
+        [self checkJsonAfter:0.3];   // only while the editor checks it as JSON
     }
     if (!(ts.editedMask & NSTextStorageEditedCharacters) || !_servers.count || !_uri) return;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushChanges)

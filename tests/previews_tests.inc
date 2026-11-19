@@ -665,6 +665,59 @@ static void testJsonOutline() {
         JsonOutline::Outline cap = parse("[1,2,3,4,5]", 3);
         CHECK(!cap.ok && cap.truncated);
     }
+    GROUP("jsonoutline:problems");
+    {
+        using JsonOutline::Problem;
+        auto one = [](const std::string &text, bool jsonc = false) {
+            std::vector<Problem> v = JsonOutline::problems(text, jsonc);
+            return v.size() == 1 ? v[0] : Problem{};
+        };
+        // A trailing comma: on the comma, as VS Code marks it.
+        const std::string trailing = "{\n  \"a\": 1,\n  \"b\": [1, 2],\n}\n";
+        Problem p = one(trailing);
+        CHECK(p.message == "Trailing comma");
+        CHECK(p.line == 2 && p.column == 13 && p.endLine == 2 && p.endColumn == 14);
+        p = one("[1, 2 ,\n]");
+        CHECK(p.message == "Trailing comma" && p.line == 0 && p.column == 6 && p.endColumn == 7);
+        // Valid, blank, or only comments in JSON with comments: nothing.
+        CHECK(JsonOutline::problems("{\"a\": [1, {\"b\": null}]}", false).empty());
+        CHECK(JsonOutline::problems("", false).empty());
+        CHECK(JsonOutline::problems(" \n\t\n", false).empty());
+        CHECK(JsonOutline::problems("// nothing yet\n", true).empty());
+        // JSON with comments allows comments and trailing commas.
+        const std::string jsonc = "// settings\n{\n  /* a */ \"a\": 1, // b\n  \"c\": [1,],\n}\n";
+        CHECK(JsonOutline::problems(jsonc, true).empty());
+        CHECK(one("{\"a\": 1 /* open", true).message == "Unterminated comment");
+        // Strict JSON: a comment is the problem, over the whole comment.
+        p = one("{\n  \"a\": 1, // why\n  \"b\": 2\n}");
+        CHECK(p.message == "Comments are not permitted in JSON");
+        CHECK(p.line == 1 && p.column == 10 && p.endLine == 1 && p.endColumn == 16);
+        p = one("{\"a\": 1 /* two\nlines */}");
+        CHECK(p.message == "Comments are not permitted in JSON");
+        CHECK(p.line == 0 && p.column == 8 && p.endLine == 1 && p.endColumn == 8);
+        // Anything else: the parser's message, over the word or character.
+        p = one("{\"a\": tru}");
+        CHECK(p.message == "Unexpected text" && p.column == 6 && p.endColumn == 9);
+        p = one("{\n  \"a\": 1\n  \"b\": 2\n}");
+        CHECK(p.message == "Expected ',' or '}'" && p.line == 2 && p.column == 2 &&
+              p.endColumn == 3);
+        // The end of the text: an empty place there.
+        p = one("{\"a\": [1, 2");
+        CHECK(p.message == "Expected ',' or ']'");
+        CHECK(p.line == 0 && p.column == 11 && p.endLine == 0 && p.endColumn == 11);
+        // Columns in UTF-16 units, lines after \r\n and a lone \r.
+        p = one("{\"\xC3\xA9\xF0\x9F\x98\x80\": 1,}");
+        CHECK(p.message == "Trailing comma" && p.column == 9 && p.endColumn == 10);
+        p = one("[\r\n1,\r2\r\n,]");
+        CHECK(p.line == 3 && p.column == 0 && p.endColumn == 1);
+        // Which files are checked.
+        using JsonOutline::checksAsJson;
+        CHECK(checksAsJson("/p/package.json") && checksAsJson("/p/A.JSON"));
+        CHECK(checksAsJson("/p/x.jsonc") && checksAsJson("/p/w.code-workspace"));
+        CHECK(checksAsJson("/p/site.webmanifest") && checksAsJson("/p/map.geojson"));
+        CHECK(!checksAsJson("/p/log.jsonl") && !checksAsJson("/p/x.ndjson"));
+        CHECK(!checksAsJson("/p/.json") && !checksAsJson("/p/json") && !checksAsJson("/p/a.js"));
+    }
     GROUP("jsonoutline:jsonc");
     {
         const std::string text = "// tsconfig\n{\n  /* the target */ \"target\": \"es2022\", // why\n"

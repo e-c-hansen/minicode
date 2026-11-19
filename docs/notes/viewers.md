@@ -86,6 +86,21 @@ found through that list.
   typing, the last good outline kept under an error line, dimmed and
   selecting nothing (`stale`: its offsets are off). `.jsonc`, tsconfig*.json,
   `.vscode/*.json` and the like allow comments (`JsonOutline::allowsComments`).
+  **Its error is a problem too** (2026-11-18, `Lsp+JsonCheck.mm`, core
+  `JsonOutline::problems` and `checksAsJson`, `jsonoutline:problems`, `make
+  guitest SUITES=problems`): a JSON file no server has (`_servers` empty)
+  is parsed on a queue when it comes on show and 0.3 s after typing; the
+  error is the list of a server of the session's own, `mutible.json`, in
+  `_store`, so squiggle, Problems, the status bar's count, hover and F8
+  are a server's (`paintDiagnostics` and `collectProblems` take
+  `jsonCheckedUri` where `_uri` is nil; `problemsKnown` is YES meanwhile,
+  so a valid file says "No problems"). As VS Code says them: "Trailing
+  comma" on the comma, "Comments are not permitted in JSON" over a comment
+  in strict JSON, else the parser's message on the token; an empty file is
+  none. JSONC files (allowsComments) parse leniently. A server attaching
+  (attachDocument) erases the editor's list; a closed tab's goes in
+  `tabsChanged`; `stopAllServers` clears the store, and documentOpened
+  checks again. Over 8 M characters: no check.
   Every row is one line of constant height (2026-11-18): the label and the
   summary go through `JsonOutline::oneLine` (line breaks, tabs and other
   control characters as `\n`, `\t`, `\u2028` escapes the Mac draws dimmed,
