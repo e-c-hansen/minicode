@@ -1,8 +1,10 @@
 // BookmarkMenuSuite.cpp — the toolbar's star and book, the Bookmarks menu in
 // the menu bar and the palette's bookmarks (`./build/mutible-guitest
 // bookmark_menu`, PARITY.md 4.8, last part; the Mac's bookmarks suite).
-// Pages come from a server inside this process on 127.0.0.1, the bookmark
-// folder is a scratch one and the Trash is a folder of the scratch world
+// Pages come from a server inside this process on 127.0.0.1, the bookmarks
+// are the scratch project's .mutible/bookmarks (bookmarks per workspace,
+// HANDOFF item 111) with a scratch shared folder holding one, for the
+// palette's Shared row, and the Trash is a folder of the scratch world
 // (GitTrash::useFolderForChecks), so nothing leaves this machine and nothing
 // touches the real ~/Bookmarks or Trash.
 //   - the star is filled for a bookmarked page (a bookmark in a subfolder
@@ -14,7 +16,8 @@
 //     the file names, a file added meanwhile there), and an item loads in
 //     the tab on show, with Ctrl in a new tab;
 //   - the menu bar's Bookmarks menu lists the same;
-//   - the palette has a row "Bookmarks > Name" that loads it.
+//   - the palette has a row "Bookmarks > Name" that loads it, and the shared
+//     folder's are "Bookmarks > Shared > Name".
 #include "CaretSuites.h"
 
 #include "AppSeam.h"
@@ -27,6 +30,8 @@
 
 #include <glib/gstdio.h>
 
+#include <ftw.h>
+
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -37,7 +42,17 @@ namespace {
 
 GSocketService* gServer = nullptr;
 int gPort = 0;
-std::string gFolder, gTrash;
+std::string gFolder, gTrash, gShared;   // the project's .mutible/bookmarks, a Trash, browser.bookmarks
+
+// The project's .mutible, which this suite made, removed: only inside the
+// scratch world.
+void removeWorkspaceBookmarks() {
+    const std::string dir = MCGuiProject() + "/.mutible", root = MCGuiScratch() + "/";
+    GCHECK(dir.compare(0, root.size(), root) == 0);
+    if (dir.compare(0, root.size(), root) != 0) return;
+    nftw(dir.c_str(), [](const char* p, const struct stat*, int, struct FTW*) { return g_remove(p); }, 16,
+         FTW_DEPTH | FTW_PHYS);
+}
 int gTabs = 0;
 
 gboolean onIncoming(GThreadedSocketService*, GSocketConnection* conn, GObject*, gpointer) {
@@ -158,8 +173,10 @@ std::string activeUrl() { return browser()->tabUrl(browser()->activeTab()); }
 }  // namespace
 
 MC_GUI_SUITE(bookmark_menu) {
-    MCGuiStep("a scratch bookmark folder with three bookmarks, a scratch Trash, a server", [] {
-        gFolder = MCGuiScratch() + "/bookmark-menu";
+    MCGuiStep("the workspace's bookmark folder with three bookmarks, a scratch Trash, a server", [] {
+        gShared = MCGuiScratch() + "/bookmark-menu";
+        gFolder = MCGuiProject() + "/.mutible/bookmarks";
+        removeWorkspaceBookmarks();   // none left by an earlier suite
         gTrash = MCGuiScratch() + "/bookmark-menu-trash";
         GitTrash::useFolderForChecks(gTrash);
         // The X server's focus on the first window before any menu opens: a
@@ -167,7 +184,7 @@ MC_GUI_SUITE(bookmark_menu) {
         // the Ctrl+click below would raise the window over the book's menu.
         MCGuiSetKeyWindow(nullptr);
         MCGuiFocusKeyWindow();
-        MCGuiSetSettings("lsp.enabled = false\nbrowser.bookmarks = " + gFolder + "\n");
+        MCGuiSetSettings("lsp.enabled = false\nbrowser.bookmarks = " + gShared + "\n");
         GCHECK(browser() != nullptr);
         if (!browser()) return;
         gServer = g_threaded_socket_service_new(4);
@@ -178,6 +195,7 @@ MC_GUI_SUITE(bookmark_menu) {
         writeBookmark(gFolder + "/Alpha.url", url("/one"));
         writeBookmark(gFolder + "/Beta_x.url", url("/two"));
         writeBookmark(gFolder + "/Work/Delta.url", url("/three"));
+        writeBookmark(gShared + "/Kappa.url", url("/two"));
         MCGuiWriteFile(gTrash + "/keep", "");
         // An earlier suite may have left tabs: tab 0 must be the page loaded below.
         while (browser()->tabCount() > 0) browser()->closeTab(browser()->tabCount() - 1);
@@ -343,6 +361,8 @@ MC_GUI_SUITE(bookmark_menu) {
         GCHECK(indexOf(l, "Bookmarks > Alpha") >= 0);
         GCHECK(indexOf(l, "Bookmarks > Work/Delta") >= 0);
         GCHECK(indexOf(l, "Bookmarks > Zed") < 0);
+        GCHECK(indexOf(l, "Bookmarks > Shared > Kappa") >= 0);   // the shared folder's
+        GCHECK(indexOf(l, "Bookmarks > Kappa") < 0);
         MCGuiType("Work/Delta");
     });
     MCGuiWait("one row matches", 10, [] {
@@ -355,7 +375,8 @@ MC_GUI_SUITE(bookmark_menu) {
     });
     MCGuiWait("the page loads in the browser", 60, [] { return has(activeUrl(), "/three"); });
 
-    MCGuiStep("the server and the Trash are put away", [] {
+    MCGuiStep("the server and the Trash are put away, the workspace's bookmarks removed", [] {
+        removeWorkspaceBookmarks();
         GitTrash::useFolderForChecks("");
         if (gServer) g_socket_service_stop(gServer);
         if (gServer) g_object_unref(gServer);
