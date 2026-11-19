@@ -2,7 +2,9 @@
 // `md:nested-containers` and `mdedit:html` groups of run_tests.cpp: GitHub's
 // footnotes, HTML blocks taken as HTML rather than Markdown, and quotes and
 // code inside list items (and lists inside quotes) nesting as GitHub draws
-// them. Included there; mdText, mdRun, mdAny and mdCount are its helpers.
+// them, and GitHub's alerts, emoji shortcodes and front matter (`md:alerts`,
+// `md:emoji`, `md:front-matter`). Included there; mdText, mdRun, mdAny and
+// mdCount are its helpers.
 
 static void testMarkdownGfm() {
     using P = MarkdownParser;
@@ -301,6 +303,112 @@ static void testMarkdownGfm() {
         CHECK(mdRun(r, "first").task == 1 && mdRun(r, "second").task == 2);
         // Ticking it still finds the box.
         CHECK(MarkdownTasks::toggleBox("1. [ ] first\n", 0) == "1. [x] first\n");
+    }
+
+    GROUP("md:alerts");
+    {
+        // GitHub's alerts: the kind on every run of the quote, the title's
+        // runs marked, the quote kept for ports that draw no alert.
+        auto r = P::parse("> [!WARNING]\n> Mind the *step*.\n>\n> - a list\n\nafter\n");
+        const MdRun title = mdRun(r, "Warning");
+        CHECK(title.alert == 4 && title.alertTitle && title.bold && title.quote);
+        CHECK(mdRun(r, "Mind the ").alert == 4 && !mdRun(r, "Mind the ").alertTitle);
+        CHECK(mdRun(r, "step").alert == 4 && mdRun(r, "step").italic);
+        CHECK(mdRun(r, "a list").alert == 4 && mdRun(r, "a list").quote);
+        CHECK(mdRun(r, "after").alert == 0 && !mdRun(r, "after").quote);
+        CHECK(mdText(r).find("[!WARNING]") == std::string::npos);
+        int kinds = 0;
+        for (const char *k : {"NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"}) {
+            auto one = P::parse(std::string("> [!") + k + "]\n> x\n");
+            const int a = mdRun(one, "x").alert;
+            if (a >= 1 && a <= 5 && std::string(P::alertName(a)) ==
+                [](std::string s) { for (char &c : s) c = (char)std::tolower((unsigned char)c); return s; }(k))
+                kinds |= 1 << a;
+        }
+        CHECK(kinds == 0x3E);
+        CHECK(std::string(P::alertName(0)).empty() && std::string(P::alertName(6)).empty());
+        // Lowercase markers count, as on GitHub; an unknown one, a marker
+        // after the first line, and a nested quote's are plain quotes.
+        CHECK(mdRun(P::parse("> [!tip]\n> y\n"), "y").alert == 2);
+        CHECK(mdRun(P::parse("> [!NOPE]\n> y\n"), "y").alert == 0);
+        CHECK(mdRun(P::parse("> first\n> [!NOTE]\n"), "first").alert == 0);
+        CHECK(mdRun(P::parse("> > [!NOTE]\n> > y\n"), "y").alert == 0);
+        // Two quotes, one an alert: the other stays plain.
+        auto two = P::parse("> [!CAUTION]\n> hot\n\n> cold\n");
+        CHECK(mdRun(two, "hot").alert == 5 && mdRun(two, "cold").alert == 0);
+        // The space between its blocks is in it too, so its bar goes on.
+        CHECK(mdAny(r, [](const MdRun &x) { return x.gap && x.quote && x.alert == 4; }));
+        CHECK(!mdAny(r, [](const MdRun &x) { return x.gap && x.quote && x.alert == 0; }));
+    }
+
+    GROUP("md:emoji");
+    {
+        CHECK(MarkdownEmoji::count() >= 300);
+        CHECK(MarkdownEmoji::lookup("tada") == "\xF0\x9F\x8E\x89");
+        CHECK(MarkdownEmoji::lookup("white_check_mark") == "\xE2\x9C\x85");
+        CHECK(MarkdownEmoji::lookup("+1") == "\xF0\x9F\x91\x8D");
+        // A character whose default is text gets the emoji selector.
+        CHECK(MarkdownEmoji::lookup("heart") == "\xE2\x9D\xA4\xEF\xB8\x8F");
+        CHECK(MarkdownEmoji::lookup("warning") == "\xE2\x9A\xA0\xEF\xB8\x8F");
+        CHECK(MarkdownEmoji::lookup("no_such_code").empty());
+        CHECK(MarkdownEmoji::replace("Shipped :tada: and :rocket:!") ==
+              "Shipped \xF0\x9F\x8E\x89 and \xF0\x9F\x9A\x80!");
+        // Unknown codes, times, and words around colons stay as written.
+        CHECK(MarkdownEmoji::replace(":not_an_emoji: x") == ":not_an_emoji: x");
+        CHECK(MarkdownEmoji::replace("at 12:100:30") == "at 12:100:30");
+        CHECK(MarkdownEmoji::replace("a:tada:b") == "a:tada:b");
+        CHECK(MarkdownEmoji::replace("::tada::") == ":\xF0\x9F\x8E\x89:");
+        CHECK(MarkdownEmoji::replace("(:+1:)") == "(\xF0\x9F\x91\x8D)");
+        CHECK(MarkdownEmoji::replace("key: value") == "key: value");
+        // In the page: text only, never code, math or an address.
+        auto r = P::parse("Done :white_check_mark: `:tada:` and **:fire:**\n\n```\n:tada:\n```\n"
+                          "\n$a:b:c$ <https://x.org/:tada:>\n");
+        CHECK(mdText(r).find("Done \xE2\x9C\x85 ") != std::string::npos);
+        CHECK(mdRun(r, ":tada:").code);
+        CHECK(mdRun(r, ":tada:\n").codeBlock);
+        CHECK(mdRun(r, "\xF0\x9F\x94\xA5").bold);
+        CHECK(mdAny(r, [](const MdRun &x) { return x.link && x.text == "https://x.org/:tada:"; }));
+        // In a heading and a table cell too; the table is measured after.
+        auto t = P::parse("# Hi :wave:\n\n| a |\n|---|\n| :x: |\n");
+        CHECK(mdRun(t, "Hi \xF0\x9F\x91\x8B").heading == 1);
+        CHECK(mdRun(t, "\xE2\x9D\x8C").table);
+    }
+
+    GROUP("md:front-matter");
+    {
+        // A table, as GitHub shows it: the keys a header row, their values
+        // the row under it.
+        const std::string src = "---\ntitle: \"Hello\"\ntags:\n  - a\n  - b\n# a comment\n"
+                                "summary: >\n  two\n  lines\ndate: 2026-11-19\n---\n# Body\n";
+        auto r = P::parse(src);
+        CHECK(!mdAny(r, [](const MdRun &x) { return x.rule; }));
+        CHECK(!mdAny(r, [](const MdRun &x) { return x.codeBlock; }));
+        auto cell = [&](int row, int col) {
+            std::string s;
+            for (const MdRun &x : r)
+                if (x.frontMatter && x.tableRow == row && x.tableCol == col) s += x.text;
+            return s;
+        };
+        CHECK(cell(0, 0) == "title" && cell(1, 0) == "Hello");
+        CHECK(cell(0, 1) == "tags" && cell(1, 1) == "a, b");
+        CHECK(cell(0, 2) == "summary" && cell(1, 2) == "two lines");
+        CHECK(cell(0, 3) == "date" && cell(1, 3) == "2026-11-19");
+        CHECK(mdRun(r, "title").bold && mdRun(r, "title").table && mdRun(r, "title").tableCols == 4);
+        CHECK(mdRun(r, "Body").heading == 1 && !mdRun(r, "Body").frontMatter);
+        CHECK(mdRun(r, "title").line == 1);
+        // Values show as written: no emphasis, links or emoji made of them.
+        auto lit = P::parse("---\nname: *not em* [x](y)\n---\n");
+        bool plain = false;
+        for (const MdRun &x : lit)
+            if (x.tableRow == 1 && x.text == "*not em* [x](y)") plain = !x.italic && !x.link;
+        CHECK(plain);
+        // Its lines are still the code block a double-click edits.
+        const auto lines = P::lines(src);
+        CHECK(lines[1].kind == MdLine::Code && lines[0].kind == MdLine::Fence);
+        CHECK(MarkdownEdit::blockAt(src, 1).kind == MarkdownEdit::Block::Code);
+        // Not front matter: not at the top, or no key on its first line.
+        CHECK(!mdAny(P::parse("x\n\n---\ntitle: y\n---\n"), [](const MdRun &x) { return x.frontMatter; }));
+        CHECK(!mdAny(P::parse("---\nplain words\n---\n"), [](const MdRun &x) { return x.frontMatter; }));
     }
 
     GROUP("md:gfm-speed");

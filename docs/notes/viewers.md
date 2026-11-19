@@ -87,7 +87,21 @@ found through that list.
   edit changes one line; BOM and a missing final newline kept; a touched row
   of one empty field is written `""`; delimiter guessed (it must split most
   lines as it splits the first). Over 50 MB read-only, 100,000 rows from
-  disk. **One table view serves every CSV tab**: a cell being typed into is
+  disk. **The header row** (2026-11-19, round 9: "the CSV header row is
+  shown as data"; `csv:header`, `previews`): `Csv::looksLikeHeader` (no
+  field of row 0 empty, a number or a date, and a column under it four in
+  five numbers or dates in the first 200 rows; text alone is not guessed)
+  picks it when a file comes on show; the reader's choice, from the right
+  click menu's First Row Is Header (shown read-only too), is kept per path
+  in the user defaults (`MCCsvFirstRowIsHeader`, the 500 newest). With it
+  the grid's rows are the file's from 1 (`headerRows`), the column titles
+  are row 0's fields in bold (an empty one keeps its letter; the letter is
+  the header's tooltip), the number column gives the file's row, and the
+  info line says "N rows under a header". The view's own API
+  (`cellAtRow:`, `setCell:row:`, `rowCount`, the menu items' rows) stays
+  in the file's rows; only the data source and Edit Cell map. The same
+  file shown again (an edit, a reload) keeps the choice; it is guessed
+  again only for another path. **One table view serves every CSV tab**: a cell being typed into is
   committed in `stashActiveTab` and the toggle (`commitEditing`), and
   dropped before `showText:` replaces the document, or NSTableView commits
   it into the next file at the old row. Undo steps keep only the changed

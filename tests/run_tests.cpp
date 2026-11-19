@@ -3,6 +3,7 @@
 #include "SyntaxHighlighter.h"
 #include "TermLinks.h"
 #include "MarkdownParser.h"
+#include "MarkdownEmoji.h"
 #include "MarkdownEdit.h"
 #include "MarkdownTasks.h"
 #include "MathTex.h"
@@ -2077,6 +2078,7 @@ void testMarkdownCommonMark() {
         CHECK(mdText(nested) == "outer\n\ninner\n");
         auto alert = P::parse("> [!TIP]\n> Use it.\n");
         CHECK(mdRun(alert, "Tip").bold && mdRun(alert, "Tip").quote);
+        CHECK(mdRun(alert, "Tip").alert == 2 && mdRun(alert, "Use it.").alert == 2);
         CHECK(mdRun(alert, "Use it.").quote && !mdRun(alert, "Use it.").bold);
         auto list = P::parse("> - a\n> - b\n");
         CHECK(mdCount(list, [](const MdRun &x) { return x.marker && x.quote; }) == 2);
@@ -2112,9 +2114,10 @@ void testMarkdownCommonMark() {
         CHECK(mdRun(two, "One").heading == 1 && mdRun(two, "Two").heading == 1);
         CHECK(mdRun(two, "Two").line == 0);   // one heading, one line
         CHECK(mdRun(P::parse("<h2 align=\"center\">Hi <b>there</b></h2>\n"), "there").heading == 2);
-        // Front matter shows as code.
+        // Front matter shows as a table (md:front-matter).
         auto fm = P::parse("---\ntitle: x\n---\n# Body\n");
-        CHECK(mdRun(fm, "title: x\n").codeBlock && mdRun(fm, "Body").heading == 1);
+        CHECK(mdRun(fm, "title").frontMatter && mdRun(fm, "x").frontMatter);
+        CHECK(mdRun(fm, "Body").heading == 1);
         CHECK(!mdAny(fm, [](const MdRun &x) { return x.rule; }));
         auto notFm = P::parse("---\nplain words\n---\n");
         CHECK(mdAny(notFm, [](const MdRun &x) { return x.rule; }));
@@ -2552,15 +2555,17 @@ void testMarkdownCorpus() {
                            r.text.find("<kbd>") != std::string::npos);
     }));
     CHECK(mdCount(runs, [](const MdRun &r) { return r.tableId > 0 && r.tableRow == 0 &&
-                                                    r.tableCol == 0; }) == 3);
+                                                    r.tableCol == 0; }) == 4);   // front matter's too
     // Every run that shows text maps back to a block a double-click can edit.
     bool editable = true;
     for (const MdRun &r : runs) {
         if (r.gap || r.rule || r.text.find_first_not_of(" \n") == std::string::npos) continue;
         if (r.table && r.tableCol < 0) continue;
         int line = r.line;
-        if (r.table) line = r.line + r.tableRow + (r.tableRow > 0 ? 1 : 0);
-        if (MarkdownEdit::blockAt(src, line, r.table ? r.tableCol : -1).kind ==
+        // Front matter's table edits as the code block it is written as.
+        const bool cell = r.table && !r.frontMatter;
+        if (cell) line = r.line + r.tableRow + (r.tableRow > 0 ? 1 : 0);
+        if (MarkdownEdit::blockAt(src, line, cell ? r.tableCol : -1).kind ==
             MarkdownEdit::Block::None) {
             editable = false;
             std::printf("  no block for run '%s' on line %d\n", r.text.c_str(), line);

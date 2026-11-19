@@ -19,6 +19,7 @@ add_library(minicode SHARED
     editing_jni.cpp
     ${CORE}/SyntaxHighlighter.cpp
     ${CORE}/MarkdownParser.cpp
+    ${CORE}/MarkdownEmoji.cpp
     ${CORE}/MarkdownEdit.cpp
     ${CORE}/MarkdownTasks.cpp
     ${CORE}/FolderSearch.cpp

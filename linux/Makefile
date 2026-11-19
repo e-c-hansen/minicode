@@ -22,7 +22,7 @@ BIN      := $(BUILD)/mutible
 # Shared portable core (never copied — compiled straight from ../src). Keep it
 # the same list as core_sources in meson.build: CI builds only with Meson, so
 # a file missing here is noticed by nobody until someone runs this.
-CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEdit.cpp \
+CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEmoji.cpp ../src/MarkdownEdit.cpp \
         ../src/MarkdownTasks.cpp ../src/MarkdownPage.cpp ../src/PreviewScroll.cpp ../src/MarkdownHtml.cpp ../src/MermaidDiagram.cpp ../src/MathTex.cpp ../src/Settings.cpp ../src/LineComments.cpp \
         ../src/AutoIndent.cpp ../src/KeepSorted.cpp ../src/FolderSearch.cpp ../src/TextFind.cpp \
         ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp ../src/Text.cpp ../src/Document.cpp ../src/UndoHistory.cpp \

@@ -116,6 +116,9 @@ static NSString *const kOpacityLink = @"mutible-opacity";
 static NSAttributedStringKey const kMarkdownSourceLine = @"MCMarkdownSourceLine";
 // On a fenced block's label line above it (a notebook's "In [3]"), for tests.
 static NSAttributedStringKey const kMarkdownCodeLabel = @"MCMarkdownCodeLabel";
+// On the runs of one of GitHub's alerts: its kind's name ("note", "tip",
+// MarkdownParser::alertName), for tests.
+static NSAttributedStringKey const kMarkdownAlert = @"MCMarkdownAlert";
 // On a rendered table cell: @[row, column], row 0 being the header.
 static NSAttributedStringKey const kMarkdownTableCell = @"MCMarkdownTableCell";
 // On the alt text standing in for a web picture still on its way:
