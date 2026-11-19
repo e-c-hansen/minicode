@@ -65,6 +65,55 @@ found through that list.
   programmatic edit; Esc; Cmd+E. A preview finds but does not replace. Menu
   items still send `performTextFinderAction:` with NSTextFinderAction tags, so
   the terminal and diff view answer their own.
+- **The find bar in a large file** (2026-11-19, round 9's C3 on 1.6.5: a
+  259 MB log's last line took about 2 s, VS Code's and Zed's well under
+  one, and Cmd+F's seeded "2026" stayed marked on every line while the next
+  query ran). A text of 1M units or more (`kStagedUnits`) is searched in
+  stages on the queue through `TextScan` (core, `TextScan.{h,cpp}`): the
+  needle every match holds (`TextFind::requiredText`; ignoring case its
+  longest ASCII run, since only ASCII folds to ASCII, which
+  `textscan:needle-ascii-case` checks over the BMP) is looked for sixteen
+  bytes at a time (GCC/Clang vector extensions, the first and last units
+  both present, a letter matched by setting 0x20), and only a line holding
+  it goes through TextFind; plain text whose needle is the whole query
+  (matching case, or ASCII) needs no line matched. The matches are
+  TextFind::findAll's exactly (`textscan:same-as-findall`: UTF-8 bytes,
+  ASCII bytes, UTF-16 read in blocks smaller than lines, ranges, first and
+  last). Find in Folder's needle is the same class now. Stages, each sent
+  to main as it is ready (`MCStagedNews`, merged into `_matches`): the
+  lines on screen (`visibleCharacters`, no layout); the first match from
+  the anchor, wrapping, selected at once with ±16K units of marks
+  ("1 of …", or "? of …" until the matches before it are counted); then
+  every match counted from the top, kMatchLimit kept for the marks, parts
+  sent every 100 ms; the count shown is exact ("1 of 3000000"), the tooltip
+  saying only 20,000 are highlighted. Find Next while counting, or past the
+  kept matches, searches the text from the selection on its own queue
+  (`_navQueue`, `findByScanning:from:`, `MCFirstIn`/`MCLastIn`), so it
+  never waits for the count; Return typed before the first match came runs
+  after it (`_afterFirst`). The text read is the file's own ASCII bytes
+  while the piece string is unedited (`MCHeldAsciiBytes`, PieceString.h,
+  set by `MCReadDiskText`), else its UTF-16 in 1M-unit blocks. Timings on a
+  246 MB, 3,000,001-line log (Apple Silicon, -O2): NEEDLE-4242 on the last
+  line 1,190 to 1,860 ms through TextFind's blocks before, 19 ms from the
+  bytes (113 ms from UTF-16 blocks, an edited text); counting 3,000,000
+  matches of "request" 73 ms (141 ms). **Marks never outlive their query**:
+  drawing reads `_shownGen`/`_shownVersion` (what `_matches` are for, in
+  part while counting), and a staged search empties them and redraws at
+  once; a small text keeps its old marks until its results come a few ms
+  later, so typing never blinks them. **The seed** follows VS Code's
+  `editor.find.seedSearchStringFromSelection` "always" (a one-line
+  selection, else the word at the caret; VS Code's other values are "never"
+  and "selection", which seeds only from a selection), but in a text of
+  20M units or more (`LargeFile::kSizeThreshold`) a word at the caret is put
+  in the field and not searched (`seedWithoutSearching:`, `seedPending`,
+  an empty count with a tooltip) until a key in the field, an option, or
+  Return, which goes to its next occurrence as if the search had run when
+  the bar opened; a selection is the user's choice and is searched. The
+  `large_file` suite checks a 100 MB log: the seed waits, Return lands on
+  line 2's "2026", a new query leaves no mark on screen, the needle's first
+  match in `GCHECK_TIME(firstMatchCpuMs, MAX(150, 8 × a memchr pass))` of
+  the queue's CPU, "1 of 1", and a match on every line counted with under
+  50 ms of main-thread CPU between two fires of a 2 ms timer.
 - Find in Folder's window is VS Code's search view (searchview.css): query
   and replace with their toggles inside, Replace All beside, files to
   include/exclude (`FolderSearch::PathFilter`, VS Code's queryBuilder rules)
@@ -209,5 +258,7 @@ text is in place in its section.
 
 - Find and replace (Mac): Traps: libc++ and libstdc++ each break JavaScript's repetition rules in places (groups unset per repetition, empty repetitions not counting), libc++ finds no `\b` at a line's end once a search starts past 0, and libc++ throws error_complexity (a silent "no match") on short exponential patterns rather than hanging, while ...
 - Find and replace (Mac): Trap: CALayer copies `shadowPath`, so release the path you made, never the one the getter returns (that crashed in the next CA commit).
+- The find bar in a large file: NSString gives no public way to the bytes it holds: `CFStringGetCStringPtr` returns NULL, for every encoding, for a string made with `initWithBytesNoCopy:` in ASCII (checked on macOS 27), so the reader hangs the bytes on the string (`MCSetHeldAsciiBytes`, an associated NSData that does not free them) and the find bar reads them while the string is the file's.
+- The find bar in a large file: the old marks stayed because nothing redrew between a query's change and its results; drawing already skipped stale results, so the fix is to redraw at once and to draw only matches for the query and text as they are now (`_shownGen`, `_shownVersion`).
 - Find in Folder's keys: the Search window floats over the editor window and stays key, so a command run from it through AppDelegate's `[self current]` changed the editor window's panes (Toggle Terminal showed the terminal and called `focusInput`) while every key typed after still went to Search: a walker's `python3 -m pytest -q` and Return landed in the replace field, where Return was Replace All, and a file was rewritten. A command that shows a pane must make the editor window key (`currentForPane:`), Return in a field of that window must never write files, and Dismiss must reach Replace All, which re-plans the whole folder and had ignored the rows taken out of the results.
 - A GTK search under the keyboard: a search clears the list at once (`clearResults`) and its rows come later from the worker, and the row that had the keyboard goes with its row; when a frame falls between the two, GTK's deferred focus move finds the list empty and leaves the window no focus at all, so the next key did nothing and a Down only put the keyboard back on the first row (GtkListView's arrows, from no focused row, start at its focus position, which the new rows reset to 0).

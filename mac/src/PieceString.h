@@ -44,3 +44,13 @@
 // Whether `a` and `b` hold the same characters: a block at a time (never a
 // copy of either), and in no time for a piece string against its original.
 BOOL MCSameText(NSString *a, NSString *b);
+
+// The bytes an ASCII text was read from (MCReadDiskText's pages), for the
+// find bar to search them directly (TextScan.h): NSString offers no public
+// way to the bytes it holds (CFStringGetCStringPtr returns NULL for these),
+// so the reader puts them on the string, and they live as long as it does.
+// A piece string's copy is that string while it is unedited, so the find
+// bar's text has them until the first edit.
+void MCSetHeldAsciiBytes(NSString *text, const char *bytes, NSUInteger length);
+// NULL when `text` holds no such bytes; *length is then 0.
+const char *MCHeldAsciiBytes(NSString *text, NSUInteger *length);

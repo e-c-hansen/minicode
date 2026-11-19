@@ -548,6 +548,167 @@ MC_GUI_SUITE(large_file) {
         MCGuiNote(@"back to the file's text: dirty %d, %.2f ms", Active(c).dirty,
                   MCGuiThreadCpuMs() - c0);
     });
+    // Round 9's C3 (1.6.5): Cmd+F searched the word at the caret ("2026")
+    // over the whole log at once, its marks stayed on every line while the
+    // next query ran, and the last line took about 2 s to find. Now the
+    // seed waits for Return, the old marks go with the query, and the
+    // search reads the file's bytes (TextScan.h): the first match at once,
+    // the count after it, off the main thread.
+    __block NSRange needle = NSMakeRange(NSNotFound, 0);
+    __block double findBase = 0, queryAt = 0;
+    MCGuiStep(@"Cmd+F seeds the word at the caret of a large log and waits", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        GCHECK(((MCPieceString *)tv.string).isOriginal);
+        NSUInteger held = 0;
+        GCHECK(MCHeldAsciiBytes([tv.string copy], &held) != NULL && held == tv.string.length);
+        tv.selectedRange = NSMakeRange(0, 0);
+        [tv scrollRangeToVisible:tv.selectedRange];
+        [c.window makeFirstResponder:tv];
+        GCHECK(MCGuiPerformMenuKey(c.window, 3, NSEventModifierFlagCommand, nil, nil));
+        GCHECK(find.shown);
+        GCHECK_EQ_STR(find.bar.findField.stringValue, @"2026");
+        GCHECK(find.seedPending && !find.counting);
+        GCHECK(find.matchRanges.count == 0 && find.markedRangesOnScreen.count == 0);
+        GCHECK_EQ_STR(find.bar.countLabel.stringValue, @"");
+    });
+    MCGuiPause(0.3);   // a negative check: nothing is searched meanwhile
+    MCGuiStep(@"nothing searched until asked", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        GCHECK(find.seedPending && find.markedRangesOnScreen.count == 0);
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(0, 0)));
+        // Return (Find Next): on from the word, to the next line's date.
+        GCHECK([find performFindAction:NSTextFinderActionNextMatch]);
+        GCHECK(!find.seedPending);
+    });
+    MCGuiWait(@"Return goes to the next 2026", 20, ^BOOL {
+        return tv.selectedRange.location > 0;
+    });
+    MCGuiStep(@"the seeded word's next occurrence is selected", ^{
+        const NSUInteger second = [tv.string rangeOfString:@"\n"].location + 1;
+        MCGuiNote(@"selected %@", NSStringFromRange(tv.selectedRange));
+        GCHECK(NSEqualRanges(tv.selectedRange, NSMakeRange(second, 4)));
+    });
+    MCGuiWait(@"the 2026 marks on screen", 20, ^BOOL {
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        return find.markedRangesOnScreen.count > 1;
+    });
+    MCGuiStep(@"a new query clears the old marks at once", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        // The least any search of the text does: a memchr pass over its
+        // bytes for its lines, on this thread.
+        NSUInteger n = 0;
+        const char *bytes = MCHeldAsciiBytes([tv.string copy], &n);
+        double b0 = MCGuiThreadCpuMs();
+        size_t lines = 0;
+        for (const char *p = bytes, *e = bytes + n; p && p < e; lines++) {
+            p = (const char *)memchr(p, '\n', (size_t)(e - p));
+            if (p) p++;
+        }
+        findBase = MCGuiThreadCpuMs() - b0;
+        GCHECK(lines > 1000000);
+        needle = [tv.string rangeOfString:@"NEEDLE-4242" options:NSBackwardsSearch];
+        tv.selectedRange = NSMakeRange(0, 0);
+        [tv scrollRangeToVisible:tv.selectedRange];
+        [find.bar.window makeFirstResponder:find.bar.findField];
+        NSTextView *ed = (NSTextView *)find.bar.findField.currentEditor;
+        [ed selectAll:nil];
+        const double c0 = MCGuiThreadCpuMs();
+        queryAt = MCGuiNowMs();
+        [ed insertText:@"NEEDLE-4242" replacementRange:ed.selectedRange];
+        const double typed = MCGuiThreadCpuMs() - c0;
+        // No 2026 mark is left on screen while the new query is searched.
+        NSArray<NSValue *> *marks = find.markedRangesOnScreen;
+        MCGuiNote(@"marks on screen right after the query changed: %lu; typing it took %.1f ms "
+                  @"of the main thread", (unsigned long)marks.count, typed);
+        GCHECK(marks.count == 0);
+        GCHECK_TIME(typed, 100, @"changing the query in a 100 MB log");
+    });
+    MCGuiWait(@"the last line's match selected", 20, ^BOOL {
+        return NSEqualRanges(tv.selectedRange, needle);
+    });
+    MCGuiStep(@"found at once, from the bytes", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        const double wall = MCGuiNowMs() - queryAt;
+        MCGuiNote(@"NEEDLE-4242 on the last line of a 100 MB log: selected %.0f ms after the "
+                  @"query (wall), %.1f ms of the search queue's CPU; the memchr baseline %.1f ms; "
+                  @"the count reads \"%@\"",
+                  wall, find.firstMatchCpuMs, findBase, find.bar.countLabel.stringValue);
+        GCHECK([find.bar.countLabel.stringValue hasPrefix:@"1 of "]);
+        GCHECK(find.firstMatchCpuMs >= 0);
+        GCHECK_TIME(find.firstMatchCpuMs, MAX(150, 8 * findBase),
+                    @"the first match of a plain query in a 100 MB log");
+    });
+    MCGuiWait(@"the count done", 20, ^BOOL {
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        return find.resultsCurrent && !find.counting;
+    });
+    MCGuiStep(@"one match, and only its mark", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        GCHECK(find.matchRanges.count == 1);
+        GCHECK_EQ_STR(find.bar.countLabel.stringValue, @"1 of 1");
+        for (NSValue *v in find.markedRangesOnScreen)
+            GCHECK([[tv.string substringWithRange:v.rangeValue] isEqualToString:@"NEEDLE-4242"]);
+    });
+    __block NSTimer *stallTimer = nil;
+    __block double busiest = 0, lastCpu = 0;
+    __block NSUInteger fires = 0, firesCounting = 0;
+    MCGuiStep(@"counting a match on every line leaves the main thread free", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        tv.selectedRange = NSMakeRange(0, 0);
+        [tv scrollRangeToVisible:tv.selectedRange];
+        lastCpu = MCGuiThreadCpuMs();
+        // The main thread's CPU between two fires of a 2 ms timer
+        // (lsp_progress's meter): a stall, not the gap a loaded Mac makes.
+        stallTimer = [NSTimer timerWithTimeInterval:0.002 repeats:YES block:^(NSTimer *t) {
+            (void)t;
+            const double now = MCGuiThreadCpuMs();
+            busiest = MAX(busiest, now - lastCpu);
+            lastCpu = now;
+            fires++;
+            MCEditorFind *f = [c valueForKey:@"editorFind"];
+            if (f.counting) firesCounting++;
+        }];
+        stallTimer.tolerance = 0;
+        [[NSRunLoop mainRunLoop] addTimer:stallTimer forMode:NSRunLoopCommonModes];
+        [find.bar.window makeFirstResponder:find.bar.findField];
+        NSTextView *ed = (NSTextView *)find.bar.findField.currentEditor;
+        [ed selectAll:nil];
+        [ed insertText:@"request" replacementRange:ed.selectedRange];
+        GCHECK(find.markedRangesOnScreen.count == 0);
+    });
+    MCGuiWait(@"every line counted", 60, ^BOOL {
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        return find.resultsCurrent && !find.counting;
+    });
+    MCGuiStep(@"the count, and the main thread never held", ^{
+        MCEditorFind *find = [c valueForKey:@"editorFind"];
+        [stallTimer invalidate];
+        stallTimer = nil;
+        __block NSUInteger lines = 0;
+        NSUInteger n = 0;
+        const char *bytes = MCHeldAsciiBytes([tv.string copy], &n);
+        for (const char *p = bytes, *e = bytes + n; p && p < e;) {
+            p = (const char *)memchr(p, '\n', (size_t)(e - p));
+            if (p) {
+                p++;
+                lines++;
+            }
+        }
+        // "request" is on every line but the last one's.
+        NSString *want = [NSString stringWithFormat:@"1 of %lu", (unsigned long)(lines - 1)];
+        MCGuiNote(@"counted: \"%@\" (%@ expected); the timer fired %lu times, %lu while "
+                  @"counting; the most main-thread CPU between two fires %.1f ms",
+                  find.bar.countLabel.stringValue, want, (unsigned long)fires,
+                  (unsigned long)firesCounting, busiest);
+        GCHECK_EQ_STR(find.bar.countLabel.stringValue, want);
+        GCHECK(firesCounting > 0);
+        GCHECK_TIME(busiest, 50, @"the main thread between two timer fires while counting");
+        // The marks on screen are the new query's.
+        GCHECK(find.markedRangesOnScreen.count > 1);
+        for (NSValue *v in find.markedRangesOnScreen)
+            GCHECK([[tv.string substringWithRange:v.rangeValue] isEqualToString:@"request"]);
+        [find close];
+    });
     MCGuiStep(@"an edit saves exactly", ^{
         const NSUInteger at = tv.string.length / 3;
         tv.selectedRange = NSMakeRange(at, 5);

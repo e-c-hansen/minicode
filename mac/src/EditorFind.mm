@@ -9,11 +9,15 @@
 #import "AppSettings.h"
 #import "FindWidget.h"
 #import "Lsp.h"
+#import "PieceString.h"
+#include "LargeFile.h"
 #include "MultiCaret.h"
 #include "TextFind.h"
+#include "TextScan.h"
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -51,7 +55,117 @@ struct MCFindText {
             [s getCharacters:(unichar *)out range:NSMakeRange(start, n)];
         };
     }
+    // For TextScan: the file's ASCII bytes themselves while the text is
+    // the one read (PieceString.h's MCHeldAsciiBytes), else its UTF-16 read
+    // in blocks. `source` keeps the bytes alive while the queue reads them.
+    TextScan::Text scanText() const {
+        NSUInteger n = 0;
+        const char *bytes = MCHeldAsciiBytes(source, &n);
+        if (bytes) return TextScan::Text::utf8(bytes, n, true);
+        return TextScan::Text::utf16(length(), reader());
+    }
 };
+
+// A text this long is searched in stages (round 9's C3: the find bar took
+// about 2 s to show the last line of a 259 MB log, with the old query's
+// marks left on every line meanwhile): the lines on screen first, then the
+// first match from the caret, selected at once ("1 of …"), then every match
+// counted from the top, all through TextScan (the needle found in the bytes
+// before any line is matched), on the queue and cancelled by the next key.
+// Under it a whole search takes a few ms and arrives at once.
+static const NSUInteger kStagedUnits = 1u << 20;
+// Units searched each side of a match selected in stages, for its marks.
+static const size_t kAroundUnits = 16384;
+
+// What a staged search sends the main thread, a part at a time.
+struct MCStagedNews {
+    std::vector<TextFind::Match> found;   // in order
+    bool hasFirst = false;                // `first` is the match to select
+    TextFind::Match first;
+    long firstIndex = -1;                 // matches before `first`, once counted
+    size_t counted = 0;                   // matches counted so far
+    size_t completeTo = 0;                // found holds every match starting before here
+    bool counting = false;                // from the counting pass
+    bool done = false, truncated = false;
+    double firstCpuMs = -1;               // the queue's CPU time to `first`
+};
+
+// This thread's CPU time, in ms (a timing that holds on a loaded Mac).
+static double MCThreadCpuMs() {
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+// A match wholly in Find in Selection's scope (or any, with none).
+static bool MCInScope(const TextFind::Match &m, NSRange scope) {
+    return scope.location == NSNotFound ||
+           (m.start >= scope.location && m.start + m.length <= NSMaxRange(scope));
+}
+
+// The first or last match in scope starting in [from, to); *cancelled when
+// the flag stopped it.
+static bool MCFirstIn(const TextScan::Text &t, const TextFind::Query &q, size_t from, size_t to,
+                      NSRange scope, const TextScan::Options &o, TextFind::Match *out,
+                      bool *cancelled) {
+    bool got = false;
+    *cancelled = !TextScan::scan(t, q, from, to, [&](const TextFind::Match &m) {
+        if (!MCInScope(m, scope)) return true;
+        *out = m;
+        got = true;
+        return false;
+    }, o);
+    return got && !*cancelled;
+}
+static bool MCLastIn(const TextScan::Text &t, const TextFind::Query &q, size_t from, size_t to,
+                     NSRange scope, const TextScan::Options &o, TextFind::Match *out,
+                     bool *cancelled) {
+    if (scope.location == NSNotFound)
+        return TextScan::findLast(t, q, from, to, out, o, cancelled) && !*cancelled;
+    bool got = false;
+    *cancelled = !TextScan::scan(t, q, from, to, [&](const TextFind::Match &m) {
+        if (MCInScope(m, scope)) {
+            *out = m;
+            got = true;
+        }
+        return true;
+    }, o);
+    return got && !*cancelled;
+}
+
+// Matches in [from, to) in scope, at most `most`, in order.
+static bool MCMatchesIn(const TextScan::Text &t, const TextFind::Query &q, size_t from, size_t to,
+                        NSRange scope, const TextScan::Options &o, size_t most,
+                        std::vector<TextFind::Match> *out) {
+    return TextScan::scan(t, q, from, to, [&](const TextFind::Match &m) {
+        if (MCInScope(m, scope)) out->push_back(m);
+        return out->size() < most;
+    }, o);
+}
+
+// `add` (in order) merged into `into` (in order), each match once.
+static void MCMergeMatches(std::vector<TextFind::Match> &into, std::vector<TextFind::Match> add) {
+    if (add.empty()) return;
+    auto before = [](const TextFind::Match &a, const TextFind::Match &b) {
+        return a.start < b.start || (a.start == b.start && a.length < b.length);
+    };
+    if (into.empty() || before(into.back(), add.front())) {
+        into.insert(into.end(), std::make_move_iterator(add.begin()),
+                    std::make_move_iterator(add.end()));
+        return;
+    }
+    std::vector<TextFind::Match> out;
+    out.reserve(into.size() + add.size());
+    std::merge(std::make_move_iterator(into.begin()), std::make_move_iterator(into.end()),
+               std::make_move_iterator(add.begin()), std::make_move_iterator(add.end()),
+               std::back_inserter(out), before);
+    out.erase(std::unique(out.begin(), out.end(),
+                          [](const TextFind::Match &a, const TextFind::Match &b) {
+                              return a.start == b.start && a.length == b.length;
+                          }),
+              out.end());
+    into = std::move(out);
+}
 
 // The most matches found and highlighted; past it the count says "20000+".
 static const size_t kMatchLimit = 20000;
@@ -556,6 +670,25 @@ static const CGFloat kSashWidth = 4;
     std::shared_ptr<MCFindText> _text;   // the characters at _textAt (MCFindText)
     NSUInteger _textAt;
     NSUInteger _textCopies;              // copies made (tests)
+
+    // What _matches are for, perhaps only in part (a staged search's so
+    // far); marks are drawn only for the query and text as they are.
+    NSUInteger _shownGen, _shownVersion;
+    // A staged search (kStagedUnits): Find Next on its own queue while the
+    // count goes on, the matches counted, every match before _completeTo in
+    // _matches, and the match it selected with the number before it.
+    BOOL _staged, _countDone;
+    dispatch_queue_t _navQueue;
+    std::shared_ptr<std::atomic<bool>> _navCancel;
+    size_t _counted, _completeTo;
+    NSRange _first;
+    long _firstIndex;
+    void (^_afterFirst)(void);   // Find Next pressed before the first match came
+    // A word seeded from the caret into a large file's bar, not searched
+    // until the user types, presses Return or changes an option.
+    BOOL _seedPending;
+    NSRange _seedWord;
+    double _firstMatchCpuMs;
 }
 
 - (instancetype)initWithTextView:(CodeTextView *)textView {
@@ -563,6 +696,9 @@ static const CGFloat kSashWidth = 4;
         _tv = textView;
         _scope = NSMakeRange(NSNotFound, 0);
         _queue = dispatch_queue_create("mutible.editor-find", DISPATCH_QUEUE_SERIAL);
+        _navQueue = dispatch_queue_create("mutible.editor-find-next", DISPATCH_QUEUE_SERIAL);
+        _first = NSMakeRange(NSNotFound, 0);
+        _firstIndex = -1;
         _bar = [[MCEditorFindBar alloc] initWithFrame:NSMakeRect(0, 0, kWidth, 33)];
         _bar.hidden = YES;
         __weak MCEditorFind *weakSelf = self;
@@ -609,11 +745,18 @@ static const CGFloat kSashWidth = 4;
     if (_observer) [[NSNotificationCenter defaultCenter] removeObserver:_observer];
     if (_selectionObserver) [[NSNotificationCenter defaultCenter] removeObserver:_selectionObserver];
     if (_cancel) _cancel->store(true);
+    if (_navCancel) _navCancel->store(true);
 }
 
 - (MCEditorFindBar *)bar { return _bar; }
 - (BOOL)shown { return _shown; }
 - (NSUInteger)textCopies { return _textCopies; }
+- (double)firstMatchCpuMs { return _firstMatchCpuMs; }
+- (BOOL)counting {
+    return _staged && !_countDone && _shownGen == _queryGen && _shownVersion == _textVersion &&
+           _searching;
+}
+- (BOOL)seedPending { return _seedPending; }
 
 // The text as it is now, for the search queue (MCFindText).
 - (std::shared_ptr<MCFindText>)currentText {
@@ -718,6 +861,16 @@ static const CGFloat kSashWidth = 4;
     [self relayout];
     if (field && !_bar.hidden) [_bar focus:field];
     if (!wasShown || seed) {
+        // A word at the caret in a large file (VS Code's 20 MB) goes in the
+        // field but is not searched until the user types, presses Return
+        // or changes an option: its marks on every line of a log (the date
+        // "2026" in round 9's walk) were a search nobody asked for. A
+        // selection is the user's choice, and is searched.
+        if (seed && word.location != NSNotFound &&
+            _tv.string.length >= LargeFile::kSizeThreshold) {
+            [self seedWithoutSearching:word];
+            return;
+        }
         [self queryChanged];
         // A word at the caret: its own occurrence is the one to select.
         if (seed && word.location != NSNotFound) _anchor = word.location;
@@ -730,9 +883,12 @@ static const CGFloat kSashWidth = 4;
     _shown = NO;
     _bar.hidden = YES;
     if (_cancel) _cancel->store(true);
+    if (_navCancel) _navCancel->store(true);
     _whenCurrent = nil;
+    _afterFirst = nil;
     _text = nullptr;   // the copy goes with the bar
     _selectOnArrival = NO;
+    _seedPending = NO;
     if (_scope.location != NSNotFound) {   // VS Code drops the scope with the widget
         _scope = NSMakeRange(NSNotFound, 0);
         [_bar setSelectionOn:NO enabled:NO];
@@ -892,7 +1048,11 @@ static const CGFloat kSashWidth = 4;
     [self performSelector:@selector(search) withObject:nil afterDelay:0.1];
 }
 
-- (void)queryChanged {
+- (void)queryChanged { [self queryChangedSearching:YES]; }
+
+// The query made again from the bar; searched unless `run` is NO (a
+// seeded word in a large file, seedWithoutSearching:).
+- (void)queryChangedSearching:(BOOL)run {
     TextFind::Options o;
     o.caseSensitive = self.matchCase;
     o.wholeWord = self.wholeWord;
@@ -902,9 +1062,25 @@ static const CGFloat kSashWidth = 4;
     _queryGen++;
     _anchor = _tv.selectedRange.location;
     _selectOnArrival = YES;
+    _seedPending = !run;
+    _afterFirst = nil;
+    if (_navCancel) _navCancel->store(true);
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(search)
                                                object:nil];
     [self search];
+}
+
+// The bar's query made from a seeded word without searching it
+// (showFocusing:): the last search stopped and its marks gone.
+- (void)seedWithoutSearching:(NSRange)word {
+    _seedWord = word;
+    [self queryChangedSearching:NO];   // search stops the last one and returns
+    _selectOnArrival = NO;
+    _searching = NO;
+    _matches.clear();
+    _first = NSMakeRange(NSNotFound, 0);
+    _tv.needsDisplay = YES;
+    [self showCount];
 }
 
 - (BOOL)resultsCurrent {
@@ -927,11 +1103,20 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
     if (_cancel) _cancel->store(true);
     _cancel = nullptr;
     if (!_shown) return;
+    if (_seedPending) {
+        [self showCount];
+        return;
+    }
     const NSUInteger gen = _queryGen, version = _textVersion;
     if (!_query.usable()) {
         [self arrived:std::vector<TextFind::Match>() truncated:NO gen:gen version:version];
         return;
     }
+    if (_tv.string.length >= kStagedUnits) {
+        [self searchInStages];
+        return;
+    }
+    _staged = NO;
     auto cancel = std::make_shared<std::atomic<bool>>(false);
     _cancel = cancel;
     _searching = YES;
@@ -965,10 +1150,11 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
     if (gen != _queryGen || version != _textVersion) return;   // a newer one is on its way
     _searching = NO;
     _cancel = nullptr;
+    _staged = NO;
     _matches = found;
     _truncated = truncated;
-    _resultsGen = gen;
-    _resultsVersion = version;
+    _resultsGen = _shownGen = gen;
+    _resultsVersion = _shownVersion = version;
     if (_selectOnArrival) {
         _selectOnArrival = NO;
         long i = TextFind::nextIndex(_matches, _anchor, _anchor, true);
@@ -979,6 +1165,248 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
     void (^then)(void) = _whenCurrent;
     _whenCurrent = nil;
     if (then) then();
+}
+
+// ------------------------------------------------------------- in stages
+// The characters on screen, laid out already (nothing is laid out here).
+- (NSRange)visibleCharacters {
+    CodeTextView *tv = _tv;
+    NSLayoutManager *lm = tv.layoutManager;
+    if (!lm || !tv.textContainer) return NSMakeRange(NSNotFound, 0);
+    NSRect r = NSOffsetRect(tv.visibleRect, -tv.textContainerOrigin.x, -tv.textContainerOrigin.y);
+    NSRange glyphs = [lm glyphRangeForBoundingRectWithoutAdditionalLayout:r
+                                                          inTextContainer:tv.textContainer];
+    return [lm characterRangeForGlyphRange:glyphs actualGlyphRange:NULL];
+}
+
+// A large text (kStagedUnits): the old marks go at once; on the queue the
+// lines on screen are searched and sent, then the first match from the
+// anchor (wrapping), selected as it comes with the matches around it, then
+// every match is counted from the top, sent in parts, the first kMatchLimit
+// kept for the marks and Find Next. The next key cancels it all.
+- (void)searchInStages {
+    const NSUInteger gen = _queryGen, version = _textVersion;
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    _cancel = cancel;
+    _searching = YES;
+    _staged = YES;
+    _countDone = NO;
+    _matches.clear();
+    _truncated = NO;
+    _counted = _completeTo = 0;
+    _first = NSMakeRange(NSNotFound, 0);
+    _firstIndex = -1;
+    _shownGen = gen;
+    _shownVersion = version;
+    _tv.needsDisplay = YES;   // the last query's marks go now, not when this one is done
+    std::shared_ptr<MCFindText> text = [self currentText];
+    TextFind::Query query = _query;
+    const NSRange scope = _scope;
+    const NSRange visible = [self visibleCharacters];
+    const size_t anchor = _anchor;
+    __weak MCEditorFind *weakSelf = self;
+    auto send = [weakSelf, cancel, gen, version](MCStagedNews news) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (cancel->load()) return;
+            [weakSelf staged:news gen:gen version:version];
+        });
+    };
+    dispatch_async(_queue, ^{
+        if (cancel->load()) return;
+        const double c0 = MCThreadCpuMs();
+        const TextScan::Text t = text->scanText();
+        TextScan::Options o;
+        o.cancel = cancel.get();
+        const size_t len = t.length;
+        const size_t lo = scope.location == NSNotFound ? 0 : MIN(scope.location, len);
+        const size_t hi = scope.location == NSNotFound ? len : MIN(NSMaxRange(scope), len);
+        const size_t toEnd = hi >= len ? SIZE_MAX : hi;   // a match at the very end counts
+        // 1. The lines on screen.
+        if (visible.location != NSNotFound) {
+            MCStagedNews news;
+            const size_t vlo = MAX(lo, visible.location), vhi = MIN(hi, NSMaxRange(visible));
+            if (vlo < vhi && !MCMatchesIn(t, query, vlo, vhi, scope, o, 4096, &news.found)) return;
+            if (!news.found.empty()) send(std::move(news));
+        }
+        // 2. The first match from the anchor, then from the top.
+        TextFind::Match first;
+        bool cancelled = false;
+        const size_t a = MIN(MAX(anchor, lo), hi);
+        bool got = MCFirstIn(t, query, a, toEnd, scope, o, &first, &cancelled);
+        if (cancelled) return;
+        if (!got && a > lo) got = MCFirstIn(t, query, lo, a, scope, o, &first, &cancelled);
+        if (cancelled) return;
+        if (!got) {
+            MCStagedNews news;
+            news.done = true;
+            news.firstCpuMs = MCThreadCpuMs() - c0;
+            send(std::move(news));
+            return;
+        }
+        {
+            MCStagedNews news;
+            news.hasFirst = true;
+            news.first = first;
+            news.firstCpuMs = MCThreadCpuMs() - c0;
+            const size_t alo = first.start > lo + kAroundUnits ? first.start - kAroundUnits : lo;
+            const size_t ahi = MIN(hi, first.start + kAroundUnits);
+            if (!MCMatchesIn(t, query, alo, ahi, scope, o, 4096, &news.found)) return;
+            send(std::move(news));
+        }
+        // 3. Every match, counted from the top.
+        MCStagedNews part;
+        part.counting = true;
+        size_t counted = 0, kept = 0;
+        long firstIndex = -1;
+        auto lastSent = std::chrono::steady_clock::now();
+        const bool finished = TextScan::scan(t, query, lo, toEnd, [&](const TextFind::Match &m) {
+            if (!MCInScope(m, scope)) return true;
+            if (firstIndex < 0 && m.start == first.start) firstIndex = (long)counted;
+            counted++;
+            if (kept < kMatchLimit) {
+                part.found.push_back(m);
+                kept++;
+                part.completeTo = m.start + 1;
+            }
+            if ((counted & 1023) == 0) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now - lastSent > std::chrono::milliseconds(100)) {
+                    part.counted = counted;
+                    part.firstIndex = firstIndex;
+                    send(part);
+                    part.found.clear();
+                    lastSent = now;
+                }
+            }
+            return true;
+        }, o);
+        if (!finished) return;
+        part.counted = counted;
+        part.firstIndex = firstIndex;
+        part.done = true;
+        part.truncated = counted > kept;
+        if (!part.truncated) part.completeTo = SIZE_MAX;
+        send(std::move(part));
+    });
+    [self showCount];
+}
+
+- (void)staged:(const MCStagedNews &)news gen:(NSUInteger)gen version:(NSUInteger)version {
+    if (gen != _queryGen || version != _textVersion || !_staged) return;
+    MCMergeMatches(_matches, news.found);
+    if (news.counting) _completeTo = MAX(_completeTo, news.completeTo);
+    if (news.hasFirst) {
+        _first = NSMakeRange(news.first.start, news.first.length);
+        MCMergeMatches(_matches, {news.first});
+        if (_selectOnArrival) {
+            _selectOnArrival = NO;
+            if (NSMaxRange(_first) <= _tv.string.length) {
+                [_tv setSelectedRange:_first];
+                [_tv scrollRangeToVisible:_first];
+            }
+        }
+    }
+    if (news.firstIndex >= 0) _firstIndex = news.firstIndex;
+    if (news.firstCpuMs >= 0) _firstMatchCpuMs = news.firstCpuMs;
+    if (news.counting) _counted = MAX(_counted, news.counted);
+    if (news.done) {
+        _counted = news.counted;
+        _countDone = YES;
+        _truncated = news.truncated;
+        _searching = NO;
+        _cancel = nullptr;
+        _selectOnArrival = NO;
+        _resultsGen = gen;
+        _resultsVersion = version;
+    }
+    [self showCount];
+    _tv.needsDisplay = YES;
+    if (_afterFirst && (news.hasFirst || news.done)) {
+        void (^next)(void) = _afterFirst;
+        _afterFirst = nil;
+        next();
+    }
+    if (news.done) {
+        void (^then)(void) = _whenCurrent;
+        _whenCurrent = nil;
+        if (then) then();
+    }
+}
+
+// The selection's number among all the matches (0-based) in a staged
+// search, as far as it is known: -1 until the matches before it are counted.
+- (long)stagedIndex {
+    const NSRange sel = _tv.selectedRange;
+    if (_shownGen != _queryGen || _shownVersion != _textVersion) return -1;
+    if (sel.location < _completeTo) {
+        const long i = TextFind::indexOf(_matches, sel.location, sel.length);
+        if (i >= 0) return i;
+    }
+    if (NSEqualRanges(sel, _first) && _firstIndex >= 0) return _firstIndex;
+    return -1;
+}
+
+// Find Next in a staged search still counting, or with more matches than
+// it keeps: the text itself searched from the selection on Find Next's own
+// queue (the count goes on), the match selected with the marks around it.
+- (void)findByScanning:(BOOL)forward from:(NSRange)sel {
+    if (_navCancel) _navCancel->store(true);
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    _navCancel = cancel;
+    const NSUInteger gen = _queryGen, version = _textVersion;
+    std::shared_ptr<MCFindText> text = [self currentText];
+    TextFind::Query query = _query;
+    const NSRange scope = _scope;
+    __weak MCEditorFind *weakSelf = self;
+    dispatch_async(_navQueue, ^{
+        if (cancel->load()) return;
+        const TextScan::Text t = text->scanText();
+        TextScan::Options o;
+        o.cancel = cancel.get();
+        const size_t len = t.length;
+        const size_t lo = scope.location == NSNotFound ? 0 : MIN(scope.location, len);
+        const size_t hi = scope.location == NSNotFound ? len : MIN(NSMaxRange(scope), len);
+        const size_t toEnd = hi >= len ? SIZE_MAX : hi;
+        TextFind::Match m;
+        bool cancelled = false, got = false;
+        if (forward) {
+            // VS Code's next: a match starting at or after the selection's
+            // end (past an empty match at an empty selection), then from the top.
+            size_t from = MIN(MAX((size_t)NSMaxRange(sel), lo), hi);
+            got = MCFirstIn(t, query, from, toEnd, scope, o, &m, &cancelled);
+            if (got && m.length == 0 && sel.length == 0 && m.start == sel.location)
+                got = MCFirstIn(t, query, from + 1, toEnd, scope, o, &m, &cancelled);
+            if (!got && !cancelled) got = MCFirstIn(t, query, lo, from, scope, o, &m, &cancelled);
+        } else {
+            const size_t to = MIN(MAX((size_t)sel.location, lo), hi);
+            got = MCLastIn(t, query, lo, to, scope, o, &m, &cancelled);
+            if (!got && !cancelled) got = MCLastIn(t, query, to, toEnd, scope, o, &m, &cancelled);
+        }
+        if (cancelled) return;
+        std::vector<TextFind::Match> around;
+        if (got) {
+            const size_t alo = m.start > lo + kAroundUnits ? m.start - kAroundUnits : lo;
+            if (!MCMatchesIn(t, query, alo, MIN(hi, m.start + kAroundUnits), scope, o, 4096,
+                             &around))
+                return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCEditorFind *s = weakSelf;
+            if (!s || cancel->load() || gen != s->_queryGen || version != s->_textVersion) return;
+            if (!got) {
+                NSBeep();
+                return;
+            }
+            MCMergeMatches(s->_matches, around);
+            MCMergeMatches(s->_matches, {m});
+            const NSRange r = NSMakeRange(m.start, m.length);
+            if (NSMaxRange(r) > s->_tv.string.length) return;
+            [s->_tv setSelectedRange:r];
+            [s->_tv scrollRangeToVisible:r];
+            [s showCount];
+            s->_tv.needsDisplay = YES;
+        });
+    });
 }
 
 // Run `block` once there are results for the query and text as they are.
@@ -992,6 +1420,7 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
 }
 
 - (NSInteger)currentIndex {
+    if (_staged) return [self stagedIndex];
     if (![self resultsCurrent]) return -1;
     NSRange sel = _tv.selectedRange;
     return TextFind::indexOf(_matches, sel.location, sel.length);
@@ -1018,11 +1447,31 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
         return;
     }
     _bar.findInput.toolTip = nil;
+    if (_seedPending) {
+        // Seeded in a large file and not searched yet (showFocusing:).
+        [_bar showCount:@"" error:NO tip:@"Press Return to find it, or type to search"];
+        [_bar setNavigable:YES];
+        return;
+    }
+    if (_staged && !_countDone && _shownGen == _queryGen && _shownVersion == _textVersion) {
+        // Counting: the match selected and its number once the matches
+        // before it are counted ("1 of …", "? of …").
+        if (_first.location == NSNotFound) {
+            [_bar showCount:@"…" error:NO tip:nil];
+            return;
+        }
+        [_bar setNavigable:YES];
+        const long i = [self stagedIndex];
+        [_bar showCount:i >= 0 ? [NSString stringWithFormat:@"%ld of …", i + 1] : @"? of …"
+                  error:NO
+                    tip:[NSString stringWithFormat:@"%zu matches counted so far", _counted]];
+        return;
+    }
     if (![self resultsCurrent]) {
         if (_resultsGen != _queryGen) [_bar showCount:@"…" error:NO tip:nil];
         return;   // the old count stands while the text is searched again
     }
-    const size_t n = _matches.size();
+    const size_t n = _staged ? _counted : _matches.size();
     [_bar setNavigable:n > 0];
     if (n == 0 && _query.tooSlow()) {   // std::regex's two seconds ran out (TextFind.h)
         [_bar showCount:@"Too slow" error:YES
@@ -1038,14 +1487,18 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
         [_bar setNoResults:YES];
         return;
     }
-    NSString *total = _truncated ? [NSString stringWithFormat:@"%zu+", n]
-                                 : [NSString stringWithFormat:@"%zu", n];
+    // A staged search counts every match and keeps the first 20,000.
+    NSString *total = _truncated && !_staged ? [NSString stringWithFormat:@"%zu+", n]
+                                             : [NSString stringWithFormat:@"%zu", n];
     NSInteger i = [self currentIndex];
+    NSString *tip = nil;
+    if (_truncated)
+        tip = _staged ? @"Only the first 20,000 matches are highlighted"
+                      : @"Only the first 20,000 matches are counted and highlighted";
     [_bar showCount:i >= 0 ? [NSString stringWithFormat:@"%ld of %@", (long)i + 1, total]
                            : [NSString stringWithFormat:@"? of %@", total]
               error:NO
-                tip:_truncated ? @"Only the first 20,000 matches are counted and highlighted"
-                               : nil];
+                tip:tip];
 }
 
 - (void)selectMatch:(size_t)i {
@@ -1059,8 +1512,39 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
 }
 
 - (void)findNext:(BOOL)forward {
+    if (_seedPending) {
+        // The seeded word searched now: on from the word itself, as if its
+        // search had run when the bar opened (VS Code's Enter after Cmd+F).
+        const NSRange word = _seedWord;
+        [self queryChanged];
+        _selectOnArrival = NO;
+        if (!_query.usable()) return;
+        if (_staged) {
+            [self findByScanning:forward
+                            from:forward ? NSMakeRange(NSMaxRange(word), 0)
+                                         : NSMakeRange(word.location, 0)];
+            return;
+        }
+    }
     if (!_query.usable()) {
         NSBeep();
+        return;
+    }
+    if (_staged && _shownGen == _queryGen && _shownVersion == _textVersion &&
+        !(_countDone && !_truncated)) {
+        if (_selectOnArrival && _first.location == NSNotFound && !_countDone) {
+            // Typed, then Return before the first match came: it is selected
+            // as it comes, and this goes on from there.
+            __weak MCEditorFind *weakSelf = self;
+            _afterFirst = ^{
+                MCEditorFind *s = weakSelf;
+                if (!s) return;
+                if (s->_first.location == NSNotFound) NSBeep();
+                else [s findByScanning:forward from:s->_tv.selectedRange];
+            };
+            return;
+        }
+        [self findByScanning:forward from:_tv.selectedRange];
         return;
     }
     __weak MCEditorFind *weakSelf = self;
@@ -1091,7 +1575,8 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
     [self whenCurrent:^{
         MCEditorFind *s = weakSelf;
         if (!s) return;
-        NSInteger i = [s currentIndex];
+        const NSRange sel = s->_tv.selectedRange;
+        const long i = TextFind::indexOf(s->_matches, sel.location, sel.length);
         if (i < 0) {
             [s findNext:YES];
             return;
@@ -1205,29 +1690,44 @@ static std::vector<TextFind::Match> InScope(std::vector<TextFind::Match> found, 
                 NSRectFillUsingOperation(box, NSCompositingOperationSourceOver);
         }];
     }
-    if (![self resultsCurrent] || _matches.empty()) return;
+    NSColor *other = FHex(0xEA5C00, 0.33);
+    NSColor *current = dark ? FHex(0x515C6A) : FHex(0xA8AC94);
+    const NSRange sel = tv.selectedRange;
+    [self forEachMarkInRect:rect do:^(NSRange m) {
+        [(NSEqualRanges(m, sel) ? current : other) setFill];
+        [tv enumerateRectsForRange:m block:^(NSRect box) {
+            if (NSIntersectsRect(box, rect))
+                NSRectFillUsingOperation(box, NSCompositingOperationSourceOver);
+        }];
+    }];
+}
+
+// The matches marked in `rect` (the text view's coordinates): none while
+// they are for another query or text, so a query's marks never outlive it.
+- (void)forEachMarkInRect:(NSRect)rect do:(void (^)(NSRange m))f {
+    CodeTextView *tv = _tv;
+    if (!_shown || _matches.empty() || _shownGen != _queryGen || _shownVersion != _textVersion)
+        return;
     NSLayoutManager *lm = tv.layoutManager;
     if (!lm) return;
     NSRect r = NSOffsetRect(rect, -tv.textContainerOrigin.x, -tv.textContainerOrigin.y);
     NSRange glyphs = [lm glyphRangeForBoundingRectWithoutAdditionalLayout:r
                                                           inTextContainer:tv.textContainer];
     NSRange chars = [lm characterRangeForGlyphRange:glyphs actualGlyphRange:NULL];
-    NSColor *other = FHex(0xEA5C00, 0.33);
-    NSColor *current = dark ? FHex(0x515C6A) : FHex(0xA8AC94);
-    const NSInteger cur = [self currentIndex];
     auto it = std::lower_bound(_matches.begin(), _matches.end(), chars.location,
                                [](const TextFind::Match &m, size_t at) {
                                    return m.start + m.length < at;
                                });
-    for (; it != _matches.end() && it->start <= NSMaxRange(chars); ++it) {
-        if (it->length == 0) continue;
-        NSColor *c = (it - _matches.begin()) == cur ? current : other;
-        [c setFill];
-        [tv enumerateRectsForRange:NSMakeRange(it->start, it->length) block:^(NSRect box) {
-            if (NSIntersectsRect(box, rect))
-                NSRectFillUsingOperation(box, NSCompositingOperationSourceOver);
-        }];
-    }
+    for (; it != _matches.end() && it->start <= NSMaxRange(chars); ++it)
+        if (it->length) f(NSMakeRange(it->start, it->length));
+}
+
+- (NSArray<NSValue *> *)markedRangesOnScreen {
+    NSMutableArray<NSValue *> *a = [NSMutableArray array];
+    [self forEachMarkInRect:_tv.visibleRect do:^(NSRange m) {
+        [a addObject:[NSValue valueWithRange:m]];
+    }];
+    return a;
 }
 
 @end
