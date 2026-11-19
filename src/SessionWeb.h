@@ -606,6 +606,15 @@ struct Options {
     // the app makes links when asked (newLink).
     std::function<void(const std::string& url)> nextLink;
     int pollMs = 500;         // how often the session's state is looked at
+    // At most this many connections at once (pages' sockets, files being
+    // sent, requests not yet answered); one past it is closed as it is
+    // accepted, so a local process cannot use up the app's descriptors
+    // (round 10's defect 10: the Mac serves from inside the app).
+    int maxConnections = 64;
+    // A connection that has not sent a whole request within this, or whose
+    // answer is not taken by then, is closed. A page's socket once upgraded
+    // and a file being sent are not held to it.
+    int requestDeadlineMs = 5000;
     // The settings file the page's colors come from ("" for
     // $MUTIBLE_SETTINGS, else ~/.config/mutible/settings.conf), looked at
     // every second: a change recolors every page.
@@ -642,6 +651,8 @@ public:
     void stop();
     // Browsers connected over the socket now (any thread).
     int browsers() const { return browsers_.load(); }
+    // Connections open now, of every kind (any thread).
+    int connections() const { return connections_.load(); }
     // The settings file changed (any thread): read it now rather than at
     // the next look.
     void reloadSettings();
@@ -670,6 +681,7 @@ private:
     int wake_[2] = {-1, -1};
     std::atomic<bool> stop_{false};
     std::atomic<int> browsers_{0};
+    std::atomic<int> connections_{0};
     std::vector<std::unique_ptr<Conn>> conns_;
     std::unique_ptr<Session> session_;
     Json palette_;

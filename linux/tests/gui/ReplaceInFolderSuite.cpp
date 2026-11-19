@@ -534,7 +534,12 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiSetKeyWindow(nullptr);
     });
     MCGuiWait("closed", 10, [] { return !gtk_widget_get_mapped(panel()->window()); });
-    // The X focus back on the app's window, not on the one just closed.
-    MCGuiStep("the keyboard back in the app's window", [] { MCGuiFocusKeyWindow(); });
+    // The X focus back on the app's window, not on the one just closed. The
+    // window keeps rif and "three.txt" for the next Find in Folder, which
+    // in a shuffled order is another suite's (preview_tabs found nothing).
+    MCGuiStep("the keyboard back in the app's window; Find in Folder as a new window's", [] {
+        MCGuiFocusKeyWindow();
+        MCGuiResetFolderSearch();
+    });
     MCGuiWait("active", 10, [] { return gtk_window_is_active(MCGuiApp().window); });
 }

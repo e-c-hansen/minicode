@@ -32,8 +32,30 @@ found through that list.
   stamp moved: from `showText:` (a toggle back, a clean tab following the
   disk) and from `recordStamp:ofTab:` (a save, Keep Mine) through
   `htmlFileMayHaveChanged`. Every main-frame navigation away from the
-  tab's own file (a link, a script, a drop) is cancelled and handed to
-  `openMarkdownLink:`; a target=_blank too. **Scripts** (the owner's call,
+  tab's own file (a link, a script, a drop) is cancelled; a link the user
+  clicked or a form they sent (`WKNavigationTypeLinkActivated`,
+  `FormSubmitted`) goes to `openMarkdownLink:`, a target=_blank too; one
+  the page started by itself (a meta refresh, a script setting location,
+  `window.open`) only when it is http(s) and the page's scripts run
+  (`MCHtmlMayFollow`), else it goes to `onRefused` and the status bar
+  names it (`htmlPageRefused:`). **Trap** (round 10's documents defect
+  2, 2026-11-19): a `<meta http-equiv="refresh">` to `zoommtg://` (any
+  app's scheme) went to `openURL:` with no click, and an https one
+  loaded in the browser pane; `html.scripts` never applied, since a
+  meta refresh is not a script. `html_page` loads both kinds and checks
+  nothing reached `openURL:` (`MCGuiOpenedURLs`, the harness records
+  it). GTK follows the same rule from the core (`HtmlPage::mayFollow`,
+  `htmlpage:follow`; HANDOFF item 121), but WebKitGTK cannot tell the
+  main frame at the policy check, so `HtmlPage::policy` refuses there,
+  in any frame, a jump the page made by itself to a scheme no frame
+  loads (`loadsInFrame`: an app's), and the main frame's to a web
+  address or a file is stopped at its response check
+  (`is_main_frame_main_resource`) or its load's failure, the page left as
+  it was: putting it back by loading it again fired the refresh again.
+  Refused ones go to `Host::refused`, the status bar's note in the Mac's
+  words (`refusedNote`); the GTK html_page checks a link spy
+  (`HtmlView::linkSpy`) and `MCGuiLaunchedUris` (the harness's recorder
+  in `Editor::launchUriHook`, so no check starts another app). **Scripts** (the owner's call,
   2026-11-15, against "nothing runs because a file was opened"):
   `html.scripts` (ask, on, off); with ask, a page whose text
   `FileSniff::htmlMayRunScripts` flags shows with
@@ -206,6 +228,8 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- Viewers in the editor's slot (Mac): **Trap** (round 10's documents defect 2, 2026-11-19): a `<meta http-equiv="refresh">` to `zoommtg://` (any app's scheme) went to `openURL:` with no click, and an https one loaded in the browser pane; `html.scripts` never applied, since a meta refresh is not a script.
+- HTML pages (GTK): **Trap** (the same defect, 2026-11-19): the GTK port let a page's own main-frame load run to `WEBKIT_LOAD_COMMITTED`, then loaded the file again and handed the address to the link handler (`openMarkdownLink`, which gives any scheme but http(s) and file to the desktop's handler), and loading the file again fired its refresh again, so the page went round for as long as it showed. WebKitGTK says which frame only at the response check (`webkit_response_policy_decision_is_main_frame_main_resource`); stop it there, or at `load-failed` (an unreachable address, a missing file, where the default handler would commit an error page at that address), and the page never leaves. A scheme no frame loads is refused at the policy check, before anything loads.
 - CSV and TSV: **Trap (round 9)**: the grid's `validateMenuItem:` ended in `[super validateMenuItem:]`, which NSTableView does not have (it validates through `validateUserInterfaceItem:`), so validating any menu item the grid was the target of threw, AppKit dropped the key, and no menu key worked while the grid had the keyboard: Shift+Cmd+P "did nothing".
 - JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).
 - Viewers in the editor's slot (Mac): Trap: laying both panes out to size them took 1.5 s on the main thread for 50,000 lines a side; every row has one fixed height (a paragraph style), so sizes and row rects are arithmetic and layout is non-contiguous.

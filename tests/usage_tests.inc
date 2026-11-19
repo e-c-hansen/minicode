@@ -482,6 +482,117 @@ static void testClaudeUsage() {
               formatDuration(2 * h + 600) == "2 h 10 m" && formatDuration(76 * h) == "3 d 4 h" &&
               formatDuration(3 * h) == "3 h");
     }
+
+    GROUP("usage:sessions");
+    {
+        // The session goes in the log when the status line names it.
+        Sample s;
+        CHECK(sampleFromStatusJson(R"({"session_id":"5f1c-abc_1.2","rate_limits":{"five_hour":)"
+                                   R"({"used_percentage":12,"resets_at":5000}}})", 100, &s));
+        CHECK(s.session == "5f1c-abc_1.2" && formatSample(s) == "v1 100 12 5000 - - 5f1c-abc_1.2");
+        Sample back;
+        CHECK(parseSample(formatSample(s), &back) && back.session == "5f1c-abc_1.2" && usageNear(back.fivePct, 12));
+        CHECK(parseSample("v1 100 12 5000 - -", &back) && back.session.empty());
+        CHECK(!parseSample("v1 100 12 5000 - - a/b", &back) && !parseSample("v1 100 12 5000 - - a b", &back));
+        // An id the log could not hold is left out, never written torn.
+        CHECK(sampleFromStatusJson(R"({"session_id":"a b","rate_limits":{"five_hour":)"
+                                   R"({"used_percentage":12,"resets_at":5000}}})", 100, &s));
+        CHECK(s.session.empty() && formatSample(s) == "v1 100 12 5000 - -");
+
+        // Two sessions on one plan (round 10's agents Medium 2). "busy"
+        // spends $1 every 10 minutes from the window's start, every dollar
+        // 2% of the window, and its status line reads its own last reply
+        // every 20 minutes. "idle" replied once, 4.5 minutes in, at 2%, and
+        // its status line runs again ten minutes after each of busy's (the
+        // user typing into it), still saying 2%. A line logged before
+        // sessions were (no session) says 2% too, five minutes after each.
+        const double reset = 1763400000, start = reset - 5 * 3600, now = start + 3 * 3600;
+        std::vector<Entry> es;
+        es.push_back(costEntry(start + 270, 1, "idle"));
+        for (int i = 1; i <= 18; i++) es.push_back(costEntry(start + i * 600 - 30, 1, "busy"));
+        std::stable_sort(es.begin(), es.end(), [](const Entry &a, const Entry &b) { return a.time < b.time; });
+        auto at = [&](double t, double pct, const std::string &session) {
+            Sample x;
+            x.time = t;
+            x.fiveReset = reset;
+            x.fivePct = pct;
+            x.session = session;
+            return x;
+        };
+        std::vector<Sample> busy, both;
+        for (int i = 1; i <= 9; i++) {
+            // busy's reply 30 s before: 2i + 1 dollars spent by then.
+            busy.push_back(at(start + i * 1200, 2.0 * (2 * i + 1), "busy"));
+            both.push_back(busy.back());
+            both.push_back(at(start + i * 1200 + 300, 2, ""));
+            both.push_back(at(start + i * 1200 + 600, 2, "idle"));
+        }
+        // Each reading at its own time: busy's at its replies, idle's once,
+        // at its one reply (its repeats are the same reading).
+        std::vector<Sample> rt = readingTimes(both, es);
+        size_t idleSeen = 0;
+        for (const Sample &x : rt)
+            if (x.session == "idle") {
+                idleSeen++;
+                CHECK(usageNear(x.time, start + 270));
+            }
+        CHECK(idleSeen == 1 && rt.size() == 9 + 9 + 1);
+        CHECK(usageNear(rt.front().time, start + 270));
+        for (size_t i = 1; i < rt.size(); i++) CHECK(rt[i - 1].time <= rt[i].time);
+
+        Forecast alone = forecast(busy, es, now), mixed = forecast(both, es, now);
+        CHECK(alone.five.fit.ok && usageNear(alone.five.fit.scale, 2) && usageNear(alone.five.pctNow, 38));
+        // The stale readings neither start the fit over nor stand as the
+        // current percent: 38% used, no unseen usage.
+        CHECK(mixed.five.fit.ok && usageNear(mixed.five.fit.scale, 2));
+        CHECK(mixed.five.fit.readings >= alone.five.fit.readings);
+        CHECK(usageNear(mixed.five.pctNow, 38) && mixed.five.unseenPct < 0.5 && !mixed.five.estimated);
+        CHECK(usageNear(mixed.five.sampledAt, start + 9 * 1200 - 30));
+        std::vector<std::string> lines = describe(mixed, now);
+        for (const std::string &l : lines) std::printf("    %s\n", l.c_str());
+        CHECK(lines[0].find("5-hour window: 38% used.") == 0);
+        for (const std::string &l : lines) CHECK(l.find("Unseen usage") == std::string::npos);
+        // With idle's reading logged last of all (and busy's last reading
+        // the one before it), the newest reading is still busy's.
+        std::vector<Sample> idleLast = busy;
+        idleLast.push_back(at(now - 10, 2, "idle"));
+        Forecast il = forecast(idleLast, es, now);
+        CHECK(usageNear(il.five.pctNow, 38) && il.five.unseenPct < 0.5);
+        // A reading from the window before, from a session whose replies
+        // were not read (its reset long gone), logged after busy's: older,
+        // so the window is not "worked out" as if it had reset.
+        std::vector<Sample> prevWindow = busy;
+        Sample old = at(now - 60, 70, "gone");
+        old.fiveReset = start - 60;
+        prevWindow.push_back(old);
+        Forecast pw = forecast(prevWindow, es, now);
+        CHECK(pw.five.known && !pw.five.estimated && usageNear(pw.five.pctNow, 38) &&
+              usageNear(pw.five.resetsAt, reset));
+        CHECK(fitScale(prevWindow, es, Window::FiveHour).ok);
+
+        // The log: the stale reading is not news, so the two sessions do
+        // not write a line on every run between them.
+        const Sample b36 = at(start + 3600, 36, "busy"), i2 = at(start + 3605, 2, "idle");
+        CHECK(olderReading(b36, i2) && !olderReading(i2, b36));
+        CHECK(!worthLogging(b36, i2) && worthLogging(i2, b36));
+        Sample later = i2;
+        later.time = b36.time + 3600;   // an hour on, still older: not logged
+        CHECK(!worthLogging(b36, later));
+        Sample prev = b36;
+        prev.fiveReset = reset - 5 * 3600;   // the window before
+        prev.fivePct = 90;
+        CHECK(olderReading(b36, prev) && !worthLogging(b36, prev));
+        Sample next = b36;
+        next.fiveReset = reset + 5 * 3600;   // the next window, at 1%
+        next.fivePct = 1;
+        CHECK(!olderReading(b36, next) && worthLogging(b36, next));
+        // Older in one window and newer in the other: logged.
+        Sample mixedWin = b36, lastWin = b36;
+        lastWin.weekPct = 10, lastWin.weekReset = reset + 86400;
+        mixedWin.weekPct = 11, mixedWin.weekReset = reset + 86400;
+        mixedWin.fivePct = 30;
+        CHECK(!olderReading(lastWin, mixedWin) && worthLogging(lastWin, mixedWin));
+    }
 }
 
 static void testClaudeStatusLine() {

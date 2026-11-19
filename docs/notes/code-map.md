@@ -116,7 +116,9 @@ goes here first, with tests; the GUI only displays it.
   parse, expand, the tab stops through edits), `LineIndex` (line starts, a gap
   buffer), `PieceTable` (a text as pieces of an original and of its
   edits: large-file mode's storage), `BracketMatch`, `Folding`, `TextFind` (find and replace, UTF-16 and
-  UTF-8), `Regex` (its linear-time engine), `Formatter` (Format Document's
+  UTF-8), `TextScan` (a large text searched for what every match holds
+  first, sixteen bytes at a time: the find bar's large files and Find in
+  Folder's needle), `Regex` (its linear-time engine), `Formatter` (Format Document's
   plan), `InstallHints`, `LargeFile.h` (VS Code's large-file thresholds,
   header only), `WrapIndent.h` (where a wrapped line goes on,
   editor.wrapping-indent, header only), `SpellCheck` (which words of a file are prose for the
@@ -140,7 +142,8 @@ goes here first, with tests; the GUI only displays it.
   block or a few lines makes of the file), `MergeConflicts` (git's
   conflict blocks, and what keeping a side or both makes of the text).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
-  (the folder picker's paths, rows and completion), `HintsSearch.h`
+  (the folder picker's paths, rows and completion), `ThemePicker` (the
+  theme picker's list and its preview, choose and cancel), `HintsSearch.h`
   (the shortcut hints' search, header only), `WindowTitle.h` (the
   window's title: the file's path from the folder, ~ outside it, the
   terminal's or the page's title while it has the keyboard; header only), `SymbolOutline`
@@ -205,8 +208,9 @@ goes here first, with tests; the GUI only displays it.
 - `Migration` (the first launch since the rename: copies Application
   Support, ~/.config, WebKit's data and the defaults domain from
   minicode's names, once, by `Rename.h`'s rules). <!-- rename-mutible: keep -->
-- `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
-  `Keymap`.
+- `AppSettings` (with the theme picker's preview, `previewTheme:`),
+  `Appearance` (Adjust Settings, Theme menu, opacity popover),
+  `ThemePickerPanel` (the theme picker in the palette), `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
 - Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownMedia`, `MarkdownEditPanel`,

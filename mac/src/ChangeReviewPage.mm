@@ -7,6 +7,7 @@
 #import "GitPanel.h"
 #import <ImageIO/ImageIO.h>
 #include "ChangeReview.h"
+#include "ChangeReviewRead.h"
 #include "FolderSearch.h"
 #include "GitModel.h"
 #include "GitGraph.h"
@@ -1096,6 +1097,10 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     // "Staged a change" never outlives the staged change.
     ChangeReview::ActionNote _note;
     BOOL _messageSettled;     // _note.settled, for the checks
+    // The next say: is about an action whose result is the read after it,
+    // not the one on show (a refused Apply to Main, which shows the
+    // worktree as it is now): its note settles on that read.
+    BOOL _noteSettlesOnNextRead;
     std::string _actionHead;  // HEAD as the last action ran, read on the queue
     BOOL _actionHeadKnown;
     size_t _lastConflicts;
@@ -1730,7 +1735,9 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     _actionHeadKnown = NO;
     // A worktree's page is what it compares, which no action of its own
     // changes: the result is on show already.
-    if ((!ran || _worktree) && _data && _data->error.empty()) _note.settle(_data->diffs);
+    if ((!ran || _worktree) && !_noteSettlesOnNextRead && _data && _data->error.empty())
+        _note.settle(_data->diffs);
+    _noteSettlesOnNextRead = NO;
     _messageSettled = _note.settled;
     _messageLabel.stringValue = text ?: @"";
     _messageLabel.toolTip = text;
@@ -2396,61 +2403,54 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     }];
 }
 
-// The worktree's patch against the merge base, and one for each untracked
-// file, applied to main: plainly first (all or nothing), else three-way,
-// whose cleanly applied files are then unstaged so everything arrives
-// unstaged; never a commit.
+// The core's ChangeReview::applyToMain, as GTK runs it: the worktree read
+// again (a file changed since this page's read refuses the whole), main's
+// status again, then the worktree's patch against the merge base held to
+// the files asked about, and one for each untracked file, applied to main:
+// plainly first (all or nothing), else three-way, whose cleanly applied
+// files are then unstaged so everything arrives unstaged; never a commit.
 - (void)runApply:(std::shared_ptr<ReviewData>)data paths:(std::vector<std::string>)paths
        untracked:(std::vector<std::string>)untracked main:(std::string)mainName {
-    NSString *top = NS8(data->top), *mainPath = NS8(data->mainPath);
-    const std::string base = data->baseRef;
-    const size_t files = data->diffs.size();
+    ChangeReview::ApplySource source;
+    source.top = data->top;
+    source.baseRef = data->baseRef;
+    source.mainPath = data->mainPath;
+    source.files.paths = paths;
+    source.files.untracked = untracked;
+    source.fileCount = data->diffs.size();
+    NSString *mainPath = NS8(data->mainPath);
     __weak MCChangeReviewPage *weakSelf = self;
     [self act:^{
-        NSString *failure = nil;
-        std::vector<std::string> conflicts;
-        std::string patch;
-        MCGitResult *d = MCGitRunSync(top, Args(GitUi::worktreeDiffArgs(base)));
-        if (!d.ok) failure = NS8(GitUi::applyFailureText(d.status, Bytes(d.output), Std(d.errorText)));
-        else patch = Bytes(d.output);
-        for (size_t i = 0; !failure && i < untracked.size(); i++) {
-            MCGitResult *n = MCGitRunSync(top, Args(GitUi::newFilePatchArgs(untracked[i])));
-            if (n.status == 0 || n.status == 1) patch += Bytes(n.output);
-            else failure = NS8(GitUi::applyFailureText(n.status, Bytes(n.output), Std(n.errorText)));
-        }
-        if (!failure && patch.empty()) failure = @"There was nothing to bring into the main checkout.";
-        if (!failure) {
-            NSData *input = [NSData dataWithBytes:patch.data() length:patch.size()];
-            MCGitResult *plain = MCGitRunSyncWithInput(mainPath, Args(GitUi::applyToMainArgs(false)), input);
-            if (!plain.ok) {
-                MCGitResult *three = MCGitRunSyncWithInput(mainPath, Args(GitUi::applyToMainArgs(true)), input);
-                MCGitResult *st = MCGitRunSync(mainPath, Args(GitUi::statusArgs()));
-                std::vector<std::string> staged;
-                if (st.ok)
-                    for (const Git::Entry &e : Git::parseStatus(Bytes(st.output)).entries) {
-                        if (std::find(paths.begin(), paths.end(), e.path) == paths.end()) continue;
-                        if (e.unmerged) conflicts.push_back(e.path);
-                        else if (e.staged != '.') staged.push_back(e.path);
-                    }
-                if (!three.ok && conflicts.empty()) {
-                    failure = NS8(GitUi::applyFailureText(three.status, Bytes(three.output),
-                                                          Std(three.errorText)));
-                } else if (!staged.empty()) {
-                    MCGitRunSync(mainPath, Args(GitUi::unstageArgs(staged)));
-                }
-            }
-        }
+        const ChangeReview::GitRunner run = [](const std::string &dir, const std::vector<std::string> &args,
+                                               const std::string &input) {
+            MCGitResult *r = input.empty()
+                ? MCGitRunSync(NS8(dir), Args(args))
+                : MCGitRunSyncWithInput(NS8(dir), Args(args), [NSData dataWithBytes:input.data() length:input.size()]);
+            ChangeReview::GitOut o;
+            o.ok = r.ok;
+            o.status = r.status;
+            o.out = Bytes(r.output);
+            o.err = Std(r.errorText);
+            return o;
+        };
+        const ChangeReview::ApplyResult r = ChangeReview::applyToMain(source, mainName, run);
         dispatch_async(dispatch_get_main_queue(), ^{
             MCChangeReviewPage *s = weakSelf;
             if (!s) return;
             s->_applying = NO;
-            s->_lastConflicts = conflicts.size();
-            if (!failure) {
+            s->_lastConflicts = r.conflicts.size();
+            if (r.ok) {
                 s->_applied = YES;
                 s->_appliedPrint = data->fingerprint;
                 s->_appliedMain = mainPath;
             }
-            [s finish:failure ?: NS8(GitUi::applyDoneText(files, conflicts, mainName)) ok:failure == nil about:{} ran:YES];
+            // A refusal (a file changed in the worktree since this page's
+            // read, main with changes of its own) is said over the read
+            // that follows it, which shows the worktree as it is now: settled
+            // on the page as it was, the note went as soon as that read
+            // came (CI on main, 2026-11-19: "late.txt was changed..." gone).
+            s->_noteSettlesOnNextRead = !r.ok;
+            [s finish:NS8(r.text) ok:r.ok about:{} ran:YES];
         });
     }];
 }

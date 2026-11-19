@@ -35,6 +35,7 @@
 #include "AutoClose.h"
 #include "CommandPalette.h"
 #include "FolderPicker.h"
+#include "ThemePicker.h"
 #include "Backups.h"
 #include "TabSessions.h"
 #include "SavePlan.h"
@@ -1572,6 +1573,48 @@ void testMarkdownEdit() {
         // Nothing to find: punctuation alone, or a word the source lacks.
         CHECK(at("A, b.", ",") == "<none>" && at("abc", "xyz") == "<none>" && at("", "a") == "<none>");
         CHECK(at("a [x](http://example.org) b", "example") == "example@13");   // only in the URL
+    }
+
+    GROUP("mdedit:rebase");
+    {
+        // An edit box's span, found again in the text as it is when the
+        // edit is applied (round 10's documents defect 3: an agent rewrote
+        // the file while the box was open, and the edit went in at the old
+        // offsets, or reverted the rewrite). Only the span's own bytes are
+        // ever named, so applying there keeps whatever else changed.
+        const std::string npos = "<none>";
+        auto at = [](const std::string &base, const std::string &span, const std::string &now) {
+            const size_t s = base.find(span);
+            const auto r = rebaseSpan(base, s, s + span.size(), now);
+            if (r.first == std::string::npos) return std::string("<none>");
+            return now.substr(r.first, r.second - r.first) + "@" + std::to_string(r.first);
+        };
+        const std::string base = "Intro.\n\nThe heron waits.\n\nThe end.\n";
+        CHECK(at(base, "The heron waits.", base) == "The heron waits.@8");
+        // A change after the span, and one before it (offsets shift).
+        CHECK(at(base, "The heron waits.", base + "Added by an agent.\n") == "The heron waits.@8");
+        CHECK(at(base, "The heron waits.", "# Agent\n\n" + base) == "The heron waits.@17");
+        // Changes on both sides: found where its exact bytes are, once.
+        CHECK(at(base, "The heron waits.", "Intro, rewritten.\n\nThe heron waits.\n\nThe close.\n") ==
+              "The heron waits.@19");
+        // Right against the change, either side, still its own bytes.
+        CHECK(at("foo bar", "foo", "foo2 bar") == "foo@0");
+        CHECK(at("foo bar", "bar", "foo 2bar") == "bar@5");
+        // The span itself rewritten, or gone: refused.
+        CHECK(at(base, "The heron waits.", "Intro.\n\nThe egret waits.\n\nThe end.\n") == npos);
+        CHECK(at(base, "The heron waits.", "Intro.\n") == npos);
+        // In the new text twice, with the text around it changed: no guess.
+        CHECK(at(base, "The heron waits.",
+                 "New.\n\nThe heron waits.\n\nThe heron waits.\n\nEnd.\n") == npos);
+        // Twice, but the change is wholly after the first: that one.
+        CHECK(at(base, "The heron waits.", base + "The heron waits.\n") == "The heron waits.@8");
+        // Out of range, or empty and inside the change.
+        CHECK(rebaseSpan("abc", 2, 5, "abc").first == std::string::npos);
+        CHECK(rebaseSpan("abc", 2, 1, "abc").first == std::string::npos);
+        CHECK(rebaseSpan("abcd", 2, 2, "aXYd").first == std::string::npos);
+        // Multibyte text either side: whole characters, as written.
+        CHECK(at("Café\n\nthe crème\n", "the crème", "Café au lait\n\nthe crème\n") ==
+              "the crème@15");
     }
 
     GROUP("mdedit:blocks-more");
@@ -11783,6 +11826,7 @@ static void testMultiCaretOccurrences() {
 #include "fold_tests.inc"
 #include "previews_tests.inc"
 #include "folder_picker_tests.inc"
+#include "theme_picker_tests.inc"
 #include "commands_tests.inc"
 #include "commands_linux_tests.inc"
 #include "procs_tests.inc"
@@ -11808,6 +11852,7 @@ static void testMultiCaretOccurrences() {
 #include "markdown_page_tests.inc"
 #include "lsp_watch_tests.inc"
 #include "large_file_tests.inc"
+#include "text_scan_tests.inc"
 #include "wrap_indent_tests.inc"
 #include "terminal_draw_tests.inc"
 #include "tree_tests.inc"
@@ -11864,6 +11909,7 @@ int main() {
     testSyntaxLiterals();
     testIncrementalHighlight();
     testLargeFiles();
+    testTextScan();
     testWrapIndent();
     testTermLinks();
     benchIncrementalHighlight();
@@ -11956,6 +12002,7 @@ int main() {
     testMultiCaret();
     testCommandPalette();
     testFolderPicker();
+    testThemePicker();
     testMultiCaretOccurrences();
     testBackups();
     testTabSessions();

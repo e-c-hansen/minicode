@@ -22,6 +22,9 @@
 // A link clicked in the page opens through `onOpenLink` (a local file in
 // its own tab, a web address in the browser pane), so the page on show is
 // always the tab's file; a link to a place in the same page scrolls there.
+// A navigation the page starts by itself (a meta refresh, a script) never
+// opens another app or a file: only a web address, while its scripts run,
+// goes to the browser pane; the rest goes to `onRefused`.
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 
@@ -30,8 +33,12 @@
 @interface MCHtmlPage : NSView
 // The folder the page may read from: the window's.
 @property(nonatomic, copy) NSString * (^readAccessFolder)(void);
-// A link clicked in the page, or a page it tried to open elsewhere.
+// A link clicked in the page (or a form submitted), or, while its
+// scripts run, a web address it went to by itself.
 @property(nonatomic, copy) void (^onOpenLink)(NSURL *url);
+// A navigation the page started by itself (a meta refresh, a script) that
+// was not followed: to a scheme other than http(s), or with scripts off.
+@property(nonatomic, copy) void (^onRefused)(NSURL *url);
 
 // Shows the file: loads it when it is another file or changed since it
 // was loaded (keeping the scroll), else leaves the page as it is.

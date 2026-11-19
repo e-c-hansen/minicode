@@ -298,6 +298,7 @@ MC_GUI_SUITE(go_back) {
     MCGuiStep("Ctrl+Alt+-", [] {
         MCGuiSetKeyWindow(nullptr);
         MCGuiFocusKeyWindow();
+        MCGuiResetFolderSearch();   // its scope goback/ is not the next suite's
         MCGuiKey("ctrl+alt+-");
     });
     MCGuiWait("back in b.txt at line 29", 10, [] { return at("gb-b.txt", 29); });
@@ -307,11 +308,9 @@ MC_GUI_SUITE(go_back) {
     });
 
     // ---- a file renamed, a file deleted
-    MCGuiStep("gb-c.txt's row brought into view in the tree", [] {
-        MCGuiApp().tree->revealPath(F("gb-c.txt"));
-    });
-    MCGuiWait("its row", 10, [] { return MCGuiFindLabel(MCGuiApp().tree->widget(), "gb-c.txt"); });
-    MCGuiStep("a click on it", [] { MCGuiClick(MCGuiFindLabel(MCGuiApp().tree->widget(), "gb-c.txt")); });
+    // The row by its path, never its name (docs/notes/tree.md).
+    MCGuiBringTreeRow(F("gb-c.txt"));
+    MCGuiStep("a click on it", [] { MCGuiClick(MCGuiTreeRow(F("gb-c.txt"))); });
     MCGuiWait("c.txt on show, a jump from found.txt", 10, [] {
         return ed()->currentPath() == F("gb-c.txt") && history() == "gb-b.txt:29 gb-found.txt:40 >gb-c.txt:0";
     });

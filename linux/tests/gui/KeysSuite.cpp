@@ -18,6 +18,7 @@
 
 #ifdef MUTIBLE_ENABLE_TERMINAL
 #include "Terminal.h"
+#include "WindowLayout.h"
 #include <algorithm>
 #include <vte/vte.h>
 #endif
@@ -503,6 +504,12 @@ MC_GUI_SUITE(keys) {
 
 #ifdef MUTIBLE_ENABLE_TERMINAL
     // ---- with the terminal focused
+    // Ctrl+` toggles: a terminal an earlier suite left shown would be put
+    // away instead (the soak's shuffled orders), so it starts hidden.
+    MCGuiStep("the terminal hidden to start", [] {
+        if (MCGuiApp().layout->terminalShown()) MCGuiApp().layout->toggleTerminal();
+    });
+    MCGuiWait("hidden", 10, [] { return !MCGuiApp().layout->terminalShown(); });
     MCGuiStep("Ctrl+` opens the terminal with the keyboard", [] {
         MCGuiClick(MCGuiApp().editor->textView());
         MCGuiKey("ctrl+`");

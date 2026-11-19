@@ -587,14 +587,35 @@ MC_GUI_SUITE(markdown_preview) {
         GCHECK(At(c, @"Markdown again, after a blank line.") != NSNotFound);
     });
 
-    MCGuiStep(@"an edit after the file changed underneath goes to the clipboard, and says so", ^{
+    MCGuiStep(@"an edit after the file changed elsewhere lands where its block now is", ^{
         EditorController *c = MCGuiController();
         const NSUInteger at = At(c, @"Markdown again, after a blank line.");
         GCHECK(at != NSNotFound);
         NSRect r = [c textRectForCharacter:at];
         GCHECK([c editMarkdownAtCharacter:at point:NSMakePoint(NSMidX(r), NSMidY(r))]);
-        // Meanwhile the buffer changes (a reload from disk, an agent's edit).
-        NSString *changed = [c.sourceText stringByAppendingString:@"\nAdded meanwhile.\n"];
+        // Meanwhile the buffer changes elsewhere (a reload, an agent's edit).
+        NSString *was = [c.sourceText copy];
+        NSString *changed = [@"Added meanwhile.\n\n" stringByAppendingString:was];
+        [c setValue:changed forKey:@"sourceText"];
+        SaveEdit(c, @"Markdown again, edited.");
+        MCGuiNote(@"text now: %@", c.sourceText);
+        GCHECK([c.sourceText hasPrefix:@"Added meanwhile.\n\n"]);   // kept
+        GCHECK([c.sourceText containsString:@"Markdown again, edited."]);
+        GCHECK(![c.sourceText containsString:@"Markdown again, after a blank line."]);
+        [c setValue:was forKey:@"sourceText"];
+        [c renderMarkdownKeepingPlace];
+    });
+    MCGuiStep(@"an edit after its own block changed underneath goes to the clipboard, and says so", ^{
+        EditorController *c = MCGuiController();
+        const NSUInteger at = At(c, @"Markdown again, after a blank line.");
+        GCHECK(at != NSNotFound);
+        NSRect r = [c textRectForCharacter:at];
+        GCHECK([c editMarkdownAtCharacter:at point:NSMakePoint(NSMidX(r), NSMidY(r))]);
+        // Meanwhile that very block changes (a reload from disk, an agent's edit).
+        NSString *changed = [c.sourceText stringByReplacingOccurrencesOfString:
+                                              @"Markdown again, after a blank line."
+                                                                    withString:@"Markdown again, rewritten meanwhile."];
+        GCHECK(![changed isEqualToString:c.sourceText]);
         [c setValue:changed forKey:@"sourceText"];
         [NSPasteboard.generalPasteboard clearContents];
         SaveEdit(c, @"My careful rewrite.");
@@ -605,12 +626,14 @@ MC_GUI_SUITE(markdown_preview) {
         GCHECK([note.stringValue containsString:@"your text is on the clipboard"]);
         // Saving it unchanged is no edit, and loses nothing worth a note.
         [c renderMarkdownKeepingPlace];
-        const NSUInteger again = At(c, @"Markdown again, after a blank line.");
+        const NSUInteger again = At(c, @"Markdown again, rewritten meanwhile.");
+        GCHECK(again != NSNotFound);
+        if (again == NSNotFound) return;
         r = [c textRectForCharacter:again];
         GCHECK([c editMarkdownAtCharacter:again point:NSMakePoint(NSMidX(r), NSMidY(r))]);
         [c setValue:[changed stringByAppendingString:@"x"] forKey:@"sourceText"];
         [NSPasteboard.generalPasteboard clearContents];
-        SaveEdit(c, @"Markdown again, after a blank line.");
+        SaveEdit(c, @"Markdown again, rewritten meanwhile.");
         GCHECK([NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString] == nil);
     });
 

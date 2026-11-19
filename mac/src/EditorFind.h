@@ -23,6 +23,10 @@
 // at the caret, and a selection over several lines leaves the query as it
 // was. It does so from the editor whether or not the bar is open; from the
 // bar's own field Cmd+F only selects the query.
+// In a large file (VS Code's 20 MB) the word at the caret is put in the
+// field but not searched until the user types, presses Return (which goes
+// to its next occurrence) or changes an option, so no search of every line
+// starts that nobody asked for; a selection is searched as anywhere.
 //
 // Find in Selection (the button, Option+Cmd+L while the bar has the
 // keyboard, or Edit > Find Options) keeps the matches to the selection it
@@ -111,4 +115,14 @@
 @property(nonatomic, readonly) NSInteger currentIndex;
 // How many copies of the text the searches have made (one per edit of it).
 @property(nonatomic, readonly) NSUInteger textCopies;
+// A large text (over a million characters) is searched in stages: the lines
+// on screen, the first match from the caret (selected at once, "1 of …"),
+// then every match counted from the top on the search queue. For tests:
+// whether it is still counting, the queue's CPU time to the first match of
+// the last such search, the matches marked on screen now (none for an old
+// query), and whether a word seeded into a large file waits for Return.
+@property(nonatomic, readonly) BOOL counting;
+@property(nonatomic, readonly) double firstMatchCpuMs;
+@property(nonatomic, readonly) NSArray<NSValue *> *markedRangesOnScreen;
+@property(nonatomic, readonly) BOOL seedPending;
 @end

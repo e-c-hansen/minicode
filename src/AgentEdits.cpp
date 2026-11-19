@@ -233,7 +233,10 @@ Result analyze(std::vector<Change> changes, const std::string &current, bool exi
     };
     for (size_t k = changes.size(); k-- > 0;) {
         Change &c = changes[k];
-        if (c.refused) {
+        // A refused call was not made; one with no result yet may still be
+        // waiting at Claude Code's permission prompt, so it is not made yet
+        // either. Both are left out of the reckoning.
+        if (c.refused || !c.answered) {
             c.standing = Standing::Unknown;
             continue;
         }

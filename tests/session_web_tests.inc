@@ -3695,4 +3695,68 @@ static void testSessionWebAccess() {
         mac.stop();
         macThread.join();
     }
+
+    // Round 10's defect 10: idle connections cannot use up the app's
+    // descriptors. At most maxConnections at once (one past it is closed
+    // as accepted), and one that has not sent a whole request within the
+    // deadline is closed; a page's socket is not held to it.
+    GROUP("sessionweb:connections");
+    {
+        CHECK(Web::Options().maxConnections == 64 && Web::Options().requestDeadlineMs == 5000);
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = rig.path();
+        o.folder = rig.proj;
+        o.pollMs = 100;
+        o.maxConnections = 6;
+        o.requestDeadlineMs = 2500;
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        const int port = web.port();
+        // Closed by the server within `ms` (EOF read), else false.
+        auto closedWithin = [](PageClient& c, int ms) {
+            const double end = nowMs() + ms;
+            while (nowMs() < end)
+                if (!c.readSome(50)) return true;
+            return false;
+        };
+        {
+            // A page's socket first: past the deadline it stays.
+            PageClient page;
+            CHECK(page.open(web));
+            CHECK(waitUntil([&] { return web.browsers() == 1; }));
+            // Five idle ones, one with half a request: the cap reached.
+            std::vector<std::unique_ptr<PageClient>> idle;
+            for (int i = 0; i < 5; i++) {
+                idle.push_back(std::make_unique<PageClient>());
+                CHECK(idle.back()->connectTo(port));
+            }
+            CHECK(idle[0]->write("GET " + web.base() + " HTTP/1.1\r\nHost: 127"));
+            CHECK(waitUntil([&] { return web.connections() == 6; }, 2000));
+            // The seventh is closed at once, unanswered; the count holds.
+            // (Well before the deadline, while the idle ones stay open.)
+            PageClient over;
+            CHECK(over.connectTo(port));
+            CHECK(closedWithin(over, 1500));
+            CHECK(over.in.empty());
+            CHECK(web.connections() == 6);
+            CHECK(idle[1]->readSome(0) && idle[1]->in.empty());
+            // At the deadline every idle one goes, the half request too.
+            for (auto& c : idle) CHECK(closedWithin(*c, 5000));
+            CHECK(waitUntil([&] { return web.connections() == 1; }, 2000));
+            // The page's socket is still open, and still served.
+            CHECK(!closedWithin(page, 300));
+            CHECK(web.browsers() == 1);
+            // Below the cap again, a request is answered.
+            PageClient later;
+            const std::string r = later.exchange(port, "GET " + web.base() + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            CHECK(r.compare(0, 12, "HTTP/1.1 403") == 0);
+        }
+        CHECK(waitUntil([&] { return web.connections() == 0 && web.browsers() == 0; }, 3000));
+        web.stop();
+        webThread.join();
+    }
 }

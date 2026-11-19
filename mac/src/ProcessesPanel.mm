@@ -809,9 +809,40 @@ static const CGFloat kStopWidth = 40;
     if (self.onNote) self.onNote(text);
 }
 
+// The process on show now with `p`'s pid and start time, anywhere in the
+// tree (a collapsed group too); nil when the list no longer has it.
+- (MCProcItem *)currentItemFor:(MCProcItem *)p {
+    NSString *key = p.key;
+    NSMutableArray *queue = [NSMutableArray arrayWithArray:_groups ?: @[]];
+    for (NSUInteger i = 0; i < queue.count; i++) {
+        id item = queue[i];
+        if ([item isKindOfClass:MCProcItem.class] && [((MCProcItem *)item).key isEqualToString:key])
+            return item;
+        NSArray *children = [self childrenOf:item];
+        if (children.count) [queue addObjectsFromArray:children];
+    }
+    return nil;
+}
+
+// A menu's items act on the process the menu was opened on, by its pid and
+// start time, never on the row number: the list reloads every 2 s while
+// the menu is open, and the row may hold another process by then (round
+// 10's agents Medium 1). One that has exited since is said so.
+- (MCProcItem *)stillRunning:(MCProcItem *)p {
+    MCProcItem *now = [self currentItemFor:p];
+    if (now.alive) return now;
+    NSBeep();
+    [self note:[NSString stringWithFormat:@"%@ (process %d) has exited; nothing was stopped", p.name, p.pid]];
+    return nil;
+}
+
 - (void)revealOriginOfRow:(NSInteger)row {
     MCProcItem *p = [self procAtRow:row];
     if (!p) { NSBeep(); return; }
+    [self revealOriginOfItem:p];
+}
+
+- (void)revealOriginOfItem:(MCProcItem *)p {
     if (p.outside) {
         [self note:[NSString stringWithFormat:@"%@ was not started in mutible", p.name]];
         return;
@@ -825,6 +856,10 @@ static const CGFloat kStopWidth = 40;
 - (void)stopRow:(NSInteger)row {
     MCProcItem *p = [self procAtRow:row];
     if (!p || !p.alive) { NSBeep(); return; }
+    [self stopItem:p];
+}
+
+- (void)stopItem:(MCProcItem *)p {
     if (!p.orphan) {
         NSAlert *a = [NSAlert new];
         a.messageText = [NSString stringWithFormat:@"Stop %@?", p.name];
@@ -870,12 +905,16 @@ static const CGFloat kStopWidth = 40;
     MCProcItem *p = [self procAtRow:row];
     __weak MCProcessesPanel *weakSelf = self;
     if (p) {
-        [self item:p.orphan ? @"Stop" : @"Stop…" in:m run:^{ [weakSelf stopRow:row]; }].enabled = p.alive;
+        [self item:p.orphan ? @"Stop" : @"Stop…" in:m run:^{
+            MCProcessesPanel *s = weakSelf;
+            MCProcItem *now = [s stillRunning:p];
+            if (now) [s stopItem:now];
+        }].enabled = p.alive;
         for (NSNumber *port in p.alive ? p.ports : @[])
             [self item:[NSString stringWithFormat:@"Open localhost:%@", port] in:m run:^{
                 [weakSelf openPort:port];
             }];
-        [self item:@"Reveal Origin" in:m run:^{ [weakSelf revealOriginOfRow:row]; }].enabled =
+        [self item:@"Reveal Origin" in:m run:^{ [weakSelf revealOriginOfItem:p]; }].enabled =
             !p.outside && !p.orphan;
         [m addItem:[NSMenuItem separatorItem]];
         NSString *command = p.command ?: @"";

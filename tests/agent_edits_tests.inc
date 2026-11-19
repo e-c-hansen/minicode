@@ -93,6 +93,25 @@ static void testAgentEdits() {
         refused.refused = true;
         Result rf = analyze({edit("a = 1", "a = 2"), refused}, "a = 2\n", true);
         CHECK(rf.rebuilt && rf.before == "a = 1\n" && rf.changes[1].standing == Standing::Unknown);
+        // So is a call with no result yet: Claude Code may be waiting at its
+        // permission prompt, and the file does not have it. Held against the
+        // file, its text is not there and the before could not be worked
+        // out (round 10's agents Low 3).
+        Change pending = edit("b = 1", "b = 3");
+        pending.answered = false;
+        Result pd = analyze({edit("a = 1", "a = 2"), pending}, "a = 2\nb = 1\n", true);
+        CHECK(pd.rebuilt && pd.before == "a = 1\nb = 1\n" && pd.why.empty());
+        CHECK(pd.changes[1].standing == Standing::Unknown && pd.standing == 1 && pd.gone == 0);
+        // Its new text already in the file once: still not undone, so the
+        // before is not rebuilt wrong.
+        Change pending2 = edit("x", "a = 2");
+        pending2.answered = false;
+        Result pd2 = analyze({edit("a = 1", "a = 2"), pending2}, "a = 2\n", true);
+        CHECK(pd2.rebuilt && pd2.before == "a = 1\n" && pd2.changes[1].standing == Standing::Unknown);
+        // Answered later (approved and made), it counts.
+        pending.answered = true;
+        Result pd3 = analyze({edit("a = 1", "a = 2"), pending}, "a = 2\nb = 3\n", true);
+        CHECK(pd3.rebuilt && pd3.before == "a = 1\nb = 1\n" && pd3.standing == 2);
         // No file now.
         Result none = analyze({edit("a", "b")}, "", false);
         CHECK(!none.rebuilt && none.changes[0].standing == Standing::Gone);
@@ -148,6 +167,16 @@ static void testAgentEdits() {
         CHECK(samePath(plain, "/private/tmp/x/a.py", "/tmp/x/a.py"));
         CHECK(!samePath(plain, "/private/tmpx/a.py", "/tmpx/a.py"));
         CHECK(!samePath(plain, "/tmp/x/a.py", "/tmp/x/b.py"));
+        // An edit still at the permission prompt: in the transcript with no
+        // result. Not answered, so the file before is still worked out.
+        put(t,
+            editUse("2026-11-05T10:00:08Z", "e4", file, "    print('hello, world')\n",
+                    "    print('hello, world')\n    print('bye')\n") + "\n",
+            true);
+        FileHistory waiting = collect(cfs.fs, t, file);
+        CHECK(waiting.changes.size() == 4 && !waiting.changes.back().answered);
+        Result wr = analyze(waiting.changes, "def hello():\n    print('hello, world')\n", true);
+        CHECK(wr.rebuilt && !wr.existedBefore && wr.standing == 2 && wr.gone == 0 && wr.why.empty());
         fsys::remove_all(root);
     }
 

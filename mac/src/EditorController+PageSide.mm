@@ -57,6 +57,9 @@ static const NSTimeInterval kLatexFollowDelay = 0.25;
     _sideHtml.onOpenLink = ^(NSURL *url) {
         [weakSelf openMarkdownLink:url.absoluteString ?: @""];
     };
+    _sideHtml.onRefused = ^(NSURL *url) {
+        [weakSelf htmlPageRefused:url];
+    };
     _sideHtml.hidden = YES;
     [self.rightArea addSubview:_sideHtml positioned:NSWindowBelow relativeTo:self.termDivider];
     return _sideHtml;

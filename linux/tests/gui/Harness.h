@@ -179,6 +179,10 @@ std::string MCGuiReadFile(const std::string& path);      // "" when unreadable
 bool MCGuiFileExists(const std::string& path);
 void MCGuiSetSettings(const std::string& text);          // writes the file, has the app read it
 void MCGuiSetKeys(const std::string& text);              // keys.conf ($MUTIBLE_KEYS), the same
+// Every address handed to the desktop's handler (Editor::launchUriHook: a
+// link to mailto: or an app's scheme), in order. The checks record it
+// instead, so nothing they do starts another app (the Mac's MCGuiOpenedURLs).
+std::vector<std::string> MCGuiLaunchedUris();
 // The text of the editor's buffer (the newest window's).
 std::string MCGuiEditorText();
 // A picture of a widget as drawn, written as <name>.png into
@@ -209,6 +213,9 @@ GtkWindow* MCGuiTopWindow();
 // file of the same name in a folder an earlier suite opened (watch/notes.txt
 // beside notes.txt) is never taken for it.
 GtkWidget* MCGuiTreeRow(const std::string& path);
+// The same in another window's tree (a suite's second window on a folder
+// of its own).
+GtkWidget* MCGuiTreeRow(FileTree* tree, const std::string& path);
 // Queues what a click on a tree row needs after other suites: a full run
 // leaves the project folder with a hundred entries and folders open, more
 // than the tree shows at once, and its list view makes rows only for what is
@@ -222,6 +229,15 @@ void MCGuiBringTreeRow(const std::string& path, double timeout = 10);
 // it shown (the pane takes the editor's width: a PDF's pages narrower, the
 // keyboard maybe in the page), and a wait until it is hidden.
 void MCGuiHideBrowserPane();
+// Puts every window's Find in Folder back as a new window has it: the query
+// empty (first, so that nothing below starts a search), no files to include
+// or exclude, Match Case, Whole Word and Regular Expression off, and the
+// scope the window's folder. The scope, the files and the options outlive
+// the window's closing, so a suite that searched calls it before it ends
+// (else the harness does, with a LEFT line); one about to search calls it
+// once the window is up, then sets its own scope. A files box it empties
+// searches again 350 ms later, with the query in the box by then.
+void MCGuiResetFolderSearch();
 // Queues taking back what a suite typed at the newest window's shell prompt
 // and left there (Run in Terminal and Open in Terminal type a command
 // without Return): Ctrl+U sent to the shell, then, unless `typed` is empty,
