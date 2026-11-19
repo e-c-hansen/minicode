@@ -2726,8 +2726,8 @@ void Editor::showMdPopover(const std::string& title, const std::string& text, bo
         // Escape and Cancel does (commitPageEdit).
         PopoverKeep::install(mdPop_, [this] { commitMdEdit(); });
         // Closed with the keyboard still in it (Enter, Escape, Apply,
-        // Cancel), the page it was over takes the keyboard back; left in the
-        // hidden box, the next double-click on the page did not open it.
+        // Cancel), the page it was over takes the keyboard back, as on the
+        // Mac, rather than leaving it in the hidden box.
         g_signal_connect(mdPop_, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer) {
             GtkWidget* over = gtk_widget_get_parent(GTK_WIDGET(p));
             GtkRoot* root = over ? gtk_widget_get_root(over) : nullptr;
@@ -2764,6 +2764,27 @@ void Editor::showMdPopover(const std::string& title, const std::string& text, bo
                 self->mdEditValid_ = false;
                 gtk_popover_popdown(GTK_POPOVER(self->mdPop_));
                 return TRUE;
+            }
+            // Save's keys (Ctrl+S, or keys.conf's) apply the draft, then
+            // save, as Cmd+S does on the Mac: the window's accelerators never
+            // see a key typed in the box (GTK hands it to the popover's own
+            // shortcut handling), so it is asked for here.
+            if (GtkApplication* app = GTK_APPLICATION(g_application_get_default())) {
+                char** accels = gtk_application_get_accels_for_action(app, "win.save");
+                bool save = false;
+                for (char** a = accels; a && *a && !save; a++) {
+                    guint k = 0;
+                    GdkModifierType m = (GdkModifierType)0;
+                    if (gtk_accelerator_parse(*a, &k, &m))
+                        save = gdk_keyval_to_lower(k) == gdk_keyval_to_lower(key) &&
+                               (mods & gtk_accelerator_get_default_mod_mask()) == m;
+                }
+                g_strfreev(accels);
+                if (save) {
+                    self->commitMdEdit();
+                    gtk_widget_activate_action(self->view_, "win.save", nullptr);
+                    return TRUE;
+                }
             }
             if ((key != GDK_KEY_Return && key != GDK_KEY_KP_Enter) || (mods & GDK_SHIFT_MASK))
                 return FALSE;

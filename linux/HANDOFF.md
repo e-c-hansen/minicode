@@ -7557,8 +7557,28 @@ change; GTK had all four.
   `Editor::commitPageEdit` applies one before a tab leaves (`stash`), the
   page turns to its source, Ctrl+S, Save All, closing a tab or the window
   (before the unsaved question) and quitting. Closed with the keyboard in
-  it, it gives the keyboard back to the page (left in the hidden box, the
-  next double-click selected the line instead of opening it).
+  it, it gives the keyboard back to the page, as on the Mac.
+- **Trap: a key typed in a popover never reaches the window's
+  accelerators.** Ctrl+S in the block editor ran no Save at all (before
+  this change, too): GTK hands a key in a popover to the popover's own
+  shortcut handling. The box's key controller now matches Save's keys
+  (`gtk_application_get_accels_for_action("win.save")`, so keys.conf's
+  too), applies the draft and activates `win.save`; `edit_boxes` checks
+  the file then holds the draft.
+- **Trap (the checks): a double-click soon after the last.** The page
+  opens the block editor on a double-click only (`n == 2`); a second
+  double-click on the same paragraph within GTK's double-click time is
+  its third and fourth clicks, which select the line and open nothing.
+  `edit_boxes` typed a word, pressed Escape and double-clicked again in
+  under 0.4 s; it now pauses 0.5 s before each double-click, as
+  `tree_clicks` does. Not a product problem: a hand is never that quick
+  after Escape.
+- **Trap (the checks): a popup's picture right after a theme change.**
+  `lsp_popups` read a pixel inside the rename field on light-modern just
+  as the field showed; in the long run (a busier machine) the box was not
+  yet laid out at the new theme's sizes, the field's right end past the
+  box's, and the read missed. It now waits until the field lies inside
+  the box and the box is drawn.
 - **The harness**: `MCGuiFocusElsewhere()` switches apps as a hand does
   with the mouse: a click on a 10-pixel window of the harness's own, on a
   second X connection, in the screen's far corner, then the X focus given
@@ -7577,15 +7597,20 @@ change; GTK had all four.
 - **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7): before the
   change `tree_drags` failed 8 checks, `lsp_popups` 19 (the colors on
   both themes, the field's place, the field lost in the switch) and
-  `edit_boxes` 16. After it, alone: `tree_drags` 9 passed, `lsp_popups`
-  43 passed. With tree_clicks, tree_focus, tree_edits, terminal_tabs,
-  themes, notes, lsp_actions, signature_help, completion_keys,
-  second_server and markdown_side_edit: 681 passed, 7 failed. **Left
-  open**: `edit_boxes`' third block editor (after one closed by Escape,
-  the next double-click on the same paragraph selects its line and opens
-  nothing; the same before the change, and giving the page the keyboard
-  back on close did not cure it) fails 4; `lsp_popups`' pixel inside the
-  rename field fell outside the box once in the long run (it passed
-  alone); `themes`' "the keyboard back where it was" failed once in the
-  long run, not looked into. `meson test --no-suite gui` and `make test`
-  (349) pass.
+  `edit_boxes` 16. After it, alone: `edit_boxes` 16 passed, `lsp_popups`
+  43, `tree_drags` 9, `themes` 136 (five runs, each 136, none failed);
+  the four together 204 passed, none failed, twice, and once more with
+  MC_GUI_ROOT under linux/build. With tree_clicks, tree_focus,
+  tree_edits, terminal_tabs, notes, lsp_actions, signature_help,
+  completion_keys, second_server and markdown_side_edit as well: 683
+  passed, none failed. `meson test --no-suite gui` and `make test` (349)
+  pass.
+- **Trap (the checks): `themes` read "the pane before" off the menu
+  bar.** Its "the keyboard back where it was" failed 1 run in 8 alone on
+  this branch (main: 5 of 5 passed): the check before View read the
+  keyboard while it was still on an earlier menu's bar item, which
+  MenuBarFocus gives back a moment after that menu closes, so the pane
+  "before" was the bar's item and the keyboard went back to the editor.
+  This change touches neither the menus nor MenuBarFocus; a longer
+  stylesheet for each theme change is the likeliest reason the race shows
+  more here. `openThemeMenu` now waits for the keyboard to be off the bar.

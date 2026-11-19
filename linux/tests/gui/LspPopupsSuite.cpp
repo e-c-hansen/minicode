@@ -207,9 +207,20 @@ void themeRound(const std::string& theme) {
     MCGuiWait("closed", 5, [] { return !lsp()->pickerVisible(); });
 
     MCGuiStep("F2", [] { MCGuiKey("F2"); });
-    MCGuiWait("the rename box", 10, [] {
-        return lsp()->renameBoxVisible() && lsp()->renameEntry() &&
-               MCGuiOnScreen(lsp()->renameEntry());
+    // Laid out at its size and drawn: the field takes the editor's font as
+    // it shows, and the box grows to it a frame later, so the field's right
+    // end can lie past the box's for a moment (the long run's miss).
+    MCGuiWait("the rename box, laid out and drawn", 10, [] {
+        GtkWidget* pop = popover("minicode-rename");
+        GtkWidget* e = lsp()->renameEntry();
+        graphene_rect_t b;
+        int px[4] = {0, 0, 0, 0};
+        return lsp()->renameBoxVisible() && pop && e && MCGuiOnScreen(e) &&
+               gtk_widget_compute_bounds(e, pop, &b) &&
+               b.origin.x + b.size.width <= gtk_widget_get_width(pop) &&
+               b.origin.y + b.size.height <= gtk_widget_get_height(pop) &&
+               MCGuiPixel(pop, (int)(b.origin.x + b.size.width - 4), (int)(b.origin.y + b.size.height / 2), px) &&
+               (px[0] || px[1] || px[2]);
     });
     MCGuiStep("the rename box in the theme's colors, its field in input's", [theme] {
         GtkWidget* pop = popover("minicode-rename");

@@ -247,7 +247,9 @@ found through that list.
   on an app switch, on X11 because the click on the other program is its
   grab's outside click), so an app switch keeps it and its draft; a press
   elsewhere in the window applies the draft, as do `Editor::stash` (a tab
-  leaving), the page turned to its source, Ctrl+S, Save All, closing a tab
+  leaving), the page turned to its source, Ctrl+S (matched in the box's own
+  key controller from win.save's accelerators: a key typed in a popover
+  never reaches the window's), Save All, closing a tab
   or the window and quitting (`Editor::commitPageEdit`, before any
   question); Escape and Cancel drop it. The other group shows no rendered page
   on GTK (it names the file until clicked, `Groups.cpp`), so the Mac's

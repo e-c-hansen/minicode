@@ -76,9 +76,14 @@ bool boxHasKeyboard() {
     return t && gtk_widget_has_focus(t) && gtk_window_is_active(MCGuiApp().window);
 }
 
-// Opens the block editor on the first paragraph and types over the word.
-void openAndType(const std::string& what, const std::string& typed) {
-    MCGuiStep(what + ": a double-click on the first paragraph", [] { doubleClickText("First"); });
+// Opens the block editor on a paragraph (by its first word, which the
+// double-click selects) and types over the word.
+void openAndType(const std::string& what, const std::string& typed,
+                 const std::string& word = "First") {
+    // The double-click interval: a double-click on the paragraph soon after
+    // the last is GTK's third and fourth clicks, which select the line.
+    MCGuiPause(0.5);
+    MCGuiStep(what + ": a double-click on " + word, [word] { doubleClickText(word); });
     MCGuiWait("the block editor", 10, [] { return ed()->blockEditorOpen(); });
     MCGuiWait("with the keyboard", 5, [] { return boxHasKeyboard(); });
     MCGuiStep("typed over the word", [typed] { MCGuiType(typed); });
@@ -168,7 +173,7 @@ MC_GUI_SUITE(edit_boxes) {
         GCHECK_EQ_STR(bufferText(), MCGuiReadFile(F("page.md")));
     });
 
-    openAndType("another tab", "Tabbed ");
+    openAndType("another tab", "Tabbed ", "Second");   // Ctrl+S's draft took "First"
     MCGuiStep("another tab shown", [] { MCGuiOpenFileKept(F("other.txt")); });
     MCGuiWait("other.txt on show", 5, [] { return ed()->currentPath() == F("other.txt"); });
     MCGuiStep("the draft applied to the page's buffer", [] {
