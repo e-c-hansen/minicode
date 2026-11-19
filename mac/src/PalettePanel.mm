@@ -155,6 +155,7 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 @property(nonatomic) BOOL heading;   // a kind's heading in "@:": never selected
 @property(nonatomic, copy) NSString *folderPath;   // the folder picker: a folder row's
 @property(nonatomic) BOOL opensTyped;   // the folder picker: Open This Folder
+@property(nonatomic) NSInteger pickIndex;   // a pick list: the row's index in pick.labels
 @end
 @implementation MCPaletteItem
 @end
@@ -198,11 +199,31 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
 @end
 
 // A list that never takes the keyboard: the field keeps it while rows are
-// clicked.
+// clicked. The pointer moving over a row is told to hoverRow, for pick lists
+// that show the row under it (the theme picker).
 @interface MCPaletteTable : NSTableView
+@property(nonatomic, copy) void (^hoverRow)(NSInteger row);
 @end
-@implementation MCPaletteTable
+@implementation MCPaletteTable {
+    NSTrackingArea *_hover;
+}
 - (BOOL)acceptsFirstResponder { return NO; }
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_hover) [self removeTrackingArea:_hover];
+    _hover = nil;
+    if (!self.hoverRow) return;
+    _hover = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseMoved | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+               owner:self
+            userInfo:nil];
+    [self addTrackingArea:_hover];
+}
+- (void)mouseMoved:(NSEvent *)e {
+    if (!self.hoverRow) { [super mouseMoved:e]; return; }
+    self.hoverRow([self rowAtPoint:[self convertPoint:e.locationInWindow fromView:nil]]);
+}
 @end
 
 // --------------------------------------------------------------- the overlay
@@ -252,6 +273,8 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     std::string _folderListingDir;
     std::shared_ptr<std::atomic<bool>> _cancelFolders;
     NSString *_folderShownText;
+    // A pick list with a preview: the row (index in pick.labels) on show.
+    NSInteger _pickShown;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame commands:(NSArray<MCPaletteCommand *> *)commands
@@ -349,7 +372,47 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     self.emptyLabel.font = [NSFont systemFontOfSize:13];
     self.emptyLabel.hidden = YES;
     [self.box addSubview:self.emptyLabel];
+
+    _pickShown = context.pick.preview ? context.pick.initialIndex : -1;
+    if (context.pick.preview) {
+        __weak MCPaletteOverlay *weakSelf = self;
+        t.hoverRow = ^(NSInteger row) { [weakSelf hoverRow:row]; };
+    }
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(settingsChanged:)
+                                                 name:MCSettingsDidChangeNotification
+                                               object:nil];
     return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // Gone with its window, never closed: a preview ends all the same.
+    if (!_closing && !_ran && _context.pick.cancel) _context.pick.cancel();
+}
+
+// The colors follow the settings while the palette is open: a theme the
+// theme picker previews shows in the palette too. A pick list that previews
+// keeps the row on show selected; the other lists keep their rows.
+- (void)settingsChanged:(NSNotification *)n {
+    (void)n;
+    if (self.closing) return;
+    AppSettings *cfg = [AppSettings shared];
+    self.box.layer.backgroundColor =
+        [[cfg background:Surface::Sidebar] colorWithAlphaComponent:1].CGColor;
+    self.fieldBack.layer.backgroundColor =
+        [[cfg background:Surface::Editor] colorWithAlphaComponent:1].CGColor;
+    self.field.textColor = [cfg text:Surface::Editor];
+    self.textColor = [cfg text:Surface::Sidebar];
+    if (self.context.pick.preview) [self refilter];
+    else [self.table reloadData];
+}
+
+// The pointer over a row of a pick list that previews: that row is selected,
+// and so shown.
+- (void)hoverRow:(NSInteger)row {
+    if (self.closing || row < 0 || row >= (NSInteger)self.items.count || row == self.selected)
+        return;
+    [self select:row];
 }
 
 // The folder's files, listed on a background queue; the list fills in when
@@ -563,6 +626,9 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
         if (!items[i].heading) first = (NSInteger)i;
     if (p.mode == Mode::Symbols && _preselect >= 0 && _preselect < (NSInteger)items.count)
         first = _preselect;
+    if (self.context.pick.preview && _pickShown >= 0)
+        for (NSUInteger i = 0; i < items.count; i++)
+            if (items[i].run && items[i].pickIndex == _pickShown) { first = (NSInteger)i; break; }
     self.items = items;
     self.selected = first;
     [self.table reloadData];
@@ -572,6 +638,10 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
     if (self.selected >= 0) [self.table scrollRowToVisible:self.selected];
     // Typing in "@" shows the best match in the editor, as VS Code does.
     if (p.mode == Mode::Symbols && !p.query.empty() && self.selected >= 0 &&
+        self.items[(NSUInteger)self.selected].preview)
+        self.items[(NSUInteger)self.selected].preview();
+    // A pick list that previews shows the row typing came to.
+    if (self.context.pick.preview && self.selected >= 0 &&
         self.items[(NSUInteger)self.selected].preview)
         self.items[(NSUInteger)self.selected].preview();
 }
@@ -598,8 +668,18 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
         it.label = pick.labels[(NSUInteger)index];
         it.text = [self attributed:it.label title:it.label match:m];
         if ((NSUInteger)index < pick.details.count) it.keys = pick.details[(NSUInteger)index];
+        it.pickIndex = index;
+        void (^preview)(NSInteger) = pick.preview;
+        if (preview)
+            it.preview = ^{
+                MCPaletteOverlay *me = weakSelf;
+                if (!me || me.closing || me->_pickShown == index) return;
+                me->_pickShown = index;
+                preview(index);
+            };
         void (^choose)(NSInteger) = pick.choose;
         it.run = ^{
+            weakSelf.ran = YES;
             [weakSelf closeRestoringFocus:YES];
             if (choose) dispatch_async(dispatch_get_main_queue(), ^{ choose(index); });
         };
@@ -1216,6 +1296,11 @@ static NSString *POneLine(NSString *s) {
         self.context.cancelWorkspaceSymbols();
     // Closed without going to a symbol: the editor goes back to where it was.
     if (self.previewed && !self.ran && self.context.endPreview) self.context.endPreview();
+    // A pick list closed without a choice.
+    if (self.context.pick && !self.ran && self.context.pick.cancel) self.context.pick.cancel();
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:MCSettingsDidChangeNotification
+                                                  object:nil];
     NSWindow *w = self.window;
     if (restore && w) {
         NSResponder *r = self.restore;
@@ -1324,6 +1409,10 @@ NSArray<NSString *> *MCCommandPaletteKeys(NSView *palette) {
 NSInteger MCCommandPaletteSelection(NSView *palette) {
     return [palette isKindOfClass:MCPaletteOverlay.class] ? ((MCPaletteOverlay *)palette).selected
                                                           : -1;
+}
+
+void MCCommandPaletteHoverRow(NSView *palette, NSInteger row) {
+    if ([palette isKindOfClass:MCPaletteOverlay.class]) [(MCPaletteOverlay *)palette hoverRow:row];
 }
 
 BOOL MCCommandPaletteFilesListed(NSView *palette) {

@@ -30,6 +30,18 @@
 @property(nonatomic, copy) NSString *(^typedRow)(NSString *text);
 @property(nonatomic, copy) void (^chooseTyped)(NSString *text);
 @property(nonatomic, copy) NSString *emptyText;   // when nothing matches
+// A list that shows each row as the list comes to it, as the theme picker
+// does (ThemePickerPanel.h). With `preview` set: the row of initialIndex is
+// selected while the text is empty, and the row last shown is kept
+// selected while it matches what is typed (else the best match); `preview`
+// runs with a row's index whenever the selection comes to another row, by
+// the arrow keys, by typing, or by the pointer moving over it; `cancel`
+// runs when the palette closes without a choice (Esc, a click outside,
+// the keyboard going elsewhere). The palette follows a settings change
+// while it is open, so it shows each preview's colors too.
+@property(nonatomic) NSInteger initialIndex;
+@property(nonatomic, copy) void (^preview)(NSInteger index);
+@property(nonatomic, copy) void (^cancel)(void);
 @end
 
 // mutible's own folder picker (Open Folder…, the Dock's Open Folder…), in
@@ -112,4 +124,7 @@ NSTextField *MCCommandPaletteField(NSView *palette);
 NSArray<NSString *> *MCCommandPaletteLabels(NSView *palette);
 NSArray<NSString *> *MCCommandPaletteKeys(NSView *palette);   // each row's keys, as drawn
 NSInteger MCCommandPaletteSelection(NSView *palette);
+// For tests: the pointer moved over a row (index into the labels), as a
+// mouseMoved: over the list delivers it.
+void MCCommandPaletteHoverRow(NSView *palette, NSInteger row);
 BOOL MCCommandPaletteFilesListed(NSView *palette);

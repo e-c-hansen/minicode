@@ -4,7 +4,11 @@
 // Keyboard Shortcuts' first write change the file the link names and leave
 // the link a link (a dangling one too); with settings.conf open in a tab
 // with unsaved changes, a theme is refused, the reason shows in the status
-// bar, and neither the tab nor the disk changes.
+// bar, and neither the tab nor the disk changes. The theme picker
+// (Ctrl+Cmd+T): each row the list comes to shows in the window, by the
+// arrow keys or the pointer, within a bound of main-thread CPU; Esc puts
+// the theme back and leaves the file byte for byte; Return writes the
+// theme line and keeps the file's comments.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -12,6 +16,9 @@
 #import "Appearance.h"
 #import "IdeLinkServer.h"
 #import "Keymap.h"
+#import "EditorPanes.h"
+#import "PalettePanel.h"
+#include "ThemePicker.h"
 #include <sys/stat.h>
 
 namespace {
@@ -28,6 +35,31 @@ BOOL IsLink(NSString *path) {
 NSString *StatusText(EditorController *c) {
     NSTextField *f = [c valueForKey:@"settingsLabel"];
     return f.stringValue ?: @"";
+}
+NSView *Palette(EditorController *c) { return MCCommandPaletteIn(c.window); }
+void PaletteCommand(EditorController *c, SEL sel) {
+    [(NSTextView *)MCCommandPaletteField(Palette(c)).currentEditor doCommandBySelector:sel];
+}
+// Whether a pane's color is the theme's background for that surface, as
+// drawn (opacity aside).
+BOOL IsThemeBackground(NSColor *color, const std::string &themeId, Surface surface) {
+    const Theme *t = Settings::findTheme(themeId);
+    NSColor *got = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!t || !got) return NO;
+    const Rgba want = Rgba::hex(t->background[(int)surface]);
+    const BOOL same = fabs(got.redComponent * 255 - want.r) < 1.5 &&
+                      fabs(got.greenComponent * 255 - want.g) < 1.5 &&
+                      fabs(got.blueComponent * 255 - want.b) < 1.5;
+    if (!same)
+        MCGuiNote(@"%s: wanted #%06X, the pane has %@", themeId.c_str(),
+                  t->background[(int)surface], got);
+    return same;
+}
+NSColor *EditorBackground(EditorController *c) {
+    return ((PanelScrollView *)[c valueForKey:@"editorScroll"]).panelColor;
+}
+NSColor *TreeBackground(EditorController *c) {
+    return ((PanelScrollView *)[c valueForKey:@"sidebarScroll"]).panelColor;
 }
 NSString *Dots(NSString *name) {
     return [[MCGuiScratch() stringByAppendingPathComponent:@"dots"] stringByAppendingPathComponent:name];
@@ -143,5 +175,112 @@ MC_GUI_SUITE(config_writes) {
         MCGuiWriteFile(settings, before);
         [[AppSettings shared] reload];
         GCHECK(!IsLink(settings) && [Disk(settings) isEqualToString:before]);
+    });
+
+    // ------------------------------------------------------ the theme picker
+    __block NSString *pickerFile = nil;
+    __block std::string setId, thirdId, lightId;
+    __block NSInteger start = 0;
+    MCGuiStep(@"Ctrl+Cmd+T opens the theme picker on the theme in use", ^{
+        // A window with several tabs, a highlighted one on show.
+        NSMutableString *py = [NSMutableString string];
+        for (int i = 0; i < 400; i++)
+            [py appendFormat:@"def f%d(x):\n    # a comment\n    return x + %d  # \"s\"\n", i, i];
+        MCGuiWriteFile(MCGuiProjectFile(@"src/picker.py"), py);
+        [c focusEditor:nil];
+        GCHECK([c showFile:MCGuiProjectFile(@"README.md")]);
+        GCHECK([c showFile:MCGuiProjectFile(@"big.txt")]);
+        GCHECK([c showFile:MCGuiProjectFile(@"src/picker.py")]);
+        pickerFile = [@"# the theme picker keeps this comment\n" stringByAppendingString:before];
+        MCGuiWriteFile(settings, pickerFile);
+        [[AppSettings shared] reload];
+        setId = [AppSettings shared].settings.theme().id;
+        const std::vector<ThemePicker::Row> rows = ThemePicker::rows();
+        start = ThemePicker::rowOf(rows, setId);
+        GCHECK(start >= 0);
+        thirdId = rows[(size_t)((start + 2) % (NSInteger)rows.size())].id;
+        for (const ThemePicker::Row &r : rows)
+            if (!r.dark && r.id != thirdId && r.id != setId) { lightId = r.id; break; }
+        [c.window makeFirstResponder:TV(c)];
+        GCHECK(MCGuiPerformMenuKey(c.window, 17, NSEventModifierFlagControl | NSEventModifierFlagCommand,
+                                   nil, nil));
+        GCHECK(Palette(c) != nil);
+        NSArray<NSString *> *labels = MCCommandPaletteLabels(Palette(c));
+        GCHECK(labels.count == rows.size());
+        for (NSUInteger i = 0; i < MIN(labels.count, rows.size()); i++)
+            GCHECK_EQ_STR(labels[i], @(rows[i].title.c_str()));
+        GCHECK(MCCommandPaletteSelection(Palette(c)) == start);
+        GCHECK_EQ_STR(MCCommandPaletteKeys(Palette(c)).firstObject, @"dark themes");
+        GCHECK(IsThemeBackground(EditorBackground(c), setId, Surface::Editor));
+    });
+    MCGuiStep(@"down twice shows the third theme, each step within its bound", ^{
+        double worst = 0;
+        for (int i = 0; i < 2; i++) {
+            const double c0 = MCGuiThreadCpuMs();
+            PaletteCommand(c, @selector(moveDown:));
+            worst = MAX(worst, MCGuiThreadCpuMs() - c0);
+        }
+        GCHECK_TIME(worst, 100, @"a theme preview step (main-thread CPU)");
+        GCHECK(MCCommandPaletteSelection(Palette(c)) ==
+               (start + 2) % (NSInteger)ThemePicker::rows().size());
+        GCHECK([[AppSettings shared].previewedTheme isEqualToString:@(thirdId.c_str())]);
+        GCHECK(IsThemeBackground(EditorBackground(c), thirdId, Surface::Editor));
+        GCHECK(IsThemeBackground(TreeBackground(c), thirdId, Surface::Sidebar));
+        GCHECK_EQ_STR(Disk(settings), pickerFile);
+    });
+    MCGuiStep(@"the pointer over a light theme shows it, controls and all", ^{
+        const std::vector<ThemePicker::Row> rows = ThemePicker::rows();
+        const int row = ThemePicker::rowOf(rows, lightId);
+        GCHECK(row >= 0);
+        MCCommandPaletteHoverRow(Palette(c), row);
+        GCHECK(MCCommandPaletteSelection(Palette(c)) == row);
+        GCHECK(IsThemeBackground(EditorBackground(c), lightId, Surface::Editor));
+        GCHECK([c.window.appearance.name isEqualToString:NSAppearanceNameAqua]);
+    });
+    MCGuiStep(@"Esc puts the theme back and leaves the file byte for byte", ^{
+        PaletteCommand(c, @selector(cancelOperation:));
+        GCHECK(Palette(c) == nil);
+        GCHECK([AppSettings shared].previewedTheme == nil);
+        GCHECK(std::string([AppSettings shared].settings.theme().id) == setId);
+        GCHECK(IsThemeBackground(EditorBackground(c), setId, Surface::Editor));
+        GCHECK(IsThemeBackground(TreeBackground(c), setId, Surface::Sidebar));
+        GCHECK_EQ_STR(Disk(settings), pickerFile);
+    });
+    MCGuiStep(@"View > Theme > Choose Theme…: down twice and Return", ^{
+        if (Settings::colorOverrides(pickerFile.UTF8String ?: "") > 0)
+            MCGuiAnswerAlerts(@[@(NSAlertSecondButtonReturn)]);
+        NSMenu *view = nil;
+        for (NSMenuItem *top in NSApp.mainMenu.itemArray)
+            if ([top.submenu.title isEqualToString:@"View"]) view = top.submenu;
+        NSMenuItem *choose = [[view itemWithTitle:@"Theme"].submenu itemWithTitle:@"Choose Theme…"];
+        GCHECK(choose != nil);
+        if (!choose) return;
+        [choose.menu update];
+        GCHECK(choose.isEnabled);
+        GCHECK([NSApp sendAction:choose.action to:choose.target from:choose]);
+        GCHECK(Palette(c) != nil);
+        if (!Palette(c)) return;
+        GCHECK(MCCommandPaletteSelection(Palette(c)) == start);
+        PaletteCommand(c, @selector(moveDown:));
+        PaletteCommand(c, @selector(moveDown:));
+        PaletteCommand(c, @selector(insertNewline:));
+        GCHECK(Palette(c) == nil);
+    });
+    MCGuiWait(@"the theme written", 5, ^BOOL {
+        return [Disk(settings) containsString:[NSString stringWithFormat:@"theme = %s", thirdId.c_str()]];
+    });
+    MCGuiStep(@"the file has the theme line, its comments kept, and the theme shows", ^{
+        const std::string want = Settings::withTheme(pickerFile.UTF8String ?: "", thirdId, false);
+        GCHECK_EQ_STR(Disk(settings), @(want.c_str()));
+        GCHECK([Disk(settings) hasPrefix:@"# the theme picker keeps this comment\n"]);
+        GCHECK([AppSettings shared].previewedTheme == nil);
+        GCHECK(std::string([AppSettings shared].settings.theme().id) == thirdId);
+        GCHECK(IsThemeBackground(EditorBackground(c), thirdId, Surface::Editor));
+    });
+    MCGuiStep(@"put the settings back", ^{
+        for (int i = 0; i < 3; i++) [c closeTab:Active(c) prompt:NO];
+        MCGuiWriteFile(settings, before);
+        [[AppSettings shared] reload];
+        GCHECK([Disk(settings) isEqualToString:before]);
     });
 }

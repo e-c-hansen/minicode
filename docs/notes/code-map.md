@@ -140,7 +140,8 @@ goes here first, with tests; the GUI only displays it.
   block or a few lines makes of the file), `MergeConflicts` (git's
   conflict blocks, and what keeping a side or both makes of the text).
 - `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
-  (the folder picker's paths, rows and completion), `HintsSearch.h`
+  (the folder picker's paths, rows and completion), `ThemePicker` (the
+  theme picker's list and its preview, choose and cancel), `HintsSearch.h`
   (the shortcut hints' search, header only), `WindowTitle.h` (the
   window's title: the file's path from the folder, ~ outside it, the
   terminal's or the page's title while it has the keyboard; header only), `SymbolOutline`
@@ -205,8 +206,9 @@ goes here first, with tests; the GUI only displays it.
 - `Migration` (the first launch since the rename: copies Application
   Support, ~/.config, WebKit's data and the defaults domain from
   minicode's names, once, by `Rename.h`'s rules). <!-- rename-mutible: keep -->
-- `AppSettings`, `Appearance` (Adjust Settings, Theme menu, opacity popover),
-  `Keymap`.
+- `AppSettings` (with the theme picker's preview, `previewTheme:`),
+  `Appearance` (Adjust Settings, Theme menu, opacity popover),
+  `ThemePickerPanel` (the theme picker in the palette), `Keymap`.
 - Terminal: `Terminal` (`TerminalView`, `MCPty`, the shell integration),
   `TerminalGridView`, `TerminalPanel`, `TerminalFindBar`, `RunCommand`.
 - Viewers: `Latex`, `MarkdownMath`, `MarkdownMermaid`, `MarkdownImage`, `MarkdownMedia`, `MarkdownEditPanel`,

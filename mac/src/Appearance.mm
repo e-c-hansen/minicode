@@ -258,9 +258,17 @@ void MCShowSwatchColorPanel(NSColor *color, id target, SEL action, NSView *owner
 
 NSMenu *MCThemeSubmenu(void) {
     NSMenu *m = [[NSMenu alloc] initWithTitle:@"Theme"];
+    // The picker that previews each theme (ThemePickerPanel.h), sent up the
+    // responder chain to the app delegate; its key comes from the registry.
+    // Built with the registry's default key, Ctrl+Cmd+T (workbench.action.selectTheme).
+    NSMenuItem *choose = [m addItemWithTitle:@"Choose Theme…"
+                                      action:NSSelectorFromString(@"selectColorTheme:")
+                               keyEquivalent:@"t"];
+    choose.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    [m addItem:[NSMenuItem separatorItem]];
     BOOL lastDark = YES;
     for (const Theme &t : Settings::themes()) {
-        if (!t.dark && lastDark && m.numberOfItems) [m addItem:[NSMenuItem separatorItem]];
+        if (!t.dark && lastDark && m.numberOfItems > 2) [m addItem:[NSMenuItem separatorItem]];
         lastDark = t.dark;
         NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@(t.title)
                                                       action:@selector(chooseTheme:)

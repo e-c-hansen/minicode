@@ -35,6 +35,7 @@
 #include "AutoClose.h"
 #include "CommandPalette.h"
 #include "FolderPicker.h"
+#include "ThemePicker.h"
 #include "Backups.h"
 #include "TabSessions.h"
 #include "SavePlan.h"
@@ -11783,6 +11784,7 @@ static void testMultiCaretOccurrences() {
 #include "fold_tests.inc"
 #include "previews_tests.inc"
 #include "folder_picker_tests.inc"
+#include "theme_picker_tests.inc"
 #include "commands_tests.inc"
 #include "commands_linux_tests.inc"
 #include "procs_tests.inc"
@@ -11956,6 +11958,7 @@ int main() {
     testMultiCaret();
     testCommandPalette();
     testFolderPicker();
+    testThemePicker();
     testMultiCaretOccurrences();
     testBackups();
     testTabSessions();

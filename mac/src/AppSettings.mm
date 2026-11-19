@@ -78,6 +78,7 @@ BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString 
     _text = text;
     std::vector<SettingsError> errs;
     _settings = Settings::parse(text.UTF8String ?: "", &errs);
+    [self applyPreview];
     NSMutableArray *list = [NSMutableArray array];
     for (const SettingsError &e : errs)
         [list addObject:[NSString stringWithFormat:@"line %d: %s", e.line,
@@ -85,6 +86,30 @@ BOOL MCWriteConfigFile(NSString *path, NSString *text, BOOL checkTabs, NSString 
     _errors = list;
     for (NSString *e in list) NSLog(@"Mutible settings %@", e);
     return YES;
+}
+
+// The previewed theme over the file's (Settings::setTheme).
+- (void)applyPreview {
+    if (!_previewedTheme) return;
+    if (const Theme *t = Settings::findTheme(_previewedTheme.UTF8String ?: ""))
+        _settings.setTheme(*t);
+}
+
+- (void)previewTheme:(NSString *)themeId {
+    if (themeId && !Settings::findTheme(themeId.UTF8String ?: "")) return;
+    if ((!themeId && !_previewedTheme) || [themeId isEqualToString:_previewedTheme]) return;
+    const Theme *was = &_settings.theme();
+    _previewedTheme = [themeId copy];
+    if (themeId) {
+        [self applyPreview];
+    } else {
+        // The file's own theme: parsed again from the text last applied
+        // (a few hundred lines; the errors are the same).
+        _settings = Settings::parse(_text.UTF8String ?: "");
+    }
+    if (&_settings.theme() != was)
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:MCSettingsDidChangeNotification object:self];
 }
 
 - (void)reload {

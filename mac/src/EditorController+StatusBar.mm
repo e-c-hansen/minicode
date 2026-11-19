@@ -733,7 +733,7 @@ static std::vector<HintsSearch::Field> MCHintsFields(const MCHintEntry &e) {
     [self appendHintsRow:s key:[self hk:@"workbench.action.files.saveAll"] label:@"Save all"
                     key2:[self hk:@"workbench.action.openRecent"] label2:@"Open recent folder" state:nil];
     [self appendHintsRow:s key:[self hk:@"workbench.action.closeOtherEditors"] label:@"Close other tabs"
-                    key2:nil label2:nil state:nil];
+                    key2:[self hk:@"workbench.action.selectTheme"] label2:@"Color theme" state:nil];
 
     [self appendHintsHeading:@"Navigation" to:s];
     [self appendHintsRow:s key:[self hk:@"workbench.action.showCommands"] label:@"Command palette"
