@@ -2271,7 +2271,8 @@ static void act_keep_tab(GSimpleAction*, GVariant*, gpointer userp) {
 // The browser panel hides while it has the keyboard, anywhere else the tab
 // on show closes (asking about unsaved changes first), and with no tab
 // left the window closes, so the key is never dead. In the terminal Ctrl+W
-// is the shell's (it deletes a word).
+// is the shell's (it deletes a word), unless terminal.mac-style-keys makes
+// it the Mac's Cmd+W, which closes the terminal pane with the keyboard.
 static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
     // The Problems list with the keyboard closes, as the Mac's Cmd+W.
@@ -2280,6 +2281,15 @@ static void act_close_tab(GSimpleAction*, GVariant*, gpointer userp) {
         app->layout->focusAfterClosingPanel();
         return;
     }
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    // As the Mac's closeFocusedTerminal: a program running there asks
+    // first, and the last tab hides the dock (TerminalDock::remove).
+    if (Keys::terminalMacStyle())
+        if (Terminal* t = terminalWithKeyboard(app)) {
+            app->termDock->closePane(t);
+            return;
+        }
+#endif
 #ifdef MUTIBLE_ENABLE_BROWSER
     // The agent page when it shows, else the browser's tab; the last tab
     // hides the pane (Browser::onEmpty), the keyboard to what is left.
@@ -3805,21 +3815,36 @@ static std::vector<HintRow> hintsRows(App* app) {
 
 #ifdef MUTIBLE_ENABLE_TERMINAL
     heading("In the terminal");
-    text("Plain Ctrl keys go to the program (Ctrl C,");
-    text("Ctrl W, Ctrl H...). These still work:");
-    plain("Ctrl Shift C", "Copy");
-    plain("Ctrl Shift V", "Paste");
-    plain("Ctrl click", "Open a file:line or URL");
-    plain("Ctrl Shift …", "Ctrl Shift shortcuts, but");
-    plain("", "G and Space (the shell's), and:");
-    // The commands that keep a plain Ctrl key there (Global on Linux).
-    for (const Keys::Action& a : Keys::actions()) {
-        const Commands::Command* c = Commands::find(a.id);
-        if (!c || !Commands::appliesIn(c->when, Commands::When::Terminal)) continue;
-        for (const Commands::Key& k : Keys::keymap().keysOf(c->id))
-            if (!(k.mods & (Commands::Shift | Commands::Alt)) &&
-                !Commands::linuxTerminalTakes(*c, k))
-                plain(Commands::keyLabel(k, Commands::Platform::Linux), Commands::titleOf(*c, Commands::Platform::Linux));
+    if (Keys::terminalMacStyle()) {
+        // terminal.mac-style-keys: a remapper's Cmd is Ctrl, its Ctrl Super.
+        text("Ctrl keys are shortcuts, as Cmd keys on a");
+        text("Mac. Super keys go to the program as Ctrl:");
+        plain("Super C", "Ctrl C, interrupt");
+        plain("Super W", "Ctrl W, delete a word");
+        plain("Super Alt K", "Ctrl K, as Super K");
+        plain("Ctrl C", "Copy");
+        plain("Ctrl V", "Paste");
+        plain("Ctrl A", "Select all");
+        plain("Ctrl W", "Close the terminal");
+        plain("Ctrl click", "Open a file:line or URL");
+    } else {
+        text("Plain Ctrl keys go to the program (Ctrl C,");
+        text("Ctrl W, Ctrl H...). These still work:");
+        plain("Ctrl Shift C", "Copy");
+        plain("Ctrl Shift V", "Paste");
+        plain("Ctrl click", "Open a file:line or URL");
+        plain("Ctrl Shift …", "Ctrl Shift shortcuts, but");
+        plain("", "G and Space (the shell's), and:");
+        // The commands that keep a plain Ctrl key there (Global on Linux).
+        for (const Keys::Action& a : Keys::actions()) {
+            const Commands::Command* c = Commands::find(a.id);
+            if (!c || !Commands::appliesIn(c->when, Commands::When::Terminal)) continue;
+            for (const Commands::Key& k : Keys::keymap().keysOf(c->id))
+                if (!(k.mods & (Commands::Shift | Commands::Alt)) &&
+                    !Commands::linuxTerminalTakes(*c, k))
+                    plain(Commands::keyLabel(k, Commands::Platform::Linux),
+                          Commands::titleOf(*c, Commands::Platform::Linux));
+        }
     }
 #endif
 
@@ -4137,9 +4162,11 @@ static void onSettingsChanged(void*) {
         g_simple_action_set_state(gFormatOnSaveAction,
                                   g_variant_new_boolean(g.settings->settings().formatOnSave()));
     applyStylesheet();
+    Keys::setTerminalMacStyle(g.settings->settings().terminalMacStyleKeys());   // the accelerators
     for (App* a : g.windows) {
         applyWindowSettings(a);
         if (!a->dead && a->formatOffer) a->formatOffer->settingsChanged();
+        if (!a->dead) refreshHints(a);   // the terminal's part says what Ctrl does there
     }
     scheduleBookmarkRefresh();
     refreshDockMenu();   // window.dock-menu
@@ -4386,6 +4413,7 @@ static void initShared() {
     g_object_unref(gFormatOnSaveAction);
 
     Zoom::applySettings(g.settings->settings());   // the zoom from last time, before any view
+    Keys::setTerminalMacStyle(g.settings->settings().terminalMacStyleKeys());
     Keys::init(g.gapp, onKeysChanged);
     // mutible's own writes to the settings file (a theme) wait while any
     // window's tab holds it with unsaved changes; the reason goes to the

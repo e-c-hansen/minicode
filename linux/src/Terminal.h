@@ -355,6 +355,14 @@ private:
     bool userInput_ = false;
     guint userInputIdle_ = 0;
     void userTyped();
+    // terminal.mac-style-keys: a key no accelerator took, as the Mac's
+    // Terminal would take it (Commands::linuxMacStyleKey): Ctrl+C, V and A
+    // copy, paste and select all, other Ctrl keys with a character do
+    // nothing, and Super with one sends the program that Ctrl key's byte.
+    // True when it was handled here and VTE must not see it.
+    bool macStyleKeys_ = false;
+    bool macStyleKey(guint keyval, GdkModifierType held);
+    void pasteClipboard();   // VTE's paste, the user's typing
     long long navLine_ = -1;       // the outlined command's prompt line (host's)
 
     int         controlId_ = 0;

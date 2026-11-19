@@ -18,7 +18,9 @@
 //     not the ones the program gets (Commands::linuxTerminalTakes: plain
 //     Ctrl keys and unmodified keys unless Global, VTE's copy and paste,
 //     Ctrl+Shift+G and Ctrl+Shift+Space). The Mac never needs this: its
-//     keys are on Command.
+//     keys are on Command. With terminal.mac-style-keys on (a Mac-style
+//     remapper's Cmd arrives as Ctrl), every key with Ctrl is the app's
+//     there too, but VTE's copy and paste (setTerminalMacStyle).
 //   - A page's commands (its zoom) only in a page (Place::page), where
 //     their keys outrank the editor's zoom, which has the same ones.
 //   - Elsewhere, every command but the terminal's. A Markdown-only key with
@@ -85,6 +87,12 @@ struct Place {
 };
 // Sets the accelerators for it, when it differs from the last.
 void setPlace(const Place& place);
+// terminal.mac-style-keys: in the terminal, every key with Ctrl is its
+// command's (Commands::linuxTerminalTakes with macStyle), as Cmd keys on
+// the Mac; the terminal itself sends Super keys as Ctrl (Terminal.cpp).
+// Sets the accelerators again when it changes.
+void setTerminalMacStyle(bool on);
+bool terminalMacStyle();
 // Is `focus` inside `area`, not counting a popover parented inside it?
 bool within(GtkWidget* focus, GtkWidget* area);
 

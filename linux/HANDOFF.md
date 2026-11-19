@@ -6840,3 +6840,92 @@ cursor in the terminal for dark mode does not appear to exist", and
   theme's cursor against its background, 3:1 or more, and its text
   against the cursor), `commands:linux-terminal` (readline's fifteen are
   the shell's whatever has them).
+
+### 113. Mac-style keys in the terminal, for Toshy and Kinto (terminal.mac-style-keys; November 2026)
+
+The owner types on a PC keyboard through Toshy, which in mutible's window
+(not in its `terminals` list) sends the physical Cmd-position key, beside
+the space bar, as Ctrl, and the physical Ctrl as Super (item 110). With
+#209's rule, every plain Ctrl key that is not Global goes to the shell
+while the terminal has the keyboard, so there the owner's Cmd+W deleted a
+word, Cmd+C and Cmd+V went to the shell, and their Ctrl+W typed a w. The
+owner approved an opt-in setting that makes the physical keys do what
+they do in Terminal.app.
+
+- **The setting.** `terminal.mac-style-keys` (Settings.cpp's keyTable, its
+  commented default in `defaultFileText`, `Settings::terminalMacStyleKeys`),
+  Linux only, false by default. The Mac ignores it (its keys are on
+  Command already).
+- **Ctrl is the Mac's Cmd.** `Commands::linuxTerminalTakes(c, k, macStyle)`
+  with `macStyle` gives no key with Ctrl to the terminal but VTE's own
+  Ctrl+Shift+C and V. Keys.cpp keeps the flag (`Keys::setTerminalMacStyle`,
+  set at startup before `Keys::init` and in `onSettingsChanged`, which
+  applies the accelerators again), so in the terminal every Ctrl key of a
+  command that applies there is an accelerator: Ctrl+W, F, S, P, N, O, B,
+  Q, R, T, comma, and Ctrl+Shift+G and Space too. Close Tab
+  (`act_close_tab`) with the terminal's keyboard and the setting on closes
+  that pane, as the Mac's `closeFocused:` does (`closeFocusedTerminal`): a
+  running program asks first, and the last tab leaves a fresh one and
+  hides the dock (TerminalDock::remove). With it off the menu's Close Tab
+  is as before. A key no accelerator took goes to the terminal's capture
+  controller (`Terminal::macStyleKey`, core `Commands::linuxMacStyleKey`):
+  Ctrl+C copies the selection (nothing without one), Ctrl+V pastes as
+  Ctrl+Shift+V does (`Terminal::pasteClipboard`), Ctrl+A selects all, as
+  the Mac's grid does for Cmd+C, V and A, and any other Ctrl key that
+  types a character, with Shift or Alt too, is dropped: it never reaches
+  the program. Ctrl with a key that types nothing (Ctrl+Left,
+  Ctrl+Backspace) goes on to VTE, and Ctrl+Up and Ctrl+Down still move
+  between commands.
+- **Super is the program's Ctrl.** Super with a character sends what VTE
+  sends for Ctrl with it (`Commands::terminalControlByte`) through
+  `vte_terminal_feed_child`, so it reaches the host by VTE's commit as
+  typing: every letter, Shift or not (a terminal sends one byte for Ctrl
+  and Ctrl+Shift with a letter), and readline's punctuation (Super+[ Esc,
+  Super+] ^], Super+\ ^\, Super+Shift+- ^_, Super+Space and Super+Shift+2
+  NUL, Super+Shift+6 ^^, Super+/ ^_, Super+3 to 8). Super with Alt and a
+  letter sends the same (the coordinator's addition): Toshy's general
+  keymap rewrites Super+K and Super+D (and Super+A, E, B, F, N and P, to
+  Home, End and the arrows, which readline takes the same way, so the
+  physical Ctrl+A, E, B, F, N and P never arrive as Super), and GNOME
+  grabs Super+L to lock the screen, so Toshy's keymap for VS Code's
+  terminal sends the physical Ctrl+K, D and L as Super+Alt+K, D and L; a
+  keymap of Toshy's for `ai.ible.Mutible` can do the same. Super with
+  Ctrl, or with a key that types nothing, goes on to VTE.
+- **Unchanged:** everything with the setting off, the editor and every
+  pane but the terminal with it on (the controller is on VTE's widget),
+  and the hints search box, which takes no key with Super. The hints
+  panel's "In the terminal" part says what Ctrl and Super do while it is
+  on.
+- **Docs.** `docs/REFERENCE.md`'s keys.conf paragraph (the plain Ctrl keys'
+  rule names the setting) and a new paragraph for remappers, Toshy's
+  Super+Alt keys among them; `docs/notes/terminal.md`.
+- **Checks.** `terminal_keys` keeps #209's half as it was (the setting
+  off) and adds: VTE's own bytes for Ctrl+[, ], \, @, _, ^, Space, /, 3
+  to 8, read from a raw `head` and VTE's commit, equal to
+  `terminalControlByte`'s (they were on the first run, so the table is
+  VTE's, not only xterm's); then with the setting on the hints panel's
+  terminal part, Ctrl+W, F and S as win.closetab, find and save there and
+  Ctrl+K, U, L, Z, X and D as nothing; Ctrl+K, U, L, Z, X and D pressed,
+  then Super with W, A, E, U, K, R, L, C, Z, Y, Shift+W, Alt+K, Alt+D and
+  Alt+L and with the fourteen punctuation keys, the program reading only
+  Super's bytes; Super+W at a bash prompt (`echo one two`, Super+W,
+  `three`), Super+Alt+K killing " gone", Super+C ending a `sleep 100`;
+  Ctrl+A then Ctrl+C putting the terminal's text on the clipboard, read
+  back, and Ctrl+V pasting a command that Return runs; Ctrl+W closing a
+  second terminal tab with no editor tab closed, and in the editor closing
+  its tab; the setting off again, Ctrl+W no accelerator and deleting a
+  word. The suite, `terminal_draw`, `terminal_tabs`, `terminal_splits`,
+  `keys`, `agents` and `hints_panel` pass together in one harness run
+  (`agents` printed a LEFT warning: the X focus left on a window it
+  closed, given back). Core:
+  `commands:linux-terminal` (`linuxTerminalTakes` with macStyle for the
+  Linux table's Ctrl keys, `linuxMacStyleKey` for all 26 letters with
+  Super, Shift and Alt, the punctuation, Super with Ctrl, Ctrl's Copy,
+  Paste, Select All, VTE's own Ctrl+Shift+C and V, the dropped keys and
+  the keys that pass), `settings:terminal` and `settings:default-file`
+  (the new key and its default).
+- **Needs the owner's keyboard:** the real Toshy on the ThinkPad (whether
+  its keymaps leave Super+W, C, R, U and the rest alone in mutible's
+  window, as item 110 read them, and whether its Super+Alt keymap for
+  mutible is wanted), and GNOME on Wayland, where the harness's X11 Super
+  (Mod4) cannot speak for GDK's Super mask.
