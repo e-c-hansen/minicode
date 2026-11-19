@@ -45,6 +45,7 @@
 #import "CompareView.h"
 #import "FileViewers.h"
 #include "TabSessions.h"
+#include "Backups.h"
 @class MCChangeReviewPage;
 #import "QuickLook.h"
 #import "MarkdownCode.h"
@@ -893,6 +894,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)discardBackupsAsWindowCloses;
 - (void)backupsAppWillTerminate:(NSNotification *)note;
 - (BOOL)takeBackup:(NSString *)bid intoTab:(MCTab *)t;
+// This window's name in the backups (Backups::Entry::window).
+- (NSString *)backupKey;
+- (void)restoreConflictingBackups:(const std::vector<Backups::Restore::Item> &)conflicts;
 - (void)showRestoredText:(NSString *)text base:(NSDate *)base inode:(uint64_t)inode;
 - (Settings::AutoSave)autoSaveMode;
 - (BOOL)tabTakesAutoSave:(MCTab *)t;

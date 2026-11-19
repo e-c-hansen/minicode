@@ -9,10 +9,26 @@
 // D10): one comes back and saves as UTF-16LE with its mark; the other is
 // deleted meanwhile, and its backup's record of the encoding saves it as
 // UTF-16BE again.
+//
+// In the suite's own process (round 10's workspace item 1): two windows on
+// one folder with a.txt unsaved in both, as hot exit leaves them at Quit,
+// each come back with their own text, and neither backup is deleted; a
+// window that is not one of them takes both, the other window's text as
+// "a (unsaved copy).txt" beside the file.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
+#import "BackupStore.h"
+#include "Backups.h"
+#include "TabSessions.h"
 #include <signal.h>
+
+@interface EditorController (BackupsSuite)
+- (TabSessions::Window)windowRecordNow;
+@end
+@interface NSObject (BackupsSuiteApp)
+- (EditorController *)openWindowAtPath:(NSString *)path restoring:(NSString *)record;
+@end
 
 namespace {
 NSString *Folder() { return [MCGuiScratch() stringByAppendingPathComponent:@"bk"]; }
@@ -45,6 +61,57 @@ NSData *Utf16(NSString *s, BOOL le) {
 // and its becoming key asks about b.txt's change (checked below).
 NSArray<NSString *> *Edited() {
     return @[@"d16.txt", @"e16.txt", @"a.txt", @"b.txt", @"c.txt"];
+}
+// Two windows' backups, as their Quit with hot exit wrote them.
+NSString *TwoWindows() { return [MCGuiScratch() stringByAppendingPathComponent:@"twowin"]; }
+NSString *TwoRoot() { return TwoWindows().stringByResolvingSymlinksInPath; }
+Backups::Store TestStore() {
+    Backups::Store st;
+    st.dir = MCBackupStore.shared.directory.fileSystemRepresentation;
+    st.fs = Backups::posixFs();
+    return st;
+}
+BOOL SaveBackup(NSString *bid, NSString *name, NSString *window, double age, NSString *text) {
+    Backups::Entry e;
+    e.id = bid.UTF8String;
+    e.path = [TwoRoot() stringByAppendingPathComponent:name].fileSystemRepresentation;
+    e.root = TwoRoot().fileSystemRepresentation;
+    e.window = window ? window.UTF8String : "";
+    // Based on the file as it is on disk, as an unsaved tab's backup is.
+    const Backups::Stat st = Backups::posixFs().stat(e.path);
+    e.diskExisted = st.exists;
+    e.diskMtime = st.mtime;
+    e.diskInode = st.inode;
+    e.saved = NSDate.date.timeIntervalSince1970 - age;
+    e.ownerPid = 0;   // its process is gone
+    return TestStore().save(e, text.UTF8String);
+}
+BOOL HasBackup(NSString *bid) {
+    Backups::Entry e;
+    std::string text;
+    return TestStore().load(bid.UTF8String, &e, &text);
+}
+NSString *Record(NSString *key) {
+    TabSessions::Window w;
+    w.root = TwoRoot().UTF8String;
+    w.backupKey = key.UTF8String;
+    return @(TabSessions::encodeWindows({w}).c_str());
+}
+NSArray<NSString *> *TabNames(EditorController *c) {
+    NSMutableArray *names = [NSMutableArray array];
+    for (NSString *p in [c valueForKeyPath:@"tabs.currentPath"])
+        if ([p isKindOfClass:NSString.class]) [names addObject:p.lastPathComponent];
+    return [names sortedArrayUsingSelector:@selector(compare:)];
+}
+NSString *TextOf(EditorController *c, NSString *name) {
+    if (![c showFile:[TwoRoot() stringByAppendingPathComponent:name]]) return @"(no tab)";
+    return Text(c).string;
+}
+void CloseUnasked(EditorController *c) {
+    NSArray<MCTab *> *tabs = [NSArray arrayWithArray:[c valueForKey:@"tabs"]];
+    for (MCTab *t in tabs) [c closeTab:t prompt:NO];
+    [c.window performClose:nil];
+    [MCBackupStore.shared flush];
 }
 void TypeAtStart(EditorController *c, NSString *s) {
     NSTextView *tv = Text(c);
@@ -106,6 +173,78 @@ MC_GUI_SUITE(backups) {
         if (![e isEqualToData:Utf16(@"unsaved e16.txt epsilon\n", NO)]) MCGuiNote(@"e16.txt: %@", e);
         GCHECK([d isEqualToData:Utf16(@"unsaved d16.txt delta\r\n", YES)]);
         GCHECK([e isEqualToData:Utf16(@"unsaved e16.txt epsilon\n", NO)]);
+    });
+
+    // --------------------------- two windows, one file unsaved in both
+    NSString *k1 = NSUUID.UUID.UUIDString, *k2 = NSUUID.UUID.UUIDString;
+    NSString *a1 = NSUUID.UUID.UUIDString, *b2 = NSUUID.UUID.UUIDString,
+             *c3 = NSUUID.UUID.UUIDString;
+    __block EditorController *one = nil, *two = nil;
+    MCGuiStep(@"two windows on one folder quit with a.txt unsaved in both", ^{
+        MCGuiWriteFile([TwoWindows() stringByAppendingPathComponent:@"a.txt"], @"a on disk\n");
+        MCGuiWriteFile([TwoWindows() stringByAppendingPathComponent:@"b.txt"], @"b on disk\n");
+        GCHECK(SaveBackup(a1, @"a.txt", k1, 30, @"window one's a\n"));
+        GCHECK(SaveBackup(b2, @"a.txt", k2, 20, @"window two's a\n"));   // newer
+        GCHECK(SaveBackup(c3, @"b.txt", k2, 10, @"window two's b\n"));
+    });
+    MCGuiStep(@"the first window back takes its own a.txt and leaves the second's", ^{
+        // As a launch reserves every window it brings back (windowsToRestore).
+        [MCBackupStore.shared reserveWindowKeys:@[k1, k2]];
+        one = [(NSObject *)NSApp.delegate openWindowAtPath:TwoWindows() restoring:Record(k1)];
+        MCGuiNote(@"window one: %@", TabNames(one));
+        GCHECK_EQ_STR([TabNames(one) componentsJoinedByString:@" "], @"a.txt");
+        GCHECK_EQ_STR(TextOf(one, @"a.txt"), @"window one's a\n");
+        GCHECK([[one valueForKey:@"dirty"] boolValue]);
+        GCHECK_EQ_STR([one backupKey], k1);
+        // Nothing deleted: the second window's backups wait for it.
+        GCHECK(HasBackup(a1) && HasBackup(b2) && HasBackup(c3));
+    });
+    MCGuiStep(@"the second window back takes its own a.txt and b.txt", ^{
+        two = [(NSObject *)NSApp.delegate openWindowAtPath:TwoWindows() restoring:Record(k2)];
+        MCGuiNote(@"window two: %@", TabNames(two));
+        GCHECK_EQ_STR([TabNames(two) componentsJoinedByString:@" "], @"a.txt b.txt");
+        GCHECK_EQ_STR(TextOf(two, @"a.txt"), @"window two's a\n");
+        GCHECK_EQ_STR(TextOf(two, @"b.txt"), @"window two's b\n");
+        // Each window writes its own key down for the next launch.
+        GCHECK_EQ_STR(@([two windowRecordNow].backupKey.c_str()), k2);
+        CloseUnasked(one);
+        CloseUnasked(two);
+        MCGuiSetKeyWindow(nil);
+    });
+    MCGuiWait(@"closed unasked, their backups go", 10, ^BOOL {
+        return !HasBackup(a1) && !HasBackup(b2) && !HasBackup(c3);
+    });
+    __block EditorController *any = nil;
+    NSString *d1 = NSUUID.UUID.UUIDString, *d2 = NSUUID.UUID.UUIDString;
+    MCGuiStep(@"a window that is neither takes both: the other text as a copy beside it", ^{
+        GCHECK(SaveBackup(d1, @"a.txt", k1, 30, @"window one's a\n"));
+        GCHECK(SaveBackup(d2, @"a.txt", k2, 20, @"window two's a\n"));
+        any = [(NSObject *)NSApp.delegate openWindowAtPath:TwoWindows() restoring:nil];
+        // (The folder's own session may add b.txt, closed unsaved above.)
+        MCGuiNote(@"the window: %@", TabNames(any));
+        GCHECK([TabNames(any) containsObject:@"a.txt"]);
+        GCHECK([TabNames(any) containsObject:@"a (unsaved copy).txt"]);
+        GCHECK(![TabNames(any) containsObject:@"a (unsaved copy 2).txt"]);
+        GCHECK_EQ_STR(TextOf(any, @"a.txt"), @"window two's a\n");   // the newer
+        MCTab *copy = nil;
+        for (MCTab *t in [any valueForKey:@"tabs"])
+            if ([t.currentPath.lastPathComponent isEqualToString:@"a (unsaved copy).txt"]) copy = t;
+        GCHECK(copy.dirty && copy.untitled);
+        GCHECK_EQ_STR(copy.draftOf.lastPathComponent, @"a.txt");
+        GCHECK_EQ_STR(copy.sourceText, @"window one's a\n");
+        // Never on disk until saved; its backup is kept under its new name.
+        GCHECK(![[NSFileManager defaultManager]
+            fileExistsAtPath:[TwoRoot() stringByAppendingPathComponent:@"a (unsaved copy).txt"]]);
+        Backups::Entry e;
+        std::string text;
+        GCHECK(TestStore().load(d1.UTF8String, &e, &text) && text == "window one's a\n" &&
+               [@(e.path.c_str()) hasSuffix:@"/a (unsaved copy).txt"]);
+        GCHECK(HasBackup(d2));
+        CloseUnasked(any);
+        MCGuiSetKeyWindow(nil);
+    });
+    MCGuiWait(@"closed unasked, these backups go too", 10, ^BOOL {
+        return !HasBackup(d1) && !HasBackup(d2);
     });
 }
 

@@ -26,6 +26,9 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
     // Backups a window of this process brought back: held here from then
     // on, even before the first write puts this process's name in them.
     NSMutableSet<NSString *> *_claimed;
+    // Keys of windows this launch brings back that have not yet planned
+    // (reserveWindowKeys:): their backups wait for them.
+    NSMutableSet<NSString *> *_reserved;
 }
 
 + (instancetype)shared {
@@ -52,6 +55,7 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
         _latest = [NSMutableDictionary dictionary];
         _myStart = MCProcessStart(getpid());
         _claimed = [NSMutableSet set];
+        _reserved = [NSMutableSet set];
     }
     return self;
 }
@@ -76,9 +80,10 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 }
 
 - (Backups::Entry)entryForID:(NSString *)bid path:(NSString *)path root:(NSString *)root
-                    diskDate:(NSDate *)diskDate inode:(uint64_t)inode
+                      window:(NSString *)window diskDate:(NSDate *)diskDate inode:(uint64_t)inode
                 fileEncoding:(NSString *)fileEncoding {
     Backups::Entry e;
+    e.window = U8(window ?: @"");
     e.fileEncoding = U8(fileEncoding ?: @"");
     e.id = U8(bid);
     e.path = U8(path);
@@ -107,10 +112,10 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 }
 
 - (void)writeID:(NSString *)bid path:(NSString *)path root:(NSString *)root
-       diskDate:(NSDate *)diskDate inode:(uint64_t)inode
+         window:(NSString *)window diskDate:(NSDate *)diskDate inode:(uint64_t)inode
    fileEncoding:(NSString *)fileEncoding text:(NSString *)text {
     if (!bid.length || !path) return;
-    const Backups::Entry e = [self entryForID:bid path:path root:root
+    const Backups::Entry e = [self entryForID:bid path:path root:root window:window
                                      diskDate:diskDate inode:inode fileEncoding:fileEncoding];
     NSString *copy = [text copy] ?: @"";   // immutable: safe on the queue
     const uint64_t stamp = [self stamp:bid];
@@ -125,10 +130,10 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 }
 
 - (BOOL)writeNowID:(NSString *)bid path:(NSString *)path root:(NSString *)root
-          diskDate:(NSDate *)diskDate inode:(uint64_t)inode
+            window:(NSString *)window diskDate:(NSDate *)diskDate inode:(uint64_t)inode
       fileEncoding:(NSString *)fileEncoding text:(NSString *)text {
     if (!bid.length || !path) return NO;
-    const Backups::Entry e = [self entryForID:bid path:path root:root
+    const Backups::Entry e = [self entryForID:bid path:path root:root window:window
                                      diskDate:diskDate inode:inode fileEncoding:fileEncoding];
     NSData *bytes = [text ?: @"" dataUsingEncoding:NSUTF8StringEncoding];
     if (!bytes) return NO;
@@ -151,15 +156,54 @@ static std::string U8(NSString *s) { return s.UTF8String ? s.UTF8String : ""; }
 
 - (void)flush { dispatch_sync(_queue, ^{}); }
 
+- (void)reserveWindowKeys:(NSArray<NSString *> *)keys {
+    @synchronized(_reserved) {
+        for (NSString *k in keys)
+            if (k.length) [_reserved addObject:k];
+    }
+}
+
 - (Backups::Restore)planForRoot:(NSString *)root
-                   sessionFiles:(const std::vector<std::string> &)files {
+                   sessionFiles:(const std::vector<std::string> &)files
+                         window:(NSString *)window {
     [self flush];   // this process's own writes are on disk first
-    Backups::Restore r = Backups::plan(_store.list(), U8(root), files, [self liveTest]);
-    for (const std::string &id : r.discard) _store.discard(id);
+    std::set<std::string> reserved;
+    @synchronized(_reserved) {
+        if (window) [_reserved removeObject:window];
+        for (NSString *k in _reserved) reserved.insert(U8(k));
+    }
+    // Nothing is deleted here (round 10's workspace item 1): another
+    // window's unsaved text in the same file is a conflict to show.
+    Backups::Restore r =
+        Backups::plan(_store.list(), U8(root), files, [self liveTest], U8(window ?: @""), reserved);
     @synchronized(_claimed) {
         for (const auto &item : r.items) [_claimed addObject:@(item.id.c_str())];
     }
     return r;
+}
+
+- (BOOL)moveID:(NSString *)bid toPath:(NSString *)path window:(NSString *)window {
+    if (!bid.length || !path.length) return NO;
+    __block BOOL ok = NO;
+    [self stamp:bid];   // nothing queued for it may land after
+    dispatch_sync(_queue, ^{
+        Backups::Entry e;
+        std::string text;
+        if (!self->_store.load(U8(bid), &e, &text)) return;
+        e.path = U8(path);
+        e.window = U8(window ?: @"");
+        // A buffer with no file yet (an untitled one): it saves to its path.
+        e.diskExisted = false;
+        e.diskMtime = 0;
+        e.diskInode = 0;
+        e.ownerPid = getpid();
+        e.ownerStart = self->_myStart;
+        ok = self->_store.save(e, text);
+    });
+    if (ok) {
+        @synchronized(_claimed) { [_claimed addObject:bid]; }
+    }
+    return ok;
 }
 
 - (BOOL)loadID:(NSString *)bid entry:(Backups::Entry *)entry text:(NSString **)text {

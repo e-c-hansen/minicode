@@ -1,6 +1,7 @@
 // SaveSuite.mm — saving and the disk (`make guitest SUITES=save`): the one
 // writer behind Cmd+S, a background tab's save and auto-save (symlinks kept,
-// a UTF-8 byte order mark kept, viewers without text never written), a read
+// a UTF-8 byte order mark kept, a UTF-8 file with a stray byte kept byte for
+// byte, viewers without text never written), a read
 // that fails never marking old text as the disk's, reloads of clean tabs as
 // one undoable step (on show and in the background, and a file deleted and
 // made again), auto-save's guards (composing text, a change the date
@@ -160,6 +161,33 @@ MC_GUI_SUITE(save) {
         Type(c, @"o", 0);
         [c saveCurrentFile:nil];
         GCHECK([Bytes(F(@"other.txt")) isEqualToData:Utf8(@"oother\n")]);
+    });
+
+    // -------------------------------------------- UTF-8 with a stray byte
+    // Round 10's workspace item 2: one Latin-1 byte in a UTF-8 file opened
+    // the whole file as Windows-1252 ("naÃ¯ve"), and a save after an arrow
+    // wrote every character encoded twice. Now it is UTF-8, the stray byte
+    // kept as it was (FolderSearch::readsAsUtf8WithStrayBytes).
+    MCGuiStep(@"a UTF-8 file with a stray byte opens as UTF-8 and saves byte for byte", ^{
+        EditorController *c = MCGuiController();
+        const char raw[] = "na\xC3\xAFve caf\xC3\xA9\nno-break \xA0 space\n";
+        NSData *file = [NSData dataWithBytes:raw length:sizeof raw - 1];
+        GCHECK([file writeToFile:F(@"stray.txt") atomically:YES]);
+        GCHECK([c showFile:F(@"stray.txt")]);
+        GCHECK([TV(c).string hasPrefix:@"na\u00EFve caf\u00E9\nno-break "]);
+        GCHECK(Active(c).encoding == MCTextEncodingUtf8Raw);
+        GCHECK_EQ_STR([[c valueForKey:@"encodingLabel"] stringValue], @"UTF-8, bad bytes kept");
+        [c saveCurrentFile:nil];   // unedited
+        GCHECK([Bytes(F(@"stray.txt")) isEqualToData:file]);
+        Type(c, @"\u2192 ", 0);   // an arrow, which Windows-1252 lacks
+        [c saveCurrentFile:nil];
+        NSMutableData *want = [Utf8(@"\u2192 ") mutableCopy];
+        [want appendData:file];
+        if (![Bytes(F(@"stray.txt")) isEqualToData:want]) MCGuiNote(@"wrote %@", Bytes(F(@"stray.txt")));
+        GCHECK([Bytes(F(@"stray.txt")) isEqualToData:want]);
+        GCHECK(Active(c).encoding == MCTextEncodingUtf8Raw);
+        GCHECK(![[c valueForKey:@"dirty"] boolValue]);
+        GCHECK([c closeTab:Active(c) prompt:NO]);
     });
 
     // ------------------------------------------------- viewers without text

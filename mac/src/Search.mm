@@ -86,6 +86,17 @@ static BOOL MCReadsAsWindows1252(const std::string &path) {
     return FolderSearch::readsAsWindows1252(bytes);
 }
 
+// Mostly UTF-8, with a few stray bytes (FolderSearch::readsAsUtf8WithStrayBytes),
+// which Replace in Folder leaves alone too.
+static BOOL MCReadsAsUtf8WithStrayBytes(const std::string &path) {
+    std::string bytes;
+    FolderSearch::FileStamp st;
+    if (FolderSearch::readFileStable(path, FolderSearchOptions().maxFileSize, &bytes, &st) !=
+        FolderSearch::ReadStatus::Ok)
+        return NO;
+    return FolderSearch::readsAsUtf8WithStrayBytes(bytes);
+}
+
 // Replace in Folder rewrites a file whole in memory, so it leaves a file
 // over FolderSearch's whole-read size alone (the search still finds its
 // matches): "1 MB".
@@ -1687,6 +1698,10 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
                     [failed addObject:[NSString stringWithFormat:
                                 @"%@ is not UTF-8 (read as Windows-1252), which Replace in "
                                  "Folder leaves alone", path.lastPathComponent]];
+                else if (MCReadsAsUtf8WithStrayBytes(p))
+                    [failed addObject:[NSString stringWithFormat:
+                                @"%@ has bytes that are not UTF-8, which Replace in Folder "
+                                 "leaves alone", path.lastPathComponent]];
                 else
                     [failed addObject:[NSString stringWithFormat:@"%@ could not be read as text",
                                                                  path.lastPathComponent]];
