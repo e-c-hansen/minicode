@@ -429,7 +429,7 @@ void LspSession::referencesArrived(const Json& result, const Json& error, int ge
         }
         lspgtk::PickerRow heading;
         heading.heading = true;
-        heading.markup = "<b>" + escape(name) + "</b>  <span foreground=\"#9CA3AF\">" +
+        heading.markup = "<b>" + escape(name) + "</b>  <span fgalpha=\"70%\">" +
                          escape(folder) + (folder.empty() ? "" : "  ") +
                          std::to_string(f.ranges.size()) + "</span>";
         rows.push_back(heading);
@@ -446,7 +446,7 @@ void LspSession::referencesArrived(const Json& result, const Json& error, int ge
                                  : line.size();
             char number[16];
             g_snprintf(number, sizeof number, "%5d  ", r.start.line + 1);
-            std::string markup = "<span foreground=\"#9CA3AF\">" + std::string(number) + "</span>";
+            std::string markup = "<span fgalpha=\"70%\">" + std::string(number) + "</span>";
             if (b > a && a >= indent) {
                 markup += escape(Lsp::toUtf8(line.substr(indent, a - indent))) +
                           "<span background=\"#1F4E79\" foreground=\"#FFFFFF\">" +
@@ -567,7 +567,7 @@ void LspSession::showQuickFixes() {
             lspgtk::PickerRow row;
             row.markup = escape(a.title);
             if (!kind.empty())
-                row.markup += "   <span foreground=\"#9CA3AF\">" + escape(kind) + "</span>";
+                row.markup += "   <span fgalpha=\"70%\">" + escape(kind) + "</span>";
             rows.push_back(row);
         }
         act_->actions = actions;

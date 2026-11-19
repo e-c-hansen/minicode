@@ -135,6 +135,8 @@ test:
 	    ../src/TermLinks.cpp src/TermLinkPath.cpp \
 	    ../src/GitStatus.cpp ../src/GitGraph.cpp ../src/GitModel.cpp \
 	    src/WebImageRules.cpp src/LaunchOptions.cpp src/EnvLock.cpp src/MigrationLinux.cpp \
+	    ../src/FindRules.cpp ../src/EditSpans.cpp ../src/MultiCaret.cpp \
+	    ../src/TextFind.cpp ../src/Regex.cpp \
 	    $(shell pkg-config --cflags --libs gio-2.0) -pthread \
 	    -o $(TEST_BIN)
 	@$(TEST_BIN)

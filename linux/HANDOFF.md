@@ -7501,3 +7501,91 @@ whose stat parse now carries the session id, so it follows the core.
   Ctrl+W, mac-style, closed the window; the next wait read a null dock and
   the run crashed. The step now presses Ctrl+W only while the terminal
   has the keyboard.
+
+### 119. Tree drags reach the terminal and the editor; the server's popups in the theme's colors; edit boxes keep their typing through an app switch (the Mac's #212 and #223; November 2026)
+
+The Mac fixed four things in #212 and #223 with no core parts. Each was
+first checked on GTK with a new GUI check, run against the code before the
+change; GTK had all four.
+
+- **Tree rows dropped on the terminal and the editor** (`tree_drags`, real
+  XTest drags in the harness's Xvfb, so GTK's drag source and the XDND
+  exchange both run). Before: nothing reached the terminal (VTE's GTK 4
+  build has no drop target of its own), and a file dropped on the editor
+  typed its path into the text (GtkTextView's own drop target, as item 13
+  said). Now `Terminal::dropped` (a GtkDropTarget on the VTE widget, a
+  GdkFileList or a string, Copy, Move or Link) types each path quoted as
+  the Mac's terminal does (the core's `TermDrop::paths`: backslashes, a
+  space after each) as a paste, and the terminal takes the keyboard; the
+  check reads `.../drags/a\ b\'s.txt X` back after typing X. On the
+  editor, a capture-phase drop target ahead of the text view's
+  (`Editor::openDropped`) opens each file through the link handler (a tab
+  of its own, as VS Code does) and shows a dropped folder in the tree;
+  dropped text is still the view's to insert.
+- **The language server's popups** (`lsp_popups`, dark-modern and
+  light-modern, each popup's drawn background against the theme's).
+  Before: the hover box, the completion list, the signature hint and the
+  references list were #181818 on both themes (the themes want #202020
+  and #F8F8F8), from fixed CSS in `Lsp.cpp` and `LspPicker.cpp`. Now
+  `ThemeCss.cpp` styles them from `FindRules::palette` (what the find bar
+  reads): editorWidget.background, its border and foreground, the
+  selection for a list's selected row, input.* and focusBorder for the
+  rename field; muted text in their markup is the label's own color at
+  70% (`fgalpha`), and the signature's active parameter is VS Code's list
+  highlight by the theme's darkness. `Lsp.cpp` and `LspPicker.cpp` keep
+  only the layout.
+- **The rename field over the name** (`lsp_popups`). Before: under the
+  name's line, over the next. Now no arrow, the box as wide as the field
+  (a popover is centered on the rectangle it points at, so the box starts
+  where the name does, less the field's 5-pixel inset), its top just above
+  the line, in the editor's font, the old name selected.
+- **Edit boxes through an app switch** (`lsp_popups` for the rename field,
+  `edit_boxes` for the Markdown page's block editor and the tree's name
+  box). Before: switching apps closed each box and its typing went, and
+  the block editor said "Enter saves" with a Save button that only
+  applied the edit. Trap: an autohide popover closes when another program
+  takes the keyboard: on X11 GDK grabs the pointer and keyboard for it, so
+  the click on the other program's window is its outside click (and under
+  the grab the window does not even go inactive), and on Wayland the
+  compositor dismisses a grabbing popup. `PopoverKeep::install`
+  (`PopoverKeep.h`) makes the three not autohide and watches presses in
+  their window while they show: a press outside calls the box's own answer
+  (the rename fields cancel, the block editor applies its draft) from an
+  idle, and the press goes on. Escape still closes them. The block editor
+  now says "Enter applies, Shift+Enter for a new line", its button is
+  Apply, Escape and Cancel are the only ways to drop a draft, and
+  `Editor::commitPageEdit` applies one before a tab leaves (`stash`), the
+  page turns to its source, Ctrl+S, Save All, closing a tab or the window
+  (before the unsaved question) and quitting. Closed with the keyboard in
+  it, it gives the keyboard back to the page (left in the hidden box, the
+  next double-click selected the line instead of opening it).
+- **The harness**: `MCGuiFocusElsewhere()` switches apps as a hand does
+  with the mouse: a click on a 10-pixel window of the harness's own, on a
+  second X connection, in the screen's far corner, then the X focus given
+  to it. `XSetInputFocus(None)` alone left the window active here.
+- **Mac-only, not ported**: ClickOutline's drag detection (GTK's click
+  acts on release and its drag starts past the threshold, item 13),
+  pictures with no file of their own dropped on the terminal (saved as a
+  PNG in Mutible-drop), promised files, the paste question for dropped
+  text (GTK's terminal asks none for a paste either), and the two-group
+  double-click (the other group shows no rendered page on GTK).
+- **Not checked**: a row dragged onto a folder row of the tree itself. The
+  harness's drag, two rows up the same list, never landed (neither moved
+  nor copied), before this change as after it; item 13 checked it with
+  xdotool in Docker. A real drag, Alt+Tab under GNOME (X11 and Wayland)
+  with each box open, and the popups' look need the owner's eyes.
+- **Numbers** (2026-11-19, this ThinkPad, cores 4 to 7): before the
+  change `tree_drags` failed 8 checks, `lsp_popups` 19 (the colors on
+  both themes, the field's place, the field lost in the switch) and
+  `edit_boxes` 16. After it, alone: `tree_drags` 9 passed, `lsp_popups`
+  43 passed. With tree_clicks, tree_focus, tree_edits, terminal_tabs,
+  themes, notes, lsp_actions, signature_help, completion_keys,
+  second_server and markdown_side_edit: 681 passed, 7 failed. **Left
+  open**: `edit_boxes`' third block editor (after one closed by Escape,
+  the next double-click on the same paragraph selects its line and opens
+  nothing; the same before the change, and giving the page the keyboard
+  back on close did not cure it) fails 4; `lsp_popups`' pixel inside the
+  rename field fell outside the box once in the long run (it passed
+  alone); `themes`' "the keyboard back where it was" failed once in the
+  long run, not looked into. `meson test --no-suite gui` and `make test`
+  (349) pass.

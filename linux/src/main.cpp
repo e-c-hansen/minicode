@@ -628,6 +628,7 @@ static const char* kLostDetail = "Your changes will be lost if you don't save th
 static void closeTabAsking(App* app, Document* d, std::function<void(bool)> done = nullptr) {
     auto finish = [done](bool closed) { if (done) done(closed); };
     if (app->dead || !d || !app->editor->isOpen(d)) { finish(false); return; }
+    app->editor->commitPageEdit();   // a draft is asked about with the tab's text
     // With auto-save on, what it would write once the tab goes is written
     // first, so it is not asked about.
     if (d->dirty()) app->persist->autoSaveNow();
@@ -1205,6 +1206,9 @@ static void openFolder(App* app, const std::string& dir) {
 // dealt with.
 static gboolean onCloseRequest(GtkWindow*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+    // A draft in the page's block editor is applied before the question
+    // about unsaved changes (Editor::commitPageEdit, #223).
+    if (!app->closing) app->editor->commitPageEdit();
     if (app->closing || !app->editor->anyDirty()) {
         // The window really is closing: stop its language servers
         // (shutdown, exit, then signals if they linger).
@@ -1284,6 +1288,7 @@ static void act_open(GSimpleAction*, GVariant*, gpointer userp) {
 
 static void act_save(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+    app->editor->commitPageEdit();   // Ctrl+S applies the block editor's draft, then saves it
     // With the LaTeX preview on show, the files it read that have unsaved
     // changes are saved with the document, so the page shows them.
     app->editor->saveLatexInputs([app](Document* d) { return saveDocument(app, d); });
@@ -2152,7 +2157,10 @@ static void act_quit(GSimpleAction*, GVariant*, gpointer) {
     // quit with two windows on one folder reopens the files of both, as on
     // the Mac (windows closing one by one would leave only the last one's).
     for (App* a : open)
-        if (!a->dead) a->persist->saveSession();
+        if (!a->dead) {
+            a->editor->commitPageEdit();   // kept, as an unsaved change (#223)
+            a->persist->saveSession();
+        }
     saveOpenWindows();   // and every window, for the next launch that opens nothing
     g.quitting = true;
     for (App* a : open)
@@ -2403,6 +2411,7 @@ static void act_reopen_tab(GSimpleAction*, GVariant*, gpointer userp) {
 // fails stops it, with the reason shown.
 static void act_save_all(GSimpleAction*, GVariant*, gpointer userp) {
     App* app = static_cast<App*>(userp);
+    app->editor->commitPageEdit();
     const std::vector<Document*> dirty = app->editor->dirtyDocuments();
     if (dirty.empty()) {
         gtk_widget_error_bell(app->window);

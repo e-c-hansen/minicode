@@ -16,6 +16,7 @@
 // under the "standard::file" attribute, as GtkDirectoryList's did; we read it
 // back with g_file_info_get_attribute_object().
 #include "FileTree.h"
+#include "PopoverKeep.h"
 #include "Palette.h"
 #include "FileDetails.h"
 #include "FileSniff.h"
@@ -1745,6 +1746,14 @@ void FileTree::askName(const std::string& prompt, const std::string& initial,
     gtk_popover_set_child(GTK_POPOVER(pop), box);
     gtk_popover_set_position(GTK_POPOVER(pop), GTK_POS_BOTTOM);
     gtk_widget_set_parent(pop, listView_);
+    // Kept through an app switch with what was typed (#223, PopoverKeep.h);
+    // a click elsewhere in the window cancels, as Escape does.
+    PopoverKeep::install(pop, [pop] { gtk_popover_popdown(GTK_POPOVER(pop)); });
+    // Not autohide, it is not given the keyboard by GTK: the field takes it
+    // once on screen, keeping the selection made below.
+    g_signal_connect(pop, "map", G_CALLBACK(+[](GtkWidget*, gpointer entryp) {
+        gtk_entry_grab_focus_without_selecting(GTK_ENTRY(entryp));
+    }), entry);
 
     // Under the selected row when it is on screen, else at the top of the tree.
     graphene_rect_t b;

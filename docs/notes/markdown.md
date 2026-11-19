@@ -241,6 +241,17 @@ found through that list.
   Offscreen the popover never shows, so `markdown_page` checks the
   behavior, posts the app's resign and become-active notifications, and
   calls `popoverWillClose:` by hand.
+  **GTK** (2026-11-19, linux/HANDOFF.md item 119, `edit_boxes`): the
+  block editor says "Enter applies, Shift+Enter for a new line" and has
+  Apply; it is not autohide (`PopoverKeep.h`: an autohide popover closes
+  on an app switch, on X11 because the click on the other program is its
+  grab's outside click), so an app switch keeps it and its draft; a press
+  elsewhere in the window applies the draft, as do `Editor::stash` (a tab
+  leaving), the page turned to its source, Ctrl+S, Save All, closing a tab
+  or the window and quitting (`Editor::commitPageEdit`, before any
+  question); Escape and Cancel drop it. The other group shows no rendered page
+  on GTK (it names the file until clicked, `Groups.cpp`), so the Mac's
+  two-group double-click change has no counterpart.
 - **Pictures**: `MCMarkdownImage` attachments with `MCAnimatedImageCell` (sized
   to the line; a GIF's timer runs only while on screen). An `<img>`'s width
   and height (`MdRun::width`/`height`, `MdLength`: CSS pixels or a percent of

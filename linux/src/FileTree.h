@@ -225,6 +225,8 @@ public:
     // entry holding `initial`. Enter calls `cb` with the trimmed text; Escape,
     // a click elsewhere or an empty entry cancels.
     void askName(const std::string& prompt, const std::string& initial, NameCb cb);
+    // askName's popover while it is up, else null (for the checks).
+    GtkWidget* namePopover() const { return namePopover_; }
 
 private:
     GListModel* makeDirModel(GFile* dir, bool root = false);   // one folder, sorted, then filtered

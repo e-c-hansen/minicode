@@ -19,20 +19,12 @@ void installCss() {
     static bool done = false;
     if (done || !gdk_display_get_default()) return;
     done = true;
+    // Only the layout: the colors follow the theme (ThemeCss.cpp, #212).
     std::string css =
-        "popover.minicode-completion > contents, popover.minicode-hover > contents {"
-        "  background-color: " + std::string(pal::SidebarBg) + ";"
-        "  color: " + pal::EditorText + ";"
-        "  border: 1px solid #454545; border-radius: 4px; padding: 0; }"
         "popover.minicode-completion list { background: transparent; }"
         "popover.minicode-completion row { padding: 1px 8px; min-height: 0;"
         "  font-family: monospace; }"
-        "popover.minicode-completion row:selected { background-color: #04395E; }"
         "popover.minicode-hover label { font-family: monospace; padding: 8px 10px; }"
-        "popover.minicode-signature > contents {"
-        "  background-color: " + std::string(pal::SidebarBg) + ";"
-        "  color: " + pal::EditorText + ";"
-        "  border: 1px solid #454545; border-radius: 4px; padding: 0; }"
         "popover.minicode-signature label { padding: 4px 8px; }";
     GtkCssProvider* p = gtk_css_provider_new();
     gtk_css_provider_load_from_string(p, css.c_str());

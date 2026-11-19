@@ -471,6 +471,30 @@ void drag(int ax, int ay, int bx, int by, int clicksBefore, Window window) {
 
 bool MCGuiInputPending() { return gPendingGestures > 0; }
 
+// As a hand switches apps with the mouse: a click on another program's
+// window, then the X focus given to it, as a window manager gives it. The
+// window is the harness's own, on a connection of its own (a client other
+// than the app), in the screen's far corner where no window of the app is
+// (the screen is 2560x1600). An autohide popover's grab (GDK's, on X11)
+// takes that click, as it takes a real one, and the popover closes; a
+// compositor dismisses a grabbing popup the same way on Wayland.
+void MCGuiFocusElsewhere() {
+    Display* d = LaterDpy();
+    static Window other = 0;
+    const int x = DisplayWidth(d, DefaultScreen(d)) - 12, y = DisplayHeight(d, DefaultScreen(d)) - 12;
+    if (!other) {
+        XSetWindowAttributes a{};
+        a.override_redirect = True;
+        other = XCreateWindow(d, DefaultRootWindow(d), x, y, 10, 10, 0, CopyFromParent, InputOutput,
+                              CopyFromParent, CWOverrideRedirect, &a);
+        XMapRaised(d, other);
+        XSync(d, False);
+    }
+    clickAt(x + 5, y + 5);
+    XSetInputFocus(d, other, RevertToParent, CurrentTime);
+    XSync(d, False);
+}
+
 void MCGuiClicks(GtkWidget* widget, double x, double y, int count) {
     int rx = 0, ry = 0;
     if (!widget || !pointOnRoot(widget, x, y, &rx, &ry)) {

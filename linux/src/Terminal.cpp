@@ -19,6 +19,7 @@
 #include "TerminalAttention.h"
 #include "TerminalExit.h"
 #include "TerminalFrame.h"
+#include "TermDrop.h"
 #include "TermLinkPath.h"
 #include "TermLinks.h"
 #include "ThemeCss.h"
@@ -459,6 +460,23 @@ void Terminal::makeTerminal() {
     }), this);
     gtk_widget_add_controller(vte_, motion);
     handlers_.push_back(G_OBJECT(motion));
+
+    // Files dropped here, from the tree or a file manager, type their paths
+    // as the Mac's terminal does (TermDrop.h: each quoted with backslashes,
+    // a space after each), and dropped text goes in as it is; both as a
+    // paste, so a program that asked for brackets (Claude Code) reads one
+    // paste. VTE's GTK 4 build takes no drops of its own. The tree offers
+    // Move and Copy (a move only onto its own folders); Copy is taken here.
+    GtkDropTarget* drop = gtk_drop_target_new(G_TYPE_INVALID,
+        (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK));
+    GType dropTypes[] = {GDK_TYPE_FILE_LIST, G_TYPE_STRING};
+    gtk_drop_target_set_gtypes(drop, dropTypes, G_N_ELEMENTS(dropTypes));
+    g_signal_connect(drop, "drop", G_CALLBACK(+[](GtkDropTarget*, const GValue* value, double,
+                                                   double, gpointer p) -> gboolean {
+        return static_cast<Terminal*>(p)->dropped(value);
+    }), this);
+    gtk_widget_add_controller(vte_, GTK_EVENT_CONTROLLER(drop));
+    handlers_.push_back(G_OBJECT(drop));
 
     // New output, or scrolling, can move text under a pointer that has not
     // moved. Only looked at while Ctrl is down or a link is showing, so
@@ -1275,6 +1293,29 @@ void Terminal::pasteClipboard() {
     // the user's now.
     userTyped();
     vte_terminal_paste_clipboard(VTE_TERMINAL(vte_));
+}
+
+bool Terminal::dropped(const GValue* value) {
+    if (!vte_ || !value) return false;
+    std::string text;
+    if (G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) {
+        std::vector<std::string> paths;
+        GSList* files = gdk_file_list_get_files((GdkFileList*)g_value_get_boxed(value));
+        for (GSList* l = files; l; l = l->next) {   // the list is ours, the files not
+            char* p = g_file_get_path(G_FILE(l->data));
+            if (p) paths.emplace_back(p);
+            g_free(p);
+        }
+        g_slist_free(files);
+        text = TermDrop::paths(paths);
+    } else if (G_VALUE_HOLDS(value, G_TYPE_STRING) && g_value_get_string(value)) {
+        text = g_value_get_string(value);
+    }
+    if (text.empty()) return false;
+    gtk_widget_grab_focus(vte_);   // the terminal under the pointer
+    userTyped();
+    vte_terminal_paste_text(VTE_TERMINAL(vte_), text.c_str());
+    return true;
 }
 
 bool Terminal::macStyleKey(guint keyval, GdkModifierType held) {

@@ -248,6 +248,12 @@ void MCGuiSetKeyWindow(GtkWindow* window);   // null: the newest
 GtkWindow* MCGuiKeyWindow();
 GtkWindow* MCGuiPinnedKeyWindow();   // MCGuiSetKeyWindow's, while still mapped; else null
 void MCGuiFocusKeyWindow();
+// Another program takes the keyboard, as switching apps with the mouse
+// does: a click where no window of the app is, then the X focus to none of
+// them, so GTK's is-active goes false (Input.cpp says what an autohide
+// popover's grab makes of it). The next key, or MCGuiFocusKeyWindow, gives
+// it back.
+void MCGuiFocusElsewhere();
 // A chord in the registry's notation (src/Commands.h): "ctrl+s",
 // "ctrl+shift+p", "alt+shift+f", "f2", "enter", "ctrl+`". Modifiers are held
 // around the key as a finger would. A key that needs Shift on the layout

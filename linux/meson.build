@@ -559,7 +559,10 @@ port_tests = executable('mutible-linux-tests',
   core_dir / 'GitStatus.cpp',
   core_dir / 'GitGraph.cpp', 'src/TermLinkPath.cpp', core_dir / 'GitModel.cpp',
   'src/WebImageRules.cpp', 'src/LaunchOptions.cpp', 'src/EnvLock.cpp',
-  'src/MigrationLinux.cpp'],
+  'src/MigrationLinux.cpp',
+  # ThemeCss's popups read the find bar's palette (FindRules).
+  core_dir / 'FindRules.cpp', core_dir / 'EditSpans.cpp', core_dir / 'MultiCaret.cpp',
+  core_dir / 'TextFind.cpp', core_dir / 'Regex.cpp'],
   include_directories : inc,
   dependencies : [dependency('gio-2.0'), dependency('threads')],
   install : false)
