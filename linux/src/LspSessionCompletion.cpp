@@ -396,7 +396,7 @@ void LspSession::showList(int select, const GtkTextIter* at) {
         g_free(l);
         if (!item.detail.empty()) {
             char* d = g_markup_escape_text(item.detail.c_str(), -1);
-            markup += std::string("   <span foreground=\"#9CA3AF\">") + d + "</span>";
+            markup += std::string("   <span fgalpha=\"70%\">") + d + "</span>";
             g_free(d);
         }
         GtkWidget* label = gtk_label_new(nullptr);

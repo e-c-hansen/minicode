@@ -430,6 +430,16 @@ found through that list.
   and the keyboard moves to the next row only once the row is out; and the
   tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or
   the tree goes to the next tab's file.
+- **Rows dragged out of the tree on GTK** (2026-11-19, linux/HANDOFF.md
+  item 120, the Mac's #212): the row's GdkFileList (Move and Copy) dropped
+  on the terminal types its path as the Mac's does (`Terminal::dropped`,
+  TermDrop::paths, as a paste; VTE's GTK 4 build takes no drops), and on
+  the editor's text opens the file in a tab of its own, a folder shown in
+  the tree (`Editor::openDropped` through the link handler; a capture-phase
+  drop target ahead of GtkTextView's, which typed the path). Checked by
+  `tree_drags` with real XTest drags. The tree's name box (Rename, New
+  File) keeps its typing through an app switch (`PopoverKeep.h`, checked
+  by `edit_boxes`).
 
 ## Traps
 

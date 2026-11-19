@@ -382,6 +382,9 @@ private:
     bool macStyleKeys_ = false;
     bool macStyleKey(guint keyval, GdkModifierType held);
     void pasteClipboard();   // VTE's paste, the user's typing
+    // A drop's value (a GdkFileList or a string), pasted as the user's;
+    // false when there is nothing to type.
+    bool dropped(const GValue* value);
     long long navLine_ = -1;       // the outlined command's prompt line (host's)
 
     int         controlId_ = 0;

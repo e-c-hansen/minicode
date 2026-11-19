@@ -129,7 +129,13 @@ void LspSession::signatureArrived(const Json& result, int gen, const std::string
     }
     std::string markup, text;
     if (pb > pa) {
-        markup = escaped(label.substr(0, pa)) + "<b><span foreground=\"#4EA1F7\">" +
+        // VS Code's list highlight, by the theme's darkness as the editor's
+        // text color tells it (light text, a dark theme).
+        GdkRGBA fg;
+        gtk_widget_get_color(view_, &fg);
+        const bool dark = 0.299 * fg.red + 0.587 * fg.green + 0.114 * fg.blue > 0.5;
+        markup = escaped(label.substr(0, pa)) + "<b><span foreground=\"" +
+                 std::string(dark ? "#2AAAFF" : "#0066BF") + "\">" +
                  escaped(label.substr(pa, pb - pa)) + "</span></b>" + escaped(label.substr(pb));
     } else {
         markup = escaped(label);
@@ -138,7 +144,7 @@ void LspSession::signatureArrived(const Json& result, int gen, const std::string
     if (help.signatures.size() > 1) {
         const std::string count = "   " + std::to_string(help.activeSignature + 1) + " of " +
                                   std::to_string(help.signatures.size());
-        markup += "<span foreground=\"#9CA3AF\" size=\"small\">" + escaped(count) + "</span>";
+        markup += "<span fgalpha=\"70%\" size=\"small\">" + escaped(count) + "</span>";
         text += count;
     }
     std::string doc;
@@ -147,7 +153,7 @@ void LspSession::signatureArrived(const Json& result, int gen, const std::string
     else if (!sig.documentation.empty())
         doc = firstParagraph(sig.documentation);
     if (!doc.empty()) {
-        markup += "\n<span foreground=\"#9CA3AF\" size=\"small\">" + escaped(doc) + "</span>";
+        markup += "\n<span fgalpha=\"70%\" size=\"small\">" + escaped(doc) + "</span>";
         text += "\n" + doc;
     }
     if (!sig_->popover) {
