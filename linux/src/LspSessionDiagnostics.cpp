@@ -139,9 +139,11 @@ std::vector<std::pair<size_t, size_t>> LspSession::problemMarks(uint64_t* genera
 // its text as it is now.
 void LspSession::paintDiagnostics() {
     clearMarks();
-    if (!buffer_ || uri_.empty()) return;
+    // A server's file, or JSON the editor checks itself (LspSessionJsonCheck.cpp).
+    const std::string& uri = shownUri();
+    if (!buffer_ || uri.empty()) return;
     const std::vector<const Lsp::DiagnosticStore::Set*> sets =
-        diag_->store.forUri(lspui::canonicalUri(uri_));
+        diag_->store.forUri(lspui::canonicalUri(uri));
     if (sets.empty()) return;
     const std::u16string now = utf16::fromUtf8(lspui::bufferText(buffer_));
     const std::vector<Lsp::MergedSpan> spans = Lsp::mergedDiagnosticSpans(sets, now);

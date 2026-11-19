@@ -225,7 +225,18 @@ found through that list.
   Code does. zoomfit checks the x of each continuation against the first
   non-blank glyph, the three modes, the fallback, a click and a copy, and
   the CPU of a space typed into a wrapped line's indentation in 20,000
-  lines.
+  lines. **Linux** (2026-11-19, `linux/src/WrapIndentTags.{h,cpp}`,
+  HANDOFF item 114): GtkTextView has no per-fragment hook, so each source
+  line with leading blanks and text after them carries one tag of the
+  shared table, `mutible-wrap-<columns>` (tabs to Pango's 8-column stops),
+  whose negative `indent` is a hanging indent; the tags' pixels come from
+  `WrapIndent::continuationIndent` for the mode, a space in the view's
+  font and the view's room (`Editor::updateWrapIndent`, after an
+  allocation or a zoom, in an idle), so a zoom or resize changes tags, not
+  lines. An edit retags only the lines it touched (none when the leading
+  width is unchanged); opening a file tags the lines on screen at once and
+  the rest in 5 ms idle slices; large-file mode and none tag nothing.
+  The GTK suite word_wrap checks it.
 - **Maximize Pane** (Ctrl+Cmd+M; VS Code's is a Cmd+K chord): `_maximizedPane`
   in relayoutRightArea shows only that pane; showing or focusing another
   (`leaveMaximizedPaneFor:`) ends it.
@@ -385,7 +396,17 @@ found through that list.
   AppKit's own moves (paragraph start or end, then single steps from the
   nearer of head and line start, `extendSoleFrom:`), since a selection set
   outright makes AppKit extend from its start: Shift+Home then Shift+Right
-  must give a character back.
+  must give a character back. **Linux** (2026-11-19, HANDOFF item 114):
+  GTK's own Home and End went to the display line's start and end (no
+  first non-blank); `Carets::onMoveCursor` now takes
+  `GTK_MOVEMENT_DISPLAY_LINE_ENDS` at one caret or several
+  (`Carets::homeOrEnd`, the same core calls), a row being GTK's display
+  line (`Carets::rowAt`: `gtk_text_view_backward_display_line_start` to the
+  next one's start). GtkTextBuffer keeps the anchor itself, so Shift needs
+  none of the Mac's head-finding. A long line shown a part at a time
+  follows the caret (`LongLines::followCaret`). `cursorHome` and the rest
+  are Linux rows (home, end, with Shift), listed, not actions;
+  `./build/mutible-guitest editor_keys` checks them.
 - **Words** (2026-11-08; a double-click on `arr` in `arr.size` took both,
   AppKit's UAX 29 words keeping a period between letters): in source text
   every word rule is `MultiCaret`'s `charClass`, VS Code's default

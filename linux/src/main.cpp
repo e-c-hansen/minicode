@@ -3826,6 +3826,8 @@ static std::vector<HintRow> hintsRows(App* app) {
     row("editor.action.copyLinesUpAction", "Copy line up");
     row("cursorTop", "Start of the file");
     row("cursorBottom", "End of the file");
+    row("cursorHome", "Start of the line");
+    row("cursorEnd", "End of the line (Shift selects)");
 
     heading("Navigation");
     row("workbench.action.showCommands", "Command palette");
@@ -5112,8 +5114,10 @@ static App* newWindow(const std::string& root, const std::string& file,
     Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
     app->zoomListener = Zoom::listen([app](const std::string& what) {
         if (app->dead) return;
-        if (what == "editor") Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
-        else if (what == "terminal") applyTerminalZoom(app);
+        if (what == "editor") {
+            Zoom::scaleTags(gtk_text_buffer_get_tag_table(app->editor->buffer()));
+            app->editor->wrapIndentGeometryChanged();   // a space's width, once restyled
+        } else if (what == "terminal") applyTerminalZoom(app);
         else if (what == "wrap") app->editor->applyWordWrap();
         refreshHints(app);
     });

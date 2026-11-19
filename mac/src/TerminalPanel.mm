@@ -273,6 +273,11 @@ static const int kResizeCells = 4;
         if (s.onOpenLink) s.onOpenLink(link);
     };
     t.onTitleChange = ^{ [weakSelf reloadStrip]; };
+    // `exit` closes it (terminal.close-on-exit): nothing is left to ask about.
+    t.onShellExit = ^(TerminalView *ended) {
+        MCTerminalPanel *s = weakSelf;
+        if (s && [s.terminals containsObject:ended]) [s removeTerminal:ended];
+    };
     // At the back, so the bars between panes stay above the terminals and
     // take the clicks in their grab areas.
     [self addSubview:t positioned:NSWindowBelow relativeTo:nil];

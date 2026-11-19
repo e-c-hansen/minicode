@@ -158,7 +158,7 @@ found through that list.
   (Toggle Terminal, Toggle Browser) from there shows and focuses its pane,
   as VS Code's toggles hide only the focused view. The key monitor runs
   Global keys (Ctrl+`) for those windows too (`MCKeymapHandleGlobalKeyDown`).
-- **The same on Linux** (2026-11-19, `linux/HANDOFF.md` item 117,
+- **The same on Linux** (2026-11-19, `linux/HANDOFF.md` item 116,
   `linux/src/Search.cpp`). Enter in the replace field is `fieldReturn`,
   what Enter in the query does (search, or into the results when they
   answer the query; GTK's query did that before #210); Replace All is the

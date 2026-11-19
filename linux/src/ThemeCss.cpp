@@ -129,6 +129,23 @@ std::string stylesheet(const Settings& s) {
            "; box-shadow: inset 0 2px #4EA1F7; }";
     css += ".minicode-tab.active label { color: " + fg(Surface::Editor) + "; }";
     css += ".minicode-tab.preview .minicode-tab-title { font-style: italic; }";
+    // The folders after a title that tell same-named files apart, as the
+    // Mac draws them: a point smaller, at 0.55 of the title's color.
+    css += ".minicode-tab-hint { font-size: 92%; opacity: 0.55; }";
+    // A row of tabs that scrolls (TabStrip.h): its cut-off ends fade into
+    // the strip, and a thin bar shows where the view is while the pointer
+    // is over it, in the inactive titles' color as on the Mac.
+    {
+        Rgba strip = s.background(Surface::Sidebar), clear = s.background(Surface::Sidebar);
+        clear.a = 0;
+        css += ".minicode-tabs-fade-left { background-image: linear-gradient(to right, " +
+               cssColor(strip) + ", " + cssColor(clear) + "); }";
+        css += ".minicode-tabs-fade-right { background-image: linear-gradient(to left, " +
+               cssColor(strip) + ", " + cssColor(clear) + "); }";
+        Rgba bar = dim;
+        bar.a *= 0.45 / 0.7;
+        css += ".minicode-tabs-bar { background-color: " + cssColor(bar) + "; border-radius: 2px; }";
+    }
     css += ".minicode-tab-close { min-width: 16px; padding: 0 2px; border-radius: 3px; }";
     css += ".minicode-tab-close:hover { background-color: " + std::string(dark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.10)") + "; }";
     // Images and PDFs sit on the editor's background, in the editor's slot.

@@ -299,10 +299,14 @@ gui_sources = [
   # (LspSessionSemantic.cpp), painted by each document (SemanticColors.cpp).
   'src/LspSessionSemantic.cpp',
   'src/SemanticColors.cpp',
+  # Wrapped lines keep their indentation (#214, editor.wrapping-indent).
+  'src/WrapIndentTags.cpp',
   # Symbols for the palette's "@" and "#" (LspSessionSymbols.cpp), and the
   # server's folding ranges (LspSessionFolding.cpp).
   'src/LspSessionSymbols.cpp',
   'src/LspSessionFolding.cpp',
+  # JSON no server checks, checked by the editor itself (#213).
+  'src/LspSessionJsonCheck.cpp',
   'src/MediaView.cpp',
   # PdfView.cpp is #ifdef-guarded like Terminal.cpp and Browser.cpp, and so
   # are the LaTeX preview's two files, which need poppler too.

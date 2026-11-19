@@ -1218,6 +1218,8 @@ const std::vector<Settings::KeyRule>& Settings::keyTable() {
                return boolValue(v, s.terminalMacStyleKeys_, e);),
         MC_KEY("terminal.activate-venv", Word, false,
                return boolValue(v, s.terminalActivateVenv_, e);),
+        MC_KEY("terminal.close-on-exit", Word, false,
+               return boolValue(v, s.terminalCloseOnExit_, e);),
         MC_KEY("terminal.multiline-paste-warning", Word, false,
                const std::string w = lower(v);
                if (w != "auto" && w != "always" && w != "never") {
@@ -1905,6 +1907,11 @@ const char* Settings::defaultFileText() {
 # folder's choice, python.interpreter, or the folder's own .venv once you
 # allow it for the language servers), when it is a virtual environment.
 # terminal.activate-venv = true
+# exit, or Ctrl+D at an empty prompt, closes the terminal (the dock goes
+# with the last one). off leaves it saying Process exited until Return
+# starts a new shell. A shell that was killed or crashed always stays, with
+# the signal, until Return (macOS).
+# terminal.close-on-exit = on
 # Pasting several lines asks first: auto when the program running has not
 # said it takes pasted lines as text (zsh's prompt does; cat and an older
 # REPL do not, and run each line as it arrives), always, or never.

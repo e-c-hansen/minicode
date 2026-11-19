@@ -63,6 +63,7 @@
 
 class BracketColors;
 class SemanticColors;
+class WrapIndentTags;
 namespace Lsp {
 struct SemanticSpan;
 }
@@ -409,6 +410,12 @@ public:
     void paintSemanticOnScreen();
     // editor.semantic-highlighting turned off: every semantic color goes.
     void semanticSettingChanged();
+    // Wrapped lines keep their indentation (WrapIndentTags.h): its lines
+    // are kept tagged while it is source text, editor.wrapping-indent is
+    // not none, and it is not a large file with its features off. Asked
+    // again whenever one of those may have changed.
+    WrapIndentTags* wrapIndent() const { return wrap_.get(); }
+    void wrapIndentSettingChanged();
     // Its folds (Folds.h, PARITY.md 1.10): the regions, the closed folds and
     // their tag, made with the buffer.
     DocumentFolds* folds() const { return folds_.get(); }
@@ -643,6 +650,7 @@ private:
     std::unique_ptr<BracketColors> brackets_;
     std::unique_ptr<SemanticColors> semantic_;
     std::unique_ptr<DocumentFolds> folds_;
+    std::unique_ptr<WrapIndentTags> wrap_;
 
     int   tasksDone_ = 0, tasksTotal_ = 0;
     guint taskTimer_ = 0;

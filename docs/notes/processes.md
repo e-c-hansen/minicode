@@ -10,7 +10,15 @@ found through that list.
   (the table, then per process cwd, command line, footprint, CPU time,
   listening TCP ports) and keys processes by (pid, start time). Tracked:
   descendants of terminal shells (the shells themselves not), kept with
-  their origin after re-parenting to launchd, and their children; the
+  their origin after re-parenting to launchd, and their children; a
+  process already re-parented when a look first sees it (`( server & )`,
+  nohup and disown just before `exit`) by its session (`Basic::sid`:
+  `getsid` on the Mac, /proc's stat on Linux), since the pty's shell leads
+  the session everything started in it keeps unless it calls setsid: each
+  terminal's shell is remembered (`shellsSeen_`, pid and start time) while
+  anything is left in its session, so a server whose shell exited is an
+  orphan of that terminal, and a shell pid used again is forgotten
+  (round 9, A4: such a server was "not started here"); the
   user's processes outside mutible's own tree (language servers, git and
   shells are in it) whose cwd is in an open window's folder ("not started
   here", dropped when the cwd leaves). The command line is read again when
@@ -58,7 +66,12 @@ found through that list.
   `MCFindProgram`, else `nc -lk`) in its own terminal, disowns it, closes
   the terminal, stops the orphan; a sleep for Stop's question; a server
   started by `sh` that exits at once (launchd its parent) for "not started
-  here"; times five looks with at least 200 processes. Trap: in `sh -c 'cd
+  here"; times five looks with at least 200 processes. Then a server
+  detached with `( server & )` in a terminal of its own, launchd's at once:
+  under that terminal, then an orphan once `exit` closes the terminal,
+  never "not started here", with the terminal's pty in mutible and again
+  on the session's host (the suite turns editor.session-host on and puts
+  the settings back). Trap: in `sh -c 'cd
   d && prog &'` the `&` takes the whole list, so a subshell holds the
   pipes and is the parent; write `cd d || exit; prog &`.
 

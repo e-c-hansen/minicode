@@ -290,9 +290,9 @@ bool Carets::keyPressed(guint key, GdkModifierType mods) {
 }
 
 // The moves GTK's key bindings make: at every caret while there are
-// several; with one, only the word moves (VS Code's words) and Ctrl+Up and
-// Ctrl+Down (a line's scroll), in source text. A Markdown page, a message
-// or the welcome text keep GTK's.
+// several; with one, only the word moves (VS Code's words), Home and End
+// (VS Code's, homeOrEnd) and Ctrl+Up and Ctrl+Down (a line's scroll), in
+// source text. A Markdown page, a message or the welcome text keep GTK's.
 void Carets::onMoveCursor(GtkTextView* v, GtkMovementStep step, int count, gboolean extend,
                           gpointer p) {
     Carets* self = static_cast<Carets*>(p);
@@ -301,6 +301,12 @@ void Carets::onMoveCursor(GtkTextView* v, GtkMovementStep step, int count, gbool
     if (step == GTK_MOVEMENT_PARAGRAPHS) {
         if (extend) return;
         self->scrollLines(count);
+        g_signal_stop_emission_by_name(v, "move-cursor");
+        return;
+    }
+    // Home and End: GTK's bindings move to a display line's ends.
+    if (step == GTK_MOVEMENT_DISPLAY_LINE_ENDS) {
+        self->homeOrEnd(dir > 0, extend);
         g_signal_stop_emission_by_name(v, "move-cursor");
         return;
     }
@@ -321,7 +327,6 @@ void Carets::onMoveCursor(GtkTextView* v, GtkMovementStep step, int count, gbool
     case GTK_MOVEMENT_DISPLAY_LINES:
         for (int i = 0; i < n; i++) self->moveVertically(dir, extend);
         break;
-    case GTK_MOVEMENT_DISPLAY_LINE_ENDS:
     case GTK_MOVEMENT_PARAGRAPH_ENDS:
         self->moveAll(dir > 0 ? Move::LineEnd : Move::LineStart, extend);
         break;

@@ -7082,7 +7082,216 @@ they do in Terminal.app.
   mutible is wanted), and GNOME on Wayland, where the harness's X11 Super
   (Mod4) cannot speak for GDK's Super mask.
 
-### 117. Find in Folder: Enter never replaces, the panes take the keyboard, dismissed rows stay out of Replace All (the Mac's #210; November 2026)
+### 114. Home and End as VS Code's, JSON errors in Problems, and wrapped lines keeping their indentation (November 2026)
+
+The Mac's #213 and #214 brought to GTK with the same core calls
+(`MultiCaret::homeTarget`, `endTarget`, `homeCarets`, `endCarets`;
+`JsonOutline::checksAsJson`, `problems`, `allowsComments`;
+`WrapIndent::leadingColumns`, `continuationIndent`; none of their logic
+copied).
+
+- **Home and End.** Before, GTK's own: Home and End went to the display
+  line's start and end, so Home never stopped at the first non-blank
+  character. Now `Carets::onMoveCursor` takes
+  `GTK_MOVEMENT_DISPLAY_LINE_ENDS` (Home, End, the keypad's, with Shift)
+  in source text at one caret or several (`Carets::homeOrEnd`): Home to
+  the first non-blank character, then the line's start, then back; End to
+  the line's end; on a wrapped line End goes to the row's end first
+  (before the space it broke at, so the caret is drawn on that row) and
+  Home on a later row to its start first. A row is GTK's display line
+  (`Carets::rowAt`: `gtk_text_view_backward_display_line_start`, then
+  `forward_display_line` for the next one's start); not wrapping, the
+  whole line. GtkTextBuffer keeps the anchor itself (the selection bound),
+  so Shift needs none of the Mac's head-finding: Shift+Home then
+  Shift+Right gives a character back. A Markdown page, a message or the
+  welcome text keep GTK's. The registry's `cursorHome`, `cursorHomeSelect`,
+  `cursorEnd` and `cursorEndSelect` are Linux rows (home, shift+home, end,
+  shift+end), listed, not actions, like Ctrl+Home; the hints panel has
+  "Start of the line" and "End of the line (Shift selects)", and
+  REFERENCE.md's Linux column the keys.
+- **Trap: a long line read in blocks.** The core reads the text through
+  `MultiCaret::Text`, which asked `CaretText::text()` for 1,024-character
+  blocks; each block's `gtk_text_buffer_get_iter_at_offset` found its place
+  in a 5 MB line from the line's start, so End there took 49 s of CPU
+  (large_file's stall check). `CaretText::textNear(offsets)` reads the
+  carets' lines whole, once each, and serves the core's blocks from them:
+  92 ms for that End now (the bound is 250). `moveAll` (the arrows, and End
+  at several carets before this item) still reads through `text()`.
+- **JSON in Problems** (`LspSessionJsonCheck.cpp`, the Mac's
+  Lsp+JsonCheck.mm): a file `JsonOutline::checksAsJson` names that no
+  server has (`server_` and `alsoServer_` null, which servers off
+  includes) is parsed on a detached thread when it comes on show
+  (`documentChanged`) and 0.3 s after typing (`textEdited`); the answer
+  comes back through `lspui::afterMs` under `life_` and a generation, and
+  goes into the diagnostics store as the list of a server of its own,
+  `mutible.json`, source "json". Painting and F8 use `shownUri()` (the
+  server's URI, else the check's), `problemsKnown` holds while a file is
+  checked (so a valid one says "No problems"), `tabsChanged` drops the
+  lists of files no tab has, and a server taking the file erases the
+  editor's list. Over 8 MB: no check. JSON with comments (tsconfig.json,
+  .jsonc, .vscode's files) allows comments and trailing commas.
+- **Wrapped lines keep their indentation** (`WrapIndentTags.{h,cpp}`,
+  `editor.wrapping-indent`): GtkTextView has nothing like TextKit's line
+  fragment rects, but a paragraph's `indent` taken negative is a hanging
+  indent. Each source line with leading spaces or tabs and something after
+  them carries one tag of the shared tag table, `mutible-wrap-<columns>`
+  (columns by `WrapIndent::leadingColumns`, tabs to Pango's 8-column
+  stops), over the whole line and its break, so alike neighbours join up.
+  Each tag's pixels are `-continuationIndent(columns × space, mode, 4 ×
+  space, room)`, set by `WrapIndentTable::configure` from
+  `Editor::updateWrapIndent` (the setting through `applySettings`; a space
+  measured as the ruler measures, in the view's font, only while it shows
+  source; the room the text window less its margins), run in an idle after
+  each allocation (`CodeView::onAllocated`) and after a zoom; only tags
+  whose pixels change are set, so a zoom or a resize past the half-room
+  fall back re-lays lines out, and typing never does. `WrapIndentTags` (one
+  a document) retags the lines an edit touched, in the buffer's
+  `insert-text` and `delete-range` after-handlers: a space typed into the
+  indentation took 0.02 to 0.03 ms of CPU there in a file of 20,000
+  wrapped lines, and nothing changes when the leading width stays (the
+  line's first character's tags are read with `gtk_text_iter_get_tags`;
+  only they count, as GTK takes a paragraph's attributes from there). More
+  than 1,000 lines (a file opening, a big paste) get the lines on screen
+  at once and the rest in idle slices of 5 ms, the waiting range carried
+  through edits (`noteLines`). A paste from another buffer brings its
+  tags; `apply-tag` refuses wrap tags from anyone else, as the
+  highlighter's. On only for text, not in large-file mode (no wrapping
+  there) and not with none, decided in `Document::wrapIndentSettingChanged`
+  (from `startHighlighting`, so each load, rename and large-file switch,
+  and from `Editor::applySettings`); tags left from before keep 0 px with
+  none. Nothing reaches the text, its undo, a copy or a server. Left: the
+  first source file shown after the welcome text may draw one frame with
+  0 px (the space is measured in an idle once the view's font is the
+  source's).
+- **The CSV grid's menu keys** (#214's other half): the Mac's grid
+  swallowed every menu key; GTK's never did (its key controller takes only
+  Ctrl+Z and Ctrl+Y, and the window's accelerators run), now checked.
+- **Checks**: `editor_keys` (new, EditorKeysSuite.cpp: Home and End
+  first and second presses, End Left Left, Shift with Shift+Right and
+  Shift+End past the anchor, two carets plain and with Shift, and a
+  wrapped line's rows: End to the first row's end, drawn on that row, then
+  the line's end; Home on the second row to its start, then the line's;
+  Shift+End to the row's end; two carets on two rows); `problems` (a
+  package.json with a trailing comma: one error drawn on the comma, the
+  list's rows "# package.json — 1 error | E 3:21 Trailing comma [json]",
+  the status bar's "1 error"; Delete takes it away, "No problems"; typed
+  back, back; tsconfig.json's comment and trailing comma none; its tab
+  closed, gone); `word_wrap` (the continuations of an 8-space line and a
+  tab line at the first non-blank character's x by
+  `gtk_text_view_get_iter_location`, none at the edge, indent 4 spaces
+  further in, a space typed into the indentation moving them, a line
+  indented past half the pane at the edge, and 20,000 such lines settled
+  in idle time with a typed space's retag bounded at 2 ms of CPU);
+  `csv_table` (Ctrl+Shift+P in the grid opens the palette). The core's
+  `commands:linux-defaults` checks the four rows.
+
+### 115. Tabs: whole names and a scrolling row, as VS Code's tabSizing "fit" (November 2026)
+
+The Mac's #211 brought to GTK with the same core calls
+(`EditorTabs::tabNames` through `Model::Window::tabNames`, `layoutStrip`,
+`clampScroll`, `revealScroll`, `wheelScroll`, `dragAutoScroll`,
+`clipped`, `fitName` and its `fitMiddle`; none of their logic copied).
+
+- **What a user meets.** A tab keeps its natural width, its whole title,
+  80 to 320 pixels, and is never squeezed: before this, every title had a
+  30-character cap and Pango's middle ellipsis. Only a title wider than
+  the widest tab is cut, in the middle ("a_rather_long_modul…_their_
+  summaries.py"). A row wider than the strip scrolls sideways by the wheel,
+  vertical too, or a touchpad, with a thin bar along the bottom while the
+  pointer is over it and fades over the cut-off ends; the tab on show
+  comes into view whenever it is another tab (a new active index, a row of
+  another length, its title or path changed by a preview replaced) and
+  when the strip gets a new width, never for an unsaved-changes dot. Files
+  of one name show the name and, after it, smaller and dimmed, the
+  folders that tell them apart ("index.ts app", "index.ts lib"), where
+  "one/README.md" was one label. A tab still drags along its row, and
+  held near either end the row scrolls under it each frame. The terminal
+  dock's and the browser's strips are the same class and behave the same;
+  their titles have no hints.
+- **Code.** `linux/src/TabStrip.{h,cpp}`: the scrolled window and its
+  inner box are gone. The tabs are children of `row_`, a GtkBox whose
+  layout is a `gtk_custom_layout_new` (as `Groups.cpp`'s), clipped
+  (`GTK_OVERFLOW_HIDDEN`), asking no width and only its natural height as
+  the scroller did. `rowAllocate` places each tab at `layoutStrip`'s x
+  less the scroll, at its width, then the two fades and the bar, which
+  never take a click (`gtk_widget_set_child_visible` by `clipped` and the
+  pointer). A tab's natural width is GTK's measure of its box less its
+  names box (`chrome`: padding, the gap, the close button) plus its whole
+  title and hint measured with Pango in each label's own font (the CSS's
+  italics and sizes), so it never depends on what the labels show cut, and
+  `fitTitles` puts `fitName`'s result in the labels in `setItems`, and
+  again from an idle when a layout finds the fonts changed since
+  (`tabs.font-size`, a strip not yet on screen). The tabs are measured
+  only when GTK asked the row's size again (`rowMeasure` marks it), never
+  for a scroll. The wheel is a `GtkEventControllerScroll` on the row,
+  both axes, its deltas negated (GTK's point the way the view goes, the
+  core's the way the content goes), a notch 48 pixels, a touchpad's
+  pixels as they are where GDK says they are pixels
+  (`GDK_SCROLL_UNIT_SURFACE`, Wayland; X11 gives a touchpad fractional
+  notches); over a row that fits it lets the event go.
+  A capture-phase motion controller on the row sees a held tab's pointer
+  (the tab's click gesture keeps the drag) and starts a tick callback
+  scrolling by `dragAutoScroll` (28 pixels from an end, 14 a frame). The
+  press and release places are the tab's left edge in the whole row plus
+  the pointer's x in the tab, so a row scrolled meanwhile drops right
+  (`dropIndex` over the core's widths, not the allocations). Each tab is
+  a names box (the title, then the hint with a 5 pixel margin, on one
+  baseline) and the close label; the names box expands, so at 80 pixels
+  the close button stays at the right end. `Tabs.cpp`'s `refreshStrip`
+  and `Groups.cpp`'s `refreshMirror` take `tabNames` (a diff keeps its
+  title); `ThemeCss.cpp` adds `.minicode-tab-hint` (92%, opacity 0.55),
+  the fades in the strip's color and the bar in the sidebar text's at
+  0.45. Checks read `displayedTitle`, `displayedHint`, `hintWidget`,
+  `rowWidget`, `tabLeft`, `tabWidth`, `contentWidth` and `scrollOffset`
+  (as last laid out: read right after a title changed, it can be the old
+  layout's, even past the end).
+- **Trap: a reveal waiting for its frame undid a wheel.** `setItems`
+  only marks the reveal; the layout does it. In `browser_tabs` (two runs
+  in eight) the page's title came in, so the active tab's title changed,
+  and the wheel clicks arrived before the next frame: they scrolled the
+  row, and the layout after them revealed the active tab again, back at
+  the end. `settle()` now does the layout's pending work (measuring anew
+  if GTK has not, the reveal) before a wheel, a drag's press and each
+  auto-scroll frame, so the user's scroll goes on from where the row is
+  about to be. `tab_strip` sends Alt+1 and two wheel clicks in one step
+  and wants the row two notches from its start; with `settle` emptied it
+  failed three runs in three, and it passed eight browser_tabs runs in
+  eight after.
+- **The old strip squeezed.** The scrolled window gave its row the
+  view's width whenever the tabs' smallest widths (an ellipsis each) fit,
+  so its tabs shrank instead of scrolling, and `browser_tabs` clicked the
+  first tab and dragged it onto the last with five tabs in a 378 pixel
+  pane. They are 88 pixels each now, a row of 440 scrolled to the last;
+  the suite wheels the row back to its start before clicking the first,
+  and drags it by holding it at the strip's right end until the row has
+  scrolled to its end, then letting go.
+- **Checks.** `tab_strip` (TabStripSuite.cpp, 130 checks): seventeen
+  files (the Mac's fifteen, a.c and a 75-character name) in an 851 pixel
+  strip, a row of 2116; every title whole but the long one, which keeps
+  its first and last eight bytes around "…", and no label ellipsized by
+  Pango; widths 80 (a.c) to 320 (the long one), end to end, each where
+  GTK allocated it; the last tab in view at the row's end with the left
+  fade only; Alt+1 back to 0 with the right fade only, Ctrl+Page Up to
+  the end again; two wheel clicks up 96 pixels with the bar and both fades
+  and nothing chosen, one down 48; typing in a tab scrolled half out of
+  view put its dot there without moving the row, undone; the index.ts
+  tabs' hints, after the title, 12.3 pt to its 13.3; summary.py dragged
+  past config.json; a tab held at the strip's right end scrolling the row
+  to its end and dropped last; Alt+1 with two wheel clicks at once (the
+  trap above). With the reveal taken out 14 checks failed; with a reveal
+  on every `setItems`, the dot's. `tabs` now also checks the README.md
+  tabs' name and hint, and `browser_tabs` scrolls its row (above). With
+  `tabs`, `preview_tabs`, `tab_viewers`,
+  `split_editor`, `sessions`, `window_title`, `go_back`, `terminal_tabs`,
+  `terminal_splits`, `layout`, `adjust_settings`, `backups`,
+  `browser_tabs`, `themes`, `compare` and `owner_reports` passing. The
+  core's `tabs:names`, `tabs:strip-widths`, `tabs:strip-scroll` and
+  `tabs:fit-title` groups of `make test` are the Mac's.
+- **Needs a person:** a real touchpad's feel (its smooth deltas go in as
+  pixels, with no kinetic glide after the fingers lift, as the Mac's
+  strip) and a real wheel's notch size on the owner's mouse.
+
+### 116. Find in Folder: Enter never replaces, the panes take the keyboard, dismissed rows stay out of Replace All (the Mac's #210; November 2026)
 
 On the Mac (1.6.3) a walker's `python3 -m pytest -q` and Enter landed in
 the Search window's replace field, where Enter was Replace All, and a file

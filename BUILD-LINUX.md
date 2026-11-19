@@ -937,7 +937,16 @@ Verified by running it:
   Don't Save, and Save each did their part; a window with two dirty tabs
   asked once. Ctrl Alt Shift T reopened tabs newest first with their caret
   and scroll, and skipped a removed file; Ctrl Alt S saved every dirty tab;
-  two README.md files were labelled by folder. The tab menu's Close Tabs to
+  two README.md files were labelled by folder (the name, then the folder
+  dimmed after it, since item 115). The `tab_strip` suite (2026-11-19)
+  opened seventeen files in an 851 pixel strip: every title whole but one
+  past the widest tab, cut in the middle; widths 80 to 320 where GTK
+  allocated them; the row scrolled, with the tab on show in view after
+  opening, Alt 1 and Ctrl Page Up; two wheel clicks moved it 96 pixels and
+  chose nothing; a dot left it where it was; two index.ts tabs showed
+  "app" and "lib" smaller after the name; a drag still reordered, and a
+  drag held at the right end scrolled the row to its end and dropped the
+  tab last. The tab menu's Close Tabs to
   the Right, Close Other Tabs, and Copy Path did their part, and a middle
   click on a tab or its close button closed it. A single click in the tree or Find in
   Folder opens a preview tab (italic) that the next replaces; a double
@@ -1606,6 +1615,13 @@ that are files, databases made with the C API) on Xvfb. The details are in
   yourself, start Claude Code in two terminal tabs and a split, and see the
   dot (" ●") and the done mark (" ✓") on the right tab, Next Waiting Terminal
   landing on it, and `mutible state` listing each terminal with its own id.
+- [ ] Home, End and wrapped indentation (`linux/HANDOFF.md` item 114): in
+  an indented Python line, Home twice and back, End, Shift+Home, with a
+  real keyboard (a laptop's Fn+arrows too); on a wrapped line, End goes to
+  the row's end first. A long indented line, wrapped, goes on under its
+  first character; say how it looks as the window is resized and zoomed
+  (Ctrl+= and Ctrl+-), with editor.wrapping-indent = indent and none. A
+  package.json with a trailing comma shows a red squiggle and one problem.
 
 ### Sessions and losing work
 
