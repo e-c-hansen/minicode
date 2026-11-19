@@ -7,9 +7,11 @@
 // panel no taller than the window's room that scrolls to its last row. The
 // keys are symbols (⇧ ⌘ ⏎), not words.
 // Its search box takes every key without Command or Control while it
-// shows (never the editor or the key monitor), marks what it finds, dims
-// the rest, matches keys by name ("shift+cmd+h"), and Esc clears it, then
-// closes the panel, the keyboard going back to the editor.
+// shows (never the editor or the key monitor), marks what it finds, puts
+// the matches first under their headings and the rest after them, dimmed,
+// in as many columns, matches keys by name ("shift+cmd+h"), and Esc clears
+// it, the list back as it was, then closes the panel, the keyboard going
+// back to the editor.
 //
 // `make guitest SUITES=markdown_width`: a rendered Markdown page's lines
 // keep to markdown.max-width at the zoom, centered in a wider pane, its
@@ -136,6 +138,25 @@ BOOL Dimmed(NSTextView *tv, NSString *what) {
     if (r.location == NSNotFound) return NO;
     return [tv.textStorage attribute:MCHintsDimmedAttribute atIndex:r.location
                       effectiveRange:NULL] != nil;
+}
+
+// Each line of `text`: whether it holds a mark (found) or a dimmed run.
+void LineMarks(NSAttributedString *text, NSMutableArray<NSString *> *lines,
+               NSMutableArray<NSNumber *> *found, NSMutableArray<NSNumber *> *dimmed) {
+    NSString *s = text.string;
+    [s enumerateSubstringsInRange:NSMakeRange(0, s.length) options:NSStringEnumerationByLines
+                       usingBlock:^(NSString *line, NSRange r, NSRange, BOOL *) {
+        __block BOOL f = NO, d = NO;
+        if (r.length) {
+            [text enumerateAttribute:MCHintsMatchAttribute inRange:r options:0
+                          usingBlock:^(id v, NSRange, BOOL *) { if (v) f = YES; }];
+            [text enumerateAttribute:MCHintsDimmedAttribute inRange:r options:0
+                          usingBlock:^(id v, NSRange, BOOL *) { if (v) d = YES; }];
+        }
+        [lines addObject:line];
+        [found addObject:@(f)];
+        [dimmed addObject:@(d)];
+    }];
 }
 
 NSUInteger DimmedCount(NSTextView *tv) {
@@ -308,10 +329,9 @@ MC_GUI_SUITE(hints_panel) {
         GCHECK(![c hintsPanelTakesKeyDown:Key(c.window, kVK_F2, NSEventModifierFlagFunction,
                                               [NSString stringWithCharacters:&f2 length:1])]);
     });
-    MCGuiStep(@"what the box finds is marked, the rest dimmed, the layout kept", ^{
+    MCGuiStep(@"what the box finds is marked, the rest dimmed, as many columns", ^{
         MCHintsSearchBox *box = c.hintsSearchBox;
         NSTextView *tv = [c valueForKey:@"hintsTextView"];
-        NSString *before = [tv.string copy];
         TypeInBox(box, @"SAVE");
         GCHECK([box.query isEqualToString:@"SAVE"]);
         NSArray *found = Found(tv);
@@ -322,7 +342,7 @@ MC_GUI_SUITE(hints_panel) {
         GCHECK(Dimmed(tv, @"Undo"));
         GCHECK(Dimmed(tv, @"TABS"));   // a heading with nothing found under it
         GCHECK(!Dimmed(tv, @"EDITING"));
-        GCHECK([tv.string isEqualToString:before]);   // nothing hidden, nothing moved
+        GCHECK([tv.string containsString:@"Undo"]);   // nothing hidden
         CheckHints(c, @"search_save", columnsAt1400);
         // Keys by name and as combinations, modifiers in any order.
         TypeInBox(box, @"cmd+shift+h");
@@ -334,7 +354,6 @@ MC_GUI_SUITE(hints_panel) {
         TypeInBox(box, @"shift+cmd+h");
         GCHECK([Found(tv) containsObject:@"⇧⌘H"]);
         GCHECK(!Dimmed(tv, @"Hide these hints"));
-        GCHECK([tv.string isEqualToString:before]);
         // Return by name finds ⏎ (Open file, in the tree, and Insert line below's ⌘⏎).
         TypeInBox(box, @"return");
         found = Found(tv);
@@ -342,7 +361,6 @@ MC_GUI_SUITE(hints_panel) {
         GCHECK([found containsObject:@"⏎"]);
         GCHECK(!Dimmed(tv, @"Open file"));
         GCHECK(Dimmed(tv, @"Undo"));
-        GCHECK([tv.string isEqualToString:before]);
         GCHECK(c.hintsColumns == columnsAt1400);
         TypeInBox(box, @"shift");
         GCHECK([Found(tv) containsObject:@"⇧"]);
@@ -387,6 +405,94 @@ MC_GUI_SUITE(hints_panel) {
         GCHECK(c.window.firstResponder == [c valueForKey:@"textView"]);
         [c toggleHints:nil];   // open again for the steps below
         GCHECK(c.hintsVisible && box.query.length == 0);
+    });
+    MCGuiStep(@"a query puts the matches first, under their headings, the rest after them dimmed", ^{
+        MCHintsSearchBox *box = c.hintsSearchBox;
+        NSTextView *tv = [c valueForKey:@"hintsTextView"];
+        NSView *panel = [c valueForKey:@"hintsPanel"];
+        NSScrollView *scroll = [c valueForKey:@"hintsScroll"];
+        GCHECK(box.query.length == 0);
+        NSString *before = [tv.string copy];
+        NSString *oneColumnBefore = [c hintsText].string;
+        const NSRect frameBefore = panel.frame;
+        GCHECK([c.window makeFirstResponder:box.field]);
+        [tv scrollRangeToVisible:NSMakeRange(tv.string.length, 0)];   // down, to come back up
+        TypeInBox(box, @"terminal");
+        NSArray<NSString *> *found = Found(tv);
+        MCGuiNote(@"found for terminal: %@; %ld columns, %ld before; panel %@, %@ before", found,
+                  (long)c.hintsColumns, (long)columnsAt1400, NSStringFromRect(panel.frame),
+                  NSStringFromRect(frameBefore));
+        GCHECK(found.count >= 2);
+        for (NSString *f in found) GCHECK([f.lowercaseString isEqualToString:@"terminal"]);
+        GCHECK(![tv.string isEqualToString:before]);   // moved
+        // The list at its top, where the matches are.
+        GCHECK(NSMinY(scroll.contentView.bounds) <= 0.5);
+        // As many columns, the panel no smaller.
+        GCHECK(c.hintsColumns == columnsAt1400);
+        GCHECK(NSWidth(panel.frame) >= NSWidth(frameBefore) - 0.5);
+        GCHECK(NSHeight(panel.frame) >= NSHeight(frameBefore) - 0.5);
+        // The panel's first line: its first column a heading, lit; under
+        // it, the column's first shortcut, a match.
+        NSMutableArray<NSString *> *lines = [NSMutableArray array];
+        NSMutableArray<NSNumber *> *lit = [NSMutableArray array], *dim = [NSMutableArray array];
+        LineMarks(tv.textStorage, lines, lit, dim);
+        GCHECK(lines.count > 2);
+        if (lines.count > 2) {
+            NSString *heading = [lines[0] componentsSeparatedByString:@"\t"].firstObject;
+            MCGuiNote(@"top: \"%@\" then \"%@\"", heading, lines[1]);
+            GCHECK(heading.length > 0 && [heading isEqualToString:heading.uppercaseString]);
+            GCHECK(!Dimmed(tv, heading));
+            NSArray<NSString *> *cells = [lines[1] componentsSeparatedByString:@"\t"];
+            GCHECK(cells.count >= 2);
+            if (cells.count >= 2) {
+                const NSUInteger at = [tv.string rangeOfString:lines[1]].location;
+                const NSUInteger cell = cells[0].length + 1 + cells[1].length;   // key, tab, label
+                __block BOOL hit = NO;
+                [tv.textStorage enumerateAttribute:MCHintsMatchAttribute
+                                           inRange:NSMakeRange(at, cell) options:0
+                                        usingBlock:^(id v, NSRange, BOOL *) { if (v) hit = YES; }];
+                GCHECK(hit);
+            }
+        }
+        // In reading order (one column): headings and matches, then the
+        // rest, every line of it dimmed (a pair's other half may be dimmed
+        // among the matches).
+        NSAttributedString *one = [c hintsText];
+        [lines removeAllObjects];
+        [lit removeAllObjects];
+        [dim removeAllObjects];
+        LineMarks(one, lines, lit, dim);
+        NSInteger last = -1;
+        for (NSUInteger i = 0; i < lines.count; i++)
+            if (lit[i].boolValue) last = (NSInteger)i;
+        GCHECK(last >= 1);
+        GCHECK(lines.count > 0 && ![lines[0] containsString:@"\t"] && !dim[0].boolValue);
+        GCHECK(lines.count > 1 && lit[1].boolValue);
+        NSUInteger after = 0, undimmed = 0;
+        for (NSUInteger i = (NSUInteger)(last + 1); i < lines.count; i++) {
+            if (!lines[i].length) continue;   // the gap
+            after++;
+            if (!dim[i].boolValue) {
+                undimmed++;
+                MCGuiNote(@"not dimmed after the matches: %@", lines[i]);
+            }
+        }
+        for (NSInteger i = 0; i <= last; i++)
+            if (![lines[i] containsString:@"\t"] && lines[i].length) GCHECK(!dim[i].boolValue);
+        MCGuiNote(@"one column: matches to line %ld, %lu lines after", (long)last, (unsigned long)after);
+        GCHECK(after > 20 && undimmed == 0);
+        const NSUInteger undo = [one.string rangeOfString:@"Undo"].location;
+        const NSUInteger lastLine = [one.string rangeOfString:lines[(NSUInteger)MAX(last, 0)]].location;
+        GCHECK(undo != NSNotFound && undo > lastLine);
+        CheckHints(c, @"search_terminal", columnsAt1400);
+        // An empty box: the list exactly as it was.
+        TypeInBox(box, @"");
+        GCHECK(box.query.length == 0);
+        GCHECK([tv.string isEqualToString:before]);
+        GCHECK([[c hintsText].string isEqualToString:oneColumnBefore]);
+        GCHECK(Found(tv).count == 0 && DimmedCount(tv) == 0);
+        GCHECK(c.hintsColumns == columnsAt1400);
+        GCHECK(NSEqualRects(panel.frame, frameBefore));
     });
     MCGuiStep(@"short: the panel stops at the window's room and scrolls, as many columns", ^{
         Resize(c, 1400, 500);

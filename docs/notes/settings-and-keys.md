@@ -155,6 +155,17 @@ found through that list.
   wrong column; a heading has a blank line above it except at a column's
   top. With no room for one column the text is the old one column, labels
   wrapping at their stop. `hintsText` (tests) is one column.
+- **The hints' search, matches first, on the Mac** (2026-11-19, the
+  owner's decision for both systems; `hints_panel`): with a query,
+  `hintsTextForRows:...search:YES` passes one `HintsSearch::Item` an
+  entry (a pair's first half `withNext`) to `HintsSearch::bubbleMatches`
+  and draws its order: `[0, rest)` the matching sections (heading lit,
+  matches marked), `[rest, end)` dimmed, headings too. `updateHints`
+  lays out the whole list first, for its column count and the panel's
+  size, then the bubbled list at that count (`maxColumns`), the panel
+  no smaller than the whole list's, so typing never adds a column or
+  shrinks the panel; `hintsQueryChanged` scrolls to the top. An empty
+  query draws the whole list, as it was, through the same path.
 - **The hints' columns on Linux** (2026-11-18, `linux/src/HintsColumns.{h,cpp}`,
   `linux/HANDOFF.md` item 111): the same `layoutHints`, from widths
   measured with Pango in the fonts drawn (keys in Monospace, labels in the
