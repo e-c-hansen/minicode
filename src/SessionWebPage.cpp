@@ -29,7 +29,10 @@
 // The sidebar's Source Control lists the folder's uncommitted changes as
 // the window's does, and a file clicked shows the review page of those
 // changes in a tab of the page's own, inline or side by side, read only
-// (R3's fourth slice, SessionWebGit.h).
+// (R3's fourth slice, SessionWebGit.h). The window's open commit pages and
+// worktree pages are tabs beside its documents, shown the same way with
+// their headers, and a review's pictures show before and after from the
+// server's /picture/ addresses (R3's last slice).
 // "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
@@ -177,6 +180,18 @@ body.sideclosed #side { display: none; }
 #review tr.x.p1 td.t, #review tr.x.p2 td.t { background: rgba(64, 166, 255, .18); }
 #review tr.x.p6 td.t, #review tr.x.p7 td.t { background: rgba(115, 201, 145, .18); }
 #review tr.x.p1 td.t, #review tr.x.p3 td.t, #review tr.x.p5 td.t, #review tr.x.p7 td.t { font-weight: 600; }
+#review .rtop { padding: 10px 12px 8px; }
+#review .rtitle { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+#review .rro { margin-left: 10px; font-size: 11px; font-weight: normal; color: var(--muted);
+               border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; vertical-align: middle; }
+#review .rdetail { margin-top: 2px; font-size: 12px; color: var(--muted); }
+#review .rbodytext { margin-top: 6px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#review .rimgs { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; padding: 8px 12px 12px; }
+#review .rimg { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
+#review .rlabel { font-size: 12px; color: var(--muted); }
+#review .rimg img { display: block; width: auto; height: auto; max-width: 100%; max-height: 320px;
+                    object-fit: contain; align-self: flex-start;
+                    background: repeating-conic-gradient(rgba(127, 127, 127, .18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
 #treenote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none;
             border-top: 1px solid var(--line); }
 #work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -493,6 +508,15 @@ body:not(.editable) #caret { display: none; }
     for (const w of state.windows)
       for (const g of w.groups || []) for (const t of g.tabs || []) add(t.doc, t.path);
     for (const d of state.docs) add(d.id, d.path);
+    // The window's commit and worktree pages: shown here read-only, closed
+    // only in the window.
+    for (const r of windowReviews()) {
+      const rel = kPagePrefix + r.id;
+      seen.add(rel);
+      strip.appendChild(tabButton(r.title, r.title + " (read-only here)",
+                                  "review" + (L.on === rel ? " shown" : "") + (r.onShow ? " onshow" : ""),
+                                  () => showLocal(rel), null, ""));
+    }
     // The files this page opened itself, which only it shows and closes.
     for (const f of L.tabs) {
       const name = f.label || base(f.path);
@@ -695,8 +719,10 @@ body:not(.editable) #caret { display: none; }
   // every file this way; an editable one when the session has no window to
   // open it in.
   const L = { tabs: [], on: "" };   // tabs: the filetext messages, by path
+  // A tab of this page's own by its path, or a window review page's.
+  function localTab(rel) { return L.tabs.find((x) => x.path === rel) || windowReviewTab(rel); }
   function showLocal(rel) {
-    const f = L.tabs.find((x) => x.path === rel);
+    const f = localTab(rel);
     if (!f) return;
     if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
     if (f.viewer) { showViewer(f); return; }
@@ -730,7 +756,9 @@ body:not(.editable) #caret { display: none; }
   }
   function closeLocal(rel) {
     L.tabs = L.tabs.filter((x) => x.path !== rel);
-    if (rel === kReview) { G.review = null; G.cur = ""; drawGit(); watchGit(); }
+    if (rel === kReview) { RV.delete(""); G.cur = ""; drawGit(); watchGit(); }
+    const page = reviewIdOf(rel);
+    if (page) { RV.delete(page); post({ t: "review", page: page, watch: false }); }
     if (L.on === rel) {
       hideViewer();
       // Back to the window's tab on show.
@@ -784,6 +812,7 @@ body:not(.editable) #caret { display: none; }
     open.classList.toggle("hidden", view === "table" || view === "notebook" || view === "database" ||
                           view === "review");
     if (V.on !== rel) {
+      leaveReviewPage(rel);
       V.on = rel;
       box.textContent = ""; box.className = "";
       let el = null;
@@ -808,6 +837,9 @@ body:not(.editable) #caret { display: none; }
         if (f.db) drawDb(f.db);
         else { fileNote("Reading " + base(rel) + "…"); askDb(rel, "", 0); }
       } else if (view === "review") {
+        // A window's page: read (or what was read, at once) each time it
+        // is shown, which the server takes as watching it.
+        if (f.page) askReview(f.page);
         drawReview();
       }
       if (el) {
@@ -827,6 +859,7 @@ body:not(.editable) #caret { display: none; }
   // the editor's again.
   function hideViewer() {
     if (!V.on) return;
+    leaveReviewPage("");
     V.on = "";
     $("fileview").textContent = "";
     $("fileview").classList.add("hidden");
@@ -999,8 +1032,57 @@ body:not(.editable) #caret { display: none; }
   // stage, unstage, discard or commit, on any page. The server says again
   // when the changes move, as far as its host watches the folder (the Mac
   // does); otherwise ↻, a reconnect, or coming back to the page reads again.
+  //
+  // The window's commit pages and worktree pages (R3) are the same review
+  // read the same way, in tabs of their own beside the window's documents
+  // (the state's `reviews`), each by the id the server gave it.
   const kReview = "/changes";   // the review's tab, by a path no file of the folder has
-  const G = { mode: false, status: null, review: null, opened: new Map(), side: new Set(), goto: "", cur: "" };
+  const kPagePrefix = "/review/";   // a window review page's tab: this, then its id
+  const G = { mode: false, status: null, cur: "" };
+  // Each review on this page by id ("" the uncommitted changes): the last
+  // answer, the gaps opened and the files side by side, by file key, and a
+  // file to scroll to once drawn.
+  const RV = new Map();
+  let reviewAsked = true;   // false after a reconnect, until the review page on show is asked for
+  function rv(id) {
+    let r = RV.get(id);
+    if (!r) { r = { review: null, opened: new Map(), side: new Set(), goto: "" }; RV.set(id, r); }
+    return r;
+  }
+  // The review a tab's path is ("" the uncommitted changes), else null.
+  function reviewIdOf(path) {
+    if (path === kReview) return "";
+    return path && path.startsWith(kPagePrefix) ? path.slice(kPagePrefix.length) : null;
+  }
+  function reviewOn() { return V.on ? reviewIdOf(V.on) : null; }
+  function windowReviews() {
+    const out = [];
+    if (!state) return out;
+    for (const w of state.windows) for (const r of w.reviews || []) out.push(r);
+    return out;
+  }
+  // A window review page as a tab of this page's (made when asked for).
+  function windowReviewTab(rel) {
+    const id = reviewIdOf(rel);
+    if (!id) return null;
+    const r = windowReviews().find((x) => x.id === id);
+    if (!r) return null;
+    return { path: rel, abs: r.title + " (read-only)", label: r.title, view: "review", viewer: true, page: id,
+             kind: r.kind };
+  }
+  // Leaving a window review page for `next`: the server stops reading it
+  // for this page.
+  function leaveReviewPage(next) {
+    const id = reviewOn();
+    if (id && next !== V.on) post({ t: "review", page: id, watch: false });
+  }
+  // The window closed a review page this page shows: back to its tab.
+  function dropGoneReviews() {
+    const ids = new Set(windowReviews().map((r) => r.id));
+    for (const id of [...RV.keys()]) if (id && !ids.has(id)) RV.delete(id);
+    const on = reviewIdOf(L.on);
+    if (on && !ids.has(on)) closeLocal(L.on);
+  }
   function gitWanted() { return G.mode || L.tabs.some((x) => x.path === kReview); }
   function askGit() {
     if (!G.status) drawGit();
@@ -1064,26 +1146,40 @@ body:not(.editable) #caret { display: none; }
     G.status = m;
     drawGit();
     // The review on show follows a read that shows something new.
-    if (L.tabs.some((x) => x.path === kReview) && (!G.review || G.review.version !== m.version)) askReview();
+    const r = rv("");
+    if (L.tabs.some((x) => x.path === kReview) && (!r.review || r.review.version !== m.version)) askReview("");
   }
-  function openedJson() {
+  function openedJson(id) {
     const o = {};
-    for (const [k, v] of G.opened) o[k] = [...v];
+    for (const [k, v] of rv(id).opened) o[k] = [...v];
     return o;
   }
-  function askReview() { post({ t: "review", opened: openedJson(), side: [...G.side] }); }
-  function askReviewFile(key) {
-    post({ t: "review", file: key, opened: [...(G.opened.get(key) || [])], side: G.side.has(key) });
+  // The review `id` asked for (with `reread`, read again first).
+  function askReview(id, reread) {
+    const m = { t: "review", opened: openedJson(id), side: [...rv(id).side] };
+    if (id) { m.page = id; if (reread) m.reread = true; }
+    post(m);
+  }
+  function askReviewFile(id, key) {
+    const r = rv(id), m = { t: "review", file: key, opened: [...(r.opened.get(key) || [])], side: r.side.has(key) };
+    if (id) m.page = id;
+    post(m);
   }
   function openReview(key) {
     if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
-    G.goto = key; G.cur = key;
+    const r = rv("");
+    r.goto = key; G.cur = key;
     if (!L.tabs.find((x) => x.path === kReview))
       L.tabs.push({ path: kReview, abs: "Uncommitted changes (read-only)", label: "Changes", view: "review",
                     viewer: true });
-    if (!G.review) askReview();
+    if (!r.review) askReview("");
     showLocal(kReview);
     drawGit();
+  }
+  // The window review page on show was read again: asked for anew.
+  function onReviewRead(m) {
+    const r = RV.get(m.page);
+    if (reviewOn() === m.page && (!r || !r.review || r.review.version !== m.version)) askReview(m.page);
   }
   // Text with its syntax colors and the words that changed, each piece a
   // span made by textContent.
@@ -1110,7 +1206,7 @@ body:not(.editable) #caret { display: none; }
     if (text !== undefined) td.textContent = text;
     return td;
   }
-  function reviewRows(f) {
+  function reviewRows(f, id) {
     const table = document.createElement("table"), body = document.createElement("tbody");
     if (f.side) table.className = "side";
     const cols = f.side ? 4 : 3;
@@ -1124,9 +1220,10 @@ body:not(.editable) #caret { display: none; }
         if (r[0] === "g") {
           tr.title = "Show these lines";
           tr.addEventListener("click", () => {
-            if (!G.opened.has(f.key)) G.opened.set(f.key, new Set());
-            G.opened.get(f.key).add(r[1]);
-            askReviewFile(f.key);
+            const opened = rv(id).opened;
+            if (!opened.has(f.key)) opened.set(f.key, new Set());
+            opened.get(f.key).add(r[1]);
+            askReviewFile(id, f.key);
           });
         }
       } else if (r[0] === "s") {
@@ -1155,7 +1252,28 @@ body:not(.editable) #caret { display: none; }
     table.appendChild(body);
     return table;
   }
-  function reviewFile(f) {
+  // A binary picture's versions, as the window's review shows them: side
+  // by side under their labels (Before and After when both exist), each at
+  // its size in pixels and never taller than 320, on a checkerboard; the
+  // bytes from the server's /picture/ address, read from the review's read.
+  function reviewImages(f) {
+    const row = document.createElement("div");
+    row.className = "rimgs";
+    for (const i of f.images || []) {
+      const col = document.createElement("div"), label = document.createElement("div"),
+            img = document.createElement("img");
+      col.className = "rimg"; col.dataset.side = i.side;
+      label.className = "rlabel"; label.textContent = i.label;
+      img.alt = (i.side === "old" ? "Before: " : "After: ") + base(f.path);
+      img.width = i.width; img.height = i.height;   // the space it takes before it loads
+      img.addEventListener("error", () => { label.textContent = i.label + " (it could not be shown here)"; });
+      img.src = i.url;
+      col.appendChild(label); col.appendChild(img);
+      row.appendChild(col);
+    }
+    return row;
+  }
+  function reviewFile(f, id) {
     const box = document.createElement("div");
     box.className = "rfile"; box.dataset.key = f.key;
     const head = document.createElement("div");
@@ -1170,16 +1288,18 @@ body:not(.editable) #caret { display: none; }
       b.addEventListener("click", onclick);
       head.appendChild(b);
     };
+    const side = rv(id).side;
     if (f.more) button("Show Changes", "This file's changes, which the page left out to stay quick",
-                       () => askReviewFile(f.key));
+                       () => askReviewFile(id, f.key));
     else if (f.canSide)
       button(f.side ? "Inline" : "Side by Side", f.side ? "Removed lines above added ones" : "The two versions side by side",
-             () => { if (f.side) G.side.delete(f.key); else G.side.add(f.key); askReviewFile(f.key); });
+             () => { if (f.side) side.delete(f.key); else side.add(f.key); askReviewFile(id, f.key); });
     box.appendChild(head);
-    if (!f.more) {
+    if (f.images && f.images.length) box.appendChild(reviewImages(f));
+    if (!f.more && (f.rows || []).length) {
       const body = document.createElement("div");
       body.className = "rbody";
-      body.appendChild(reviewRows(f));
+      body.appendChild(reviewRows(f, id));
       box.appendChild(body);
     }
     return box;
@@ -1199,10 +1319,12 @@ body:not(.editable) #caret { display: none; }
     return null;
   }
   function scrollReview(keep) {
-    const view = $("fileview");
-    if (G.goto) {
-      const f = fileEl(G.goto);
-      if (f) { view.scrollTop = f.offsetTop; G.goto = ""; }
+    const view = $("fileview"), id = reviewOn();
+    if (id === null) return;
+    const r = rv(id);
+    if (r.goto) {
+      const f = fileEl(r.goto);
+      if (f) { view.scrollTop = f.offsetTop; r.goto = ""; }
       return;
     }
     if (keep) {
@@ -1210,43 +1332,75 @@ body:not(.editable) #caret { display: none; }
       if (f) view.scrollTop = f.offsetTop + keep.off;
     }
   }
+  // A window review page's header: its title, what it is against (a
+  // commit's author and date, a worktree's branch point) and the counts,
+  // then the rest of a commit's message.
+  function reviewTop(m) {
+    const top = document.createElement("div"), title = document.createElement("div"),
+          detail = document.createElement("div");
+    top.className = "rtop";
+    title.className = "rtitle"; title.textContent = m.title || "";
+    detail.className = "rdetail"; detail.textContent = m.detail || "";
+    const ro = document.createElement("span");
+    ro.className = "rro"; ro.textContent = "Read-only";
+    ro.title = "Nothing on this page changes the repository; the mutible window has the page's buttons.";
+    title.appendChild(ro);
+    top.appendChild(title); top.appendChild(detail);
+    if (m.body) {
+      const body = document.createElement("div");
+      body.className = "rbodytext"; body.textContent = m.body;
+      top.appendChild(body);
+    }
+    return top;
+  }
   function drawReview() {
-    if (V.on !== kReview) return;
-    const box = $("fileview"), m = G.review, keep = reviewAnchor();
-    if (!m || m.pending) { fileNote("Reading the changes…"); return; }
+    const id = reviewOn();
+    if (id === null) return;
+    const box = $("fileview"), m = rv(id).review, keep = reviewAnchor();
+    const reading = id ? "Reading the page…" : "Reading the changes…";
+    if (!m || m.pending) { fileNote(reading); return; }
     if (m.error) { fileNote(m.error); return; }
-    if (!(m.files || []).length) { fileNote("No changes."); return; }
+    if (!id && !(m.files || []).length) { fileNote("No changes."); return; }
     box.textContent = ""; box.className = "review";
     const wrap = document.createElement("div");
     wrap.id = "review";
+    if (id) wrap.appendChild(reviewTop(m));
     const counts = {};
-    for (const f of m.files) counts[f.section] = (counts[f.section] || 0) + 1;
+    for (const f of m.files || []) counts[f.section] = (counts[f.section] || 0) + 1;
     let section = "";
-    for (const f of m.files) {
-      if (f.section !== section) {
+    for (const f of m.files || []) {
+      // A commit's or a worktree's files are one list, with no heading.
+      if (f.section !== section && f.section !== "plain") {
         section = f.section;
         const h = document.createElement("div");
         h.className = "rsec"; h.textContent = sectionText(section, counts[section]);
         wrap.appendChild(h);
       }
-      wrap.appendChild(reviewFile(f));
+      wrap.appendChild(reviewFile(f, id));
+    }
+    if (id && !(m.files || []).length) {
+      const n = document.createElement("div");
+      n.id = "filenote"; n.textContent = "No changes.";
+      wrap.appendChild(n);
     }
     box.appendChild(wrap);
     scrollReview(keep);
   }
   function onReview(m) {
-    if (m.pending) { if (!G.review) G.review = m; drawReview(); return; }
-    G.review = m;
-    drawReview();
+    const id = m.page || "", r = rv(id);
+    if (m.pending) { if (!r.review) r.review = m; drawReview(); return; }
+    r.review = m;
+    if (reviewOn() === id) drawReview();
   }
   function onReviewFile(m) {
-    if (!G.review || !G.review.files) return;
-    const key = m.file ? m.file.key : m.key, at = G.review.files.findIndex((f) => f.key === key);
+    const id = m.page || "", r = rv(id);
+    if (!r.review || !r.review.files) return;
+    const key = m.file ? m.file.key : m.key, at = r.review.files.findIndex((f) => f.key === key);
     if (at < 0) return;
-    if (m.gone) { askReview(); return; }   // the changes moved: the whole review again
-    G.review.files[at] = m.file;
+    if (m.gone) { askReview(id); return; }   // the changes moved: the whole review again
+    r.review.files[at] = m.file;
     const old = fileEl(key);
-    if (old && V.on === kReview) old.replaceWith(reviewFile(m.file));
+    if (old && reviewOn() === id) old.replaceWith(reviewFile(m.file, id));
   }
 
   // ---- the tree: one folder's rows at a time, read by the host each time
@@ -1436,7 +1590,10 @@ body:not(.editable) #caret { display: none; }
     if (!terms.includes(want.term)) { followTerm = true; want.term = terms.length ? terms[0] : 0; }
     sendShow();
     takeWindowPanes();
+    dropGoneReviews();
     drawTabs(); drawTermTabs(); drawWeb();
+    const page = reviewOn();
+    if (page && !reviewAsked) { reviewAsked = true; askReview(page); }
     if (!want.doc && !L.on) showNote("No document is on show.");
     takePending();
     takeWebPending();
@@ -2412,6 +2569,9 @@ body:not(.editable) #caret { display: none; }
           if (X.asked) post({ t: "latex", path: X.asked });
           // Source Control on show, or its review: read again.
           if (gitWanted()) askGit();
+          // A window review page on show: asked for again once the state
+          // lists it on this connection.
+          reviewAsked = false;
           break;
         case "palette": applyPalette(m.palette); break;
         case "state": onState(m); break;
@@ -2439,6 +2599,7 @@ body:not(.editable) #caret { display: none; }
         case "git": onGit(m); break;
         case "review": onReview(m); break;
         case "reviewfile": onReviewFile(m); break;
+        case "reviewread": onReviewRead(m); break;
         case "closing": if (!m.ok) toast(m.why || "That tab was not closed."); break;
       }
     };
@@ -2528,7 +2689,11 @@ body:not(.editable) #caret { display: none; }
     // keeps the tab, as in the window's tree.
     openFile(rel, e, ev.detail >= 2 || ev.metaKey || ev.ctrlKey);
   });
-  $("refresh").addEventListener("click", () => { if (G.mode) askGit(); else refreshTree(); });
+  $("refresh").addEventListener("click", () => {
+    const page = reviewOn();
+    if (page) askReview(page, true);   // a window review page on show: read again
+    if (G.mode) askGit(); else refreshTree();
+  });
   $("filesbtn").addEventListener("click", () => setSideMode(false));
   $("scmbtn").addEventListener("click", () => setSideMode(true));
   $("gitlist").addEventListener("click", (ev) => {
@@ -2554,6 +2719,8 @@ body:not(.editable) #caret { display: none; }
     if (document.hidden) return;
     refreshTree();
     if (gitWanted()) askGit();   // a host that watches nothing has not said
+    const page = reviewOn(), tab = page ? windowReviewTab(V.on) : null;
+    if (tab && tab.kind === "worktree") askReview(page, true);   // a commit does not change
   });
   $("term").addEventListener("keydown", onTermKey);
   $("term").addEventListener("paste", (e) => {
@@ -2583,7 +2750,7 @@ body:not(.editable) #caret { display: none; }
     local: () => L.on,
     file: () => {
       if (!V.on) return null;
-      const f = L.tabs.find((x) => x.path === V.on) || {};
+      const f = localTab(V.on) || {};
       const box = $("fileview"), el = box.firstElementChild, rows = [...box.querySelectorAll("tbody tr")];
       return { view: f.view, path: V.on, src: (el && el.getAttribute("src")) || "",
                width: el && el.tagName === "IMG" ? el.naturalWidth : 0,
@@ -2609,8 +2776,12 @@ body:not(.editable) #caret { display: none; }
                                                                            r.dataset.path),
                   current: [...$("gitlist").querySelectorAll(".row.current")].map((r) => r.dataset.path) }),
     review: () => {
-      const box = $("review");
-      return { shown: V.on === kReview && !!box, version: G.review ? G.review.version || 0 : 0,
+      const box = $("review"), id = reviewOn(), r = id === null ? null : RV.get(id);
+      return { shown: id !== null && !!box, page: id === null ? null : id,
+               version: r && r.review ? r.review.version || 0 : 0,
+               title: box && box.querySelector(".rtitle") ? box.querySelector(".rtitle").firstChild.textContent : "",
+               detail: box && box.querySelector(".rdetail") ? box.querySelector(".rdetail").textContent : "",
+               body: box && box.querySelector(".rbodytext") ? box.querySelector(".rbodytext").textContent : "",
                note: ($("filenote") || {}).textContent || "",
                buttons: box ? [...box.querySelectorAll("button")].map((b) => b.textContent) : [],
                words: box ? box.querySelectorAll(".wa, .wr").length : 0,
@@ -2619,6 +2790,12 @@ body:not(.editable) #caret { display: none; }
                files: box ? [...box.querySelectorAll(".rfile")].map((f) => ({
                  key: f.dataset.key, head: f.querySelector(".rpath").textContent, offset: f.offsetTop,
                  side: !!f.querySelector("table.side"),
+                 images: [...f.querySelectorAll(".rimg")].map((c) => {
+                   const img = c.querySelector("img");
+                   return { side: c.dataset.side, label: c.querySelector(".rlabel").textContent,
+                            src: img.getAttribute("src") || "", width: img.naturalWidth, height: img.naturalHeight,
+                            complete: img.complete };
+                 }),
                  rows: [...f.querySelectorAll("tr")].map((r) => r.className + "|" +
                          [...r.querySelectorAll("td")].map((c) => c.textContent).join("|")) })) : [] };
     },

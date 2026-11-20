@@ -141,6 +141,7 @@ static char kSessionWindowKey;
     };
     w.panes = ^NSDictionary * { return [weakSelf sessionBrowserPanes]; };
     w.browserTabs = ^NSDictionary * { return [weakSelf sessionBrowserTabs]; };
+    w.reviews = ^NSArray<NSDictionary *> * { return [weakSelf sessionBrowserReviews]; };
     w.onLost = ^{ [weakSelf sessionHostWentAway]; };
 }
 

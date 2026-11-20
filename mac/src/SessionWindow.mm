@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "SessionWeb.h"
+#include "SessionWebGit.h"
 
 @implementation MCSessionWindow {
     std::shared_ptr<MCSession::Link> _l;
@@ -119,6 +120,27 @@
     if (NSDictionary *panes = _panes ? _panes() : nil)
         w.set("panes", Shared::Web::panesReportJson([panes[@"browser"] boolValue], [panes[@"terminal"] boolValue],
                                                     [panes[@"browserShare"] doubleValue]));
+    // Its commit and worktree pages, which the page shows read-only.
+    if (NSArray<NSDictionary *> *reviews = _reviews ? _reviews() : nil) {
+        std::vector<Shared::Web::ReviewPage> pages;
+        for (NSDictionary *r in reviews) {
+            if (![r isKindOfClass:NSDictionary.class]) continue;
+            auto str = [r](NSString *key) -> std::string {
+                id v = r[key];
+                if ([key isEqualToString:@"path"] && [v isKindOfClass:NSString.class])
+                    return ((NSString *)v).fileSystemRepresentation ?: "";
+                return [v isKindOfClass:NSString.class] ? (((NSString *)v).UTF8String ?: "") : "";
+            };
+            Shared::Web::ReviewPage p;
+            p.kind = str(@"kind");
+            p.hash = str(@"hash");
+            p.path = str(@"path");
+            p.title = str(@"title");
+            p.onShow = [r[@"onShow"] boolValue];
+            pages.push_back(std::move(p));
+        }
+        if (!pages.empty()) w.set("reviews", Shared::Web::reviewsReportJson(pages));
+    }
     return w;
 }
 

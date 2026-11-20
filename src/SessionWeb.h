@@ -45,7 +45,11 @@
 // same rules as /file/: the app publishes its typesets to the server,
 // which runs no tectonic of its own (Options::typeset, Typesets). The
 // page's Source Control lists the folder's uncommitted changes and shows
-// their review page, read only (`git`, `review`; SessionWebGit.h).
+// their review page, read only (`git`, `review`; SessionWebGit.h), and
+// the window's open commit pages and worktree pages, which it reports
+// beside its tabs (`reviews`), the same way; a binary picture's two
+// versions are served from the read at /v/ID/picture/PAGE/VERSION/FILE/SIDE
+// (pictureTarget), under the same rules as /file/.
 //
 // Access (SessionWebAccess.h): every address is under the view's own path,
 // /v/ID/. A link, http://127.0.0.1:PORT/v/ID/?t=TOKEN with a random token
@@ -99,7 +103,9 @@
 //           a window with a browser pane
 //           has `browser` {tabs: [{url, title, web, loopback}], active},
 //           and a window that says which panes it shows has `panes`
-//           {browser, terminal, browserShare} (panesViewJson)
+//           {browser, terminal, browserShare} (panesViewJson), and one
+//           with commit or worktree pages open has `reviews` [{id, kind,
+//           title, onShow}] (reviewsViewJson, SessionWebGit.h)
 //   doc     {id, path, kind, version, editable, indent, lines, html | note,
 //           latex}:
 //           the document the browser shows, whole: kind "code" (lines, each
@@ -159,7 +165,12 @@
 //           again whenever a read shows something new
 //   review  {version, files | error}: the review page of those changes
 //           (reviewJson); reviewfile {version, file | key, gone}: one file
-//           of it (reviewFileJson)
+//           of it (reviewFileJson). With `page`, a window's review page
+//           (a commit's, a worktree's; the id from the state's `reviews`)
+//           and its header: {page, version, title, detail, body, files |
+//           error | pending}
+//   reviewread {page, version}: a read of that review page that the page
+//           has not had (it asks for the review again)
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
 //   alive   {}: someone is using the page (sent at most once a minute
@@ -183,7 +194,11 @@
 //   review  {opened, side, file}: the review of the last read (every file,
 //           or the one whose key `file` names), `opened` the gaps shown
 //           whole by file key ({key: [id]}; for `file`, [id]), `side` the
-//           files side by side (keys; for `file`, a boolean); any page
+//           files side by side (keys; for `file`, a boolean); any page.
+//           With `page` (an id the state's `reviews` listed), that window
+//           review page instead, read when first asked, again on `reread`
+//           (and, for a worktree, when the folder changes); `watch: false`
+//           stops it
 // and, only when editable:
 //   open    {path, keep}: a file the tree's row names, opened as a tab in
 //           the window (Options::open); a page that only reads is refused
@@ -278,6 +293,7 @@ struct Answer {
     std::string response, why;
     std::string file;   // File: the path from the folder, decoded, not yet checked
     bool typeset = false;   // File: a LaTeX document's typeset PDF (/typeset/), not its bytes
+    bool picture = false;   // File: a review's picture (/picture/, `file` what follows it)
     // The request's credential (Page, Socket, File), and its state: a
     // socket is taken whatever the state, so its page can be told.
     std::string credential;
@@ -864,6 +880,23 @@ private:
     void onReview(Conn& c, const Json& j);
     void askGit();
     void takeGit();
+    // The window's review pages (a commit's, a worktree's), each read on a
+    // thread of its own once a page asks for it, by the id the state gave.
+    // `number` names it in its pictures' addresses (0 is the review of
+    // uncommitted changes).
+    struct PageReads {
+        std::unique_ptr<GitReads> reads;
+        std::uint64_t finished = 0;
+        int number = 0;
+        bool worktree = false;
+    };
+    std::map<std::string, PageReads> pages_;
+    int nextPage_ = 1;
+    void onReviewPage(Conn& c, const Json& j, const std::string& page);
+    PageReads* pageReads(const std::string& page);
+    void takePages();
+    // A review's picture over HTTP, from the read's bytes in memory.
+    void beginPicture(Conn& c, const std::string& spec, const std::string* range);
     std::unique_ptr<GitReads> git_;
     std::uint64_t gitFinished_ = 0;
     std::atomic<bool> gitDirty_{false};

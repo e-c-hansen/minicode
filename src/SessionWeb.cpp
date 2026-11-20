@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <fstream>
 #include <netinet/in.h>
@@ -619,19 +620,22 @@ Answer answer(const Request& r, Access& access, const std::string& page, const C
 
     // A file for a viewer, or a LaTeX document's typeset PDF: the
     // credential only (an <img> or <video> sends no header of the page's).
+    // A review's picture, likewise, by numbers alone (pictureTarget).
     const bool typeset = rest.compare(0, 8, "typeset/") == 0;
-    if (typeset || rest.compare(0, 5, "file/") == 0) {
+    const bool picture = rest.compare(0, 8, "picture/") == 0;
+    if (typeset || picture || rest.compare(0, 5, "file/") == 0) {
         if (credential.empty())
             return refuse(403, "Forbidden", "no credential: open the address mutible printed");
         if (held != Access::State::Allowed) return refuse(403, "Forbidden", notAllowed(held));
         std::string rel;
-        if (!pathDecode(rest.substr(typeset ? 8 : 5), &rel))
+        if (!pathDecode(rest.substr(typeset || picture ? 8 : 5), &rel))
             return refuse(400, "Bad Request", "a file's address that does not decode");
         access.touch(credential, from.now);
         Answer a;
         a.kind = Answer::File;
         a.status = 200;
         a.typeset = typeset;
+        a.picture = picture;
         a.file = std::move(rel);
         a.credential = credential;
         a.state = held;
@@ -1318,6 +1322,11 @@ struct Server::Conn {
     // read whose answer it has not had, and the read's version last sent.
     bool gitWatch = false, gitAsked = false;
     std::uint64_t gitSent = 0;
+    // A window's review page it shows (`review {page}`), the read's
+    // version it was last told of, and whether it waits for a first read.
+    std::string reviewPage;
+    std::uint64_t pageSent = 0;
+    bool pageAsked = false;
 };
 
 struct Server::Session : Client::Listener, Client::TermListener {
@@ -1328,6 +1337,10 @@ struct Server::Session : Client::Listener, Client::TermListener {
     // attaches to and types into no other.
     std::set<DocId> allowed;
     std::set<TermId> allowedTerms;
+    // The review pages the window reports (a headless host's windows: every
+    // window's), checked (reviewPagesFrom), by id: what a page's `review
+    // {page}` may name.
+    std::map<std::string, ReviewPage> reviews;
     std::unique_ptr<Client> client;
     std::map<DocId, std::unique_ptr<DocView>> docs;
     std::map<TermId, std::unique_ptr<TermView>> terms;
@@ -1414,6 +1427,7 @@ Server::Server() {
 Server::~Server() {
     // First, so a read still under way never wakes a pipe that is closed.
     git_.reset();
+    pages_.clear();
     detach();
     for (auto& c : conns_)
         if (c->fd >= 0) ::close(c->fd);
@@ -1660,6 +1674,7 @@ void Server::handleHttp(Conn& c) {
         auto range = r.headers.find("range");
         const std::string* rangeHeader = range == r.headers.end() ? nullptr : &range->second;
         if (a.typeset) beginTypeset(c, a.file, rangeHeader);
+        else if (a.picture) beginPicture(c, a.file, rangeHeader);
         else beginFile(c, a.file, rangeHeader);
         return;
     }
@@ -2400,6 +2415,33 @@ void Server::typesetFailed(const std::string& path, const std::string& error) {
 
 // ---- Source Control (R3's fourth slice, SessionWebGit.h)
 
+namespace {
+
+// One file of a review, by the key a page sent: {t: "reviewfile", version,
+// file} or {..., key, gone} when no file has it.
+Json reviewFileAnswer(const ChangeReview::Read& r, std::uint64_t version, const Json& j, const PictureUrl& picture) {
+    const std::string key = j["file"].asString();
+    Json m = Json::object();
+    m.set("t", Json("reviewfile"));
+    m.set("version", Json((int64_t)version));
+    for (std::size_t i = 0; i < r.diffs.size(); i++) {
+        const ChangeReview::FileDiff& d = r.diffs[i];
+        if (d.file.key() != key) continue;
+        Json ids = Json::object();
+        ids.set(key, j["opened"]);
+        const ChangeReview::Opened opened = openedFrom(ids);
+        auto it = opened.find(key);
+        m.set("file", reviewFileJson(d, it == opened.end() ? std::set<int>() : it->second, j["side"].asBool(),
+                                     picture, i));
+        return m;
+    }
+    m.set("key", Json(key));
+    m.set("gone", Json(true));
+    return m;
+}
+
+}  // namespace
+
 void Server::gitChanged() {
     gitDirty_ = true;
     wake();
@@ -2439,6 +2481,7 @@ void Server::onGit(Conn& c, const Json& j) {
 }
 
 void Server::onReview(Conn& c, const Json& j) {
+    if (j["page"].isString() && !j["page"].asString().empty()) return onReviewPage(c, j, j["page"].asString());
     const GitReads::Latest l = git_ ? git_->latest() : GitReads::Latest();
     if (!l.read) {
         // Nothing read yet: the page asks again when the list comes.
@@ -2450,43 +2493,202 @@ void Server::onReview(Conn& c, const Json& j) {
         if (!git_) askGit();
         return;
     }
-    if (j["file"].isString()) {
-        const std::string key = j["file"].asString();
-        Json m = Json::object();
-        m.set("t", Json("reviewfile"));
-        m.set("version", Json((int64_t)l.version));
-        for (const ChangeReview::FileDiff& d : l.read->diffs)
-            if (d.file.key() == key) {
-                Json ids = Json::object();
-                ids.set(key, j["opened"]);
-                const ChangeReview::Opened opened = openedFrom(ids);
-                auto it = opened.find(key);
-                m.set("file", reviewFileJson(d, it == opened.end() ? std::set<int>() : it->second,
-                                             j["side"].asBool()));
-                return sendJson(c, m);
-            }
-        m.set("key", Json(key));
-        m.set("gone", Json(true));
+    const std::string viewBase = base();
+    const std::uint64_t version = l.version;
+    const PictureUrl picture = [viewBase, version](std::size_t file, bool newSide) {
+        return pictureTarget(viewBase, 0, version, file, newSide);
+    };
+    if (j["file"].isString()) return sendJson(c, reviewFileAnswer(*l.read, l.version, j, picture));
+    sendJson(c, reviewJson(*l.read, l.version, openedFrom(j["opened"]), sideFrom(j["side"]), kReviewRowBudget,
+                           picture));
+}
+
+// ---- the window's review pages (a commit's, a worktree's)
+
+Server::PageReads* Server::pageReads(const std::string& page) {
+    auto found = pages_.find(page);
+    if (found != pages_.end()) return &found->second;
+    if (!session_) return nullptr;
+    auto it = session_->reviews.find(page);
+    if (it == session_->reviews.end()) return nullptr;
+    ChangeReview::GitRunner run;
+    if (opt_.git) {
+        auto git = opt_.git;
+        run = [git](const std::string& dir, const std::vector<std::string>& args, const std::string& input) {
+            ChangeReview::GitOut o;
+            int status = -1;
+            o.ok = git(dir, args, input, &o.out, &o.err, &status);
+            o.status = status;
+            return o;
+        };
+    } else {
+        run = [](const std::string& dir, const std::vector<std::string>& args, const std::string& input) {
+            return runGit(dir, args, input);
+        };
+    }
+    // What the read is of was checked when the state came (reviewPagesFrom),
+    // and readReviewPage holds it to the folder's repository again.
+    const ReviewPage p = it->second;
+    const std::string folder = opt_.folder;
+    const bool hidden = opt_.showHidden;
+    PageReads& pr = pages_[page];
+    pr.number = nextPage_++;
+    pr.worktree = p.kind == "worktree";
+    pr.reads = std::make_unique<GitReads>(
+        [folder, hidden, p, run]() { return readReviewPage(folder, hidden, p, run, (long long)std::time(nullptr)); },
+        [this] { wake(); });
+    pr.reads->ask();
+    return &pr;
+}
+
+void Server::onReviewPage(Conn& c, const Json& j, const std::string& page) {
+    if (j["watch"].isBool() && !j["watch"].asBool()) {
+        if (c.reviewPage == page) c.reviewPage.clear();
+        return;
+    }
+    Json m = Json::object();
+    m.set("t", Json("review"));
+    m.set("page", Json(page));
+    PageReads* pr = pageReads(page);
+    if (!pr) {
+        if (c.reviewPage == page) c.reviewPage.clear();
+        m.set("version", Json((int64_t)0));
+        m.set("error", Json("This page is no longer open in the mutible window."));
         return sendJson(c, m);
     }
-    sendJson(c, reviewJson(*l.read, l.version, openedFrom(j["opened"]), sideFrom(j["side"])));
+    if (c.reviewPage != page) c.pageSent = 0;
+    c.reviewPage = page;
+    if (j["reread"].asBool()) pr->reads->ask();
+    const GitReads::Latest l = pr->reads->latest();
+    if (!l.read) {
+        // Not read yet: the page hears `reviewread` when it is.
+        c.pageAsked = true;
+        m.set("version", Json((int64_t)0));
+        m.set("pending", Json(true));
+        return sendJson(c, m);
+    }
+    c.pageSent = l.version;
+    c.pageAsked = false;
+    const std::string viewBase = base();
+    const int number = pr->number;
+    const std::uint64_t version = l.version;
+    const PictureUrl picture = [viewBase, number, version](std::size_t file, bool newSide) {
+        return pictureTarget(viewBase, number, version, file, newSide);
+    };
+    Json answer;
+    if (j["file"].isString()) {
+        answer = reviewFileAnswer(*l.read, l.version, j, picture);
+    } else {
+        answer = reviewJson(*l.read, l.version, openedFrom(j["opened"]), sideFrom(j["side"]), kReviewRowBudget,
+                            picture);
+        answer.set("title", Json(l.page->title));
+        answer.set("detail", Json(l.page->detail));
+        answer.set("body", Json(l.page->body));
+    }
+    answer.set("page", Json(page));
+    sendJson(c, answer);
+}
+
+void Server::takePages() {
+    for (auto& [id, pr] : pages_) {
+        const GitReads::Latest l = pr.reads->latest();
+        if (l.finished == pr.finished) continue;
+        pr.finished = l.finished;
+        if (!l.read) continue;
+        for (auto& c : conns_) {
+            if (!c->welcomed || c->reviewPage != id || (!c->pageAsked && c->pageSent == l.version)) continue;
+            Json m = Json::object();
+            m.set("t", Json("reviewread"));
+            m.set("page", Json(id));
+            m.set("version", Json((int64_t)l.version));
+            sendJson(*c, m);
+            c->pageAsked = false;
+            c->pageSent = l.version;
+        }
+    }
+}
+
+// A review's picture: the bytes the read on show holds for it, only while
+// that read is the latest (an address names its version), only a picture
+// the review shows, as `fileType` serves the kind (its CSP sandbox,
+// nosniff), counted among the files sent at once.
+void Server::beginPicture(Conn& c, const std::string& spec, const std::string* range) {
+    auto refuse = [&](int status, const std::string& why) {
+        c.out += fileRefusal(status, why);
+        c.closeAfterWrite = true;
+    };
+    int page = 0;
+    std::uint64_t version = 0;
+    std::size_t file = 0;
+    bool newSide = false;
+    if (!pictureParts(spec, &page, &version, &file, &newSide)) return refuse(404, "no such picture");
+    if (!session_) return refuse(503, "the session's page is not open");
+    int sending = 0;
+    for (auto& o : conns_)
+        if (o->file) sending++;
+    if (sending >= kMaxFileSends) return refuse(503, "too many files at once");
+    GitReads* reads = nullptr;
+    if (page == 0) {
+        reads = git_.get();
+    } else {
+        for (auto& [id, pr] : pages_)
+            if (pr.number == page) reads = pr.reads.get();
+    }
+    if (!reads) return refuse(404, "no such review");
+    const GitReads::Latest l = reads->latest();
+    if (!l.read || l.version != version) return refuse(404, "the changes moved on since");
+    if (file >= l.read->diffs.size() || file >= l.read->extras.size()) return refuse(404, "no such file");
+    const ChangeReview::File& f = l.read->diffs[file].file;
+    const std::string& bytes = newSide ? l.read->extras[file].newImage : l.read->extras[file].oldImage;
+    if (!f.image || !(newSide ? f.newImage.shown : f.oldImage.shown) || bytes.empty())
+        return refuse(404, "that file shows no such picture");
+    const FileType type = fileType(f.path);
+    if (type.view != "image" || type.mime.empty()) return refuse(404, "this page does not show that kind of picture");
+    const std::uint64_t size = bytes.size();
+    if (type.maxBytes && size > type.maxBytes)
+        return refuse(413, "too large to show here (over " + std::to_string(type.maxBytes >> 20) + " MB)");
+    const ByteRange r = byteRange(range, size);
+    c.out += fileHead(type, size, r);
+    if (r.kind == ByteRange::Unsatisfiable) {
+        c.closeAfterWrite = true;
+        return;
+    }
+    auto send = std::make_unique<FileSend>();
+    send->rel = f.path;
+    send->type = type;
+    send->sized = true;
+    send->mem = std::shared_ptr<const std::string>(l.read, &bytes);   // the read kept while it is sent
+    send->next = r.start;
+    send->left = r.length();
+    c.file = std::move(send);
+    pumpFile(c);
 }
 
 void Server::takeGit() {
-    if (!git_) {
-        gitDirty_ = false;   // nobody has asked for Source Control yet
-        return;
+    takePages();
+    // The worktree pages shown now: a change on disk reads them again too
+    // (a commit does not change).
+    std::set<std::string> worktrees;
+    for (auto& c : conns_) {
+        if (!c->welcomed || c->reviewPage.empty()) continue;
+        auto it = pages_.find(c->reviewPage);
+        if (it != pages_.end() && it->second.worktree) worktrees.insert(c->reviewPage);
     }
     bool watched = false;
-    for (auto& c : conns_)
-        if (c->welcomed && c->gitWatch) watched = true;
+    if (git_)
+        for (auto& c : conns_)
+            if (c->welcomed && c->gitWatch) watched = true;
     if (gitDirty_) {
-        if (!watched) gitDirty_ = false;   // the next page to watch reads anew
-        else if (msSince(lastGitAsk_) >= 1000) {
+        if (!watched && worktrees.empty()) {
+            gitDirty_ = false;   // the next page to watch reads anew
+        } else if (msSince(lastGitAsk_) >= 1000) {
             gitDirty_ = false;
-            askGit();
+            lastGitAsk_ = Clock::now();
+            if (watched) askGit();
+            for (const std::string& id : worktrees) pages_[id].reads->ask();
         }
     }
+    if (!git_) return;   // nobody has asked for Source Control yet
     const GitReads::Latest l = git_->latest();
     if (l.finished == gitFinished_) return;
     gitFinished_ = l.finished;
@@ -2657,6 +2859,8 @@ void Server::detach() {
     if (session_->letGo) session_->letGo();        // no more deliveries after this
     session_->client.reset();
     session_.reset();
+    pages_.clear();   // the review pages were the session's window's
+    for (auto& c : conns_) c->reviewPage.clear();
 }
 
 void Server::lookAtState() {
@@ -2670,6 +2874,7 @@ void Server::lookAtState() {
     Json windows = Json::array();
     s.allowed.clear();
     s.allowedTerms.clear();
+    s.reviews.clear();
     for (const Json& w : st["windows"].elements()) {
         if (opt_.window && (std::uint64_t)w["window"].asInt() != opt_.window) continue;
         // A closed window's record (its renderer gone, or left detached for
@@ -2681,12 +2886,31 @@ void Server::lookAtState() {
         if (tabs.isObject() && tabs.has("browser")) tabs.set("browser", browserViewJson(tabs["browser"]));
         // Which panes the window shows, so the page lays itself out alike.
         if (tabs.isObject() && tabs.has("panes")) tabs.set("panes", panesViewJson(tabs["panes"]));
+        // Its commit and worktree pages, checked again; the page gets their
+        // ids and titles, and names nothing else when it asks for one.
+        if (tabs.isObject() && tabs.has("reviews")) {
+            std::vector<ReviewPage> pages = reviewPagesFrom(tabs["reviews"]);
+            std::vector<ReviewPage> kept;
+            for (ReviewPage& p : pages)
+                if (s.reviews.size() < kMaxReviewPages && s.reviews.emplace(p.id(), p).second) kept.push_back(p);
+            tabs.set("reviews", reviewsViewJson(kept));
+        }
         windows.push(std::move(tabs));
         for (const Json& g : w["tabs"]["groups"].elements())
             for (const Json& t : g["tabs"].elements()) s.allowed.insert((DocId)t["doc"].asInt());
         for (const Json& t : w["tabs"]["terms"].elements()) s.allowedTerms.insert((TermId)t.asInt());
     }
     out.set("windows", std::move(windows));
+    // A review page the window closed: its read let go, and nobody shows it.
+    for (auto it = pages_.begin(); it != pages_.end();) {
+        if (s.reviews.count(it->first)) {
+            ++it;
+            continue;
+        }
+        for (auto& c : conns_)
+            if (c->reviewPage == it->first) c->reviewPage.clear();
+        it = pages_.erase(it);
+    }
     Json docs = Json::array();
     for (const Json& d : st["documents"].elements()) {
         if (opt_.window && !s.allowed.count((DocId)d["doc"].asInt())) continue;
@@ -2927,7 +3151,7 @@ bool Server::run() {
             if (session_->pending) timeout = std::min(timeout, 30);
         }
         // A change on disk waits out the second since the last read.
-        if (gitDirty_ && git_ && session_) timeout = (int)std::max(0LL, std::min<long long>(timeout, 1001 - msSince(lastGitAsk_)));
+        if (gitDirty_ && (git_ || !pages_.empty()) && session_) timeout = (int)std::max(0LL, std::min<long long>(timeout, 1001 - msSince(lastGitAsk_)));
         polls.clear();
         polls.push_back(pollfd{wake_[0], POLLIN, 0});
         polls.push_back(pollfd{listen_, POLLIN, 0});

@@ -155,6 +155,61 @@ static void testChangeReviewRead() {
         CHECK(asked == before);
         for (const FileDiff& d : plain.diffs) CHECK(!d.file.image && plain.extras.size() == plain.diffs.size());
     }
+    // A commit's page (the Mac's ReadCommit, now the core's): its header,
+    // its files against its first parent, Plain, from blobs only; a root
+    // commit against nothing; its pictures as pictures.
+    GROUP("review-read:commit");
+    {
+        const std::string cdir = root + "/commits";
+        CHECK(sh("mkdir commits && cd commits && git init -q . && git config user.email a@b && "
+                 "git config user.name Ann && git config commit.gpgsign false && "
+                 "printf 'one\\ntwo\\nthree\\n' >a.txt && printf 'PIC\\000\\002\\001x' >p.png && "
+                 "git add . && git commit -q -m first && "
+                 "printf 'one\\nTWO\\nthree\\n' >a.txt && printf 'PIC\\000\\004\\003xy' >p.png && "
+                 "printf 'new\\n' >n.txt && git add . && "
+                 "git commit -q -m 'Second subject' -m 'The body line.' && "
+                 "printf 'one\\nwork tree\\nthree\\n' >a.txt"));
+        const std::string head = run(cdir, {"rev-parse", "HEAD"}, "").out.substr(0, 40);
+        const std::string first = run(cdir, {"rev-parse", "HEAD~1"}, "").out.substr(0, 40);
+        ImageReading images;
+        images.size = [](const std::string& b) {
+            ImageSide s;
+            if (b.size() >= 6 && b.compare(0, 4, std::string("PIC\0", 4)) == 0) {
+                s.width = (unsigned char)b[4];
+                s.height = (unsigned char)b[5];
+            }
+            return s;
+        };
+        CommitRead c = readCommit(cdir, head, run, images);
+        CHECK(c.read.error.empty() && c.commit.hash == head && c.commit.author == "Ann");
+        CHECK(c.commit.message.find("Second subject") == 0 && c.commit.message.find("The body line.") != std::string::npos);
+        CHECK(c.commit.parents.size() == 1 && c.commit.parents[0] == first);
+        CHECK(c.read.diffs.size() == 3 && c.read.extras.size() == 3);
+        for (size_t i = 0; i < c.read.diffs.size(); i++) {
+            const File& f = c.read.diffs[i].file;
+            CHECK(f.section == Section::Plain);
+            if (f.path == "a.txt") {
+                // The commit's text, not the work tree's.
+                CHECK(f.letter == 'M' && QuickDiff::toUtf8(f.newText) == "one\nTWO\nthree\n");
+                CHECK(c.read.diffs[i].added == 1 && c.read.diffs[i].removed == 1);
+            }
+            if (f.path == "n.txt") CHECK(f.letter == 'A' && !f.oldExists && f.newExists);
+            if (f.path == "p.png") {
+                CHECK(f.image && f.oldImage.width == 2 && f.newImage.width == 4 && f.newImage.height == 3);
+                CHECK(c.read.extras[i].oldImage == std::string("PIC\0\x02\x01x", 7));
+                CHECK(c.read.extras[i].newImage == std::string("PIC\0\x04\x03xy", 8));
+            }
+        }
+        // The root commit: every file added.
+        CommitRead r1 = readCommit(cdir, first, run);
+        CHECK(r1.read.error.empty() && r1.commit.parents.empty() && r1.read.diffs.size() == 2);
+        for (const FileDiff& d : r1.read.diffs) CHECK(d.file.letter == 'A' && !d.file.image);
+        // A name that is no commit, and a folder that is no repository.
+        CHECK(!readCommit(cdir, std::string(40, 'e'), run).read.error.empty());
+        CHECK(readCommit("/nonexistent-mutible-review", head, run).read.error ==
+              "This folder is not in a git repository.");
+    }
+
     // Not a repository.
     CHECK(readUncommitted("/nonexistent-mutible-review", run).error == "This folder is not in a git repository.");
     CHECK(std::system(("rm -rf " + shq(root) + " " + shq(tmpIn) + " " + shq(tmpOut) + " " + shq(tmpErr)).c_str()) == 0);
