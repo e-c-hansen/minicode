@@ -127,7 +127,7 @@ ifneq ($(if $(MAKECMDGOALS),$(filter-out clean,$(MAKECMDGOALS)),all),)
           printf '%s\n' '$(VARIANT)' > $(OBJDIR)/variant.txt)
 endif
 
-.PHONY: all app run test test-asan test-tsan guitest guitest-build fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux icon compdb FORCE
+.PHONY: all app run test test-asan test-tsan guitest guitest-build fakelsp latex-sweep install dmg dist-zip clean demos membench-mac membench-linux taskbench-mac icon compdb FORCE
 
 all: app compile_commands.json
 
@@ -485,6 +485,20 @@ build/procmem-mac: tools/procmem-mac.c
 
 membench-mac: app build/procmem-mac
 	./scripts/membench-mac.sh
+
+# Scripted tasks on mutible, VS Code and Zed: wall time, inputs, CPU and
+# memory per task; see scripts/taskbench-mac.sh and docs/notes/demos.md. It
+# drives the apps with posted keys and clicks, so it takes the screen; it
+# waits for the keyboard and mouse to be idle 15 s and stops at any real
+# input. `./scripts/taskbench-mac.sh --list` or `--check` drives nothing.
+build/taskbench-mac: tools/taskbench-mac.m
+	@mkdir -p build
+	$(CC) -O2 -Wall -Wextra -fobjc-arc $< -framework Foundation -framework AppKit \
+	    -framework ApplicationServices -framework IOKit -framework AVFoundation \
+	    -framework CoreMedia -framework CoreVideo -framework ImageIO -o $@
+
+taskbench-mac: build/taskbench-mac
+	./scripts/taskbench-mac.sh
 
 # The same workload on Linux (a private Xvfb by default; see the script).
 # Builds linux/build-bench as a release build first.
