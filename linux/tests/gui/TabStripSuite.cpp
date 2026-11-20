@@ -108,12 +108,19 @@ void DragTab(int from, int to) {
     MCGuiDrag(win, p1.x, p1.y, std::max(1.0f, q1.x), p1.y);
 }
 
-double gScroll = 0, gMaxSeen = 0;
+double gScroll = 0, gMaxSeen = 0, gRowAtPress = 0;
 std::string gDragged;
 
 }  // namespace
 
 MC_GUI_SUITE(tab_strip) {
+    // The row's width is the right side's, less any pane beside the editor:
+    // with browser_tabs' browser pane left on show (the soak's round 2) the
+    // row was 472 wide, and the press on config.json below put its outline
+    // beside the text, the right side was laid out again, the row went to
+    // 713 under the held drag, and the pointer at its old end was no longer
+    // near the end: the row scrolled 12 pixels and stopped.
+    MCGuiHideBrowserPane();
     MCGuiStep("seventeen files open in tabs of their own", [] {
         ed()->closeAllTabs();
         for (const std::string& n : kMany) MCGuiWriteFile(F(n), base(n) + "\n");
@@ -270,6 +277,7 @@ MC_GUI_SUITE(tab_strip) {
     MCGuiStep("a tab held down and the pointer taken to the strip's right end", [] {
         gDragged = strip()->item(1).title;
         gMaxSeen = strip()->scrollOffset();
+        gRowAtPress = view();
         MCGuiPress(strip()->tabWidget(1), 20, -1);
     });
     MCGuiStep("moved", [] {
@@ -280,7 +288,11 @@ MC_GUI_SUITE(tab_strip) {
         return strip()->scrollOffset() == maxScroll();
     });
     MCGuiStep("let go", [] {
-        MCGuiNote("scrolled to %.0f of %.0f", gMaxSeen, maxScroll());
+        MCGuiNote("scrolled to %.0f of %.0f; the row %.0f wide at the press, %.0f now", gMaxSeen, maxScroll(),
+                  gRowAtPress, view());
+        // The pointer was left at the row's end as it was: a row that grew
+        // meanwhile left it short of the end.
+        GCHECK(view() == gRowAtPress);
         MCGuiRelease(1);
     });
     MCGuiWait("the tab dropped at the end of the row", 10, [] {

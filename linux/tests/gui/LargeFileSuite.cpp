@@ -256,7 +256,10 @@ double baselineMs(const std::string& path) {
     return MCGuiThreadCpuMs() - c0;
 }
 
-double gOpen0 = 0, gLoadedAt = 0, gWaitFrom = 0;
+double gOpen0 = 0, gLoadedAt = 0, gWaitFrom = 0, gWaitCpu = 0;
+// GTK laying out the 470,000 lines: the main thread's CPU it may take, and
+// the clock's time past which nothing is moving it any more.
+const double kLayoutCpuSeconds = 90, kLayoutWallSeconds = 900;
 int gTypedAt = 0, gTopBefore = 0, gCaretBefore = 0;
 double gKeysCpu0 = 0;
 size_t gTypedKeys = 0;
@@ -325,6 +328,7 @@ MC_GUI_SUITE(large_file) {
 
     MCGuiStep("the caret to line 300,000", [] {
         gWaitFrom = MCGuiNowMs();
+        gWaitCpu = MCGuiThreadCpuMs();
         GCHECK(ed()->revealLine(300000, 6, 0));
     });
     // GTK lays the lines out for 10 to 20 s after the file comes on show,
@@ -335,13 +339,17 @@ MC_GUI_SUITE(large_file) {
     // for a frame of a loaded run; the settling then went on, put the line
     // typed into next at the very top, a pixel of it hidden, and the tab
     // switch below kept that place: the caret was never on screen again.
-    MCGuiWait("on screen, and staying there", 180, [] {
+    // The layout is the main thread's own work, bounded by its CPU time: 13
+    // to 44 s of it here, quiet or loaded, while the clock ran 14 to 470 s
+    // (155 in a replay of the soak's order beside three other agents' builds).
+    MCGuiWaitCpu("on screen, and staying there", kLayoutCpuSeconds, kLayoutWallSeconds, [] {
         GtkTextIter it;
         gtk_text_buffer_get_iter_at_mark(buf(), &it, gtk_text_buffer_get_insert(buf()));
         return MCGuiTextLaidOut(ed()->textView()) && gtk_text_iter_get_line(&it) == 299999 && caretShown();
     });
     MCGuiStep("typing in it stays cheap", [] {
-        MCGuiNote("line 300,000 on screen to stay %.1f s after Go to Line", (MCGuiNowMs() - gWaitFrom) / 1000);
+        MCGuiNote("line 300,000 on screen to stay %.1f s after Go to Line, %.1f s of main-thread CPU",
+                  (MCGuiNowMs() - gWaitFrom) / 1000, (MCGuiThreadCpuMs() - gWaitCpu) / 1000);
         gTypedAt = caret();
         std::string text;
         while (text.size() < 200) text += "ab cd ";
@@ -417,14 +425,21 @@ MC_GUI_SUITE(large_file) {
         GCHECK(caret() == gCaretBefore);
         GCHECK(doc()->canUndo());
         gWaitFrom = MCGuiNowMs();
+        gWaitCpu = MCGuiThreadCpuMs();
     });
     // GTK lays the 470,000 lines out for 10 to 20 s after the tab comes back
     // (see settleOnPlace): the place is right once the height stops growing.
-    MCGuiWait("its place as it was", 180, [] {
+    // 7 to 27 s of the main thread's CPU, 8 to 174 s on the clock (one core
+    // shared with four busy loops); a wait of 180 s on the clock failed at
+    // 270 in the replay. (The editor's settling has limits of the clock of
+    // its own, Editor::settleOnPlace: with eight busy loops on the core it
+    // ended a second after the height last grew, the place still far off.)
+    MCGuiWaitCpu("its place as it was", kLayoutCpuSeconds, kLayoutWallSeconds, [] {
         return std::abs(topLine() - gTopBefore) <= 1 && caretShown();
     });
     MCGuiStep("", [] {
-        MCGuiNote("the place back %.1f s after the tab", (MCGuiNowMs() - gWaitFrom) / 1000);
+        MCGuiNote("the place back %.1f s after the tab, %.1f s of main-thread CPU", (MCGuiNowMs() - gWaitFrom) / 1000,
+                  (MCGuiThreadCpuMs() - gWaitCpu) / 1000);
         MCGuiNote("the top line %d before, %d shown again; the caret on screen: %d", gTopBefore,
                   topLine(), (int)caretOnScreen());
         checkStall("switching tabs");

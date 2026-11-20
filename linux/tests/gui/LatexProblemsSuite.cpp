@@ -147,6 +147,10 @@ MC_GUI_SUITE(latex_problems) {
             (k ? gStaleKept : gStaleGone) = sib;
             (k ? gStaleDirKept : gStaleDirGone) = dir;
         }
+        // Swept by a launch's first typeset only: run after another suite's
+        // in the same process (latex_forward's, in a shuffled order), this
+        // one's would not sweep without it.
+        LatexPreview::sweepAgainForTest();
         MCGuiOpenFileKept(F("lp-bad.tex"));
     });
     MCGuiWait("the preview shows tectonic's failure", 20, [] {

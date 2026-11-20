@@ -478,13 +478,15 @@ void sweepOldFolders(const std::string& base) {
         removeTree(dir);
     }
 }
+bool gSwept = false;   // this launch's first typeset has swept
 }  // namespace
+
+void LatexPreview::sweepAgainForTest() { gSwept = false; }
 
 // Written before the sibling, so a crash after leaves the means to remove it.
 void LatexPreview::writeRecord(const std::string& src) {
-    static bool swept = false;
-    if (!swept) {
-        swept = true;
+    if (!gSwept) {
+        gSwept = true;
         sweepOldFolders(outputBase());
     }
     LatexScratch::Record r;
@@ -744,7 +746,6 @@ void LatexPreview::finishCompile(Job* job, GBytes* output, bool ok) {
 }
 
 void LatexPreview::showDocument() {
-    const int n = pdf_->pageCount();
     gtk_stack_set_visible_child_name(GTK_STACK(stack_), "pdf");
     setButton("Recompile", true);
     showPagesStatus();

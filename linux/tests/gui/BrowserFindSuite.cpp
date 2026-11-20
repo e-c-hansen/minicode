@@ -142,4 +142,11 @@ MC_GUI_SUITE(browser_find) {
         while (browser()->tabCount() > 1) browser()->closeTab(browser()->tabCount() - 1);
         browser()->load("about:blank");
     });
+    // And the pane hidden: left on show it took the right side's width
+    // from the editor of the suites after it (tab_strip's, in the soak).
+    MCGuiStep("the pane hidden again", [] {
+        if (MCGuiApp().layout->browserShown())
+            g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
+    });
+    MCGuiWait("hidden", 10, [] { return !MCGuiApp().layout->browserShown(); });
 }

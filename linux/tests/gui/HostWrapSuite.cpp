@@ -141,6 +141,28 @@ MC_GUI_SUITE(host_wrap) {
         return t && t->hostTerminal() && t->shellPid() > 0 && t->vteWidget() &&
                gtk_widget_get_mapped(t->vteWidget());
     });
+    // The new window laid out, and VTE with the grid its frame holds: the
+    // shell can start before GTK's first layout of the window, and VTE's
+    // grid is then its 80 x 24 of before any size. Read then (a replay of
+    // the soak's order, on a loaded machine), the view's own grid was
+    // 80 x 24 and the 104 x 10 the pty went back to never matched it.
+    MCGuiWait("VTE laid out in its frame, at the grid it holds", 30, [] {
+        Terminal* t = MCGuiApp().terminal;
+        VteTerminal* v = vte();
+        if (!v || t->atPtySize()) return false;
+        GtkWidget* frame = t->frameWidget();
+        const graphene_rect_t c = terminalFrameChildRect(frame);
+        const int fw = gtk_widget_get_width(frame), fh = gtk_widget_get_height(frame);
+        const double cw = (double)vte_terminal_get_char_width(v), ch = (double)vte_terminal_get_char_height(v);
+        if (fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0 || (int)c.size.width != fw || (int)c.size.height != fh)
+            return false;
+        GtkBorder pad{};
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        gtk_style_context_get_padding(gtk_widget_get_style_context(GTK_WIDGET(v)), &pad);
+        G_GNUC_END_IGNORE_DEPRECATIONS
+        return vte_terminal_get_column_count(v) == (long)((fw - pad.left - pad.right) / cw) &&
+               vte_terminal_get_row_count(v) == (long)((fh - pad.top - pad.bottom) / ch);
+    });
     MCGuiStep("the view's own grid, larger than the other renderer's", [] {
         VteTerminal* v = vte();
         gViewCols = (int)vte_terminal_get_column_count(v);

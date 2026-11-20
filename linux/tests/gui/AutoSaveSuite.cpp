@@ -130,7 +130,13 @@ MC_GUI_SUITE(auto_save) {
     MCGuiStep("auto-save off, to set up", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
     OpenForTyping("outside.txt");
     MCGuiStep("an edit", [] { MCGuiType("mine "); });
-    MCGuiWait("unsaved", 10, [] { return ed()->dirty(); });
+    // Every key of it in, not only the first: GDK hands the window one key
+    // a turn of the main loop, so on a loaded machine the tab was dirty
+    // with "mi" while "ne " still waited, and arrived in other.txt once it
+    // was shown ("one other.txt", in a replay of the soak's order).
+    MCGuiWait("unsaved, all of it typed", 10, [] {
+        return ed()->dirty() && MCGuiEditorText() == "mine outside.txt\n";
+    });
     OpenForTyping("other.txt");
     MCGuiStep("the first changed on disk while another tab is shown", [] {
         MCGuiWriteFile(F("outside.txt"), "from outside\n");

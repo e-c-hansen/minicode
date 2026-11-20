@@ -15,6 +15,7 @@
 #include "Editor.h"
 #include "Gutter.h"
 #include "LineIndex.h"
+#include "WrapIndentTags.h"
 
 #include <string>
 
@@ -76,6 +77,26 @@ bool rowsRight() {
     return sawCaret;
 }
 
+// The tags on the last line's "1", other than the wrap indent's (every
+// indented line has one): the colors the opening's highlighting gives it,
+// last of all, in its idle slices. Their names, for a note.
+std::string lastLineColors() {
+    GtkTextIter it;
+    gtk_text_buffer_get_end_iter(buf(), &it);
+    gtk_text_iter_backward_chars(&it, 2);
+    GSList* tags = gtk_text_iter_get_tags(&it);
+    std::string names;
+    for (GSList* l = tags; l; l = l->next) {
+        if (WrapIndentTable::isTag(GTK_TEXT_TAG(l->data))) continue;
+        char* name = nullptr;
+        g_object_get(l->data, "name", &name, NULL);
+        names += std::string(names.empty() ? "" : " ") + (name ? name : "(anonymous)");
+        g_free(name);
+    }
+    g_slist_free(tags);
+    return names;
+}
+
 }  // namespace
 
 MC_GUI_SUITE(gutter_typing) {
@@ -119,9 +140,14 @@ MC_GUI_SUITE(gutter_typing) {
         }
         return caretLine() == 49999 && rowsRight();
     });
-    // Opening highlights in idle slices; the typing is measured from when the
-    // main thread is idle again.
-    MCGuiWaitQuiet("the main thread idle", 0.5, 30, [] { return (long)(MCGuiThreadCpuMs() / 20); });
+    // Opening highlights in idle slices; the typing is measured once they
+    // are over, the last line colored. (Waited for as the main thread's CPU
+    // standing still for half a second, it never came in a replay of the
+    // soak's order on a loaded machine: after fifty suites the thread spent
+    // 100 ms a second and more on what had nothing to do with this file,
+    // a caret's fading blink among it, at 60 frames a second.)
+    MCGuiWait("the whole file colored", 30, [] { return !lastLineColors().empty(); });
+    MCGuiStep("the last line's colors", [] { MCGuiNote("the last line's 1: %s", lastLineColors().c_str()); });
     MCGuiStep("typing, with a Return after each word", [] {
         gCpu0 = MCGuiThreadCpuMs();
         gGutter0 = gutterCpuMs();

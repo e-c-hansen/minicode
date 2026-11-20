@@ -143,6 +143,9 @@ public:
     // Where the hidden sibling and the output folder are (tests).
     std::string siblingPathForTest() const { return scratchPath(); }
     std::string outDirForTest() const { return outDir(); }
+    // The next typeset sweeps a dead process's folders again, as a launch's
+    // first does (a suite run after another typeset in the same process).
+    static void sweepAgainForTest();
 
     // Forward search (docs/notes/latex.md, "Forward search"): light the lines of text
     // that `line` of `file` (the buffer's own file, or one it \\input) set,

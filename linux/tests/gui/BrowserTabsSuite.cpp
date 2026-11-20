@@ -37,6 +37,14 @@ int gBefore = 0;
 }  // namespace
 
 MC_GUI_SUITE(browser_tabs) {
+    // It counts the pane's tabs from none: an earlier suite's (browser_find's
+    // one, bookmark_save's) are closed first, the last closing the pane.
+    MCGuiStep("no browser tab left from an earlier suite", [] {
+        while (browser() && browser()->tabCount() > 0) browser()->closeTab(browser()->tabCount() - 1);
+    });
+    MCGuiWait("none, the pane hidden", 30, [] {
+        return browser()->tabCount() == 0 && !MCGuiApp().layout->browserShown();
+    });
     MCGuiStep("pages are written and the pane is shown", [] {
         GCHECK(browser() != nullptr);
         for (int n = 1; n <= 6; n++)
@@ -231,4 +239,10 @@ MC_GUI_SUITE(browser_tabs) {
     MCGuiWait("the pane is hidden, no tab left", 30, [] { return !shown() && browser()->tabCount() == 0; });
     MCGuiStep("showing the pane again starts a tab", [] { MCGuiApp().layout->showBrowser(); });
     MCGuiWait("one tab with a page", 60, [] { return shown() && browser()->tabCount() == 1 && browser()->userProbe() != nullptr; });
+    // Left on show it took the right side's width from the editor of the
+    // suites after it (tab_strip, in the soak's order).
+    MCGuiStep("the pane hidden again", [] {
+        g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
+    });
+    MCGuiWait("hidden", 10, [] { return !shown(); });
 }

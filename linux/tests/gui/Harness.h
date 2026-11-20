@@ -137,6 +137,16 @@ void MCGuiPause(double seconds);
 // arriving, a count still growing), failing after `timeout`.
 void MCGuiWaitQuiet(const std::string& what, double quiet, double timeout,
                     std::function<long()> value);
+// Polls `until` as MCGuiWait does, for what waits on work the main thread
+// does itself (GTK laying a big buffer out in idle slices): a check fails
+// once the main thread has spent `cpuSeconds` of CPU time since the wait
+// began without it (MC_GUI_WAIT_SCALE applies), however long that took on
+// the clock, so a loaded machine that gives the thread a part of a core
+// only delays it. A minute of the clock (scaled) in which the main thread
+// spent under 0.3 s of CPU fails it too: the work is over and the condition
+// did not come. `wallSeconds` is the last backstop.
+void MCGuiWaitCpu(const std::string& what, double cpuSeconds, double wallSeconds,
+                  std::function<bool()> until);
 
 // ---- checks
 bool MCGuiCheck(bool ok, const std::string& what, const char* file, int line);
