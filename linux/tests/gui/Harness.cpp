@@ -980,6 +980,16 @@ void checkWhatSuiteLeft() {
     // processes, after it in the soak's shuffled order.
     if (was.closeAsks && !now.closeAsks)
         leak("left a window's question before closing a busy terminal off (TerminalDock::confirmClose)");
+    // A drop from one of the app's own drags (tree_drags') leaves GDK's user
+    // time days ahead of the X server's with GTK 4.22 (Input.cpp), and every
+    // window the app presents after it comes up without the keyboard:
+    // preview_tabs' and replace_in_folder's, after tree_drags. GTK's, not
+    // the suite's; said, not failed.
+    if (MCGuiUserTimeAhead()) {
+        leak("left GDK's user time ahead of the X server's (a drop from the app's own drag), put back",
+             false);
+        if (putBack) MCGuiPutBackUserTime();
+    }
     // With no window manager the X focus stays on a window that closed (a
     // question, a second window) and no app window is active, so a click
     // gives the keyboard nothing: tabs' first click in the text, after such
