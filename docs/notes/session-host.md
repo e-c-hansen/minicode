@@ -2066,13 +2066,9 @@ every page, editable or not.
   Syntax colors reuse the theme's rules (`#review .sN`); tints are the
   Mac's review's (removed #F14C4C at .16, added #73C991 at .16, words .38
   and .36). `mcSessionView.git()` and `review()` say what shows.
-- **Not done**: the window's open commit pages (`commit:<root>:<hash>`)
-  and worktree pages (Compare with Main) are not reported to the page, and
-  the commit reading is still the Mac's (`ReadCommit` in
-  ChangeReviewPage.mm; the worktree's is the core's `readWorktree`), so
-  they are the next slice; no graph, no commit text, no pictures (a binary
-  picture keeps its note), no Open of a file from the review, no F7.
-  Nothing stages, discards, commits or applies, by design.
+- **Not done here** (the window's commit and worktree pages and the
+  pictures came next, below): no graph, no Open of a file from the
+  review, no F7. Nothing stages, discards, commits or applies, by design.
 
 #### Checks
 
@@ -2101,6 +2097,151 @@ nothing; Side by Side pairs the changed lines; the gap opened shows every
 line; an agent's edit on disk reaches the review with no press, side by
 side and the gap kept; HEAD and the staged list as they were. The look in
 Safari, a long review's scrolling, and a phone need the owner's eyes.
+
+### The window's commit and worktree pages, and pictures (R3, last slice)
+
+What #262 left: the window's open commit pages and worktree pages
+(Compare with Main) on the page, and the review's pictures (#217's image
+diffs). Both read only, on every page.
+
+- **The window says which.** `WindowTabs` gains `reviews`
+  (`Web::reviewsReportJson`: [{kind "commit", hash | kind "worktree",
+  path, title, onShow}], at most 32, a page that does not hold up left
+  out). The Mac's `sessionBrowserReviews` (the SessionBrowser category)
+  lists the `MCChangeReviewPage`s with a `commit` or a `worktree` in both
+  groups' strips, the tab on show marked; `MCSessionWindow reviews` puts
+  them in the record, so they ride the half-second report. The window's
+  Uncommitted Changes page is left out (the page has its own).
+- **The server checks it again** (`lookAtState`, `reviewPagesFrom`: the
+  report is a renderer's): a known kind; a commit by 4 to 64 hex digits
+  only (`commitName`; never `HEAD~1`, never `--output=...`); a worktree by
+  an absolute path of valid UTF-8 with no control character; titles cut
+  at 300 bytes; each id once. The page gets `reviews` [{id, kind, title,
+  onShow}] in the window's state (`reviewsViewJson`), ids
+  `commit:HASH` and `worktree:PATH`, and `Session::reviews` keeps what
+  each id stands for. Another window's pages are never listed (the
+  window filter comes first).
+- **A page picks by id, git reads by the host's own state.** `review
+  {page}` (any page) names an id; one the state does not list is answered
+  `error` ("no longer open in the mutible window") and nothing runs. The
+  first ask makes the page's `GitReads` over `readReviewPage`, on a
+  thread of its own as the uncommitted read: a commit is the core's new
+  `ChangeReview::readCommit` (the Mac's `ReadCommit` ported: `show -s`,
+  `diff-tree -r -z -M` against the first parent or `--root`, one
+  `cat-file --batch`; `review-read:commit`) in the session's folder's own
+  repository, whatever root the window's page had, then `confineReview`
+  to the folder; a worktree only when `worktree list --porcelain` run in
+  the folder names it (realpath compared; not the main checkout, not a
+  bare one), compared with `AgentView::mainRef` of that list (the main
+  checkout's branch, never a name the report gives), read by the core's
+  `readWorktree` and held by `confineReview` to the worktree's own folder.
+  `readWorktree` now marks each file read from the disk `workRead`, so
+  an untracked link in the worktree (to a secret elsewhere) is shown as a
+  link with no text. Pending first, then `reviewread {page, version}`
+  for each new version the page has not had, and the page asks again
+  (`review {page}` answers from the last read at once). A worktree page
+  shown is read again on `gitChanged` (the window's FSEvents see a
+  worktree under the folder; one elsewhere is read again on ↻ and on
+  coming back to the page), at most once a second with the uncommitted
+  read; a commit page never (a commit does not change) except on ↻
+  (`reread`). `watch: false` (leaving the tab) stops it; a page the
+  window closes is let go (its read dropped, the conn's `reviewPage`
+  cleared) at the next state.
+- **The header** (`ReviewRead`'s title, detail and body): a commit's
+  subject, its byline (`commitByline`) and the counts, the rest of its
+  message; a worktree's "x compared with main", "against main at the
+  branch point (1a2b3c4)", its branch and the counts. `review` carries
+  them with `page`.
+- **Pictures** (every review, the uncommitted one too): the page's reads
+  give `ImageReading` `pageImages()`, whose `pictureSize` reads PNG, GIF,
+  JPEG, WebP, BMP and ICO sizes from their headers (no decoding; a TIFF
+  or HEIC file, which Chrome cannot show, stays the binary note), so
+  `showAsImages` makes the file a picture under the window's caps (64
+  megapixels, 4 MB a side). `reviewFileJson` gives such a file `images`
+  [{side, label (the window's `imageLabel`), width, height, bytes, url}]
+  and no image rows; without a URL maker the old note stays. The bytes
+  are the read's (`Extra::oldImage`, `newImage`), served at
+  `/v/ID/picture/PAGE/VERSION/FILE/SIDE` (`pictureTarget`; PAGE 0 the
+  uncommitted review, else the number the server gave the page's reads):
+  numbers only, so the address names no path or key. `answer()` takes it
+  as `/file/` (the credential's cookie, Host and Origin), then
+  `beginPicture`: a page's socket open (503 before), counted among the
+  32 files at once, the read named by PAGE, only while VERSION is its
+  latest (404 once the changes moved on: the page asks for the new
+  review anyway), only a file shown as pictures and a side it shows, the
+  kind `fileType` serves as an image (its mime, nosniff, no-store, the
+  sandbox CSP, its 64 MB cap), Range as for a file, from memory
+  (`FileSend::mem` aliasing the read, which stays alive while it is
+  sent). `confineReview` now also drops a linked file's pictures (their
+  bytes came through the link). `printOf` hashes the pictures' bytes, so
+  a picture that changed alone is a new version.
+- **The page.** The window's pages are tabs in the strip after its
+  documents (class `review`, no ×: only the window closes them), titled
+  as the window titles them; a click shows the review in `#fileview` as
+  the Changes tab does (`L.tabs`' entry made from the state,
+  `windowReviewTab`, path `/review/` + id). Per review state (`RV`, by id,
+  "" the uncommitted one): its answer, opened gaps, side-by-side files.
+  A page review has `#review .rtop` (title, a Read-only mark, detail, the
+  body in pre-wrap) and no section headings (its files are Plain). A
+  file's pictures are `.rimgs`: a column each, its label above an `<img>`
+  at the pixel size (`width`/`height` attributes for its room before it
+  loads), never taller than 320, on the checkerboard; an image that fails
+  says so in its label. A page the window closes leaves the strip, and
+  if it was on show the page goes back to the window's tab
+  (`dropGoneReviews`). A reconnect asks for the review on show once the
+  state lists it again. `mcSessionView.review()` gains `page`, `title`,
+  `detail`, `body`, and each file's `images` (with `naturalWidth`).
+- **Not done**: the page does not follow the window to a review page it
+  shows (the tab on show is marked `onshow`, nothing more); no Open of a
+  file and no F7 from these pages; GTK reports no review pages (it has no
+  session browser); the Mac's own pages still read with ChangeReviewPage.mm's
+  `ReadCommit` and `ReadWorktree`, beside the core's twins.
+
+#### Checks
+
+`review-read:commit`: `readCommit` over a scratch repository (the header,
+the parent, three Plain files with the commit's text and not the work
+tree's, an added file, a picture's two versions and bytes, a root commit,
+a name that is no commit, no repository). `sessionweb:pictures`:
+`pictureSize` over PNG (cut, zero, too wide), GIF, JPEG (and scan data
+first), WebP VP8X, BMP top-down, ICO's largest entry, text, empty, TIFF;
+`pictureTarget` and `pictureParts` over 12 bad parts; `answer()` refusing
+/picture/ without the cookie. `sessionweb:review-pages`: the report and
+its check (a hostile report: an option, `HEAD~1`, short and long names, a
+relative path, a newline, an unknown kind, non-objects, a 400-byte title,
+a duplicate; the 32 cap; the view leaves out the hash); against a real
+git with an agent's worktree outside the folder: a commit's header,
+detail, files held to the folder (no dotfile unless hidden, a subfolder's
+one file), its picture's images JSON with the window's label and the
+addresses, the note without them, names that are no commit (an option
+among them, which writes nothing); the worktree's title and detail, its
+change, its new picture, the dotfile left out, the untracked link to a
+secret shown as a link with no bytes, not the main checkout, not a folder
+that is no worktree; `GitReads` over a page with a picture that changed
+alone giving a new version; then over the wire with an in-process host
+whose window reports both pages and two that do not hold up, and another
+window one of its own: the state's ids and titles only, pending then
+`reviewread` then the review with its header, the pictures' bytes over
+HTTP (type, nosniff, sandbox), refused without the cookie, under another
+version, at five made-up addresses and for a text file; one file by key;
+two pages the window does not have; the worktree page with the link and
+its new picture; `gitChanged` bringing a new version; the window closing
+the commit page (the state, the ask and its picture all refused); no
+SECRET or TOKEN in anything sent; HEAD, the status and the worktree's
+index unchanged. GUI: `session_browser`, on the read-only page: two
+commits with a picture made bigger, and an agent's worktree (outside the
+folder) with a change and a new picture; the window opens the commit's
+page and the worktree's; the page's strip lists both (not as its own);
+a click shows the commit's page with its title, its change, and the
+picture's Before and After decoded at 2 and 4 pixels wide from /picture/
+addresses, labeled as the window labels them, only Side by Side, the
+window opening nothing; the worktree's tab shows "compared with", the
+agent's change and the new picture decoded, no Apply to Main; the window
+closing the commit's page takes its tab off the page, the worktree's
+staying on show; closing the worktree's page puts the page back on the
+window's tab. The look in Safari and Chrome (the header, the pictures'
+row, a tall picture capped at 320), a phone, and a big worktree page
+need the owner's eyes.
 
 ### The window's browser tabs in the page (R4)
 
@@ -2270,6 +2411,7 @@ panes and the ×s needs the owner's eyes.
   changes. A headless host's page cannot open text files (no window
   decides tabs); it shows pictures, PDFs, media, HTML, tables, notebooks
   and databases (R3), and a LaTeX document's text, saying the window's
-  own page shows its pages (it typesets nothing). Source Control and the
-  review of uncommitted changes are in (R3's fourth slice); the window's
-  open commit and worktree pages are the next.
+  own page shows its pages (it typesets nothing). Source Control, the
+  review of uncommitted changes (R3's fourth slice), and the window's
+  open commit and worktree pages with every review's pictures (its last
+  slice) are in; the page does not follow the window to a review page.

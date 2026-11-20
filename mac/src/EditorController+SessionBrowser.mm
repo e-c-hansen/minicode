@@ -15,10 +15,13 @@
 // preview of it typeset (R3's third slice): each tab's preview tells the
 // server of every typeset, and a page asking is given the preview's PDF,
 // or, with no preview of the file in the window, one the server's own
-// preview typesets from the tab's text or the disk's.
+// preview typesets from the tab's text or the disk's. The window's open
+// commit and worktree pages go with its tabs too (sessionBrowserReviews),
+// for the page to show read-only; the server reads them itself.
 #import "EditorController+Private.h"
 #import "AppSettings.h"
 #import "Browser.h"
+#import "ChangeReviewPage.h"
 #import "Latex.h"
 #import "SessionBrowser.h"
 #import "SessionLink.h"
@@ -145,6 +148,27 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     for (NSUInteger i = 0; i < urls.count; i++)
         [tabs addObject:@{@"url": urls[i] ?: @"", @"title": i < titles.count ? titles[i] : @""}];
     return @{@"tabs": tabs, @"active": @((int)b.selectedTab)};
+}
+
+// The commit and worktree pages in either group's strip, with whether each
+// is the tab on show there. The uncommitted changes' page is left out: the
+// page has its own, under Source Control.
+- (NSArray<NSDictionary *> *)sessionBrowserReviews {
+    NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
+    NSArray<MCTab *> *groups[2] = {[self groupTabs], [self parkedTabs]};
+    MCTab *shown[2] = {_activeTab, [self parkedActive]};
+    for (int g = 0; g < 2; g++)
+        for (MCTab *t in groups[g]) {
+            if (![t.page isKindOfClass:MCChangeReviewPage.class]) continue;
+            MCChangeReviewPage *page = (MCChangeReviewPage *)t.page;
+            NSString *title = page.pageTitle ?: @"";
+            NSNumber *onShow = @(t == shown[g]);
+            if (page.worktree.length)
+                [out addObject:@{@"kind": @"worktree", @"path": page.worktree, @"title": title, @"onShow": onShow}];
+            else if (page.commit.length)
+                [out addObject:@{@"kind": @"commit", @"hash": page.commit, @"title": title, @"onShow": onShow}];
+        }
+    return out;
 }
 
 // An editable page's address (http or https, the core has checked): the

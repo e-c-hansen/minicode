@@ -135,7 +135,13 @@ found through that list.
   Window and Copy Worktree Path. Once Claude Code writes its transcript
   the session row stands for the task. Session rows with a worktree gained
   Compare with Main… (`onCompareWorktree`, MCAgentWindow's
-  `compareWorktreeAt:`).
+  `compareWorktreeAt:`). A worktree page the window has open also shows,
+  read-only, on the session's page in a browser (R3's last slice,
+  session-host.md, "The window's commit and worktree pages, and
+  pictures"): the server reads it with the core's `readWorktree`, only
+  for a worktree the folder's repository's `worktree list` names, against
+  the branch that list says the main checkout is on; no Apply to Main
+  there.
 - Checked by `make guitest SUITES=agent_task` (a stand-in claude script;
   the transcript it writes for a SESSION prompt goes to the suite's
   scratch MUTIBLE_CLAUDE_PROJECTS). Not run against a real Claude Code

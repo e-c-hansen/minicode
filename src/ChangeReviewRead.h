@@ -111,6 +111,22 @@ std::string discardText(const Read& r, size_t fi, const std::u16string& text, co
                         const std::function<bool(std::string* where, std::string* why)>& trashCopy,
                         std::string* trashed);
 
+// ------------------------------------------------------------- a commit
+// A commit's page (a click in the graph), the part the Mac keeps in
+// ReadCommit (mac/src/ChangeReviewPage.mm), over the same runner: its
+// header (`show -s`, Git::parseShow) and every file it changed against its
+// first parent (against nothing for a root commit), from diff-tree's raw
+// records and their blobs in one cat-file --batch. Plain files, no buttons
+// but Side by Side; nothing is read from the work tree.
+struct CommitRead {
+    Read read;                  // top, diffs, extras (row.path, origPath, letter)
+    Git::CommitDetail commit;   // hash, parents, author, time, message
+};
+// `commit` goes to git as it is: the caller holds it to a name it trusts
+// (the session's page takes hex digits only).
+CommitRead readCommit(const std::string& root, const std::string& commit, const GitRunner& run,
+                      const ImageReading& images = ImageReading());
+
 // ------------------------------------------------ a worktree against main
 // Compare with Main's reading and Apply to Main's writing, the part the
 // Mac keeps in ReadWorktree and runApply (mac/src/ChangeReviewPage.mm), over

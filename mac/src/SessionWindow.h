@@ -45,6 +45,9 @@
 @property(nonatomic, copy) void (^termDock)(Shared::TermDock *out);
 @property(nonatomic, copy) NSDictionary * (^browserTabs)(void);
 @property(nonatomic, copy) NSDictionary * (^panes)(void);
+// Its open commit and worktree pages (EditorController's
+// sessionBrowserReviews), the record's "reviews" (Web::reviewsReportJson).
+@property(nonatomic, copy) NSArray<NSDictionary *> * (^reviews)(void);
 // After a record was sent (the browser's view looks at once).
 @property(nonatomic, copy) void (^onReported)(void);
 

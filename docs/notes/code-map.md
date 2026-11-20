@@ -96,7 +96,10 @@ goes here first, with tests; the GUI only displays it.
   real path and served at /typeset/; `sessionweb:typeset`), `SessionWebGit` (the page's
   Source Control: `runGit`, a POSIX git runner with fixed arguments, the
   core's `readUncommitted` held to the folder, the list and the review as
-  JSON, `GitReads` on a thread of its own; `sessionweb:git`), and
+  JSON, `GitReads` on a thread of its own; `sessionweb:git`; the window's
+  commit and worktree pages, `ReviewPage` and `readReviewPage`, and the
+  pictures' header sizes and /picture/ addresses; `sessionweb:pictures`
+  and `sessionweb:review-pages` in tests/session_web_review_tests.inc), and
   `SessionWebAccess`
   (who may use the browser's view: single-use links, the credential's
   cookie, idle expiry, the app's question before a new browser and its
