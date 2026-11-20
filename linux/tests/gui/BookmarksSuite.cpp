@@ -316,4 +316,7 @@ MC_GUI_SUITE(bookmarks) {
         MCGuiSetKeyWindow(nullptr);
         MCGuiFocusKeyWindow();
     });
+    // The browser pane hidden: left on show it takes the right side's width
+    // from the editor of the suites after it (the harness's LEFT line).
+    MCGuiHideBrowserPane();
 }

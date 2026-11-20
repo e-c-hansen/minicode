@@ -14,6 +14,7 @@
 //     and `open` refused.
 #include "Harness.h"
 #include "AppSeam.h"
+#include "Browser.h"
 #include "ShellIntegration.h"
 #include "TabStrip.h"
 #include "Terminal.h"
@@ -357,8 +358,16 @@ MC_GUI_SUITE(terminal_splits) {
     // ---- clean up
     MCGuiStep("one pane again; the settings are put back", [] {
         while (grp()->count() > 1) dock()->closePane(grp()->panes().back(), false);
+#ifdef MUTIBLE_ENABLE_BROWSER
+        // And the agent page `split --right browse` opened: browser_pages,
+        // after this suite in a shuffled order, checks there is none.
+        if (MCGuiApp().browser && MCGuiApp().browser->hasAgentPage()) MCGuiApp().browser->closeAgentPage();
+#endif
         dock()->confirmClose = gOldConfirm;
         if (gHadShell) EnvLock::envSet("SHELL", gOldShell.c_str(), TRUE);
         else EnvLock::envUnset("SHELL");
     });
+    // The browser pane hidden: left on show it takes the right side's width
+    // from the editor of the suites after it (the harness's LEFT line).
+    MCGuiHideBrowserPane();
 }

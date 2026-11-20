@@ -241,8 +241,5 @@ MC_GUI_SUITE(browser_tabs) {
     MCGuiWait("one tab with a page", 60, [] { return shown() && browser()->tabCount() == 1 && browser()->userProbe() != nullptr; });
     // Left on show it took the right side's width from the editor of the
     // suites after it (tab_strip, in the soak's order).
-    MCGuiStep("the pane hidden again", [] {
-        g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
-    });
-    MCGuiWait("hidden", 10, [] { return !shown(); });
+    MCGuiHideBrowserPane();
 }

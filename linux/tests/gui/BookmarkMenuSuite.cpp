@@ -382,4 +382,7 @@ MC_GUI_SUITE(bookmark_menu) {
         if (gServer) g_object_unref(gServer);
         gServer = nullptr;
     });
+    // The browser pane hidden: left on show it takes the right side's width
+    // from the editor of the suites after it (the harness's LEFT line).
+    MCGuiHideBrowserPane();
 }
