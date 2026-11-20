@@ -205,6 +205,7 @@ gui_sources = [
   # The session's host and the editor's client of it (SESSION-DESIGN.md
   # stage 4a): the documents' text and undo live there.
   'src/SessionLink.cpp',
+  'src/SessionBrowser.cpp',
   'src/Groups.cpp',
   'src/TabStrip.cpp',
   # The view itself (CodeView.cpp: its drawing passes and the ruler), its

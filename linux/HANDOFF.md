@@ -8324,3 +8324,49 @@ said nothing about Ctrl+click until it was tried. The core already had
   `ls --hyperlink` and gcc's links by hand. Snapshots of the row (with a
   count of 2 and the dot) and of the hint over printf's output were looked
   at under the harness's Adwaita.
+
+### 126. The session browser, first part: Show Session in Browser… and Copy Session Browser Link (the Mac's SessionBrowser; November 2026)
+
+The Mac's View > Show Session in Browser… on GTK, without the LaTeX
+typesets, the review pages and the page's Source Control, which are the
+next bites. The core's `Shared::Web::Server` (SessionWeb.h) was already
+built into the GTK app; nothing started one.
+
+- **What a user meets.** View > Session Browser has Show Session in
+  Browser…, Copy Session Browser Link and Remembered Browsers…, no keys (a
+  submenu, since three more rows in View itself would pass a 768-pixel
+  screen). Show asks Editable or Read-Only, the last answer first, then
+  opens a fresh link with the system's handler; Copy puts one on the
+  clipboard. A browser the app does not remember waits ("Waiting for
+  approval in mutible") while a dialog on the window asks Allow, Deny or
+  Always Allow, naming the browser and where it connects from (this
+  computer with the connection's port, or the far end of an SSH tunnel).
+  An editable page saves through the window's Ctrl+S, opens a file from
+  its tree as a tree click does, closes a tab (never one with unsaved
+  changes) and opens http and https addresses in the window's browser
+  pane. The page shows only the window's tabs, its own terminals, its
+  browser pane's tabs and which panes it shows.
+- **Code.** `linux/src/SessionBrowser.{h,cpp}` (new): one server per
+  window, its callbacks carried to the main loop with a generation number,
+  the half-second report, the dialog, the remembered browsers and the
+  Editable answer in `$XDG_STATE_HOME/mutible/session-browser.json`, and
+  the SSH peer read from /proc/net/tcp{,6} and the user's /proc/PID/fd.
+  SessionLink gained `connectViewer` (a browser's view as one more
+  renderer of the in-process host, its messages routed by client id),
+  `windowPanes` (the "browser" and "panes" records), `hostWindowId`, and a
+  public `dispatch`. main.cpp: the three actions, the Host callbacks, and
+  the server deleted before the window detaches. CommandsLinux and Keys
+  have the three rows.
+- **Differences from the Mac.** No question about editor.session-host:
+  GTK always has a host. Nothing asks for attention when the app is in
+  the background.
+- **Checks.** Bite 2 adds the `session_browser` suite. This bite was
+  smoke-checked in a private Xvfb with scratch XDG folders and a
+  temporary hook (removed) that ran Copy: curl got the page (200, the
+  cookies), the spent link 403, the cookie 200, a wrong Host 403; a
+  socket client got "waiting", the dialog showed (looked at), Return
+  allowed it, and the page's open, edit, save and close reached the
+  window (the file on disk changed), on the in-process host and on a
+  headless one (`MUTIBLE_HOST=socket`).
+- **Needs the owner's eyes**: the dialogs' look on the real desktop, Show
+  opening the default browser, and a page from a real SSH tunnel.

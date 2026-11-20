@@ -495,7 +495,7 @@ build/taskbench-mac: tools/taskbench-mac.m
 	@mkdir -p build
 	$(CC) -O2 -Wall -Wextra -fobjc-arc $< -framework Foundation -framework AppKit \
 	    -framework ApplicationServices -framework IOKit -framework AVFoundation \
-	    -framework CoreMedia -framework CoreVideo -framework ImageIO -o $@
+	    -framework CoreMedia -framework CoreVideo -framework ImageIO -framework Vision -o $@
 
 taskbench-mac: build/taskbench-mac
 	./scripts/taskbench-mac.sh

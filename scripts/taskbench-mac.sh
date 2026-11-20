@@ -90,7 +90,7 @@ OUT_STEPS="$REPO/build/taskbench-mac-steps.csv"
 # as its launch. Add a task here and a steps_<id>_<app> function per app.
 TASK_TABLE=(
 "review|no|Review the uncommitted changes across files and stage one hunk|git diff --cached holds app.py's first hunk and nothing else"
-"viewers|no|Open a PDF, PNG, MP4, CSV, notebook, and SQLite file and show each rendered|each file's window shows a view that is not its text (read through AX), else 'opens as text' or 'refused'"
+"viewers|no|Open a PDF, PNG, MP4, CSV, notebook, and SQLite file and show each rendered|each file's window shows a view that is not its text (read through AX, or from the screen where an app has none), else 'opens as text' or 'refused'"
 "server|no|Find the server left running on port $SRV_PORT and stop it from the app|nothing accepts on port $SRV_PORT"
 "page|no|Open the page the fixture serves on localhost inside the app|the fixture's server logs the request (and the page's title shows, where AX can read it)"
 "biglog|yes|Open a ${LOG_MB} MB log and find a string near its end|the find count reads 1 of 1"
@@ -133,11 +133,23 @@ open_mutible() {
         --env "MUTIBLE_BACKUP_DIR=$RUN/backups" --env "CLAUDE_CONFIG_DIR=$RUN/claude" \
         --env "MUTIBLE_MATH_CACHE=$RUN/math" "$2"
 }
+# Two Chromium switches (Electron passes them on), neither a step:
+#   --use-mock-keychain: VS Code's safeStorage asks the keychain for "Code
+#     Safe Storage" at startup; under a scratch HOME there is no login
+#     keychain, so macOS put up "Keychain Not Found" (one dialog a launch,
+#     on the owner's screen) and VS Code's main thread blocked on it: the
+#     first run's 90 s launch timeouts. It also keeps VS Code off the
+#     owner's keychain.
+#   --force-renderer-accessibility: Chromium builds no AX tree until asked,
+#     and asking through AXManualAccessibility once the app runs was lost
+#     or took seconds (tools/taskbench-mac.m, Adopt), so the tree is on
+#     from the first window, as for a person with VoiceOver running.
 open_vscode() {
     local g=""; if [ "$1" = bg ]; then g="-g"; fi
     # shellcheck disable=SC2086
     q open -n $g -a "$VSCODE_APP" --env "HOME=$RUN/home" "$2" \
-        --args --user-data-dir "$RUN/data" --extensions-dir "$EXTDIR"
+        --args --user-data-dir "$RUN/data" --extensions-dir "$EXTDIR" \
+        --use-mock-keychain --force-renderer-accessibility
 }
 open_zed() {
     local g=""; if [ "$1" = bg ]; then g="-g"; fi
@@ -165,9 +177,9 @@ open_zed() {
 # is Cmd+P. A click on the file in the tree is shorter (one input) in all
 # three, but Zed's tree cannot be reached through AX, so all three use Cmd+P
 # and the comparison stays even.
-open_by_name() {   # open_by_name <name> <condition>
+open_by_name() {   # open_by_name <name> <condition> [typed condition]
     echo "key cmd+p => focus AXTextField || quiet 250"
-    echo "type $1 => ?quiet 150 @3"
+    echo "type $1 => ${3:-?quiet 150} @3"
     echo "key return => $2 @30"
 }
 
@@ -184,38 +196,72 @@ steps_review_mutible() {
 }
 steps_review_vscode() {
     # Source control docs: Ctrl+Shift+G opens the Source Control view; a
-    # click on a file opens its diff; Option+F5 (Go to Next Change) moves to
-    # the first change; Cmd+K Cmd+Option+S (Git: Stage Selected Ranges)
-    # stages the change at the cursor.
-    echo "key ctrl+shift+g => ax AXRow~app.py || ax AXTreeItem~app.py @15"
-    echo "click AXRow~app.py || AXTreeItem~app.py => window~app.py"
-    echo "key alt+f5 => ?quiet 150 @3"
+    # file opens in its diff editor, a double click with the keyboard in it
+    # (a single click opens a preview and leaves the keyboard in the list,
+    # where the stage key does nothing); the diff editor opens with the
+    # cursor on its first change (Option+F5, Go to Next Change, went on to
+    # the second, watched 2026-11-20); Cmd+K Cmd+Option+S (Git: Stage
+    # Selected Ranges, the git extension's keybinding, "when":
+    # editorTextFocus) stages the change at the cursor.
+    echo "key ctrl+shift+g => ax AXRow~app.py, Modified @15"
+    echo "dclick AXRow~app.py, Modified => window~app.py && focus AXTextArea"
     echo "key cmd+k cmd+alt+s => sh $CHECKS/staged-one-only"
 }
 steps_review_zed() {
-    # Git docs: "git: diff" opens the Project Diff, every changed file in one
-    # editable view with the cursor in the first; Cmd+Y (git: stage and next)
-    # stages the hunk at the cursor. Zed shows no AX tree, so the steps
-    # between wait for its CPU to settle.
+    # Git docs (zed.dev/docs/git): "git: diff" opens the Project Diff, every
+    # changed file in one view; "focus on each hunk and stage them
+    # individually ... via the keybindings git: stage and next" (Cmd+Y).
+    # Watched 2026-11-20: the diff opens with the cursor on line 2, above
+    # the first hunk, so the first Cmd+Y only moves to that hunk (its Stage
+    # and Restore buttons appear) and the second stages it. Ctrl-G D, the
+    # docs' key for git: diff, did nothing with no file open, so the palette.
+    # Zed shows no AX tree, so the steps before the last wait for its CPU to
+    # settle; the last is read from git's index.
     echo "key cmd+shift+p => ?quiet 250 @3"
     echo "type git: diff => ?quiet 150 @3"
     echo "key return => window~Uncommitted Changes || quiet 400 @15"
+    echo "key cmd+y => ?quiet 150 @3"
     echo "key cmd+y => sh $CHECKS/staged-one-only"
 }
 
 # 2. viewers ---------------------------------------------------------------
 
-viewer_steps() {
+viewer_steps() {   # viewer_steps [verified]: the palette's typed name read back from its field
     # The magic after each name is what the file's text starts with, so a
-    # text view of it reads as "opens as text".
-    open_by_name report.pdf "[report.pdf] view report.pdf %PDF"
-    open_by_name picture.png "[picture.png] view picture.png PNG"
-    open_by_name clip.mp4 "[clip.mp4] view clip.mp4 ftyp"
-    open_by_name cities.csv "[cities.csv] view cities.csv city,country"
-    open_by_name analysis.ipynb "[analysis.ipynb] view analysis.ipynb \"cells\""
-    open_by_name shop.sqlite "[shop.sqlite] view shop.sqlite SQLite format"
+    # text view of it reads as "opens as text". The PNG's is its first
+    # chunk's name, IHDR, not "PNG": Zed's image viewer prints "PNG" in its
+    # size line, read from the screen.
+    typed() { if [ "${V:-}" = verified ]; then echo "focus AXTextField=$1"; fi; }
+    local V="${1:-}"
+    open_by_name report.pdf "[report.pdf] view report.pdf %PDF" "$(typed report.pdf)"
+    open_by_name picture.png "[picture.png] view picture.png IHDR" "$(typed picture.png)"
+    open_by_name clip.mp4 "[clip.mp4] view clip.mp4 ftyp" "$(typed clip.mp4)"
+    open_by_name cities.csv "[cities.csv] view cities.csv city,country" "$(typed cities.csv)"
+    open_by_name analysis.ipynb "[analysis.ipynb] view analysis.ipynb \"cells\"" "$(typed analysis.ipynb)"
+    open_by_name shop.sqlite "[shop.sqlite] view shop.sqlite SQLite format" "$(typed shop.sqlite)"
 }
-steps_viewers_mutible() { viewer_steps; }
+# mutible's palette field is read back once the name is typed (as VS Code's
+# is), not waited on for 150 ms of quiet; its rows are drawn, so a Return
+# before the list filtered would open another file and fail the view's title.
+steps_viewers_mutible() { viewer_steps verified; }
+# VS Code's Quick Open, read through AX: its field (an AXTextField described
+# "Search files by name ...") is up, then holds the typed name with its list
+# filtered to one ("1 Results"), so no wait for quiet is needed. The keyboard's
+# element is no help here: VS Code reported an AXStaticText of the page
+# behind as focused while Quick Open was up.
+vscode_open_by_name() {   # vscode_open_by_name <name> <condition> [menu | click]
+    if [ "${3:-}" = menu ]; then
+        echo "menu Go>Go to File… => ax AXTextField~Search files by name"
+    else
+        echo "key cmd+p => ax AXTextField~Search files by name"
+    fi
+    if [ "${3:-}" = click ]; then
+        echo "click AXTextField~Search files by name => none"
+    fi
+    # Filtered: the field holds the name and the list's count reads one.
+    echo "type $1 => ax AXTextField=$1 && ax AXStaticText=1 Results @5"
+    echo "key return => $2 @30"
+}
 steps_viewers_vscode() {
     # VS Code shows images, video, and notebooks itself; a PDF and a SQLite
     # file need an extension each (its PDF opens as text, its SQLite file is
@@ -224,7 +270,20 @@ steps_viewers_vscode() {
     # (Rainbow CSV only colours it), so no extension is added for it.
     echo "setup 13: sh $(code_cli) --install-extension tomoki1207.pdf >/dev/null 2>&1 => none @300"
     echo "setup 16: sh $(code_cli) --install-extension qwtel.sqlite-viewer >/dev/null 2>&1 => none @300"
-    viewer_steps
+    vscode_open_by_name report.pdf "[report.pdf] view report.pdf %PDF"
+    # The PDF viewer (pdf.js in a webview) keeps the keyboard and takes Cmd+P
+    # for its own print, so Quick Open never came (watched 2026-11-20); the
+    # next file is opened from the Go menu, as a person would once Cmd+P did
+    # nothing: Go > Go to File…, two clicks.
+    vscode_open_by_name picture.png "[picture.png] view picture.png IHDR" menu
+    vscode_open_by_name clip.mp4 "[clip.mp4] view clip.mp4 ftyp"
+    # From the video preview (a webview with the keyboard in its player),
+    # Cmd+P brings Quick Open up but leaves the keyboard in the player, so
+    # the name typed never reached the field (watched 2026-11-20: the field
+    # stayed up and empty): a click in the field first.
+    vscode_open_by_name cities.csv "[cities.csv] view cities.csv city,country" click
+    vscode_open_by_name analysis.ipynb "[analysis.ipynb] view analysis.ipynb \"cells\""
+    vscode_open_by_name shop.sqlite "[shop.sqlite] view shop.sqlite SQLite format"
 }
 steps_viewers_zed() { viewer_steps; }
 
@@ -251,19 +310,26 @@ steps_server_zed() {
 steps_page_mutible() {
     # REFERENCE.md: Shift+Cmd+B shows the browser pane with the keyboard in
     # its address bar.
+    # The typed address is read back from the field, as in VS Code: waiting
+    # for 100 ms of quiet timed out at 3 s in every run on 2026-11-20 (the
+    # new pane's WebKit processes were still busy), which put 3 s of the
+    # benchmark's waiting into mutible's wall time.
     echo "key cmd+shift+b => focus AXTextField @10"
-    echo "type http://127.0.0.1:$PAGE_PORT/ => ?quiet 100 @3"
-    echo "key return => sh grep -q 'GET / ' $PAGE_LOG @15"
+    echo "type http://127.0.0.1:$PAGE_PORT/ => focus AXTextField=http://127.0.0.1:$PAGE_PORT/ || ax AXTextField=http://127.0.0.1:$PAGE_PORT/ @5"
+    echo "key return => sh grep -qE 'GET /[ ?]' $PAGE_LOG @15"
     echo "none => ?ax *~taskbench page @10"
 }
 steps_page_vscode() {
     # VS Code's built-in Simple Browser (the simple-browser extension that
     # ships with it): Command Palette, "Simple Browser: Show", the address.
-    echo "key cmd+shift+p => focus AXTextField || quiet 250"
-    echo "type simple browser: show => ?quiet 150 @3"
-    echo "key return => focus AXTextField || quiet 250"
-    echo "type http://127.0.0.1:$PAGE_PORT/ => ?quiet 100 @3"
-    echo "key return => sh grep -q 'GET / ' $PAGE_LOG @15"
+    # Each field read through AX: the palette's (its ">" prefilled), filtered
+    # to the one command, then the command's own "Enter url to visit" box
+    # (described by its placeholder, https://example.com) holding the URL.
+    echo "key cmd+shift+p => ax AXTextField~Type the name of a command"
+    echo "type simple browser: show => ax AXTextField=>simple browser: show && ax AXStaticText=1 Results @5"
+    echo "key return => ax AXTextField~https://example.com"
+    echo "type http://127.0.0.1:$PAGE_PORT/ => ax AXTextField=http://127.0.0.1:$PAGE_PORT/ @5"
+    echo "key return => sh grep -qE 'GET /[ ?]' $PAGE_LOG @15"
     echo "none => ?ax *~taskbench page @10"
 }
 steps_page_zed() {
@@ -272,24 +338,48 @@ steps_page_zed() {
 
 # 5. biglog (cold) ---------------------------------------------------------
 
-biglog_steps() {   # biglog_steps <app> <count condition>
-    echo "finder $("open_$1" fg "$BIGLOG") => window~huge.log @180"
-    echo "key cmd+f => focus AXTextField || quiet 300"
-    echo "type $NEEDLE => $2 @120"
+biglog_steps() {   # biglog_steps <app> <shown condition> <find bar condition> <count condition>
+    echo "finder $("open_$1" fg "$BIGLOG") => $2 @180"
+    echo "key cmd+f => $3"
+    echo "type $NEEDLE => $4 @120"
 }
 # Each app's find count: "1 of 1" in mutible and VS Code (exact, since "1 of
-# 10000" holds "1 of 1" while the first letters are searched), "1/1" in Zed,
-# which AX cannot read, so its CPU settling stands in.
-steps_biglog_mutible() { biglog_steps mutible "ax *=1 of 1"; }
-steps_biglog_vscode() { biglog_steps vscode "ax *=1 of 1"; }
-steps_biglog_zed() { biglog_steps zed "ax *=1/1 || quiet 1000"; }
+# 10000" holds "1 of 1" while the first letters are searched). VS Code's
+# window is titled for the log about a second before its text is loaded
+# (Cmd+F then did nothing), so it waits for the editor (a text area
+# described "huge.log"); its find field is a text area described "Find"
+# (it opens holding the word at the cursor, selected, so the needle typed
+# replaces it).
+steps_biglog_mutible() { biglog_steps mutible "window~huge.log" "focus AXTextField || quiet 300" "ax *=1 of 1"; }
+steps_biglog_vscode() {
+    biglog_steps vscode "window~huge.log && ax AXTextArea=huge.log" "ax AXTextArea=Find" "ax *=1 of 1"
+}
+# Zed, read from the screen (it has no AX tree): a file opened cold comes up
+# behind the modal "Unrecognized Project" question (Restricted Mode), which
+# holds the keyboard, so Cmd+F and the needle did nothing until it was
+# answered (watched 2026-11-20); Return is its "Trust and Continue". Its find
+# bar then reads "0/0", and "1/1" once the needle is found.
+zed_trust_steps() {   # zed_trust_steps <file name>: the cold open and the trust question
+    echo "finder $(open_zed fg "$2") => window~$1 && screen Unrecognized Project @180"
+    echo "key return => !screen Unrecognized Project @60"
+}
+steps_biglog_zed() {
+    zed_trust_steps huge.log "$BIGLOG"
+    echo "key cmd+f => screen 0/0 @60"
+    echo "type $NEEDLE => screen 1/1 @120"
+}
 
 # 6. finder (cold) ---------------------------------------------------------
 
 steps_finder_mutible() { echo "finder $(open_mutible fg "$F/lonely/lonely.py") => window~lonely.py && focus AXTextArea @60"; }
 steps_finder_vscode() { echo "finder $(open_vscode fg "$F/lonely/lonely.py") => window~lonely.py && focus AXTextArea @60"; }
 steps_finder_zed() {
-    echo "finder $(open_zed fg "$F/lonely/lonely.py") => window~lonely.py && focus AXTextArea || window~lonely.py && quiet 500 @60"
+    # The first run read Zed as done once its window settled, but the
+    # keyboard was in the trust question (above), not the text. Now the
+    # question is answered and the file's text read from the screen; where
+    # the keyboard is cannot be read, so the result is unverified.
+    zed_trust_steps lonely.py "$F/lonely/lonely.py" | sed '$d'
+    echo "key return => [text shown; keyboard place unverified] !screen Unrecognized Project && screen print(\"lonely\" @60"
 }
 
 # ------------------------------------------------------------------ setup once per app
@@ -308,10 +398,15 @@ prep_vscode() {
     echo "setup 0: none => ?quiet 1000 @20"
 }
 prep_zed() {
-    # Zed's own first-launch page and its Restricted Mode question cannot be
-    # read through AX; check on a first run whether they hold a task up.
+    # Zed opens an unknown folder behind a modal "Unrecognized Project"
+    # question (Restricted Mode), which AX cannot read and which took every
+    # key of the first run's tasks (Cmd+Y staged nothing). Return is its
+    # "Trust and Continue"; Zed keeps the answer in the profile the tasks
+    # copy (watched 2026-11-20 in a screenshot), so it is asked once, like
+    # VS Code's folder trust.
     echo "launch $(open_zed bg "$P") => window @90"
     echo "setup 0: none => ?quiet 1500 @30"
+    echo "setup 1: key return => ?quiet 500 @10"
 }
 
 # ------------------------------------------------------------------ the fixture
@@ -385,7 +480,14 @@ EOF
 }
 
 free_mb() { df -m "$(dirname "$WORK")" | awk 'NR == 2 {print $4}'; }
-running() { ps -axo comm= | grep -Fxc "$1" || true; }   # copies of an executable running
+# Copies of an executable running, counting one Gatekeeper runs from an
+# AppTranslocation copy (a quarantined app it did not see Finder move).
+running() {
+    local inner; inner="$(echo "$1" | sed -E 's#^.*(/[^/]+\.app/Contents/MacOS/[^/]+)$#\1#')"
+    ps -axo comm= | awk -v exe="$1" -v inner="$inner" '
+        $0 == exe || (index($0, "/AppTranslocation/") && substr($0, length($0) - length(inner) + 1) == inner) { n++ }
+        END { print n + 0 }'
+}
 
 # ------------------------------------------------------------------ servers and pids
 
@@ -406,6 +508,7 @@ start_server() {   # start_server <port> <log>: a server with its working folder
     if port_open "$1"; then echo "taskbench: port $1 is in use; set another in the script" >&2; exit 2; fi
     (cd "$P" && exec nohup /usr/bin/python3 -m http.server "$1" --bind 127.0.0.1 --directory site >"$2" 2>&1) &
     local pid=$!
+    disown "$pid" 2>/dev/null || true   # no "Terminated" line when the app under test stops it
     STARTED_PIDS+=("$pid")
     local i
     for ((i = 0; i < 500; i++)); do port_open "$1" && break; sleep 0.01; done
@@ -480,12 +583,20 @@ prep_app() {   # prep_app <app>: the one-time setup, on the template profile
     case "$app" in
         vscode)
             # Quiet only: no update checks, no telemetry (not counted).
+            # editor.accessibilitySupport on: VS Code takes the AX tree the
+            # benchmark reads for a screen reader and switches its editor to
+            # Screen Reader Optimized on its own ("auto"), asking in a
+            # notification; "on" is that mode without the notification. Off
+            # would hide the editor's text from AX ("The editor is not
+            # accessible at this time"), so a file that opens as text could
+            # not be told from one shown.
             cat >"$RUN/data/User/settings.json" <<'EOF'
 {
     "update.mode": "none",
     "telemetry.telemetryLevel": "off",
     "extensions.autoUpdate": false,
-    "extensions.autoCheckUpdates": false
+    "extensions.autoCheckUpdates": false,
+    "editor.accessibilitySupport": "on"
 }
 EOF
             ;;
@@ -564,7 +675,7 @@ report() {
         echo "$apps_line"
         echo "wall: input sent to result, summed over the task's steps; inputs: clicks/chords/keys/opens;"
         echo "CPU: the app's process tree during the steps; MB: physical footprint, peak and settled."
-        echo "A result marked * was read from the app's CPU settling, not from what it shows (unverified)."
+        echo "A result marked * could not be read from what the app shows (unverified: only its CPU settling, or part of it)."
         local row id
         echo
         echo "Setup, once per app (not in the task rows)"
