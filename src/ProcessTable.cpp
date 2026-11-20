@@ -550,6 +550,36 @@ std::string displayName(const Proc& p) {
     return first.empty() ? p.name : first;
 }
 
+static std::string portWords(const Proc& p) {
+    const std::string ports = formatPorts(p.ports);
+    if (ports.empty()) return "";
+    return (ports.find(',') == std::string::npos ? "port " : "ports ") + ports;
+}
+
+std::string rowLabel(const Proc& p, bool orphan) {
+    std::string s = displayName(p);
+    if (p.alive) {
+        const std::string ports = portWords(p);
+        if (!ports.empty()) s += ", " + ports;
+        s += ", running, CPU " + formatCpu(p.cpu) + ", " + formatBytes(p.memory);
+    } else {
+        s += ", exited";
+    }
+    s += ", process " + std::to_string(p.key.pid);
+    if (p.origin == Origin::Outside)
+        s += ", not started in mutible";
+    else if (p.terminal)
+        s += ", from terminal " + std::to_string(p.terminal) + (orphan ? ", which was closed" : "");
+    if (!p.command.empty()) s += ": " + p.command;
+    return s;
+}
+
+std::string stopLabel(const Proc& p) {
+    const std::string ports = portWords(p);
+    if (!ports.empty()) return "Stop " + displayName(p) + " on " + ports;
+    return "Stop " + displayName(p) + ", process " + std::to_string(p.key.pid);
+}
+
 const char* helpText() {
     return "What this window's terminals started, and what other programs run in this "
            "folder. A daemon that starts a session of its own between two looks, a few "

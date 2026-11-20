@@ -1301,9 +1301,33 @@ MC_GUI_SUITE(git_review) {
             GCHECK([ts attribute:NSBackgroundColorAttributeName atIndex:NSMaxRange(two) - 1
                   effectiveRange:nil] != nil);
         MCGuiSnapshot(p.pageView, @"git-review");
+        // The drawn buttons are accessibility elements (VoiceOver, scripts):
+        // each a button named for its change and file, beside the text in
+        // its scroll view, with the tooltip as its help.
+        for (NSUInteger b = 1; b <= 3; b++)
+            for (NSString *t in @[@"Stage", @"Discard"]) {
+                NSString *name = [NSString stringWithFormat:@"%@ change %lu in f.txt", t, (unsigned long)b];
+                id e = MCGuiAXFind(p.scrollView, NSAccessibilityButtonRole, name);
+                GCHECK(e != nil);
+                if (!e) MCGuiNote(@"no accessibility button named \"%@\"", name);
+                GCHECK([e accessibilityParent] == p.scrollView);
+            }
+        for (NSString *name in @[@"Stage File f.txt", @"Discard File f.txt", @"Side by Side f.txt",
+                                 @"Open f.txt"])
+            GCHECK(MCGuiAXFind(p.scrollView, NSAccessibilityButtonRole, name) != nil);
+        GCHECK(MCGuiAXFind(p.scrollView, NSAccessibilityButtonRole, @"Unstage change 1 in f.txt") == nil);
+        id stage2 = MCGuiAXFind(p.scrollView, NSAccessibilityButtonRole, @"Stage change 2 in f.txt");
+        GCHECK_EQ_STR([stage2 accessibilityHelp], @"Stage this change");
+        // Its frame is the drawn button's, and a hit test there finds it.
+        const NSRect drawn = [p buttonRect:@"Stage" row:[p rowOfBlock:1]];
+        const NSRect screen = [p.textView.window
+            convertRectToScreen:[p.textView convertRect:drawn toView:nil]];
+        GCHECK(NSEqualRects([stage2 accessibilityFrame], screen));
+        GCHECK([p.textView accessibilityHitTest:NSMakePoint(NSMidX(screen), NSMidY(screen))] == stage2);
         loads = p.loads;
         actions = 0;
-        GCHECK(PressButton(p, @"Stage", [p rowOfBlock:1]));
+        // Pressed as VoiceOver presses it: the middle block staged.
+        GCHECK([stage2 accessibilityPerformPress]);
     });
     MCGuiWait(@"the middle block staged, and read again", 15, ^BOOL {
         return actions == 1 && Review(c).loads > loads &&
@@ -1762,6 +1786,15 @@ MC_GUI_SUITE(worktree_review) {
         GCHECK([rows containsObject:@"F n.txt  (new)  +1"]);
         for (NSString *r in rows) GCHECK(![r containsString:@"c.txt"]);
         GCHECK(![[p valueForKey:@"applyButton"] isHidden]);
+        // Each file's drawn buttons are accessibility elements named for
+        // it; nothing here stages or discards.
+        for (NSString *name in @[@"Side by Side a.txt", @"Open a.txt", @"Open n.txt"]) {
+            id e = MCGuiAXFind(p.scrollView, NSAccessibilityButtonRole, name);
+            GCHECK(e != nil);
+            if (!e) MCGuiNote(@"no accessibility button named \"%@\"", name);
+        }
+        GCHECK(MCGuiAXFind(p.scrollView, NSAccessibilityButtonRole, @"Stage change 1 in a.txt") == nil);
+        GCHECK(MCGuiAXFind(p.scrollView, NSAccessibilityButtonRole, @"Discard change 1 in a.txt") == nil);
         // Main busy in b.txt.
         MCGuiWriteFile([repo stringByAppendingPathComponent:@"b.txt"], @"main's own edit\n");
         actions = 0;

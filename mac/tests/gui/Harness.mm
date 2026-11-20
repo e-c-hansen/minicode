@@ -368,6 +368,31 @@ void MCGuiFakeLspClearLog(NSString *name) {
     truncate(log.fileSystemRepresentation, 0);
 }
 
+// AppKit's own stand-ins (a table's rows and their cells) answer only the
+// older attribute calls; everything else the NSAccessibility protocol.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+static id AXAttr(id e, NSString *attribute) {
+    return [e respondsToSelector:@selector(accessibilityAttributeValue:)]
+               ? [e accessibilityAttributeValue:attribute] : nil;
+}
+#pragma clang diagnostic pop
+
+id MCGuiAXFind(id root, NSAccessibilityRole role, NSString *label) {
+    if (!root) return nil;
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:root];
+    for (NSUInteger i = 0; i < queue.count && i < 20000; i++) {
+        id e = queue[i];
+        const BOOL modern = [e respondsToSelector:@selector(accessibilityRole)];
+        id r = modern ? [e accessibilityRole] : AXAttr(e, NSAccessibilityRoleAttribute);
+        id l = modern ? [e accessibilityLabel] : AXAttr(e, NSAccessibilityDescriptionAttribute);
+        if ([r isEqual:role] && (!label || [l isEqual:label])) return e;
+        id kids = modern ? [e accessibilityChildren] : AXAttr(e, NSAccessibilityChildrenAttribute);
+        if ([kids isKindOfClass:NSArray.class]) [queue addObjectsFromArray:kids];
+    }
+    return nil;
+}
+
 void MCGuiSnapshot(NSView *view, NSString *name) {
     NSString *dir = Env(@"MC_GUI_SNAPSHOTS");
     if (!dir.length || !view || NSIsEmptyRect(view.bounds)) return;

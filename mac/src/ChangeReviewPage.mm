@@ -632,6 +632,39 @@ NSDictionary *ButtonAttrs(NSColor *color) {
              NSForegroundColorAttributeName: color ?: NSColor.whiteColor};
 }
 
+// A button's tooltip, which is also its accessibility help.
+NSString *TipOf(Act act, NSString *title, const ChangeReview::FileDiff &fd, const PageRow &pr) {
+    switch (act) {
+    case ActStage: return @"Stage this change";
+    case ActUnstage: return @"Unstage this change";
+    case ActDiscard: return @"Discard this change (asks first; Undo Discard puts it back)";
+    case ActSide: return @"Show this file side by side";
+    case ActOpen: return @"Open the file";
+    case ActDiscardFile: return @"Discard every change to this file (asks first)";
+    case ActStageFile: return @"Stage the whole file";
+    case ActUnstageFile: return @"Unstage the whole file";
+    case ActKeepCurrent:
+    case ActKeepIncoming:
+    case ActKeepBoth: {
+        const size_t bi = pr.block >= 0 ? (size_t)pr.block : 0;
+        return bi < fd.conflicts.size() ? NS8(MergeConflicts::tooltip(KeepOf(act), fd.conflicts[bi]))
+                                        : title;
+    }
+    case ActMarkResolved: return @"Stage the file, which tells git its conflicts are resolved";
+    }
+    return title;
+}
+
+// A button's name for VoiceOver and the Accessibility API: "Stage change 1
+// in app.py", "Stage File app.py" (ChangeReview::buttonLabel).
+NSString *LabelOf(Act act, NSString *title, const ChangeReview::FileDiff &fd, const PageRow &pr) {
+    const bool onBlock = act == ActStage || act == ActUnstage || act == ActDiscard ||
+                         act == ActKeepCurrent || act == ActKeepIncoming || act == ActKeepBoth;
+    const bool conflict = act == ActKeepCurrent || act == ActKeepIncoming || act == ActKeepBoth;
+    return NS8(ChangeReview::buttonLabel(std::string(title.UTF8String ?: ""), fd.file.path,
+                                         onBlock ? pr.block : -1, conflict));
+}
+
 }  // namespace
 
 @class MCReviewTextView;
@@ -656,13 +689,122 @@ NSDictionary *ButtonAttrs(NSColor *color) {
 - (NSRect)rectOfRow:(size_t)row;
 - (long)rowAtY:(CGFloat)y;
 - (std::vector<Button>)buttonsForRow:(size_t)row;
+- (NSArray *)buttonElements;   // the buttons on screen, as accessibility elements
+@end
+
+// ------------------------------------------------------ accessibility
+// A drawn button as an accessibility element, so VoiceOver and scripts
+// through the Accessibility API find it, read its name ("Stage change 1 in
+// app.py") and press it. Made for the rows on screen when the text view's
+// children are asked for, kept while the same read is on show.
+@interface MCReviewButtonElement : NSAccessibilityElement
+@property(nonatomic, weak) MCReviewTextView *view;
+@property(nonatomic) NSInteger act;   // an Act
+@property(nonatomic) size_t row;
+@property(nonatomic, copy) NSString *title, *label, *help;
+@end
+
+@interface MCReviewTextView ()
+- (std::shared_ptr<ReviewData>)reviewData;
+@end
+
+@implementation MCReviewButtonElement
+- (NSAccessibilityRole)accessibilityRole { return NSAccessibilityButtonRole; }
+- (NSString *)accessibilityLabel { return self.label; }
+- (NSString *)accessibilityHelp { return self.help; }
+- (BOOL)isAccessibilityElement { return YES; }
+- (BOOL)isAccessibilityEnabled { return YES; }
+// A sibling of the text, in its scroll view: VoiceOver moves to it from
+// the text as to any control, without interacting with the text area.
+- (id)accessibilityParent { return self.view.enclosingScrollView ?: self.view; }
+- (id)accessibilityWindow { return self.view.window; }
+- (id)accessibilityTopLevelUIElement { return self.view.window; }
+
+// The button's rect now: pinned to the visible right edge, so it moves
+// with a sideways scroll. Zero once the row has it no more.
+- (NSRect)rectInView {
+    for (const Button &b : [self.view buttonsForRow:self.row])
+        if ((NSInteger)b.act == self.act) return b.rect;
+    return NSZeroRect;
+}
+
+- (NSRect)accessibilityFrame {
+    MCReviewTextView *v = self.view;
+    const NSRect r = [self rectInView];
+    if (!v.window || NSIsEmptyRect(r)) return NSZeroRect;
+    return [v.window convertRectToScreen:[v convertRect:r toView:nil]];
+}
+
+// The press runs after the Accessibility API has its answer: Discard asks
+// first, and a modal question inside the call would hold the caller until
+// it timed out.
+- (BOOL)accessibilityPerformPress {
+    MCReviewTextView *v = self.view;
+    if (!v || NSIsEmptyRect([self rectInView])) return NO;
+    const std::shared_ptr<ReviewData> asked = [v reviewData];
+    const Act act = (Act)self.act;
+    const size_t row = self.row;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // The same read still on show, or the row may be another's.
+        if ([v reviewData] != asked) return;
+        for (const Button &b : [v buttonsForRow:row])
+            if (b.act == act) {
+                [v.owner reviewView:v pressedButton:act row:row];
+                return;
+            }
+    });
+    return YES;
+}
 @end
 
 @implementation MCReviewTextView {
     BOOL _overButton;
+    std::weak_ptr<ReviewData> _axData;   // the read the elements were made for
+    NSMutableDictionary<NSString *, MCReviewButtonElement *> *_axButtons;
 }
 
 - (std::shared_ptr<ReviewData>)reviewData { return [self.owner data]; }
+
+// The buttons on the rows on screen, as elements (kept by row and kind
+// while the same read is on show, so VoiceOver's place holds).
+- (NSArray *)buttonElements {
+    auto d = [self reviewData];
+    if (_axData.lock() != d || !_axButtons) {
+        _axData = d;
+        _axButtons = [NSMutableDictionary dictionary];
+    }
+    NSMutableArray *out = [NSMutableArray array];
+    if (!d || d->page.rows.empty()) return out;
+    const NSRect vis = self.visibleRect;
+    const long first = std::max(0L, [self rowAtY:NSMinY(vis)]);
+    long last = [self rowAtY:NSMaxY(vis) - 1];
+    if (last < 0) last = (long)d->page.rows.size() - 1;
+    for (long r = first; r <= last; r++) {
+        const PageRow &pr = d->page.rows[(size_t)r];
+        for (const Button &b : [self buttonsForRow:(size_t)r]) {
+            NSString *key = [NSString stringWithFormat:@"%ld:%d", r, (int)b.act];
+            MCReviewButtonElement *e = _axButtons[key];
+            if (!e) {
+                e = [MCReviewButtonElement new];
+                e.view = self;
+                e.act = b.act;
+                e.row = (size_t)r;
+                e.title = b.title;
+                e.label = LabelOf(b.act, b.title, d->diffs[pr.file], pr);
+                e.help = TipOf(b.act, b.title, d->diffs[pr.file], pr);
+                _axButtons[key] = e;
+            }
+            [out addObject:e];
+        }
+    }
+    return out;
+}
+
+- (id)accessibilityHitTest:(NSPoint)point {
+    for (MCReviewButtonElement *e in [self buttonElements])
+        if (NSPointInRect(point, e.accessibilityFrame)) return e;
+    return [super accessibilityHitTest:point];
+}
 
 - (NSRect)rectOfRow:(size_t)row {
     const CGFloat h = ReviewRowHeight();
@@ -865,29 +1007,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
             [b.title drawAtPoint:NSMakePoint(NSMidX(b.rect) - sz.width / 2,
                                              NSMidY(b.rect) - sz.height / 2)
                   withAttributes:attrs];
-            NSString *tip = nil;
-            switch (b.act) {
-            case ActStage: tip = @"Stage this change"; break;
-            case ActUnstage: tip = @"Unstage this change"; break;
-            case ActDiscard: tip = @"Discard this change (asks first; Undo Discard puts it back)"; break;
-            case ActSide: tip = @"Show this file side by side"; break;
-            case ActOpen: tip = @"Open the file"; break;
-            case ActDiscardFile: tip = @"Discard every change to this file (asks first)"; break;
-            case ActStageFile: tip = @"Stage the whole file"; break;
-            case ActUnstageFile: tip = @"Unstage the whole file"; break;
-            case ActKeepCurrent:
-            case ActKeepIncoming:
-            case ActKeepBoth: {
-                const ChangeReview::FileDiff &cd = d->diffs[pr.file];
-                const size_t bi = pr.block >= 0 ? (size_t)pr.block : 0;
-                tip = bi < cd.conflicts.size()
-                          ? NS8(MergeConflicts::tooltip(KeepOf(b.act), cd.conflicts[bi]))
-                          : b.title;
-                break;
-            }
-            case ActMarkResolved: tip = @"Stage the file, which tells git its conflicts are resolved"; break;
-            }
-            [self addToolTipRect:b.rect owner:tip userData:NULL];
+            [self addToolTipRect:b.rect owner:TipOf(b.act, b.title, d->diffs[pr.file], pr) userData:NULL];
         }
     }
 }
@@ -990,6 +1110,20 @@ NSDictionary *ButtonAttrs(NSColor *color) {
         return d && !d->page.blockRows.empty();
     }
     return [super validateMenuItem:item];
+}
+@end
+
+// The text's scroll view lists the drawn buttons on screen after its own
+// children, so VoiceOver and the Accessibility API reach them as controls.
+@interface MCReviewScrollView : NSScrollView
+@end
+
+@implementation MCReviewScrollView
+- (NSArray *)accessibilityChildren {
+    NSMutableArray *out = [NSMutableArray arrayWithArray:[super accessibilityChildren] ?: @[]];
+    if ([self.documentView isKindOfClass:MCReviewTextView.class])
+        [out addObjectsFromArray:[(MCReviewTextView *)self.documentView buttonElements]];
+    return out;
 }
 @end
 
@@ -1223,7 +1357,7 @@ NSDictionary *ButtonAttrs(NSColor *color) {
     for (NSView *v in @[_titleLabel, _summaryLabel, _messageLabel, _undoButton, _bodyLabel])
         [_view addSubview:v];
 
-    _scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, kTopBarHeight, 600, 366)];
+    _scroll = [[MCReviewScrollView alloc] initWithFrame:NSMakeRect(0, kTopBarHeight, 600, 366)];
     _scroll.hasVerticalScroller = YES;
     _scroll.hasHorizontalScroller = YES;
     _scroll.autohidesScrollers = YES;
