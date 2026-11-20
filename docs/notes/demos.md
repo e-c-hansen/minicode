@@ -131,7 +131,8 @@ clicks.
   three drives anything. `APPS`, `TASKS`, `LOG_MB` (500), and `KEEP=1` (keep
   `/private/tmp/mutible-taskbench`) narrow or keep a run. The terminal it
   runs in needs Accessibility permission (`taskbench-mac check` says so when
-  it is missing). Report: `build/taskbench-mac.txt` (a table per task),
+  it is missing), and Screen Recording for Zed's results (read from the
+  screen; without it they read as unverified). Report: `build/taskbench-mac.txt` (a table per task),
   `build/taskbench-mac.csv` (a row per task and app), and
   `build/taskbench-mac-steps.csv` (every step's time).
 - **The tasks** (the table's six; add a row and a `steps_<id>_<app>` per
@@ -167,12 +168,28 @@ clicks.
   SQLite extensions, counted as their GUI path's inputs) is setup, counted
   apart and not timed; settings that only keep an app quiet (no update
   checks, no telemetry) are not counted.
+- **Reading an app with no AX tree** (2026-11-20): Zed is read from its
+  pixels. `screen TEXT` and `!screen TEXT` capture its front window with
+  `screencapture -l` and recognise the text with Vision (a system
+  framework; the terminal needs Screen Recording permission), and a `view`
+  whose window has no AX tree is classified the same way ("refused (on
+  screen: "Could not open file")", "opens as text (on screen: ...)",
+  "shown (read from the screen)"). A read takes 300 to 1,000 ms, which is
+  the step's resolution (`poll_ms`); only the recognising after the
+  picture that ends a step is kept out of its wall time, never the reads
+  that found the condition false. `taskbench-mac screentext PID` prints
+  what Vision reads.
 - **Isolation**: VS Code on `--user-data-dir` and `--extensions-dir`, Zed on
   `--user-data-dir` (1.29 has it) and a scratch HOME, mutible on a scratch
   HOME, CFFIXED_USER_HOME, TMPDIR and defaults suite as the GUI checks use;
   every app is started with `open -n`, so a copy the owner has open is never
   used, and only the pids it started are stopped (`taskbench-mac quit`
-  checks the executable first; never `pkill`). Zed is skipped while the
+  checks the executable first; never `pkill`). VS Code also gets
+  `--use-mock-keychain` and `--force-renderer-accessibility` (Traps) and
+  `editor.accessibilitySupport: "on"` in its quiet settings: the mode it
+  switches to by itself once an AX client reads it, without the
+  notification asking; "off" hides the editor's text from AX, so a file
+  opened as text could not be told from one shown. Zed is skipped while the
   owner's Zed runs, since a second Zed may hand its requests to it. Setup
   runs once per app on a template profile; tasks on the project run on a
   copy of it, cold tasks on a fresh profile with only the quiet settings.
@@ -184,23 +201,84 @@ clicks.
   clicks are posted only while the app being driven is in front (asked
   through AX each time), so nothing is ever typed into another app.
 - **Caveats**: AX reads only what an app exposes. Zed shows almost no AX
-  tree, so its results are mostly read from its CPU settling (`quiet`,
-  reported as "unverified" and marked * in the table) or from outside (git's
-  index, the port). mutible's review page and processes rows were drawn
-  without AX elements until 2026-11-20 (the review task staged from the
-  editor, the server task picked the list's second row); now its review
-  task presses "Stage change 1 in app.py" and its server task the Stop
-  named "on port N", as VoiceOver would. Turning on Chromium's AX tree
-  (`AXManualAccessibility`) costs VS Code some CPU and memory, and every app
-  pays for being queried. AX cannot see mutible's palette rows (drawn) or
-  Zed's list, so in every app the step after typing in a palette waits for
-  the app to settle (150 ms of quiet), and that window is in each wall
-  time. Chords are posted by US key positions. The
-  conditions were written from each app's docs and source, not yet watched
-  on screen: a first run with the owner present should check each step with
-  `taskbench-mac axdump <pid>` where a condition times out, and adjust the
-  table.
+  tree, so its results are read from the screen (above) or from outside
+  (git's index, the port), and its palette steps wait for its CPU to settle
+  (`quiet`); where neither can tell, the result is "unverified" and marked
+  * in the table (Zed's finder task: its text is read from the screen, the
+  keyboard's place cannot be). The palette's typed text is read back from
+  the field in mutible and VS Code (VS Code's also by its "1 Results"
+  count), and waited on for 150 ms of quiet only in Zed. mutible's review
+  page and processes rows were drawn without AX elements until 2026-11-20
+  (the review task staged from the editor, the server task picked the
+  list's second row); now its review task presses "Stage change 1 in
+  app.py" and its server task the Stop named "on port N", as VoiceOver
+  would. Chromium's AX tree costs VS Code some CPU and memory, and every
+  app pays for being queried. Chords are posted by US key positions. Every
+  step was watched on screen on 2026-11-20 (one app and task at a time,
+  `KEEP=1`, `axdump`, `screentext`); a step that differs from the app's
+  docs says what was watched beside it in the script.
+- **Working out a step**: `taskbench-mac run --pid PID` drives a copy a
+  kept run left running (it must be the `--exe`'s), so a step can be tried
+  without a relaunch; `axdump PID [DEPTH] [manual]` (`manual` sets
+  `AXManualAccessibility` on an Electron app started without the flag and
+  waits 3 s for its tree); `screentext PID` for Zed.
 
 ## Traps
 
-None recorded under a "Trap" label; read the sections above.
+- **An app in AppTranslocation** (2026-11-20): VS Code, unzipped into
+  /Applications and still quarantined, runs from
+  `/private/var/folders/.../AppTranslocation/<uuid>/d/Visual Studio
+  Code.app`, so a pid matched against `/Applications/...` by its exact
+  executable path was never found: no AX, no measures, and `quit` never ran,
+  which left six scratch copies running. `ExeMatches` (and the script's
+  `running`) accept a translocated copy of the same bundle. Never clear the
+  owner's quarantine attribute to "fix" it.
+- **VS Code under a scratch HOME blocks on the keychain**: its safeStorage
+  asks for "Code Safe Storage" at startup; with no login keychain under the
+  scratch HOME macOS shows "Keychain Not Found" (SecurityAgent, on the
+  owner's screen, one per launch) and VS Code's main thread waits on it,
+  ignoring SIGTERM. The first run's 90 s launch timeouts were this.
+  `--use-mock-keychain` (Chromium's switch) avoids it. If such a dialog is
+  ever left up, press only its Cancel; "Reset To Defaults" resets the
+  owner's keychain.
+- **Electron's AX tree**: set `AXManualAccessibility` on a starting app and
+  the request is lost; set later, the tree takes seconds, and meanwhile
+  the app lists its application element among its windows and as its own
+  child (a cycle that filled every walk to 40,000 nodes) and fails AX calls
+  with kAXErrorCannotComplete; VS Code 1.107 never reads the attribute back
+  as true. Start Electron apps with `--force-renderer-accessibility`
+  instead: the tree is there from the first window. `Walk` visits each
+  element once and does not descend into an application or menu bar
+  element.
+- **Frontmost through AX fails while VS Code is busy**: the system-wide
+  `AXFocusedApplication` asks the front app, and VS Code answered
+  kAXErrorCannotComplete, so every key was refused as "would not come to
+  the front" though VS Code was in front. `Frontmost` falls back to the
+  owner of the frontmost window (CGWindowList).
+- **VS Code's keyboard element is unreliable**: with Quick Open up it
+  reported a static text of the page behind as focused. Check its fields
+  by their description and value (`ax AXTextField~Search files by name`,
+  `ax AXTextField=NAME`), not `focus`.
+- **A click at a row that has just appeared** landed on the row that took
+  its place as VS Code's Source Control view filled in (Commit, not
+  app.py; it asked to commit everything). A click now waits for its
+  target's frame to hold still (60 ms, 2 s at most), and that wait is in
+  the step's wall time.
+- **Webviews keep the keyboard in VS Code**: after the PDF viewer (pdf.js)
+  Cmd+P does nothing (pdf.js takes it for print), and after the video
+  preview Quick Open comes up with the keyboard still in the player; the
+  steps use Go > Go to File… and a click in the field there, as a person
+  would.
+- **Zed asks "Unrecognized Project" (Restricted Mode)** for every folder
+  and for a file opened cold, in a modal that AX cannot read and that
+  takes every key. The first run's Zed failures (Cmd+Y staged nothing,
+  Cmd+F found no bar) were this, not Zed. Setup answers it once (Return,
+  "Trust and Continue", kept in the profile the tasks copy); a cold task
+  answers it as a counted input.
+- **Zed's Project Diff opens above its first hunk**: the first Cmd+Y (git:
+  stage and next) only moves to the hunk; the second stages it.
+- **VS Code's Simple Browser asks for `/?id=...&vscodeBrowserReqId=...`**,
+  so the page condition greps `GET /[ ?]`, not `GET / `.
+- **A magic that the viewer itself prints**: Zed's image viewer shows
+  "PNG" in its size line, which read as "opens as text"; the PNG's magic is
+  its IHDR chunk name.

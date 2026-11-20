@@ -1787,6 +1787,18 @@ void FileTree::askName(const std::string& prompt, const std::string& initial,
     g_signal_connect(pop, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer selfp) {
         FileTree* self = static_cast<FileTree*>(selfp);
         if (self->namePopover_ == GTK_WIDGET(p)) self->namePopover_ = nullptr;
+        // The keyboard back to the list now, while the box is still its
+        // child. GTK would move it there itself, but only at the window's
+        // next after-paint, from the hidden box to its parent; when the idle
+        // below has taken the box off first, GTK finds no parent and moves
+        // the focus forward from the window's start, to the tree's first
+        // row, and the list scrolls to its top (GtkListBase: Tab into the
+        // list goes to row 0, and a row taking the focus is scrolled to).
+        // A Rename then centered its row from there, 7 rows off.
+        GtkRoot* root = gtk_widget_get_root(GTK_WIDGET(p));
+        GtkWidget* focus = root ? gtk_root_get_focus(root) : nullptr;
+        if (focus && self->listView_ && gtk_widget_is_ancestor(focus, GTK_WIDGET(p)))
+            gtk_widget_grab_focus(self->listView_);   // its focus row: no scroll
         g_idle_add([](gpointer w) -> gboolean {
             GtkWidget* widget = GTK_WIDGET(w);
             if (gtk_widget_get_parent(widget)) gtk_widget_unparent(widget);
