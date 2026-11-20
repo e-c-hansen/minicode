@@ -140,7 +140,7 @@ a trap.
 - `make guitest [SUITES="control agents"]`: the offscreen GUI checks in
   `mac/tests/gui` (see "Verification").
 - `make run [DIR=~/path]`, `make icon` (from `tools/makeicon.m`), `make demos
-  [SCENES="tour latex"] [POSTERS=1]`, `make membench-mac`, `make membench-linux`, `make install` (runs `mutible
+  [SCENES="tour latex"] [POSTERS=1]`, `make membench-mac`, `make membench-linux`, `make taskbench-mac` (drives mutible, VS Code and Zed: ask first), `make install` (runs `mutible
   install-skill` from the checkout: `skills/mutible/SKILL.md` to
   `~/.claude/skills/mutible`; the bundle carries the skill in
   `Contents/Resources/skills`, so a Homebrew copy can install it too), `make dist-zip`,
@@ -336,7 +336,7 @@ traps already paid for there.
 - Processes and ports: `docs/notes/processes.md` (traps inside).
 - Opening from Finder, the Dock and the command line:
   `docs/notes/opening.md`.
-- Demo GIFs and the memory benchmark: `docs/notes/demos.md` (traps
+- Demo GIFs, the memory benchmark, and the task benchmark: `docs/notes/demos.md` (traps
   inside).
 - The rest of the verification notes (harness traps, CI's runner, pixels,
   the GTK port by Docker or on the ThinkPad): `docs/notes/verification.md`

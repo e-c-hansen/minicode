@@ -137,6 +137,33 @@ static void testProcs() {
         CHECK(displayName(p) == "Python");
     }
     CHECK(std::string(helpText()).find("can be missed") != std::string::npos);
+    GROUP("procs:row-labels");
+    {
+        // What the Accessibility API reads for a row and names its Stop
+        // button: the command, the ports, and whether it runs.
+        Proc p;
+        p.key.pid = 4242;
+        p.name = "Python";
+        p.command = "/usr/bin/python3 -m http.server 8123";
+        p.ports = {{"127.0.0.1", 8123}, {"::1", 8123}};
+        p.cpu = 0.42;
+        p.memory = (uint64_t)(34.2 * MB);
+        p.origin = Origin::Outside;
+        CHECK(rowLabel(p, false) == "python3, port 8123, running, CPU 0.4%, 34.2 MB, process 4242, "
+                                    "not started in mutible: /usr/bin/python3 -m http.server 8123");
+        CHECK(stopLabel(p) == "Stop python3 on port 8123");
+        p.ports.push_back({"*", 5173});
+        CHECK(stopLabel(p) == "Stop python3 on ports 8123, 5173");
+        p.ports.clear();
+        p.origin = Origin::Terminal;
+        p.terminal = 2;
+        p.command = "sleep 30";
+        CHECK(stopLabel(p) == "Stop sleep, process 4242");
+        CHECK(rowLabel(p, true) == "sleep, running, CPU 0.4%, 34.2 MB, process 4242, from terminal 2, "
+                                   "which was closed: sleep 30");
+        p.alive = false;
+        CHECK(rowLabel(p, false) == "sleep, exited, process 4242, from terminal 2: sleep 30");
+    }
 
     GROUP("procs:terminal-descendants");
     {

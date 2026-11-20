@@ -1,4 +1,4 @@
-# Demo GIFs and the memory benchmark
+# Demo GIFs, the memory benchmark, and the task benchmark
 
 Area notes moved out of `CLAUDE.md` (see its "Area notes" list). The text
 below is as it stood there; section names quoted in it ("see ...") are
@@ -110,6 +110,96 @@ named for it (`-mac`, `-linux`).
 
 Check each side's breakdown before quoting a number (a first Mac run
 "measured" 55 MB with clangd and WebKit missing).
+
+## Task benchmark (`make taskbench-mac`)
+
+The same tasks, driven by script in mutible, VS Code, and Zed, compared by
+numbers rather than by an agent's walk (2026-11-20, the owner's words:
+"grab the cpu usage, memory usage, number of clicks, and total walltime and
+use them to compare each approach"). `scripts/taskbench-mac.sh` holds the
+task table, each app's steps, the fixture, and the report;
+`tools/taskbench-mac.m` (built as `build/taskbench-mac`) drives one app
+through one task's steps and measures it. No third-party tools: the
+Accessibility API finds elements and reads results, CGEvent posts keys and
+clicks.
+
+- **Running it**: `make taskbench-mac` drives the apps (it takes the screen;
+  ask the owner first, and never run it unattended on the owner's Mac).
+  `./scripts/taskbench-mac.sh --list` prints the task table and each app's
+  path, `--show <task>` each app's steps, `--check` the Accessibility
+  permission, the apps found and their versions, and the disk; none of the
+  three drives anything. `APPS`, `TASKS`, `LOG_MB` (500), and `KEEP=1` (keep
+  `/private/tmp/mutible-taskbench`) narrow or keep a run. The terminal it
+  runs in needs Accessibility permission (`taskbench-mac check` says so when
+  it is missing). Report: `build/taskbench-mac.txt` (a table per task),
+  `build/taskbench-mac.csv` (a row per task and app), and
+  `build/taskbench-mac-steps.csv` (every step's time).
+- **The tasks** (the table's six; add a row and a `steps_<id>_<app>` per
+  app): review the uncommitted changes and stage one hunk (`git diff
+  --cached`), open a PDF, PNG, MP4, CSV, notebook, and SQLite file (each read
+  as "shown", "opens as text", or "refused"), stop a server left running on a
+  port (the port closes), open a localhost page in the app (the server logs
+  the request), open a 500 MB log cold and find a line near its end, and open
+  one file from Finder cold to a window with the keyboard in the text. The
+  fixture (a git repo with changes in two files and a new one, the media,
+  `site/index.html`, a lone file) is made fresh for every task and app; the
+  log only for its task, and deleted after.
+- **Measures**: wall time per step from the input sent to its condition
+  true, polled every 10 ms (never a fixed sleep), summed per task (a poll
+  that walks a large AX tree, as VS Code's is, takes longer, and the steps
+  CSV's `poll_ms` gives each step's slowest poll: its resolution); inputs as
+  clicks, key chords, typed keystrokes (one a character), and Finder opens;
+  CPU as user + system time of the app's process tree over the steps
+  (`proc_pid_rusage`, with the time of children it reaped, and the last
+  seen time of launchd-parented helpers that exit); memory as the tree's
+  physical footprint, the peak over the steps (100 ms samples) and settled
+  (once the tree has used under 5% of a core for a second). The tree is
+  membench's: the app and every process whose parent or responsible pid is
+  in it, so WebKit's and Electron's helpers count. A task on the project
+  launches the app first, timed apart as its launch; a cold task's first
+  input starts the app, so its launch is in the task.
+- **Fairness**: each app takes its shortest documented path with its own
+  default keys, cited beside its steps in the script; a task an app cannot
+  do is "cannot" with the reason (VS Code and Zed have no process view,
+  Zed no browser). Opening a file by name is Cmd+P in all three, though a
+  tree click is shorter in each, because Zed's tree cannot be reached
+  through AX. What an app needs once (VS Code's folder trust, its PDF and
+  SQLite extensions, counted as their GUI path's inputs) is setup, counted
+  apart and not timed; settings that only keep an app quiet (no update
+  checks, no telemetry) are not counted.
+- **Isolation**: VS Code on `--user-data-dir` and `--extensions-dir`, Zed on
+  `--user-data-dir` (1.29 has it) and a scratch HOME, mutible on a scratch
+  HOME, CFFIXED_USER_HOME, TMPDIR and defaults suite as the GUI checks use;
+  every app is started with `open -n`, so a copy the owner has open is never
+  used, and only the pids it started are stopped (`taskbench-mac quit`
+  checks the executable first; never `pkill`). Zed is skipped while the
+  owner's Zed runs, since a second Zed may hand its requests to it. Setup
+  runs once per app on a template profile; tasks on the project run on a
+  copy of it, cold tasks on a fresh profile with only the quiet settings.
+- **The owner first**: the run waits until HIDIdleTime says the keyboard and
+  mouse have been idle 15 s, and stops at once (exit 3, a partial report) on
+  any input event it did not post: the guard file holds the time of the last
+  event it accounts for, the owner's before the run and then each event the
+  tool posts, and an event newer than that is someone at the Mac. Keys and
+  clicks are posted only while the app being driven is in front (asked
+  through AX each time), so nothing is ever typed into another app.
+- **Caveats**: AX reads only what an app exposes. Zed shows almost no AX
+  tree, so its results are mostly read from its CPU settling (`quiet`,
+  reported as "unverified" and marked * in the table) or from outside (git's
+  index, the port). mutible's review page and processes rows were drawn
+  without AX elements until 2026-11-20 (the review task staged from the
+  editor, the server task picked the list's second row); now its review
+  task presses "Stage change 1 in app.py" and its server task the Stop
+  named "on port N", as VoiceOver would. Turning on Chromium's AX tree
+  (`AXManualAccessibility`) costs VS Code some CPU and memory, and every app
+  pays for being queried. AX cannot see mutible's palette rows (drawn) or
+  Zed's list, so in every app the step after typing in a palette waits for
+  the app to settle (150 ms of quiet), and that window is in each wall
+  time. Chords are posted by US key positions. The
+  conditions were written from each app's docs and source, not yet watched
+  on screen: a first run with the owner present should check each step with
+  `taskbench-mac axdump <pid>` where a condition times out, and adjust the
+  table.
 
 ## Traps
 

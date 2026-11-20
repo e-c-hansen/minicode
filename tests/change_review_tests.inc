@@ -236,6 +236,16 @@ static void testChangeReview() {
         CHECK(q.rows.size() == p.rows.size() + 5 && q.rows[2].kind == RowKind::Context);
         CHECK(gapText(1) == "1 unchanged line");
     }
+
+    GROUP("review:button-labels");
+    // What the Accessibility API names each drawn button: the file, and
+    // the change by its place in the file, counted from 1.
+    CHECK(buttonLabel("Stage", "app.py", 0) == "Stage change 1 in app.py");
+    CHECK(buttonLabel("Discard", "src/a.py", 2) == "Discard change 3 in src/a.py");
+    CHECK(buttonLabel("Unstage", "app.py", 1) == "Unstage change 2 in app.py");
+    CHECK(buttonLabel("Keep Current", "a.py", 1, true) == "Keep Current for conflict 2 in a.py");
+    CHECK(buttonLabel("Stage File", "app.py", -1) == "Stage File app.py");
+    CHECK(buttonLabel("Side by Side", "b c.txt", -1) == "Side by Side b c.txt");
     {
         // Syntax colors placed on the rows: a keyword in a Python line.
         FileDiff d = diffFile([&] {

@@ -53,6 +53,28 @@ found through that list.
   (process N) has exited; nothing was stopped"; Reveal Origin uses the
   captured item. The `processes` suite checks both (a sleep that exits
   under its menu, and one that moves up a row under it).
+- **Accessibility** (2026-11-20, found by `make taskbench-mac`, which
+  could only click the list's second row): the outline wraps each row's
+  view in a cell of its own (AppKit's `NSOutlineRow`, AXRow, then an AXCell
+  stand-in that reads the view's `accessibilityLabel`), so `MCProcRowView`
+  is not an element itself (`isAccessibilityElement` NO; a cell in a cell
+  otherwise) and gives the label, `Procs::rowLabel` ("python3, port 8123,
+  running, CPU 0.4%, 34.2 MB, process 4242, not started in mutible:
+  <command>"), made with the item. Its only child is an
+  `MCProcStopElement`, a button named by `Procs::stopLabel` ("Stop python3
+  on port 8123", else "Stop sleep, process 4242"; `procs:row-labels`),
+  there whether or not the drawn Stop shows (that shows only on hover or
+  selection, and VoiceOver has neither), its frame the drawn button's or
+  where it would be; the drawn NSButton is `accessibilityElement = NO`, so
+  there is one Stop. Its press checks the row still shows that process
+  (pid and start time) and runs `onStop` on the main queue a turn later,
+  since Stop's question is modal and would hold the AX caller. The
+  `processes` suite reads the server row's label and button and stops a
+  sleep by pressing its element. Trap: AppKit's row and cell stand-ins
+  answer only the older `accessibilityAttributeValue:` calls, and a
+  view's own older calls ignore its NSAccessibility overrides, so a walk
+  must use the protocol where an object has it and the old calls only for
+  the stand-ins (`MCGuiAXFind` does).
 - **Mac**: `MCProcessMonitor` starts itself at launch (`+load` observes
   didFinishLaunching), samples on its own serial queue every 10 s, 2 s while
   a panel shows; at each look it asks AppDelegate's `controlControllers` for
@@ -89,4 +111,5 @@ found through that list.
 Each trap's first sentence, in the order it appears above; the whole
 text is in place in its section.
 
+- Processes and ports (Mac): Trap: AppKit's row and cell stand-ins answer only the older `accessibilityAttributeValue:` calls, and a view's own older calls ignore its NSAccessibility overrides, so a walk must use the protocol where an object has it and the old calls only for the stand-ins (`MCGuiAXFind` does).
 - Processes and ports (Mac): Trap: in `sh -c 'cd d && prog &'` the `&` takes the whole list, so a subshell holds the pipes and is the parent; write `cd d || exit; prog &`.

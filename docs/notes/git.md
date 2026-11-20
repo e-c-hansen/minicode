@@ -209,7 +209,25 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   asked for between the action and its note). Rows are one height
   (`ReviewRowHeight`), so places are arithmetic and layout is
   non-contiguous; tints, numbers and the buttons are drawn, the buttons
-  pinned to the visible right edge (a sideways scroll redraws). New,
+  pinned to the visible right edge (a sideways scroll redraws).
+  **Accessibility** (2026-11-20, found by `make taskbench-mac`): the drawn
+  buttons are `MCReviewButtonElement`s (NSAccessibilityElement, role
+  button) named by `ChangeReview::buttonLabel` ("Stage change 1 in
+  app.py", "Keep Current for conflict 2 in a.py", "Stage File app.py";
+  `review:button-labels`), the tooltip as their help. `MCReviewTextView
+  buttonElements` makes them for the rows on screen, kept by row and kind
+  while the same read shows (a new read makes them again);
+  `MCReviewScrollView` lists them after its own children, so they are
+  siblings of the text area, not inside it (VoiceOver moves to them
+  without interacting with the text). Their frame is the drawn button's,
+  asked each time (it moves with a sideways scroll), and the text view's
+  `accessibilityHitTest:` returns them. `accessibilityPerformPress` checks
+  the button is still there and queues the press on the main queue:
+  Discard asks, and a modal question inside the AX call would hold the
+  caller until its timeout. Commit and worktree pages get the same (Side
+  by Side, Open). `git_review` and `worktree_review` find them through
+  `MCGuiAXFind` (the harness's walk of the accessibility tree), and
+  `git_review` stages a block by pressing one. New,
   deleted, binary, submodule, conflicted and `add -N` files go whole
   (`wholeOnlyReason`). **GTK** (2026-11-19, `linux/HANDOFF.md` item 118,
   GUI `git_panel` and `git_review`) has the same over the same core: a file

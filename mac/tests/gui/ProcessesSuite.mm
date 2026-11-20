@@ -387,6 +387,30 @@ MC_GUI_SUITE(processes) {
         GCHECK([s.panel.summaryText containsString:@" in "] &&
                [s.panel.summaryText containsString:@" process"]);
         GCHECK([MCProcessMonitor shared].lastListed > 10);
+        // To VoiceOver and the Accessibility API the row is a cell (the
+        // outline's, reading the row view's label) that says its command,
+        // port and state, and its Stop is a button named by the port, there
+        // while the drawn one is hidden (not hovered, not selected).
+        const NSInteger row = [s.panel rowForPid:s.serverPid];
+        [s.panel.outline deselectAll:nil];
+        NSView *cell = [s.panel.outline viewAtColumn:0 row:row makeIfNecessary:YES];
+        NSString *label = cell.accessibilityLabel;
+        MCGuiNote(@"the server row reads: %@", label);
+        NSString *port = [NSString stringWithFormat:@", port %d, running, ", s.port];
+        NSString *pid = [NSString stringWithFormat:@", process %d, from terminal ", s.serverPid];
+        GCHECK([label containsString:port] && [label containsString:pid]);
+        GCHECK(s.panel.outline.selectedRow != row && [s.panel stopButtonForRow:row].hidden);
+        NSArray *kids = cell.accessibilityChildren;
+        GCHECK(kids.count == 1);
+        id stop = kids.firstObject;
+        GCHECK_EQ_STR([stop accessibilityRole], NSAccessibilityButtonRole);
+        NSString *onPort = [NSString stringWithFormat:@" on port %d", s.port];
+        GCHECK([[stop accessibilityLabel] hasPrefix:@"Stop "] && [[stop accessibilityLabel] hasSuffix:onPort]);
+        GCHECK([stop accessibilityParent] == cell);
+        // Reached from the outline through its row and cell, and the drawn
+        // button stands aside: one Stop, never two.
+        GCHECK(MCGuiAXFind(s.panel.outline, NSAccessibilityButtonRole, [stop accessibilityLabel]) == stop);
+        GCHECK(MCGuiAXFind(s.panel.outline, NSAccessibilityCellRole, label) != nil);
     });
     MCGuiWait(@"the earlier job under the first terminal", 15, ^BOOL {
         return PidsNamed(s, s.termA, "sleep").size() == 1;
@@ -636,12 +660,20 @@ MC_GUI_SUITE(processes) {
     // A pause before a negative check: the sleep must still be alive after
     // Cancel, and no condition says "nothing will happen".
     MCGuiPause(0.5);
-    MCGuiStep(@"still running; Stop again, answered Stop", ^{
+    MCGuiStep(@"still running; Stop again, pressed as VoiceOver presses it, answered Stop", ^{
         GCHECK(Alive(s.sleepPid));
         MCGuiAnswerAlerts(@[@(NSAlertFirstButtonReturn)]);
-        [s.panel stopRow:[s.panel rowForPid:s.sleepPid]];
+        NSString *name = [NSString stringWithFormat:@"Stop sleep, process %d", s.sleepPid];
+        id stop = MCGuiAXFind(s.panel.outline, NSAccessibilityButtonRole, name);
+        GCHECK(stop != nil);
+        if (!stop) MCGuiNote(@"no accessibility button named \"%@\"", name);
+        // The press answers at once; Stop's question comes a turn later.
+        s.alerts = MCGuiAlertsShown().count;
+        GCHECK([stop accessibilityPerformPress]);
     });
-    MCGuiWait(@"the sleep ends", 5, ^BOOL { return !Alive(s.sleepPid); });
+    MCGuiWait(@"asked, then the sleep ends", 5, ^BOOL {
+        return MCGuiAlertsShown().count == s.alerts + 1 && !Alive(s.sleepPid);
+    });
     // An exited helper (no port) folds into the group's "N exited" row,
     // which opens to list it.
     MCGuiWait(@"it folds into an exited row, which lists it", 10, ^BOOL {
