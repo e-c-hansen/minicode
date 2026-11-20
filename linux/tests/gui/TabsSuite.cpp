@@ -192,6 +192,10 @@ MC_GUI_SUITE(tabs) {
     MCGuiStep("files in the project, and no tab open", [] {
         // An earlier suite's tabs go (their edits were saved).
         ed()->closeAllTabs();
+        // And the keyboard to the editor: the window's title is the pane's
+        // with the keyboard (WindowTitle.h), and after a terminal suite
+        // (terminal_draw, terminal_keys) the terminal's prompt title was it.
+        gtk_widget_grab_focus(ed()->textView());
         MCGuiWriteFile(F("tab-a.txt"), kA);
         MCGuiWriteFile(F("tab-b.py"), kB);
         MCGuiWriteFile(F("tab-c.txt"), kC);
