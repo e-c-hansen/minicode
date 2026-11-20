@@ -441,6 +441,19 @@ found through that list.
   and the keyboard moves to the next row only once the row is out; and the
   tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or
   the tree goes to the next tab's file.
+  A rename kept the tree's place in only about one run of three once
+  other suites had run first (2026-11-20, `tree_edits`' "the tree kept
+  its place" after `maximize`, `hints_panel` or a tree suite: the tree at
+  908, was 736): the list went to its top as the name box closed, before
+  any row changed, and the reveal of the renamed row then centered it
+  from there. Trap (GTK): a popover on the list that has the keyboard as
+  it closes gives it back only at the window's next after-paint, to the
+  popover's parent, and when the idle that unparents the popover runs
+  first GTK finds no parent and tabs into the window from its start, so
+  the list focuses row 0 and scrolls to its top (GtkListBase's tab
+  behavior "all", then `set_focus_child`'s `scroll_to_item`); the name
+  box's "closed" gives the list the keyboard itself, before the idle (its
+  focus row, the row asked about: no scroll).
 - **Rows dragged out of the tree on GTK** (2026-11-19, linux/HANDOFF.md
   item 120, the Mac's #212): the row's GdkFileList (Move and Copy) dropped
   on the terminal types its path as the Mac's does (`Terminal::dropped`,
@@ -466,3 +479,4 @@ text is in place in its section.
 - The file tree (GTK): Trap (GTK checks): the tree following the tab leaves open the folders earlier suites opened files from (Find in Folder's results open `replace_in_folder`'s rif4, which holds a.txt to d.txt), so a check finds a tree row by its path (`MCGuiTreeRow`), never by its name (`MCGuiFindLabel`); a check that wants the top row scrolls to the top on every look, as a row coming in above the rows on show stays above the pane.
 - The file tree (GTK): Trap: a name the icon theme lacks draws GTK's missing-image picture (no fallback by dropping parts of the name), so every name is checked with `gtk_icon_theme_has_icon` and each type's list ends with text-x-generic.
 - The file tree (GTK): Trap: GtkListView puts the list at its top a frame or two after the row it is anchored on goes, so `keepRows` undoes a scroll gone to 0 after rows go, and the keyboard moves to the next row only once the row is out; and the tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or the tree goes to the next tab's file.
+- The file tree (GTK): Trap: a popover on the list that has the keyboard as it closes gives it back only at the window's next after-paint, to the popover's parent, and when the idle that unparents the popover runs first GTK finds no parent and tabs into the window from its start, so the list focuses row 0 and scrolls to its top (GtkListBase's tab behavior "all", then `set_focus_child`'s `scroll_to_item`); the name box's "closed" gives the list the keyboard itself, before the idle (its focus row, the row asked about: no scroll).

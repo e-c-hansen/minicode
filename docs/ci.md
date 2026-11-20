@@ -444,6 +444,15 @@ round's own still-open failure below; the second also failed
 `preview_tabs`' "gone" after Ctrl+W, the keyboard in the window's
 GtkPaned rather than the editor (seen once, not looked into).
 
+GTK `tree_edits`, "the tree kept its place; b_dir/f050b.txt selected"
+(2026-11-20, order; in about two runs of three after `maximize`,
+`hints_panel`, `preview_tabs` or a tree suite): the app's fault. When
+the idle that takes the closed Rename box off the list ran before the
+window's next frame, GTK gave the keyboard, still in the box, to the
+tree's first row, which scrolled the list to its top, and the renamed
+row was then centered from there. The box gives the list the keyboard
+as it closes (`docs/notes/tree.md`, the GTK traps).
+
 Still open from that soak:
 
 - Seen in one round each: Mac `organize_on_save` (an alert count off by
