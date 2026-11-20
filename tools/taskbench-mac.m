@@ -16,9 +16,10 @@
 //
 //   taskbench-mac check                      AX trust and the owner's idle time
 //   taskbench-mac idle-wait SECONDS STATE    wait until the owner has been idle
-//   taskbench-mac run --exe PATH --steps FILE --state STATE [--out FILE]
+//   taskbench-mac run --exe PATH --steps FILE --state STATE [--out FILE] [--pid PID]
 //   taskbench-mac quit --exe PATH PID        stop a pid this run started, and its tree
-//   taskbench-mac axdump PID [DEPTH]         print an app's windows' AX tree
+//   taskbench-mac axdump PID [DEPTH] [manual] print an app's windows' AX tree
+//   taskbench-mac screentext PID             print the text Vision reads in an app's front window
 //   taskbench-mac tree PID                   print a tree's CPU and footprint
 //   taskbench-mac media DIR                  write report.pdf, picture.png, clip.mp4
 //   taskbench-mac biglog PATH MB NEEDLE      write a log of MB megabytes, NEEDLE near its end
@@ -57,9 +58,13 @@
 //   sh CMD                 a shell command exits 0
 //   port-closed N          nothing accepts on 127.0.0.1:N or [::1]:N
 //   quiet MS               the tree used under 5% of a core for MS ms ("settled, unverified")
+//   screen TEXT | !screen TEXT   the app's front window shows TEXT / text without it,
+//                          read from its pixels by Vision (for an app with no AX tree;
+//                          spaces ignored, case kept; slow, so put it after cheap terms)
 //   view NAME MAGIC        NAME's window is up and settled; then "opens as text" when a
 //                          text area starts with MAGIC, "refused" when the app says it
-//                          cannot show it, "shown" otherwise, "unverified" without an AX tree
+//                          cannot show it, "shown" otherwise; without an AX tree the
+//                          same is read from the screen, and "unverified" if no text is
 //   none                   true at once
 //
 // Owner input stops the run: the state file holds the time of the last input
@@ -80,6 +85,7 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
+#import <Vision/Vision.h>
 #include <IOKit/IOKitLib.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -250,12 +256,29 @@ static NSString *ExePath(pid_t pid) {
     return @(buf);
 }
 
+// YES when a running process's executable is the app's. An app that still
+// carries the quarantine attribute and was not moved by Finder is run by
+// Gatekeeper from a read-only copy under .../AppTranslocation/<uuid>/d/
+// (VS Code 1.107, unzipped into /Applications, was), so its path is not the
+// one under /Applications: then the bundle's name and the path inside it
+// must match.
+static BOOL ExeMatches(NSString *path, NSString *exe) {
+    if (!path) return NO;
+    if ([path isEqualToString:exe]) return YES;
+    if ([path rangeOfString:@"/AppTranslocation/"].location == NSNotFound) return NO;
+    NSRange inner = [exe rangeOfString:@".app/Contents/MacOS/" options:NSBackwardsSearch];
+    if (inner.location == NSNotFound) return NO;
+    NSRange slash = [exe rangeOfString:@"/" options:NSBackwardsSearch range:NSMakeRange(0, inner.location)];
+    if (slash.location == NSNotFound) return NO;
+    return [path hasSuffix:[exe substringFromIndex:slash.location]];
+}
+
 static NSSet<NSNumber *> *PidsRunning(NSString *exe) {
     NSMutableSet *out = [NSMutableSet set];
     NSData *links = ListLinks();
     const ProcLink *l = links.bytes;
     for (NSUInteger i = 0; i < links.length / sizeof(ProcLink); i++)
-        if ([ExePath(l[i].pid) isEqualToString:exe]) [out addObject:@(l[i].pid)];
+        if (ExeMatches(ExePath(l[i].pid), exe)) [out addObject:@(l[i].pid)];
     return out;
 }
 
@@ -366,15 +389,23 @@ static id FocusedWindow(AXUIElementRef app) {
 // Breadth first through the given roots. The visitor returns NO to stop.
 static int Walk(NSArray *roots, int maxNodes, BOOL (^visit)(AXUIElementRef e, Node n, int depth)) {
     NSMutableArray *queue = [NSMutableArray array];
+    // Each element once: an Electron app turning its accessibility on listed
+    // its application element among its windows and as its own child, a
+    // cycle that filled every walk to kMaxNodes.
+    NSMutableSet *visited = [NSMutableSet set];
     for (id r in roots) [queue addObject:@[ r, @0 ]];
     int seen = 0;
     for (NSUInteger i = 0; i < queue.count && seen < maxNodes; i++) {
         AXUIElementRef e = (__bridge AXUIElementRef)queue[i][0];
         int depth = [queue[i][1] intValue];
+        if ([visited containsObject:queue[i][0]]) continue;
+        [visited addObject:queue[i][0]];
         Node n = NodeOf(e);
         seen++;
         if (!visit(e, n, depth)) break;
-        if (depth > 80) continue;
+        if (depth > 80 ||
+            (depth > 0 && ([n.role isEqualToString:@"AXApplication"] || [n.role isEqualToString:@"AXMenuBar"])))
+            continue;
         for (id k in n.kids) [queue addObject:@[ k, @(depth + 1) ]];
         if (i > 4096) {   // keep the queue short
             [queue removeObjectsInRange:NSMakeRange(0, i + 1)];
@@ -433,6 +464,31 @@ static id FindElement(AXUIElementRef app, NSString *specs) {
         if (found) return found;
     }
     return nil;
+}
+
+static BOOL ElementCentre(id el, CGPoint *out);
+
+// The element's centre once its frame has held still for 60 ms (2 s at
+// most), as a person waits for a list to stop moving before clicking. A
+// click at the frame read the moment a VS Code row appeared landed on the
+// row that took its place while the view filled in (Commit, not app.py).
+static BOOL StableCentre(id el, CGPoint *out) {
+    CGPoint a, b;
+    if (!ElementCentre(el, &a)) return NO;
+    const double until = MonoMs() + 2000;
+    for (;;) {
+        SleepMs(30);
+        if (!ElementCentre(el, &b)) return NO;
+        if (CGPointEqualToPoint(a, b)) {
+            SleepMs(30);
+            if (!ElementCentre(el, &b)) return NO;
+            if (CGPointEqualToPoint(a, b) || MonoMs() > until) break;
+        }
+        if (MonoMs() > until) break;
+        a = b;
+    }
+    *out = b;
+    return YES;
 }
 
 static BOOL ElementCentre(id el, CGPoint *out) {
@@ -595,12 +651,18 @@ static NSString *gExe;
 static AXUIElementRef gApp;
 static NSSet *gBefore;   // pids of gExe running before the app was started
 
+// Chromium (VS Code) builds its accessibility tree only when asked. The run
+// does not ask through AXManualAccessibility: set on a starting app the
+// request was lost, set later it took seconds to build and, while it built,
+// the app listed itself among its windows (a cycle a walk never left) and
+// failed AX calls; and VS Code 1.107 never reads it back as true. The script
+// starts Electron apps with Chromium's --force-renderer-accessibility
+// instead, so the tree is there from the first window, at the same cost in
+// every task. axdump, which may look at any running app, still sets it.
 static void Adopt(pid_t pid) {
     gPid = pid;
     if (gApp) CFRelease(gApp);
     gApp = AXUIElementCreateApplication(pid);
-    // Chromium (VS Code) builds its accessibility tree only when asked.
-    AXUIElementSetAttributeValue(gApp, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
 }
 
 static void LookForNewPid(void) {
@@ -611,14 +673,32 @@ static void LookForNewPid(void) {
     if (best) Adopt(best);
 }
 
+// The owner of the frontmost normal-level window on screen, or 0.
+static pid_t TopWindowPid(void) {
+    NSArray *wins = CFBridgingRelease(CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    for (NSDictionary *w in wins)
+        if ([w[(__bridge id)kCGWindowLayer] intValue] == 0) return [w[(__bridge id)kCGWindowOwnerPID] intValue];
+    return 0;
+}
+
 // Asked of the system through AX each time: NSWorkspace's answer is updated
-// by notifications this tool, with no run loop, never receives.
+// by notifications this tool, with no run loop, never receives. The system
+// answers AX's question by asking the frontmost app, and an Electron app
+// busy building its accessibility tree (VS Code for a few seconds after
+// AXManualAccessibility) fails it with kAXErrorCannotComplete: then the
+// owner of the frontmost window on screen answers instead.
 static BOOL Frontmost(void) {
     static AXUIElementRef sys;
     if (!sys) sys = AXUIElementCreateSystemWide();
-    id app = AXObj(sys, kAXFocusedApplicationAttribute);
+    CFTypeRef app = NULL;
     pid_t pid = 0;
-    return app && AXUIElementGetPid((__bridge AXUIElementRef)app, &pid) == kAXErrorSuccess && pid == gPid;
+    if (AXUIElementCopyAttributeValue(sys, kAXFocusedApplicationAttribute, &app) == kAXErrorSuccess && app) {
+        AXUIElementGetPid((AXUIElementRef)app, &pid);
+        CFRelease(app);
+        return pid == gPid;
+    }
+    return gPid && TopWindowPid() == gPid;
 }
 
 // Bring the app forward before input; the time is not counted. NO when it
@@ -706,7 +786,102 @@ static BOOL Quiet(double ms) {
 
 static NSRegularExpression *gRefused;
 
-// "unverified" when the window shows no accessibility tree to read.
+// ------------------------------------------------------------------ the screen
+//
+// An app that shows no AX tree (Zed) is read from its pixels: its front
+// window captured by screencapture(1) and its text recognised by Vision,
+// both on this Mac. A read takes 300 to 1,000 ms, which is the step's time
+// resolution (its poll_ms); the recognising after the picture that ends a
+// step is the benchmark's time, not the app's, so it is kept out of the
+// step's wall time (gHarnessMs). It needs Screen Recording permission for
+// the terminal; without it nothing is read, which reads as unverified.
+
+static double gHarnessMs = 0;
+
+static CGWindowID FrontWindowOf(pid_t pid) {
+    NSArray *wins = CFBridgingRelease(CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    for (NSDictionary *w in wins)
+        if ([w[(__bridge id)kCGWindowOwnerPID] intValue] == pid && [w[(__bridge id)kCGWindowLayer] intValue] == 0)
+            return [w[(__bridge id)kCGWindowNumber] unsignedIntValue];
+    return 0;
+}
+
+static int RunShell(NSString *cmd);
+
+// The text Vision reads in the app's front window, a line each, or nil.
+static NSString *ScreenText(pid_t pid) {
+    double shot = MonoMs();
+    NSString *text = nil;
+    CGWindowID wid = FrontWindowOf(pid);
+    NSString *png = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                                                [NSString stringWithFormat:@"taskbench-screen-%d.png", getpid()]];
+    const BOOL captured =
+        wid && RunShell([NSString stringWithFormat:@"/usr/sbin/screencapture -x -o -l%u '%@'", wid, png]) == 0;
+    shot = MonoMs();   // the picture is of a moment no later than this
+    if (captured) {
+        CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:png], NULL);
+        CGImageRef img = src ? CGImageSourceCreateImageAtIndex(src, 0, NULL) : NULL;
+        if (img) {
+            VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
+            req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+            req.usesLanguageCorrection = NO;
+            VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:img options:@{}];
+            if ([h performRequests:@[ req ] error:nil]) {
+                NSMutableArray *lines = [NSMutableArray array];
+                for (VNRecognizedTextObservation *o in req.results) {
+                    VNRecognizedText *best = [o topCandidates:1].firstObject;
+                    if (best.string.length) [lines addObject:best.string];
+                }
+                text = [lines componentsJoinedByString:@"\n"];
+            }
+            CGImageRelease(img);
+        }
+        if (src) CFRelease(src);
+    }
+    [NSFileManager.defaultManager removeItemAtPath:png error:nil];
+    // Only the reading after the last picture is kept out of wall time: a
+    // condition that holds on this read held when the picture was taken,
+    // and the time of a read that found it not yet true is time the app
+    // took. (Not added up: subtracting every read would hide the app's.)
+    gHarnessMs = MonoMs() - shot;
+    return text;
+}
+
+// Text compared as the screen gives it: no spaces, one kind of quote. Case
+// counts: "PNG" is a PNG shown as text, "picture.png" only its tab.
+static NSString *Flat(NSString *s) {
+    NSMutableString *m = [s mutableCopy];
+    for (NSString *q in @[ @"“", @"”", @"„", @"''" ]) [m replaceOccurrencesOfString:q withString:@"\"" options:0 range:NSMakeRange(0, m.length)];
+    NSArray *parts = [m componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return [parts componentsJoinedByString:@""];
+}
+
+static BOOL ScreenHas(NSString *screen, NSString *want) {
+    return screen.length && want.length && [Flat(screen) rangeOfString:Flat(want)].location != NSNotFound;
+}
+
+static NSString *Excerpt(NSString *s) {
+    s = [[s componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsJoinedByString:@" / "];
+    return s.length > 70 ? [[s substringToIndex:70] stringByAppendingString:@"..."] : s;
+}
+
+// What the screen shows for a view the AX tree cannot read.
+static NSString *ClassifyScreen(NSString *magic) {
+    NSString *screen = ScreenText(gPid);
+    if (!screen.length) return @"unverified (no accessibility tree, no text on screen)";
+    // The line that decided it, as the report's evidence.
+    for (NSString *line in [screen componentsSeparatedByString:@"\n"])
+        if ([gRefused firstMatchInString:line options:0 range:NSMakeRange(0, line.length)])
+            return [NSString stringWithFormat:@"refused (on screen: \"%@\")", Excerpt(line)];
+    for (NSString *line in [screen componentsSeparatedByString:@"\n"])
+        if (ScreenHas(line, magic)) return [NSString stringWithFormat:@"opens as text (on screen: \"%@\")", Excerpt(line)];
+    if (ScreenHas(screen, magic)) return @"opens as text (read from the screen)";
+    return @"shown (read from the screen)";
+}
+
+// "unverified" when the window shows no accessibility tree to read and the
+// screen gives no text either.
 static NSString *ClassifyView(NSString *magic) {
     id w = FocusedWindow(gApp);
     if (!w) return nil;
@@ -729,7 +904,7 @@ static NSString *ClassifyView(NSString *magic) {
     });
     if (refused) return @"refused";
     if (text) return @"opens as text";
-    if (nodes < 15 || readable < 3) return @"unverified (no accessibility tree)";
+    if (nodes < 15 || readable < 3) return ClassifyScreen(magic);
     return @"shown";
 }
 
@@ -751,6 +926,11 @@ static BOOL Term(NSString *t, NSMutableDictionary *state) {
         NSString *want = [t substringFromIndex:7];
         NSString *title = AXStr((__bridge AXUIElementRef)FocusedWindow(gApp), kAXTitleAttribute);
         return TextMatches(title, want, [t characterAtIndex:6] == '=');
+    }
+    if ([t hasPrefix:@"screen "]) return ScreenHas(ScreenText(gPid), [t substringFromIndex:7]);
+    if ([t hasPrefix:@"!screen "]) {
+        NSString *s = ScreenText(gPid);
+        return s.length && !ScreenHas(s, [t substringFromIndex:8]);   // nothing read is not "gone"
     }
     if ([t hasPrefix:@"ax "]) return FindElement(gApp, [t substringFromIndex:3]) != nil;
     if ([t hasPrefix:@"!ax "]) return FindElement(gApp, [t substringFromIndex:4]) == nil;
@@ -828,6 +1008,7 @@ static NSString *Await(NSString *cond, double timeoutMs) {
     gPollMaxMs = 0;
     for (;;) {
         const double tick = MonoMs();
+        gHarnessMs = 0;   // only the read in the poll that ends the step counts (ScreenText)
         if (OwnerTouched()) {
             gAborted = YES;
             return nil;
@@ -955,6 +1136,7 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
         }
 
         Counts c = {0, 0, 0, 0};
+        double settleMs = 0;   // waiting for a click's target to hold still: the app's time, so in wall
         NSString *status = @"ok";
         const double t0 = MonoMs();
         if ([verb isEqualToString:@"launch"] || [verb isEqualToString:@"finder"]) {
@@ -999,7 +1181,12 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                 if (!done && !Activate()) {
                     status = kNotInFront;
                     done = YES;
-                } else if (!done && ElementCentre(el, &p)) {
+                } else if (!done && ({
+                               const double s0 = MonoMs();
+                               const BOOL ok = StableCentre(el, &p);
+                               settleMs = MonoMs() - s0;
+                               ok;
+                           })) {
                     PostClick(p, [verb isEqualToString:@"rclick"] ? kCGMouseButtonRight : kCGMouseButtonLeft,
                               [verb isEqualToString:@"dclick"] ? 2 : 1);
                     done = YES;
@@ -1034,9 +1221,10 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
         } else if (![verb isEqualToString:@"none"]) {
             status = [NSString stringWithFormat:@"error: unknown input %@", verb];
         }
-        const double inputMs = MonoMs() - t0;
+        const double inputMs = MonoMs() - t0 - settleMs;
         const double t1 = MonoMs();
         NSString *m = @"";
+        gHarnessMs = 0;
         if (gAborted) break;
         // A step read from the app's CPU settling, or a soft condition that
         // never held, is unverified. The task is unverified when its last
@@ -1056,7 +1244,8 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                 if (!setup) viewUnverified = YES;
             }
         }
-        const double wall = MonoMs() - t1;
+        // Reading the screen is the benchmark's time, not the app's.
+        const double wall = MAX(0, MonoMs() - t1 + settleMs - gHarnessMs);
         const BOOL skipped = [status hasPrefix:@"skipped"];
         if (skipped) c = (Counts){0, 0, 0, 0};
         if ([verb isEqualToString:@"launch"]) {
@@ -1087,6 +1276,12 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
             failed = YES;
             break;
         }
+    }
+    // A launch whose condition timed out may have started the app all the
+    // same: its pid is still reported, so the script stops it.
+    if (!gPid) {
+        LookForNewPid();
+        if (gPid) Emit([NSString stringWithFormat:@"pid\t%d", gPid]);
     }
     if (gAborted) {
         if (gPid) Emit([NSString stringWithFormat:@"pid\t%d", gPid]);
@@ -1130,7 +1325,7 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
 static int Quit(NSString *exe, pid_t pid) {
     NSString *path = ExePath(pid);
     if (!path) return 0;   // already gone
-    if (![path isEqualToString:exe]) {
+    if (!ExeMatches(path, exe)) {
         fprintf(stderr, "taskbench: pid %d is %s, not %s; left alone\n", pid, path.UTF8String, exe.UTF8String);
         return 2;
     }
@@ -1155,9 +1350,14 @@ static int Quit(NSString *exe, pid_t pid) {
 
 // ------------------------------------------------------------------ axdump
 
-static int AxDump(pid_t pid, int maxDepth) {
+static int AxDump(pid_t pid, int maxDepth, BOOL manual) {
     Adopt(pid);
-    SleepMs(300);   // Chromium fills its tree after AXManualAccessibility
+    // An Electron app started without --force-renderer-accessibility builds
+    // its tree only when asked, and takes a few seconds to (`manual`).
+    if (manual) {
+        AXUIElementSetAttributeValue(gApp, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
+        SleepMs(3000);
+    }
     NSArray *wins = Windows(gApp);
     printf("%lu window(s); focused: %s\n", (unsigned long)wins.count,
            (AXStr((__bridge AXUIElementRef)FocusedWindow(gApp), kAXTitleAttribute) ?: @"(none)").UTF8String);
@@ -1307,7 +1507,7 @@ static int BigLog(NSString *path, long mb, NSString *needle) {
 
 static int Usage(void) {
     fprintf(stderr, "usage: taskbench-mac check | idle-wait SECONDS STATE | run --exe PATH --steps FILE --state STATE "
-                    "[--out FILE] | quit --exe PATH PID | axdump PID [DEPTH] | tree PID | media DIR | "
+                    "[--out FILE] [--pid PID] | quit --exe PATH PID | axdump PID [DEPTH] [manual] | screentext PID | tree PID | media DIR | "
                     "biglog PATH MB NEEDLE\n");
     return 2;
 }
@@ -1326,6 +1526,9 @@ int main(int argc, const char *argv[]) {
         if ([cmd isEqualToString:@"check"]) {
             const BOOL trusted = AXIsProcessTrusted();
             printf("accessibility: %s\n", trusted ? "trusted" : "NOT trusted");
+            printf("screen recording: %s\n", CGPreflightScreenCaptureAccess()
+                                                 ? "allowed"
+                                                 : "not allowed (Zed's results, read from the screen, read as unverified)");
             const double idle = HidIdleMs();
             printf("owner idle: %.1f s\n", idle / 1000);
             if (!trusted)
@@ -1358,18 +1561,29 @@ int main(int argc, const char *argv[]) {
         }
         if ([cmd isEqualToString:@"run"]) {
             NSString *exe = nil, *steps = nil, *out = nil;
+            pid_t attach = 0;
             for (int i = 2; i + 1 < argc; i += 2) {
                 NSString *k = @(argv[i]), *v = @(argv[i + 1]);
                 if ([k isEqualToString:@"--exe"]) exe = v;
                 else if ([k isEqualToString:@"--steps"]) steps = v;
                 else if ([k isEqualToString:@"--state"]) gStatePath = v;
                 else if ([k isEqualToString:@"--out"]) out = v;
+                else if ([k isEqualToString:@"--pid"]) attach = (pid_t)v.intValue;
                 else return Usage();
             }
             if (!exe || !steps || !gStatePath) return Usage();
             if (!AXIsProcessTrusted()) {
                 fprintf(stderr, "taskbench: this terminal has no Accessibility permission (taskbench-mac check)\n");
                 return 4;
+            }
+            // --pid: drive a copy already running (one a kept run left, while
+            // working out a step); it must be the --exe's.
+            if (attach) {
+                if (!ExeMatches(ExePath(attach), exe)) {
+                    fprintf(stderr, "taskbench: pid %d is not %s\n", attach, exe.UTF8String);
+                    return 2;
+                }
+                Adopt(attach);
             }
             LoadState();
             return Run(exe, steps, out);
@@ -1381,7 +1595,12 @@ int main(int argc, const char *argv[]) {
                 fprintf(stderr, "taskbench: this terminal has no Accessibility permission\n");
                 return 4;
             }
-            return AxDump((pid_t)atoi(argv[2]), argc > 3 ? atoi(argv[3]) : 40);
+            return AxDump((pid_t)atoi(argv[2]), argc > 3 ? atoi(argv[3]) : 40, argc > 4 && !strcmp(argv[4], "manual"));
+        }
+        if ([cmd isEqualToString:@"screentext"] && argc == 3) {
+            NSString *s = ScreenText((pid_t)atoi(argv[2]));
+            printf("%s\n(%.0f ms)\n", (s ?: @"(nothing read)").UTF8String, gHarnessMs);
+            return s.length ? 0 : 1;
         }
         if ([cmd isEqualToString:@"tree"] && argc == 3) {
             TreeSample s = SampleTree((pid_t)atoi(argv[2]));
