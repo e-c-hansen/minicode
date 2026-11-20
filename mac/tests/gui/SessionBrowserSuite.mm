@@ -40,12 +40,34 @@
 // hostile cells escaped, nothing run), and a SQLite database as its tables
 // (hostile names as text) and its rows a page at a time, Next going on,
 // the file unchanged; and a Markdown file as its page, Show Source flipping
-// to its text and Show Page back.
+// to its text and Show Page back. A LaTeX document (with a stand-in
+// tectonic): the window opens it in its preview, and the read-only page,
+// following the window, shows the PDF the window's preview typeset, the
+// bytes at its /typeset/ address the window's own; Show Source shows its
+// text; an agent's rewrite that the window reads and typesets again
+// reaches the page as a new PDF at a new address; a document the window
+// does not have open, clicked in the page's tree, is typeset by the
+// server's own preview, the window opening nothing and no file left
+// beside it. Source Control (R3's fourth slice): the folder made a
+// repository with changes, the read-only page's Source Control lists them
+// as the window's does, a file clicked shows the review page of the
+// changes in a tab of the page's own (removed and added lines, the changed
+// words marked, syntax colors, no Stage or Discard anywhere), Side by Side
+// and an unchanged stretch opened; an agent's edit on disk reaches the page
+// with no reload (the window's FSEvents), and the repository is as it was.
+// Then the window's commit page and an agent worktree's page (R3's last
+// slice): both listed in the read-only page's tab strip, each shown there
+// read-only (only Side by Side; no Apply to Main), a picture's Before and
+// After decoded from the server's /picture/ addresses at their pixel
+// sizes, the window opening nothing, and each page's tab going when the
+// window closes it.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 #import "EditorController.h"
 #import "EditorController+Private.h"
+#import "ChangeReviewPage.h"
 #import "EditorTab.h"
+#import "GitPanel.h"   // MCGitExecutable, MCGitRunSync
 #import "SessionBrowser.h"
 #import "SessionLink.h"
 #import "Terminal.h"
@@ -336,6 +358,10 @@ NSString *const kRead =
     @" file: window.mcSessionView ? window.mcSessionView.file() : null,"
     @" pwned: String(window.pwned),"
     @" mode: document.getElementById('modebtn').classList.contains('hidden') ? '' : document.getElementById('modebtn').textContent,"
+    @" typeset: window.mcSessionView ? window.mcSessionView.typeset() : null,"
+    @" fetched: window.__typesetFetch || null,"
+    @" scm: window.mcSessionView ? window.mcSessionView.git() : null,"
+    @" review: window.mcSessionView ? window.mcSessionView.review() : null,"
     @" mdShown: !document.getElementById('md').classList.contains('hidden')})";
 
 // Script run in the page (a click on its controls), its failure noted.
@@ -424,6 +450,50 @@ NSString *Typed(NSString *s) {
     return [parts componentsJoinedByString:@","];
 }
 
+// A PDF of one word, as the stand-in tectonic "typesets" it.
+NSData *WordPDF(NSString *word) {
+    NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 300, 80)];
+    tv.string = word;
+    tv.font = [NSFont systemFontOfSize:24];
+    return [tv dataWithPDFInsideRect:tv.bounds];
+}
+
+// The bytes' sum, as the page's fetch adds them up.
+uint32_t ByteSum(NSData *d) {
+    uint32_t s = 0;
+    const unsigned char *b = (const unsigned char *)d.bytes;
+    for (NSUInteger i = 0; i < d.length; i++) s += b[i];
+    return s;
+}
+
+// The page fetches its typeset frame's address, as its frame does: the
+// answer's status, type, length and byte sum in window.__typesetFetch.
+// What was read before is dropped: Read() answers later, so a wait
+// looking at gSeen at once saw the last fetch's answer (CI, PR #261).
+void FetchTypeset(void) {
+    gSeen = nil;
+    Eval(@"(() => { window.__typesetFetch = null; const src = window.mcSessionView.typeset().src;"
+         @" if (!src) return false;"
+         @" fetch(src).then(r => r.arrayBuffer().then(b => { const a = new Uint8Array(b); let s = 0;"
+         @" for (const x of a) s = (s + x) >>> 0;"
+         @" window.__typesetFetch = {status: r.status, type: r.headers.get('content-type') || '',"
+         @" length: a.length, sum: s, src: src}; }))"
+         @" .catch(e => { window.__typesetFetch = {error: String(e)}; });"
+         @" return true; })()");
+}
+
+NSDictionary *SeenTypeset(void) {
+    return [gSeen[@"typeset"] isKindOfClass:NSDictionary.class] ? gSeen[@"typeset"] : nil;
+}
+NSDictionary *SeenFetch(void) {
+    return [gSeen[@"fetched"] isKindOfClass:NSDictionary.class] ? gSeen[@"fetched"] : nil;
+}
+// A fetch of the frame's address now on show has answered.
+BOOL FetchedShown(void) {
+    NSString *src = SeenTypeset()[@"src"];
+    return src.length && [SeenFetch()[@"src"] isEqualToString:src];
+}
+
 NSTextView *TV(EditorController *c) { return [c valueForKey:@"textView"]; }
 MCTab *Active(EditorController *c) { return [c valueForKey:@"activeTab"]; }
 // The window's tab for a file named `name`, nil when it has none.
@@ -433,6 +503,33 @@ MCTab *MCTabNamed(EditorController *c, NSString *name) {
     return nil;
 }
 std::string Text(EditorController *c) { return std::string(TV(c).string.UTF8String ?: ""); }
+
+// A PNG of w by h pixels, every pixel gray.
+NSData *GrayPng(NSInteger w, NSInteger h) {
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:NULL pixelsWide:w pixelsHigh:h bitsPerSample:8 samplesPerPixel:4
+                        hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+                     bytesPerRow:0 bitsPerPixel:0];
+    memset(rep.bitmapData, 0x80, (size_t)rep.bytesPerRow * (size_t)h);
+    return [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+}
+
+// The window's tab whose page is `page`, nil when none is.
+MCTab *TabOfPage(EditorController *c, id page) {
+    for (MCTab *t in [c groupTabs])
+        if (t.page == page) return t;
+    return nil;
+}
+
+// A click on the page's tab strip button named `name`.
+void ClickTab(NSString *name) {
+    NSData *quoted = [NSJSONSerialization dataWithJSONObject:@[ name ] options:0 error:nil];
+    Eval([NSString stringWithFormat:
+        @"(() => { const want = %@[0];"
+        @" const b = [...document.querySelectorAll('#tabs button')].find(x => x.firstChild.textContent === want);"
+        @" if (b) b.click(); return !!b; })()",
+        [[NSString alloc] initWithData:quoted encoding:NSUTF8StringEncoding]]);
+}
 
 }  // namespace
 
@@ -1159,6 +1256,445 @@ MC_GUI_SUITE(session_browser) {
     MCGuiWait(@"back to the window's tab once more", 20, ^BOOL {
         Read();
         return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:@"notes.md"];
+    });
+    // A LaTeX document (R3's third slice): the window's preview's PDF on
+    // the page, and a new one when the window typesets again.
+    NSString *texPath = [dir stringByAppendingPathComponent:@"paper.tex"];
+    NSString *soloPath = [dir stringByAppendingPathComponent:@"solo.tex"];
+    NSString *alphaTex = @"\\documentclass{article}\\begin{document}ALPHA\\end{document}\n";
+    NSString *betaTex = @"\\documentclass{article}\\begin{document}BETA\\end{document}\n";
+    NSString *soloTex = @"\\documentclass{article}\\begin{document}SOLO\\end{document}\n";
+    __block MCTab *texTab = nil;
+    __block NSData *firstPdf = nil, *secondPdf = nil;
+    __block NSString *firstSrc = nil;
+    __block NSUInteger texTabsBefore = 0;
+    MCGuiStep(@"a stand-in tectonic and two LaTeX documents; the window opens one", ^{
+        NSString *pdfs = [MCGuiScratch() stringByAppendingPathComponent:@"typeset-pdfs"];
+        [NSFileManager.defaultManager createDirectoryAtPath:pdfs withIntermediateDirectories:YES
+                                                  attributes:nil error:nil];
+        [WordPDF(@"ALPHA") writeToFile:[pdfs stringByAppendingPathComponent:@"alpha.pdf"] atomically:YES];
+        [WordPDF(@"BETA, a longer page") writeToFile:[pdfs stringByAppendingPathComponent:@"beta.pdf"] atomically:YES];
+        [WordPDF(@"SOLO") writeToFile:[pdfs stringByAppendingPathComponent:@"solo.pdf"] atomically:YES];
+        // "Typesets" by copying the PDF its text names.
+        NSString *script = [NSString stringWithFormat:
+            @"#!/bin/sh\n"
+            @"out=''; prev=''; input=''\n"
+            @"for a in \"$@\"; do [ \"$prev\" = --outdir ] && out=\"$a\"; prev=\"$a\"; input=\"$a\"; done\n"
+            @"stem=$(basename \"$input\" .tex)\n"
+            @"if grep -q ALPHA \"$input\"; then cp '%@/alpha.pdf' \"$out/$stem.pdf\";\n"
+            @"elif grep -q BETA \"$input\"; then cp '%@/beta.pdf' \"$out/$stem.pdf\";\n"
+            @"else cp '%@/solo.pdf' \"$out/$stem.pdf\"; fi\n",
+            pdfs, pdfs, pdfs];
+        NSString *tool = [MCGuiScratch() stringByAppendingPathComponent:@"typeset-tectonic"];
+        MCGuiWriteFile(tool, script);
+        chmod(tool.fileSystemRepresentation, 0755);
+        MCSetEnv("MUTIBLE_LATEX_WORK", [MCGuiScratch() stringByAppendingPathComponent:@"typeset-work"].UTF8String);
+        MCSetEnv("MUTIBLE_TECTONIC", tool.UTF8String);
+        GCHECK_EQ_STR(MCTectonicPath(), tool);
+        MCGuiWriteFile(texPath, alphaTex);
+        MCGuiWriteFile(soloPath, soloTex);
+        texTabsBefore = [gC tabs].count;
+        [gC openFileAtPath:texPath];
+        texTab = MCTabNamed(gC, @"paper.tex");
+        GCHECK(texTab != nil && texTab.isLatex && texTab.previewMode && texTab.latex != nil && texTab.session != nil);
+        Eval(@"(() => { document.getElementById('refresh').click(); return 1; })()");
+    });
+    MCGuiWait(@"the window's preview typesets it", 20, ^BOOL {
+        return texTab.latex.typesetPdf != nil && !texTab.latex.typesetting;
+    });
+    MCGuiWait(@"the read-only page follows the window to it and shows its pages", 30, ^BOOL {
+        Read();
+        NSDictionary *x = SeenTypeset();
+        return [x[@"state"] isEqualToString:@"ready"] && [x[@"src"] containsString:@"/typeset/paper.tex?v="] &&
+               [x[@"frame"] boolValue] && [x[@"shown"] boolValue] && [gSeen[@"mode"] isEqualToString:@"Show Source"];
+    });
+    MCGuiStep(@"the page fetches its frame's address", ^{
+        MCGuiNote(@"typeset: %@", SeenTypeset());
+        GCHECK_EQ_STR(gSeen[@"local"], @"");   // the window's tab, not one of the page's own
+        firstPdf = texTab.latex.typesetPdf;
+        firstSrc = SeenTypeset()[@"src"];
+        FetchTypeset();
+    });
+    MCGuiWait(@"fetched", 20, ^BOOL {
+        Read();
+        return FetchedShown();
+    });
+    MCGuiStep(@"the bytes are the window's PDF; then Show Source", ^{
+        NSDictionary *f = SeenFetch();
+        MCGuiNote(@"fetched: %@", f);
+        GCHECK([f[@"status"] intValue] == 200);
+        GCHECK_EQ_STR(f[@"type"], @"application/pdf");
+        GCHECK([f[@"length"] unsignedIntegerValue] == firstPdf.length);
+        GCHECK([f[@"sum"] unsignedIntValue] == ByteSum(firstPdf));
+        Eval(@"(() => { document.getElementById('modebtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"its text, and Show Page to go back", 20, ^BOOL {
+        Read();
+        return ![SeenTypeset()[@"shown"] boolValue] && [gSeen[@"lines"] hasPrefix:@"\\documentclass"] &&
+               [gSeen[@"lines"] containsString:@"ALPHA"] && [gSeen[@"mode"] isEqualToString:@"Show Page"];
+    });
+    MCGuiStep(@"Show Page; an agent rewrites the file, and the window reads it", ^{
+        Eval(@"(() => { document.getElementById('modebtn').click(); return 1; })()");
+        GCHECK(!texTab.dirty);
+        MCGuiWriteFile(texPath, betaTex);
+        [gC checkTabsOnDisk];
+    });
+    MCGuiWait(@"the window typesets the new text, and the page's frame has a new address", 30, ^BOOL {
+        Read();
+        NSDictionary *x = SeenTypeset();
+        NSData *now = texTab.latex.typesetPdf;
+        return now && ![now isEqualToData:firstPdf] && !texTab.latex.typesetting &&
+               [x[@"state"] isEqualToString:@"ready"] && [x[@"shown"] boolValue] &&
+               [x[@"src"] containsString:@"/typeset/paper.tex?v="] && ![x[@"src"] isEqualToString:firstSrc];
+    });
+    MCGuiStep(@"fetched again", ^{
+        secondPdf = texTab.latex.typesetPdf;
+        FetchTypeset();
+    });
+    MCGuiWait(@"the new bytes", 20, ^BOOL {
+        Read();
+        return FetchedShown();
+    });
+    MCGuiStep(@"they are the window's new PDF; a document the window has not open, clicked in the tree", ^{
+        NSDictionary *f = SeenFetch();
+        MCGuiNote(@"fetched: %@", f);
+        GCHECK([f[@"length"] unsignedIntegerValue] == secondPdf.length);
+        GCHECK([f[@"sum"] unsignedIntValue] == ByteSum(secondPdf));
+        GCHECK([gSeen[@"tree"] containsString:@"solo.tex"]);
+        texTabsBefore = [gC tabs].count;
+        ClickRow(@"solo.tex");
+    });
+    MCGuiWait(@"in a tab of the page's own, typeset by the server's own preview", 30, ^BOOL {
+        Read();
+        NSDictionary *x = SeenTypeset();
+        return [gSeen[@"local"] isEqualToString:@"solo.tex"] && [x[@"state"] isEqualToString:@"ready"] &&
+               [x[@"src"] containsString:@"/typeset/solo.tex?v="] && [x[@"frame"] boolValue];
+    });
+    MCGuiStep(@"the window opened nothing; fetched", ^{
+        GCHECK([gC tabs].count == texTabsBefore);
+        GCHECK(MCTabNamed(gC, @"solo.tex") == nil);
+        FetchTypeset();
+    });
+    MCGuiWait(@"its bytes", 20, ^BOOL {
+        Read();
+        return FetchedShown();
+    });
+    MCGuiStep(@"the stand-in's PDF; the file unchanged and nothing left beside it; both closed", ^{
+        NSDictionary *f = SeenFetch();
+        NSData *solo = [NSData dataWithContentsOfFile:
+            [[MCGuiScratch() stringByAppendingPathComponent:@"typeset-pdfs"] stringByAppendingPathComponent:@"solo.pdf"]];
+        GCHECK([f[@"length"] unsignedIntegerValue] == solo.length && [f[@"sum"] unsignedIntValue] == ByteSum(solo));
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:soloPath encoding:NSUTF8StringEncoding error:nil], soloTex);
+        for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil])
+            GCHECK(![name hasSuffix:@".mutible.tex"]);
+        CloseTab(@"solo.tex");
+        GCHECK([gC closeTabEverywhere:texTab prompt:YES]);
+        MCSetEnv("MUTIBLE_TECTONIC", nullptr);
+        MCSetEnv("MUTIBLE_LATEX_WORK", nullptr);
+    });
+    MCGuiWait(@"back to the window's tab, the pages gone", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && ![SeenTypeset()[@"shown"] boolValue] &&
+               ![gSeen[@"tabs"] containsString:@"solo.tex"] && ![gSeen[@"tabs"] containsString:@"paper.tex"];
+    });
+    // Source Control in the page (R3's fourth slice): the folder becomes a
+    // repository with changes; the read-only page lists them and shows
+    // their review, and follows an agent's edit with no reload.
+    NSString *revPath = [dir stringByAppendingPathComponent:@"review_me.py"];
+    __block NSString *git = nil;
+    __block NSString *headBefore = nil, *stagedBefore = nil;
+    NSString *(^revLines)(NSString *, NSString *) = ^NSString *(NSString *second, NSString *last) {
+        NSMutableString *t = [NSMutableString string];
+        for (int i = 1; i <= 40; i++) {
+            if (i == 2) [t appendFormat:@"%@\n", second];
+            else if (i == 39) [t appendFormat:@"%@\n", last];
+            else [t appendFormat:@"value_%d = compute(%d)\n", i, i];
+        }
+        return t;
+    };
+    MCGuiStep(@"files to commit", ^{
+        git = MCGitExecutable();
+        if (!git) MCGuiNote(@"no git here: the Source Control checks are skipped");
+        MCGuiWriteFile(revPath, revLines(@"value_2 = compute(2)", @"value_39 = compute(39)"));
+        MCGuiWriteFile([dir stringByAppendingPathComponent:@"staged.txt"], @"one\n");
+    });
+    MCGuiAsync(@"git init, add, commit", 30, ^(MCGuiDone done) {
+        if (!git) { done(); return; }
+        NSString *sh = [NSString stringWithFormat:
+            @"cd '%@' && '%@' init -q && '%@' add -A && '%@' -c commit.gpgsign=false commit -qm first && "
+            @"printf 'two\\n' > staged.txt && '%@' add staged.txt && printf 'fresh\\n' > fresh.txt",
+            dir, git, git, git, git];
+        MCGuiRunProcess(@[@"/bin/sh", @"-c", sh], nil, ^(int st, NSString *, NSString *err) {
+            GCHECK(st == 0);
+            if (st) MCGuiNote(@"git: %@", err);
+            done();
+        });
+    });
+    MCGuiStep(@"a change of two lines far apart; Source Control in the page's sidebar", ^{
+        if (!git) return;
+        MCGuiWriteFile(revPath, revLines(@"value_2 = compute(2) + offset", @"value_39 = compute(39) * 2"));
+        headBefore = [[NSString alloc] initWithData:MCGitRunSync(dir, @[@"rev-parse", @"HEAD"]).output
+                                           encoding:NSUTF8StringEncoding];
+        stagedBefore = [[NSString alloc] initWithData:MCGitRunSync(dir, @[@"diff", @"--cached", @"--name-only"]).output
+                                             encoding:NSUTF8StringEncoding];
+        GCHECK_EQ_STR(stagedBefore, @"staged.txt\n");
+        Eval(@"(() => { document.getElementById('scmbtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"the page lists the changes, staged first, as the window's Source Control does", 30, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSArray *rows = [gSeen[@"scm"] isKindOfClass:NSDictionary.class] ? gSeen[@"scm"][@"rows"] : nil;
+        return [rows containsObject:@"M staged.txt"] && [rows containsObject:@"M review_me.py"] &&
+               [rows containsObject:@"U fresh.txt"] && [rows.firstObject isEqualToString:@"M staged.txt"];
+    });
+    MCGuiStep(@"review_me.py clicked in the list", ^{
+        if (!git) return;
+        MCGuiNote(@"source control: %@", gSeen[@"scm"]);
+        GCHECK([gSeen[@"scm"][@"mode"] boolValue]);
+        Eval(@"(() => { const r = [...document.querySelectorAll('#gitlist .row')]"
+             @".find(x => x.dataset.path === 'review_me.py'); if (r) r.click(); return !!r; })()");
+    });
+    // The review_me.py file of the review on show, or nil.
+    NSDictionary *(^revFile)(void) = ^NSDictionary *{
+        NSDictionary *rv = [gSeen[@"review"] isKindOfClass:NSDictionary.class] ? gSeen[@"review"] : nil;
+        for (NSDictionary *f in rv[@"files"])
+            if ([f[@"head"] hasPrefix:@"review_me.py"]) return f;
+        return nil;
+    };
+    BOOL (^rowsHave)(NSDictionary *, NSString *) = ^BOOL(NSDictionary *f, NSString *text) {
+        for (NSString *r in f[@"rows"])
+            if ([r containsString:text]) return YES;
+        return NO;
+    };
+    MCGuiWait(@"the review shows in a tab of the page's own, at that file", 30, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *f = revFile();
+        return [gSeen[@"review"][@"shown"] boolValue] && [gSeen[@"local"] isEqualToString:@"/changes"] &&
+               rowsHave(f, @"value_2 = compute(2) + offset") && rowsHave(f, @"value_39 = compute(39) * 2");
+    });
+    MCGuiStep(@"removed and added lines, the words marked, colored, read only; then Side by Side", ^{
+        if (!git) return;
+        NSDictionary *rv = gSeen[@"review"], *f = revFile();
+        MCGuiNote(@"review_me.py: %@", f[@"rows"]);
+        GCHECK([gSeen[@"tabs"] containsString:@"+Changes"]);
+        GCHECK(rowsHave(f, @"r|2||value_2 = compute(2)"));
+        GCHECK(rowsHave(f, @"a||2|value_2 = compute(2) + offset"));
+        GCHECK(rowsHave(f, @"gap|"));   // the unchanged middle folded
+        GCHECK([rv[@"words"] intValue] >= 2 && [rv[@"colored"] intValue] > 0);
+        // Only Side by Side: nothing on the page stages, discards or commits.
+        GCHECK([[NSSet setWithArray:rv[@"buttons"]] isEqual:[NSSet setWithObject:@"Side by Side"]]);
+        GCHECK([gC tabs].count == tabsBefore);   // the window opened nothing
+        Eval(@"(() => { const f = [...document.querySelectorAll('#review .rfile')]"
+             @".find(x => x.querySelector('.rpath').textContent.startsWith('review_me.py'));"
+             @" const b = f && f.querySelector('.rhead button'); if (b) b.click(); return !!b; })()");
+    });
+    MCGuiWait(@"the file side by side, its changed pair on one row", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *f = revFile();
+        return [f[@"side"] boolValue] && rowsHave(f, @"sm|2|value_2 = compute(2)|2|value_2 = compute(2) + offset");
+    });
+    __block NSUInteger rowsFolded = 0;
+    MCGuiStep(@"the unchanged stretch clicked open", ^{
+        if (!git) return;
+        rowsFolded = [revFile()[@"rows"] count];
+        Eval(@"(() => { const f = [...document.querySelectorAll('#review .rfile')]"
+             @".find(x => x.querySelector('.rpath').textContent.startsWith('review_me.py'));"
+             @" const g = f && f.querySelector('tr.gap'); if (g) g.click(); return !!g; })()");
+    });
+    MCGuiWait(@"every line shows, still side by side", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *f = revFile();
+        return [f[@"side"] boolValue] && !rowsHave(f, @"gap|") && [f[@"rows"] count] > rowsFolded &&
+               rowsHave(f, @"value_20 = compute(20)");
+    });
+    MCGuiStep(@"an agent edits the file on disk; nobody presses anything", ^{
+        if (!git) return;
+        MCGuiWriteFile(revPath, revLines(@"value_2 = compute(2) + offset", @"value_39 = AGENT_EDIT(39)"));
+    });
+    MCGuiWait(@"the page's review follows, keeping its side by side and its open stretch", 30, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *f = revFile();
+        return rowsHave(f, @"AGENT_EDIT") && [f[@"side"] boolValue] && !rowsHave(f, @"gap|");
+    });
+    MCGuiStep(@"the repository as it was; the review closed and the tree back", ^{
+        if (!git) return;
+        NSString *head = [[NSString alloc] initWithData:MCGitRunSync(dir, @[@"rev-parse", @"HEAD"]).output
+                                               encoding:NSUTF8StringEncoding];
+        NSString *staged = [[NSString alloc] initWithData:MCGitRunSync(dir, @[@"diff", @"--cached", @"--name-only"]).output
+                                                 encoding:NSUTF8StringEncoding];
+        GCHECK_EQ_STR(head, headBefore);
+        GCHECK_EQ_STR(staged, stagedBefore);
+        GCHECK([[NSString stringWithContentsOfFile:revPath encoding:NSUTF8StringEncoding error:nil]
+            containsString:@"AGENT_EDIT"]);
+        CloseTab(@"Changes");
+        Eval(@"(() => { document.getElementById('filesbtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"back to the window's tab and the tree", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:@"+Changes"] &&
+               ![gSeen[@"scm"][@"mode"] boolValue] && [gSeen[@"tree"] containsString:@"review_me.py"];
+    });
+    MCGuiStep(@"what the page shows after Source Control", ^{
+        MCGuiNote(@"local '%@', tabs %@, source control %@, tree %@", gSeen[@"local"], gSeen[@"tabs"],
+                  gSeen[@"scm"][@"mode"], gSeen[@"tree"]);
+    });
+    // The window's commit page and an agent worktree's page (R3's last
+    // slice): the read-only page lists both and shows each, read-only, with
+    // a picture's two versions decoded from the server's /picture/ address.
+    NSString *wtPath = [dir.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"session-wt"];
+    NSData *picSmall = GrayPng(2, 1), *picBig = GrayPng(4, 3), *picShot = GrayPng(3, 3);
+    __block NSString *commitHash = nil, *mainBranch = nil;
+    __block MCChangeReviewPage *worktreePage = nil;
+    __block NSUInteger tabsWithPages = 0;
+    MCGuiStep(@"a picture committed, then a bigger one with a change", ^{
+        if (!git) return;
+        [picSmall writeToFile:[dir stringByAppendingPathComponent:@"pic.png"] atomically:YES];
+    });
+    MCGuiAsync(@"two commits and an agent's worktree with a new picture", 30, ^(MCGuiDone done) {
+        if (!git) { done(); return; }
+        NSString *sh = [NSString stringWithFormat:
+            @"cd '%@' && '%@' add -A && '%@' -c commit.gpgsign=false commit -qm pictures && "
+            @"cp '%@/pic-big.png' pic.png && rm '%@/pic-big.png' && "
+            @"printf 'value_2 = compute(2) + COMMITTED\\n' >> review_me.py && "
+            @"'%@' -c commit.gpgsign=false commit -qam 'Bigger picture' && "
+            @"'%@' worktree add -q -b agent-gui '%@' HEAD && "
+            @"cd '%@' && printf 'agent work\\n' >> review_me.py && cp '%@/shot.png' shot.png",
+            dir, git, git, dir.stringByDeletingLastPathComponent, dir.stringByDeletingLastPathComponent, git, git,
+            wtPath, wtPath, dir.stringByDeletingLastPathComponent];
+        [picBig writeToFile:[dir.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"pic-big.png"]
+                 atomically:YES];
+        [picShot writeToFile:[dir.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"shot.png"]
+                  atomically:YES];
+        MCGuiRunProcess(@[@"/bin/sh", @"-c", sh], nil, ^(int st, NSString *, NSString *err) {
+            GCHECK(st == 0);
+            if (st) MCGuiNote(@"git: %@", err);
+            done();
+        });
+    });
+    MCGuiStep(@"the window opens the commit's page and the worktree's", ^{
+        if (!git) return;
+        NSString *(^out)(NSArray *) = ^NSString *(NSArray *args) {
+            NSString *s = [[NSString alloc] initWithData:MCGitRunSync(dir, args).output encoding:NSUTF8StringEncoding];
+            return [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        };
+        commitHash = out(@[@"rev-parse", @"HEAD"]);
+        mainBranch = out(@[@"rev-parse", @"--abbrev-ref", @"HEAD"]);
+        GCHECK(commitHash.length == 40);
+        [gC showCommitReview:commitHash title:@"Bigger picture" preview:NO];
+        worktreePage = [[MCChangeReviewPage alloc] initForWorktree:wtPath label:@"agent-gui" branch:@"agent-gui"
+                                                           mainRef:mainBranch];
+        [gC showPage:worktreePage preview:NO];
+        [worktreePage reload];
+        tabsWithPages = [gC tabs].count;
+        MCGuiNote(@"window tabs with the pages: %lu (before %lu)", (unsigned long)tabsWithPages,
+                  (unsigned long)tabsBefore);
+    });
+    NSString *wtTitle = @"session-wt vs ";   // the worktree page's title, then the main branch
+    MCGuiWait(@"the read-only page lists both of the window's pages in its tab strip", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        return [gSeen[@"tabs"] containsString:@"Bigger picture"] && [gSeen[@"tabs"] containsString:wtTitle];
+    });
+    MCGuiStep(@"the commit's tab clicked in the page", ^{
+        if (!git) return;
+        MCGuiNote(@"tabs %@", gSeen[@"tabs"]);
+        GCHECK(![gSeen[@"tabs"] containsString:@"+Bigger picture"]);   // the window's, not the page's own
+        ClickTab(@"Bigger picture");
+    });
+    // The file of the review on show whose header starts with `name`.
+    NSDictionary *(^shownFile)(NSString *) = ^NSDictionary *(NSString *name) {
+        NSDictionary *rv = [gSeen[@"review"] isKindOfClass:NSDictionary.class] ? gSeen[@"review"] : nil;
+        for (NSDictionary *f in rv[@"files"])
+            if ([f[@"head"] hasPrefix:name]) return f;
+        return nil;
+    };
+    BOOL (^decoded)(NSDictionary *, NSString *, int) = ^BOOL(NSDictionary *f, NSString *side, int width) {
+        for (NSDictionary *i in f[@"images"])
+            if ([i[@"side"] isEqualToString:side]) return [i[@"width"] intValue] == width;
+        return NO;
+    };
+    MCGuiWait(@"the commit's page shows: its header, its change, its picture before and after", 30, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *rv = gSeen[@"review"], *pic = shownFile(@"pic.png"), *text = shownFile(@"review_me.py");
+        return [rv[@"shown"] boolValue] && [rv[@"page"] isEqual:[@"commit:" stringByAppendingString:commitHash]] &&
+               [rv[@"title"] isEqualToString:@"Bigger picture"] && rowsHave(text, @"COMMITTED") &&
+               decoded(pic, @"old", 2) && decoded(pic, @"new", 4);
+    });
+    MCGuiStep(@"labelled as the window labels them, at the server's addresses, read only", ^{
+        if (!git) return;
+        NSDictionary *rv = gSeen[@"review"], *pic = shownFile(@"pic.png");
+        MCGuiNote(@"commit page: %@ / %@; pictures %@", rv[@"title"], rv[@"detail"], pic[@"images"]);
+        NSArray *images = pic[@"images"];
+        GCHECK(images.count == 2);
+        if (images.count == 2) {
+            GCHECK([images[0][@"label"] hasPrefix:@"Before: 2 × 1 pixels"]);
+            GCHECK([images[1][@"label"] hasPrefix:@"After: 4 × 3 pixels"]);
+            GCHECK([images[0][@"src"] containsString:@"/picture/"] && [images[1][@"src"] hasSuffix:@"/new"]);
+        }
+        GCHECK([[NSSet setWithArray:rv[@"buttons"]] isSubsetOfSet:[NSSet setWithObject:@"Side by Side"]]);
+        GCHECK([gSeen[@"local"] hasPrefix:@"/review/commit:"]);
+        GCHECK([gC tabs].count == tabsWithPages);   // the window opened nothing
+        ClickTab([wtTitle stringByAppendingString:mainBranch ?: @"main"]);
+    });
+    MCGuiWait(@"the worktree's page shows: compared with main, the agent's change, its new picture", 30, ^BOOL {
+        if (!git) return YES;
+        Read();
+        NSDictionary *rv = gSeen[@"review"], *shot = shownFile(@"shot.png"), *text = shownFile(@"review_me.py");
+        return [rv[@"shown"] boolValue] && [rv[@"page"] isEqual:[@"worktree:" stringByAppendingString:wtPath]] &&
+               [rv[@"title"] containsString:@"compared with"] && rowsHave(text, @"agent work") &&
+               decoded(shot, @"new", 3);
+    });
+    MCGuiStep(@"no Apply to Main on the page; the window closes the commit's page", ^{
+        if (!git) return;
+        NSDictionary *rv = gSeen[@"review"];
+        MCGuiNote(@"worktree page: %@ / %@, buttons %@", rv[@"title"], rv[@"detail"], rv[@"buttons"]);
+        GCHECK([[NSSet setWithArray:rv[@"buttons"]] isSubsetOfSet:[NSSet setWithObject:@"Side by Side"]]);
+        GCHECK(!worktreePage.applied);
+        GCHECK([shownFile(@"shot.png")[@"images"] count] == 1);
+        MCTab *t = nil;
+        for (MCTab *x in [gC groupTabs])
+            if ([x.page isKindOfClass:MCChangeReviewPage.class] && ((MCChangeReviewPage *)x.page).commit.length) t = x;
+        GCHECK(t != nil);
+        if (t) [gC closeTabEverywhere:t prompt:NO];
+    });
+    MCGuiWait(@"its tab leaves the page; the worktree's page stays on show", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        return ![gSeen[@"tabs"] containsString:@"Bigger picture"] && [gSeen[@"review"][@"shown"] boolValue] &&
+               [gSeen[@"local"] hasPrefix:@"/review/worktree:"];
+    });
+    MCGuiStep(@"the window closes the worktree's page", ^{
+        if (!git) return;
+        MCTab *t = TabOfPage(gC, worktreePage);
+        GCHECK(t != nil);
+        if (t) [gC closeTabEverywhere:t prompt:NO];
+    });
+    MCGuiWait(@"the page is back on the window's tab", 20, ^BOOL {
+        if (!git) return YES;
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:wtTitle] &&
+               ![gSeen[@"review"][@"shown"] boolValue];
+    });
+    MCGuiAsync(@"the worktree removed; the repository's commits as made", 30, ^(MCGuiDone done) {
+        if (!git) { done(); return; }
+        worktreePage = nil;
+        GCHECK([gC tabs].count == tabsBefore);
+        NSString *head = [[[NSString alloc] initWithData:MCGitRunSync(dir, @[@"rev-parse", @"HEAD"]).output
+                                                encoding:NSUTF8StringEncoding]
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        GCHECK_EQ_STR(head, commitHash);
+        NSString *sh = [NSString stringWithFormat:@"cd '%@' && '%@' worktree remove --force '%@'", dir, git, wtPath];
+        MCGuiRunProcess(@[@"/bin/sh", @"-c", sh], nil, ^(int st, NSString *, NSString *err) {
+            GCHECK(st == 0);
+            if (st) MCGuiNote(@"git: %@", err);
+            done();
+        });
     });
     MCGuiStep(@"the window closes, and the server with it", ^{
         GCHECK([gC tabs].count == tabsBefore);

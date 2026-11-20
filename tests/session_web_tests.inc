@@ -18,6 +18,7 @@
 
 #include "IdeLink.h"
 #include "SessionWeb.h"
+#include "SessionWebGit.h"
 #include "SqliteRead.h"
 
 namespace {
@@ -2824,6 +2825,288 @@ static void testSessionWeb() {
         hostThread.join();
     }
 
+    // The LaTeX preview's typeset in the page (R3's third slice): a LaTeX
+    // document is text marked `latex`; the app publishes its preview's
+    // typesets, a page's `latex` asks the app (Options::typeset) and hears
+    // each change, and the PDF is served from memory at /typeset/, only for
+    // a document held inside the folder.
+    GROUP("sessionweb:typeset");
+    {
+        for (const char* tex : {"paper.tex", "a/B.TEX", "x.ltx", "y.LaTeX"}) CHECK(Web::typesetSource(tex));
+        for (const char* other : {"paper.text", "tex", "a.tex.bak", "dir.tex/notes", "a.bib", ".tex/x.md"})
+            CHECK(!Web::typesetSource(other));
+        CHECK(Web::typesetTarget("/v/ab12/", "my docs/Paper+1.tex") == "/v/ab12/typeset/my%20docs/Paper%2B1.tex");
+        CHECK(Web::typesetTarget("/v/ab12/", "caf\xc3\xa9/%.tex") == "/v/ab12/typeset/caf%C3%A9/%25.tex");
+
+        const std::string root = Shared::resolveFolder(scratchFolder()), elsewhere = scratchFolder();
+        const std::string viaLink = scratchFolder() + "/link";
+        CHECK(::symlink(root.c_str(), viaLink.c_str()) == 0);
+        std::string rel;
+        writeText(root + "/paper.tex", "\\documentclass{article}\\begin{document}Hi\\end{document}\n");
+        CHECK(Web::relativeInFolder(root, "sub/ch.tex", &rel) && rel == "sub/ch.tex");
+        CHECK(Web::relativeInFolder(root, root + "/sub/ch.tex", &rel) && rel == "sub/ch.tex");
+        CHECK(Web::relativeInFolder(viaLink, root + "/paper.tex", &rel) && rel == "paper.tex");
+        CHECK(Web::relativeInFolder(root, viaLink + "/paper.tex", &rel) && rel == "paper.tex");
+        CHECK(!Web::relativeInFolder(root, "/etc/x.tex", &rel));
+        CHECK(!Web::relativeInFolder(root, elsewhere + "/x.tex", &rel));
+        CHECK(!Web::relativeInFolder(root + "/sub", root + "/subway/x.tex", &rel));
+
+        // The kept typesets: versions, the PDF kept while another runs, the
+        // same bytes again no new address, a failure's text cut and valid.
+        {
+            Web::Typesets ts;
+            const std::string p = root + "/paper.tex";
+            CHECK(ts.get(p).state == Web::Typesets::State::None && ts.get(p).version == 0);
+            CHECK(ts.working(p) && !ts.working(p));
+            CHECK(ts.get(p).state == Web::Typesets::State::Working && ts.get(p).version == 1 && !ts.get(p).pdf);
+            auto pdf = [](const std::string& s) { return std::make_shared<const std::string>(s); };
+            CHECK(ts.ready(p, pdf("%PDF one")));
+            Web::Typesets::Entry e = ts.get(p);
+            CHECK(e.state == Web::Typesets::State::Ready && e.version == 2 && *e.pdf == "%PDF one");
+            const std::uint64_t first = e.pdfVersion;
+            CHECK(first > 0);
+            CHECK(!ts.ready(p, pdf("%PDF one")));   // nothing new
+            CHECK(ts.working(p));
+            e = ts.get(p);
+            CHECK(e.state == Web::Typesets::State::Working && e.pdf && *e.pdf == "%PDF one");
+            CHECK(ts.ready(p, pdf("%PDF one")));    // ready again, the same bytes: the same address
+            CHECK(ts.get(p).pdfVersion == first && ts.get(p).version == 4);
+            CHECK(ts.ready(p, pdf("%PDF two")) && ts.get(p).pdfVersion > first);
+            // The same document by another spelling is the same entry.
+            CHECK(ts.get(viaLink + "/paper.tex").version == ts.get(p).version);
+            CHECK(Web::Typesets::key(viaLink + "/paper.tex") == p);
+            CHECK(ts.failed(p, "! Undefined control sequence.\nl.3 \\foo"));
+            e = ts.get(p);
+            CHECK(e.state == Web::Typesets::State::Failed && e.error.find("Undefined control") != std::string::npos);
+            CHECK(e.pdf && *e.pdf == "%PDF two");   // kept for the next that works
+            CHECK(!ts.failed(p, "! Undefined control sequence.\nl.3 \\foo"));
+            CHECK(ts.failed(p, std::string(70000, 'x') + "\xc3\xa9"));
+            CHECK(ts.get(p).error.size() == Web::Typesets::kMaxErrorBytes);
+            CHECK(ts.failed(p, "bad \xff byte") && ts.get(p).error == "bad \xef\xbf\xbd byte");
+            CHECK(ts.failed(p, "") && !ts.get(p).error.empty());
+            CHECK(ts.ready(p, nullptr) && ts.get(p).state == Web::Typesets::State::Failed);
+            // At most kMaxEntries: the one changed longest ago goes.
+            for (std::size_t i = 0; i < Web::Typesets::kMaxEntries + 5; i++)
+                ts.working(root + "/many" + std::to_string(i) + ".tex");
+            CHECK(ts.size() == Web::Typesets::kMaxEntries);
+            CHECK(ts.get(p).state == Web::Typesets::State::None);
+            CHECK(ts.get(root + "/many" + std::to_string(Web::Typesets::kMaxEntries + 4) + ".tex").state ==
+                  Web::Typesets::State::Working);
+        }
+        // What the page is told.
+        {
+            Web::Typesets::Entry e;
+            Json j = Web::typesetJson("paper.tex", "paper.tex", e, "/v/ab12/", false);
+            CHECK(j["t"].asString() == "latex" && j["state"].asString() == "none" && !j.has("url"));
+            CHECK(j["text"].asString().find("does not typeset") != std::string::npos);
+            j = Web::typesetJson("paper.tex", "paper.tex", e, "/v/ab12/", true);
+            CHECK(j["state"].asString() == "working" && !j.has("text"));
+            e.state = Web::Typesets::State::Ready;
+            e.pdf = std::make_shared<const std::string>("%PDF");
+            e.pdfVersion = 7;
+            e.version = 3;
+            j = Web::typesetJson("/abs/sub dir/p.tex", "sub dir/p.tex", e, "/v/ab12/", true);
+            CHECK(j["path"].asString() == "/abs/sub dir/p.tex" && j["rel"].asString() == "sub dir/p.tex");
+            CHECK(j["state"].asString() == "ready" && j["version"].asInt() == 3);
+            CHECK(j["url"].asString() == "/v/ab12/typeset/sub%20dir/p.tex?v=7");
+            e.state = Web::Typesets::State::Failed;
+            e.error = "the log";
+            j = Web::typesetJson("p.tex", "p.tex", e, "/v/ab12/", true);
+            CHECK(j["state"].asString() == "failed" && j["text"].asString() == "the log" && j.has("url"));
+        }
+        // A document and a page's own file say they are LaTeX; others not.
+        {
+            Web::DocView tex(3, root + "/paper.tex"), py(4, root + "/main.py");
+            Ot::Op op;
+            op.ins = u"\\section{A}\n";
+            tex.apply(Ot::Ops{op});
+            CHECK(tex.snapshot()["latex"].asBool() && tex.snapshot()["kind"].asString() == "code");
+            CHECK(!py.snapshot().has("latex"));
+            const Json f = Web::localFileJson(root, "paper.tex", false);
+            CHECK(!f.has("error") && f["latex"].asBool() && f["lines"].size() >= 1);
+            writeText(root + "/notes.txt", "text\n");
+            CHECK(!Web::localFileJson(root, "notes.txt", false).has("latex"));
+        }
+        // The address: the credential only, as for /file/.
+        {
+            Gate g;
+            Web::Answer a = g.ask(getWith(g.base() + "typeset/sub%20dir/p.tex?v=3", g.cookie));
+            CHECK(a.kind == Web::Answer::File && a.typeset && a.file == "sub dir/p.tex");
+            a = g.ask(getWith(g.base() + "file/p.tex", g.cookie));
+            CHECK(a.kind == Web::Answer::File && !a.typeset);
+            CHECK(g.ask(getWith(g.base() + "typeset/p.tex")).status == 403);
+            CHECK(g.ask(getWith(g.base() + "typeset/p%00.tex", g.cookie)).status == 400);
+            CHECK(g.ask(getWith(g.base() + "typesets/p.tex", g.cookie)).status == 404);
+            CHECK(g.ask("POST " + g.base() + "typeset/p.tex HTTP/1.1\r\nHost: 127.0.0.1:8123\r\n" + g.cookie +
+                        "\r\n").status == 405);
+        }
+
+        // Over the wire: a headless host serving the folder, and an app
+        // (this test) that typesets when asked.
+        ::mkdir((root + "/sub").c_str(), 0755);
+        writeText(root + "/sub/ch.tex", "\\section{Two}\n");
+        writeText(root + "/.hidden.tex", "h");
+        writeText(elsewhere + "/secret.tex", "SECRET");
+        CHECK(::symlink(elsewhere.c_str(), (root + "/away").c_str()) == 0);
+        CHECK(::symlink((elsewhere + "/secret.tex").c_str(), (root + "/leak.tex").c_str()) == 0);
+        Shared::HostServer host;
+        Shared::HostOptions ho;
+        ho.folder = root;
+        ho.socketDir = scratchFolder() + "/s";
+        ho.idleMs = 60000;
+        std::string error;
+        CHECK(host.start(ho, &error) == Shared::HostServer::Start::Ok);
+        std::thread hostThread([&] { host.run(); });
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = host.socketPath();
+        o.folder = root;
+        o.pollMs = 100;
+        std::mutex askedLock;
+        std::vector<std::string> asked;
+        o.typeset = [&](const std::string& path) {
+            std::lock_guard<std::mutex> lock(askedLock);
+            asked.push_back(path);
+        };
+        auto askedNow = [&] {
+            std::lock_guard<std::mutex> lock(askedLock);
+            return asked;
+        };
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        const int port = web.port();
+        PageClient p;
+        CHECK(p.enter(web));
+        auto get = [&](const std::string& target, const std::string& extra = "", bool cookie = true) {
+            PageClient c;
+            return c.exchange(port, "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) +
+                                        "\r\n" + (cookie ? "Cookie: " + p.cookie + "\r\n" : "") + extra + "\r\n");
+        };
+        auto bodyOf = [](const std::string& r) {
+            const std::size_t e = r.find("\r\n\r\n");
+            return e == std::string::npos ? std::string() : r.substr(e + 4);
+        };
+        auto headOf = [](const std::string& r) { return r.substr(0, r.find("\r\n\r\n") + 2); };
+        const std::string paper = root + "/paper.tex";
+        const std::string pdf1 = "%PDF-1.5\nthe first typeset\n%%EOF\n";
+        web.typesetReady(paper, std::make_shared<const std::string>(pdf1));
+        // Nothing before a page is open.
+        CHECK(get(web.base() + "typeset/paper.tex").compare(0, 12, "HTTP/1.1 503") == 0);
+        CHECK(p.upgrade(port, web.base() + "ws"));
+        Json state;
+        std::vector<Json> got;
+        auto take = [&](const Json& m) {
+            if (m["t"].asString() == "state") state = m;
+            else if (m["t"].asString() == "latex") got.push_back(m);
+        };
+        CHECK(p.pump(take, [&] { return state.isObject(); }));
+        auto lastFor = [&](const std::string& path) {
+            for (auto it = got.rbegin(); it != got.rend(); ++it)
+                if ((*it)["path"].asString() == path) return *it;
+            return Json();
+        };
+        // What the app published already, and the app asked: it says what
+        // its preview has (here, nothing new).
+        p.sendText("{\"t\":\"latex\",\"path\":\"paper.tex\"}");
+        CHECK(p.pump(take, [&] { return lastFor("paper.tex").isObject(); }));
+        Json m = lastFor("paper.tex");
+        CHECK(m["state"].asString() == "ready" && m["rel"].asString() == "paper.tex");
+        std::string url = m["url"].asString();
+        CHECK(url.compare(0, web.base().size() + 18, web.base() + "typeset/paper.tex?") == 0);
+        CHECK(askedNow() == std::vector<std::string>{paper});
+        std::string r = get(url);
+        CHECK(r.compare(0, 15, "HTTP/1.1 200 OK") == 0);
+        CHECK(headOf(r).find("Content-Type: application/pdf\r\n") != std::string::npos);
+        CHECK(headOf(r).find("X-Content-Type-Options: nosniff\r\n") != std::string::npos);
+        CHECK(headOf(r).find("Content-Security-Policy") == std::string::npos);   // Chrome's viewer
+        CHECK(bodyOf(r) == pdf1);
+        r = get(url, "Range: bytes=2-5\r\n");
+        CHECK(r.compare(0, 12, "HTTP/1.1 206") == 0 && bodyOf(r) == pdf1.substr(2, 4));
+        r = get(url, "Range: bytes=" + std::to_string(pdf1.size()) + "-\r\n");
+        CHECK(r.compare(0, 12, "HTTP/1.1 416") == 0 && bodyOf(r).empty());
+        // The app typesets again: working (the last PDF still there), then
+        // a new PDF at a new address, 5 MB sent in pieces.
+        got.clear();
+        web.typesetWorking(paper);
+        CHECK(p.pump(take, [&] { return lastFor("paper.tex").isObject(); }));
+        m = lastFor("paper.tex");
+        CHECK(m["state"].asString() == "working" && m["url"].asString() == url);
+        std::string pdf2 = "%PDF-1.5\n";
+        for (std::uint32_t i = 0; pdf2.size() < (5u << 20) + 17; i++) pdf2 += (char)('a' + (i * 31u) % 26);
+        got.clear();
+        web.typesetReady(paper, std::make_shared<const std::string>(pdf2));
+        CHECK(p.pump(take, [&] { return lastFor("paper.tex").isObject(); }));
+        m = lastFor("paper.tex");
+        CHECK(m["state"].asString() == "ready" && m["url"].asString() != url);
+        url = m["url"].asString();
+        r = get(url);
+        CHECK(headOf(r).find("Content-Length: " + std::to_string(pdf2.size()) + "\r\n") != std::string::npos);
+        CHECK(bodyOf(r) == pdf2);
+        r = get(url, "Range: bytes=-10\r\n");
+        CHECK(r.compare(0, 12, "HTTP/1.1 206") == 0 && bodyOf(r) == pdf2.substr(pdf2.size() - 10));
+        // The same bytes again: nothing for the page.
+        got.clear();
+        web.typesetReady(paper, std::make_shared<const std::string>(pdf2));
+        CHECK(!p.pump(take, [&] { return !got.empty(); }, 400));
+        // A failure: its log, for the page to show.
+        web.typesetFailed(paper, "! Undefined control sequence.");
+        CHECK(p.pump(take, [&] { return lastFor("paper.tex").isObject(); }));
+        m = lastFor("paper.tex");
+        CHECK(m["state"].asString() == "failed" && m["text"].asString() == "! Undefined control sequence.");
+        // A document's path, as the session spells it, is the same file.
+        got.clear();
+        p.sendText(Json::object().set("t", Json("latex")).set("path", Json(paper)).dump());
+        CHECK(p.pump(take, [&] { return lastFor(paper).isObject(); }));
+        CHECK(lastFor(paper)["rel"].asString() == "paper.tex" && lastFor(paper)["state"].asString() == "failed");
+        // One with nothing yet: working while the app typesets it.
+        p.sendText("{\"t\":\"latex\",\"path\":\"sub/ch.tex\"}");
+        CHECK(p.pump(take, [&] { return lastFor("sub/ch.tex").isObject(); }));
+        CHECK(lastFor("sub/ch.tex")["state"].asString() == "working" && !lastFor("sub/ch.tex").has("url"));
+        CHECK(get(web.base() + "typeset/sub/ch.tex").compare(0, 12, "HTTP/1.1 404") == 0);
+        web.typesetReady(root + "/sub/ch.tex", std::make_shared<const std::string>("%PDF ch"));
+        got.clear();
+        CHECK(p.pump(take, [&] { return lastFor("sub/ch.tex").isObject(); }));
+        CHECK(lastFor("sub/ch.tex")["state"].asString() == "ready");
+        CHECK(bodyOf(get(lastFor("sub/ch.tex")["url"].asString())) == "%PDF ch");
+        // Refused, the app never asked: outside the folder (even with a
+        // typeset kept for the outside file), a dotfile, not LaTeX, missing.
+        web.typesetReady(elsewhere + "/secret.tex", std::make_shared<const std::string>("%PDF SECRET"));
+        const std::size_t askedBefore = askedNow().size();
+        const std::vector<std::string> bad = {"away/secret.tex", "leak.tex", "../secret.tex", ".hidden.tex",
+                                              "notes.txt", "/etc/x.tex", elsewhere + "/secret.tex", "missing.tex",
+                                              "sub"};
+        got.clear();
+        for (const std::string& b : bad) p.sendText(Json::object().set("t", Json("latex")).set("path", Json(b)).dump());
+        CHECK(p.pump(take, [&] { return got.size() == bad.size(); }));
+        for (const Json& g : got) {
+            if (g["state"].asString() != "refused" || g.has("url") || g.dump().find("SECRET") != std::string::npos)
+                std::printf("  sessionweb:typeset: %s\n", g.dump().c_str());
+            CHECK(g["state"].asString() == "refused" && !g.has("url") && g.dump().find("SECRET") == std::string::npos);
+        }
+        CHECK(askedNow().size() == askedBefore);
+        for (const char* b : {"away/secret.tex", "leak.tex", "..%2Fsecret.tex", ".hidden.tex", "notes.txt",
+                              "missing.tex", "%2Fetc%2Fx.tex"}) {
+            r = get(web.base() + "typeset/" + b);
+            if (r.compare(0, 12, "HTTP/1.1 404") != 0 || r.find("SECRET") != std::string::npos)
+                std::printf("  sessionweb:typeset: GET %s: %s\n", b, r.substr(0, 80).c_str());
+            CHECK(r.compare(0, 12, "HTTP/1.1 404") == 0 && r.find("SECRET") == std::string::npos);
+        }
+        CHECK(get(url, "", false).compare(0, 12, "HTTP/1.1 403") == 0);       // no cookie
+        CHECK(get(web.base() + "file/paper.tex").compare(0, 12, "HTTP/1.1 404") == 0);   // text is a tab
+        // The file itself never changed, and nothing was made beside it.
+        CHECK(fileBytes(paper) == "\\documentclass{article}\\begin{document}Hi\\end{document}\n");
+        p.close();
+        CHECK(waitUntil([&] { return web.browsers() == 0; }));
+        CHECK(get(url).compare(0, 12, "HTTP/1.1 503") == 0);
+        web.stop();
+        webThread.join();
+        host.stop();
+        hostThread.join();
+        // The page has its place for the pages, and asks for them.
+        CHECK(Web::pageHtml().find("id=\"texframe\"") != std::string::npos);
+        CHECK(Web::pageHtml().find("t: \"latex\"") != std::string::npos);
+    }
+
     // The window's browser pane (R4): its tabs as the window reports them,
     // checked again for the page, only that window's; an editable page may
     // ask the pane to open an http or https address and nothing else, a
@@ -3759,4 +4042,317 @@ static void testSessionWebAccess() {
         web.stop();
         webThread.join();
     }
+}
+
+// Source Control in the page (R3's fourth slice, SessionWebGit.h): git run
+// with the core's fixed arguments, the folder's uncommitted changes held to
+// the folder, the list and the review as the page gets them, and the whole
+// over the wire, read only. Against a real git; skipped without one.
+static void testSessionWebGit() {
+    GROUP("sessionweb:git");
+    if (std::system("git --version >/dev/null 2>&1") != 0) return;
+    const std::string root = Shared::resolveFolder(scratchFolder()), elsewhere = scratchFolder();
+    auto shq = [](const std::string& s) {
+        std::string o = "'";
+        for (char c : s) o += c == '\'' ? std::string("'\\''") : std::string(1, c);
+        return o + "'";
+    };
+    auto sh = [&](const std::string& c) { return std::system(("cd " + shq(root) + " && " + c).c_str()) == 0; };
+    auto lines = [](int n, const std::string& tag) {
+        std::string t;
+        for (int i = 1; i <= n; i++) t += "value_" + std::to_string(i) + " = " + tag + "(" + std::to_string(i) + ")\n";
+        return t;
+    };
+    ::mkdir((root + "/sub").c_str(), 0755);
+    writeText(root + "/a.py", lines(30, "f"));
+    writeText(root + "/b.txt", "bee\n");
+    writeText(root + "/sub/c.txt", "sea\n");
+    writeText(root + "/.hidden.txt", "hid\n");
+    writeText(root + "/long.txt", std::string(5000, 'x') + "\n");
+    writeText(root + "/gone.txt", "going\n");
+    CHECK(sh("git init -q . && git config user.email a@b && git config user.name n && "
+             "git config commit.gpgsign false && git add -A && git commit -q -m one"));
+    // Two changes far apart in a.py (a gap between), one a changed line;
+    // b.txt changed and staged; sub/c.txt changed; a new file; a dotfile;
+    // a long line; a deleted file; an untracked link to a secret outside.
+    std::string a = lines(30, "f");
+    a.replace(a.find("value_2 = f(2)"), 14, "value_2 = g(2)");
+    a.replace(a.find("value_28 = f(28)"), 16, "value_28 = f(28) + 1");
+    writeText(root + "/a.py", a);
+    writeText(root + "/b.txt", "bee two\n");
+    CHECK(sh("git add b.txt"));
+    writeText(root + "/sub/c.txt", "sea two\n");
+    writeText(root + "/n.txt", "new\n");
+    writeText(root + "/.hidden.txt", "hid two\n");
+    writeText(root + "/long.txt", std::string(4999, 'x') + "y\n");
+    ::unlink((root + "/gone.txt").c_str());
+    writeText(elsewhere + "/secret.txt", "SECRET\n");
+    CHECK(::symlink((elsewhere + "/secret.txt").c_str(), (root + "/leak.txt").c_str()) == 0);
+    auto statusNow = [&] { return Web::runGit(root, {"status", "--porcelain=v1", "-z"}, "").out; };
+    const std::string statusBefore = statusNow(), indexBefore = fileBytes(root + "/.git/index");
+
+    // The runner: output, a failure's status, stdin, a folder that is not
+    // a repository.
+    {
+        ChangeReview::GitOut o = Web::runGit(root, {"rev-parse", "--show-toplevel"}, "");
+        CHECK(o.ok && o.status == 0 && o.out.find(root) != std::string::npos);
+        o = Web::runGit(root, {"rev-parse", "--verify", "no-such-ref"}, "");
+        CHECK(!o.ok && o.status > 0 && !o.err.empty());
+        o = Web::runGit(root, {"hash-object", "--stdin"}, "hello\n");
+        CHECK(o.ok && o.out == "ce013625030ba8dba906f756967f9e9ca394464a\n");
+        o = Web::runGit(elsewhere, {"rev-parse", "--show-toplevel"}, "");
+        CHECK(!o.ok);
+    }
+    const ChangeReview::GitRunner run = [](const std::string& dir, const std::vector<std::string>& args,
+                                           const std::string& input) { return Web::runGit(dir, args, input); };
+    auto keys = [](const ChangeReview::Read& r) {
+        std::string k;
+        for (const ChangeReview::FileDiff& d : r.diffs) k += (k.empty() ? "" : ",") + d.file.key();
+        return k;
+    };
+    ChangeReview::Read r = ChangeReview::readUncommitted(root, run);
+    Web::confineReview(r, root, false);
+    std::printf("  sessionweb review: %zu changed files read for the page\n", r.diffs.size());
+    {
+        const std::string k = keys(r);
+        if (k.find("leak.txt") == std::string::npos) std::printf("  sessionweb:git: %s\n", k.c_str());
+        CHECK(r.error.empty() && !r.branchText.empty());
+        CHECK(k.find("b.txt") != std::string::npos && k.find("a.py") != std::string::npos);
+        CHECK(k.find("sub/c.txt") != std::string::npos && k.find("n.txt") != std::string::npos);
+        CHECK(k.find("gone.txt") != std::string::npos && k.find("leak.txt") != std::string::npos);
+        CHECK(k.find(".hidden.txt") == std::string::npos);   // a dotfile, as the tree hides it
+        CHECK(r.diffs.size() == r.extras.size());
+        for (const ChangeReview::FileDiff& d : r.diffs)
+            if (d.file.path == "leak.txt") CHECK(d.file.symlink && d.file.newText.empty() && d.rows.empty());
+    }
+    {
+        ChangeReview::Read h = ChangeReview::readUncommitted(root, run);
+        Web::confineReview(h, root, true);
+        CHECK(keys(h).find(".hidden.txt") != std::string::npos);
+        // A folder below the top level: only what is under it.
+        ChangeReview::Read s = ChangeReview::readUncommitted(root + "/sub", run);
+        Web::confineReview(s, root + "/sub", false);
+        CHECK(s.diffs.size() == 1 && s.extras.size() == 1 && s.diffs[0].file.path == "sub/c.txt");
+        // Not a repository.
+        ChangeReview::Read none = ChangeReview::readUncommitted(elsewhere, run);
+        Web::confineReview(none, elsewhere, false);
+        CHECK(!none.error.empty() && none.diffs.empty());
+        const Json j = Web::gitStatusJson(none, 1);
+        CHECK(j["error"].asString() == none.error && j["files"].size() == 0);
+    }
+    // The list.
+    {
+        const Json j = Web::gitStatusJson(r, 3);
+        CHECK(j["t"].asString() == "git" && j["version"].asInt() == 3 && j["files"].size() == r.diffs.size());
+        CHECK(j["files"][0]["section"].asString() == "staged" && j["files"][0]["path"].asString() == "b.txt");
+        CHECK(j["files"][0]["letter"].asString() == "M");
+        bool sawNew = false, sawDeleted = false;
+        for (const Json& f : j["files"].elements()) {
+            if (f["path"].asString() == "n.txt") sawNew = f["letter"].asString() == "U";
+            if (f["path"].asString() == "gone.txt") sawDeleted = f["letter"].asString() == "D";
+        }
+        CHECK(sawNew && sawDeleted);
+        CHECK(j.dump().find("SECRET") == std::string::npos);
+    }
+    // The review: a.py's blocks with removed and added lines, the changed
+    // words marked, its syntax colored, the unchanged middle folded.
+    std::string aKey;
+    for (const ChangeReview::FileDiff& d : r.diffs)
+        if (d.file.path == "a.py") aKey = d.file.key();
+    auto fileOf = [](const Json& review, const std::string& key) {
+        for (const Json& f : review["files"].elements())
+            if (f["key"].asString() == key) return f;
+        return Json();
+    };
+    auto kinds = [](const Json& f) {
+        std::string k;
+        for (const Json& row : f["rows"].elements()) k += row[0].asString();
+        return k;
+    };
+    {
+        const Json review = Web::reviewJson(r, 3, {}, {});
+        CHECK(review["t"].asString() == "review" && review["files"].size() == r.diffs.size());
+        CHECK(review.dump().find("SECRET") == std::string::npos);
+        const Json f = fileOf(review, aKey);
+        const std::string k = kinds(f);
+        CHECK(f["canSide"].asBool() && !f["side"].asBool());
+        if (k.find("ra") == std::string::npos || k.find('g') == std::string::npos)
+            std::printf("  sessionweb:git: a.py rows %s\n", k.c_str());
+        CHECK(k.find("ra") != std::string::npos && k.find('g') != std::string::npos);
+        int gap = -1;
+        bool words = false, colored = false, numbered = false;
+        for (const Json& row : f["rows"].elements()) {
+            const std::string kind = row[0].asString();
+            if (kind == "g") gap = (int)row[1].asInt();
+            if ((kind == "r" || kind == "a") && row[5].size()) words = true;
+            if (kind != "g" && kind != "n" && row[4].size()) colored = true;
+            if (kind == "a" && row[3].asString() == "value_2 = g(2)" && row[2].asInt() == 2) numbered = true;
+        }
+        CHECK(words && colored && numbered && gap > 0);
+        // The gap opened: every line of the file shows.
+        ChangeReview::Opened opened;
+        opened[aKey].insert(gap);
+        const Json all = fileOf(Web::reviewJson(r, 3, opened, {}), aKey);
+        CHECK(kinds(all).find('g') == std::string::npos && all["rows"].size() > f["rows"].size());
+        CHECK(Web::reviewFileJson(r.diffs[0], {}, false)["key"].asString() == r.diffs[0].file.key());
+        // Side by side: pairs, the changed pair's words on both sides, the
+        // same gap folded.
+        const Json side = fileOf(Web::reviewJson(r, 3, {}, {aKey}), aKey);
+        CHECK(side["side"].asBool());
+        bool pair = false, sideGap = false;
+        for (const Json& row : side["rows"].elements()) {
+            if (row[0].asString() == "g") sideGap = row[1].asInt() == gap;
+            if (row[0].asString() == "s" && row[1].asString() == "m" && row[8].size() && row[9].size() &&
+                row[4].asString() == "value_2 = f(2)" && row[5].asString() == "value_2 = g(2)")
+                pair = true;
+        }
+        CHECK(pair && sideGap);
+        // A long line is cut, and with it its colors; a link's note and no
+        // text; a deleted file's removed line.
+        for (const ChangeReview::FileDiff& d : r.diffs) {
+            if (d.file.path == "long.txt") {
+                const Json lf = Web::reviewFileJson(d, {}, false);
+                bool cut = false;
+                for (const Json& row : lf["rows"].elements())
+                    if (row[0].asString() == "a")
+                        cut = QuickDiff::fromUtf8(row[3].asString()).size() == Web::kReviewRowChars + 1;
+                CHECK(cut);
+            }
+            if (d.file.path == "leak.txt") {
+                const Json lf = Web::reviewFileJson(d, {}, true);
+                CHECK(!lf["canSide"].asBool() && kinds(lf) == "n");
+            }
+            if (d.file.path == "gone.txt") CHECK(kinds(Web::reviewFileJson(d, {}, false)) == "r");
+        }
+        // Past the budget, files come as their headers, to ask for alone.
+        const Json small = Web::reviewJson(r, 3, {}, {}, 1);
+        CHECK(small["files"].size() == r.diffs.size() && small["files"][0].has("rows"));
+        CHECK(small["files"][1]["more"].asBool() && !small["files"][1].has("rows"));
+    }
+    // What a page may say, capped.
+    {
+        Json o = Json::object();
+        Json ids = Json::array();
+        for (int i = 0; i < 5000; i++) ids.push(Json(i));
+        ids.push(Json(-3));
+        ids.push(Json("x"));
+        o.set("k", ids);
+        const ChangeReview::Opened got = Web::openedFrom(o);
+        CHECK(got.at("k").size() == Web::kMaxOpenedGaps && !got.at("k").count(-3));
+        CHECK(Web::openedFrom(Json("x")).empty() && Web::sideFrom(Json::object()).empty());
+        Json side = Json::array();
+        side.push(Json("a"));
+        side.push(Json(3));
+        CHECK(Web::sideFrom(side) == std::set<std::string>{"a"});
+    }
+    // The reads: on a thread, a new version only for something new, the
+    // wake called, none once gone.
+    {
+        std::atomic<int> woke{0};
+        auto reads = std::make_unique<Web::GitReads>(root, false, run, [&] { woke++; });
+        CHECK(!reads->latest().read);
+        reads->ask();
+        CHECK(waitUntil([&] { return reads->latest().finished == 1; }, 20000));
+        Web::GitReads::Latest l = reads->latest();
+        CHECK(l.read && l.version == 1 && woke == 1 && keys(*l.read) == keys(r));
+        reads->ask();
+        CHECK(waitUntil([&] { return reads->latest().finished == 2; }, 20000));
+        CHECK(reads->latest().version == 1);   // the same changes: nothing new
+        writeText(root + "/n.txt", "new two\n");
+        reads->ask();
+        CHECK(waitUntil([&] { return reads->latest().finished == 3; }, 20000));
+        CHECK(reads->latest().version == 2 && woke == 3);
+        reads->ask();
+        reads.reset();   // gone mid-read: never waits, never wakes
+        const int before = woke;
+        ::usleep(500 * 1000);
+        CHECK(woke == before);
+    }
+
+    // Over the wire: a headless host serving the folder; the page asks.
+    Shared::HostServer host;
+    Shared::HostOptions ho;
+    ho.folder = root;
+    ho.socketDir = scratchFolder() + "/s";
+    ho.idleMs = 60000;
+    std::string error;
+    CHECK(host.start(ho, &error) == Shared::HostServer::Start::Ok);
+    std::thread hostThread([&] { host.run(); });
+    Web::Server web;
+    Web::Options o;
+    o.hostSocket = host.socketPath();
+    o.folder = root;
+    o.pollMs = 100;
+    CHECK(web.start(o, &error));
+    std::thread webThread([&] { web.run(); });
+    PageClient p;
+    CHECK(p.enter(web));
+    CHECK(p.upgrade(web.port(), web.base() + "ws"));
+    Json state;
+    std::vector<Json> gits, reviews, files;
+    std::string all;
+    auto take = [&](const Json& m) {
+        const std::string t = m["t"].asString();
+        if (t == "state") state = m;
+        if (t == "git" || t == "review" || t == "reviewfile") all += m.dump();
+        if (t == "git") gits.push_back(m);
+        if (t == "review") reviews.push_back(m);
+        if (t == "reviewfile") files.push_back(m);
+    };
+    CHECK(p.pump(take, [&] { return state.isObject(); }));
+    // A review before any read: pending, and a read starts.
+    p.sendText("{\"t\":\"review\"}");
+    CHECK(p.pump(take, [&] { return !reviews.empty(); }));
+    CHECK(reviews.back()["pending"].asBool());
+    p.sendText("{\"t\":\"git\"}");
+    CHECK(p.pump(take, [&] { return !gits.empty(); }, 20000));
+    const std::int64_t firstVersion = gits.empty() ? 0 : gits.back()["version"].asInt();
+    CHECK(!gits.empty() && gits.back()["files"].size() == r.diffs.size() && firstVersion >= 1);
+    reviews.clear();
+    {
+        Json side = Json::array();
+        side.push(Json(aKey));
+        p.sendText(Json::object().set("t", Json("review")).set("side", side).dump());
+    }
+    CHECK(p.pump(take, [&] { return !reviews.empty(); }));
+    CHECK(!reviews.empty() && reviews.back()["files"].size() == r.diffs.size() &&
+          fileOf(reviews.back(), aKey)["side"].asBool());
+    // One file; a key that is no file's; nonsense, answered as the whole
+    // review.
+    reviews.clear();
+    p.sendText(Json::object().set("t", Json("review")).set("file", Json(aKey)).set("side", Json(false)).dump());
+    p.sendText("{\"t\":\"review\",\"file\":\"../../etc/passwd\",\"opened\":[1,2]}");
+    p.sendText("{\"t\":\"review\",\"file\":7,\"opened\":\"x\",\"side\":{}}");
+    CHECK(p.pump(take, [&] { return files.size() == 2 && reviews.size() == 1; }));
+    CHECK(files.size() == 2 && files[0]["file"]["key"].asString() == aKey && !files[0]["file"]["side"].asBool());
+    CHECK(files.size() == 2 && files[1]["gone"].asBool() && !files[1].has("file"));
+    // A change on disk, said by the app: the page that watches hears of it.
+    gits.clear();
+    writeText(root + "/sub/c.txt", "sea three\n");
+    web.gitChanged();
+    CHECK(p.pump(take, [&] { return !gits.empty(); }, 20000));
+    CHECK(!gits.empty() && gits.back()["version"].asInt() > firstVersion);
+    // No longer watching: a change says nothing.
+    p.sendText("{\"t\":\"git\",\"watch\":false}");
+    gits.clear();
+    writeText(root + "/sub/c.txt", "sea four\n");
+    web.gitChanged();
+    CHECK(!p.pump(take, [&] { return !gits.empty(); }, 1800));
+    CHECK(all.find("SECRET") == std::string::npos);
+    p.close();
+    CHECK(waitUntil([&] { return web.browsers() == 0; }));
+    web.stop();
+    webThread.join();
+    host.stop();
+    hostThread.join();
+    // git changed nothing: the status and the index as they were, once
+    // this test's own writes are put back.
+    writeText(root + "/sub/c.txt", "sea two\n");
+    writeText(root + "/n.txt", "new\n");
+    CHECK(statusNow() == statusBefore);
+    CHECK(fileBytes(root + "/.git/index") == indexBefore);
+    // The page asks, and draws what it gets with textContent.
+    CHECK(Web::pageHtml().find("t: \"git\", watch: true") != std::string::npos);
+    CHECK(Web::pageHtml().find("id=\"gitlist\"") != std::string::npos);
+    CHECK(Web::pageHtml().find("innerHTML") == std::string::npos);
 }

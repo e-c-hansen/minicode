@@ -79,6 +79,7 @@ Read readUncommitted(const std::string& root, const GitRunner& run, const ImageR
     GitUi::Snapshot snap;
     GitUi::applyStatus(snap, Git::parseStatus(st.out));
     data.initial = snap.initial;
+    data.branchText = snap.branchText;
     std::vector<GitUi::Row> rows;
     std::vector<std::string> paths;
     for (const GitUi::Row& row : snap.rows) {
@@ -292,6 +293,84 @@ std::string discardText(const Read& r, size_t fi, const std::u16string& text, co
 }
 
 // ------------------------------------------------ a worktree against main
+CommitRead readCommit(const std::string& root, const std::string& commit, const GitRunner& run,
+                      const ImageReading& images) {
+    CommitRead c;
+    Read& data = c.read;
+    GitOut r = run(root, GitUi::topLevelArgs(), "");
+    std::string top, gitDir;
+    if (!r.ok || !GitUi::parseTopLevel(r.out, top, gitDir)) {
+        data.error = "This folder is not in a git repository.";
+        return c;
+    }
+    data.top = top;
+    GitOut h = run(top, commitHeaderArgs(commit), "");
+    if (!h.ok || !Git::parseShow(h.out, c.commit)) {
+        data.error = h.err.empty() ? "git show failed." : h.err;
+        return c;
+    }
+    const std::string parent = c.commit.parents.empty() ? "" : c.commit.parents[0];
+    GitOut dt = run(top, commitDiffArgs(c.commit.hash, parent), "");
+    if (!dt.ok) {
+        data.error = dt.err.empty() ? "git diff-tree failed." : dt.err;
+        return c;
+    }
+    const std::vector<RawChange> changes = parseRawDiff(dt.out);
+    auto wanted = [](const std::string& mode, const std::string& object) {
+        return mode != "000000" && mode != "160000" && !nullObject(object);
+    };
+    std::string want;
+    for (const RawChange& rc : changes) {
+        if (wanted(rc.oldMode, rc.oldObject)) want += rc.oldObject + "\n";
+        if (wanted(rc.newMode, rc.newObject)) want += rc.newObject + "\n";
+    }
+    std::map<std::string, std::string> blobs;
+    if (!want.empty()) {
+        GitOut b = run(top, batchArgs(), want);
+        if (b.ok) blobs = parseBatch(b.out);
+    }
+    auto blob = [&](const std::string& object) {
+        auto it = blobs.find(object);
+        return it == blobs.end() ? std::string() : it->second;
+    };
+    size_t total = 0;
+    for (const RawChange& rc : changes) {
+        File f;
+        Extra x;
+        f.path = rc.path;
+        f.origPath = rc.origPath;
+        f.section = Section::Plain;
+        f.letter = rc.letter;
+        f.oldExists = rc.oldMode != "000000";
+        f.newExists = rc.newMode != "000000";
+        f.submodule = rc.oldMode == "160000" || rc.newMode == "160000";
+        f.symlink = rc.oldMode == "120000" || rc.newMode == "120000";
+        x.row.path = rc.path;
+        x.row.origPath = rc.origPath;
+        x.row.letter = rc.letter;
+        if (!f.submodule && !f.symlink) {
+            const std::string oldBytes = f.oldExists ? blob(rc.oldObject) : std::string();
+            const std::string newBytes = f.newExists ? blob(rc.newObject) : std::string();
+            total += oldBytes.size() + newBytes.size();
+            if (oldBytes.size() > kMaxSideBytes || newBytes.size() > kMaxSideBytes || total > kMaxTotalBytes)
+                f.tooLarge = true;
+            else if (looksBinary(oldBytes) || looksBinary(newBytes))
+                f.binary = true;
+            seeImages(f, x, oldBytes, newBytes, images);
+            if (!f.tooLarge && !f.binary) {
+                FolderSearch::TextEncoding enc;
+                bool bom = false;
+                encodingOfBlob(f.newExists ? newBytes : oldBytes, &enc, &bom);
+                f.oldText = QuickDiff::readOriginal(oldBytes, enc, bom).text;
+                f.newText = QuickDiff::readOriginal(newBytes, enc, bom).text;
+            }
+        }
+        data.extras.push_back(x);
+        data.diffs.push_back(diffFile(f, extensionOf(f.path)));
+    }
+    return c;
+}
+
 WorktreeRead readWorktree(const std::string& path, const std::string& mainRef,
                           const GitRunner& run, const ImageReading& images) {
     WorktreeRead w;
@@ -365,6 +444,9 @@ WorktreeRead readWorktree(const std::string& path, const std::string& mainRef,
             f.newExists = rs != FolderSearch::ReadStatus::Missing;
             if (rs == FolderSearch::ReadStatus::TooLarge) f.tooLarge = true;
             else if (rs != FolderSearch::ReadStatus::Ok) newBytes.clear();
+            // Read from the disk (through a link, if it is one): a caller
+            // that holds reads to a folder looks again (confineReview).
+            x.workRead = rs == FolderSearch::ReadStatus::Ok;
         }
         if (!f.submodule && !f.symlink) {
             auto it = blobs.find(c.oldObject);

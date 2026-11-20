@@ -228,6 +228,16 @@ found through that list.
   goes in the document's folder, and since tectonic discards docstrip's output,
   a script keeping a `.dtx`'s code lines made the `.sty`. Spacing differs from
   Overleaf by design (XeTeX; compare with Overleaf set to XeLaTeX).
+- **The session's page in a browser** (R3's third slice, 2026-11-19;
+  session-host.md, "The LaTeX preview in the page"): each typeset is
+  announced as it starts and ends (`onTypeset(path, pdf, error)`, a
+  missing tectonic and an unwritable copy as failures), and the view says
+  what it has (`typesetting`, counting the typing debounce, `typesetPdf`,
+  `typesetFailure`). The page shows the window's own PDF and never asks
+  for another typeset of a document a tab previews; for one no tab
+  previews, the window's `MCSessionBrowser` keeps a `LatexView` of its
+  own in no window. Trap: init typesets before the caller can set
+  `onTypeset`, so the maker says the state itself afterwards.
 - Headless: drive `openEditorForPage:point:`, `startAddItem:`, `commitEdit:`
   with points from `[PDFDocument findString:]`, on scratch `MUTIBLE_TECTONIC`
   and `TECTONIC_CACHE_DIR`.
@@ -246,3 +256,4 @@ text is in place in its section.
 - LaTeX preview (read before touching it): **Trap**: with the box kept open across an app switch, an agent's rewrite read into the clean tab had the draft spliced at the old offsets (full preview) or the old text plus the edit put back over the reload (beside the source), reverting the agent silently.
 - LaTeX preview (read before touching it): **Trap** (round 10's documents defect 8): an edit on the side page pushed a snapshot, and Cmd+Z in the full preview after typing in the source put that snapshot back, dropping the typing.
 - LaTeX preview (read before touching it): **Trap** (round 10's documents defect 4): the input was parsed from its buffer, so SyncTeX's lines (the disk's) matched against a chapter with unsaved lines above the click picked another paragraph, and Return edited it.
+- LaTeX preview (read before touching it): Trap: init typesets before the caller can set `onTypeset`, so the maker says the state itself afterwards.

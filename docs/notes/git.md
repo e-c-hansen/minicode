@@ -401,6 +401,18 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   `EditorController+Private.h` imports it and every GUI suite imports
   that; a suite's own `Git(c)` helper then clashed with `namespace Git`
   ("reference to 'Git' is ambiguous", CI's first run).
+- **The session's page in a browser** (R3's fourth slice, 2026-11-19;
+  session-host.md, "Source Control and the review in the page"): the
+  page lists the uncommitted changes and shows their review from the
+  core's `readUncommitted`, read only, held to the folder, git run with
+  the core's arguments (the Mac's through `MCGitRunSync`); the window's
+  FSEvents say when to read again. Since R3's last slice it also shows
+  the window's open commit pages (the core's `ChangeReview::readCommit`,
+  the Mac's `ReadCommit` ported, `review-read:commit`) and worktree pages
+  (`readWorktree`, which now marks the work tree's files `workRead`), and
+  every review's pictures (session-host.md, "The window's commit and
+  worktree pages, and pictures"). The Mac's own pages still read with
+  ChangeReviewPage.mm's copies.
 - **Tool guard trap**: in a worktree-isolated agent session, git commands in
   compound or unusual forms are refused (even a filename containing "git"); use
   plain `cd x && git ...` lines or a script file.

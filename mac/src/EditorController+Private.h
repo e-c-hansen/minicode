@@ -806,6 +806,16 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 @interface EditorController (SessionBrowserRecord)
 - (NSDictionary *)sessionBrowserPanes;
 - (NSDictionary *)sessionBrowserTabs;
+// The window's open commit pages and worktree pages, for the page to show
+// read-only: each @{@"kind": @"commit", @"hash", @"title", @"onShow"} or
+// @{@"kind": @"worktree", @"path", @"title", @"onShow"}.
+- (NSArray<NSDictionary *> *)sessionBrowserReviews;
+// A tab's LaTeX preview, made (makeLatexPreview): its typesets go to the
+// window's page in a browser (R3's third slice).
+- (void)wireSessionTypesetOf:(LatexView *)view;
+// The window's folder changed on disk (its FSEvents): the page's Source
+// Control reads the changes again (R3's fourth slice).
+- (void)sessionFolderChangedOnDisk;
 @end
 
 // EditorController+Groups.mm: two editor groups side by side (Split Editor),

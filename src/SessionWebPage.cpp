@@ -22,7 +22,18 @@
 // or TSV file as a table of the rows the server parsed (R3); a notebook as
 // the page the server rendered, in a frame sandboxed with no scripts, and a
 // SQLite database as its tables and a page of rows at a time, read-only
-// (R3's second slice); an editable page opens it in the window too. "{{NONCE}}" is the response's script nonce. Every
+// (R3's second slice); an editable page opens it in the window too. A
+// LaTeX document shows as the PDF the app's own LaTeX preview typeset,
+// served at the server's /typeset/ address and drawn again each time the
+// app typesets it, Show Source flipping to its lines (R3's third slice).
+// The sidebar's Source Control lists the folder's uncommitted changes as
+// the window's does, and a file clicked shows the review page of those
+// changes in a tab of the page's own, inline or side by side, read only
+// (R3's fourth slice, SessionWebGit.h). The window's open commit pages and
+// worktree pages are tabs beside its documents, shown the same way with
+// their headers, and a review's pictures show before and after from the
+// server's /picture/ addresses (R3's last slice).
+// "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
 #include "SessionWeb.h"
@@ -44,7 +55,8 @@ const std::string& pageHtml() {
         --sbg: #181818; --sfg: #cccccc; --ign: #8c8c8c;
         --line: #2b2b2b; --accent: #4ea1f7; --lh: 1.4em; --hbg: #181818; --hfg: #cccccc;
         --gutter: #1f1f1f; --ln: #6e7681; --lnact: #cccccc; --efs: 13px; --tfs: 12px;
-        --sfs: 13px; --selbg: rgba(38, 79, 120, .9); }
+        --sfs: 13px; --selbg: rgba(38, 79, 120, .9);
+        --gmod: #e2c08d; --gadd: #81b88b; --gunt: #73c991; --gdel: #c74e39; --gcon: #e4676b; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--fg); display: flex; flex-direction: column;
@@ -118,6 +130,68 @@ body.sideclosed #side { display: none; }
 #tree .row.link .name { font-style: italic; }
 #tree .more, #tree .err { color: var(--muted); font-size: 12px; line-height: 20px;
                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sidemodes { display: flex; gap: 4px; padding: 0 6px 5px 8px; flex: none; }
+#sidemodes button { flex: 1; min-width: 0; font: inherit; font-size: 12px; background: none; color: var(--muted);
+                    border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; cursor: pointer;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sidemodes button[aria-pressed="true"] { color: var(--sfg); border-color: var(--accent); }
+#git { flex: 1; overflow: auto; min-height: 0; padding-bottom: 1em; }
+#gitsum { margin: 0; padding: 2px 10px 6px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+#gitlist .gsec { padding: 6px 10px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+                 font-weight: 600; opacity: .8; white-space: nowrap; }
+#gitlist .row { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; cursor: pointer;
+                line-height: 22px; padding: 0 8px 0 14px; user-select: none; }
+#gitlist .row:hover { background: rgba(127, 127, 127, .12); }
+#gitlist .row.current { background: rgba(127, 127, 127, .24); }
+#gitlist .gname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#gitlist .gdir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted);
+                 font-size: 12px; }
+.gl { flex: none; width: 1.2em; text-align: center; font-weight: 600; color: var(--gmod); }
+.gl.A { color: var(--gadd); } .gl.U { color: var(--gunt); } .gl.D { color: var(--gdel); }
+.gl.C { color: var(--gcon); }
+#fileview.review { display: block; position: relative; }
+#review { padding-bottom: 2em; font-size: var(--efs); }
+#review .rsec { padding: 10px 12px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+                letter-spacing: .04em; color: var(--muted); }
+#review .rhead { display: flex; align-items: center; gap: 8px; padding: 4px 12px; background: var(--hbg);
+                 color: var(--hfg); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+                 position: sticky; top: 0; z-index: 1; font-size: 13px; }
+#review .rpath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#review .rhead button { flex: none; font: inherit; font-size: 12px; color: var(--fg); background: none;
+                        border: 1px solid var(--line); border-radius: 3px; padding: 1px 8px; cursor: pointer; }
+#review .rbody { overflow-x: auto; }
+#review table { border-collapse: collapse; min-width: 100%;
+                font: var(--efs)/var(--lh) ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
+#review td { padding: 0 8px; white-space: pre; vertical-align: top; border: 0; }
+#review td.n { color: var(--ln); background: var(--gutter); text-align: right; user-select: none;
+               min-width: 3.2em; width: 1px; }
+#review table.side td.t { width: 50%; }
+#review td.t.r, #review tr.r td.t { background: rgba(241, 76, 76, .16); }
+#review td.t.a, #review tr.a td.t { background: rgba(115, 201, 145, .16); }
+#review td.fill { background: rgba(127, 127, 127, .07); }
+#review .wr { background: rgba(241, 76, 76, .38); }
+#review .wa { background: rgba(115, 201, 145, .36); }
+#review tr.gap td { color: var(--muted); cursor: pointer; text-align: center; background: rgba(127, 127, 127, .08);
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif; font-size: 12px; }
+#review tr.gap:hover td { color: var(--fg); }
+#review tr.rnote td { color: var(--muted); font-style: italic; white-space: normal; padding: 4px 12px;
+                      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif; font-size: 12px; }
+#review tr.x td.t { background: rgba(127, 127, 127, .10); }
+#review tr.x.p1 td.t, #review tr.x.p2 td.t { background: rgba(64, 166, 255, .18); }
+#review tr.x.p6 td.t, #review tr.x.p7 td.t { background: rgba(115, 201, 145, .18); }
+#review tr.x.p1 td.t, #review tr.x.p3 td.t, #review tr.x.p5 td.t, #review tr.x.p7 td.t { font-weight: 600; }
+#review .rtop { padding: 10px 12px 8px; }
+#review .rtitle { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+#review .rro { margin-left: 10px; font-size: 11px; font-weight: normal; color: var(--muted);
+               border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; vertical-align: middle; }
+#review .rdetail { margin-top: 2px; font-size: 12px; color: var(--muted); }
+#review .rbodytext { margin-top: 6px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#review .rimgs { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; padding: 8px 12px 12px; }
+#review .rimg { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
+#review .rlabel { font-size: 12px; color: var(--muted); }
+#review .rimg img { display: block; width: auto; height: auto; max-width: 100%; max-height: 320px;
+                    object-fit: contain; align-self: flex-start;
+                    background: repeating-conic-gradient(rgba(127, 127, 127, .18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
 #treenote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none;
             border-top: 1px solid var(--line); }
 #work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -164,6 +238,11 @@ body:not(.editable) #caret { display: none; }
                 text-indent: -4.5em; }
 #code.wrap .l::before { text-indent: 0; }
 #md { flex: 1; border: 0; width: 100%; background: var(--bg); min-height: 0; }
+#tex { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#texnote { flex: none; margin: 0; padding: 4px 10px; color: var(--muted); font-size: 12px; }
+#texframe { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
+#texlog { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 8px 12px; white-space: pre-wrap;
+          font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
 #note { padding: 2em 1em; color: var(--muted); }
 #fileopen { color: var(--accent); flex: none; font-size: 12px; }
 #fileview { flex: 1; min-height: 0; overflow: auto; display: flex; }
@@ -224,7 +303,7 @@ body:not(.editable) #caret { display: none; }
   #side { display: none; position: absolute; left: 0; top: 0; bottom: 0; z-index: 20;
           width: min(85vw, 340px); box-shadow: 2px 0 12px rgba(0, 0, 0, .35); }
   body.sideopen #side { display: flex; }
-  #tree .row { line-height: 30px; }
+  #tree .row, #gitlist .row { line-height: 30px; }
 }
 </style>
 </head>
@@ -235,7 +314,9 @@ body:not(.editable) #caret { display: none; }
 <div id="wrap">
 <aside id="side" aria-label="Files">
   <div id="sidebar"><span id="sidename">Files</span><button id="refresh" class="iconbtn" type="button" title="Refresh the tree" aria-label="Refresh the tree">&#8635;</button></div>
+  <div id="sidemodes"><button id="filesbtn" type="button" aria-pressed="true" title="The folder's files">Files</button><button id="scmbtn" type="button" aria-pressed="false" title="The folder's uncommitted changes, as the window's Source Control lists them (read-only)">Source Control</button></div>
   <div id="tree" role="tree"></div>
+  <div id="git" class="hidden"><p id="gitsum"></p><div id="gitlist" role="list"></div></div>
   <p id="treenote" class="hidden"></p>
 </aside>
 <div id="work">
@@ -246,6 +327,7 @@ body:not(.editable) #caret { display: none; }
     <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
+    <div id="tex" class="hidden"><p id="texnote" class="hidden"></p><iframe id="texframe" class="hidden" title="Typeset pages"></iframe><pre id="texlog" class="hidden"></pre></div>
     <div id="note" class="hidden"></div>
     <div id="fileview" class="hidden"></div>
     <p id="filemore" class="hidden"></p>
@@ -302,6 +384,9 @@ body:not(.editable) #caret { display: none; }
     const side = sf.sidebar || {};
     set("--sbg", side.background); set("--sfg", side.text);
     set("--ign", p.treeIgnored);
+    const g = p.git || {};
+    set("--gmod", g.modified); set("--gadd", g.added); set("--gunt", g.untracked); set("--gdel", g.deleted);
+    set("--gcon", g.conflict);
     set("--gutter", p.gutter); set("--ln", p.lineNumber); set("--lnact", p.lineNumberActive);
     set("--muted", p.dark ? "#9d9d9d" : "#616161");
     set("--line", p.dark ? "#2b2b2b" : "#e5e5e5");
@@ -311,7 +396,7 @@ body:not(.editable) #caret { display: none; }
     if (p.tabsFontSize) set("--sfs", p.tabsFontSize + "px");
     root.colorScheme = p.dark ? "dark" : "light";
     let css = "";
-    (p.syntax || []).forEach((c, i) => { if (i) css += "#code .s" + i + "{color:" + c + "}\n"; });
+    (p.syntax || []).forEach((c, i) => { if (i) css += "#code .s" + i + ",#review .s" + i + "{color:" + c + "}\n"; });
     // The ruler's columns, past the line numbers' 4.5em.
     const rulers = (p.rulers || []).map((n) => {
       const x = "calc(4.5em + " + n + "ch)";
@@ -423,9 +508,18 @@ body:not(.editable) #caret { display: none; }
     for (const w of state.windows)
       for (const g of w.groups || []) for (const t of g.tabs || []) add(t.doc, t.path);
     for (const d of state.docs) add(d.id, d.path);
+    // The window's commit and worktree pages: shown here read-only, closed
+    // only in the window.
+    for (const r of windowReviews()) {
+      const rel = kPagePrefix + r.id;
+      seen.add(rel);
+      strip.appendChild(tabButton(r.title, r.title + " (read-only here)",
+                                  "review" + (L.on === rel ? " shown" : "") + (r.onShow ? " onshow" : ""),
+                                  () => showLocal(rel), null, ""));
+    }
     // The files this page opened itself, which only it shows and closes.
     for (const f of L.tabs) {
-      const name = base(f.path);
+      const name = f.label || base(f.path);
       strip.appendChild(tabButton(name, f.abs + " (on this page only)", "local" + (L.on === f.path ? " shown" : ""),
                                   () => showLocal(f.path), () => closeLocal(f.path), "Close " + name + " on this page"));
     }
@@ -625,8 +719,10 @@ body:not(.editable) #caret { display: none; }
   // every file this way; an editable one when the session has no window to
   // open it in.
   const L = { tabs: [], on: "" };   // tabs: the filetext messages, by path
+  // A tab of this page's own by its path, or a window review page's.
+  function localTab(rel) { return L.tabs.find((x) => x.path === rel) || windowReviewTab(rel); }
   function showLocal(rel) {
-    const f = L.tabs.find((x) => x.path === rel);
+    const f = localTab(rel);
     if (!f) return;
     if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
     if (f.viewer) { showViewer(f); return; }
@@ -639,13 +735,15 @@ body:not(.editable) #caret { display: none; }
     D.indent = f.indent || D.indent;
     D.flight = null; D.queue = []; D.undo = 0; D.save = false;
     D.html = f.html || "";
+    D.latex = !!f.latex;
     D.a = D.h = 0; D.goal = null; D.moved = true;
-    D.mode = f.kind === "markdown" ? "page" : "code";
+    D.mode = f.kind === "markdown" || D.latex ? "page" : "code";
     $("code").scrollTop = 0;
     $("docpath").textContent = inFolder(f.abs) + " (on this page only)";
     if (f.kind === "large") {
       D.shadow = []; D.lines = []; reindex(); render();
       $("code").classList.add("hidden"); $("md").classList.add("hidden"); $("modebtn").classList.add("hidden");
+      hideTex();
       const n = $("note"); n.textContent = f.note; n.classList.remove("hidden");
       drawSelection();
     } else {
@@ -658,6 +756,9 @@ body:not(.editable) #caret { display: none; }
   }
   function closeLocal(rel) {
     L.tabs = L.tabs.filter((x) => x.path !== rel);
+    if (rel === kReview) { RV.delete(""); G.cur = ""; drawGit(); watchGit(); }
+    const page = reviewIdOf(rel);
+    if (page) { RV.delete(page); post({ t: "review", page: page, watch: false }); }
     if (L.on === rel) {
       hideViewer();
       // Back to the window's tab on show.
@@ -700,15 +801,18 @@ body:not(.editable) #caret { display: none; }
     D.id = 0; D.kind = ""; D.editable = false; D.flight = null; D.queue = [];
     $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
     $("modebtn").classList.add("hidden"); $("note").classList.add("hidden");
-    $("docpath").textContent = rel + " (on this page only)";
+    hideTex();
+    $("docpath").textContent = f.label ? f.abs : rel + " (on this page only)";
     drawSelection();
     const box = $("fileview"), url = fileUrl(rel), open = $("fileopen");
     box.classList.remove("hidden");
     $("filemore").classList.add("hidden");
     open.href = url;
     // Only what the server serves as bytes has an address of its own.
-    open.classList.toggle("hidden", view === "table" || view === "notebook" || view === "database");
+    open.classList.toggle("hidden", view === "table" || view === "notebook" || view === "database" ||
+                          view === "review");
     if (V.on !== rel) {
+      leaveReviewPage(rel);
       V.on = rel;
       box.textContent = ""; box.className = "";
       let el = null;
@@ -732,6 +836,11 @@ body:not(.editable) #caret { display: none; }
       } else if (view === "database") {
         if (f.db) drawDb(f.db);
         else { fileNote("Reading " + base(rel) + "…"); askDb(rel, "", 0); }
+      } else if (view === "review") {
+        // A window's page: read (or what was read, at once) each time it
+        // is shown, which the server takes as watching it.
+        if (f.page) askReview(f.page);
+        drawReview();
       }
       if (el) {
         el.addEventListener("error", () => { if (V.on === rel) fileNote(base(rel) + " could not be shown here."); });
@@ -740,6 +849,8 @@ body:not(.editable) #caret { display: none; }
       }
     } else if (view === "table" && f.table) {
       drawTable(f.table);
+    } else if (view === "review") {
+      scrollReview();
     }
     drawTabs();
     markCurrent();
@@ -748,6 +859,7 @@ body:not(.editable) #caret { display: none; }
   // the editor's again.
   function hideViewer() {
     if (!V.on) return;
+    leaveReviewPage("");
     V.on = "";
     $("fileview").textContent = "";
     $("fileview").classList.add("hidden");
@@ -911,6 +1023,385 @@ body:not(.editable) #caret { display: none; }
     showLocal(m.path);
   }
 
+
+  // ---- Source Control (R3's fourth slice): the folder's uncommitted
+  // changes as the window's Source Control lists them, read by the server
+  // with the core's fixed git commands (git), and their review page in a
+  // tab of this page's own (review): each file's blocks, unchanged lines
+  // folded (a click shows them), inline or side by side. Read only: no
+  // stage, unstage, discard or commit, on any page. The server says again
+  // when the changes move, as far as its host watches the folder (the Mac
+  // does); otherwise ↻, a reconnect, or coming back to the page reads again.
+  //
+  // The window's commit pages and worktree pages (R3) are the same review
+  // read the same way, in tabs of their own beside the window's documents
+  // (the state's `reviews`), each by the id the server gave it.
+  const kReview = "/changes";   // the review's tab, by a path no file of the folder has
+  const kPagePrefix = "/review/";   // a window review page's tab: this, then its id
+  const G = { mode: false, status: null, cur: "" };
+  // Each review on this page by id ("" the uncommitted changes): the last
+  // answer, the gaps opened and the files side by side, by file key, and a
+  // file to scroll to once drawn.
+  const RV = new Map();
+  let reviewAsked = true;   // false after a reconnect, until the review page on show is asked for
+  function rv(id) {
+    let r = RV.get(id);
+    if (!r) { r = { review: null, opened: new Map(), side: new Set(), goto: "" }; RV.set(id, r); }
+    return r;
+  }
+  // The review a tab's path is ("" the uncommitted changes), else null.
+  function reviewIdOf(path) {
+    if (path === kReview) return "";
+    return path && path.startsWith(kPagePrefix) ? path.slice(kPagePrefix.length) : null;
+  }
+  function reviewOn() { return V.on ? reviewIdOf(V.on) : null; }
+  function windowReviews() {
+    const out = [];
+    if (!state) return out;
+    for (const w of state.windows) for (const r of w.reviews || []) out.push(r);
+    return out;
+  }
+  // A window review page as a tab of this page's (made when asked for).
+  function windowReviewTab(rel) {
+    const id = reviewIdOf(rel);
+    if (!id) return null;
+    const r = windowReviews().find((x) => x.id === id);
+    if (!r) return null;
+    return { path: rel, abs: r.title + " (read-only)", label: r.title, view: "review", viewer: true, page: id,
+             kind: r.kind };
+  }
+  // Leaving a window review page for `next`: the server stops reading it
+  // for this page.
+  function leaveReviewPage(next) {
+    const id = reviewOn();
+    if (id && next !== V.on) post({ t: "review", page: id, watch: false });
+  }
+  // The window closed a review page this page shows: back to its tab.
+  function dropGoneReviews() {
+    const ids = new Set(windowReviews().map((r) => r.id));
+    for (const id of [...RV.keys()]) if (id && !ids.has(id)) RV.delete(id);
+    const on = reviewIdOf(L.on);
+    if (on && !ids.has(on)) closeLocal(L.on);
+  }
+  function gitWanted() { return G.mode || L.tabs.some((x) => x.path === kReview); }
+  function askGit() {
+    if (!G.status) drawGit();
+    post({ t: "git", watch: true });
+  }
+  function watchGit() { if (!gitWanted()) post({ t: "git", watch: false }); }
+  function setSideMode(scm) {
+    G.mode = scm;
+    $("tree").classList.toggle("hidden", scm);
+    $("git").classList.toggle("hidden", !scm);
+    $("treenote").classList.add("hidden");
+    $("filesbtn").setAttribute("aria-pressed", String(!scm));
+    $("scmbtn").setAttribute("aria-pressed", String(scm));
+    const r = $("refresh"), what = scm ? "Read the changes again" : "Refresh the tree";
+    r.title = what; r.setAttribute("aria-label", what);
+    // Back to Files: the open folders listed again, since files came and
+    // went while the changes were on show (the tree does not follow the
+    // disk by itself).
+    if (scm) askGit(); else { watchGit(); refreshTree(); }
+  }
+  function dirOf(p) { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
+  function letterEl(letter) {
+    const l = document.createElement("span");
+    l.className = "gl " + letter; l.textContent = letter;
+    l.title = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed", T: "Type changed", U: "Untracked",
+                C: "Conflict" }[letter] || "";
+    return l;
+  }
+  function sectionText(section, n) { return (section === "staged" ? "Staged Changes" : "Changes") + "  " + n; }
+  function drawGit() {
+    const sum = $("gitsum"), list = $("gitlist"), m = G.status;
+    list.textContent = "";
+    if (!m) { sum.textContent = "Reading the changes…"; return; }
+    if (m.error) { sum.textContent = m.error; return; }
+    const n = m.count || 0;
+    sum.textContent = (m.branch ? m.branch + ": " : "") +
+                      (n ? n + (n === 1 ? " file changed" : " files changed") : "No changes.");
+    const counts = {};
+    for (const f of m.files) counts[f.section] = (counts[f.section] || 0) + 1;
+    let section = "";
+    for (const f of m.files) {
+      if (f.section !== section) {
+        section = f.section;
+        const h = document.createElement("div");
+        h.className = "gsec"; h.textContent = sectionText(section, counts[section]);
+        list.appendChild(h);
+      }
+      const row = document.createElement("div");
+      row.className = "row" + (f.key === G.cur && L.on === kReview ? " current" : "");
+      row.setAttribute("role", "listitem");
+      row.dataset.key = f.key; row.dataset.path = f.path;
+      row.title = f.header;
+      const name = document.createElement("span"), dir = document.createElement("span");
+      name.className = "gname"; name.textContent = base(f.path);
+      dir.className = "gdir"; dir.textContent = dirOf(f.path);
+      row.appendChild(name); row.appendChild(dir); row.appendChild(letterEl(f.letter));
+      list.appendChild(row);
+    }
+  }
+  function onGit(m) {
+    G.status = m;
+    drawGit();
+    // The review on show follows a read that shows something new.
+    const r = rv("");
+    if (L.tabs.some((x) => x.path === kReview) && (!r.review || r.review.version !== m.version)) askReview("");
+  }
+  function openedJson(id) {
+    const o = {};
+    for (const [k, v] of rv(id).opened) o[k] = [...v];
+    return o;
+  }
+  // The review `id` asked for (with `reread`, read again first).
+  function askReview(id, reread) {
+    const m = { t: "review", opened: openedJson(id), side: [...rv(id).side] };
+    if (id) { m.page = id; if (reread) m.reread = true; }
+    post(m);
+  }
+  function askReviewFile(id, key) {
+    const r = rv(id), m = { t: "review", file: key, opened: [...(r.opened.get(key) || [])], side: r.side.has(key) };
+    if (id) m.page = id;
+    post(m);
+  }
+  function openReview(key) {
+    if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
+    const r = rv("");
+    r.goto = key; G.cur = key;
+    if (!L.tabs.find((x) => x.path === kReview))
+      L.tabs.push({ path: kReview, abs: "Uncommitted changes (read-only)", label: "Changes", view: "review",
+                    viewer: true });
+    if (!r.review) askReview("");
+    showLocal(kReview);
+    drawGit();
+  }
+  // The window review page on show was read again: asked for anew.
+  function onReviewRead(m) {
+    const r = RV.get(m.page);
+    if (reviewOn() === m.page && (!r || !r.review || r.review.version !== m.version)) askReview(m.page);
+  }
+  // Text with its syntax colors and the words that changed, each piece a
+  // span made by textContent.
+  function spansInto(td, text, syn, words) {
+    const cuts = new Set([0, text.length]);
+    for (const s of syn || []) { cuts.add(s[0]); cuts.add(Math.min(text.length, s[0] + s[1])); }
+    for (const s of words || []) { cuts.add(s[0]); cuts.add(Math.min(text.length, s[0] + s[1])); }
+    const at = [...cuts].filter((x) => x >= 0 && x <= text.length).sort((a, b) => a - b);
+    const inside = (list, a) => (list || []).find((s) => s[0] <= a && a < s[0] + s[1]);
+    for (let i = 0; i + 1 < at.length; i++) {
+      const a = at[i], b = at[i + 1];
+      if (b <= a) continue;
+      const sy = inside(syn, a), w = inside(words, a);
+      if (!sy && !w) { td.appendChild(document.createTextNode(text.slice(a, b))); continue; }
+      const e = document.createElement("span");
+      e.className = (sy ? "s" + sy[2] : "") + (w ? (w[2] ? " wa" : " wr") : "");
+      e.textContent = text.slice(a, b);
+      td.appendChild(e);
+    }
+  }
+  function cell(cls, text) {
+    const td = document.createElement("td");
+    td.className = cls;
+    if (text !== undefined) td.textContent = text;
+    return td;
+  }
+  function reviewRows(f, id) {
+    const table = document.createElement("table"), body = document.createElement("tbody");
+    if (f.side) table.className = "side";
+    const cols = f.side ? 4 : 3;
+    for (const r of f.rows || []) {
+      const tr = document.createElement("tr");
+      if (r[0] === "g" || r[0] === "n") {
+        tr.className = r[0] === "g" ? "gap" : "rnote";
+        const td = cell("", r[3]);
+        td.colSpan = cols;
+        tr.appendChild(td);
+        if (r[0] === "g") {
+          tr.title = "Show these lines";
+          tr.addEventListener("click", () => {
+            const opened = rv(id).opened;
+            if (!opened.has(f.key)) opened.set(f.key, new Set());
+            opened.get(f.key).add(r[1]);
+            askReviewFile(id, f.key);
+          });
+        }
+      } else if (r[0] === "s") {
+        // [s, kind, old, new, oldText, newText, oldSyn, newSyn, oldWords, newWords]
+        const k = r[1];
+        tr.className = "s" + k;
+        const lt = cell("t" + (r[2] ? (k === "m" || k === "r" ? " r" : "") : " fill"));
+        const rt = cell("t" + (r[3] ? (k === "m" || k === "a" ? " a" : "") : " fill"));
+        if (r[2]) spansInto(lt, r[4], r[6], r[8]);
+        if (r[3]) spansInto(rt, r[5], r[7], r[9]);
+        tr.appendChild(cell("n", r[2] ? String(r[2]) : ""));
+        tr.appendChild(lt);
+        tr.appendChild(cell("n", r[3] ? String(r[3]) : ""));
+        tr.appendChild(rt);
+      } else {
+        // [kind, old, new, text, syntax, words | part]
+        tr.className = r[0] + (r[0] === "x" ? " p" + r[5] : "");
+        tr.appendChild(cell("n", r[1] ? String(r[1]) : ""));
+        tr.appendChild(cell("n", r[2] ? String(r[2]) : ""));
+        const td = cell("t");
+        spansInto(td, r[3], r[4], r[0] === "r" || r[0] === "a" ? r[5] : null);
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+    return table;
+  }
+  // A binary picture's versions, as the window's review shows them: side
+  // by side under their labels (Before and After when both exist), each at
+  // its size in pixels and never taller than 320, on a checkerboard; the
+  // bytes from the server's /picture/ address, read from the review's read.
+  function reviewImages(f) {
+    const row = document.createElement("div");
+    row.className = "rimgs";
+    for (const i of f.images || []) {
+      const col = document.createElement("div"), label = document.createElement("div"),
+            img = document.createElement("img");
+      col.className = "rimg"; col.dataset.side = i.side;
+      label.className = "rlabel"; label.textContent = i.label;
+      img.alt = (i.side === "old" ? "Before: " : "After: ") + base(f.path);
+      img.width = i.width; img.height = i.height;   // the space it takes before it loads
+      img.addEventListener("error", () => { label.textContent = i.label + " (it could not be shown here)"; });
+      img.src = i.url;
+      col.appendChild(label); col.appendChild(img);
+      row.appendChild(col);
+    }
+    return row;
+  }
+  function reviewFile(f, id) {
+    const box = document.createElement("div");
+    box.className = "rfile"; box.dataset.key = f.key;
+    const head = document.createElement("div");
+    head.className = "rhead";
+    head.appendChild(letterEl(f.letter));
+    const path = document.createElement("span");
+    path.className = "rpath"; path.textContent = f.header; path.title = f.header;
+    head.appendChild(path);
+    const button = (text, title, onclick) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = text; b.title = title;
+      b.addEventListener("click", onclick);
+      head.appendChild(b);
+    };
+    const side = rv(id).side;
+    if (f.more) button("Show Changes", "This file's changes, which the page left out to stay quick",
+                       () => askReviewFile(id, f.key));
+    else if (f.canSide)
+      button(f.side ? "Inline" : "Side by Side", f.side ? "Removed lines above added ones" : "The two versions side by side",
+             () => { if (f.side) side.delete(f.key); else side.add(f.key); askReviewFile(id, f.key); });
+    box.appendChild(head);
+    if (f.images && f.images.length) box.appendChild(reviewImages(f));
+    if (!f.more && (f.rows || []).length) {
+      const body = document.createElement("div");
+      body.className = "rbody";
+      body.appendChild(reviewRows(f, id));
+      box.appendChild(body);
+    }
+    return box;
+  }
+  // Where the eye is: the file at the top of the view, and how far into it.
+  function reviewAnchor() {
+    const view = $("fileview"), box = $("review");
+    if (!box) return null;
+    for (const f of box.querySelectorAll(".rfile"))
+      if (f.offsetTop + f.offsetHeight > view.scrollTop) return { key: f.dataset.key, off: view.scrollTop - f.offsetTop };
+    return null;
+  }
+  function fileEl(key) {
+    const box = $("review");
+    if (!box) return null;
+    for (const f of box.querySelectorAll(".rfile")) if (f.dataset.key === key) return f;
+    return null;
+  }
+  function scrollReview(keep) {
+    const view = $("fileview"), id = reviewOn();
+    if (id === null) return;
+    const r = rv(id);
+    if (r.goto) {
+      const f = fileEl(r.goto);
+      if (f) { view.scrollTop = f.offsetTop; r.goto = ""; }
+      return;
+    }
+    if (keep) {
+      const f = fileEl(keep.key);
+      if (f) view.scrollTop = f.offsetTop + keep.off;
+    }
+  }
+  // A window review page's header: its title, what it is against (a
+  // commit's author and date, a worktree's branch point) and the counts,
+  // then the rest of a commit's message.
+  function reviewTop(m) {
+    const top = document.createElement("div"), title = document.createElement("div"),
+          detail = document.createElement("div");
+    top.className = "rtop";
+    title.className = "rtitle"; title.textContent = m.title || "";
+    detail.className = "rdetail"; detail.textContent = m.detail || "";
+    const ro = document.createElement("span");
+    ro.className = "rro"; ro.textContent = "Read-only";
+    ro.title = "Nothing on this page changes the repository; the mutible window has the page's buttons.";
+    title.appendChild(ro);
+    top.appendChild(title); top.appendChild(detail);
+    if (m.body) {
+      const body = document.createElement("div");
+      body.className = "rbodytext"; body.textContent = m.body;
+      top.appendChild(body);
+    }
+    return top;
+  }
+  function drawReview() {
+    const id = reviewOn();
+    if (id === null) return;
+    const box = $("fileview"), m = rv(id).review, keep = reviewAnchor();
+    const reading = id ? "Reading the page…" : "Reading the changes…";
+    if (!m || m.pending) { fileNote(reading); return; }
+    if (m.error) { fileNote(m.error); return; }
+    if (!id && !(m.files || []).length) { fileNote("No changes."); return; }
+    box.textContent = ""; box.className = "review";
+    const wrap = document.createElement("div");
+    wrap.id = "review";
+    if (id) wrap.appendChild(reviewTop(m));
+    const counts = {};
+    for (const f of m.files || []) counts[f.section] = (counts[f.section] || 0) + 1;
+    let section = "";
+    for (const f of m.files || []) {
+      // A commit's or a worktree's files are one list, with no heading.
+      if (f.section !== section && f.section !== "plain") {
+        section = f.section;
+        const h = document.createElement("div");
+        h.className = "rsec"; h.textContent = sectionText(section, counts[section]);
+        wrap.appendChild(h);
+      }
+      wrap.appendChild(reviewFile(f, id));
+    }
+    if (id && !(m.files || []).length) {
+      const n = document.createElement("div");
+      n.id = "filenote"; n.textContent = "No changes.";
+      wrap.appendChild(n);
+    }
+    box.appendChild(wrap);
+    scrollReview(keep);
+  }
+  function onReview(m) {
+    const id = m.page || "", r = rv(id);
+    if (m.pending) { if (!r.review) r.review = m; drawReview(); return; }
+    r.review = m;
+    if (reviewOn() === id) drawReview();
+  }
+  function onReviewFile(m) {
+    const id = m.page || "", r = rv(id);
+    if (!r.review || !r.review.files) return;
+    const key = m.file ? m.file.key : m.key, at = r.review.files.findIndex((f) => f.key === key);
+    if (at < 0) return;
+    if (m.gone) { askReview(id); return; }   // the changes moved: the whole review again
+    r.review.files[at] = m.file;
+    const old = fileEl(key);
+    if (old && reviewOn() === id) old.replaceWith(reviewFile(m.file, id));
+  }
 
   // ---- the tree: one folder's rows at a time, read by the host each time
   // a folder opens (list), folders first as the apps list them, dotfiles as
@@ -1099,7 +1590,10 @@ body:not(.editable) #caret { display: none; }
     if (!terms.includes(want.term)) { followTerm = true; want.term = terms.length ? terms[0] : 0; }
     sendShow();
     takeWindowPanes();
+    dropGoneReviews();
     drawTabs(); drawTermTabs(); drawWeb();
+    const page = reviewOn();
+    if (page && !reviewAsked) { reviewAsked = true; askReview(page); }
     if (!want.doc && !L.on) showNote("No document is on show.");
     takePending();
     takeWebPending();
@@ -1115,7 +1609,7 @@ body:not(.editable) #caret { display: none; }
   const D = { id: 0, kind: "", path: "", version: 0, editable: false,
               indent: { tabs: false, width: 4 }, shadow: [], lines: [], starts: [0],
               flight: null, queue: [], a: 0, h: 0, goal: null, moved: true,
-              undo: 0, save: false, switchTo: 0, mode: "code", html: "" };
+              undo: 0, save: false, switchTo: 0, mode: "code", html: "", latex: false };
   let seq = 0;
   function lineOf(l) { return { t: l[0], s: l[1] || [], b: l.length > 2 ? kBreaks[l[2]] : "\n" }; }
   function pending() { return D.flight ? [D.flight].concat(D.queue) : D.queue; }
@@ -1771,6 +2265,7 @@ body:not(.editable) #caret { display: none; }
   // ---- documents on show
   function showNote(text) {
     hideViewer();
+    hideTex();
     $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
     $("modebtn").classList.add("hidden");
     const n = $("note"); n.textContent = text; n.classList.remove("hidden");
@@ -1780,15 +2275,62 @@ body:not(.editable) #caret { display: none; }
   }
   function showMode() {
     const code = $("code"), md = $("md");
-    const page = D.kind === "markdown" && D.mode === "page";
-    $("modebtn").classList.toggle("hidden", D.kind !== "markdown");
+    // A Markdown document's page is the core's HTML; a LaTeX document's
+    // the app's typeset PDF.
+    const tex = D.kind === "code" && D.latex;
+    const page = (D.kind === "markdown" || tex) && D.mode === "page";
+    $("modebtn").classList.toggle("hidden", D.kind !== "markdown" && !tex);
     $("modebtn").textContent = page ? (D.editable ? "Edit Source" : "Show Source") : "Show Page";
     $("note").classList.add("hidden");
     code.classList.toggle("hidden", page);
-    md.classList.toggle("hidden", !page);
-    if (page) setMarkdown(D.html);
+    md.classList.toggle("hidden", !page || tex);
+    if (page && !tex) setMarkdown(D.html);
     else { md.removeAttribute("srcdoc"); mdHtml = null; }
+    if (page && tex) showTex(L.on || D.path);
+    else hideTex();
     drawSelection();
+  }
+  // ---- a LaTeX document's pages (R3's third slice): the PDF the app's own
+  // LaTeX preview typeset, at the server's /typeset/ address. Asked for
+  // each time the page shows it (`latex`, the path as this page knows it:
+  // a tab of its own by its path from the folder, a document by the
+  // session's path), and drawn again when the server says the app
+  // typeset it anew (a new address, so the frame loads the new PDF).
+  const X = { asked: "", m: null };
+  function texNote(text) { const n = $("texnote"); n.textContent = text || ""; n.classList.toggle("hidden", !text); }
+  function showTex(path) {
+    $("tex").classList.remove("hidden");
+    if (X.asked !== path) {
+      X.asked = path; X.m = null;
+      $("texframe").removeAttribute("src"); $("texframe").classList.add("hidden");
+      $("texlog").textContent = ""; $("texlog").classList.add("hidden");
+      texNote("Typesetting…");
+    }
+    post({ t: "latex", path: path });
+  }
+  function hideTex() {
+    X.asked = ""; X.m = null;
+    $("tex").classList.add("hidden");
+    $("texframe").removeAttribute("src");   // nothing left loading
+    $("texlog").textContent = "";
+  }
+  function onLatex(m) {
+    if (!X.asked || m.path !== X.asked) return;
+    X.m = m;
+    const frame = $("texframe"), log = $("texlog");
+    const failed = m.state === "failed" || m.state === "refused";
+    if (m.url && !failed) {
+      if (frame.getAttribute("src") !== m.url) frame.setAttribute("src", m.url);
+      frame.classList.remove("hidden");
+    } else {
+      frame.removeAttribute("src"); frame.classList.add("hidden");
+    }
+    log.textContent = m.state === "failed" ? m.text || "" : "";
+    log.classList.toggle("hidden", m.state !== "failed");
+    if (m.state === "ready") texNote("");
+    else if (m.state === "working") texNote(m.url ? "Typesetting again…" : "Typesetting…");
+    else if (m.state === "failed") texNote("The document did not typeset. tectonic said:");
+    else texNote(m.text || "");
   }
   function onDoc(m) {
     if (m.id !== want.doc) return;
@@ -1799,15 +2341,18 @@ body:not(.editable) #caret { display: none; }
     D.indent = m.indent || D.indent;
     D.flight = null; D.queue = []; D.undo = 0; D.save = false;
     D.html = m.html || "";
+    D.latex = !!m.latex;
     if (!same) {
       D.a = D.h = 0; D.goal = null; D.moved = true;
-      D.mode = m.kind === "markdown" && !D.editable ? "page" : "code";
+      // A LaTeX document opens on its pages, as the window's does.
+      D.mode = (m.kind === "markdown" && !D.editable) || (m.kind === "code" && D.latex) ? "page" : "code";
       $("code").scrollTop = 0;
     }
     $("docpath").textContent = inFolder(m.path);
     if (m.kind === "large") {
       D.shadow = []; D.lines = []; reindex(); render();
       $("code").classList.add("hidden"); $("md").classList.add("hidden"); $("modebtn").classList.add("hidden");
+      hideTex();
       const n = $("note"); n.textContent = m.note; n.classList.remove("hidden");
       drawSelection();
       return;
@@ -1995,7 +2540,7 @@ body:not(.editable) #caret { display: none; }
         case "waiting": gate(m.text); setStatus("waiting"); break;
         case "denied": case "expired":
           ended = true; gate(m.text); setStatus(m.t === "denied" ? "refused" : "expired");
-          hideViewer(); $("web").setAttribute("src", "about:blank");
+          hideViewer(); hideTex(); $("web").setAttribute("src", "about:blank");
           break;
         case "hello":
           gate("");
@@ -2019,6 +2564,14 @@ body:not(.editable) #caret { display: none; }
           // rows on show stay until the answers replace them).
           T.err.clear();
           refreshTree();
+          // A LaTeX document's pages on show: asked for again on the new
+          // connection, which knows nothing of the last one's.
+          if (X.asked) post({ t: "latex", path: X.asked });
+          // Source Control on show, or its review: read again.
+          if (gitWanted()) askGit();
+          // A window review page on show: asked for again once the state
+          // lists it on this connection.
+          reviewAsked = false;
           break;
         case "palette": applyPalette(m.palette); break;
         case "state": onState(m); break;
@@ -2042,6 +2595,11 @@ body:not(.editable) #caret { display: none; }
         case "table": onTable(m); break;
         case "notebook": onNotebook(m); break;
         case "db": onDb(m); break;
+        case "latex": onLatex(m); break;
+        case "git": onGit(m); break;
+        case "review": onReview(m); break;
+        case "reviewfile": onReviewFile(m); break;
+        case "reviewread": onReviewRead(m); break;
         case "closing": if (!m.ok) toast(m.why || "That tab was not closed."); break;
       }
     };
@@ -2131,7 +2689,17 @@ body:not(.editable) #caret { display: none; }
     // keeps the tab, as in the window's tree.
     openFile(rel, e, ev.detail >= 2 || ev.metaKey || ev.ctrlKey);
   });
-  $("refresh").addEventListener("click", refreshTree);
+  $("refresh").addEventListener("click", () => {
+    const page = reviewOn();
+    if (page) askReview(page, true);   // a window review page on show: read again
+    if (G.mode) askGit(); else refreshTree();
+  });
+  $("filesbtn").addEventListener("click", () => setSideMode(false));
+  $("scmbtn").addEventListener("click", () => setSideMode(true));
+  $("gitlist").addEventListener("click", (ev) => {
+    const row = ev.target.closest(".row");
+    if (row && row.dataset.key) openReview(row.dataset.key);
+  });
   $("browse").addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.target.value = ""; e.target.blur(); return; }
     if (e.key !== "Enter" || e.isComposing) return;
@@ -2147,7 +2715,13 @@ body:not(.editable) #caret { display: none; }
   // At phone width a tap beside the open tree closes it.
   $("work").addEventListener("pointerdown", () => { if (narrow.matches && sideOpen()) setSide(false); });
   // Back to the page after a while: the folders may have changed meanwhile.
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshTree(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    refreshTree();
+    if (gitWanted()) askGit();   // a host that watches nothing has not said
+    const page = reviewOn(), tab = page ? windowReviewTab(V.on) : null;
+    if (tab && tab.kind === "worktree") askReview(page, true);   // a commit does not change
+  });
   $("term").addEventListener("keydown", onTermKey);
   $("term").addEventListener("paste", (e) => {
     if (!editable || !want.term) return;
@@ -2176,7 +2750,7 @@ body:not(.editable) #caret { display: none; }
     local: () => L.on,
     file: () => {
       if (!V.on) return null;
-      const f = L.tabs.find((x) => x.path === V.on) || {};
+      const f = localTab(V.on) || {};
       const box = $("fileview"), el = box.firstElementChild, rows = [...box.querySelectorAll("tbody tr")];
       return { view: f.view, path: V.on, src: (el && el.getAttribute("src")) || "",
                width: el && el.tagName === "IMG" ? el.naturalWidth : 0,
@@ -2188,6 +2762,42 @@ body:not(.editable) #caret { display: none; }
                where: ($("dbwhere") || {}).textContent || "",
                html: el && el.tagName === "IFRAME" ? el.srcdoc || "" : "",
                note: ($("filenote") || {}).textContent || "" };
+    },
+    // A LaTeX document's pages: what the page asked for, the server's
+    // last answer, and what is drawn.
+    typeset: () => ({ shown: !$("tex").classList.contains("hidden"), asked: X.asked,
+                      state: X.m ? X.m.state : "", url: X.m && X.m.url ? X.m.url : "",
+                      src: $("texframe").getAttribute("src") || "",
+                      frame: !$("texframe").classList.contains("hidden"),
+                      note: $("texnote").textContent, log: $("texlog").textContent }),
+    // Source Control: the list as drawn, and the review on show.
+    git: () => ({ mode: G.mode, summary: $("gitsum").textContent, version: G.status ? G.status.version : 0,
+                  rows: [...$("gitlist").querySelectorAll(".row")].map((r) => r.querySelector(".gl").textContent + " " +
+                                                                           r.dataset.path),
+                  current: [...$("gitlist").querySelectorAll(".row.current")].map((r) => r.dataset.path) }),
+    review: () => {
+      const box = $("review"), id = reviewOn(), r = id === null ? null : RV.get(id);
+      return { shown: id !== null && !!box, page: id === null ? null : id,
+               version: r && r.review ? r.review.version || 0 : 0,
+               title: box && box.querySelector(".rtitle") ? box.querySelector(".rtitle").firstChild.textContent : "",
+               detail: box && box.querySelector(".rdetail") ? box.querySelector(".rdetail").textContent : "",
+               body: box && box.querySelector(".rbodytext") ? box.querySelector(".rbodytext").textContent : "",
+               note: ($("filenote") || {}).textContent || "",
+               buttons: box ? [...box.querySelectorAll("button")].map((b) => b.textContent) : [],
+               words: box ? box.querySelectorAll(".wa, .wr").length : 0,
+               colored: box ? box.querySelectorAll("td.t span[class^='s']").length : 0,
+               top: $("fileview").scrollTop,
+               files: box ? [...box.querySelectorAll(".rfile")].map((f) => ({
+                 key: f.dataset.key, head: f.querySelector(".rpath").textContent, offset: f.offsetTop,
+                 side: !!f.querySelector("table.side"),
+                 images: [...f.querySelectorAll(".rimg")].map((c) => {
+                   const img = c.querySelector("img");
+                   return { side: c.dataset.side, label: c.querySelector(".rlabel").textContent,
+                            src: img.getAttribute("src") || "", width: img.naturalWidth, height: img.naturalHeight,
+                            complete: img.complete };
+                 }),
+                 rows: [...f.querySelectorAll("tr")].map((r) => r.className + "|" +
+                         [...r.querySelectorAll("td")].map((c) => c.textContent).join("|")) })) : [] };
     },
     windowPanes: () => windowPanes(),
     gate: () => ($("gate").classList.contains("hidden") ? "" : $("gate").textContent),

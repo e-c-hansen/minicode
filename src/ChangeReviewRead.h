@@ -86,6 +86,7 @@ bool seeImages(File& f, Extra& x, const std::string& oldBytes, const std::string
 struct Read {
     std::string top;               // the repository's top level
     bool initial = false;          // no commit yet
+    std::string branchText;        // the panel's branch line ("main ↑2 ↓1")
     std::string error;             // why there is nothing to show
     std::vector<FileDiff> diffs;
     std::vector<Extra> extras;     // one per diff
@@ -109,6 +110,22 @@ std::string stageText(const Read& r, size_t fi, const std::u16string& text, cons
 std::string discardText(const Read& r, size_t fi, const std::u16string& text, const GitRunner& run,
                         const std::function<bool(std::string* where, std::string* why)>& trashCopy,
                         std::string* trashed);
+
+// ------------------------------------------------------------- a commit
+// A commit's page (a click in the graph), the part the Mac keeps in
+// ReadCommit (mac/src/ChangeReviewPage.mm), over the same runner: its
+// header (`show -s`, Git::parseShow) and every file it changed against its
+// first parent (against nothing for a root commit), from diff-tree's raw
+// records and their blobs in one cat-file --batch. Plain files, no buttons
+// but Side by Side; nothing is read from the work tree.
+struct CommitRead {
+    Read read;                  // top, diffs, extras (row.path, origPath, letter)
+    Git::CommitDetail commit;   // hash, parents, author, time, message
+};
+// `commit` goes to git as it is: the caller holds it to a name it trusts
+// (the session's page takes hex digits only).
+CommitRead readCommit(const std::string& root, const std::string& commit, const GitRunner& run,
+                      const ImageReading& images = ImageReading());
 
 // ------------------------------------------------ a worktree against main
 // Compare with Main's reading and Apply to Main's writing, the part the

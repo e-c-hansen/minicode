@@ -11,10 +11,18 @@
 // with unsaved changes); a read-only page changes nothing here. The
 // browser pane's tabs and which panes the window shows go with the
 // window's tabs, and an editable page's address opens in the pane as a
-// bookmark does.
+// bookmark does. A LaTeX document on the page shows what this window's
+// preview of it typeset (R3's third slice): each tab's preview tells the
+// server of every typeset, and a page asking is given the preview's PDF,
+// or, with no preview of the file in the window, one the server's own
+// preview typesets from the tab's text or the disk's. The window's open
+// commit and worktree pages go with its tabs too (sessionBrowserReviews),
+// for the page to show read-only; the server reads them itself.
 #import "EditorController+Private.h"
 #import "AppSettings.h"
 #import "Browser.h"
+#import "ChangeReviewPage.h"
+#import "Latex.h"
 #import "SessionBrowser.h"
 #import "SessionLink.h"
 #import "SessionWindow.h"
@@ -142,12 +150,74 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     return @{@"tabs": tabs, @"active": @((int)b.selectedTab)};
 }
 
+// The commit and worktree pages in either group's strip, with whether each
+// is the tab on show there. The uncommitted changes' page is left out: the
+// page has its own, under Source Control.
+- (NSArray<NSDictionary *> *)sessionBrowserReviews {
+    NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
+    NSArray<MCTab *> *groups[2] = {[self groupTabs], [self parkedTabs]};
+    MCTab *shown[2] = {_activeTab, [self parkedActive]};
+    for (int g = 0; g < 2; g++)
+        for (MCTab *t in groups[g]) {
+            if (![t.page isKindOfClass:MCChangeReviewPage.class]) continue;
+            MCChangeReviewPage *page = (MCChangeReviewPage *)t.page;
+            NSString *title = page.pageTitle ?: @"";
+            NSNumber *onShow = @(t == shown[g]);
+            if (page.worktree.length)
+                [out addObject:@{@"kind": @"worktree", @"path": page.worktree, @"title": title, @"onShow": onShow}];
+            else if (page.commit.length)
+                [out addObject:@{@"kind": @"commit", @"hash": page.commit, @"title": title, @"onShow": onShow}];
+        }
+    return out;
+}
+
 // An editable page's address (http or https, the core has checked): the
 // pane made and shown if need be, a tab already at the address shown again,
 // else a new one, the keyboard left where it was.
 - (void)openSessionAddress:(NSString *)url {
     [self agentBrowserPane];
     [self keepKeyboardDuring:^{ [self.browser openAddresses:@[ url ]]; }];
+}
+
+// A tab's LaTeX preview, made: every typeset of it goes to the window's
+// page, when one is served.
+- (void)wireSessionTypesetOf:(LatexView *)view {
+    __weak EditorController *weakSelf = self;
+    view.onTypeset = ^(NSString *path, NSData *pdf, NSString *error) {
+        [weakSelf.sessionBrowser typesetOf:path pdf:pdf error:error];
+    };
+}
+
+// The folder changed on disk: a page showing Source Control reads again.
+- (void)sessionFolderChangedOnDisk {
+    [self.sessionBrowser gitChanged];
+}
+
+// A page shows a LaTeX document: what this window's own preview of it has
+// (never typeset again for the page), else a typeset of the server's own
+// preview, from the tab's text when the window has the file open, else
+// from the disk.
+- (void)typesetForSessionPage:(NSString *)path {
+    MCSessionBrowser *b = self.sessionBrowser;
+    if (!b) return;
+    NSString *real = path.stringByResolvingSymlinksInPath;
+    MCTab *tab = nil;
+    for (MCTab *t in [self tabs])
+        if (t.currentPath && [t.currentPath.stringByResolvingSymlinksInPath isEqualToString:real]) {
+            tab = t;
+            if (t.latex) break;
+        }
+    if (tab.latex) {
+        [b typesetOf:path view:tab.latex];
+        return;
+    }
+    NSString *text = tab ? tab.sourceText
+                         : [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (!text) {
+        [b typesetOf:path pdf:nil error:@"The file could not be read as UTF-8 text."];
+        return;
+    }
+    [b typesetInBackground:path source:text];
 }
 
 // The window's server, started now (editable or not) if it is not yet; nil,
@@ -165,6 +235,7 @@ static BOOL MCSessionBrowserEditableChoice(void) {
         b.open = ^(NSString *path, BOOL keep) { [weakSelf openSessionPath:path keep:keep]; };
         b.close = ^(uint64_t docId) { [weakSelf closeSessionDocument:docId]; };
         b.browse = ^(NSString *url) { [weakSelf openSessionAddress:url]; };
+        b.typeset = ^(NSString *path) { [weakSelf typesetForSessionPage:path]; };
         objc_setAssociatedObject(self, &kSessionBrowserKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     b.editable = editable;

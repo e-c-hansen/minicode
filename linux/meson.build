@@ -54,6 +54,8 @@ core_sources = [
   core_dir / 'SessionWeb.cpp',
   core_dir / 'SessionWebPage.cpp',
   core_dir / 'SessionWebViewers.cpp',
+  core_dir / 'SessionWebTypeset.cpp',
+  core_dir / 'SessionWebGit.cpp',
   core_dir / 'SessionWebAccess.cpp',
   core_dir / 'SqliteRead.cpp',
   core_dir / 'SessionFiles.cpp',

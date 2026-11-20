@@ -350,6 +350,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     }
     [self treeFoldersChangedOnDisk:disk subtree:subtree];
     if (self.gitPanelVisible) [self.gitPanel refresh];   // a commit or edit made elsewhere
+    [self sessionFolderChangedOnDisk];   // the page's Source Control, when a browser shows it
     [self checkTabsOnDisk];   // a tab's file moved or deleted in the terminal
 }
 

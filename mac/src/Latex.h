@@ -141,6 +141,20 @@
 - (void)commitPendingEdit;
 // The PDF on show (PageZoom.h zooms it with Cmd+=, Cmd+- and Cmd+0).
 - (PDFView *)latexPDFView;
+
+// Each typeset as it starts and ends, for the session's page in a browser
+// (SessionWeb.h, R3's third slice): `pdf` and `error` both nil when one
+// starts, `pdf` the bytes tectonic wrote when it worked, `error` its log
+// (or why it did not run) when it did not. `path` is the document's.
+@property(nonatomic, copy) void (^onTypeset)(NSString *path, NSData *pdf, NSString *error);
+// What the preview has now, for a page that asks: a typeset under way or
+// due (the source changed and one is scheduled), the last PDF that worked
+// (kept while another runs), and why the last typeset failed (nil when it
+// worked, or none has ended).
+@property(nonatomic, readonly) BOOL typesetting;
+@property(nonatomic, readonly) NSData *typesetPdf;
+@property(nonatomic, readonly) NSString *typesetFailure;
+@property(nonatomic, readonly, copy) NSString *texPath;
 @end
 
 // Where tectonic was found, or nil. Exposed for the status line and tests.

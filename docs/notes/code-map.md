@@ -91,7 +91,16 @@ goes here first, with tests; the GUI only displays it.
   it by `confinedPath`, with the apps' trees' dotfile, order and ignore
   rules, for the browser's tree; `host:fs-list`), `SessionWebViewers`
   (what the browser's page renders itself: a notebook as a page, a SQLite
-  database's tables and rows; `sessionweb:viewers`), and `SessionWebAccess`
+  database's tables and rows; `sessionweb:viewers`), `SessionWebTypeset`
+  (the LaTeX preview's typesets the app publishes, kept by the document's
+  real path and served at /typeset/; `sessionweb:typeset`), `SessionWebGit` (the page's
+  Source Control: `runGit`, a POSIX git runner with fixed arguments, the
+  core's `readUncommitted` held to the folder, the list and the review as
+  JSON, `GitReads` on a thread of its own; `sessionweb:git`; the window's
+  commit and worktree pages, `ReviewPage` and `readReviewPage`, and the
+  pictures' header sizes and /picture/ addresses; `sessionweb:pictures`
+  and `sessionweb:review-pages` in tests/session_web_review_tests.inc), and
+  `SessionWebAccess`
   (who may use the browser's view: single-use links, the credential's
   cookie, idle expiry, the app's question before a new browser and its
   rate limit; `sessionweb:access*`). The wire

@@ -199,6 +199,24 @@ top of a turn, never inside a text system callback.
   is held inside the folder by its `realpath` (symlinks followed) and
   must not hold "..", ".", empty names or a leading '/'; the Mac's `open`
   trusts that check.
+- **A typeset is kept by the document's real path, not served by it**
+  (R3's third slice): the app may publish a typeset for any file, one
+  outside the folder too, so `/typeset/` checks the request's path with
+  `openLocalFile` before it looks the PDF up; never serve an entry
+  because the key matched.
+- **A preview made in code typesets at once.** `LatexView`'s init runs
+  `compileNow` before its caller can set `onTypeset`, so the first
+  "working" is never heard: whoever makes one says its state afterwards
+  (`typesetOf:view:`), and `typesetting` counts the typing debounce, or a
+  page told "failed" would wait for a typeset already due.
+- **The review's reading follows links** (R3's fourth slice):
+  `readUncommitted` reads the work tree with `readFileStable`, so an
+  untracked link to a file outside the folder had its target's text in
+  the diff. Every read the page gets goes through `confineReview`, which
+  makes such a file a link's note; never send a `Read` that skipped it.
+- **Nothing may wake a closed pipe.** `GitReads`' thread outlives the
+  server; `~Server` resets `git_` before the wake pipe closes, and the
+  wake is cleared under the reads' lock.
 
 - **Never edit the storage from the hook.** `willReplaceCharacters` runs
   inside the storage's edit: it records and sends a message, nothing else
@@ -1718,7 +1736,7 @@ the browser shows them with its own viewers.
   browser cannot show (database, archive, bookmark) says it opens in the
   window, as before.
 - **Not done in this slice**: SQLite and notebooks (the second slice,
-  below), the LaTeX preview, and git and review pages; the window's viewer tabs (a picture's tab) are
+  below), the LaTeX preview (the third), and git and review pages (the fourth); the window's viewer tabs (a picture's tab) are
   still not reported to the page (the Mac reports only tabs with a
   document on the host), so the page shows a picture only from its tree,
   and does not follow the window to one.
@@ -1813,8 +1831,8 @@ and (already there) a Markdown file's page.
   `#md` frame) with `#modebtn` flipping to the lines; its label is now
   Show Source on a page that cannot edit (Edit Source stays for one that
   can), Show Page going back.
-- **Not here**: the LaTeX preview (needs tectonic) and git and review
-  pages (the Mac's views); no query box (the Mac's viewer has one).
+- **Not here**: the LaTeX preview (the third slice, below) and git and
+  review pages (the fourth); no query box (the Mac's viewer has one).
 
 #### Checks
 
@@ -1846,6 +1864,384 @@ notebooks drawn, the hostile one running nothing; the database's tables,
 cells, paging, and a recursive view stopped after 2 s; Show Source; the
 database bar at 390 px; the file's hash unchanged. The look in Safari and
 on a phone needs the owner's eyes.
+
+### The LaTeX preview in the page (R3, third slice)
+
+The owner's ask (R3): the LaTeX preview did not show in the browser view.
+Now a LaTeX document on the page shows the PDF the window's own preview
+typeset, and the new one each time the window typesets again; the page
+never starts a typeset of its own when the window's PDF is current.
+
+- **Text first.** A `.tex`, `.ltx` or `.latex` file (`typesetSource`, the
+  Mac's list) stays text: a document's `doc` and a page's own `filetext`
+  carry `latex: true` (`DocView::snapshot`), the tree gives it no `view`,
+  and `/file/` does not serve it. The page opens it on its pages
+  (`D.mode` "page", on an editable page too, as the window opens it in
+  its preview), and `#modebtn` flips to the lines (Show Source, or Edit
+  Source on an editable page) and back, as for Markdown.
+- **The app typesets, the server keeps.** `Web::Typesets`
+  (`src/SessionWebTypeset.cpp`) keeps, by the document's real path, the
+  state (working, ready, failed), the last PDF that worked (kept while
+  another runs and through a failure), the failure's text (64 KB, valid
+  UTF-8), a version for every change and a `pdfVersion` for every new
+  PDF; ready with the same bytes changes nothing. At most 64 entries, the
+  one changed longest ago going first; a PDF over 512 MB is a failure.
+  `Server::typesetWorking`, `typesetReady` and `typesetFailed` (any
+  thread) change it and wake the server, whose loop (`sendTypesets`)
+  sends each page showing that document a new `latex` message.
+- **A page asks.** `latex {path}` (any page: the app typesets from a copy
+  and changes nothing of the user's) takes a path from the folder or a
+  document's path under it (`relativeInFolder`: as spelled, else both
+  resolved), refuses anything `openLocalFile` refuses (outside the
+  folder, a link out, a dotfile unless the tree shows them, not a regular
+  file) or that is not LaTeX, with `state: "refused"` and the app never
+  asked; else it remembers the document on the connection, calls
+  `Options::typeset(abs)` and answers with `typesetJson`: `state` (ready,
+  working, failed, none, refused), `url` (`typesetTarget` plus `?v=` the
+  `pdfVersion`, so a new PDF is a new address the frame loads), `text`
+  (the log, or what to do). With no `Options::typeset` (a headless host)
+  a document with nothing published is "none", and its text says the
+  window's own page shows the pages.
+- **`/v/ID/typeset/PATH`.** The credential's cookie as for `/file/`
+  (`Answer::typeset`), then `beginTypeset`: LaTeX only, a page's socket
+  open (503 before), `openLocalFile` again (so a typeset kept for a file
+  outside the folder is never served through a link), a PDF kept (404
+  before), then the PDF's head (no sandbox CSP: Chrome's viewer will not
+  run in one; nosniff, no-store), 206 and 416 by `byteRange`, and the
+  bytes from memory 2 MB at a time as the connection takes them
+  (`FileSend::mem`, counted among the 32 files at once).
+- **The Mac.** `LatexView` announces each typeset (`onTypeset(path, pdf,
+  error)`: both nil as it starts; tectonic missing or the copy not
+  written are failures too) and keeps what a page asks about
+  (`typesetting`, which counts the typing debounce, `typesetPdf`,
+  `typesetFailure`). `makeLatexPreview` calls `wireSessionTypesetOf:`
+  (the SessionBrowser category), which forwards each to the window's
+  `MCSessionBrowser` (`typesetOf:pdf:error:`, nothing while no server
+  runs). The server's `Options::typeset` runs `typesetForSessionPage:` on
+  the main thread: a tab of the window on that file (paths compared
+  resolved) with a preview gives what the preview has
+  (`typesetOf:view:`: its last PDF, then working or its failure), and
+  never typesets again; otherwise the `MCSessionBrowser` keeps a preview
+  of its own (`typesetInBackground:source:`, a `LatexView` in no window,
+  at most four, stopped with the server) typeset from the tab's text, or
+  the disk's for a file the window has not open, and again only when that
+  text changed (`setPath:source:`). Its hidden sibling and output folder
+  are the preview's usual ones (latex.md), gone when it ends.
+- **The page.** `showMode` shows `#tex` (`#texnote`, the `#texframe`
+  iframe, `#texlog`) for a LaTeX document on its pages and asks
+  `latex` each time (the path as it knows it: a tab of its own by its
+  path from the folder, a document by the session's path), again after a
+  reconnect; `onLatex` sets the frame's address when it changed (ready,
+  or working with the last PDF: "Typesetting again…"), shows the log for
+  a failure ("The document did not typeset. tectonic said:"), and the
+  text for none or refused. Leaving the pages (another tab, Show Source,
+  a viewer, a note) empties the frame. `mcSessionView.typeset()` says
+  what shows, for the GUI check.
+- **Not done**: a new PDF reloads the frame, so the browser's viewer
+  starts again at the top (the window keeps the reader's place); no
+  click to the source, no edit box, no forward search, and no Warnings
+  list on the page; a page's typing (an editable page) reaches the PDF
+  when the window's preview typesets it, as the window's own typing does,
+  so beside the source it waits for a save; an `\input` file typesets
+  alone (as the window's preview of it would), not as its main document.
+  Linux's port does not publish its previews yet (it has no session
+  browser).
+
+#### Checks
+
+`sessionweb:typeset`: `typesetSource` over ten names, `typesetTarget`'s
+encoding, `relativeInFolder` (relative, under the folder, through a link
+either way, outside, a sibling folder's prefix); `Typesets` (working
+once, ready, the same bytes again nothing new, working keeping the PDF,
+ready again with the same address, a new PDF a new one, the same file by
+a link's spelling, failure keeping the PDF, the failure's cap and
+UTF-8, an empty failure, a null PDF, the 64-entry cap); `typesetJson` in
+each state; `latex` on a document and a page's own file and not on
+others; `answer()` for /typeset/ (decoded, the credential, a NUL, a near
+miss, POST); then over the wire with a headless host and a stand-in app
+that records what it was asked: 503 before a page, a published PDF
+ready at once and the app asked with the file's path, its bytes, a
+range and a 416, working with the last address, a 5 MB PDF at a new
+address in pieces and a suffix range, the same bytes again sending
+nothing, a failure's log, a document's absolute path taken as the same
+file, one with nothing yet "working" and 404 until it is published,
+nine refusals (outside, a link out, "..", a dotfile, not LaTeX, an
+absolute path elsewhere, missing, a folder) with nothing of the outside
+file sent and the app never asked, seven refused addresses (404) though
+a typeset is kept for the outside file, no cookie 403, `/file/` not
+serving the .tex, the file unchanged, and 503 once the page has gone.
+GUI: `session_browser`, on the read-only page with a stand-in tectonic:
+the window opens a document in its preview, the page follows it and
+shows the pages at its /typeset/ address, a fetch from the page gets the
+window's PDF byte for byte, Show Source shows the text; an agent's
+rewrite read by the window (`checkTabsOnDisk`) typesets again and the
+page's frame moves to a new address holding the new PDF; a document the
+window has not open, clicked in the page's tree, shows in a tab of the
+page's own typeset by the server's own preview, the window opening
+nothing, the file unchanged and no sibling left. Checked by hand in
+headless Chrome over CDP against a host with a scripted app (not
+committed): the click, "Typesetting…", the frame in Chrome's PDF viewer,
+a fetch of 200 application/pdf, the second PDF at ?v=2, Show Source and
+Show Page. The look in Safari, the viewer's place after a re-typeset,
+and a phone need the owner's eyes.
+
+### Source Control and the review in the page (R3, fourth slice)
+
+The owner's ask (R3): git and review pages did not show in the browser
+view. Now the page's sidebar has Source Control beside Files, listing the
+folder's uncommitted changes as the window's panel does, and a file clicked
+shows the review page of those changes (the window's Uncommitted Changes
+page) in a tab of the page's own, inline or side by side. Read only, on
+every page, editable or not.
+
+- **The core reads; the server runs it.** `src/SessionWebGit.{h,cpp}`:
+  `GitReads` runs the core's `ChangeReview::readUncommitted` (the GTK
+  review page's reading: one status, ls-files, ls-tree, cat-file --batch,
+  then the disk) on a detached thread of its own, one read at a time, an
+  ask while one runs being one more read; a read that shows the same
+  (`ChangeReview::fingerprint` with the top level, branch line and error)
+  is no new `version`. Its destructor never waits: the thread holds the
+  state by `shared_ptr`, and the wake is cleared under the lock, so
+  `~Server` resets `git_` first, before the wake pipe closes.
+  `Read::branchText` is new (the panel's branch line).
+- **git with fixed arguments.** The page never names a command, an
+  argument or a path to git: `git {watch}` asks for a read, `review
+  {opened, side, file}` picks from the last read by file key (a key no
+  file has is `gone`), the gap ids only a set the layout looks up
+  (`openedFrom`, at most `kMaxOpenedGaps` 4096; `sideFrom`). The Mac's
+  `Options::git` runs `MCGitRunSync`/`MCGitRunSyncWithInput` (the git it
+  found, never /usr/bin/git's shim, its environment and time limits); a
+  headless host's is the core's `runGit`: `posix_spawnp("git", "-C",
+  dir, ...)`, no shell, its own process group, SIGPIPE default, stdin from
+  an unlinked scratch file (no pipe to fill), GIT_OPTIONAL_LOCKS=0 (a
+  status never rewrites the index), GIT_TERMINAL_PROMPT=0, GIT_EDITOR=true,
+  GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE dropped, SIGTERM at 30 s and
+  SIGKILL 2 s later, 256 MB of output at most.
+- **Held to the folder** (`confineReview`): a file outside the folder (a
+  folder below the repository's top level) is dropped, a dotfile too
+  unless the tree shows them (the page's read rule), and a work tree file
+  that `lstat` says is a link, or whose `realpath` is outside the folder,
+  is made a symbolic link's note with no text (`readUncommitted` reads the
+  work tree with `readFileStable`, which follows links: an untracked link
+  to a file outside would have shown it). A folder git places outside its
+  own top level shows the "not in a repository" error.
+- **What the page gets.** `git` (`gitStatusJson`): version, top, branch,
+  initial, files ({key, section, letter, path, orig, header, added,
+  removed}), count, error. `review` (`reviewJson`): one
+  `ChangeReview::layout` of every file (three lines of context, gaps
+  closed unless opened), each file's rows as arrays (`c`, `r`, `a`, `x`
+  for a conflict line with its part, `g` a gap with its id and count, `n`
+  a note), syntax and changed words as [start, length, style] in UTF-16
+  units; a file asked side by side is laid out from its `SideBySide` rows
+  with the same folding and gap ids (`s` rows, kind c, m, r, a, the words
+  on both sides). Past `kReviewRowBudget` (20,000) rows a file comes as
+  its header with `more` and the page asks for it alone (`reviewfile`). A
+  row is cut at `kReviewRowChars` (2,000 units) with an ellipsis. The
+  window's "Side by Side or Open shows it" note for a large file reads as
+  the window's review showing it.
+- **Updates.** A page that sent `git` watches until `git {watch: false}`
+  (the page sends it when neither Source Control nor the review tab is on
+  show). `Server::gitChanged()` (any thread) marks the read stale; the
+  loop asks for one at most a second after the last (`takeGit`), only
+  while a page watches, and sends `git` to each watching page whose last
+  version differs, or that asked. The Mac calls it from the window's
+  FSEvents callback (`sessionFolderChangedOnDisk`, the SessionBrowser
+  category's hook in EditorController+Tree.mm), which sees writes under
+  the folder and .git inside it: an agent's edit, git in a terminal, the
+  window's own panel. **A limit**: a folder below the repository's top
+  level sees no .git events, so a commit made elsewhere shows at the next
+  change under the folder (as the tree's git colors). A headless host
+  watches nothing: its pages read again on ↻, `hello` (a reconnect) and
+  `visibilitychange`.
+- **The page.** `#sidemodes` (Files, Source Control) swaps `#tree` for
+  `#git` (`#gitsum` the branch and count, `#gitlist` the rows: name,
+  folder, letter in the tree's git colors, `paletteJson`'s new `git`);
+  ↻ reads the mode on show. A row's click opens the review tab (`L.tabs`
+  entry path `/changes`, which no relative path is, label Changes,
+  `view: "review"`) at that file (`G.goto`), drawn in `#fileview.review`
+  by `textContent` only, each file a sticky header with Side by Side (or
+  Inline, or Show Changes), a gap row's click opening it (`reviewfile`).
+  A new `version` asks for the review again with the page's opened gaps
+  and side-by-side files, and keeps the place by the file at the top.
+  Syntax colors reuse the theme's rules (`#review .sN`); tints are the
+  Mac's review's (removed #F14C4C at .16, added #73C991 at .16, words .38
+  and .36). `mcSessionView.git()` and `review()` say what shows.
+- **Not done here** (the window's commit and worktree pages and the
+  pictures came next, below): no graph, no Open of a file from the
+  review, no F7. Nothing stages, discards, commits or applies, by design.
+
+#### Checks
+
+`sessionweb:git` (a real git in a scratch repository): `runGit` (output,
+a failure's status, stdin, not a repository); `readUncommitted` held to
+the folder: the staged file first, a change, a new and a deleted file, a
+dotfile left out (in with hidden), an untracked link to a secret outside
+shown as a link with no text, a subfolder showing only its file, an error
+outside a repository; `gitStatusJson`'s sections and letters; `reviewJson`:
+removed and added rows with numbers, changed words, syntax spans, a gap,
+the gap opened, side by side with the changed pair's words on both sides
+and the same gap id, a 5,000-character line cut, a link's note, a
+deleted file's removed row, the row budget's `more`; `openedFrom` and
+`sideFrom` capped; `GitReads` (a version only for something new, the
+wake, none once destroyed mid-read); then over the wire with a headless
+host: a review before any read pending, the list, the review with a file
+side by side, one file, a key no file has, nonsense answered as the whole
+review, `gitChanged` reaching a watching page with a new version, nothing
+once it stops watching, no byte of the secret, and the status and the
+index file byte for byte as they were. GUI: `session_browser`, on the
+read-only page: the folder made a repository with a staged change, a
+change and a new file; Source Control lists them staged first; a click
+opens the review at that file with the removed and added lines, changed
+words, syntax colors and only Side by Side buttons, the window opening
+nothing; Side by Side pairs the changed lines; the gap opened shows every
+line; an agent's edit on disk reaches the review with no press, side by
+side and the gap kept; HEAD and the staged list as they were. The look in
+Safari, a long review's scrolling, and a phone need the owner's eyes.
+
+### The window's commit and worktree pages, and pictures (R3, last slice)
+
+What #262 left: the window's open commit pages and worktree pages
+(Compare with Main) on the page, and the review's pictures (#217's image
+diffs). Both read only, on every page.
+
+- **The window says which.** `WindowTabs` gains `reviews`
+  (`Web::reviewsReportJson`: [{kind "commit", hash | kind "worktree",
+  path, title, onShow}], at most 32, a page that does not hold up left
+  out). The Mac's `sessionBrowserReviews` (the SessionBrowser category)
+  lists the `MCChangeReviewPage`s with a `commit` or a `worktree` in both
+  groups' strips, the tab on show marked; `MCSessionWindow reviews` puts
+  them in the record, so they ride the half-second report. The window's
+  Uncommitted Changes page is left out (the page has its own).
+- **The server checks it again** (`lookAtState`, `reviewPagesFrom`: the
+  report is a renderer's): a known kind; a commit by 4 to 64 hex digits
+  only (`commitName`; never `HEAD~1`, never `--output=...`); a worktree by
+  an absolute path of valid UTF-8 with no control character; titles cut
+  at 300 bytes; each id once. The page gets `reviews` [{id, kind, title,
+  onShow}] in the window's state (`reviewsViewJson`), ids
+  `commit:HASH` and `worktree:PATH`, and `Session::reviews` keeps what
+  each id stands for. Another window's pages are never listed (the
+  window filter comes first).
+- **A page picks by id, git reads by the host's own state.** `review
+  {page}` (any page) names an id; one the state does not list is answered
+  `error` ("no longer open in the mutible window") and nothing runs. The
+  first ask makes the page's `GitReads` over `readReviewPage`, on a
+  thread of its own as the uncommitted read: a commit is the core's new
+  `ChangeReview::readCommit` (the Mac's `ReadCommit` ported: `show -s`,
+  `diff-tree -r -z -M` against the first parent or `--root`, one
+  `cat-file --batch`; `review-read:commit`) in the session's folder's own
+  repository, whatever root the window's page had, then `confineReview`
+  to the folder; a worktree only when `worktree list --porcelain` run in
+  the folder names it (realpath compared; not the main checkout, not a
+  bare one), compared with `AgentView::mainRef` of that list (the main
+  checkout's branch, never a name the report gives), read by the core's
+  `readWorktree` and held by `confineReview` to the worktree's own folder.
+  `readWorktree` now marks each file read from the disk `workRead`, so
+  an untracked link in the worktree (to a secret elsewhere) is shown as a
+  link with no text. Pending first, then `reviewread {page, version}`
+  for each new version the page has not had, and the page asks again
+  (`review {page}` answers from the last read at once). A worktree page
+  shown is read again on `gitChanged` (the window's FSEvents see a
+  worktree under the folder; one elsewhere is read again on ↻ and on
+  coming back to the page), at most once a second with the uncommitted
+  read; a commit page never (a commit does not change) except on ↻
+  (`reread`). `watch: false` (leaving the tab) stops it; a page the
+  window closes is let go (its read dropped, the conn's `reviewPage`
+  cleared) at the next state.
+- **The header** (`ReviewRead`'s title, detail and body): a commit's
+  subject, its byline (`commitByline`) and the counts, the rest of its
+  message; a worktree's "x compared with main", "against main at the
+  branch point (1a2b3c4)", its branch and the counts. `review` carries
+  them with `page`.
+- **Pictures** (every review, the uncommitted one too): the page's reads
+  give `ImageReading` `pageImages()`, whose `pictureSize` reads PNG, GIF,
+  JPEG, WebP, BMP and ICO sizes from their headers (no decoding; a TIFF
+  or HEIC file, which Chrome cannot show, stays the binary note), so
+  `showAsImages` makes the file a picture under the window's caps (64
+  megapixels, 4 MB a side). `reviewFileJson` gives such a file `images`
+  [{side, label (the window's `imageLabel`), width, height, bytes, url}]
+  and no image rows; without a URL maker the old note stays. The bytes
+  are the read's (`Extra::oldImage`, `newImage`), served at
+  `/v/ID/picture/PAGE/VERSION/FILE/SIDE` (`pictureTarget`; PAGE 0 the
+  uncommitted review, else the number the server gave the page's reads):
+  numbers only, so the address names no path or key. `answer()` takes it
+  as `/file/` (the credential's cookie, Host and Origin), then
+  `beginPicture`: a page's socket open (503 before), counted among the
+  32 files at once, the read named by PAGE, only while VERSION is its
+  latest (404 once the changes moved on: the page asks for the new
+  review anyway), only a file shown as pictures and a side it shows, the
+  kind `fileType` serves as an image (its mime, nosniff, no-store, the
+  sandbox CSP, its 64 MB cap), Range as for a file, from memory
+  (`FileSend::mem` aliasing the read, which stays alive while it is
+  sent). `confineReview` now also drops a linked file's pictures (their
+  bytes came through the link). `printOf` hashes the pictures' bytes, so
+  a picture that changed alone is a new version.
+- **The page.** The window's pages are tabs in the strip after its
+  documents (class `review`, no ×: only the window closes them), titled
+  as the window titles them; a click shows the review in `#fileview` as
+  the Changes tab does (`L.tabs`' entry made from the state,
+  `windowReviewTab`, path `/review/` + id). Per review state (`RV`, by id,
+  "" the uncommitted one): its answer, opened gaps, side-by-side files.
+  A page review has `#review .rtop` (title, a Read-only mark, detail, the
+  body in pre-wrap) and no section headings (its files are Plain). A
+  file's pictures are `.rimgs`: a column each, its label above an `<img>`
+  at the pixel size (`width`/`height` attributes for its room before it
+  loads), never taller than 320, on the checkerboard; an image that fails
+  says so in its label. A page the window closes leaves the strip, and
+  if it was on show the page goes back to the window's tab
+  (`dropGoneReviews`). A reconnect asks for the review on show once the
+  state lists it again. `mcSessionView.review()` gains `page`, `title`,
+  `detail`, `body`, and each file's `images` (with `naturalWidth`).
+- **Not done**: the page does not follow the window to a review page it
+  shows (the tab on show is marked `onshow`, nothing more); no Open of a
+  file and no F7 from these pages; GTK reports no review pages (it has no
+  session browser); the Mac's own pages still read with ChangeReviewPage.mm's
+  `ReadCommit` and `ReadWorktree`, beside the core's twins.
+
+#### Checks
+
+`review-read:commit`: `readCommit` over a scratch repository (the header,
+the parent, three Plain files with the commit's text and not the work
+tree's, an added file, a picture's two versions and bytes, a root commit,
+a name that is no commit, no repository). `sessionweb:pictures`:
+`pictureSize` over PNG (cut, zero, too wide), GIF, JPEG (and scan data
+first), WebP VP8X, BMP top-down, ICO's largest entry, text, empty, TIFF;
+`pictureTarget` and `pictureParts` over 12 bad parts; `answer()` refusing
+/picture/ without the cookie. `sessionweb:review-pages`: the report and
+its check (a hostile report: an option, `HEAD~1`, short and long names, a
+relative path, a newline, an unknown kind, non-objects, a 400-byte title,
+a duplicate; the 32 cap; the view leaves out the hash); against a real
+git with an agent's worktree outside the folder: a commit's header,
+detail, files held to the folder (no dotfile unless hidden, a subfolder's
+one file), its picture's images JSON with the window's label and the
+addresses, the note without them, names that are no commit (an option
+among them, which writes nothing); the worktree's title and detail, its
+change, its new picture, the dotfile left out, the untracked link to a
+secret shown as a link with no bytes, not the main checkout, not a folder
+that is no worktree; `GitReads` over a page with a picture that changed
+alone giving a new version; then over the wire with an in-process host
+whose window reports both pages and two that do not hold up, and another
+window one of its own: the state's ids and titles only, pending then
+`reviewread` then the review with its header, the pictures' bytes over
+HTTP (type, nosniff, sandbox), refused without the cookie, under another
+version, at five made-up addresses and for a text file; one file by key;
+two pages the window does not have; the worktree page with the link and
+its new picture; `gitChanged` bringing a new version; the window closing
+the commit page (the state, the ask and its picture all refused); no
+SECRET or TOKEN in anything sent; HEAD, the status and the worktree's
+index unchanged. GUI: `session_browser`, on the read-only page: two
+commits with a picture made bigger, and an agent's worktree (outside the
+folder) with a change and a new picture; the window opens the commit's
+page and the worktree's; the page's strip lists both (not as its own);
+a click shows the commit's page with its title, its change, and the
+picture's Before and After decoded at 2 and 4 pixels wide from /picture/
+addresses, labeled as the window labels them, only Side by Side, the
+window opening nothing; the worktree's tab shows "compared with", the
+agent's change and the new picture decoded, no Apply to Main; the window
+closing the commit's page takes its tab off the page, the worktree's
+staying on show; closing the worktree's page puts the page back on the
+window's tab. The look in Safari and Chrome (the header, the pictures'
+row, a tall picture capped at 320), a phone, and a big worktree page
+need the owner's eyes.
 
 ### The window's browser tabs in the page (R4)
 
@@ -2014,5 +2410,8 @@ panes and the ×s needs the owner's eyes.
   yet. Stage 7's watching should send the page a folder's listing when it
   changes. A headless host's page cannot open text files (no window
   decides tabs); it shows pictures, PDFs, media, HTML, tables, notebooks
-  and databases (R3). LaTeX and git pages in the page are R3's later
-  slices.
+  and databases (R3), and a LaTeX document's text, saying the window's
+  own page shows its pages (it typesets nothing). Source Control, the
+  review of uncommitted changes (R3's fourth slice), and the window's
+  open commit and worktree pages with every review's pictures (its last
+  slice) are in; the page does not follow the window to a review page.
