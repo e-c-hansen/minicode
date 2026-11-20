@@ -262,8 +262,8 @@ goes here first, with tests; the GUI only displays it.
 - `Demo` (`make demos`, inert unless `MUTIBLE_DEMO`), `Bench`
   (`MUTIBLE_BENCH`; the Linux port's is `linux/src/Bench.cpp`).
 - Elsewhere: `tools/mutible-cli.cpp`, `scripts/mutible-launcher`,
-  `tools/makegif.m`, `tools/procmem-mac.c`, `tools/procmem-linux.c`,
-  `scripts/membench-mac.sh`, `scripts/membench-linux.sh`, `skills/mutible/SKILL.md`,
+  `tools/makegif.m`, `tools/procmem-mac.c`, `tools/procmem-linux.c`, `tools/taskbench-mac.m`,
+  `scripts/membench-mac.sh`, `scripts/membench-linux.sh`, `scripts/taskbench-mac.sh`, `skills/mutible/SKILL.md`,
   `tests/fixtures/claude`, `mac/tests/gui`, `tests/latex`, `tests/markdown`,
   `tests/keepsorted`, `site/` (the homepage, `docs/notes/release.md`).
 
