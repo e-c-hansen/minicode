@@ -41,4 +41,11 @@ bool hyperlink(const std::string& uri, const std::string& localHost, Link& out);
 // Code does; anything else is returned as it is.
 std::string browserAddress(const std::string& url);
 
+// What shows beside the pointer resting on a link, since a plain click
+// selects text as in every terminal: "⌘-click to open" on the Mac, "Ctrl+click
+// to open" elsewhere (the GTK port's spelling of its keys), with an OSC 8
+// hyperlink's address on a second line, its text being free to say anything
+// (`address` "" for a link read from the text).
+std::string restHint(bool mac, const std::string& address);
+
 }  // namespace TermLinks

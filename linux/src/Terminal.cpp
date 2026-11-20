@@ -25,6 +25,7 @@
 #include "ThemeCss.h"
 
 #include <vte/vte.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -132,6 +133,47 @@ Terminal::Terminal(const std::string& cwd, std::shared_ptr<SessionLink::Link> li
     gtk_widget_set_margin_top(attentionDot_, 2);
     gtk_widget_set_visible(attentionDot_, FALSE);
     gtk_overlay_add_overlay(GTK_OVERLAY(root_), attentionDot_);
+    // The hint beside a pointer resting on a link (showLinkHint), over
+    // everything, clicks going through to VTE; placed by hand below.
+    linkHint_ = gtk_label_new(nullptr);
+    gtk_widget_add_css_class(linkHint_, "minicode-link-hint");
+    gtk_label_set_wrap(GTK_LABEL(linkHint_), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(linkHint_), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_max_width_chars(GTK_LABEL(linkHint_), 60);
+    gtk_label_set_xalign(GTK_LABEL(linkHint_), 0);
+    gtk_widget_set_can_target(linkHint_, FALSE);
+    gtk_widget_set_visible(linkHint_, FALSE);
+    gtk_overlay_add_overlay(GTK_OVERLAY(root_), linkHint_);
+    // Under the pointer's arrow, else above it, and always inside the
+    // terminal, as the Mac's HoverHint and GTK's tooltips are placed.
+    auto placeHint = +[](GtkOverlay* o, GtkWidget* child, GdkRectangle* r, gpointer p) -> gboolean {
+        Terminal* self = static_cast<Terminal*>(p);
+        if (child != self->linkHint_) return FALSE;
+        const int W = gtk_widget_get_width(GTK_WIDGET(o)), H = gtk_widget_get_height(GTK_WIDGET(o));
+        int minW = 0, w = 0, minH = 0, h = 0;
+        gtk_widget_measure(child, GTK_ORIENTATION_HORIZONTAL, -1, &minW, &w, nullptr, nullptr);
+        w = std::max(minW, std::min(w, std::max(minW, W - 4)));
+        gtk_widget_measure(child, GTK_ORIENTATION_VERTICAL, w, &minH, &h, nullptr, nullptr);
+        double px = self->hintX_, py = self->hintY_;
+        if (self->vte_) {
+            graphene_point_t in = GRAPHENE_POINT_INIT((float)px, (float)py), at;
+            if (gtk_widget_compute_point(self->vte_, GTK_WIDGET(o), &in, &at)) {
+                px = at.x;
+                py = at.y;
+            }
+        }
+        constexpr double kBelow = 20, kAbove = 6;
+        const double x = std::max(2.0, std::min(px, (double)W - w - 2));
+        double y = py + kBelow;
+        if (y + h > H) y = py - kAbove - h;
+        y = std::max(0.0, std::min(y, (double)H - h));
+        r->x = (int)std::lround(x);
+        r->y = (int)std::lround(y);
+        r->width = w;
+        r->height = h;
+        return TRUE;
+    };
+    g_signal_connect(root_, "get-child-position", G_CALLBACK(placeHint), this);
     // Only the floor: the height is the paned divider's business now, so the
     // panel must not demand a fixed size (that was what made it unresizable).
     gtk_widget_set_size_request(root_, -1, kMinHeight);
@@ -439,17 +481,39 @@ void Terminal::makeTerminal() {
     }), this);
     gtk_widget_add_controller(vte_, GTK_EVENT_CONTROLLER(click));
     handlers_.push_back(G_OBJECT(click));
+    // Any button pressed takes the link hint away (the click itself is
+    // VTE's, or the gesture's above).
+    GtkGesture* anyPress = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(anyPress), 0);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(anyPress), GTK_PHASE_CAPTURE);
+    g_signal_connect(anyPress, "pressed", G_CALLBACK(+[](GtkGestureClick*, int, double, double,
+                                                         gpointer p) {
+        Terminal* self = static_cast<Terminal*>(p);
+        self->armRestHint(true);   // no new wait while the button is down
+        self->hideLinkHint();
+    }), this);
+    gtk_widget_add_controller(vte_, GTK_EVENT_CONTROLLER(anyPress));
+    handlers_.push_back(G_OBJECT(anyPress));
 
-    // Where the pointer is, and whether Ctrl is down, for the underline.
+    // Where the pointer is, and whether Ctrl is down, for the underline; a
+    // move takes the link hint away and starts the rest's wait again.
     GtkEventController* motion = gtk_event_controller_motion_new();
     auto moved = +[](GtkEventControllerMotion* m, double x, double y, gpointer p) {
         Terminal* self = static_cast<Terminal*>(p);
+        const GdkModifierType state =
+            gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(m));
+        // GTK repeats the pointer's place after a relayout (the hint
+        // showing): not a move, so it neither hides the hint nor waits again.
+        if (self->pointerIn_ && std::fabs(x - self->pointerX_) < 0.5 &&
+            std::fabs(y - self->pointerY_) < 0.5 &&
+            (bool)(state & GDK_CONTROL_MASK) == self->ctrlDown_)
+            return;
         self->pointerIn_ = true;
         self->pointerX_ = x;
         self->pointerY_ = y;
-        self->ctrlDown_ = gtk_event_controller_get_current_event_state(
-                              GTK_EVENT_CONTROLLER(m)) & GDK_CONTROL_MASK;
+        self->ctrlDown_ = state & GDK_CONTROL_MASK;
         self->setHover(self->ctrlDown_);
+        self->armRestHint(state & (GDK_BUTTON1_MASK | GDK_BUTTON2_MASK | GDK_BUTTON3_MASK));
     };
     g_signal_connect(motion, "enter", G_CALLBACK(moved), this);
     g_signal_connect(motion, "motion", G_CALLBACK(moved), this);
@@ -457,6 +521,8 @@ void Terminal::makeTerminal() {
         Terminal* self = static_cast<Terminal*>(p);
         self->pointerIn_ = false;
         self->setHover(false);
+        self->armRestHint(true);
+        self->hideLinkHint();
     }), this);
     gtk_widget_add_controller(vte_, motion);
     handlers_.push_back(G_OBJECT(motion));
@@ -483,13 +549,18 @@ void Terminal::makeTerminal() {
     // ordinary output costs nothing.
     auto recheck = +[](gpointer, gpointer p) {
         Terminal* self = static_cast<Terminal*>(p);
-        if (self->ctrlDown_ || !self->hover_.empty()) self->setHover(self->ctrlDown_);
+        // A scroll moves the text under the hint: it goes, as on the Mac.
+        if (!self->addressHint_) {
+            self->armRestHint(true);
+            self->hideLinkHint();
+        }
+        if (self->ctrlDown_ || self->hoverLink_) self->setHover(self->ctrlDown_);
         if (self->navLine_ >= 0) gtk_widget_queue_draw(self->underline_);   // the outline scrolls
     };
     g_signal_connect(vte_, "contents-changed", G_CALLBACK(+[](VteTerminal*, gpointer p) {
         Terminal* self = static_cast<Terminal*>(p);
         self->topKnown_ = false;   // see topRow
-        if (self->ctrlDown_ || !self->hover_.empty()) self->setHover(self->ctrlDown_);
+        if (self->ctrlDown_ || self->hoverLink_) self->setHover(self->ctrlDown_);
     }), this);
     if (GtkAdjustment* adj = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(vte_))) {
         g_signal_connect(adj, "value-changed", G_CALLBACK(recheck), this);
@@ -509,7 +580,15 @@ void Terminal::makeTerminal() {
         auto ctrlKey = +[](GtkEventControllerKey* k, guint keyval, guint, GdkModifierType,
                            gpointer q) -> gboolean {
             Terminal* t = static_cast<Terminal*>(q);
-            if (keyval != GDK_KEY_Control_L && keyval != GDK_KEY_Control_R) return FALSE;
+            if (keyval != GDK_KEY_Control_L && keyval != GDK_KEY_Control_R) {
+                // Any other key takes the link hint away (Ctrl's own press
+                // is setHover's to judge).
+                if (!t->hintText_.empty() || t->restTimer_) {
+                    t->armRestHint(true);
+                    t->hideLinkHint();
+                }
+                return FALSE;
+            }
             // key-pressed and key-released share the handler; which one ran
             // is in the event itself.
             GdkEvent* ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(k));
@@ -781,6 +860,7 @@ Terminal::~Terminal() {
         g_object_remove_weak_pointer(G_OBJECT(keysWindow_), (gpointer*)&keysWindow_);
     }
     if (cursorIdle_) g_source_remove(cursorIdle_);
+    if (restTimer_) g_source_remove(restTimer_);
     if (typeTimer_) g_source_remove(typeTimer_);
     if (claudeTimer_) g_source_remove(claudeTimer_);
     if (finishTimer_) g_source_remove(finishTimer_);
@@ -904,9 +984,49 @@ std::string Terminal::shellDirectory() const {
     return cwd_;
 }
 
+bool Terminal::hyperlinkAt(double x, double y, Link* out, bool* had) {
+    *had = false;
+    char* uri = vte_terminal_check_hyperlink_at(VTE_TERMINAL(vte_), x, y);
+    if (!uri) return false;
+    *had = true;
+    const std::string address = uri;
+    g_free(uri);
+    TermLinks::Link l;
+    if (!TermLinks::hyperlink(address, g_get_host_name(), l)) return false;
+    Link link;
+    link.address = address;
+    if (l.kind == TermLinks::Link::Url) {
+        link.isUrl = true;
+        link.target = l.target;
+    } else {
+        // A file here, which must exist, as a path read from the text.
+        TermLinkPath::Target found;
+        if (!TermLinkPath::resolve(l.target, shellDirectory(), root_dir_, g_get_home_dir(), &found))
+            return false;
+        link.target = found.path;
+        link.isDir = found.isDir;
+        link.insideRoot = found.insideRoot;
+    }
+    *out = link;
+    return true;
+}
+
 bool Terminal::findLink(double x, double y, Link* out, std::vector<Span>* spans) {
     if (!vte_) return false;   // not shown yet
     VteTerminal* t = VTE_TERMINAL(vte_);
+    // An OSC 8 hyperlink comes first, whatever its text says; one whose
+    // address opens nothing here (javascript:, another host's file) is no
+    // link at all. VTE underlines a hovered hyperlink itself: no spans.
+    {
+        bool had = false;
+        Link hl;
+        if (hyperlinkAt(x, y, &hl, &had)) {
+            if (out) *out = hl;
+            if (spans) spans->clear();
+            return true;
+        }
+        if (had) return false;
+    }
     const long cw = vte_terminal_get_char_width(t), ch = vte_terminal_get_char_height(t);
     const long cols = vte_terminal_get_column_count(t);
     if (cw <= 0 || ch <= 0 || cols <= 0) return false;
@@ -1013,7 +1133,66 @@ bool Terminal::openLinkAt(double x, double y) {
     if (!findLink(x, y, &link, nullptr)) return false;
     hover_.clear();
     gtk_widget_queue_draw(underline_);
+    hideLinkHint();
     if (onLink_) onLink_(link);
+    return true;
+}
+
+std::string Terminal::linkHintText() const {
+    return linkHint_ && gtk_widget_get_visible(linkHint_) ? hintText_ : std::string();
+}
+
+void Terminal::showLinkHint(const std::string& text, double x, double y) {
+    if (!linkHint_) return;
+    hintText_ = text;
+    hintX_ = x;
+    hintY_ = y;
+    gtk_label_set_text(GTK_LABEL(linkHint_), text.c_str());
+    gtk_widget_set_visible(linkHint_, TRUE);
+    gtk_widget_queue_allocate(root_);   // placed again (get-child-position)
+}
+
+void Terminal::hideLinkHint() {
+    addressHint_ = false;
+    if (hintText_.empty()) return;
+    hintText_.clear();
+    if (linkHint_) gtk_widget_set_visible(linkHint_, FALSE);
+}
+
+// A move hides the hint and starts the wait again: the link is looked up
+// once the pointer has rested, never on every move. No wait while Ctrl is
+// down (setHover's then) or a button is held (a selection being dragged).
+void Terminal::armRestHint(bool buttonDown) {
+    if (restTimer_) {
+        g_source_remove(restTimer_);
+        restTimer_ = 0;
+    }
+    if (!addressHint_ && !hintText_.empty()) hideLinkHint();
+    if (buttonDown || ctrlDown_ || !pointerIn_) return;
+    restTimer_ = g_timeout_add(kRestHintMs, [](gpointer p) -> gboolean {
+        Terminal* self = static_cast<Terminal*>(p);
+        self->restTimer_ = 0;
+        self->showRestHint();
+        return G_SOURCE_REMOVE;
+    }, this);
+}
+
+void Terminal::showRestHint() {
+    if (!vte_ || !pointerIn_ || ctrlDown_ || !gtk_widget_get_mapped(vte_)) return;
+    Link link;
+    if (!findLink(pointerX_, pointerY_, &link, nullptr)) return;
+    showLinkHint(TermLinks::restHint(false, link.address), pointerX_, pointerY_);
+}
+
+bool Terminal::cellCenter(long row, long col, double* x, double* y) {
+    if (!vte_) return false;
+    VteTerminal* t = VTE_TERMINAL(vte_);
+    const long cw = vte_terminal_get_char_width(t), ch = vte_terminal_get_char_height(t);
+    const double r = (double)row - topRow();
+    if (cw <= 0 || ch <= 0 || r < 0 || r >= vte_terminal_get_row_count(t)) return false;
+    const GtkBorder pad = cellInset(vte_);
+    *x = pad.left + (col + 0.5) * cw;
+    *y = pad.top + (r + 0.5) * ch;
     return true;
 }
 
@@ -1021,18 +1200,33 @@ bool Terminal::openLinkAt(double x, double y) {
 // pointing hand over it.
 void Terminal::setHover(bool ctrl) {
     std::vector<Span> spans;
-    if (ctrl && pointerIn_ && gtk_widget_get_mapped(vte_))
-        findLink(pointerX_, pointerY_, nullptr, &spans);
+    Link link;
+    const bool found = ctrl && pointerIn_ && gtk_widget_get_mapped(vte_) &&
+                       findLink(pointerX_, pointerY_, &link, &spans);
     bool same = spans.size() == hover_.size();
     for (size_t i = 0; same && i < spans.size(); i++)
         same = spans[i].row == hover_[i].row && spans[i].col0 == hover_[i].col0 &&
                spans[i].col1 == hover_[i].col1;
     hover_ = std::move(spans);
+    hoverLink_ = found;
     if (!same) gtk_widget_queue_draw(underline_);
+
+    // A hyperlink's text may say anything: with Ctrl held over one, its
+    // address shows beside the pointer at once. Otherwise no hint but a
+    // rest's, which Ctrl pressed takes away too.
+    const std::string address = found ? link.address : std::string();
+    if (!address.empty()) {
+        if (!addressHint_ || hintText_ != address) {
+            showLinkHint(address, pointerX_, pointerY_);
+            addressHint_ = true;
+        }
+    } else if (addressHint_ || (ctrl && !hintText_.empty())) {
+        hideLinkHint();
+    }
 
     // VTE sets its own cursor as the pointer moves, possibly after this
     // handler has run, so the hand goes on once the event is done with.
-    const bool hand = !hover_.empty();
+    const bool hand = hoverLink_;
     if (!hand && !handCursor_) return;
     handCursor_ = hand;
     if (cursorIdle_) return;

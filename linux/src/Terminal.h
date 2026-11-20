@@ -74,7 +74,19 @@ public:
     // shared TermLinks core finds URLs and file references such as
     // src/foo.cpp:42:7 in the clicked line; a file reference counts only when
     // it names something that exists, tried against the shell's directory and
-    // then the project folder. Holding Ctrl over one underlines it.
+    // then the project folder. Holding Ctrl over one underlines it. An OSC 8
+    // hyperlink a program printed (`ls --hyperlink`, gcc, Claude Code) comes
+    // first: VTE keeps its address, which TermLinks::hyperlink reads (a web
+    // address, or a file here that exists), whatever its text says.
+    //
+    // Resting the pointer on a link for half a second (kRestHintMs) shows
+    // "Ctrl+click to open" beside it (TermLinks::restHint, a hyperlink's
+    // address on a second line), since a plain click selects text as in
+    // every terminal; a move, a press, a key, a scroll or leaving the
+    // terminal takes it away. With Ctrl held over a hyperlink its address
+    // shows there at once. The hint is a label over the terminal that
+    // clicks go through (the Mac's HoverHint), not a tooltip: GTK, like
+    // AppKit, shows a tooltip only after the pointer moves.
     struct Link {
         bool isUrl = false;
         bool isDir = false;
@@ -82,7 +94,9 @@ public:
         std::string target;        // the URL, or the resolved absolute path
         int line = 0;              // 1-based, 0 when the reference named none
         int column = 0;            // 1-based characters, 0 when none
+        std::string address;       // an OSC 8 hyperlink's address; "" for text
     };
+    static constexpr int kRestHintMs = 500;
     // The session's own folders (its scratchpad, its worktree) for the
     // session running here, asked at each click: a relative path that is not
     // in the shell's folder is looked for there before the project's.
@@ -94,6 +108,15 @@ public:
     bool linkAt(double x, double y, Link* out);
     // What a Ctrl+click at that point does: true when there was a link to open.
     bool openLinkAt(double x, double y);
+    // For the checks: the hint beside the pointer ("" while none shows), its
+    // label, whether the hovered link is underlined (a link read from the
+    // text; VTE draws a hyperlink's own), and the middle of a cell of the
+    // buffer (scrollback included) in the VTE widget's coordinates, false
+    // when that row is not on screen.
+    std::string linkHintText() const;
+    GtkWidget* linkHintWidget() const { return linkHint_; }
+    bool linkUnderlined() const { return !hover_.empty(); }
+    bool cellCenter(long row, long col, double* x, double* y);
 
     // Run in Terminal (PARITY.md 2.8, the Mac's typeCommand:): `text` at
     // the shell's prompt as a paste (in brackets when the shell asked for
@@ -260,6 +283,15 @@ private:
     // row of the whole buffer (scrollback included), not of the screen.
     struct Span { long row, col0, col1; };
     bool findLink(double x, double y, Link* out, std::vector<Span>* spans);
+    // An OSC 8 hyperlink at the point: false when there is none or VTE's
+    // address opens nothing here; `*had` says whether there was one.
+    bool hyperlinkAt(double x, double y, Link* out, bool* had);
+    // The hint beside the pointer (see Link): shown at a point in VTE's
+    // coordinates, hidden, the rest's wait started again by a move.
+    void showLinkHint(const std::string& text, double x, double y);
+    void hideLinkHint();
+    void armRestHint(bool buttonDown);
+    void showRestHint();
     std::string shellDirectory() const;
     double topRow();                               // buffer row at the top of the view
     void setHover(bool ctrl);                      // re-evaluate at the pointer
@@ -415,7 +447,15 @@ private:
     bool   ctrlDown_ = false;
     std::vector<Span> hover_;
     bool   handCursor_ = false;
+    bool   hoverLink_ = false;      // a link under the pointer with Ctrl held
     guint  cursorIdle_ = 0;
+    // The hint beside the pointer: its label over the terminal, the point it
+    // was shown at (VTE's coordinates), what it says, and the rest's timer.
+    GtkWidget* linkHint_ = nullptr;
+    double hintX_ = 0, hintY_ = 0;
+    std::string hintText_;
+    bool   addressHint_ = false;    // shown for Ctrl over a hyperlink, not a rest
+    guint  restTimer_ = 0;
     GtkEventController* windowKeys_ = nullptr;   // on the window, for Ctrl alone
     GtkWidget* keysWindow_ = nullptr;
     GdkRGBA    linkColor_{};

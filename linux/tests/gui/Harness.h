@@ -325,6 +325,10 @@ void MCGuiRelease(int button = 1);
 // ("ctrl+shift"), as a hand holds them.
 void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x = -1,
                     double y = -1, int button = 1);
+// A modifier ("ctrl", "shift", "alt") pressed and left down, or let go: a
+// hand resting on Ctrl while the pointer moves. A suite that presses one
+// lets it go before it ends.
+void MCGuiHoldModifier(const std::string& modifier, bool down);
 // Press at one point of `widget`, release at another, moving between over a
 // few turns of the main loop; the next step waits until it is over.
 void MCGuiDrag(GtkWidget* widget, double x0, double y0, double x1, double y1);

@@ -288,7 +288,7 @@ public:
     bool enablePreviewFromQuickOpen() const { return enablePreviewFromQuickOpen_; }
     // workbench.sidebar-icons: a row of icons at the top of the sidebar, one
     // per panel that takes its place (the file tree, Source Control, Agents,
-    // and Processes), with their counts; on by default (the Mac).
+    // and Processes), with their counts; on by default (the Mac and the GTK port).
     bool sidebarIcons() const { return sidebarIcons_; }
     // explorer.auto-reveal: when another tab comes on show, the file tree
     // opens its folders, selects its row and centers it unless it is in
