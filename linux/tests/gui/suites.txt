@@ -135,3 +135,5 @@ TreeDragsSuite.cpp
 LspPopupsSuite.cpp
 EditBoxesSuite.cpp
 GitPanelSuite.cpp
+SidebarIconsSuite.cpp
+TerminalLinksSuite.cpp

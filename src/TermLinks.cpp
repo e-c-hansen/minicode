@@ -240,6 +240,12 @@ std::string browserAddress(const std::string& url) {
     return url;
 }
 
+std::string restHint(bool mac, const std::string& address) {
+    std::string hint = mac ? "\xE2\x8C\x98-click to open" : "Ctrl+click to open";
+    if (!address.empty()) hint += "\n" + address;
+    return hint;
+}
+
 const Link* at(const std::vector<Link>& links, size_t offset) {
     for (const Link& l : links)
         if (offset >= l.start && offset < l.start + l.length) return &l;

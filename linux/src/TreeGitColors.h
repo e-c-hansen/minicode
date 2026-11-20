@@ -64,7 +64,14 @@ public:
     static const char* cssClass(Git::Decoration d);
     static std::string tooltip(Git::Decoration d);
 
-    // The colors changed: the tree's rows on show ask again.
+    // How many paths have a change, as the last look found them (the
+    // core's Decorations::changeCount: an untracked folder is one, ignored
+    // paths none): the sidebar's Source Control badge (SidebarIcons.h), so
+    // no git runs for it. 0 outside a repository.
+    size_t changeCount() const { return decorations_ ? decorations_->changeCount() : 0; }
+
+    // The colors changed: the tree's rows on show ask again, and the
+    // sidebar's badge.
     std::function<void()> onChange;
 
     // For the checks.

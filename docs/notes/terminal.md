@@ -510,7 +510,11 @@ for full-screen programs. Both can be open at once.
   had rested and cleared by the next move. The hint is now `MCHoverHint`
   (HoverHint.h), a subview in the tooltip material that clicks go through;
   the checks read `linkHintText` and the subview's frame. The link
-  hit-test is the core's (`TermLinks::find` and `at`, through `linkAt`). A URL goes to `openWebAddressFromTerminal:` (the user's
+  hit-test is the core's (`TermLinks::find` and `at`, through `linkAt`).
+  The hint's words are the core's `TermLinks::restHint` ("Ctrl+click to
+  open" on GTK, `linux/HANDOFF.md` item 125, where the hint is a label in
+  the terminal's overlay placed by `get-child-position`, and OSC 8 links
+  come from VTE's `vte_terminal_check_hyperlink_at`). A URL goes to `openWebAddressFromTerminal:` (the user's
   page, pane shown quietly with no home page, keyboard kept; 0.0.0.0 and [::]
   become localhost, `TermLinks::browserAddress`).
 - **OSC 8** (grid only; the line-mode log ignores them): `TerminalScreen`

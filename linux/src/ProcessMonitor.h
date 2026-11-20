@@ -34,6 +34,9 @@ public:
     // Stops a process as Stop in the panel does; `done` gets "" or the
     // reason it was refused.
     void stop(const Procs::Key& key, std::function<void(const std::string&)> done);
+    // Called on the main thread after each look's rows arrived (the
+    // sidebar's Processes badge, SidebarIcons.h); one handler.
+    void setSampledHandler(std::function<void()> handler) { onSampled_ = std::move(handler); }
     // A panel on show makes looks come every 2 s.
     void setPanelShown(bool shown) { panelShown_ = shown; }
     bool panelShown() const { return panelShown_; }
@@ -60,6 +63,7 @@ private:
     unsigned samples_ = 0;
     size_t lastListed_ = 0;
     std::vector<std::function<void()>> waiting_;
+    std::function<void()> onSampled_;
 
     void post(std::function<void()> work);
     static int tick(void*);

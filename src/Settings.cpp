@@ -1756,7 +1756,7 @@ const char* Settings::defaultFileText() {
 # its place: the file tree, Source Control (with the count of changes),
 # Agents (with a dot while a session waits for you), and Processes (with the
 # count of running servers). A click shows that panel. Off, the panels are
-# reached by their keys and the View menu (macOS).
+# reached by their keys and the View menu.
 # workbench.sidebar-icons = on
 
 # The file editor and Markdown preview.

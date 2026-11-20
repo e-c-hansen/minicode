@@ -386,6 +386,22 @@ void MCGuiClickWith(const std::string& modifiers, GtkWidget* widget, double x, d
     XSync(Dpy(), False);
 }
 
+void MCGuiHoldModifier(const std::string& modifier, bool down) {
+    MCGuiFocusKeyWindow();
+    std::string m = modifier;
+    for (char& c : m) c = (char)std::tolower((unsigned char)c);
+    KeySym sym = NoSymbol;
+    if (m == "ctrl" || m == "control") sym = XK_Control_L;
+    else if (m == "shift") sym = XK_Shift_L;
+    else if (m == "alt") sym = XK_Alt_L;
+    if (sym == NoSymbol) {
+        MCGuiCheck(false, "known modifier: " + modifier, __FILE__, __LINE__);
+        return;
+    }
+    sendKey(codeOf(sym), down);
+    XSync(Dpy(), False);
+}
+
 // A drag is played over several turns of the main loop, as a hand moves. Sent
 // in one go (press, motion, release), a drag in the text view right after a
 // double-click selected nothing in 3 runs of 8 (GDK merges motion events that

@@ -269,6 +269,31 @@ std::string stylesheet(const Settings& s) {
 
     // File tree: the scroller paints, the list and its rows stay clear.
     css += ".minicode-sidebar { background-color: " + bg(Surface::Sidebar) + "; }";
+    // The row of panel icons over the sidebar (SidebarIcons.h): the
+    // sidebar's colors, the icons (symbolic, so drawn in the color given
+    // here) in its text color, dimmed but for the panel on show and the one
+    // under the pointer, as VS Code's activity bar; the panel on show
+    // underlined, and the counts on a pill, in VS Code's activityBar
+    // activeBorder and activityBarBadge blue (#0078D4, the Mac's too); the
+    // waiting dot in the terminal's orange (Terminal::setAttention). None of
+    // the desktop theme's button look: no ground, border or shadow.
+    css += ".minicode-sidebar-icons { background-color: " + bg(Surface::Sidebar) +
+           "; padding: 0 6px; }";
+    css += "button.minicode-sidebar-icon, button.minicode-sidebar-icon:hover,"
+           " button.minicode-sidebar-icon:active { background: none; box-shadow: none;"
+           " border: none; border-radius: 0; outline: none; min-width: 30px; min-height: 28px;"
+           " padding: 0; margin: 0; color: " + fg(Surface::Sidebar) + "; }";
+    css += "button.minicode-sidebar-icon image { opacity: 0.55; -gtk-icon-size: 16px; }";
+    css += "button.minicode-sidebar-icon:hover image, button.minicode-sidebar-icon.current image {"
+           " opacity: 1; }";
+    css += "button.minicode-sidebar-icon:active image { opacity: 0.7; }";
+    css += ".minicode-sidebar-icon-mark { background-color: #0078D4; min-width: 16px;"
+           " min-height: 2px; }";
+    css += ".minicode-sidebar-icon-badge { background-color: #0078D4; color: #FFFFFF;"
+           " font-size: 9px; font-weight: 600; border-radius: 6px; min-width: 12px;"
+           " min-height: 12px; padding: 0 3px; margin: 2px 1px 0 0; }";
+    css += ".minicode-sidebar-icon-dot { background-color: #E8A33D; min-width: 7px;"
+           " min-height: 7px; border-radius: 4px; margin: 4px 4px 0 0; }";
     css += ".minicode-tree, .minicode-tree > row { background-color: transparent; }";
     // The selected row. The rule above cleared the desktop theme's selection
     // color along with the rest, since this stylesheet outranks the theme
@@ -527,6 +552,12 @@ std::string stylesheet(const Settings& s) {
                " padding: 1px 3px; min-height: 0; }";   // RenameBox's kInset
         css += "popover.minicode-rename entry:focus-within { border-color: " + hexa(p.focus) +
                "; }";
+        // The hint beside the pointer resting on a terminal link
+        // (Terminal::showLinkHint), small, in the popups' colors.
+        css += ".minicode-link-hint { background-color: " + hexa(p.widgetBg) + "; color: " +
+               hexa(p.widgetFg) + "; border: 1px solid " + edge +
+               "; border-radius: 4px; padding: 2px 6px; font-size: 11px; box-shadow: 0 1px 4px " +
+               hexa(p.shadow) + "; }";
     }
 
     // The floating shortcut list: an overlay, not a pane, so not configurable.

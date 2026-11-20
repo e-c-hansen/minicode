@@ -184,6 +184,18 @@ void testTerminalHyperlinks() {
         CHECK(!TermLinks::hyperlink("javascript:alert(1)", "mac", l));
     }
 
+    GROUP("hyperlinks:rest-hint");
+    {
+        // The hint beside a resting pointer (the Mac's MCTerminalLinkHint,
+        // the GTK port's Terminal::linkHintText): the click, then a
+        // hyperlink's address on a line of its own.
+        using TermLinks::restHint;
+        CHECK(restHint(true, "") == "\xE2\x8C\x98-click to open");
+        CHECK(restHint(false, "") == "Ctrl+click to open");
+        CHECK(restHint(false, "http://localhost:8000/x") == "Ctrl+click to open\nhttp://localhost:8000/x");
+        CHECK(restHint(true, "file:///tmp/a") == "\xE2\x8C\x98-click to open\nfile:///tmp/a");
+    }
+
     GROUP("hyperlinks:browser-address");
     {
         using TermLinks::browserAddress;
