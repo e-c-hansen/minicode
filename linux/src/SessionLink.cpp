@@ -15,6 +15,7 @@
 #include <set>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #include "ControlPaths.h"
 #include "EditorTabs.h"
@@ -34,6 +35,11 @@ namespace SessionLink {
 struct Link::Wake {
     std::atomic<bool> queued{false};
     std::weak_ptr<Link> link;   // the main thread's only
+};
+
+struct Link::Viewers {
+    std::mutex mu;
+    std::map<Shared::ClientId, Shared::Client*> clients;
 };
 
 namespace {
@@ -183,14 +189,49 @@ void Link::startInProcess(bool loopback, unsigned delayUs) {
     makeClient();
     Shared::Client* c = client_.get();
     auto wire = [loopback](Shared::Message&& m) { return loopback ? Shared::roundTrip(m) : std::move(m); };
+    viewers_ = std::make_shared<Viewers>();
+    std::shared_ptr<Viewers> v = viewers_;
     host_ = std::make_unique<Shared::SessionHost>(
-        [c, wire](Shared::ClientId, Shared::Message&& m) { c->deliver(wire(std::move(m))); }, delayUs);
+        [c, wire, v](Shared::ClientId to, Shared::Message&& m) {
+            {
+                std::lock_guard<std::mutex> lk(v->mu);
+                auto it = v->clients.find(to);
+                if (it != v->clients.end()) {
+                    it->second->deliver(wire(std::move(m)));
+                    return;
+                }
+            }
+            c->deliver(wire(std::move(m)));
+        },
+        delayUs);
     Shared::SessionHost* h = host_.get();
     hostId_ = h->connect();
     const Shared::ClientId id = hostId_;
     client_->connect([h, id, wire](Shared::Message&& m) { h->post(id, wire(std::move(m))); });
     // The Welcome, with the base of this renderer's ids (Client::newId).
     if (!client_->settle()) g_printerr("mutible: the session's host did not answer\n");
+}
+
+std::function<void()> Link::connectViewer(Shared::Client& client) {
+    if (!host_ || !viewers_) return nullptr;
+    Shared::SessionHost* h = host_.get();
+    const Shared::ClientId id = h->connect();
+    std::shared_ptr<Viewers> v = viewers_;
+    {
+        std::lock_guard<std::mutex> lk(v->mu);
+        v->clients[id] = &client;
+    }
+    const bool loopback = kind_ == Kind::Loopback;
+    client.connect([h, id, loopback](Shared::Message&& m) {
+        h->post(id, loopback ? Shared::roundTrip(m) : std::move(m));
+    });
+    return [h, id, v] {
+        {
+            std::lock_guard<std::mutex> lk(v->mu);
+            v->clients.erase(id);
+        }
+        h->disconnect(id);
+    };
 }
 
 // The folder's headless host, found or started, attached to. False, with
@@ -313,7 +354,17 @@ Json Link::tabsJson(std::uint64_t window, const Model::Window& w) const {
     tabs.set("terms", std::move(terms));
     auto l = windowLayout_.find(window);
     if (l != windowLayout_.end() && !l->second.isNull()) tabs.set("termLayout", l->second);
+    auto p = windowPanes_.find(window);
+    if (p != windowPanes_.end()) {
+        if (!p->second.first.isNull()) tabs.set("browser", p->second.first);
+        if (!p->second.second.isNull()) tabs.set("panes", p->second.second);
+    }
     return tabs;
+}
+
+void Link::windowPanes(std::uint64_t window, const Model::Window& w, Json browser, Json panes) {
+    windowPanes_[window] = {std::move(browser), std::move(panes)};
+    windowTabs(window, w);
 }
 
 void Link::windowTerminals(std::uint64_t window, const Model::Window& w, std::vector<std::uint64_t> terms,
@@ -337,6 +388,7 @@ void Link::windowDetached(std::uint64_t window, const Model::Window& w) {
         sentTabs_.erase(window);
         windowTerms_.erase(window);
         windowLayout_.erase(window);
+        windowPanes_.erase(window);
         return;
     }
     windowClosed(window);
@@ -381,6 +433,7 @@ void Link::windowClosed(std::uint64_t window) {
     sentTabs_.erase(window);
     windowTerms_.erase(window);
     windowLayout_.erase(window);
+    windowPanes_.erase(window);
     auto it = hostWindow_.find(window);
     if (it == hostWindow_.end()) return;   // never sent
     client_->windowClosed(it->second);
