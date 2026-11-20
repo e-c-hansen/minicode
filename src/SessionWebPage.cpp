@@ -25,7 +25,10 @@
 // (R3's second slice); an editable page opens it in the window too. A
 // LaTeX document shows as the PDF the app's own LaTeX preview typeset,
 // served at the server's /typeset/ address and drawn again each time the
-// app typesets it, Show Source flipping to its lines (R3's third slice).
+// app typesets it, Show Source flipping to its lines (R3's third slice):
+// as one picture a page (/typeset-page/) in a scroller that keeps the
+// reader's place through a new typeset, when the server draws pages, else
+// in the browser's own PDF viewer.
 // The sidebar's Source Control lists the folder's uncommitted changes as
 // the window's does, and a file clicked shows the review page of those
 // changes in a tab of the page's own, inline or side by side, read only
@@ -241,6 +244,10 @@ body:not(.editable) #caret { display: none; }
 #tex { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #texnote { flex: none; margin: 0; padding: 4px 10px; color: var(--muted); font-size: 12px; }
 #texframe { flex: 1; border: 0; width: 100%; min-height: 0; background: #ffffff; }
+#texpages { flex: 1; min-height: 0; overflow: auto; position: relative; padding: 12px;
+            background: var(--tbg); }
+#texpages img { display: block; width: 100%; max-width: 1100px; height: auto; margin: 0 auto 12px;
+                background: #ffffff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
 #texlog { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 8px 12px; white-space: pre-wrap;
           font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
 #note { padding: 2em 1em; color: var(--muted); }
@@ -327,7 +334,7 @@ body:not(.editable) #caret { display: none; }
     <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
-    <div id="tex" class="hidden"><p id="texnote" class="hidden"></p><iframe id="texframe" class="hidden" title="Typeset pages"></iframe><pre id="texlog" class="hidden"></pre></div>
+    <div id="tex" class="hidden"><p id="texnote" class="hidden"></p><iframe id="texframe" class="hidden" title="Typeset pages"></iframe><div id="texpages" class="hidden" tabindex="0" aria-label="Typeset pages"></div><pre id="texlog" class="hidden"></pre></div>
     <div id="note" class="hidden"></div>
     <div id="fileview" class="hidden"></div>
     <p id="filemore" class="hidden"></p>
@@ -2295,14 +2302,100 @@ body:not(.editable) #caret { display: none; }
   // each time the page shows it (`latex`, the path as this page knows it:
   // a tab of its own by its path from the folder, a document by the
   // session's path), and drawn again when the server says the app
-  // typeset it anew (a new address, so the frame loads the new PDF).
-  const X = { asked: "", m: null };
+  // typeset it anew. When the server draws pages (`pages`, `pageUrl`),
+  // each is a picture in #texpages, laid out by its size before it is
+  // drawn, and a new typeset swaps the pictures in place and puts the
+  // reader back on the page they were reading, as far down it; else the
+  // browser's own viewer frames the PDF (a new address, so it loads anew,
+  // from the top).
+  const X = { asked: "", m: null, pagesUrl: "", w: 0, place: null };
   function texNote(text) { const n = $("texnote"); n.textContent = text || ""; n.classList.toggle("hidden", !text); }
+  // The pictures' width in pixels: the column's times the screen's scale,
+  // in steps of 256 so a small resize asks for nothing new.
+  function texWidth() {
+    const col = Math.min(Math.max($("texpages").clientWidth - 24, 100), 1100);
+    const px = col * (window.devicePixelRatio || 1);
+    return Math.min(4096, Math.max(256, Math.ceil(px / 256) * 256));
+  }
+  // A page's span in the scroller: from its top (the first from 0) to the
+  // next one's.
+  function texSpan(i) {
+    const box = $("texpages"), p = box.children;
+    return [i ? p[i].offsetTop : 0, i + 1 < p.length ? p[i + 1].offsetTop : box.scrollHeight];
+  }
+  // The reader's place: the page at the top of the view, and how far into it.
+  function texPlace() {
+    const box = $("texpages"), n = box.children.length, top = box.scrollTop;
+    for (let i = 0; i < n; i++) {
+      const [start, end] = texSpan(i);
+      if (top < end || i === n - 1)
+        return { page: i, frac: end > start ? Math.max(0, Math.min(1, (top - start) / (end - start))) : 0 };
+    }
+    return null;
+  }
+  // Back to a place; past the last page (a shorter typeset), the last's top.
+  function texGo(place) {
+    const box = $("texpages"), n = box.children.length;
+    if (!place || !n) return;
+    const i = Math.min(place.page, n - 1), frac = place.page < n ? place.frac : 0;
+    const [start, end] = texSpan(i);
+    box.scrollTop = Math.round(start + frac * (end - start));
+    X.place = texPlace();
+  }
+  function texSrcs() {
+    const box = $("texpages");
+    for (let i = 0; i < box.children.length; i++) {
+      const src = X.pagesUrl + "&p=" + (i + 1) + "&w=" + X.w;
+      if (box.children[i].getAttribute("src") !== src) box.children[i].setAttribute("src", src);
+    }
+  }
+  function drawPages(m) {
+    const box = $("texpages"), shown = !box.classList.contains("hidden");
+    if (shown && X.pagesUrl === m.pageUrl && box.children.length === m.pages.length) return;
+    // Hidden (a failure shown meanwhile), the scroller kept no place: the
+    // one it had.
+    const place = shown ? texPlace() : X.place;
+    box.classList.remove("hidden");
+    X.w = texWidth();
+    while (box.children.length > m.pages.length) box.lastChild.remove();
+    m.pages.forEach((size, i) => {
+      let img = box.children[i];
+      if (!img) {
+        img = document.createElement("img");
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.alt = "Page " + (i + 1);
+        box.appendChild(img);
+      }
+      img.style.aspectRatio = size[0] + " / " + size[1];
+    });
+    X.pagesUrl = m.pageUrl;
+    texSrcs();
+    texGo(place);
+  }
+  function hidePages(forget) {
+    const box = $("texpages");
+    if (!box.classList.contains("hidden")) X.place = texPlace();
+    box.classList.add("hidden");
+    if (forget) { box.replaceChildren(); X.pagesUrl = ""; X.place = null; }
+  }
+  $("texpages").addEventListener("scroll", () => { X.place = texPlace(); }, { passive: true });
+  // A wider or narrower column: the same place, pictures drawn to fit.
+  const onTexResize = () => {
+    const box = $("texpages");
+    if (box.classList.contains("hidden") || !box.clientWidth || !X.pagesUrl) return;
+    texGo(X.place);
+    const w = texWidth();
+    if (w !== X.w) { X.w = w; texSrcs(); }
+  };
+  if (window.ResizeObserver) new ResizeObserver(onTexResize).observe($("texpages"));
+  else window.addEventListener("resize", onTexResize);
   function showTex(path) {
     $("tex").classList.remove("hidden");
     if (X.asked !== path) {
       X.asked = path; X.m = null;
       $("texframe").removeAttribute("src"); $("texframe").classList.add("hidden");
+      hidePages(true);
       $("texlog").textContent = ""; $("texlog").classList.add("hidden");
       texNote("Typesetting…");
     }
@@ -2312,6 +2405,7 @@ body:not(.editable) #caret { display: none; }
     X.asked = ""; X.m = null;
     $("tex").classList.add("hidden");
     $("texframe").removeAttribute("src");   // nothing left loading
+    hidePages(true);
     $("texlog").textContent = "";
   }
   function onLatex(m) {
@@ -2319,10 +2413,16 @@ body:not(.editable) #caret { display: none; }
     X.m = m;
     const frame = $("texframe"), log = $("texlog");
     const failed = m.state === "failed" || m.state === "refused";
-    if (m.url && !failed) {
+    const pages = !failed && m.url && m.pageUrl && Array.isArray(m.pages) && m.pages.length > 0;
+    if (pages) {
+      frame.removeAttribute("src"); frame.classList.add("hidden");
+      drawPages(m);
+    } else if (m.url && !failed) {
+      hidePages(true);
       if (frame.getAttribute("src") !== m.url) frame.setAttribute("src", m.url);
       frame.classList.remove("hidden");
     } else {
+      hidePages(false);   // its place kept for the next that works
       frame.removeAttribute("src"); frame.classList.add("hidden");
     }
     log.textContent = m.state === "failed" ? m.text || "" : "";
@@ -2765,11 +2865,23 @@ body:not(.editable) #caret { display: none; }
     },
     // A LaTeX document's pages: what the page asked for, the server's
     // last answer, and what is drawn.
-    typeset: () => ({ shown: !$("tex").classList.contains("hidden"), asked: X.asked,
-                      state: X.m ? X.m.state : "", url: X.m && X.m.url ? X.m.url : "",
-                      src: $("texframe").getAttribute("src") || "",
-                      frame: !$("texframe").classList.contains("hidden"),
-                      note: $("texnote").textContent, log: $("texlog").textContent }),
+    // `src` is the PDF's address the page shows: the frame's, or the one
+    // its pictures were drawn from; `place` the page at the top of the
+    // pictures' view (from 0) and how far into it.
+    typeset: () => {
+      const box = $("texpages"), pages = !box.classList.contains("hidden"), imgs = [...box.children];
+      const frame = !$("texframe").classList.contains("hidden");
+      return { shown: !$("tex").classList.contains("hidden"), asked: X.asked,
+               state: X.m ? X.m.state : "", url: X.m && X.m.url ? X.m.url : "",
+               src: frame ? $("texframe").getAttribute("src") || "" : pages && X.m ? X.m.url || "" : "",
+               frame: frame, pagesShown: pages, pages: pages ? imgs.length : 0,
+               pageSrcs: pages ? imgs.map((i) => i.getAttribute("src") || "") : [],
+               loaded: pages ? imgs.filter((i) => i.complete && i.naturalWidth > 0).length : 0,
+               place: pages ? texPlace() : null, scrollTop: box.scrollTop,
+               note: $("texnote").textContent, log: $("texlog").textContent };
+    },
+    // Scrolls the pictures to page `page` (from 0), `frac` of the way into it.
+    texScroll: (page, frac) => { texGo({ page: page, frac: frac }); return texPlace(); },
     // Source Control: the list as drawn, and the review on show.
     git: () => ({ mode: G.mode, summary: $("gitsum").textContent, version: G.status ? G.status.version : 0,
                   rows: [...$("gitlist").querySelectorAll(".row")].map((r) => r.querySelector(".gl").textContent + " " +

@@ -203,7 +203,13 @@ top of a turn, never inside a text system callback.
   (R3's third slice): the app may publish a typeset for any file, one
   outside the folder too, so `/typeset/` checks the request's path with
   `openLocalFile` before it looks the PDF up; never serve an entry
-  because the key matched.
+  because the key matched. `/typeset-page/` makes the same checks, and
+  its pictures are kept by that real path too.
+- **The browser keeps no place in a PDF it frames.** Its viewer offers
+  the page no scroll position, and a new address loads from the top, so
+  the reader's place needs pictures in a scroller of the page's own
+  (`/typeset-page/`). Draw them with CoreGraphics, not PDFKit: they are
+  drawn on the server's threads.
 - **A preview made in code typesets at once.** `LatexView`'s init runs
   `compileNow` before its caller can set `onTypeset`, so the first
   "working" is never heard: whoever makes one says its state afterwards
@@ -1910,6 +1916,50 @@ never starts a typeset of its own when the window's PDF is current.
   run in one; nosniff, no-store), 206 and 416 by `byteRange`, and the
   bytes from memory 2 MB at a time as the connection takes them
   (`FileSend::mem`, counted among the 32 files at once).
+- **The pages as pictures (keeping the reader's place).** The owner's
+  ask: a new typeset reloaded the frame and threw the reader back to
+  page 1, and the browser's viewer gives the page no way to read or set
+  its place (pdf.js is a third-party dependency). So, when the app gives
+  a renderer (`Options::typesetPageSizes` and `typesetPageRender`, both
+  or neither), `Server::typesetReady` reads each new PDF's page sizes in
+  points (on the caller's thread, once a PDF: the same bytes keep the
+  sizes they had; at most `kMaxTypesetPages`, every size positive) and
+  `Typesets` keeps them with it (`Entry::pages`); `typesetJson` then adds
+  `pages` ([[w, h], ...], to a hundredth of a point) and `pageUrl`
+  (`typesetPageTarget` plus `?v=` the `pdfVersion`). No renderer (a
+  headless host, the Linux port), or pages that could not be read: no
+  `pages`, and the page frames the PDF exactly as before.
+- **`/v/ID/typeset-page/PATH?v=VERSION&p=N&w=WIDTH`.** `answer()` takes
+  it as /typeset/ (the credential's cookie only, `Answer::typesetPage`),
+  then `beginTypesetPage` checks as `beginTypeset` does, in its order: a
+  renderer (404 without), LaTeX only, a page's socket open (503), the 32
+  files, then the query (`typesetPageAsk`: v, p from 1 and w, digits
+  alone, else 400; w clamped to [64, 4096]), `openLocalFile` again, a PDF
+  kept, `v` its `pdfVersion` (404 for any other: an old picture is never
+  served), sizes kept, `p` in range (404). The width drawn is
+  `typesetPageWidth`: never more than `kMaxPagePixels` (24 million) in
+  all, so a tall page is drawn narrower. The PNG (image/png, nosniff, the
+  sandbox CSP, no-store) goes from memory like the PDF; a drawing that
+  failed is a 500, too many waiting a 503.
+- **`PageRenders`** (`SessionWebTypeset.cpp`) draws on threads of its own,
+  at most `kThreads` (2) at once, started as work comes and joined by
+  `~PageRenders` (reset first in `~Server`, so no drawing wakes a closed
+  pipe). A page asked for twice while it is drawn is drawn once; the
+  connection waits with `FileSend::drawing` (not held to the request
+  deadline, as a file being sent is not) and `pumpFile` sends it once the
+  wake comes. Pictures are kept by (document, version, page, width): only
+  each document's newest version's (asking for a newer version drops the
+  older ones, and an older one is refused), within 64 MB, the one used
+  longest ago going first; a failure is kept as one, so it is not drawn
+  again; at most `kMaxWaiting` (64) wait.
+- **The Mac's renderer** (`mac/src/TypesetPages.{h,mm}`): CoreGraphics
+  and ImageIO only (`CGPDFDocument`, a bitmap context, `CGImageDestination`
+  to PNG), never PDFKit or AppKit, so it runs on the server's threads.
+  Sizes are the crop box turned by the page's rotation; a page is drawn
+  on white at the width asked, scaled up from the page's own drawing
+  transform (`CGPDFPageGetDrawingTransform` never scales up). Each thread
+  keeps the last document it parsed (`thread_local`, compared byte for
+  byte), so a typeset's pages parse the PDF once a thread.
 - **The Mac.** `LatexView` announces each typeset (`onTypeset(path, pdf,
   error)`: both nil as it starts; tectonic missing or the copy not
   written are failures too) and keeps what a page asks about
@@ -1937,10 +1987,27 @@ never starts a typeset of its own when the window's PDF is current.
   text for none or refused. Leaving the pages (another tab, Show Source,
   a viewer, a note) empties the frame. `mcSessionView.typeset()` says
   what shows, for the GUI check.
-- **Not done**: a new PDF reloads the frame, so the browser's viewer
-  starts again at the top (the window keeps the reader's place); no
-  click to the source, no edit box, no forward search, and no Warnings
-  list on the page; a page's typing (an editable page) reaches the PDF
+- **The page's pictures.** With `pages`, `#texpages` (a scroller of the
+  page's own, in place of the frame) holds one lazy `<img>` a page, laid
+  out before any is drawn by its `aspect-ratio` (the page's points), so
+  nothing shifts as pictures arrive; `w` is the column's width (at most
+  1100 CSS pixels) times `devicePixelRatio`, rounded up to a step of 256
+  (256 to 4096), so a small resize asks for nothing new and the server's
+  pictures are found again. The place (`texPlace`) is the page whose span
+  (its top, the first's from 0, to the next page's top) holds the
+  scroller's top, and how far into that span. On a new `pageUrl`
+  `drawPages` takes the place, sets each picture's ratio and address in
+  place (extra pages removed, new ones added; the browser keeps the old
+  picture until the new one loads), and goes back to it (`texGo`); a
+  place past the new last page goes to the last page's top. A failure
+  hides the scroller and keeps the place for the next that works;
+  another document, Show Source, or leaving the pages forgets it. A
+  resize keeps the place and draws again at the new step.
+  `mcSessionView.texScroll(page, frac)` scrolls there for the GUI check.
+- **Not done**: no click to the source, no edit box, no forward search,
+  no text selection or find in the pictures, and no Warnings list on the
+  page; without a renderer (a headless host, Linux) the frame still
+  reloads from the top; a page's typing (an editable page) reaches the PDF
   when the window's preview typesets it, as the window's own typing does,
   so beside the source it waits for a save; an `\input` file typesets
   alone (as the window's preview of it would), not as its main document.
@@ -1984,6 +2051,35 @@ committed): the click, "Typesetting…", the frame in Chrome's PDF viewer,
 a fetch of 200 application/pdf, the second PDF at ?v=2, Show Source and
 Show Page. The look in Safari, the viewer's place after a re-typeset,
 and a phone need the owner's eyes.
+
+`sessionweb:typeset-pages` (the pictures): `typesetPageTarget`;
+`typesetPageAsk` (good, both clamps, eleven bad queries); `typesetPageWidth`
+(the clamps, a tall page narrower within the pixel cap); sizes kept with
+new bytes only; `typesetJson` with and without sizes (to a hundredth,
+kept while working); `PageRenders` (six pages, each drawn once, at most
+two at once, the wake, the byte cap keeping the newest, a kept picture
+drawn no more, a failure kept, a newer version dropping the older and
+refusing it, Busy past 64 waiting, destroyed while drawing); `answer()`
+for /typeset-page/ (decoded, the credential, a NUL, a near miss); then over
+the wire with a headless host, a stand-in renderer, and a second server
+with none: 503 before a page, `pages` and `pageUrl`, a picture at the
+width asked and clamped both ways, drawn once for two asks, 404 for a
+page past the end, 400 for p=0, no w and no v, 404 for another version
+and v=0, 403 without the cookie, five refused paths (not LaTeX, a link
+out, "..", an absolute path, missing) with a typeset kept for the outside
+file and nothing of it sent, a shorter typeset's new sizes and address
+with the old address 404 and its third page 404, a drawing that failed
+500, a PDF whose pages could not be read sent with no `pages`, the
+server with no renderer sending no `pages` and 404 for a picture, the
+PDF's own address unchanged, and 503 once the page has gone. GUI:
+`session_browser` now sees the window's six-page typeset as six pictures
+(no frame), fetches the first (200, image/png, a PNG's signature),
+scrolls halfway into the third page, and after the agent's rewrite (six
+taller pages) checks the pictures' new address, the page still halfway
+into its third page and the scroller's offset moved to keep it; the
+server's own preview's one-page typeset shows as one picture. The
+pictures' sharpness on a Retina screen and in Safari, and a phone, need
+the owner's eyes.
 
 ### Source Control and the review in the page (R3, fourth slice)
 

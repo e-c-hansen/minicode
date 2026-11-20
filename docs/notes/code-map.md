@@ -93,7 +93,9 @@ goes here first, with tests; the GUI only displays it.
   (what the browser's page renders itself: a notebook as a page, a SQLite
   database's tables and rows; `sessionweb:viewers`), `SessionWebTypeset`
   (the LaTeX preview's typesets the app publishes, kept by the document's
-  real path and served at /typeset/; `sessionweb:typeset`), `SessionWebGit` (the page's
+  real path and served at /typeset/, and `PageRenders`, their pages drawn
+  as pictures at /typeset-page/ by the app's renderer;
+  `sessionweb:typeset`, `sessionweb:typeset-pages`), `SessionWebGit` (the page's
   Source Control: `runGit`, a POSIX git runner with fixed arguments, the
   core's `readUncommitted` held to the folder, the list and the review as
   JSON, `GitReads` on a thread of its own; `sessionweb:git`; the window's
@@ -242,7 +244,9 @@ goes here first, with tests; the GUI only displays it.
   `SessionLink` (the session's hosts, the process's and each folder's
   headless one, and each tab's document on them, editor.session-host;
   `docs/notes/session-host.md`), `SessionWindow` (a window's link, record
-  and what it took from a closed window's, stage 6),
+  and what it took from a closed window's, stage 6), `TypesetPages`
+  (the session web page's LaTeX pages drawn as PNGs with CoreGraphics,
+  off the main thread; `docs/notes/session-host.md`),
   `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box),
   `SidebarIcons` (`MCSidebarHost`, the split view's first subview, and its
   row of panel icons, workbench.sidebar-icons).

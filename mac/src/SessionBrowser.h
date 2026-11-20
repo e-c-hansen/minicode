@@ -44,7 +44,9 @@
 // window (`typeset`), which answers with what its preview of it has, or,
 // for a document no tab of the window previews, has a preview of this
 // object's own typeset it from the tab's text or the disk's; tectonic never
-// runs again for a page when the window's PDF is current. The window's open
+// runs again for a page when the window's PDF is current. The pages go to
+// the page as pictures drawn with CoreGraphics (TypesetPages.h), so a new
+// typeset keeps the reader's place there. The window's open
 // commit and worktree pages go with its tabs (`reviews`), and the page shows
 // each read-only, read by the server with git from what it checked (a
 // commit's hex name, a worktree its repository lists), with a review's
