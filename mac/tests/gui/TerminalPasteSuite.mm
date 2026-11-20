@@ -191,12 +191,28 @@ BOOL DragTreeRow(EditorController *c, NSString *path, NSPoint to) {
 
 NSString *OneLine(NSString *text) { return [[text componentsSeparatedByString:@"\n"] componentsJoinedByString:@""]; }
 
+// zsh has read a paste (`sent`, as the grid sent it) and drawn it in its
+// line editor: the screen's text ends with what was pasted. A Ctrl+C sent
+// in the same turn as the paste reached zsh while it was still reading
+// and drawing it, and zsh 5.9 loses a SIGINT that comes then: ZLE goes
+// on to block in read() for the next key as if none had come, the prompt
+// stays as it was, and the next byte typed wakes ZLE only to abort the
+// line and throw away the input (CI,
+// "a fresh prompt", then the next command's output never came). A person
+// sees the path before pressing Ctrl+C; the suite waits for it as well.
+BOOL PasteDrawn(TerminalView *t, NSString *sent) {
+    NSString *text = [[sent stringByReplacingOccurrencesOfString:@"\x1b[200~" withString:@""]
+        stringByReplacingOccurrencesOfString:@"\x1b[201~" withString:@""];
+    text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    return text.length && [OneLine([t recentText:8]) hasSuffix:text];
+}
+
 }  // namespace
 
 @interface MCPasteState : NSObject
 @property(nonatomic, strong) EditorController *c;
 @property(nonatomic, strong) TerminalView *term, *other;
-@property(nonatomic, copy) NSString *dir;
+@property(nonatomic, copy) NSString *dir, *pasted;
 @property(nonatomic, strong) NSMutableData *sent;
 @property(nonatomic) NSUInteger alerts, sheets, tabs;
 @end
@@ -242,6 +258,11 @@ MC_GUI_SUITE(terminal_paste) {
         GCHECK([inside containsString:@"␛[201~1~echo INJECTED"]);
         // Bracketed paste on: the lines are text, so nothing asked.
         GCHECK(MCGuiAlertsShown().count == s.alerts);
+    });
+    // Read before the Ctrl+C below, which zsh loses while it is still
+    // reading a paste (PasteDrawn).
+    MCGuiWait(@"zsh has read the paste into its line editor", 10, ^BOOL {
+        return [[s.term recentText:6] containsString:@"echo INJECTED-$((40+2))"];
     });
     MCGuiPause(1.0);   // negative: the pasted line must not run
     MCGuiStep(@"nothing ran; the paste waits in the line editor", ^{
@@ -432,7 +453,12 @@ MC_GUI_SUITE(terminal_paste) {
         GCHECK(panel.activeTerminal == s.term);
         GCHECK([panel closeTerminal:s.other]);
         s.other = nil;
-        const char etx = 0x03;   // drop the line
+        s.pasted = Str(s.sent);
+    });
+    MCGuiWait(@"zsh has drawn the dropped path", 10, ^BOOL { return PasteDrawn(s.term, s.pasted); });
+    MCGuiStep(@"Ctrl+C drops the line", ^{
+        if (!PasteDrawn(s.term, s.pasted)) MCGuiNote(@"the screen ends: %@", [s.term recentText:2]);
+        const char etx = 0x03;
         Grid(s.term).onInput([NSData dataWithBytes:&etx length:1]);
     });
     MCGuiWait(@"a fresh prompt", 10, ^BOOL {
@@ -470,7 +496,12 @@ MC_GUI_SUITE(terminal_paste) {
         const unsigned char magic[4] = {0x89, 'P', 'N', 'G'};
         GCHECK(png.length > 8 && memcmp(png.bytes, magic, 4) == 0);
         if (png.length <= 8) MCGuiNote(@"no PNG at %@ in %@", name, folder);
-        const char etx = 0x03;   // drop the line
+        s.pasted = sent;
+    });
+    MCGuiWait(@"zsh has drawn the picture's path", 10, ^BOOL { return PasteDrawn(s.term, s.pasted); });
+    MCGuiStep(@"Ctrl+C drops the line", ^{
+        if (!PasteDrawn(s.term, s.pasted)) MCGuiNote(@"the screen ends: %@", [s.term recentText:2]);
+        const char etx = 0x03;
         Grid(s.term).onInput([NSData dataWithBytes:&etx length:1]);
     });
     MCGuiWait(@"a fresh prompt", 10, ^BOOL {
