@@ -2,6 +2,7 @@
 // real input is Input.cpp, and the app's parts come from AppSeam.inc.
 #include "Harness.h"
 
+#include "Browser.h"
 #include "DocumentView.h"
 #include "Editor.h"
 #include "FileTree.h"
@@ -850,6 +851,7 @@ struct World {
     std::string folderSearch;   // what Find in Folder keeps that a new window's has not
     bool projectRepository = false;   // the project folder has a .git
     int browsers = 0;   // windows with the browser pane on show
+    int agentPages = 0;   // windows whose browser has an agent page open
 };
 World gWorldAtStart;
 
@@ -880,6 +882,10 @@ World lookAtWorld() {
     w.projectRepository = MCGuiProjectIsRepository();
     for (const MCGuiAppWindow& a : all)
         if (a.layout && a.layout->browserShown()) w.browsers++;
+#ifdef MUTIBLE_ENABLE_BROWSER
+    for (const MCGuiAppWindow& a : all)
+        if (a.browser && a.browser->hasAgentPage()) w.agentPages++;
+#endif
     return w;
 }
 
@@ -1055,6 +1061,19 @@ void checkWhatSuiteLeft() {
                 if (a.layout && a.layout->browserShown())
                     g_action_group_activate_action(G_ACTION_GROUP(a.window), "togglebrowser", nullptr);
     }
+#ifdef MUTIBLE_ENABLE_BROWSER
+    // An agent's page (`mutible browse`) left open: browser_pages, after
+    // terminal_splits' `split --right browse`, found one where it checks
+    // there is none. Said, not failed, and closed.
+    if (now.agentPages > was.agentPages) {
+        leak("left an agent page open in " + std::to_string(now.agentPages) + " window(s) where it found " +
+                 std::to_string(was.agentPages) + ", closed",
+             false);
+        if (putBack)
+            for (const MCGuiAppWindow& a : MCGuiAppWindows())
+                if (a.browser && a.browser->hasAgentPage()) a.browser->closeAgentPage();
+    }
+#endif
     // The project folder made a git repository and left one: every row of
     // the tree is then untracked, with a tooltip ("Untracked (git)"), the
     // Source Control panel and the gutters have a repository a later suite

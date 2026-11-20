@@ -34,7 +34,12 @@ found through that list.
   which a suite that made it one calls before it ends. A browser pane
   left on show is a LEFT line on GTK too (2026-11-19, after browser_tabs
   left one and tab_strip's row was half as wide), hidden as View >
-  Toggle Browser hides it.
+  Toggle Browser hides it, and so is an agent page left open
+  (2026-11-20, after terminal_splits' `split --right browse` left one
+  and browser_pages, which checks `page --text` with none, failed
+  behind it), closed. The suites that left either (browser_tabs,
+  browser_pages, browser_find, bookmark_save, bookmark_menu, bookmarks,
+  terminal_splits) put them back as they end (`MCGuiHideBrowserPane`).
   `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
   are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
   picture of the test window (the first ten); CI keeps them as an

@@ -136,6 +136,9 @@ MC_GUI_SUITE(browser_pages) {
     MCGuiStep("the pane is shown and a server and pages are made", [] {
         GCHECK(browser() != nullptr);
         if (!browser()) return;
+        // No agent page from an earlier suite (terminal_splits' split
+        // --right browse): page --text below is checked with none.
+        browser()->closeAgentPage();
         MCGuiApp().layout->showBrowser();
         GError* error = nullptr;
         gServer = g_threaded_socket_service_new(4);
@@ -386,9 +389,5 @@ MC_GUI_SUITE(browser_pages) {
     });
     // Left on show it took the right side's width from the editor of the
     // suites after it (as browser_tabs' did tab_strip's, in the soak's order).
-    MCGuiStep("the pane hidden again", [] {
-        if (MCGuiApp().layout->browserShown())
-            g_action_group_activate_action(G_ACTION_GROUP(MCGuiApp().window), "togglebrowser", nullptr);
-    });
-    MCGuiWait("hidden", 10, [] { return !MCGuiApp().layout->browserShown(); });
+    MCGuiHideBrowserPane();
 }
