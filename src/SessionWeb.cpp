@@ -621,20 +621,23 @@ Answer answer(const Request& r, Access& access, const std::string& page, const C
     // A file for a viewer, or a LaTeX document's typeset PDF: the
     // credential only (an <img> or <video> sends no header of the page's).
     // A review's picture, likewise, by numbers alone (pictureTarget).
+    // A page of the typeset drawn as a PNG, likewise (its query says which).
     const bool typeset = rest.compare(0, 8, "typeset/") == 0;
     const bool picture = rest.compare(0, 8, "picture/") == 0;
-    if (typeset || picture || rest.compare(0, 5, "file/") == 0) {
+    const bool typesetPage = rest.compare(0, 13, "typeset-page/") == 0;
+    if (typeset || picture || typesetPage || rest.compare(0, 5, "file/") == 0) {
         if (credential.empty())
             return refuse(403, "Forbidden", "no credential: open the address mutible printed");
         if (held != Access::State::Allowed) return refuse(403, "Forbidden", notAllowed(held));
         std::string rel;
-        if (!pathDecode(rest.substr(typeset || picture ? 8 : 5), &rel))
+        if (!pathDecode(rest.substr(typesetPage ? 13 : typeset || picture ? 8 : 5), &rel))
             return refuse(400, "Bad Request", "a file's address that does not decode");
         access.touch(credential, from.now);
         Answer a;
         a.kind = Answer::File;
         a.status = 200;
         a.typeset = typeset;
+        a.typesetPage = typesetPage;
         a.picture = picture;
         a.file = std::move(rel);
         a.credential = credential;
@@ -834,6 +837,7 @@ std::string fileRefusal(int status, const std::string& why) {
                          : status == 413 ? "Payload Too Large"
                          : status == 503 ? "Service Unavailable"
                          : status == 400 ? "Bad Request"
+                         : status == 500 ? "Internal Server Error"
                                          : "Forbidden";
     return httpResponse(status, reason, "text/plain; charset=utf-8", "mutible: " + why + "\n");
 }
@@ -1292,6 +1296,9 @@ struct Server::FileSend {
     std::uint64_t left = 0;       // bytes still to send
     // A typeset PDF sent from memory instead of read from the host.
     std::shared_ptr<const std::string> mem;
+    // A typeset's page being drawn (PageRenders): sent as `mem` once it is.
+    bool drawing = false;
+    PageRenders::Key page;
 };
 
 struct Server::Conn {
@@ -1425,7 +1432,9 @@ Server::Server() {
 }
 
 Server::~Server() {
-    // First, so a read still under way never wakes a pipe that is closed.
+    // First, so a read or a drawing still under way never wakes a pipe
+    // that is closed.
+    renders_.reset();
     git_.reset();
     pages_.clear();
     detach();
@@ -1440,6 +1449,8 @@ bool Server::start(const Options& o, std::string* error) {
     opt_ = o;
     if (!opt_.token.empty()) access_.addLink(opt_.token);
     access_.setAsking((bool)opt_.ask);
+    if (opt_.typesetPageSizes && opt_.typesetPageRender)
+        renders_ = std::make_unique<PageRenders>(opt_.typesetPageRender, [this] { wake(); });
     if (opt_.remembered) access_.setRemembered(opt_.remembered);
     if (opt_.machine.empty()) {
         char name[256] = {0};
@@ -1673,7 +1684,8 @@ void Server::handleHttp(Conn& c) {
         c.in.clear();
         auto range = r.headers.find("range");
         const std::string* rangeHeader = range == r.headers.end() ? nullptr : &range->second;
-        if (a.typeset) beginTypeset(c, a.file, rangeHeader);
+        if (a.typesetPage) beginTypesetPage(c, a.file, r.query);
+        else if (a.typeset) beginTypeset(c, a.file, rangeHeader);
         else if (a.picture) beginPicture(c, a.file, rangeHeader);
         else beginFile(c, a.file, rangeHeader);
         return;
@@ -2229,6 +2241,23 @@ void Server::beginFile(Conn& c, const std::string& rel, const std::string* range
 
 void Server::pumpFile(Conn& c) {
     FileSend& f = *c.file;
+    if (f.drawing) {
+        std::shared_ptr<const std::string> png;
+        const PageRenders::Got got = renders_ ? renders_->get(f.page, nullptr, &png) : PageRenders::Got::Failed;
+        if (got == PageRenders::Got::Pending) return;
+        f.drawing = false;
+        if (got != PageRenders::Got::Ready) {
+            c.out += fileRefusal(got == PageRenders::Got::Busy ? 503 : 500, "that page could not be drawn");
+            c.closeAfterWrite = true;
+            c.file.reset();
+            return;
+        }
+        c.out += fileHead(f.type, png->size(), byteRange(nullptr, png->size()));
+        f.sized = true;
+        f.mem = std::move(png);
+        f.next = 0;
+        f.left = f.mem->size();
+    }
     if (f.mem) {
         // From memory: the next piece once the connection has taken most
         // of the last.
@@ -2355,6 +2384,47 @@ void Server::beginTypeset(Conn& c, const std::string& rel, const std::string* ra
     pumpFile(c);
 }
 
+void Server::beginTypesetPage(Conn& c, const std::string& rel, const std::map<std::string, std::string>& query) {
+    auto refuse = [&](int status, const std::string& why) {
+        c.out += fileRefusal(status, why);
+        c.closeAfterWrite = true;
+    };
+    // The same checks as the PDF's own address, before anything is drawn.
+    if (!renders_) return refuse(404, "this host draws no typeset pages");
+    if (!typesetSource(rel)) return refuse(404, "only a LaTeX document has a typeset");
+    if (!session_) return refuse(503, "the session's page is not open");
+    int sending = 0;
+    for (auto& o : conns_)
+        if (o->file) sending++;
+    if (sending >= kMaxFileSends) return refuse(503, "too many files at once");
+    PageAsk ask;
+    if (!typesetPageAsk(query, &ask)) return refuse(400, "a typeset page's address needs v, p and w");
+    std::string abs, why;
+    const int fd = openLocalFile(opt_.folder, rel, opt_.showHidden, &abs, nullptr, &why);
+    if (fd < 0) return refuse(404, why);
+    ::close(fd);
+    const Typesets::Entry e = typesets_.get(abs);
+    if (!e.pdf) return refuse(404, "that document has not been typeset");
+    if (e.pdfVersion != ask.version) return refuse(404, "that typeset is not the document's newest");
+    if (!e.pages || e.pages->empty()) return refuse(404, "that typeset's pages could not be read");
+    if ((std::size_t)ask.page > e.pages->size()) return refuse(404, "the typeset has no such page");
+    auto f = std::make_unique<FileSend>();
+    f->rel = rel;
+    f->type.view = "image";
+    f->type.mime = "image/png";
+    f->drawing = true;
+    f->page.doc = Typesets::key(abs);
+    f->page.version = e.pdfVersion;
+    f->page.page = ask.page - 1;
+    f->page.width = typesetPageWidth((*e.pages)[(std::size_t)ask.page - 1], ask.width);
+    std::shared_ptr<const std::string> png;
+    const PageRenders::Got got = renders_->get(f->page, e.pdf, &png);
+    if (got == PageRenders::Got::Busy) return refuse(503, "too many pages being drawn");
+    if (got == PageRenders::Got::Failed) return refuse(500, "that page could not be drawn");
+    c.file = std::move(f);
+    pumpFile(c);
+}
+
 void Server::onLatex(Conn& c, const Json& j) {
     if (!j["path"].isString()) return;
     const std::string asked = j["path"].asString();
@@ -2406,7 +2476,22 @@ void Server::typesetWorking(const std::string& path) {
 }
 
 void Server::typesetReady(const std::string& path, std::shared_ptr<const std::string> pdf) {
-    if (typesets_.ready(path, std::move(pdf))) wake();
+    // The pages' sizes, read once for each new PDF, when pages are drawn.
+    std::shared_ptr<const std::vector<PageSize>> pages;
+    if (renders_ && pdf && pdf->size() <= Typesets::kMaxPdfBytes) {
+        const Typesets::Entry kept = typesets_.get(path);
+        if (kept.pdf && *kept.pdf == *pdf) {
+            pages = kept.pages;
+        } else {
+            std::vector<PageSize> sizes;
+            if (opt_.typesetPageSizes(*pdf, &sizes) && !sizes.empty() && sizes.size() <= kMaxTypesetPages &&
+                std::all_of(sizes.begin(), sizes.end(), [](const PageSize& s) {
+                    return s.width > 0 && s.height > 0 && s.width < 1e6 && s.height < 1e6;
+                }))
+                pages = std::make_shared<const std::vector<PageSize>>(std::move(sizes));
+        }
+    }
+    if (typesets_.ready(path, std::move(pdf), std::move(pages))) wake();
 }
 
 void Server::typesetFailed(const std::string& path, const std::string& error) {

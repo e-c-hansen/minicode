@@ -42,10 +42,13 @@
 // the file unchanged; and a Markdown file as its page, Show Source flipping
 // to its text and Show Page back. A LaTeX document (with a stand-in
 // tectonic): the window opens it in its preview, and the read-only page,
-// following the window, shows the PDF the window's preview typeset, the
-// bytes at its /typeset/ address the window's own; Show Source shows its
-// text; an agent's rewrite that the window reads and typesets again
-// reaches the page as a new PDF at a new address; a document the window
+// following the window, shows the PDF the window's preview typeset as one
+// picture a page (a PNG drawn by the app at its /typeset-page/ address),
+// the bytes at its /typeset/ address the window's own; Show Source shows
+// its text; the page scrolled to its third page, an agent's rewrite that
+// the window reads and typesets again (taller pages) reaches the page as a
+// new PDF at a new address, and the page is still on its third page, as
+// far into it; a document the window
 // does not have open, clicked in the page's tree, is typeset by the
 // server's own preview, the window opening nothing and no file left
 // beside it. Source Control (R3's fourth slice): the folder made a
@@ -360,6 +363,7 @@ NSString *const kRead =
     @" mode: document.getElementById('modebtn').classList.contains('hidden') ? '' : document.getElementById('modebtn').textContent,"
     @" typeset: window.mcSessionView ? window.mcSessionView.typeset() : null,"
     @" fetched: window.__typesetFetch || null,"
+    @" pageFetched: window.__pageFetch || null,"
     @" scm: window.mcSessionView ? window.mcSessionView.git() : null,"
     @" review: window.mcSessionView ? window.mcSessionView.review() : null,"
     @" mdShown: !document.getElementById('md').classList.contains('hidden')})";
@@ -456,6 +460,42 @@ NSData *WordPDF(NSString *word) {
     tv.string = word;
     tv.font = [NSFont systemFontOfSize:24];
     return [tv dataWithPDFInsideRect:tv.bounds];
+}
+
+// A PDF of `pages` pages, `height` points tall and 300 wide, each with
+// `word` and its number on it, as the stand-in tectonic "typesets" it.
+NSData *PagesPDF(NSString *word, int pages, CGFloat height) {
+    NSMutableData *data = [NSMutableData data];
+    CGDataConsumerRef consumer = CGDataConsumerCreateWithCFData((__bridge CFMutableDataRef)data);
+    CGRect box = CGRectMake(0, 0, 300, height);
+    CGContextRef ctx = CGPDFContextCreate(consumer, &box, NULL);
+    CGDataConsumerRelease(consumer);
+    NSDictionary *attrs = @{NSFontAttributeName : [NSFont systemFontOfSize:24]};
+    for (int i = 0; i < pages; i++) {
+        CGPDFContextBeginPage(ctx, NULL);
+        NSGraphicsContext *was = NSGraphicsContext.currentContext;
+        NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithCGContext:ctx flipped:NO];
+        [[NSString stringWithFormat:@"%@ %d", word, i + 1] drawAtPoint:NSMakePoint(20, height - 60)
+                                                        withAttributes:attrs];
+        NSGraphicsContext.currentContext = was;
+        CGPDFContextEndPage(ctx);
+    }
+    CGPDFContextClose(ctx);
+    CGContextRelease(ctx);
+    return data;
+}
+
+// The page fetches its first page's picture: the answer's status, type,
+// length and first four bytes in window.__pageFetch.
+void FetchPage(void) {
+    gSeen = nil;
+    Eval(@"(() => { window.__pageFetch = null; const src = window.mcSessionView.typeset().pageSrcs[0];"
+         @" if (!src) return false;"
+         @" fetch(src).then(r => r.arrayBuffer().then(b => { const a = new Uint8Array(b);"
+         @" window.__pageFetch = {status: r.status, type: r.headers.get('content-type') || '',"
+         @" length: a.length, head: [...a.slice(0, 4)], src: src}; }))"
+         @" .catch(e => { window.__pageFetch = {error: String(e)}; });"
+         @" return true; })()");
 }
 
 // The bytes' sum, as the page's fetch adds them up.
@@ -1272,8 +1312,10 @@ MC_GUI_SUITE(session_browser) {
         NSString *pdfs = [MCGuiScratch() stringByAppendingPathComponent:@"typeset-pdfs"];
         [NSFileManager.defaultManager createDirectoryAtPath:pdfs withIntermediateDirectories:YES
                                                   attributes:nil error:nil];
-        [WordPDF(@"ALPHA") writeToFile:[pdfs stringByAppendingPathComponent:@"alpha.pdf"] atomically:YES];
-        [WordPDF(@"BETA, a longer page") writeToFile:[pdfs stringByAppendingPathComponent:@"beta.pdf"] atomically:YES];
+        // Six pages each, the second typeset's taller: the same scroll
+        // offset would be another place in it.
+        [PagesPDF(@"ALPHA", 6, 400) writeToFile:[pdfs stringByAppendingPathComponent:@"alpha.pdf"] atomically:YES];
+        [PagesPDF(@"BETA", 6, 560) writeToFile:[pdfs stringByAppendingPathComponent:@"beta.pdf"] atomically:YES];
         [WordPDF(@"SOLO") writeToFile:[pdfs stringByAppendingPathComponent:@"solo.pdf"] atomically:YES];
         // "Typesets" by copying the PDF its text names.
         NSString *script = [NSString stringWithFormat:
@@ -1306,7 +1348,8 @@ MC_GUI_SUITE(session_browser) {
         Read();
         NSDictionary *x = SeenTypeset();
         return [x[@"state"] isEqualToString:@"ready"] && [x[@"src"] containsString:@"/typeset/paper.tex?v="] &&
-               [x[@"frame"] boolValue] && [x[@"shown"] boolValue] && [gSeen[@"mode"] isEqualToString:@"Show Source"];
+               [x[@"pagesShown"] boolValue] && [x[@"pages"] intValue] == 6 && ![x[@"frame"] boolValue] &&
+               [x[@"shown"] boolValue] && [gSeen[@"mode"] isEqualToString:@"Show Source"];
     });
     MCGuiStep(@"the page fetches its frame's address", ^{
         MCGuiNote(@"typeset: %@", SeenTypeset());
@@ -1326,6 +1369,25 @@ MC_GUI_SUITE(session_browser) {
         GCHECK_EQ_STR(f[@"type"], @"application/pdf");
         GCHECK([f[@"length"] unsignedIntegerValue] == firstPdf.length);
         GCHECK([f[@"sum"] unsignedIntValue] == ByteSum(firstPdf));
+        NSArray *srcs = SeenTypeset()[@"pageSrcs"];
+        GCHECK(srcs.count == 6 && [srcs.firstObject containsString:@"/typeset-page/paper.tex?v="] &&
+               [srcs.firstObject containsString:@"&p=1&w="]);
+        FetchPage();
+    });
+    MCGuiWait(@"the first page's picture fetched", 20, ^BOOL {
+        Read();
+        NSDictionary *f = [gSeen[@"pageFetched"] isKindOfClass:NSDictionary.class] ? gSeen[@"pageFetched"] : nil;
+        return f != nil;
+    });
+    MCGuiStep(@"a PNG the app drew; then Show Source", ^{
+        NSDictionary *f = gSeen[@"pageFetched"];
+        MCGuiNote(@"page fetched: %@", f);
+        GCHECK([f[@"status"] intValue] == 200);
+        GCHECK_EQ_STR(f[@"type"], @"image/png");
+        GCHECK([f[@"length"] intValue] > 100);
+        NSArray *head = f[@"head"];
+        GCHECK(head.count == 4 && [head[0] intValue] == 0x89 && [head[1] intValue] == 'P' &&
+               [head[2] intValue] == 'N' && [head[3] intValue] == 'G');
         Eval(@"(() => { document.getElementById('modebtn').click(); return 1; })()");
     });
     MCGuiWait(@"its text, and Show Page to go back", 20, ^BOOL {
@@ -1333,21 +1395,50 @@ MC_GUI_SUITE(session_browser) {
         return ![SeenTypeset()[@"shown"] boolValue] && [gSeen[@"lines"] hasPrefix:@"\\documentclass"] &&
                [gSeen[@"lines"] containsString:@"ALPHA"] && [gSeen[@"mode"] isEqualToString:@"Show Page"];
     });
-    MCGuiStep(@"Show Page; an agent rewrites the file, and the window reads it", ^{
+    MCGuiStep(@"Show Page", ^{
         Eval(@"(() => { document.getElementById('modebtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"the pages again", 20, ^BOOL {
+        Read();
+        NSDictionary *x = SeenTypeset();
+        return [x[@"pagesShown"] boolValue] && [x[@"pages"] intValue] == 6;
+    });
+    // The reader's place (the owner's ask): halfway into the third page.
+    MCGuiStep(@"scrolled halfway into the third page", ^{
+        Eval(@"(() => { window.mcSessionView.texScroll(2, 0.5); return 1; })()");
+    });
+    __block double scrolledTop = 0;
+    MCGuiWait(@"the page is on its third page", 20, ^BOOL {
+        Read();
+        NSDictionary *place = [SeenTypeset()[@"place"] isKindOfClass:NSDictionary.class] ? SeenTypeset()[@"place"] : nil;
+        return [place[@"page"] intValue] == 2 && fabs([place[@"frac"] doubleValue] - 0.5) < 0.02;
+    });
+    MCGuiStep(@"an agent rewrites the file, and the window reads it", ^{
+        scrolledTop = [SeenTypeset()[@"scrollTop"] doubleValue];
+        MCGuiNote(@"at %@, scrollTop %.0f", SeenTypeset()[@"place"], scrolledTop);
+        GCHECK(scrolledTop > 0);
         GCHECK(!texTab.dirty);
         MCGuiWriteFile(texPath, betaTex);
         [gC checkTabsOnDisk];
     });
-    MCGuiWait(@"the window typesets the new text, and the page's frame has a new address", 30, ^BOOL {
+    MCGuiWait(@"the window typesets the new text, and the page's pictures have a new address", 30, ^BOOL {
         Read();
         NSDictionary *x = SeenTypeset();
         NSData *now = texTab.latex.typesetPdf;
         return now && ![now isEqualToData:firstPdf] && !texTab.latex.typesetting &&
                [x[@"state"] isEqualToString:@"ready"] && [x[@"shown"] boolValue] &&
-               [x[@"src"] containsString:@"/typeset/paper.tex?v="] && ![x[@"src"] isEqualToString:firstSrc];
+               [x[@"src"] containsString:@"/typeset/paper.tex?v="] && ![x[@"src"] isEqualToString:firstSrc] &&
+               [x[@"pagesShown"] boolValue] && [[x[@"pageSrcs"] firstObject] containsString:
+                   [x[@"src"] substringFromIndex:[x[@"src"] rangeOfString:@"?v="].location]];
     });
-    MCGuiStep(@"fetched again", ^{
+    MCGuiStep(@"still halfway into the third page, though its pages are taller; fetched again", ^{
+        NSDictionary *x = SeenTypeset();
+        NSDictionary *place = [x[@"place"] isKindOfClass:NSDictionary.class] ? x[@"place"] : nil;
+        MCGuiNote(@"after the new typeset: %@, scrollTop %@ (was %.0f)", place, x[@"scrollTop"], scrolledTop);
+        GCHECK([x[@"pages"] intValue] == 6);
+        GCHECK([place[@"page"] intValue] == 2);
+        GCHECK(fabs([place[@"frac"] doubleValue] - 0.5) < 0.02);
+        GCHECK([x[@"scrollTop"] doubleValue] > scrolledTop + 50);   // moved to keep the place
         secondPdf = texTab.latex.typesetPdf;
         FetchTypeset();
     });
@@ -1368,7 +1459,8 @@ MC_GUI_SUITE(session_browser) {
         Read();
         NSDictionary *x = SeenTypeset();
         return [gSeen[@"local"] isEqualToString:@"solo.tex"] && [x[@"state"] isEqualToString:@"ready"] &&
-               [x[@"src"] containsString:@"/typeset/solo.tex?v="] && [x[@"frame"] boolValue];
+               [x[@"src"] containsString:@"/typeset/solo.tex?v="] && [x[@"pagesShown"] boolValue] &&
+               [x[@"pages"] intValue] == 1;
     });
     MCGuiStep(@"the window opened nothing; fetched", ^{
         GCHECK([gC tabs].count == texTabsBefore);

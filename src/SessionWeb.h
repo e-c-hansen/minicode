@@ -43,7 +43,13 @@
 // `latex`, and the page shows the PDF the app's own LaTeX preview typeset
 // for it (`latex`), served from memory at /v/ID/typeset/PATH under the
 // same rules as /file/: the app publishes its typesets to the server,
-// which runs no tectonic of its own (Options::typeset, Typesets). The
+// which runs no tectonic of its own (Options::typeset, Typesets). With a
+// renderer (Options::typesetPageSizes and typesetPageRender, the Mac's
+// CoreGraphics), the page shows the typeset as one picture a page, each a
+// PNG drawn at /v/ID/typeset-page/PATH?v=VERSION&p=N&w=WIDTH under the
+// same rules, in a scroller of its own, so a new typeset keeps the
+// reader's place; without one (a headless host, the Linux port) it frames
+// the PDF in the browser's own viewer. The
 // page's Source Control lists the folder's uncommitted changes and shows
 // their review page, read only (`git`, `review`; SessionWebGit.h), and
 // the window's open commit pages and worktree pages, which it reports
@@ -156,9 +162,9 @@
 //   notebook {path, html | error}: a notebook as a page (notebookJson)
 //   db      {path, tables, moreTables, table, columns, rows, offset, more
 //           | error}: a database's tables and a page of rows (databaseJson)
-//   latex   {path, rel, state, version, url, text}: a LaTeX document's
-//           typeset (typesetJson), for a `latex`, and again each time the
-//           app's typeset of it changes
+//   latex   {path, rel, state, version, url, pages, pageUrl, text}: a
+//           LaTeX document's typeset (typesetJson), for a `latex`, and again
+//           each time the app's typeset of it changes
 //   git     {version, top, branch, initial, files, count | error}: the
 //           folder's uncommitted changes, as the window's Source Control
 //           lists them (gitStatusJson, SessionWebGit.h), for a `git`, and
@@ -244,7 +250,9 @@
 #include <string>
 #include <vector>
 
+#include <condition_variable>
 #include <deque>
+#include <thread>
 
 #include "Json.h"
 #include "SessionClient.h"
@@ -293,6 +301,7 @@ struct Answer {
     std::string response, why;
     std::string file;   // File: the path from the folder, decoded, not yet checked
     bool typeset = false;   // File: a LaTeX document's typeset PDF (/typeset/), not its bytes
+    bool typesetPage = false;   // File: a page of it drawn as a PNG (/typeset-page/; the query says which)
     bool picture = false;   // File: a review's picture (/picture/, `file` what follows it)
     // The request's credential (Page, Socket, File), and its state: a
     // socket is taken whatever the state, so its page can be told.
@@ -454,7 +463,10 @@ Json databaseJson(const std::string& folder, const std::string& rel, bool hidden
 // (PATH the document's path from the folder, as /file/ spells it), only
 // for a document held inside the folder as the page's other reads are
 // (openLocalFile), with a PDF's head (no sandbox: Chrome's viewer will not
-// run in one) and ranges.
+// run in one) and ranges. With a renderer, each page is drawn as a PNG at
+// /v/ID/typeset-page/PATH?v=PDFVERSION&p=PAGE&w=PIXELS under the same
+// checks (PageRenders), so the page keeps the reader's place through a new
+// typeset, which the browser's own viewer cannot.
 // Whether `path` is a LaTeX document by its extension (.tex, .ltx, .latex,
 // any case), as the Mac's preview takes them.
 bool typesetSource(const std::string& path);
@@ -467,6 +479,36 @@ std::string typesetTarget(const std::string& base, const std::string& rel);
 // (confinedPath does that).
 bool relativeInFolder(const std::string& folder, const std::string& path, std::string* rel);
 
+// A typeset page's size in points, as it shows (its crop box, turned by
+// its rotation).
+struct PageSize {
+    double width = 0, height = 0;
+};
+// The address a page of a document's typeset is drawn at, as a PNG:
+// typesetTarget's, under "typeset-page/". The page adds
+// "?v=PDFVERSION&p=PAGE&w=PIXELS".
+std::string typesetPageTarget(const std::string& base, const std::string& rel);
+// What a /typeset-page/ address asks for: the typeset's pdfVersion, a page
+// from 1, and a width in pixels, clamped to [kMinPageWidth, kMaxPageWidth].
+struct PageAsk {
+    std::uint64_t version = 0;
+    int page = 0;
+    int width = 0;
+};
+constexpr int kMinPageWidth = 64;
+constexpr int kMaxPageWidth = 4096;
+// The most pixels one page is drawn with (a tall page drawn narrower).
+constexpr double kMaxPagePixels = 24e6;
+// The most pages a typeset is shown as pictures; past it the page frames
+// the PDF instead.
+constexpr std::size_t kMaxTypesetPages = 5000;
+// The query's v, p and w, each digits alone (p at least 1): false when one
+// is missing or is not.
+bool typesetPageAsk(const std::map<std::string, std::string>& query, PageAsk* ask);
+// The width a page of `size` points is drawn at when `width` pixels are
+// asked for: no more than kMaxPagePixels in all, at least kMinPageWidth.
+int typesetPageWidth(const PageSize& size, int width);
+
 // The app's typesets, by the document's resolved path (any thread).
 class Typesets {
 public:
@@ -474,6 +516,9 @@ public:
     struct Entry {
         State state = State::None;
         std::shared_ptr<const std::string> pdf;   // the last that worked, kept while another runs
+        // Its pages' sizes, when the server has a renderer (null without
+        // one, or when the PDF's pages could not be read).
+        std::shared_ptr<const std::vector<PageSize>> pages;
         std::string error;                        // Failed: why (tectonic's log), cut
         std::uint64_t version = 0;                // counts every change of the entry
         std::uint64_t pdfVersion = 0;             // counts changes of `pdf` alone
@@ -487,7 +532,10 @@ public:
     // Each true when the entry changed. Ready with the same bytes as the
     // PDF kept changes nothing (no new version, no reload on the page).
     bool working(const std::string& path);
-    bool ready(const std::string& path, std::shared_ptr<const std::string> pdf);
+    // `pages`: the new PDF's page sizes, kept with it (taken only when the
+    // bytes are new).
+    bool ready(const std::string& path, std::shared_ptr<const std::string> pdf,
+               std::shared_ptr<const std::vector<PageSize>> pages = nullptr);
     bool failed(const std::string& path, const std::string& error);
     Entry get(const std::string& path) const;
     // Counts every change of any entry.
@@ -509,11 +557,69 @@ private:
 // What the page gets for a document's typeset: {t: "latex", path (as the
 // page asked), rel, state: "ready" | "working" | "failed" | "none" |
 // "refused", version, url (whenever a PDF is kept: typesetTarget with
-// "?v=" its pdfVersion, so a new PDF is a new address), text (failed:
+// "?v=" its pdfVersion, so a new PDF is a new address), pages and pageUrl
+// (whenever the PDF's page sizes are kept: [[width, height], ...] in
+// points, and typesetPageTarget with "?v=" its pdfVersion), text (failed:
 // the log; none: what to do; refused: why)}. `canTypeset`: the app makes
 // typesets (Options::typeset), so a document with none is "working".
 Json typesetJson(const std::string& asked, const std::string& rel, const Typesets::Entry& e,
                  const std::string& base, bool canTypeset);
+
+// Pages of typesets drawn as PNGs on threads of their own, at most
+// kThreads at once, the pictures kept within a cap of bytes, only the
+// newest version's of each document (any thread).
+class PageRenders {
+public:
+    using Draw = std::function<bool(const std::string& pdf, int page, int width, std::string* png)>;
+    struct Key {
+        std::string doc;            // the document's key in the typesets
+        std::uint64_t version = 0;  // the PDF's pdfVersion
+        int page = 0;               // from 0
+        int width = 0;              // pixels
+        bool operator<(const Key& o) const;
+    };
+    enum class Got { Ready, Pending, Failed, Busy };
+    static constexpr int kThreads = 2;
+    static constexpr std::size_t kMaxBytes = std::size_t(64) << 20;
+    static constexpr std::size_t kMaxWaiting = 64;
+    // `draw` runs on the threads; `wake` after each picture is drawn.
+    PageRenders(Draw draw, std::function<void()> wake, std::size_t maxBytes = kMaxBytes);
+    // Waits for the pictures being drawn; nothing is woken after.
+    ~PageRenders();
+    PageRenders(const PageRenders&) = delete;
+    PageRenders& operator=(const PageRenders&) = delete;
+    // A page's picture: Ready with it, Pending while it is drawn (asked
+    // for once, `pdf` its bytes), Failed when the drawing failed, Busy when
+    // kMaxWaiting are waiting already. An older version of the document's
+    // pictures goes once a newer one is asked for.
+    Got get(const Key& key, const std::shared_ptr<const std::string>& pdf, std::shared_ptr<const std::string>* png);
+    std::size_t bytes() const;    // the pictures' bytes kept
+    std::size_t kept() const;     // pictures kept (drawn or failed)
+    std::uint64_t drawn() const;  // drawings made, ever
+    int mostAtOnce() const;       // the most drawings ever under way at once
+
+private:
+    struct Item {
+        enum State { Waiting, Drawing, Done, Failed } state = Waiting;
+        std::shared_ptr<const std::string> png, pdf;   // pdf: until it is drawn
+        std::uint64_t used = 0;
+    };
+    Draw draw_;
+    std::function<void()> wake_;
+    std::size_t maxBytes_;
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::map<Key, Item> items_;
+    std::deque<Key> queue_;
+    std::vector<std::thread> threads_;
+    std::map<std::string, std::uint64_t> newest_;   // each document's newest version asked for
+    bool stop_ = false;
+    std::size_t bytes_ = 0;
+    std::uint64_t uses_ = 0, drawn_ = 0;
+    int drawing_ = 0, mostAtOnce_ = 0;
+    void work();
+    void trim();   // with the mutex held
+};
 
 // An address a page may frame, or ask the window to open: http or https
 // (any case), a host, no user name or password before it, no space or
@@ -716,6 +822,16 @@ struct Options {
     // headless host, which typesets nothing): the page says the window's
     // preview makes it, and shows what was published, if anything.
     std::function<void(const std::string& path)> typeset;
+    // The typeset's pages as pictures, so the page keeps the reader's place
+    // when a new typeset comes (both, or neither). typesetPageSizes reads a
+    // PDF's pages' sizes in points, in order (false when it cannot); called
+    // on the thread that publishes a new PDF (typesetReady). typesetPageRender
+    // draws page `page` (from 0) on white, `width` pixels wide, as a PNG
+    // (false when it cannot); called on a thread of the server's own, at
+    // most PageRenders::kThreads at once. Unset (a headless host, the Linux
+    // port): the page frames the PDF in the browser's own viewer.
+    std::function<bool(const std::string& pdf, std::vector<PageSize>* sizes)> typesetPageSizes;
+    std::function<bool(const std::string& pdf, int page, int width, std::string* png)> typesetPageRender;
     // Runs git for the page's Source Control (R3's fourth slice,
     // SessionWebGit.h): `args` (the core's fixed ones, never a page's) in
     // `dir`, `input` on its stdin; true when it exited 0, with its output,
@@ -872,6 +988,8 @@ private:
     void onLatex(Conn& c, const Json& j);
     void sendTypesets();
     Typesets typesets_;
+    // The typeset's pages drawn (Options::typesetPageRender), made at start.
+    std::unique_ptr<PageRenders> renders_;
     std::uint64_t typesetsSeen_ = 0;
     // Source Control (`git`, `review`; SessionWebGit.h): read on a thread
     // of GitReads' own, sent to the pages watching when a read shows
@@ -908,6 +1026,9 @@ private:
     void beginFile(Conn& c, const std::string& rel, const std::string* range);
     // A typeset PDF, from memory, a piece at a time as for a file.
     void beginTypeset(Conn& c, const std::string& rel, const std::string* range);
+    // A page of a typeset drawn as a PNG (`query` the address's), sent
+    // from memory once drawn.
+    void beginTypesetPage(Conn& c, const std::string& rel, const std::map<std::string, std::string>& query);
     void pumpFiles();
     void pumpFile(Conn& c);
     // At most this many files served at once; each holds at most two

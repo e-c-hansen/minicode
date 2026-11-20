@@ -9,6 +9,7 @@
 #import "SessionLink.h"
 #import "SessionWindow.h"
 #import "TreeDetails.h"   // MCAppDefaults
+#import "TypesetPages.h"
 
 #include <arpa/inet.h>
 #include <libproc.h>
@@ -318,6 +319,10 @@ NSString *MCSessionBrowserPeer(int peerPort, int serverPort) {
             dispatch_async(dispatch_get_main_queue(), ^{ typeset(p); });
         };
     }
+    // Its pages drawn as pictures, so a new typeset keeps the reader's
+    // place on the page (TypesetPages.h; on the server's own threads).
+    o.typesetPageSizes = MCTypesetPageSizes;
+    o.typesetPageRender = MCTypesetPageRender;
     // The page's Source Control runs git as the app's own panel does: the
     // git it found, its environment and time limits, with the core's
     // arguments (on a thread of the server's).

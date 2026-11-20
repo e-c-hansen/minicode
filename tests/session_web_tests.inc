@@ -3107,6 +3107,298 @@ static void testSessionWeb() {
         CHECK(Web::pageHtml().find("t: \"latex\"") != std::string::npos);
     }
 
+    // The typeset's pages drawn as pictures (/typeset-page/), so the page
+    // keeps the reader's place through a new typeset: the address and its
+    // query, the width clamped, the drawings capped and kept, what the page
+    // is told, and over the wire the same checks as /typeset/.
+    GROUP("sessionweb:typeset-pages");
+    {
+        CHECK(Web::typesetPageTarget("/v/ab12/", "my docs/Paper+1.tex") ==
+              "/v/ab12/typeset-page/my%20docs/Paper%2B1.tex");
+        auto ask = [](std::map<std::string, std::string> q, Web::PageAsk* a) { return Web::typesetPageAsk(q, a); };
+        Web::PageAsk a;
+        CHECK(ask({{"v", "7"}, {"p", "2"}, {"w", "1280"}}, &a) && a.version == 7 && a.page == 2 && a.width == 1280);
+        CHECK(ask({{"v", "7"}, {"p", "1"}, {"w", "1"}}, &a) && a.width == Web::kMinPageWidth);
+        CHECK(ask({{"v", "7"}, {"p", "1"}, {"w", "999999"}}, &a) && a.width == Web::kMaxPageWidth);
+        for (const std::map<std::string, std::string>& bad :
+             std::vector<std::map<std::string, std::string>>{{{"p", "1"}, {"w", "800"}},
+                                                             {{"v", "7"}, {"w", "800"}},
+                                                             {{"v", "7"}, {"p", "1"}},
+                                                             {{"v", "7"}, {"p", "0"}, {"w", "800"}},
+                                                             {{"v", "7"}, {"p", "-1"}, {"w", "800"}},
+                                                             {{"v", "7"}, {"p", "1a"}, {"w", "800"}},
+                                                             {{"v", "7"}, {"p", "1"}, {"w", ""}},
+                                                             {{"v", "7"}, {"p", "1"}, {"w", "8e2"}},
+                                                             {{"v", "0x7"}, {"p", "1"}, {"w", "800"}},
+                                                             {{"v", "7"}, {"p", "99999999999"}, {"w", "800"}},
+                                                             {{"v", "7"}, {"p", "1"}, {"w", "1234567890123456"}}})
+            CHECK(!ask(bad, &a));
+        // A tall page is drawn narrower, within kMaxPagePixels.
+        CHECK(Web::typesetPageWidth({612, 792}, 2048) == 2048);
+        CHECK(Web::typesetPageWidth({612, 792}, 99999) == Web::kMaxPageWidth);
+        CHECK(Web::typesetPageWidth({612, 792}, 3) == Web::kMinPageWidth);
+        const int tall = Web::typesetPageWidth({100, 10000}, 4096);
+        CHECK(tall < 500 && (double)tall * tall * 100 <= Web::kMaxPagePixels);
+        CHECK(Web::typesetPageWidth({1, 1e6}, 4096) == Web::kMinPageWidth);
+
+        // The sizes are kept with the PDF, taken only with new bytes.
+        {
+            Web::Typesets ts;
+            const std::string p = Shared::resolveFolder(scratchFolder()) + "/a.tex";
+            auto pdf = [](const std::string& s) { return std::make_shared<const std::string>(s); };
+            auto sizes = [](std::size_t n) {
+                return std::make_shared<const std::vector<Web::PageSize>>(n, Web::PageSize{612, 792});
+            };
+            CHECK(ts.ready(p, pdf("%PDF a"), sizes(3)) && ts.get(p).pages && ts.get(p).pages->size() == 3);
+            CHECK(!ts.ready(p, pdf("%PDF a"), sizes(9)) && ts.get(p).pages->size() == 3);
+            CHECK(ts.working(p) && ts.ready(p, pdf("%PDF a")) && ts.get(p).pages->size() == 3);
+            CHECK(ts.ready(p, pdf("%PDF b"), sizes(2)) && ts.get(p).pages->size() == 2);
+            CHECK(ts.ready(p, pdf("%PDF c")) && !ts.get(p).pages);
+        }
+        // What the page is told: the sizes and the pages' address with the
+        // PDF's version, only when they are kept.
+        {
+            Web::Typesets::Entry e;
+            e.state = Web::Typesets::State::Ready;
+            e.pdf = std::make_shared<const std::string>("%PDF");
+            e.pdfVersion = 7;
+            Json j = Web::typesetJson("p.tex", "sub dir/p.tex", e, "/v/ab12/", true);
+            CHECK(j.has("url") && !j.has("pages") && !j.has("pageUrl"));
+            e.pages = std::make_shared<const std::vector<Web::PageSize>>(
+                std::vector<Web::PageSize>{{612, 792}, {841.8898, 595.2756}});
+            j = Web::typesetJson("p.tex", "sub dir/p.tex", e, "/v/ab12/", true);
+            CHECK(j["pageUrl"].asString() == "/v/ab12/typeset-page/sub%20dir/p.tex?v=7");
+            CHECK(j["pages"].size() == 2 && j["pages"][0][0].asNumber() == 612 && j["pages"][0][1].asNumber() == 792);
+            CHECK(j["pages"][1][0].asNumber() == 841.89 && j["pages"][1][1].asNumber() == 595.28);
+            e.state = Web::Typesets::State::Working;   // the last pages shown while another runs
+            CHECK(Web::typesetJson("p.tex", "p.tex", e, "/v/ab12/", true).has("pages"));
+        }
+
+        // The drawings: at most kThreads at once, each page drawn once and
+        // kept, only the newest version's, within the cap of bytes.
+        {
+            std::atomic<int> now{0}, wakes{0};
+            std::atomic<bool> hold{false};
+            auto draw = [&](const std::string& pdf, int page, int width, std::string* png) {
+                now++;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                while (hold) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                now--;
+                if (pdf.find("BROKEN") != std::string::npos) return false;
+                *png = "PNG " + pdf + " " + std::to_string(page) + " " + std::to_string(width) + std::string(300, '.');
+                return true;
+            };
+            Web::PageRenders r(draw, [&] { wakes++; }, 1000);
+            auto pdf1 = std::make_shared<const std::string>("one");
+            auto key = [](std::uint64_t v, int page, int width) {
+                Web::PageRenders::Key k;
+                k.doc = "/d/a.tex";
+                k.version = v;
+                k.page = page;
+                k.width = width;
+                return k;
+            };
+            std::shared_ptr<const std::string> png;
+            for (int i = 0; i < 6; i++) CHECK(r.get(key(1, i, 512), pdf1, &png) == Web::PageRenders::Got::Pending);
+            CHECK(r.get(key(1, 0, 512), pdf1, &png) == Web::PageRenders::Got::Pending);   // asked once
+            CHECK(waitUntil([&] { return r.drawn() == 6; }));
+            CHECK(r.mostAtOnce() >= 1 && r.mostAtOnce() <= Web::PageRenders::kThreads);
+            CHECK(wakes.load() >= 1);
+            // Kept within 1000 bytes: the ones used longest ago went.
+            CHECK(r.bytes() <= 1000 && r.kept() == 3);
+            CHECK(r.get(key(1, 5, 512), nullptr, &png) == Web::PageRenders::Got::Ready);
+            CHECK(png && png->compare(0, 12, "PNG one 5 51") == 0);
+            CHECK(r.drawn() == 6);   // from what was kept
+            // A failure is kept as one, not drawn again.
+            auto broken = std::make_shared<const std::string>("BROKEN");
+            Web::PageRenders::Key b = key(1, 0, 512);
+            b.doc = "/d/b.tex";
+            CHECK(r.get(b, broken, &png) == Web::PageRenders::Got::Pending);
+            CHECK(waitUntil([&] { return r.get(b, nullptr, &png) == Web::PageRenders::Got::Failed; }));
+            const std::uint64_t drawnNow = r.drawn();
+            CHECK(r.get(b, broken, &png) == Web::PageRenders::Got::Failed && r.drawn() == drawnNow);
+            // A newer version: the older one's pictures go, and are no more.
+            auto pdf2 = std::make_shared<const std::string>("two");
+            CHECK(r.get(key(2, 0, 512), pdf2, &png) == Web::PageRenders::Got::Pending);
+            CHECK(r.get(key(1, 5, 512), pdf1, &png) == Web::PageRenders::Got::Failed);
+            CHECK(waitUntil([&] { return r.get(key(2, 0, 512), nullptr, &png) == Web::PageRenders::Got::Ready; }));
+            CHECK(png->compare(0, 11, "PNG two 0 5") == 0);
+            // Busy past kMaxWaiting waiting.
+            hold = true;
+            int busy = 0, pending = 0;
+            for (int i = 0; i < (int)Web::PageRenders::kMaxWaiting + Web::PageRenders::kThreads + 4; i++) {
+                const Web::PageRenders::Got got = r.get(key(2, 100 + i, 512), pdf2, &png);
+                if (got == Web::PageRenders::Got::Busy) busy++;
+                if (got == Web::PageRenders::Got::Pending) pending++;
+            }
+            CHECK(busy >= 1 && pending >= (int)Web::PageRenders::kMaxWaiting);
+            CHECK(now.load() <= Web::PageRenders::kThreads);
+            hold = false;
+            // Destroyed while drawing: it waits, and wakes nothing after.
+        }
+
+        // The address: the credential only, as for /typeset/.
+        {
+            Gate g;
+            Web::Answer a = g.ask(getWith(g.base() + "typeset-page/sub%20dir/p.tex?v=3&p=1&w=800", g.cookie));
+            CHECK(a.kind == Web::Answer::File && a.typesetPage && !a.typeset && a.file == "sub dir/p.tex");
+            CHECK(g.ask(getWith(g.base() + "typeset-page/p.tex?v=3&p=1&w=800")).status == 403);
+            CHECK(g.ask(getWith(g.base() + "typeset-page/p%00.tex?v=3&p=1&w=800", g.cookie)).status == 400);
+            CHECK(g.ask(getWith(g.base() + "typeset-pages/p.tex?v=3&p=1&w=800", g.cookie)).status == 404);
+        }
+
+        // Over the wire: a headless host and an app whose renderer is this
+        // test's, which reads one page for each "PAGE" in the PDF.
+        const std::string root = Shared::resolveFolder(scratchFolder()), elsewhere = scratchFolder();
+        writeText(root + "/paper.tex", "\\documentclass{article}\\begin{document}Hi\\end{document}\n");
+        writeText(root + "/notes.txt", "text\n");
+        writeText(elsewhere + "/secret.tex", "SECRET");
+        CHECK(::symlink((elsewhere + "/secret.tex").c_str(), (root + "/leak.tex").c_str()) == 0);
+        Shared::HostServer host;
+        Shared::HostOptions ho;
+        ho.folder = root;
+        ho.socketDir = scratchFolder() + "/s";
+        ho.idleMs = 60000;
+        std::string error;
+        CHECK(host.start(ho, &error) == Shared::HostServer::Start::Ok);
+        std::thread hostThread([&] { host.run(); });
+        std::atomic<int> draws{0};
+        Web::Options o;
+        o.hostSocket = host.socketPath();
+        o.folder = root;
+        o.pollMs = 100;
+        o.typeset = [](const std::string&) {};
+        o.typesetPageSizes = [](const std::string& pdf, std::vector<Web::PageSize>* sizes) {
+            for (std::size_t at = 0; (at = pdf.find("PAGE", at)) != std::string::npos; at += 4)
+                sizes->push_back(Web::PageSize{600, 800});
+            return !sizes->empty();
+        };
+        o.typesetPageRender = [&](const std::string& pdf, int page, int width, std::string* png) {
+            draws++;
+            if (pdf.find("BROKEN") != std::string::npos) return false;
+            *png = "\x89PNG page " + std::to_string(page) + " at " + std::to_string(width);
+            return true;
+        };
+        Web::Server web, plain;
+        CHECK(web.start(o, &error));
+        Web::Options po = o;
+        po.typesetPageSizes = nullptr;
+        po.typesetPageRender = nullptr;
+        CHECK(plain.start(po, &error));
+        std::thread webThread([&] { web.run(); }), plainThread([&] { plain.run(); });
+        PageClient p, pp;
+        CHECK(p.enter(web) && pp.enter(plain));
+        auto getFrom = [&](Web::Server& s, PageClient& owner, const std::string& target, bool cookie = true) {
+            PageClient c;
+            return c.exchange(s.port(), "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:" +
+                                            std::to_string(s.port()) + "\r\n" +
+                                            (cookie ? "Cookie: " + owner.cookie + "\r\n" : "") + "\r\n");
+        };
+        auto get = [&](const std::string& target, bool cookie = true) { return getFrom(web, p, target, cookie); };
+        auto bodyOf = [](const std::string& r) {
+            const std::size_t e = r.find("\r\n\r\n");
+            return e == std::string::npos ? std::string() : r.substr(e + 4);
+        };
+        auto status = [](const std::string& r) { return r.substr(0, 12); };
+        const std::string paper = root + "/paper.tex";
+        web.typesetReady(paper, std::make_shared<const std::string>("%PDF PAGE PAGE PAGE"));
+        plain.typesetReady(paper, std::make_shared<const std::string>("%PDF PAGE PAGE PAGE"));
+        CHECK(status(get(web.base() + "typeset-page/paper.tex?v=1&p=1&w=800")) == "HTTP/1.1 503");   // no page yet
+        CHECK(p.upgrade(web.port(), web.base() + "ws") && pp.upgrade(plain.port(), plain.base() + "ws"));
+        std::vector<Json> got, plainGot;
+        Json state, plainState;
+        auto take = [&](const Json& m) {
+            if (m["t"].asString() == "state") state = m;
+            else if (m["t"].asString() == "latex") got.push_back(m);
+        };
+        auto takePlain = [&](const Json& m) {
+            if (m["t"].asString() == "state") plainState = m;
+            else if (m["t"].asString() == "latex") plainGot.push_back(m);
+        };
+        CHECK(p.pump(take, [&] { return state.isObject(); }));
+        CHECK(pp.pump(takePlain, [&] { return plainState.isObject(); }));
+        p.sendText("{\"t\":\"latex\",\"path\":\"paper.tex\"}");
+        CHECK(p.pump(take, [&] { return !got.empty(); }));
+        Json m = got.back();
+        CHECK(m["state"].asString() == "ready" && m["pages"].size() == 3 && m["pages"][2][1].asNumber() == 800);
+        std::string pageUrl = m["pageUrl"].asString();
+        const std::string pagePrefix = web.base() + "typeset-page/paper.tex?v=";
+        CHECK(pageUrl.compare(0, pagePrefix.size(), pagePrefix) == 0);
+        // A page drawn at the width asked, clamped; drawn once for two asks.
+        std::string r = get(pageUrl + "&p=1&w=800");
+        CHECK(status(r) == "HTTP/1.1 200" && r.find("Content-Type: image/png\r\n") != std::string::npos);
+        CHECK(r.find("X-Content-Type-Options: nosniff\r\n") != std::string::npos);
+        CHECK(bodyOf(r) == "\x89PNG page 0 at 800");
+        const int drawsOnce = draws.load();
+        CHECK(bodyOf(get(pageUrl + "&p=1&w=800")) == "\x89PNG page 0 at 800" && draws.load() == drawsOnce);
+        CHECK(bodyOf(get(pageUrl + "&p=3&w=1")) == "\x89PNG page 2 at 64");
+        CHECK(bodyOf(get(pageUrl + "&p=2&w=100000")) == "\x89PNG page 1 at 4096");
+        // Refused: no such page, a query that does not read, another
+        // version, no cookie, not LaTeX, outside the folder (with a typeset
+        // kept for the outside file).
+        CHECK(status(get(pageUrl + "&p=4&w=800")) == "HTTP/1.1 404");
+        CHECK(status(get(pageUrl + "&p=0&w=800")) == "HTTP/1.1 400");
+        CHECK(status(get(pageUrl + "&p=1")) == "HTTP/1.1 400");
+        CHECK(status(get(web.base() + "typeset-page/paper.tex?p=1&w=800")) == "HTTP/1.1 400");
+        const std::string version = pageUrl.substr(pageUrl.find("?v=") + 3);
+        CHECK(status(get(web.base() + "typeset-page/paper.tex?v=" + std::to_string(std::stoull(version) + 1) +
+                         "&p=1&w=800")) == "HTTP/1.1 404");
+        CHECK(status(get(web.base() + "typeset-page/paper.tex?v=0&p=1&w=800")) == "HTTP/1.1 404");
+        CHECK(status(get(pageUrl + "&p=1&w=800", false)) == "HTTP/1.1 403");
+        web.typesetReady(elsewhere + "/secret.tex", std::make_shared<const std::string>("%PDF PAGE SECRET"));
+        for (const char* b : {"notes.txt", "leak.tex", "..%2Fsecret.tex", "%2Fetc%2Fx.tex", "missing.tex"}) {
+            r = get(web.base() + "typeset-page/" + b + "?v=" + version + "&p=1&w=800");
+            if (status(r) != "HTTP/1.1 404" || r.find("SECRET") != std::string::npos)
+                std::printf("  sessionweb:typeset-pages: GET %s: %s\n", b, r.substr(0, 80).c_str());
+            CHECK(status(r) == "HTTP/1.1 404" && r.find("SECRET") == std::string::npos);
+        }
+        // A new typeset, shorter: new sizes at a new address, the old gone.
+        got.clear();
+        web.typesetReady(paper, std::make_shared<const std::string>("%PDF PAGE PAGE second"));
+        CHECK(p.pump(take, [&] { return !got.empty(); }));
+        m = got.back();
+        CHECK(m["pages"].size() == 2 && m["pageUrl"].asString() != pageUrl);
+        CHECK(status(get(pageUrl + "&p=1&w=800")) == "HTTP/1.1 404");
+        pageUrl = m["pageUrl"].asString();
+        CHECK(bodyOf(get(pageUrl + "&p=2&w=800")) == "\x89PNG page 1 at 800");
+        CHECK(status(get(pageUrl + "&p=3&w=800")) == "HTTP/1.1 404");
+        // A page the renderer cannot draw.
+        got.clear();
+        web.typesetReady(paper, std::make_shared<const std::string>("%PDF PAGE BROKEN"));
+        CHECK(p.pump(take, [&] { return !got.empty(); }));
+        CHECK(status(get(got.back()["pageUrl"].asString() + "&p=1&w=800")) == "HTTP/1.1 500");
+        // PDF pages the app could not read: the frame, no pictures.
+        got.clear();
+        web.typesetReady(paper, std::make_shared<const std::string>("%PDF no pages"));
+        CHECK(p.pump(take, [&] { return !got.empty(); }));
+        CHECK(got.back().has("url") && !got.back().has("pages") && !got.back().has("pageUrl"));
+        // No renderer: the frame alone, and no pictures served.
+        pp.sendText("{\"t\":\"latex\",\"path\":\"paper.tex\"}");
+        CHECK(pp.pump(takePlain, [&] { return !plainGot.empty(); }));
+        CHECK(plainGot.back()["state"].asString() == "ready" && plainGot.back().has("url") &&
+              !plainGot.back().has("pages"));
+        const std::string plainUrl = plainGot.back()["url"].asString();
+        r = getFrom(plain, pp, plain.base() + "typeset-page/paper.tex?" + plainUrl.substr(plainUrl.find("v=")) +
+                                   "&p=1&w=800");
+        CHECK(status(r) == "HTTP/1.1 404");
+        // The PDF's own address is unchanged beside the pictures.
+        CHECK(bodyOf(get(got.back()["url"].asString())) == "%PDF no pages");
+        CHECK(fileBytes(paper) == "\\documentclass{article}\\begin{document}Hi\\end{document}\n");
+        p.close();
+        pp.close();
+        CHECK(waitUntil([&] { return web.browsers() == 0; }));
+        CHECK(status(get(pageUrl + "&p=1&w=800")) == "HTTP/1.1 503");
+        web.stop();
+        plain.stop();
+        webThread.join();
+        plainThread.join();
+        host.stop();
+        hostThread.join();
+        // The page has its scroller for the pictures, and keeps the place.
+        CHECK(Web::pageHtml().find("id=\"texpages\"") != std::string::npos);
+        CHECK(Web::pageHtml().find("function texPlace()") != std::string::npos);
+    }
+
     // The window's browser pane (R4): its tabs as the window reports them,
     // checked again for the page, only that window's; an editable page may
     // ask the pane to open an http or https address and nothing else, a
