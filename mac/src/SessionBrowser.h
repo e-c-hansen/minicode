@@ -110,6 +110,10 @@
 - (void)reportTabs;
 // The page's view looks at the host's state now (a record was sent).
 - (void)lookNow;
+// The window's folder changed on disk (its FSEvents): a page showing
+// Source Control reads the folder's changes again (R3's fourth slice; at
+// most one read a second, none while no page shows them).
+- (void)gitChanged;
 - (void)stop;
 @end
 

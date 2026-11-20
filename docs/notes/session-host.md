@@ -209,6 +209,14 @@ top of a turn, never inside a text system callback.
   "working" is never heard: whoever makes one says its state afterwards
   (`typesetOf:view:`), and `typesetting` counts the typing debounce, or a
   page told "failed" would wait for a typeset already due.
+- **The review's reading follows links** (R3's fourth slice):
+  `readUncommitted` reads the work tree with `readFileStable`, so an
+  untracked link to a file outside the folder had its target's text in
+  the diff. Every read the page gets goes through `confineReview`, which
+  makes such a file a link's note; never send a `Read` that skipped it.
+- **Nothing may wake a closed pipe.** `GitReads`' thread outlives the
+  server; `~Server` resets `git_` before the wake pipe closes, and the
+  wake is cleared under the reads' lock.
 
 - **Never edit the storage from the hook.** `willReplaceCharacters` runs
   inside the storage's edit: it records and sends a message, nothing else
@@ -1728,7 +1736,7 @@ the browser shows them with its own viewers.
   browser cannot show (database, archive, bookmark) says it opens in the
   window, as before.
 - **Not done in this slice**: SQLite and notebooks (the second slice,
-  below), the LaTeX preview (the third), and git and review pages; the window's viewer tabs (a picture's tab) are
+  below), the LaTeX preview (the third), and git and review pages (the fourth); the window's viewer tabs (a picture's tab) are
   still not reported to the page (the Mac reports only tabs with a
   document on the host), so the page shows a picture only from its tree,
   and does not follow the window to one.
@@ -1824,7 +1832,7 @@ and (already there) a Markdown file's page.
   Show Source on a page that cannot edit (Edit Source stays for one that
   can), Show Page going back.
 - **Not here**: the LaTeX preview (the third slice, below) and git and
-  review pages (the Mac's views); no query box (the Mac's viewer has one).
+  review pages (the fourth); no query box (the Mac's viewer has one).
 
 #### Checks
 
@@ -1976,6 +1984,123 @@ committed): the click, "Typesetting…", the frame in Chrome's PDF viewer,
 a fetch of 200 application/pdf, the second PDF at ?v=2, Show Source and
 Show Page. The look in Safari, the viewer's place after a re-typeset,
 and a phone need the owner's eyes.
+
+### Source Control and the review in the page (R3, fourth slice)
+
+The owner's ask (R3): git and review pages did not show in the browser
+view. Now the page's sidebar has Source Control beside Files, listing the
+folder's uncommitted changes as the window's panel does, and a file clicked
+shows the review page of those changes (the window's Uncommitted Changes
+page) in a tab of the page's own, inline or side by side. Read only, on
+every page, editable or not.
+
+- **The core reads; the server runs it.** `src/SessionWebGit.{h,cpp}`:
+  `GitReads` runs the core's `ChangeReview::readUncommitted` (the GTK
+  review page's reading: one status, ls-files, ls-tree, cat-file --batch,
+  then the disk) on a detached thread of its own, one read at a time, an
+  ask while one runs being one more read; a read that shows the same
+  (`ChangeReview::fingerprint` with the top level, branch line and error)
+  is no new `version`. Its destructor never waits: the thread holds the
+  state by `shared_ptr`, and the wake is cleared under the lock, so
+  `~Server` resets `git_` first, before the wake pipe closes.
+  `Read::branchText` is new (the panel's branch line).
+- **git with fixed arguments.** The page never names a command, an
+  argument or a path to git: `git {watch}` asks for a read, `review
+  {opened, side, file}` picks from the last read by file key (a key no
+  file has is `gone`), the gap ids only a set the layout looks up
+  (`openedFrom`, at most `kMaxOpenedGaps` 4096; `sideFrom`). The Mac's
+  `Options::git` runs `MCGitRunSync`/`MCGitRunSyncWithInput` (the git it
+  found, never /usr/bin/git's shim, its environment and time limits); a
+  headless host's is the core's `runGit`: `posix_spawnp("git", "-C",
+  dir, ...)`, no shell, its own process group, SIGPIPE default, stdin from
+  an unlinked scratch file (no pipe to fill), GIT_OPTIONAL_LOCKS=0 (a
+  status never rewrites the index), GIT_TERMINAL_PROMPT=0, GIT_EDITOR=true,
+  GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE dropped, SIGTERM at 30 s and
+  SIGKILL 2 s later, 256 MB of output at most.
+- **Held to the folder** (`confineReview`): a file outside the folder (a
+  folder below the repository's top level) is dropped, a dotfile too
+  unless the tree shows them (the page's read rule), and a work tree file
+  that `lstat` says is a link, or whose `realpath` is outside the folder,
+  is made a symbolic link's note with no text (`readUncommitted` reads the
+  work tree with `readFileStable`, which follows links: an untracked link
+  to a file outside would have shown it). A folder git places outside its
+  own top level shows the "not in a repository" error.
+- **What the page gets.** `git` (`gitStatusJson`): version, top, branch,
+  initial, files ({key, section, letter, path, orig, header, added,
+  removed}), count, error. `review` (`reviewJson`): one
+  `ChangeReview::layout` of every file (three lines of context, gaps
+  closed unless opened), each file's rows as arrays (`c`, `r`, `a`, `x`
+  for a conflict line with its part, `g` a gap with its id and count, `n`
+  a note), syntax and changed words as [start, length, style] in UTF-16
+  units; a file asked side by side is laid out from its `SideBySide` rows
+  with the same folding and gap ids (`s` rows, kind c, m, r, a, the words
+  on both sides). Past `kReviewRowBudget` (20,000) rows a file comes as
+  its header with `more` and the page asks for it alone (`reviewfile`). A
+  row is cut at `kReviewRowChars` (2,000 units) with an ellipsis. The
+  window's "Side by Side or Open shows it" note for a large file reads as
+  the window's review showing it.
+- **Updates.** A page that sent `git` watches until `git {watch: false}`
+  (the page sends it when neither Source Control nor the review tab is on
+  show). `Server::gitChanged()` (any thread) marks the read stale; the
+  loop asks for one at most a second after the last (`takeGit`), only
+  while a page watches, and sends `git` to each watching page whose last
+  version differs, or that asked. The Mac calls it from the window's
+  FSEvents callback (`sessionFolderChangedOnDisk`, the SessionBrowser
+  category's hook in EditorController+Tree.mm), which sees writes under
+  the folder and .git inside it: an agent's edit, git in a terminal, the
+  window's own panel. **A limit**: a folder below the repository's top
+  level sees no .git events, so a commit made elsewhere shows at the next
+  change under the folder (as the tree's git colors). A headless host
+  watches nothing: its pages read again on ↻, `hello` (a reconnect) and
+  `visibilitychange`.
+- **The page.** `#sidemodes` (Files, Source Control) swaps `#tree` for
+  `#git` (`#gitsum` the branch and count, `#gitlist` the rows: name,
+  folder, letter in the tree's git colors, `paletteJson`'s new `git`);
+  ↻ reads the mode on show. A row's click opens the review tab (`L.tabs`
+  entry path `/changes`, which no relative path is, label Changes,
+  `view: "review"`) at that file (`G.goto`), drawn in `#fileview.review`
+  by `textContent` only, each file a sticky header with Side by Side (or
+  Inline, or Show Changes), a gap row's click opening it (`reviewfile`).
+  A new `version` asks for the review again with the page's opened gaps
+  and side-by-side files, and keeps the place by the file at the top.
+  Syntax colors reuse the theme's rules (`#review .sN`); tints are the
+  Mac's review's (removed #F14C4C at .16, added #73C991 at .16, words .38
+  and .36). `mcSessionView.git()` and `review()` say what shows.
+- **Not done**: the window's open commit pages (`commit:<root>:<hash>`)
+  and worktree pages (Compare with Main) are not reported to the page, and
+  the commit reading is still the Mac's (`ReadCommit` in
+  ChangeReviewPage.mm; the worktree's is the core's `readWorktree`), so
+  they are the next slice; no graph, no commit text, no pictures (a binary
+  picture keeps its note), no Open of a file from the review, no F7.
+  Nothing stages, discards, commits or applies, by design.
+
+#### Checks
+
+`sessionweb:git` (a real git in a scratch repository): `runGit` (output,
+a failure's status, stdin, not a repository); `readUncommitted` held to
+the folder: the staged file first, a change, a new and a deleted file, a
+dotfile left out (in with hidden), an untracked link to a secret outside
+shown as a link with no text, a subfolder showing only its file, an error
+outside a repository; `gitStatusJson`'s sections and letters; `reviewJson`:
+removed and added rows with numbers, changed words, syntax spans, a gap,
+the gap opened, side by side with the changed pair's words on both sides
+and the same gap id, a 5,000-character line cut, a link's note, a
+deleted file's removed row, the row budget's `more`; `openedFrom` and
+`sideFrom` capped; `GitReads` (a version only for something new, the
+wake, none once destroyed mid-read); then over the wire with a headless
+host: a review before any read pending, the list, the review with a file
+side by side, one file, a key no file has, nonsense answered as the whole
+review, `gitChanged` reaching a watching page with a new version, nothing
+once it stops watching, no byte of the secret, and the status and the
+index file byte for byte as they were. GUI: `session_browser`, on the
+read-only page: the folder made a repository with a staged change, a
+change and a new file; Source Control lists them staged first; a click
+opens the review at that file with the removed and added lines, changed
+words, syntax colors and only Side by Side buttons, the window opening
+nothing; Side by Side pairs the changed lines; the gap opened shows every
+line; an agent's edit on disk reaches the review with no press, side by
+side and the gap kept; HEAD and the staged list as they were. The look in
+Safari, a long review's scrolling, and a phone need the owner's eyes.
 
 ### The window's browser tabs in the page (R4)
 
@@ -2145,5 +2270,6 @@ panes and the ×s needs the owner's eyes.
   changes. A headless host's page cannot open text files (no window
   decides tabs); it shows pictures, PDFs, media, HTML, tables, notebooks
   and databases (R3), and a LaTeX document's text, saying the window's
-  own page shows its pages (it typesets nothing). Git and review pages
-  are R3's next slice.
+  own page shows its pages (it typesets nothing). Source Control and the
+  review of uncommitted changes are in (R3's fourth slice); the window's
+  open commit and worktree pages are the next.

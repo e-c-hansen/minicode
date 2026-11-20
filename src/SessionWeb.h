@@ -43,7 +43,9 @@
 // `latex`, and the page shows the PDF the app's own LaTeX preview typeset
 // for it (`latex`), served from memory at /v/ID/typeset/PATH under the
 // same rules as /file/: the app publishes its typesets to the server,
-// which runs no tectonic of its own (Options::typeset, Typesets).
+// which runs no tectonic of its own (Options::typeset, Typesets). The
+// page's Source Control lists the folder's uncommitted changes and shows
+// their review page, read only (`git`, `review`; SessionWebGit.h).
 //
 // Access (SessionWebAccess.h): every address is under the view's own path,
 // /v/ID/. A link, http://127.0.0.1:PORT/v/ID/?t=TOKEN with a random token
@@ -151,6 +153,13 @@
 //   latex   {path, rel, state, version, url, text}: a LaTeX document's
 //           typeset (typesetJson), for a `latex`, and again each time the
 //           app's typeset of it changes
+//   git     {version, top, branch, initial, files, count | error}: the
+//           folder's uncommitted changes, as the window's Source Control
+//           lists them (gitStatusJson, SessionWebGit.h), for a `git`, and
+//           again whenever a read shows something new
+//   review  {version, files | error}: the review page of those changes
+//           (reviewJson); reviewfile {version, file | key, gone}: one file
+//           of it (reviewFileJson)
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
 //   alive   {}: someone is using the page (sent at most once a minute
@@ -168,6 +177,13 @@
 //   latex   {path}: the typeset of the LaTeX document it shows (a path from
 //           the folder, or a document's path under it), the app asked for
 //           one; any page
+//   git     {watch}: the folder's uncommitted changes read now and sent,
+//           then again as they change while `watch` (false: no more); any
+//           page, since git only reads
+//   review  {opened, side, file}: the review of the last read (every file,
+//           or the one whose key `file` names), `opened` the gaps shown
+//           whole by file key ({key: [id]}; for `file`, [id]), `side` the
+//           files side by side (keys; for `file`, a boolean); any page
 // and, only when editable:
 //   open    {path, keep}: a file the tree's row names, opened as a tab in
 //           the window (Options::open); a page that only reads is refused
@@ -625,6 +641,8 @@ private:
     Json cursorJson() const;
 };
 
+class GitReads;   // SessionWebGit.h
+
 // ---- the server
 struct Options {
     std::string hostSocket;   // the host's Unix socket
@@ -682,6 +700,16 @@ struct Options {
     // headless host, which typesets nothing): the page says the window's
     // preview makes it, and shows what was published, if anything.
     std::function<void(const std::string& path)> typeset;
+    // Runs git for the page's Source Control (R3's fourth slice,
+    // SessionWebGit.h): `args` (the core's fixed ones, never a page's) in
+    // `dir`, `input` on its stdin; true when it exited 0, with its output,
+    // its error text and its exit status (-1 when unknown). Called on a
+    // thread of the server's own. Unset: the core's runGit (the first git
+    // on PATH). The Mac gives its own (MCGitRunSync: the git it found, its
+    // environment and time limits).
+    std::function<bool(const std::string& dir, const std::vector<std::string>& args, const std::string& input,
+                       std::string* out, std::string* err, int* status)>
+        git;
     // Dotfiles in the tree (the window's Show Hidden Files).
     bool showHidden = false;
     int port = 0;             // 0: any free port (checks)
@@ -766,6 +794,11 @@ public:
     void typesetReady(const std::string& path, std::shared_ptr<const std::string> pdf);
     void typesetFailed(const std::string& path, const std::string& error);
     const Typesets& typesets() const { return typesets_; }
+    // The folder changed on disk, or the window's git did something (any
+    // thread): pages showing Source Control get a fresh read, at most one a
+    // second. A host that watches nothing never calls it; its pages read
+    // again when asked (the page's refresh, a reconnect).
+    void gitChanged();
 
 private:
     struct Conn;
@@ -824,6 +857,17 @@ private:
     void sendTypesets();
     Typesets typesets_;
     std::uint64_t typesetsSeen_ = 0;
+    // Source Control (`git`, `review`; SessionWebGit.h): read on a thread
+    // of GitReads' own, sent to the pages watching when a read shows
+    // something new, or to the page that asked.
+    void onGit(Conn& c, const Json& j);
+    void onReview(Conn& c, const Json& j);
+    void askGit();
+    void takeGit();
+    std::unique_ptr<GitReads> git_;
+    std::uint64_t gitFinished_ = 0;
+    std::atomic<bool> gitDirty_{false};
+    std::chrono::steady_clock::time_point lastGitAsk_;
     void takeReads();
     // A file for a viewer over HTTP: begun on its request, then read from
     // the host a piece at a time while the connection keeps up.

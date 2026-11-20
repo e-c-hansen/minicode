@@ -4,6 +4,7 @@
 #import "AppSettings.h"
 #import "EditorTab.h"
 #import "FileTree.h"   // gShowHidden
+#import "GitPanel.h"   // MCGitRunSync
 #import "Latex.h"
 #import "SessionLink.h"
 #import "SessionWindow.h"
@@ -317,6 +318,35 @@ NSString *MCSessionBrowserPeer(int peerPort, int serverPort) {
             dispatch_async(dispatch_get_main_queue(), ^{ typeset(p); });
         };
     }
+    // The page's Source Control runs git as the app's own panel does: the
+    // git it found, its environment and time limits, with the core's
+    // arguments (on a thread of the server's).
+    o.git = [](const std::string &dir, const std::vector<std::string> &args, const std::string &input,
+               std::string *out, std::string *err, int *status) {
+        NSFileManager *fm = NSFileManager.defaultManager;
+        auto ns = [fm](const std::string &s) -> NSString * {
+            return [NSString stringWithUTF8String:s.c_str()]
+                       ?: [fm stringWithFileSystemRepresentation:s.c_str() length:s.size()];
+        };
+        NSMutableArray<NSString *> *a = [NSMutableArray arrayWithCapacity:args.size()];
+        for (const std::string &s : args) {
+            NSString *x = ns(s);
+            if (!x) {
+                *err = "an argument git could not be given";
+                return false;
+            }
+            [a addObject:x];
+        }
+        NSString *d = ns(dir);
+        if (!d) return false;
+        MCGitResult *r = input.empty()
+            ? MCGitRunSync(d, a)
+            : MCGitRunSyncWithInput(d, a, [NSData dataWithBytes:input.data() length:input.size()]);
+        if (r.output.length) out->assign((const char *)r.output.bytes, r.output.length);
+        *err = r.errorText.UTF8String ?: "";
+        *status = r.status;
+        return (bool)r.ok;
+    };
     // A browser this Mac does not remember waits for the window's sheet.
     const NSUInteger generation = ++_generation;
     __weak MCSessionBrowser *weakSelf = self;
@@ -365,6 +395,10 @@ NSString *MCSessionBrowserPeer(int peerPort, int serverPort) {
 - (void)reportTabs {
     [_session report];
     [self lookNow];
+}
+
+- (void)gitChanged {
+    if (_server) _server->gitChanged();
 }
 
 - (void)lookNow {

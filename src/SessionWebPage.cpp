@@ -26,6 +26,10 @@
 // LaTeX document shows as the PDF the app's own LaTeX preview typeset,
 // served at the server's /typeset/ address and drawn again each time the
 // app typesets it, Show Source flipping to its lines (R3's third slice).
+// The sidebar's Source Control lists the folder's uncommitted changes as
+// the window's does, and a file clicked shows the review page of those
+// changes in a tab of the page's own, inline or side by side, read only
+// (R3's fourth slice, SessionWebGit.h).
 // "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
@@ -48,7 +52,8 @@ const std::string& pageHtml() {
         --sbg: #181818; --sfg: #cccccc; --ign: #8c8c8c;
         --line: #2b2b2b; --accent: #4ea1f7; --lh: 1.4em; --hbg: #181818; --hfg: #cccccc;
         --gutter: #1f1f1f; --ln: #6e7681; --lnact: #cccccc; --efs: 13px; --tfs: 12px;
-        --sfs: 13px; --selbg: rgba(38, 79, 120, .9); }
+        --sfs: 13px; --selbg: rgba(38, 79, 120, .9);
+        --gmod: #e2c08d; --gadd: #81b88b; --gunt: #73c991; --gdel: #c74e39; --gcon: #e4676b; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--fg); display: flex; flex-direction: column;
@@ -122,6 +127,56 @@ body.sideclosed #side { display: none; }
 #tree .row.link .name { font-style: italic; }
 #tree .more, #tree .err { color: var(--muted); font-size: 12px; line-height: 20px;
                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sidemodes { display: flex; gap: 4px; padding: 0 6px 5px 8px; flex: none; }
+#sidemodes button { flex: 1; min-width: 0; font: inherit; font-size: 12px; background: none; color: var(--muted);
+                    border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; cursor: pointer;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sidemodes button[aria-pressed="true"] { color: var(--sfg); border-color: var(--accent); }
+#git { flex: 1; overflow: auto; min-height: 0; padding-bottom: 1em; }
+#gitsum { margin: 0; padding: 2px 10px 6px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+#gitlist .gsec { padding: 6px 10px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+                 font-weight: 600; opacity: .8; white-space: nowrap; }
+#gitlist .row { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; cursor: pointer;
+                line-height: 22px; padding: 0 8px 0 14px; user-select: none; }
+#gitlist .row:hover { background: rgba(127, 127, 127, .12); }
+#gitlist .row.current { background: rgba(127, 127, 127, .24); }
+#gitlist .gname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#gitlist .gdir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted);
+                 font-size: 12px; }
+.gl { flex: none; width: 1.2em; text-align: center; font-weight: 600; color: var(--gmod); }
+.gl.A { color: var(--gadd); } .gl.U { color: var(--gunt); } .gl.D { color: var(--gdel); }
+.gl.C { color: var(--gcon); }
+#fileview.review { display: block; position: relative; }
+#review { padding-bottom: 2em; font-size: var(--efs); }
+#review .rsec { padding: 10px 12px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+                letter-spacing: .04em; color: var(--muted); }
+#review .rhead { display: flex; align-items: center; gap: 8px; padding: 4px 12px; background: var(--hbg);
+                 color: var(--hfg); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+                 position: sticky; top: 0; z-index: 1; font-size: 13px; }
+#review .rpath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#review .rhead button { flex: none; font: inherit; font-size: 12px; color: var(--fg); background: none;
+                        border: 1px solid var(--line); border-radius: 3px; padding: 1px 8px; cursor: pointer; }
+#review .rbody { overflow-x: auto; }
+#review table { border-collapse: collapse; min-width: 100%;
+                font: var(--efs)/var(--lh) ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
+#review td { padding: 0 8px; white-space: pre; vertical-align: top; border: 0; }
+#review td.n { color: var(--ln); background: var(--gutter); text-align: right; user-select: none;
+               min-width: 3.2em; width: 1px; }
+#review table.side td.t { width: 50%; }
+#review td.t.r, #review tr.r td.t { background: rgba(241, 76, 76, .16); }
+#review td.t.a, #review tr.a td.t { background: rgba(115, 201, 145, .16); }
+#review td.fill { background: rgba(127, 127, 127, .07); }
+#review .wr { background: rgba(241, 76, 76, .38); }
+#review .wa { background: rgba(115, 201, 145, .36); }
+#review tr.gap td { color: var(--muted); cursor: pointer; text-align: center; background: rgba(127, 127, 127, .08);
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif; font-size: 12px; }
+#review tr.gap:hover td { color: var(--fg); }
+#review tr.rnote td { color: var(--muted); font-style: italic; white-space: normal; padding: 4px 12px;
+                      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif; font-size: 12px; }
+#review tr.x td.t { background: rgba(127, 127, 127, .10); }
+#review tr.x.p1 td.t, #review tr.x.p2 td.t { background: rgba(64, 166, 255, .18); }
+#review tr.x.p6 td.t, #review tr.x.p7 td.t { background: rgba(115, 201, 145, .18); }
+#review tr.x.p1 td.t, #review tr.x.p3 td.t, #review tr.x.p5 td.t, #review tr.x.p7 td.t { font-weight: 600; }
 #treenote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none;
             border-top: 1px solid var(--line); }
 #work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -233,7 +288,7 @@ body:not(.editable) #caret { display: none; }
   #side { display: none; position: absolute; left: 0; top: 0; bottom: 0; z-index: 20;
           width: min(85vw, 340px); box-shadow: 2px 0 12px rgba(0, 0, 0, .35); }
   body.sideopen #side { display: flex; }
-  #tree .row { line-height: 30px; }
+  #tree .row, #gitlist .row { line-height: 30px; }
 }
 </style>
 </head>
@@ -244,7 +299,9 @@ body:not(.editable) #caret { display: none; }
 <div id="wrap">
 <aside id="side" aria-label="Files">
   <div id="sidebar"><span id="sidename">Files</span><button id="refresh" class="iconbtn" type="button" title="Refresh the tree" aria-label="Refresh the tree">&#8635;</button></div>
+  <div id="sidemodes"><button id="filesbtn" type="button" aria-pressed="true" title="The folder's files">Files</button><button id="scmbtn" type="button" aria-pressed="false" title="The folder's uncommitted changes, as the window's Source Control lists them (read-only)">Source Control</button></div>
   <div id="tree" role="tree"></div>
+  <div id="git" class="hidden"><p id="gitsum"></p><div id="gitlist" role="list"></div></div>
   <p id="treenote" class="hidden"></p>
 </aside>
 <div id="work">
@@ -312,6 +369,9 @@ body:not(.editable) #caret { display: none; }
     const side = sf.sidebar || {};
     set("--sbg", side.background); set("--sfg", side.text);
     set("--ign", p.treeIgnored);
+    const g = p.git || {};
+    set("--gmod", g.modified); set("--gadd", g.added); set("--gunt", g.untracked); set("--gdel", g.deleted);
+    set("--gcon", g.conflict);
     set("--gutter", p.gutter); set("--ln", p.lineNumber); set("--lnact", p.lineNumberActive);
     set("--muted", p.dark ? "#9d9d9d" : "#616161");
     set("--line", p.dark ? "#2b2b2b" : "#e5e5e5");
@@ -321,7 +381,7 @@ body:not(.editable) #caret { display: none; }
     if (p.tabsFontSize) set("--sfs", p.tabsFontSize + "px");
     root.colorScheme = p.dark ? "dark" : "light";
     let css = "";
-    (p.syntax || []).forEach((c, i) => { if (i) css += "#code .s" + i + "{color:" + c + "}\n"; });
+    (p.syntax || []).forEach((c, i) => { if (i) css += "#code .s" + i + ",#review .s" + i + "{color:" + c + "}\n"; });
     // The ruler's columns, past the line numbers' 4.5em.
     const rulers = (p.rulers || []).map((n) => {
       const x = "calc(4.5em + " + n + "ch)";
@@ -435,7 +495,7 @@ body:not(.editable) #caret { display: none; }
     for (const d of state.docs) add(d.id, d.path);
     // The files this page opened itself, which only it shows and closes.
     for (const f of L.tabs) {
-      const name = base(f.path);
+      const name = f.label || base(f.path);
       strip.appendChild(tabButton(name, f.abs + " (on this page only)", "local" + (L.on === f.path ? " shown" : ""),
                                   () => showLocal(f.path), () => closeLocal(f.path), "Close " + name + " on this page"));
     }
@@ -670,6 +730,7 @@ body:not(.editable) #caret { display: none; }
   }
   function closeLocal(rel) {
     L.tabs = L.tabs.filter((x) => x.path !== rel);
+    if (rel === kReview) { G.review = null; G.cur = ""; drawGit(); watchGit(); }
     if (L.on === rel) {
       hideViewer();
       // Back to the window's tab on show.
@@ -713,14 +774,15 @@ body:not(.editable) #caret { display: none; }
     $("code").classList.add("hidden"); $("md").classList.add("hidden"); mdHtml = null;
     $("modebtn").classList.add("hidden"); $("note").classList.add("hidden");
     hideTex();
-    $("docpath").textContent = rel + " (on this page only)";
+    $("docpath").textContent = f.label ? f.abs : rel + " (on this page only)";
     drawSelection();
     const box = $("fileview"), url = fileUrl(rel), open = $("fileopen");
     box.classList.remove("hidden");
     $("filemore").classList.add("hidden");
     open.href = url;
     // Only what the server serves as bytes has an address of its own.
-    open.classList.toggle("hidden", view === "table" || view === "notebook" || view === "database");
+    open.classList.toggle("hidden", view === "table" || view === "notebook" || view === "database" ||
+                          view === "review");
     if (V.on !== rel) {
       V.on = rel;
       box.textContent = ""; box.className = "";
@@ -745,6 +807,8 @@ body:not(.editable) #caret { display: none; }
       } else if (view === "database") {
         if (f.db) drawDb(f.db);
         else { fileNote("Reading " + base(rel) + "…"); askDb(rel, "", 0); }
+      } else if (view === "review") {
+        drawReview();
       }
       if (el) {
         el.addEventListener("error", () => { if (V.on === rel) fileNote(base(rel) + " could not be shown here."); });
@@ -753,6 +817,8 @@ body:not(.editable) #caret { display: none; }
       }
     } else if (view === "table" && f.table) {
       drawTable(f.table);
+    } else if (view === "review") {
+      scrollReview();
     }
     drawTabs();
     markCurrent();
@@ -924,6 +990,264 @@ body:not(.editable) #caret { display: none; }
     showLocal(m.path);
   }
 
+
+  // ---- Source Control (R3's fourth slice): the folder's uncommitted
+  // changes as the window's Source Control lists them, read by the server
+  // with the core's fixed git commands (git), and their review page in a
+  // tab of this page's own (review): each file's blocks, unchanged lines
+  // folded (a click shows them), inline or side by side. Read only: no
+  // stage, unstage, discard or commit, on any page. The server says again
+  // when the changes move, as far as its host watches the folder (the Mac
+  // does); otherwise ↻, a reconnect, or coming back to the page reads again.
+  const kReview = "/changes";   // the review's tab, by a path no file of the folder has
+  const G = { mode: false, status: null, review: null, opened: new Map(), side: new Set(), goto: "", cur: "" };
+  function gitWanted() { return G.mode || L.tabs.some((x) => x.path === kReview); }
+  function askGit() {
+    if (!G.status) drawGit();
+    post({ t: "git", watch: true });
+  }
+  function watchGit() { if (!gitWanted()) post({ t: "git", watch: false }); }
+  function setSideMode(scm) {
+    G.mode = scm;
+    $("tree").classList.toggle("hidden", scm);
+    $("git").classList.toggle("hidden", !scm);
+    $("treenote").classList.add("hidden");
+    $("filesbtn").setAttribute("aria-pressed", String(!scm));
+    $("scmbtn").setAttribute("aria-pressed", String(scm));
+    const r = $("refresh"), what = scm ? "Read the changes again" : "Refresh the tree";
+    r.title = what; r.setAttribute("aria-label", what);
+    // Back to Files: the open folders listed again, since files came and
+    // went while the changes were on show (the tree does not follow the
+    // disk by itself).
+    if (scm) askGit(); else { watchGit(); refreshTree(); }
+  }
+  function dirOf(p) { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
+  function letterEl(letter) {
+    const l = document.createElement("span");
+    l.className = "gl " + letter; l.textContent = letter;
+    l.title = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed", T: "Type changed", U: "Untracked",
+                C: "Conflict" }[letter] || "";
+    return l;
+  }
+  function sectionText(section, n) { return (section === "staged" ? "Staged Changes" : "Changes") + "  " + n; }
+  function drawGit() {
+    const sum = $("gitsum"), list = $("gitlist"), m = G.status;
+    list.textContent = "";
+    if (!m) { sum.textContent = "Reading the changes…"; return; }
+    if (m.error) { sum.textContent = m.error; return; }
+    const n = m.count || 0;
+    sum.textContent = (m.branch ? m.branch + ": " : "") +
+                      (n ? n + (n === 1 ? " file changed" : " files changed") : "No changes.");
+    const counts = {};
+    for (const f of m.files) counts[f.section] = (counts[f.section] || 0) + 1;
+    let section = "";
+    for (const f of m.files) {
+      if (f.section !== section) {
+        section = f.section;
+        const h = document.createElement("div");
+        h.className = "gsec"; h.textContent = sectionText(section, counts[section]);
+        list.appendChild(h);
+      }
+      const row = document.createElement("div");
+      row.className = "row" + (f.key === G.cur && L.on === kReview ? " current" : "");
+      row.setAttribute("role", "listitem");
+      row.dataset.key = f.key; row.dataset.path = f.path;
+      row.title = f.header;
+      const name = document.createElement("span"), dir = document.createElement("span");
+      name.className = "gname"; name.textContent = base(f.path);
+      dir.className = "gdir"; dir.textContent = dirOf(f.path);
+      row.appendChild(name); row.appendChild(dir); row.appendChild(letterEl(f.letter));
+      list.appendChild(row);
+    }
+  }
+  function onGit(m) {
+    G.status = m;
+    drawGit();
+    // The review on show follows a read that shows something new.
+    if (L.tabs.some((x) => x.path === kReview) && (!G.review || G.review.version !== m.version)) askReview();
+  }
+  function openedJson() {
+    const o = {};
+    for (const [k, v] of G.opened) o[k] = [...v];
+    return o;
+  }
+  function askReview() { post({ t: "review", opened: openedJson(), side: [...G.side] }); }
+  function askReviewFile(key) {
+    post({ t: "review", file: key, opened: [...(G.opened.get(key) || [])], side: G.side.has(key) });
+  }
+  function openReview(key) {
+    if (!synced()) { toast("Waiting for the session to confirm typing before showing another file."); return; }
+    G.goto = key; G.cur = key;
+    if (!L.tabs.find((x) => x.path === kReview))
+      L.tabs.push({ path: kReview, abs: "Uncommitted changes (read-only)", label: "Changes", view: "review",
+                    viewer: true });
+    if (!G.review) askReview();
+    showLocal(kReview);
+    drawGit();
+  }
+  // Text with its syntax colors and the words that changed, each piece a
+  // span made by textContent.
+  function spansInto(td, text, syn, words) {
+    const cuts = new Set([0, text.length]);
+    for (const s of syn || []) { cuts.add(s[0]); cuts.add(Math.min(text.length, s[0] + s[1])); }
+    for (const s of words || []) { cuts.add(s[0]); cuts.add(Math.min(text.length, s[0] + s[1])); }
+    const at = [...cuts].filter((x) => x >= 0 && x <= text.length).sort((a, b) => a - b);
+    const inside = (list, a) => (list || []).find((s) => s[0] <= a && a < s[0] + s[1]);
+    for (let i = 0; i + 1 < at.length; i++) {
+      const a = at[i], b = at[i + 1];
+      if (b <= a) continue;
+      const sy = inside(syn, a), w = inside(words, a);
+      if (!sy && !w) { td.appendChild(document.createTextNode(text.slice(a, b))); continue; }
+      const e = document.createElement("span");
+      e.className = (sy ? "s" + sy[2] : "") + (w ? (w[2] ? " wa" : " wr") : "");
+      e.textContent = text.slice(a, b);
+      td.appendChild(e);
+    }
+  }
+  function cell(cls, text) {
+    const td = document.createElement("td");
+    td.className = cls;
+    if (text !== undefined) td.textContent = text;
+    return td;
+  }
+  function reviewRows(f) {
+    const table = document.createElement("table"), body = document.createElement("tbody");
+    if (f.side) table.className = "side";
+    const cols = f.side ? 4 : 3;
+    for (const r of f.rows || []) {
+      const tr = document.createElement("tr");
+      if (r[0] === "g" || r[0] === "n") {
+        tr.className = r[0] === "g" ? "gap" : "rnote";
+        const td = cell("", r[3]);
+        td.colSpan = cols;
+        tr.appendChild(td);
+        if (r[0] === "g") {
+          tr.title = "Show these lines";
+          tr.addEventListener("click", () => {
+            if (!G.opened.has(f.key)) G.opened.set(f.key, new Set());
+            G.opened.get(f.key).add(r[1]);
+            askReviewFile(f.key);
+          });
+        }
+      } else if (r[0] === "s") {
+        // [s, kind, old, new, oldText, newText, oldSyn, newSyn, oldWords, newWords]
+        const k = r[1];
+        tr.className = "s" + k;
+        const lt = cell("t" + (r[2] ? (k === "m" || k === "r" ? " r" : "") : " fill"));
+        const rt = cell("t" + (r[3] ? (k === "m" || k === "a" ? " a" : "") : " fill"));
+        if (r[2]) spansInto(lt, r[4], r[6], r[8]);
+        if (r[3]) spansInto(rt, r[5], r[7], r[9]);
+        tr.appendChild(cell("n", r[2] ? String(r[2]) : ""));
+        tr.appendChild(lt);
+        tr.appendChild(cell("n", r[3] ? String(r[3]) : ""));
+        tr.appendChild(rt);
+      } else {
+        // [kind, old, new, text, syntax, words | part]
+        tr.className = r[0] + (r[0] === "x" ? " p" + r[5] : "");
+        tr.appendChild(cell("n", r[1] ? String(r[1]) : ""));
+        tr.appendChild(cell("n", r[2] ? String(r[2]) : ""));
+        const td = cell("t");
+        spansInto(td, r[3], r[4], r[0] === "r" || r[0] === "a" ? r[5] : null);
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+    return table;
+  }
+  function reviewFile(f) {
+    const box = document.createElement("div");
+    box.className = "rfile"; box.dataset.key = f.key;
+    const head = document.createElement("div");
+    head.className = "rhead";
+    head.appendChild(letterEl(f.letter));
+    const path = document.createElement("span");
+    path.className = "rpath"; path.textContent = f.header; path.title = f.header;
+    head.appendChild(path);
+    const button = (text, title, onclick) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = text; b.title = title;
+      b.addEventListener("click", onclick);
+      head.appendChild(b);
+    };
+    if (f.more) button("Show Changes", "This file's changes, which the page left out to stay quick",
+                       () => askReviewFile(f.key));
+    else if (f.canSide)
+      button(f.side ? "Inline" : "Side by Side", f.side ? "Removed lines above added ones" : "The two versions side by side",
+             () => { if (f.side) G.side.delete(f.key); else G.side.add(f.key); askReviewFile(f.key); });
+    box.appendChild(head);
+    if (!f.more) {
+      const body = document.createElement("div");
+      body.className = "rbody";
+      body.appendChild(reviewRows(f));
+      box.appendChild(body);
+    }
+    return box;
+  }
+  // Where the eye is: the file at the top of the view, and how far into it.
+  function reviewAnchor() {
+    const view = $("fileview"), box = $("review");
+    if (!box) return null;
+    for (const f of box.querySelectorAll(".rfile"))
+      if (f.offsetTop + f.offsetHeight > view.scrollTop) return { key: f.dataset.key, off: view.scrollTop - f.offsetTop };
+    return null;
+  }
+  function fileEl(key) {
+    const box = $("review");
+    if (!box) return null;
+    for (const f of box.querySelectorAll(".rfile")) if (f.dataset.key === key) return f;
+    return null;
+  }
+  function scrollReview(keep) {
+    const view = $("fileview");
+    if (G.goto) {
+      const f = fileEl(G.goto);
+      if (f) { view.scrollTop = f.offsetTop; G.goto = ""; }
+      return;
+    }
+    if (keep) {
+      const f = fileEl(keep.key);
+      if (f) view.scrollTop = f.offsetTop + keep.off;
+    }
+  }
+  function drawReview() {
+    if (V.on !== kReview) return;
+    const box = $("fileview"), m = G.review, keep = reviewAnchor();
+    if (!m || m.pending) { fileNote("Reading the changes…"); return; }
+    if (m.error) { fileNote(m.error); return; }
+    if (!(m.files || []).length) { fileNote("No changes."); return; }
+    box.textContent = ""; box.className = "review";
+    const wrap = document.createElement("div");
+    wrap.id = "review";
+    const counts = {};
+    for (const f of m.files) counts[f.section] = (counts[f.section] || 0) + 1;
+    let section = "";
+    for (const f of m.files) {
+      if (f.section !== section) {
+        section = f.section;
+        const h = document.createElement("div");
+        h.className = "rsec"; h.textContent = sectionText(section, counts[section]);
+        wrap.appendChild(h);
+      }
+      wrap.appendChild(reviewFile(f));
+    }
+    box.appendChild(wrap);
+    scrollReview(keep);
+  }
+  function onReview(m) {
+    if (m.pending) { if (!G.review) G.review = m; drawReview(); return; }
+    G.review = m;
+    drawReview();
+  }
+  function onReviewFile(m) {
+    if (!G.review || !G.review.files) return;
+    const key = m.file ? m.file.key : m.key, at = G.review.files.findIndex((f) => f.key === key);
+    if (at < 0) return;
+    if (m.gone) { askReview(); return; }   // the changes moved: the whole review again
+    G.review.files[at] = m.file;
+    const old = fileEl(key);
+    if (old && V.on === kReview) old.replaceWith(reviewFile(m.file));
+  }
 
   // ---- the tree: one folder's rows at a time, read by the host each time
   // a folder opens (list), folders first as the apps list them, dotfiles as
@@ -2086,6 +2410,8 @@ body:not(.editable) #caret { display: none; }
           // A LaTeX document's pages on show: asked for again on the new
           // connection, which knows nothing of the last one's.
           if (X.asked) post({ t: "latex", path: X.asked });
+          // Source Control on show, or its review: read again.
+          if (gitWanted()) askGit();
           break;
         case "palette": applyPalette(m.palette); break;
         case "state": onState(m); break;
@@ -2110,6 +2436,9 @@ body:not(.editable) #caret { display: none; }
         case "notebook": onNotebook(m); break;
         case "db": onDb(m); break;
         case "latex": onLatex(m); break;
+        case "git": onGit(m); break;
+        case "review": onReview(m); break;
+        case "reviewfile": onReviewFile(m); break;
         case "closing": if (!m.ok) toast(m.why || "That tab was not closed."); break;
       }
     };
@@ -2199,7 +2528,13 @@ body:not(.editable) #caret { display: none; }
     // keeps the tab, as in the window's tree.
     openFile(rel, e, ev.detail >= 2 || ev.metaKey || ev.ctrlKey);
   });
-  $("refresh").addEventListener("click", refreshTree);
+  $("refresh").addEventListener("click", () => { if (G.mode) askGit(); else refreshTree(); });
+  $("filesbtn").addEventListener("click", () => setSideMode(false));
+  $("scmbtn").addEventListener("click", () => setSideMode(true));
+  $("gitlist").addEventListener("click", (ev) => {
+    const row = ev.target.closest(".row");
+    if (row && row.dataset.key) openReview(row.dataset.key);
+  });
   $("browse").addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.target.value = ""; e.target.blur(); return; }
     if (e.key !== "Enter" || e.isComposing) return;
@@ -2215,7 +2550,11 @@ body:not(.editable) #caret { display: none; }
   // At phone width a tap beside the open tree closes it.
   $("work").addEventListener("pointerdown", () => { if (narrow.matches && sideOpen()) setSide(false); });
   // Back to the page after a while: the folders may have changed meanwhile.
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshTree(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    refreshTree();
+    if (gitWanted()) askGit();   // a host that watches nothing has not said
+  });
   $("term").addEventListener("keydown", onTermKey);
   $("term").addEventListener("paste", (e) => {
     if (!editable || !want.term) return;
@@ -2264,6 +2603,25 @@ body:not(.editable) #caret { display: none; }
                       src: $("texframe").getAttribute("src") || "",
                       frame: !$("texframe").classList.contains("hidden"),
                       note: $("texnote").textContent, log: $("texlog").textContent }),
+    // Source Control: the list as drawn, and the review on show.
+    git: () => ({ mode: G.mode, summary: $("gitsum").textContent, version: G.status ? G.status.version : 0,
+                  rows: [...$("gitlist").querySelectorAll(".row")].map((r) => r.querySelector(".gl").textContent + " " +
+                                                                           r.dataset.path),
+                  current: [...$("gitlist").querySelectorAll(".row.current")].map((r) => r.dataset.path) }),
+    review: () => {
+      const box = $("review");
+      return { shown: V.on === kReview && !!box, version: G.review ? G.review.version || 0 : 0,
+               note: ($("filenote") || {}).textContent || "",
+               buttons: box ? [...box.querySelectorAll("button")].map((b) => b.textContent) : [],
+               words: box ? box.querySelectorAll(".wa, .wr").length : 0,
+               colored: box ? box.querySelectorAll("td.t span[class^='s']").length : 0,
+               top: $("fileview").scrollTop,
+               files: box ? [...box.querySelectorAll(".rfile")].map((f) => ({
+                 key: f.dataset.key, head: f.querySelector(".rpath").textContent, offset: f.offsetTop,
+                 side: !!f.querySelector("table.side"),
+                 rows: [...f.querySelectorAll("tr")].map((r) => r.className + "|" +
+                         [...r.querySelectorAll("td")].map((c) => c.textContent).join("|")) })) : [] };
+    },
     windowPanes: () => windowPanes(),
     gate: () => ($("gate").classList.contains("hidden") ? "" : $("gate").textContent),
   };

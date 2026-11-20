@@ -12142,6 +12142,7 @@ int main() {
     testTermDockRecord();
     testSessionWeb();
     testSessionWebAccess();
+    testSessionWebGit();
     testLspProjectCode();
     testLspClangdFlags();
     testMultiEdit();

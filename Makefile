@@ -45,7 +45,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/MarkdownEmoji.c
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/TextScan.cpp src/Regex.cpp \
             src/EditSpans.cpp src/FindRules.cpp src/Text.cpp src/Document.cpp src/UndoHistory.cpp \
             src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/SessionServer.cpp src/HostPty.cpp \
-            src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebViewers.cpp src/SessionWebTypeset.cpp src/SessionWebAccess.cpp src/SessionFiles.cpp src/SqliteRead.cpp \
+            src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebViewers.cpp src/SessionWebTypeset.cpp src/SessionWebGit.cpp src/SessionWebAccess.cpp src/SessionFiles.cpp src/SqliteRead.cpp \
             src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
             src/Formatter.cpp src/FormatRun.cpp src/FolderTools.cpp src/InstallHints.cpp src/LineDiff.cpp src/QuickDiff.cpp \
@@ -81,7 +81,10 @@ SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.
             src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebAccess.cpp src/IdeLink.cpp src/MarkdownHtml.cpp \
             src/SyntaxHighlighter.cpp src/Settings.cpp src/AutoIndent.cpp src/LineComments.cpp \
             src/SessionFiles.cpp src/FileDetails.cpp src/FileSniff.cpp src/Backups.cpp src/SavePlan.cpp src/Csv.cpp \
-            src/SessionWebViewers.cpp src/SessionWebTypeset.cpp src/SqliteRead.cpp src/Notebook.cpp
+            src/SessionWebViewers.cpp src/SessionWebTypeset.cpp src/SessionWebGit.cpp src/SqliteRead.cpp src/Notebook.cpp \
+            src/ChangeReview.cpp src/ChangeReviewRead.cpp src/SideBySide.cpp src/LineDiff.cpp src/MergeConflicts.cpp \
+            src/GitModel.cpp src/GitStatus.cpp src/GitGraph.cpp src/QuickDiff.cpp \
+            src/AgentView.cpp src/AgentEvidence.cpp src/AgentIndex.cpp
 OBJ      := $(patsubst mac/src/%,$(OBJDIR)/%.o,$(patsubst src/%,$(OBJDIR)/%.o,$(SRC)))
 
 # A release build (`make dist-zip RELEASE=1`, as scripts/release.sh runs it)

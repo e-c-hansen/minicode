@@ -93,7 +93,10 @@ goes here first, with tests; the GUI only displays it.
   (what the browser's page renders itself: a notebook as a page, a SQLite
   database's tables and rows; `sessionweb:viewers`), `SessionWebTypeset`
   (the LaTeX preview's typesets the app publishes, kept by the document's
-  real path and served at /typeset/; `sessionweb:typeset`), and
+  real path and served at /typeset/; `sessionweb:typeset`), `SessionWebGit` (the page's
+  Source Control: `runGit`, a POSIX git runner with fixed arguments, the
+  core's `readUncommitted` held to the folder, the list and the review as
+  JSON, `GitReads` on a thread of its own; `sessionweb:git`), and
   `SessionWebAccess`
   (who may use the browser's view: single-use links, the credential's
   cookie, idle expiry, the app's question before a new browser and its

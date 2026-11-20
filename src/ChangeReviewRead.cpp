@@ -79,6 +79,7 @@ Read readUncommitted(const std::string& root, const GitRunner& run, const ImageR
     GitUi::Snapshot snap;
     GitUi::applyStatus(snap, Git::parseStatus(st.out));
     data.initial = snap.initial;
+    data.branchText = snap.branchText;
     std::vector<GitUi::Row> rows;
     std::vector<std::string> paths;
     for (const GitUi::Row& row : snap.rows) {
