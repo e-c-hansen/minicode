@@ -744,7 +744,6 @@ void LatexPreview::finishCompile(Job* job, GBytes* output, bool ok) {
 }
 
 void LatexPreview::showDocument() {
-    const int n = pdf_->pageCount();
     gtk_stack_set_visible_child_name(GTK_STACK(stack_), "pdf");
     setButton("Recompile", true);
     showPagesStatus();
