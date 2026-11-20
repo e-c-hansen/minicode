@@ -8,6 +8,8 @@
 #include "Editor.h"
 #include "WindowLayout.h"
 
+#include <gdk/x11/gdkx.h>
+
 #ifdef MUTIBLE_ENABLE_BROWSER
 #include "Browser.h"
 #include <webkit/webkit.h>
@@ -221,6 +223,21 @@ MC_GUI_SUITE(harness) {
         const double t0 = MCGuiThreadCpuMs();
         (void)MCGuiEditorText();
         GCHECK_TIME(MCGuiThreadCpuMs() - t0, 1000, "reading the buffer");
+    });
+
+    // GDK's user time ahead of the X server's, as a drop from the app's own
+    // drag leaves it (Input.cpp), up to nearly half X's clock ahead, seen
+    // and put back: a quarter of the clock at a time, then the server's.
+    MCGuiStep("a user time ahead of the server's, seen and put back", [] {
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        GdkSurface* s = gtk_native_get_surface(GTK_NATIVE(MCGuiApp().window));
+        for (guint32 lead : {1000u, 0x40000000u, 0x7ffff000u}) {
+            gdk_x11_surface_set_user_time(s, gdk_x11_get_server_time(s) + lead);
+            GCHECK(MCGuiUserTimeAhead());
+            MCGuiPutBackUserTime();
+            GCHECK(!MCGuiUserTimeAhead());
+        }
+        G_GNUC_END_IGNORE_DEPRECATIONS
     });
 
     MCGuiStep("a file long enough to scroll", [] { MCGuiOpenFile(MCGuiProjectFile("big.txt")); });
