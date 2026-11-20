@@ -37,6 +37,7 @@ class ProcessesPanel;
 class IdeLinkServer;
 class AgentsPanel;
 class HintsColumns;
+class SidebarIcons;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -75,6 +76,13 @@ struct MCGuiAppWindow {
     GitGutter*  changeBars = nullptr;      // the editor's change bars (2.10)
     TestGutter* tests = nullptr;           // the ▶ beside each test (TestGutter.h)
     TreeGitColors* treeColors = nullptr;   // the tree's colors (2.10)
+    // The sidebar's row of panel icons (SidebarIcons.h), its holder (hidden
+    // by workbench.sidebar-icons = off), the stack of panels under it, and
+    // whether Source Control is the panel on show.
+    SidebarIcons* sidebarIcons = nullptr;
+    GtkWidget*  sidebarIconsRow = nullptr;
+    GtkWidget*  sidebarStack = nullptr;
+    bool        gitShown = false;
     std::string rootDir;
 };
 

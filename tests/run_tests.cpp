@@ -11967,6 +11967,7 @@ static void testMultiCaretOccurrences() {
 #include "process_env_tests.inc"
 #include "rename_tests.inc"
 #include "window_title_tests.inc"
+#include "sidebar_panels_tests.inc"
 
 int main() {
     std::printf("Running Mutible core tests...\n");
@@ -12037,6 +12038,7 @@ int main() {
     testTerminalLayout();
     testTerminalExit();
     testRightArea();
+    testSidebarPanels();
     testGettingAround();
     testAdjustSettings();
     testBrowserTabs();

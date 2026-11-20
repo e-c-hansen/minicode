@@ -157,7 +157,9 @@ goes here first, with tests; the GUI only displays it.
   theme picker's list and its preview, choose and cancel), `HintsSearch.h`
   (the shortcut hints' search, header only), `WindowTitle.h` (the
   window's title: the file's path from the folder, ~ outside it, the
-  terminal's or the page's title while it has the keyboard; header only), `SymbolOutline`
+  terminal's or the page's title while it has the keyboard; header only),
+  `SidebarPanels.h` (the sidebar's row of panel icons: names, toggles,
+  tips, badges, the panel on show and a click's toggle; header only), `SymbolOutline`
   (symbols without a server), `NavHistory` (Back and Forward), `InlineAgent`,
   `ChangeRequest`, `ControlProtocol` (the control channel and the command
   line's parsing), `SideBySide` (diff rows), `PageCheck` (agents checking

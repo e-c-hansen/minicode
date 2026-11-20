@@ -89,7 +89,13 @@ container (PanelHost, laid out by hand in layoutContainer)
   point wide (Cmd+B; its buttons would draw past a 0-wide host, which does
   not clip) or with workbench.sidebar-icons = off. The icons refuse the
   keyboard; a click on the one on show is `focusTree:`. The File Tree's
-  tip has no key: Cmd+0 focuses whatever panel shows.
+  tip has no key: Cmd+0 focuses whatever panel shows. **GTK** (2026-11-20,
+  `linux/HANDOFF.md` item 125): the core's `SidebarPanels.h` holds the
+  names, toggles' ids, tips, badge text and what a click does for both;
+  `linux/src/SidebarIcons.{h,cpp}` draws the row (symbolic icons from the
+  theme, the first name it has), main.cpp's `makeSidebar` puts it over the
+  panels' stack in `sidebarHost`, which the layout shows and hides as the
+  sidebar, and the stack's `notify::visible-child` updates it.
 - The window always uses `NSWindowStyleMaskFullSizeContentView`;
   `layoutContainer` keeps the split below the title bar with
   `contentLayoutRect`, empty before the window is shown, so `titlebarHeight`

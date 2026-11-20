@@ -136,6 +136,7 @@ void ProcessMonitor::sampleNow(std::function<void()> done) {
             std::vector<std::function<void()>> waiters;
             waiters.swap(waiting_);
             for (auto& w : waiters) w();
+            if (onSampled_) onSampled_();
         });
     });
 }

@@ -193,6 +193,7 @@ gui_sources = [
   'src/TreeFollow.cpp',
   # A file row's icon from the system icon theme, by the core's FileIcon::Type.
   'src/TreeIcons.cpp',
+  'src/SidebarIcons.cpp',
   'src/ClickCount.cpp',
   # The editor: the view (Editor.cpp), each open file (DocumentView.cpp), the
   # tabs (Tabs.cpp) and their strip (TabStrip.cpp).

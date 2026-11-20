@@ -90,6 +90,7 @@
 #include "FolderConsent.h"
 #include "Formatting.h"
 #include "TreeGitColors.h"
+#include "SidebarIcons.h"
 #include "TreeFollow.h"
 #include "Lsp.h"
 #include "AgentNotes.h"
@@ -155,8 +156,13 @@ struct App {
     FileTree* tree = nullptr;
     TreeFollow* treeFollow = nullptr;   // the tree following the active tab
     // The sidebar is a stack: the file tree, or the Source Control panel in
-    // its place, made on first use.
+    // its place, made on first use. It sits under the row of the panels'
+    // icons (SidebarIcons.h, workbench.sidebar-icons) in sidebarHost, which
+    // the layout shows and hides as the sidebar.
     GtkWidget* sidebar = nullptr;
+    GtkWidget* sidebarHost = nullptr;
+    GtkWidget* sidebarIconsRow = nullptr;   // the row's holder, hidden by the setting
+    SidebarIcons* sidebarIcons = nullptr;
     GitPanel*  git = nullptr;
     bool       gitShown = false;
     // The Processes panel takes the same place (View > Toggle Processes).
@@ -3504,6 +3510,127 @@ static void act_toggle_agents(GSimpleAction*, GVariant*, gpointer userp) {
     refreshHints(app);
 }
 
+// ------------------------------------------------- the sidebar's icons
+//
+// The row of panel icons at the sidebar's top (SidebarIcons.h, the core's
+// SidebarPanels.h; the Mac's EditorController+SidebarIcons.mm): the panel on
+// show marked; Source Control's count, the paths the tree's git status found
+// changed (TreeGitColors::changeCount, so no git runs for it); Agents' dot
+// while one of the window's terminals waits for you (TerminalAttention.h);
+// Processes' count of running servers for the window, read at each of the
+// process monitor's looks (every 10 s) while the row shows. A click runs the
+// panel's own toggle, or gives the panel on show the keyboard.
+
+// The row on screen: the setting on and the sidebar shown.
+static bool sidebarIconsShown(App* app) {
+    return !app->dead && app->sidebarIcons && app->sidebarIconsRow && app->layout &&
+           app->layout->sidebarShown() && gtk_widget_get_visible(app->sidebarIconsRow);
+}
+
+static void updateSidebarAgentsDot(App* app) {
+    if (app->dead || !app->sidebarIcons) return;
+    bool waiting = false;
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    if (TerminalAttention::waitingCount() > 0 && app->termDock)
+        for (Terminal* t : app->termDock->all())
+            if (strcmp(TerminalAttention::markName(t->controlId()), "waiting") == 0) {
+                waiting = true;
+                break;
+            }
+#endif
+    app->sidebarIcons->setDot(SidebarPanels::Panel::Agents, waiting);
+}
+
+// Only while the row shows: a hidden row is counted again when it shows,
+// from the monitor's last look.
+static void countSidebarServers(App* app) {
+    if (!sidebarIconsShown(app)) return;
+    char buf[PATH_MAX];
+    const std::string folder = realpath(app->rootDir.c_str(), buf) ? std::string(buf) : app->rootDir;
+    const Procs::View v = ProcessMonitor::shared().view(app->controlId, folder);
+    app->sidebarIcons->setBadge(SidebarPanels::Panel::Processes,
+                                SidebarPanels::badgeText((size_t)Procs::countServers(v)));
+}
+
+static void updateSidebarIcons(App* app) {
+    if (app->dead || !app->sidebarIcons) return;
+    using SidebarPanels::Panel;
+    SidebarIcons* row = app->sidebarIcons;
+    row->setCurrent(SidebarPanels::onShow(app->gitShown, app->agentsShown, app->procsShown));
+    // "Source Control (Ctrl+Shift+G)", the key as keys.conf leaves it.
+    for (int i = 0; i < SidebarPanels::kCount; i++) {
+        const Panel p = (Panel)i;
+        const char* id = SidebarPanels::info(p).commandId;
+        row->setTip(p, SidebarPanels::tip(p, id ? Keys::label(id, "+") : std::string(), false));
+    }
+    row->setBadge(Panel::SourceControl,
+                  SidebarPanels::badgeText(app->treeColors ? app->treeColors->changeCount() : 0));
+    updateSidebarAgentsDot(app);
+}
+
+// A click on an icon (the Mac's showSidebarPanel:).
+static void showSidebarPanel(App* app, SidebarPanels::Panel panel) {
+    if (app->dead) return;
+    using SidebarPanels::Panel;
+    const SidebarPanels::Click c = SidebarPanels::click(
+        SidebarPanels::onShow(app->gitShown, app->agentsShown, app->procsShown), panel);
+    if (c.focus) {   // on show already: it takes the keyboard
+        act_focus_tree(nullptr, nullptr, app);
+        return;
+    }
+    switch (c.toggle) {
+    case Panel::SourceControl: act_toggle_git(nullptr, nullptr, app); break;
+    case Panel::Agents: act_toggle_agents(nullptr, nullptr, app); break;
+    case Panel::Processes: act_toggle_processes(nullptr, nullptr, app); break;
+    case Panel::Tree: break;
+    }
+}
+
+// The sidebar: the row of icons over the stack of panels, in a box the
+// layout shows and hides as the sidebar. The row sits in a scroller with no
+// bar, so a sidebar dragged narrower than the four icons clips them rather
+// than being held wider.
+static void makeSidebar(App* app) {
+    app->sidebar = gtk_stack_new();
+    gtk_widget_set_vexpand(app->sidebar, TRUE);
+    gtk_stack_add_named(GTK_STACK(app->sidebar), app->tree->container(), "tree");
+    app->sidebarIcons = new SidebarIcons();
+    app->sidebarIcons->onPick = [app](SidebarPanels::Panel p) { showSidebarPanel(app, p); };
+    app->sidebarIconsRow = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(app->sidebarIconsRow), GTK_POLICY_EXTERNAL,
+                                   GTK_POLICY_NEVER);
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(app->sidebarIconsRow), TRUE);
+    // Never the keyboard's: a scroller with nothing focusable inside takes
+    // the focus itself, and the tree's row trashed under the keyboard sent
+    // it here (tree_edits) rather than to the next row.
+    gtk_widget_set_can_focus(app->sidebarIconsRow, FALSE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(app->sidebarIconsRow),
+                                  app->sidebarIcons->widget());
+    gtk_widget_set_visible(app->sidebarIconsRow, g.settings->settings().sidebarIcons());
+    app->sidebarHost = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_add_css_class(app->sidebarHost, "minicode-sidebar-host");
+    gtk_widget_set_overflow(app->sidebarHost, GTK_OVERFLOW_HIDDEN);
+    gtk_box_append(GTK_BOX(app->sidebarHost), app->sidebarIconsRow);
+    gtk_box_append(GTK_BOX(app->sidebarHost), app->sidebar);
+    // Whatever shows a panel or gives the tree back passes here.
+    g_signal_connect(app->sidebar, "notify::visible-child",
+                     G_CALLBACK(+[](GObject*, GParamSpec*, gpointer p) {
+                         updateSidebarIcons(static_cast<App*>(p));
+                     }), app);
+}
+
+// workbench.sidebar-icons, read again.
+static void applySidebarIconsSetting(App* app) {
+    if (app->dead || !app->sidebarIconsRow) return;
+    const bool on = g.settings->settings().sidebarIcons();
+    if (on == (bool)gtk_widget_get_visible(app->sidebarIconsRow)) return;
+    gtk_widget_set_visible(app->sidebarIconsRow, on);
+    if (on) {
+        updateSidebarIcons(app);
+        countSidebarServers(app);
+    }
+}
+
 // A Find in Folder match, a TODO or a definition: open the file (a single
 // click on a result in the preview tab, a double-click or Enter kept, a
 // definition's file in preview), then go to the match. If the file did not
@@ -4221,6 +4348,7 @@ static void applyWindowSettings(App* app) {
         for (Terminal* t : app->termDock->all()) t->applySettings(st);
 #endif
     applyTerminalZoom(app);
+    applySidebarIconsSetting(app);
     showConfigErrors(app);
 }
 
@@ -4455,6 +4583,7 @@ static void onKeysChanged() {
         showConfigErrors(a);
         gtk_label_set_text(GTK_LABEL(a->hintsHint),
                            hintsHintText(gtk_widget_get_visible(a->hintsPanel)).c_str());
+        updateSidebarIcons(a);   // the icons' tooltips name the keys
         refreshHints(a);
     }
 }
@@ -4486,6 +4615,7 @@ static void initShared() {
             }
 #endif
             if (a->editor) updateTitle(a);
+            updateSidebarAgentsDot(a);   // the Agents icon's dot
         }
     });
     applyStylesheet();   // before any widget is drawn
@@ -4964,6 +5094,8 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     app->testGutter = nullptr;
     delete app->treeColors;  // before the tree it colors
     app->treeColors = nullptr;
+    delete app->sidebarIcons;   // its widgets go with the window
+    app->sidebarIcons = nullptr;
     if (app->tree) app->tree->setDecorator(nullptr);
     delete app->ide;       // before the editor whose tabs and selection it serves
     app->ide = nullptr;
@@ -5096,6 +5228,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     });
     app->treeColors->onChange = [app] {
         if (!app->dead && app->tree) app->tree->redecorate();
+        updateSidebarIcons(app);   // Source Control's count
     };
     app->treeColors->setRoot(app->rootDir);
     setupWorktrees(app);
@@ -5308,9 +5441,8 @@ static App* newWindow(const std::string& root, const std::string& file,
     // The sidebar beside the editor, the browser to the editor's right and
     // the terminal below both, as on the Mac (WindowLayout.h). The terminal
     // and the browser start hidden.
-    app->sidebar = gtk_stack_new();
-    gtk_stack_add_named(GTK_STACK(app->sidebar), app->tree->container(), "tree");
-    app->layout = new WindowLayout(app->sidebar, editorPane, app->editor->strip()->widget(),
+    makeSidebar(app);
+    app->layout = new WindowLayout(app->sidebarHost, editorPane, app->editor->strip()->widget(),
                                    browserPane, terminalPane);
     app->layout->focusEditor = [app] {
         if (!app->dead) app->editor->focusActiveDocument();
@@ -5333,6 +5465,7 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->layout->onChanged = [app] {
         if (app->dead) return;
         treeMaybeShown(app);   // the sidebar back: the file that came on show meanwhile
+        countSidebarServers(app);   // its icons back: the servers of the last look
         refreshHints(app);
     };
     // The tree back in the sidebar (Source Control, Processes or Agents
@@ -5737,6 +5870,7 @@ static App* newWindow(const std::string& root, const std::string& file,
         app->ide = new IdeLinkServer(ih);
     }
     applyWindowSettings(app);   // now that the editor, terminal and status bar exist
+    updateSidebarIcons(app);    // the icons' tooltips, marks and counts so far
     StartupLog::mark("window: actions and settings applied");
     // The files open here last time: the window's own when it is brought
     // back, else the folder's. The tree comes back as the record left it,
@@ -5997,7 +6131,11 @@ static void startControlChannel() {
     };
     registerControlCommands(gControl->dispatcher(), host);
     // The process sampler (PARITY.md 3.8): each window's folder as realpath
-    // spells it, and each terminal by its shell's pid under its own id.
+    // spells it, and each terminal by its shell's pid under its own id. Each
+    // look counts the servers on the sidebar's Processes icon.
+    ProcessMonitor::shared().setSampledHandler([] {
+        for (App* a : g.windows) countSidebarServers(a);
+    });
     ProcessMonitor::shared().start([](std::vector<Procs::Terminal>& terms,
                                       std::vector<std::string>& folders) {
         for (App* a : g.windows) {

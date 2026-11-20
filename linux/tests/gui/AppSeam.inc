@@ -37,6 +37,10 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.changeBars = a->gitGutter;
     w.tests = a->testGutter;
     w.treeColors = a->treeColors;
+    w.sidebarIcons = a->sidebarIcons;
+    w.sidebarIconsRow = a->sidebarIconsRow;
+    w.sidebarStack = a->sidebar;
+    w.gitShown = a->gitShown;
     w.rootDir = a->rootDir;
 #ifdef MUTIBLE_ENABLE_TERMINAL
     w.terminal = a->terminal;

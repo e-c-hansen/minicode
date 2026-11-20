@@ -8182,3 +8182,145 @@ has the rules ("Backups by window", "UTF-8 with stray bytes").
   `draftOf`); Find in Folder's streamed read of a large file still
   switches to Windows-1252 at the first piece that is not UTF-8 (round 10
   item 3, open on both ports).
+
+### 125. A row of panel icons over the sidebar, and a link hint that shows (the Mac's #225; November 2026)
+
+The Mac's #225 (round 9) on GTK: Source Control, Agents and Processes had
+no visible way in, only their keys and the View menu; and a terminal link
+said nothing about Ctrl+click until it was tried. The core already had
+#225's parts (`Git::Decorations::changeCount`, `Procs::countServers`,
+`workbench.sidebar-icons`).
+
+- **What a user meets.** A row of four icons at the top of the sidebar,
+  28 px tall in the sidebar's colours: File Tree, Source Control, Agents,
+  Processes, each the icon theme's symbolic icon in the sidebar's text
+  colour, dimmed but for the panel on show and the one under the pointer.
+  Each tooltip names its panel and key as keys.conf leaves it ("Source
+  Control (Ctrl+Shift+G)", "Agents (Ctrl+Shift+A)"; "Processes" alone,
+  since Toggle Processes has no key on Linux; "File Tree" alone, as on the
+  Mac, Ctrl+0 focusing whichever panel shows). A click shows that panel in
+  the sidebar; a click on the icon of the panel on show gives that panel
+  the keyboard; the tree's icon gives the tree back. The panel on show is
+  underlined in VS Code's activity bar blue (#0078D4, the Mac's). Source
+  Control's icon carries the count of changed paths (a pill in the same
+  blue, "99+" past 99), Agents' an orange dot (#E8A33D, the terminal's
+  waiting dot) while a terminal of this window waits, Processes' the count
+  of servers listening for the window's folder, read at each of the
+  process monitor's looks (every 10 s). The row hides with the sidebar
+  (Ctrl+B) and with `workbench.sidebar-icons = off`, the panels then taking
+  the sidebar's whole height. In the terminal, resting the pointer on a
+  link for half a second shows "Ctrl+click to open" beside it (below the
+  pointer, else above, always inside the terminal), in the language
+  server's popups' colours; a move, a press, a key, a scroll or leaving
+  the terminal takes it away, and a plain click still selects. OSC 8
+  hyperlinks, which GTK did not open before (item 9 left them out), now
+  open on Ctrl+click as the Mac's do (a web address in the browser pane, a
+  file here that exists in the editor; javascript:, another host's file
+  and the like are no link, whatever the text says); the rest's hint names
+  the address on a second line, and with Ctrl held over one the address
+  shows alone at once.
+- **Code.** Core: `src/SidebarPanels.h` (new, header only: the panels'
+  order, names and toggles' command ids, `badgeText`, `tip` in each port's
+  spelling, `onShow`, `click`), `TermLinks::restHint` (the hint's words,
+  "⌘-click to open" or "Ctrl+click to open", with an address). GTK:
+  `SidebarIcons.{h,cpp}` (new: the row; each icon the first of a few names
+  the display's theme has, as `TreeIcons` picks, re-resolved when the theme
+  changes), main.cpp's `makeSidebar` (the row in a scroller with no bar
+  over the stack of panels, in `sidebarHost`, which `WindowLayout` now
+  holds as the sidebar), `updateSidebarIcons` (on the stack's
+  `notify::visible-child`, keys.conf's change, the tree's git colours'
+  `onChange`), `updateSidebarAgentsDot` (the attention board's handler),
+  `countSidebarServers` (`ProcessMonitor::setSampledHandler`, new; and
+  when the sidebar shows again), `showSidebarPanel`,
+  `applySidebarIconsSetting`; `TreeGitColors::changeCount`;
+  `ThemeCss.cpp`'s row, badge, dot and `.minicode-link-hint` rules.
+  `Terminal`: `Link::address`, `hyperlinkAt` (VTE's
+  `vte_terminal_check_hyperlink_at`, then `TermLinks::hyperlink`, then
+  `TermLinkPath::resolve` for a file), first in `findLink`; the hint
+  (`linkHint_`, a label in the terminal's overlay that clicks pass,
+  placed by the overlay's `get-child-position`; `showLinkHint`,
+  `hideLinkHint`, `armRestHint`, `showRestHint`, `kRestHintMs`); a
+  capture-phase press of any button and any key on the window take it
+  away; `hoverLink_` (the hand and the recheck now cover a hyperlink,
+  which has no spans of ours: VTE underlines a hovered one itself); for
+  the checks `linkHintText`, `linkHintWidget`, `linkUnderlined`,
+  `cellCenter`. The harness: `MCGuiHoldModifier` (a modifier left down
+  while the pointer moves); AppSeam's `sidebarIcons`, `sidebarIconsRow`,
+  `sidebarStack`, `gitShown`.
+- **Differences from the Mac.** The Mac gives no rest hint while a program
+  takes the mouse; VTE does not say when one does, so GTK shows it there
+  too, where Ctrl+click still opens the link (the capture-phase gesture
+  claims it before the program sees it), so the hint stays true. The Mac
+  draws its own symbols (SF Symbols); GTK takes the icon theme's, and
+  Adwaita has no branch or processor picture: there Source Control is
+  `media-playlist-shuffle-symbolic` and Processes `system-run-symbolic`
+  (Yaru gives `emblem-shared-symbolic` and
+  `utilities-system-monitor-symbolic`, Papirus `object-merge-symbolic`
+  and `cpu-symbolic`); Agents is `starred-symbolic` everywhere.
+- **Checks.** `sidebar_icons` (new, a window of its own on a scratch
+  repository with real git): the four icons on screen in order, none
+  taking the keyboard, each a name the theme has, each tooltip the
+  registry's key ("Source Control (Ctrl+Shift+G)"), keys.conf giving
+  Toggle Processes Ctrl+Alt+J and taking Source Control's key and the tips
+  following, and back; the tree marked alone; the row above the stack, 28
+  px; a new file making Source Control's badge 1, a second 2 (the pill
+  mapped, its text); a real click on each icon showing its panel (the
+  stack's child, the flags, the mark alone on its icon), a click on the
+  icon on show giving the Source Control panel the keyboard back from the
+  editor, the tree's icon giving the tree back, Ctrl+Shift+G marking and
+  unmarking it; a notify marking the window's terminal waiting putting the
+  dot on Agents, not on the first window's, and `TerminalAttention::typed`
+  taking it away; a `python3 -m http.server` started in the folder outside
+  the app making Processes' badge 1 at a look, and 0 once it is stopped (by
+  its pid); Ctrl+B hiding and showing the row with the sidebar;
+  `workbench.sidebar-icons = off` hiding the row, the stack at the
+  sidebar's top, and on bringing it back with its mark and count.
+  `terminal_links` (new on GTK; the Mac's suite of that name), real XTest
+  pointer over a real shell's printf output: the rest's hint on a path,
+  inside the terminal, no underline without Ctrl; a move off the link, a
+  plain press (which opens nothing), Shift, and leaving for the tree each
+  take it away, and a rest off a link shows none; Ctrl held underlines the
+  path with no hint; on an http OSC 8 hyperlink the hint with the address
+  on a second line, the address alone with Ctrl held, gone when Ctrl is
+  let go, and Ctrl+click loading its page (from a server in the process)
+  in the browser pane; Ctrl+click on a file:// hyperlink opening the
+  file; a javascript: hyperlink over a URL's
+  text neither underlined nor hinted, with or without Ctrl. The core's new
+  `sidebar-panels:*` groups and `hyperlinks:rest-hint`.
+- **Trap: a scroller with nothing focusable inside takes the focus
+  itself.** The row sits in a `GtkScrolledWindow` (no bar) so a narrow
+  sidebar clips it; with only unfocusable buttons inside, the scroller
+  became focusable, and a tree row trashed under the keyboard sent the
+  focus to it rather than to the next row (`tree_edits` failed nine checks
+  until `gtk_widget_set_can_focus(row, FALSE)`). The same goes for any new
+  scroller that is never the keyboard's.
+- **Not ours: `tree_edits`' rename step.** Its "the tree kept its place;
+  b_dir/f050b.txt selected" fails two checks on this ThinkPad on main
+  (3136b81c, built apart from this change) exactly as with it: after F2
+  the tree scrolls from 722 to 894. Left for the tree's owner.
+- **Numbers** (2026-11-20, this ThinkPad): `sidebar_icons` 56 passed and
+  `terminal_links` 27 passed, none failed, with MC_GUI_ROOT=/tmp and with
+  a long root inside `linux/build` (8.6 s together); shuffled with
+  neighbours, MC_GUI_SHUFFLE=1 over tree_clicks, tree_focus, git_panel,
+  agents, agent_panel, processes, sidebar_icons, terminal_links, tabs,
+  layout, owner_reports, maximize, attention, terminal_tabs,
+  terminal_splits, terminal_draw, hints_panel, keys and sessions 2,364
+  passed, none failed (119 s); MC_GUI_SHUFFLE=7 over sidebar_icons,
+  terminal_links, browser_tabs, browser_pages, terminal_keys,
+  terminal_find, terminal_marks, tree_git_colors, git_review, agents,
+  processes, startup, themes, zoom and tree_edits 773 passed, 2 failed
+  (`tree_edits`' rename, above). The first shuffled run found two of this
+  item's own: `sidebar_icons` left an empty keys.conf where there was
+  none, which `keys` (written first there) failed on, so it now removes
+  the file it made; and `terminal_links` loaded a page that refused its
+  connection, which WebKit then took back, so its page now comes from a
+  server in the process. The core's `make test` 203,258 passed, none
+  failed; linux's `make test` 435 passed; `meson test --no-suite gui`
+  passed.
+- **Needs the owner's eyes**: the row's look on the real desktop (Yaru's
+  icons there, their size and dimming, the underline and the pill against
+  each theme, a narrow sidebar clipping the row), the hint's look and
+  place beside a real pointer, its half second, and Ctrl+click on
+  `ls --hyperlink` and gcc's links by hand. Snapshots of the row (with a
+  count of 2 and the dot) and of the hint over printf's output were looked
+  at under the harness's Adwaita.
