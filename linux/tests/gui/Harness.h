@@ -142,8 +142,9 @@ void MCGuiWaitQuiet(const std::string& what, double quiet, double timeout,
 // once the main thread has spent `cpuSeconds` of CPU time since the wait
 // began without it (MC_GUI_WAIT_SCALE applies), however long that took on
 // the clock, so a loaded machine that gives the thread a part of a core
-// only delays it. `wallSeconds` ends a wait that no work moves (the thread
-// asleep, the condition never coming).
+// only delays it. A minute of the clock (scaled) in which the main thread
+// spent under 0.3 s of CPU fails it too: the work is over and the condition
+// did not come. `wallSeconds` is the last backstop.
 void MCGuiWaitCpu(const std::string& what, double cpuSeconds, double wallSeconds,
                   std::function<bool()> until);
 

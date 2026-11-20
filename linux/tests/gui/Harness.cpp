@@ -148,12 +148,30 @@ void MCGuiWaitQuiet(const std::string& what, double quiet, double timeout,
 void MCGuiWaitCpu(const std::string& what, double cpuSeconds, double wallSeconds,
                   std::function<bool()> until) {
     auto cpu0 = std::make_shared<double>(-1);
+    // A stretch of the clock and the CPU the thread spent in it: a minute in
+    // which it spent almost none is a thread at rest, its work over and the
+    // condition not come (large_file's place settled in the wrong spot), and
+    // fails then, not at `wallSeconds` (900 s there, 22 minutes at CI's
+    // wait scale, half the GTK job's limit). Work starved by a loaded machine
+    // still gets far more than this: a ninth of a core is 6 s a minute.
+    auto stretchAt = std::make_shared<double>(0), stretchCpu = std::make_shared<double>(0);
     const double budgetMs = cpuSeconds * 1000 * MCGuiWaitScale();
+    const double stretchMs = 60 * 1000 * MCGuiWaitScale(), restMs = 300;
     MCGuiWait(what, wallSeconds, [=] {
-        if (*cpu0 < 0) *cpu0 = MCGuiThreadCpuMs();
+        const double cpu = MCGuiThreadCpuMs(), now = MCGuiNowMs();
+        if (*cpu0 < 0) *cpu0 = *stretchCpu = cpu, *stretchAt = now;
         if (until()) return true;
-        if (MCGuiThreadCpuMs() - *cpu0 < budgetMs) return false;
         char text[256];
+        if (now - *stretchAt >= stretchMs) {
+            if (cpu - *stretchCpu < restMs) {
+                snprintf(text, sizeof text, "the main thread at rest for %.0f s (%.0f ms of CPU) without: %s",
+                         stretchMs / 1000, cpu - *stretchCpu, what.c_str());
+                MCGuiCheck(false, text, __FILE__, __LINE__);
+                return true;
+            }
+            *stretchAt = now, *stretchCpu = cpu;
+        }
+        if (cpu - *cpu0 < budgetMs) return false;
         snprintf(text, sizeof text, "%.0f s of the main thread's CPU without: %s", budgetMs / 1000,
                  what.c_str());
         MCGuiCheck(false, text, __FILE__, __LINE__);
