@@ -423,6 +423,17 @@ thread's CPU over three idle seconds before each suite:
   lines); they hide it as they end. browser_tabs, which counts the
   pane's tabs from none, failed after bookmark_save's; it closes any
   left first.
+- GTK `latex_problems`, "one error, on line 3, in the document" (order;
+  found checking the above, not in a soak yet): the preview sweeps a
+  dead process's folders at a launch's first typeset only, and run after
+  latex_forward and latex_inputs in one process its typeset was not the
+  first: the crashed process's folders it had written were all still
+  there. It asks for the sweep again (`LatexPreview::sweepAgainForTest`).
+- `MCGuiWaitCpu` also fails once the main thread has spent under 0.3 s
+  of CPU in a minute of the clock (scaled), its work over and the
+  condition not come, so a large_file place lost for good fails in a
+  minute, not at 900 s (22 minutes at CI's scale, half the GTK job's
+  limit).
 
 With the changes, the round's 74 suites replayed in order on four cores
 beside four busy loops, twice, the five above passing both times
