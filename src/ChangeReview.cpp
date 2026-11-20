@@ -532,6 +532,13 @@ std::string gapText(size_t hidden) {
     return hidden == 1 ? "1 unchanged line" : std::to_string(hidden) + " unchanged lines";
 }
 
+std::string buttonLabel(const std::string& title, const std::string& path, int block,
+                        bool conflict) {
+    if (block < 0) return title + " " + path;
+    return title + (conflict ? " for conflict " : " change ") + std::to_string(block + 1) + " in " +
+           path;
+}
+
 static std::string noteFor(const FileDiff& d) {
     const File& f = d.file;
     if (f.conflict && canMarkResolved(d))

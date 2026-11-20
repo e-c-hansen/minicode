@@ -23,6 +23,9 @@ static NSString *PNS(const std::string &s) {
 @property(nonatomic) int pid, ppid, pgid;
 @property(nonatomic) int64_t start;
 @property(nonatomic, copy) NSString *name, *command, *cwd, *terminalTitle, *session;
+// What VoiceOver reads for the row and names its Stop button
+// (Procs::rowLabel, Procs::stopLabel).
+@property(nonatomic, copy) NSString *axLabel, *stopLabel;
 @property(nonatomic) uint64_t memory;
 @property(nonatomic) double cpu;
 @property(nonatomic, copy) NSArray<NSNumber *> *ports;   // each once, in order
@@ -123,6 +126,8 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
     it.orphan = kind == Procs::GroupKind::Orphans;
     it.terminal = p.terminal;
     it.depth = depth;
+    it.axLabel = PNS(Procs::rowLabel(p, it.orphan));
+    it.stopLabel = PNS(Procs::stopLabel(p));
     it.children = MakeItems(n.children, n.exited, kind, depth + 1, it.key);
     return it;
 }
@@ -140,10 +145,98 @@ static MCProcItem *MakeItem(const Procs::Node &n, Procs::GroupKind kind, NSInteg
 
 static const CGFloat kStopWidth = 40;
 
+// A row's Stop as an accessibility element, there whether or not the drawn
+// button shows (it shows only while the row is hovered or selected), so
+// VoiceOver and the Accessibility API find a server's by its port ("Stop
+// python3 on port 8123") and press it.
+@interface MCProcStopElement : NSAccessibilityElement
+@property(nonatomic, weak) MCProcRowView *row;
+@end
+
+@interface MCProcRowView ()
+- (BOOL)stoppable;
+- (NSRect)stopRect;
+@end
+
+@implementation MCProcStopElement
+- (NSAccessibilityRole)accessibilityRole { return NSAccessibilityButtonRole; }
+- (BOOL)isAccessibilityElement { return YES; }
+- (BOOL)isAccessibilityEnabled { return YES; }
+- (id)accessibilityParent { return self.row; }
+- (id)accessibilityWindow { return self.row.window; }
+- (id)accessibilityTopLevelUIElement { return self.row.window; }
+- (NSString *)accessibilityLabel {
+    id item = self.row.item;
+    return [item isKindOfClass:MCProcItem.class] ? ((MCProcItem *)item).stopLabel : nil;
+}
+- (NSString *)accessibilityHelp {
+    id item = self.row.item;
+    if (![item isKindOfClass:MCProcItem.class]) return nil;
+    return ((MCProcItem *)item).orphan ? @"Stops it now" : @"Asks first, then stops it";
+}
+- (NSRect)accessibilityFrame {
+    MCProcRowView *r = self.row;
+    if (!r.window) return NSZeroRect;
+    return [r.window convertRectToScreen:[r convertRect:[r stopRect] toView:nil]];
+}
+// The press runs after the Accessibility API has its answer: Stop asks
+// first, and a modal question inside the call would hold the caller until
+// it timed out.
+- (BOOL)accessibilityPerformPress {
+    MCProcRowView *r = self.row;
+    if (![r stoppable]) return NO;
+    NSString *key = ((MCProcItem *)r.item).key;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // The row view may show another process by now (the list reloads).
+        if (![r stoppable] || ![((MCProcItem *)r.item).key isEqualToString:key]) return;
+        if (r.onStop) r.onStop(r);
+    });
+    return YES;
+}
+@end
+
 @implementation MCProcRowView {
     NSButton *_stop;
+    MCProcStopElement *_stopElement;
 }
 - (BOOL)isFlipped { return YES; }
+
+// ---- accessibility: the outline wraps each row's view in a cell of its
+// own (AXRow, then AXCell), which reads this view's label: what runs, its
+// ports, and whether it still does. The view itself stays out of the tree,
+// so the row is one cell, not a cell in a cell; its Stop is a button in
+// that cell.
+- (BOOL)isAccessibilityElement { return NO; }
+- (NSString *)accessibilityLabel {
+    if ([self.item isKindOfClass:MCProcItem.class]) return ((MCProcItem *)self.item).axLabel;
+    if ([self.item isKindOfClass:MCProcFoldItem.class]) return ((MCProcFoldItem *)self.item).title;
+    if ([self.item isKindOfClass:MCProcGroupItem.class]) {
+        MCProcGroupItem *g = self.item;
+        NSString *title = g.kind == Procs::GroupKind::Terminal
+            ? [NSString stringWithFormat:@"%@, terminal %ld", g.title, (long)g.terminal] : g.title;
+        return [NSString stringWithFormat:@"%@, %@", title, PNS(Procs::summary(g.memory, g.count))];
+    }
+    return nil;
+}
+- (NSArray *)accessibilityChildren {
+    if (![self stoppable]) return @[];
+    if (!_stopElement) {
+        _stopElement = [MCProcStopElement new];
+        _stopElement.row = self;
+    }
+    return @[_stopElement];
+}
+- (id)accessibilityHitTest:(NSPoint)point {
+    for (MCProcStopElement *e in [self accessibilityChildren])
+        if (NSPointInRect(point, e.accessibilityFrame)) return e;
+    return self;
+}
+// Where the Stop button is, or would be when shown.
+- (NSRect)stopRect {
+    if (_stop && !_stop.hidden) return _stop.frame;
+    const NSRect b = self.bounds;
+    return NSMakeRect(b.size.width - kStopWidth - 6, round((b.size.height - 18) / 2), kStopWidth, 18);
+}
 
 // The button is made the first time it shows: a reload makes and sizes
 // many row views, and a button in each (measured on every frame change)
@@ -155,6 +248,8 @@ static const CGFloat kStopWidth = 40;
         _stop.controlSize = NSControlSizeSmall;
         _stop.font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightMedium];
         _stop.hidden = YES;
+        // The row's MCProcStopElement stands for it, shown or not.
+        _stop.accessibilityElement = NO;
         [self addSubview:_stop];
     }
     return _stop;

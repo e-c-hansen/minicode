@@ -175,6 +175,10 @@ void MCGuiWriteFile(NSString *path, NSString *text);
 // A picture of a view as drawn (cacheDisplayInRect:), written as
 // <name>.png into $MC_GUI_SNAPSHOTS when that is set, for looking at.
 void MCGuiSnapshot(NSView *view, NSString *name);
+// The first element under `root` (itself included), through its
+// accessibilityChildren as VoiceOver and the Accessibility API walk them,
+// whose role is `role` and whose label is `label` (nil: any); nil if none.
+id MCGuiAXFind(id root, NSAccessibilityRole role, NSString *label);
 
 // Writes the settings file (MUTIBLE_SETTINGS) and has the app read it now.
 void MCGuiSetSettings(NSString *text);

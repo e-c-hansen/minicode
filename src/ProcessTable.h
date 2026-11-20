@@ -225,6 +225,14 @@ std::string formatPorts(const std::vector<Listen>& ports);
 // What a row's first line shows: the program's name from its command line
 // (python3 for "/usr/bin/python3 -m http.server"), else the short name.
 std::string displayName(const Proc& p);
+// What a screen reader reads for a panel row (its accessibility label):
+// "python3, port 8123, running, CPU 0.4%, 34.2 MB, process 4242, not
+// started in mutible: /usr/bin/python3 -m http.server 8123". `orphan`: its
+// terminal was closed.
+std::string rowLabel(const Proc& p, bool orphan);
+// The row's Stop button: "Stop python3 on port 8123", else "Stop sleep,
+// process 4242", so a screen reader, or a script, finds a server's by port.
+std::string stopLabel(const Proc& p);
 
 // Is `path` the folder or inside it (both resolved, no trailing slash)?
 bool isInside(const std::string& path, const std::string& folder);

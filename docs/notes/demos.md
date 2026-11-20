@@ -186,10 +186,11 @@ clicks.
 - **Caveats**: AX reads only what an app exposes. Zed shows almost no AX
   tree, so its results are mostly read from its CPU settling (`quiet`,
   reported as "unverified" and marked * in the table) or from outside (git's
-  index, the port); mutible's review page and processes rows are drawn
-  without AX elements, so its review task stages from the editor (Option+F5,
-  View > Source Control > Stage Change) and its server task picks the
-  processes list's second row. Turning on Chromium's AX tree
+  index, the port). mutible's review page and processes rows were drawn
+  without AX elements until 2026-11-20 (the review task staged from the
+  editor, the server task picked the list's second row); now its review
+  task presses "Stage change 1 in app.py" and its server task the Stop
+  named "on port N", as VoiceOver would. Turning on Chromium's AX tree
   (`AXManualAccessibility`) costs VS Code some CPU and memory, and every app
   pays for being queried. AX cannot see mutible's palette rows (drawn) or
   Zed's list, so in every app the step after typing in a palette waits for

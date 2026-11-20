@@ -269,6 +269,12 @@ Page layout(const std::vector<FileDiff>& files, const Opened& opened, size_t con
 std::u16string fileHeaderText(const FileDiff& d);
 std::string sectionTitle(Section s, size_t files);   // "Staged Changes  2"
 std::string gapText(size_t hidden);                  // "14 unchanged lines"
+// A page button's name for a screen reader (its accessibility label): the
+// button's title, then what it acts on. A block's (`block` its index in the
+// file, from 0): "Stage change 1 in app.py"; a conflict's: "Keep Current for
+// conflict 2 in a.py"; a file's (`block` -1): "Stage File app.py".
+std::string buttonLabel(const std::string& title, const std::string& path, int block,
+                        bool conflict = false);
 
 // F7 and Shift+F7 across files: the next or previous block's row after or
 // before `row`, wrapping; -1 with no blocks.

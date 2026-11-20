@@ -175,16 +175,12 @@ open_by_name() {   # open_by_name <name> <condition>
 
 steps_review_mutible() {
     # REFERENCE.md: Shift+Cmd+G opens Source Control; its Review Changes
-    # button shows every changed file in one view.
+    # button shows every changed file in one view, each change with Stage
+    # and Discard beside its first line, which VoiceOver (so AX) reads as
+    # "Stage change 1 in app.py"; the page opens at its top, where it shows.
     echo "key cmd+shift+g => ax AXButton=Review Changes @10"
-    echo "press AXButton=Review Changes => window~Uncommitted Changes || ax *~Uncommitted Changes"
-    # The review's own Stage buttons are drawn without accessibility
-    # elements, so this cannot aim a click at one (a person clicks it: one
-    # input). REFERENCE.md's other path: Option+F5 goes to the next change,
-    # View > Source Control > Stage Change stages the change at the cursor.
-    open_by_name app.py "window~app.py"
-    echo "key alt+f5 => ?quiet 150 @3"
-    echo "menu View>Source Control>Stage Change => sh $CHECKS/staged-one-only"
+    echo "press AXButton=Review Changes => ax AXButton=Stage change 1 in app.py @15"
+    echo "press AXButton=Stage change 1 in app.py => sh $CHECKS/staged-one-only"
 }
 steps_review_vscode() {
     # Source control docs: Ctrl+Shift+G opens the Source Control view; a
@@ -236,13 +232,11 @@ steps_viewers_zed() { viewer_steps; }
 
 steps_server_mutible() {
     # REFERENCE.md: Shift+Cmd+J lists the processes whose working folder is
-    # in the window's (the server was started there, outside mutible); the
-    # selected row's Stop… button asks first, then stops it. Row 1 is the
-    # group heading, row 2 the server: this copy has no terminals, so the
-    # server is the only process listed.
-    echo "key cmd+shift+j => ax AXOutline @10"
-    echo "click AXRow#2 => ax AXButton=Stop… @15"
-    echo "press AXButton=Stop… => ax AXButton=Stop @5"
+    # in the window's (the server was started there, outside mutible); a
+    # row's Stop button, which VoiceOver (so AX) finds by its port ("Stop
+    # python3 on port N") without a hover, asks first, then stops it.
+    echo "key cmd+shift+j => ax AXButton~on port $SRV_PORT @15"
+    echo "press AXButton~on port $SRV_PORT => ax AXButton=Stop @5"
     echo "press AXButton=Stop => port-closed $SRV_PORT @10"
 }
 steps_server_vscode() {
