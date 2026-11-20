@@ -60,7 +60,9 @@
 #include "DesktopMode.h"
 #include "DocumentView.h"
 #include "Editor.h"
+#include "SessionBrowser.h"
 #include "SessionLink.h"
+#include "SessionWeb.h"   // the session browser's report of the panes
 #include "TermDockRecord.h"
 #include "FileTree.h"
 #include "HintsColumns.h"
@@ -244,6 +246,10 @@ struct App {
     Shared::TermDock heldDock;
     std::set<uint64_t> dropOnClose;
     GtkWidget* reconnectButton = nullptr;
+    // View > Session Browser's page of the window's tabs (SessionBrowser.h),
+    // made the first time it is asked for; stopped before the window
+    // detaches from its host.
+    SessionBrowser* sessionBrowser = nullptr;
 
     bool prompting = false;   // a "Save changes?" alert is up
     bool closing = false;     // the user answered it for a window close
@@ -4433,6 +4439,7 @@ static void onSettingsChanged(void*) {
     for (App* a : g.windows) {
         applyWindowSettings(a);
         if (!a->dead && a->formatOffer) a->formatOffer->settingsChanged();
+        if (!a->dead && a->sessionBrowser) a->sessionBrowser->reloadSettings();   // the page's colors
         if (!a->dead) refreshHints(a);   // the terminal's part says what Ctrl does there
     }
     scheduleBookmarkRefresh();
@@ -4849,6 +4856,157 @@ static void reportTerminals(App* app) {
                                std::move(layout));
 }
 
+// ---------------------------------------------------------------- the session browser
+//
+// View > Session Browser > Show Session in Browser… and Copy Session Browser
+// Link (SessionBrowser.h, the Mac's EditorController+SessionBrowser.mm).
+// Show asks whether the page may edit, the last answer first (editable until
+// one is given), and remembers it; Copy uses the remembered one. Each makes
+// a fresh link, good for one browser.
+
+// The window's record with what the page lays itself out by: the browser
+// pane's tabs and which panes show, then the tabs and terminals
+// (reportTerminals sends the record, only when it changed).
+static void reportSessionWindow(App* app) {
+    if (app->dead || !app->link || !app->editor) return;
+    Json browser;
+    bool browserOpen = false;
+#ifdef MUTIBLE_ENABLE_BROWSER
+    if (app->browser) {
+        std::vector<Shared::Web::BrowserTab> tabs;
+        for (int i = 0; i < app->browser->tabCount(); i++)
+            tabs.push_back({app->browser->tabUrl(i), app->browser->tabTitle(i)});
+        browser = Shared::Web::browserReportJson(tabs, app->browser->activeTab());
+        browserOpen = app->layout->browserShown();
+    }
+#endif
+    bool terminalOpen = false;
+#ifdef MUTIBLE_ENABLE_TERMINAL
+    terminalOpen = app->termDock && app->layout->terminalShown();
+#endif
+    Json panes = Shared::Web::panesReportJson(browserOpen, terminalOpen, app->layout->state().browserFraction);
+    app->link->windowPanes(app->editor->sessionWindowId(), app->editor->window(), std::move(browser),
+                           std::move(panes));
+    reportTerminals(app);
+}
+
+// A page's save: every edit it made is in the tab first, then the tab's own
+// save, as Ctrl+S on it (or on the tab on show) would.
+static void saveSessionDocument(App* app, uint64_t docId) {
+    if (app->dead) return;
+    if (app->link) app->link->dispatch();
+    Document* d = app->editor->documentById(docId);
+    if (!d) return;
+    if (d == app->editor->active()) act_save(nullptr, nullptr, app);
+    else saveDocument(app, d);
+}
+
+// An editable page's close button on one of the window's tabs: closed in
+// both groups, as the tab's own close leaves the page nothing of it. One
+// with unsaved changes stays (the core refused it already; typing since may
+// have made it so), said in the status bar.
+static void closeSessionDocument(App* app, uint64_t docId) {
+    if (app->dead) return;
+    if (app->link) app->link->dispatch();
+    for (int i = 0; i < 2; i++) {
+        Document* d = app->editor->documentById(docId);
+        if (!d || !app->editor->isOpen(d)) break;
+        if (d->dirty()) {
+            flashStatus(app, "A tab with unsaved changes was not closed from the browser's page");
+            break;
+        }
+        app->editor->closeTab(d);
+    }
+    refreshHints(app);
+}
+
+// The window's server, started now (editable or not) if it is not yet;
+// null, said in the status bar, when it cannot be.
+static SessionBrowser* startedSessionBrowser(App* app, bool editable) {
+    if (app->dead || !app->editor) return nullptr;
+    if (!app->sessionBrowser) {
+        SessionBrowser::Host host;
+        host.save = [app](uint64_t d) { saveSessionDocument(app, d); };
+        host.open = [app](const std::string& path, bool keep) {
+            if (app->dead) return;
+            treeOpenCb(path, keep ? EditorTabs::OpenFrom::TreeCommandClick : EditorTabs::OpenFrom::TreeClick, app);
+        };
+        host.close = [app](uint64_t d) { closeSessionDocument(app, d); };
+#ifdef MUTIBLE_ENABLE_BROWSER
+        // The pane shown with the page, the keyboard left where it was.
+        if (app->browser)
+            host.browse = [app](const std::string& url) {
+                if (!app->dead) showWebAddresses(app, {url}, false);
+            };
+#endif
+        host.report = [app] { reportSessionWindow(app); };
+        app->sessionBrowser = new SessionBrowser(GTK_WINDOW(app->window), std::move(host));
+    }
+    SessionBrowser* b = app->sessionBrowser;
+    b->setEditable(editable);
+    std::string error;
+    if (!b->start(app->link, app->editor->sessionWindowId(), g.showHidden, g.settings->path(), &error)) {
+        flashStatus(app, "The session's page could not start: " + error);
+        return nullptr;
+    }
+    return b;
+}
+
+static void act_show_session_in_browser(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (app->dead) return;
+    const bool last = SessionBrowser::editableChoice();
+    GtkAlertDialog* dlg = gtk_alert_dialog_new("Show this window's session in the browser");
+    gtk_alert_dialog_set_detail(dlg, "Editable lets the page type into this window's files, undo, and save them, "
+                                     "as you can here. Each link opens the page in one browser, and mutible asks "
+                                     "before a browser it does not remember connects. Read-Only shows the files "
+                                     "and follows your typing.");
+    const char* buttons[] = {last ? "Editable" : "Read-Only", last ? "Read-Only" : "Editable", "Cancel", nullptr};
+    gtk_alert_dialog_set_buttons(dlg, buttons);
+    gtk_alert_dialog_set_default_button(dlg, 0);
+    gtk_alert_dialog_set_cancel_button(dlg, 2);
+    gtk_alert_dialog_set_modal(dlg, TRUE);
+    struct Ask {
+        App* app;
+        bool last;
+    };
+    gtk_alert_dialog_choose(dlg, GTK_WINDOW(app->window), nullptr,
+        [](GObject* src, GAsyncResult* res, gpointer up) {
+            Ask* a = static_cast<Ask*>(up);
+            App* app = a->app;
+            const bool last = a->last;
+            delete a;
+            GError* err = nullptr;
+            const int choice = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, &err);
+            const bool failed = err != nullptr;
+            if (err) g_error_free(err);
+            if (failed || app->dead || (choice != 0 && choice != 1)) return;
+            const bool editable = choice == 0 ? last : !last;
+            SessionBrowser::setEditableChoice(editable);
+            SessionBrowser* b = startedSessionBrowser(app, editable);
+            if (!b) return;
+            SessionBrowser::openInBrowser(GTK_WINDOW(app->window), b->newLink());
+            flashStatus(app, editable ? "The session's page opened in the browser; it can edit this window's "
+                                        "files, and opens only on this computer."
+                                      : "The session's page opened in the browser; it is read-only and only on "
+                                        "this computer.");
+        }, new Ask{app, last});
+    g_object_unref(dlg);
+}
+
+static void act_copy_session_browser_link(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    SessionBrowser* b = startedSessionBrowser(app, SessionBrowser::editableChoice());
+    if (!b) return;
+    gdk_clipboard_set_text(gtk_widget_get_clipboard(app->window), b->newLink().c_str());
+    flashStatus(app, "Copied a fresh link to the session's page: it opens once, only on this computer.");
+}
+
+static void act_remembered_session_browsers(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    if (!app->dead) SessionBrowser::showRemembered(GTK_WINDOW(app->window));
+}
+
 // The window is going (onWindowRemoved): its record, documents and
 // terminals stay on their hosts, but the documents the close question's
 // Don't Save dropped, which close there with their tabs. What was typed
@@ -5022,6 +5180,10 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     if (!app) return;   // the Find in Folder window, an alert
     g.windows.erase(std::find(g.windows.begin(), g.windows.end(), app));
     app->dead = true;
+    // The page's server first: its view lets the host go, and the
+    // window's tabs then leave the host's state as it detaches.
+    delete app->sessionBrowser;
+    app->sessionBrowser = nullptr;
     detachWindow(app);
     // As the whole desktop the app outlives its last window: a fresh one on
     // the home folder takes its place, once this one is gone (DesktopMode.h).
@@ -5762,6 +5924,9 @@ static App* newWindow(const std::string& root, const std::string& file,
     }
     addAction(app, "togglegit",      G_CALLBACK(act_toggle_git));
     addAction(app, "toggleprocesses", G_CALLBACK(act_toggle_processes));
+    addAction(app, "showsessioninbrowser", G_CALLBACK(act_show_session_in_browser));
+    addAction(app, "copysessionbrowserlink", G_CALLBACK(act_copy_session_browser_link));
+    addAction(app, "rememberedsessionbrowsers", G_CALLBACK(act_remembered_session_browsers));
     addAction(app, "toggleagents", G_CALLBACK(act_toggle_agents));
     addAction(app, "focustree",      G_CALLBACK(act_focus_tree));
     addAction(app, "focuseditor",    G_CALLBACK(act_focus_editor));

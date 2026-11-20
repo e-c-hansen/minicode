@@ -257,6 +257,13 @@ const std::vector<LinuxRow>& linuxRows() {
         {"mutible.toggleProcesses", "", 0, nullptr, nullptr},
         // The Claude Code IDE link (PARITY.md 3.9); no key, as on the Mac.
         {"mutible.toggleIdeLink", "", 0, nullptr, nullptr},
+        // The browser's view of the window's tabs on the session's host
+        // (linux/src/SessionBrowser.h); no keys, as on the Mac. In a View
+        // submenu of their own, not View itself, which three more rows would
+        // make taller than a 768-pixel screen (see Editor Layout below).
+        {"mutible.showSessionInBrowser", "", 0, nullptr, "View > Session Browser"},
+        {"mutible.copySessionBrowserLink", "", 0, nullptr, "View > Session Browser"},
+        {"mutible.rememberedSessionBrowsers", "", 0, nullptr, "View > Session Browser"},
         {"workbench.actions.view.problems", "ctrl+shift+m", 0, nullptr, nullptr},
         {"mutible.toggleEditor", "ctrl+shift+e", 0, nullptr, nullptr},
         // The Mac's Ctrl+Cmd+M; VS Code has no key (its Toggle Maximize

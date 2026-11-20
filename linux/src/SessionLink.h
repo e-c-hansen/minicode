@@ -103,6 +103,24 @@ public:
     void windowTerminals(std::uint64_t window, const Model::Window& w, std::vector<std::uint64_t> terms,
                          Json layout = Json());
     void windowClosed(std::uint64_t window);
+    // What the window's browser pane holds ("browser", the core's
+    // Shared::Web::browserReportJson) and which panes it shows ("panes",
+    // panesReportJson), sent with its tabs from now on (when they differ)
+    // for the session browser's page (SessionBrowser.h); null leaves either
+    // out.
+    void windowPanes(std::uint64_t window, const Model::Window& w, Json browser, Json panes);
+    // The window's id on the host, the one its tabs are reported under,
+    // made now when it has none (the session browser serves only its tabs).
+    std::uint64_t hostWindowId(std::uint64_t window) { return hostWindow(window); }
+    // A browser's view (the session browser's server, SessionWeb.h's
+    // Options::connect) connected to this link's in-process host as one
+    // more renderer, the host's messages for it delivered to `client` from
+    // then on; returns what lets it go again. Any thread. Null for a
+    // headless host, which the view reaches over its socket instead.
+    std::function<void()> connectViewer(Shared::Client& client);
+    // What the host sent, taken now (dispatched on the main loop otherwise):
+    // a page's save waits for every edit it made to be in the tab.
+    void dispatch();
     // The window closes and detaches (stage 6, step 2): its record stays on
     // the host, sent once more so it is the latest a closing window left,
     // for the folder's next window to take; none is kept for a window with
@@ -144,7 +162,6 @@ private:
     void startInProcess(bool loopback, unsigned delayUs);
     bool startSocket(std::string* why);
     void makeClient();
-    void dispatch();
     static int dispatchOnMain(void* wake);   // a GSourceFunc
     std::uint64_t hostWindow(std::uint64_t window);
 
@@ -169,6 +186,12 @@ private:
     std::map<std::uint64_t, std::uint64_t> hostWindow_;
     std::map<std::uint64_t, std::vector<std::uint64_t>> windowTerms_;
     std::map<std::uint64_t, Json> windowLayout_;
+    std::map<std::uint64_t, std::pair<Json, Json>> windowPanes_;   // browser, panes
+    // The browsers' views on the in-process host, by their id there: each
+    // message the host sends one of them goes to its client, under the
+    // lock, so letting one go stops its deliveries at once.
+    struct Viewers;
+    std::shared_ptr<Viewers> viewers_;
 };
 
 // The link to the host of `root`'s folder: the one already made for it,
