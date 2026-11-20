@@ -1505,6 +1505,10 @@ MC_GUI_SUITE(session_browser) {
         return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:@"+Changes"] &&
                ![gSeen[@"scm"][@"mode"] boolValue] && [gSeen[@"tree"] containsString:@"review_me.py"];
     });
+    MCGuiStep(@"what the page shows after Source Control", ^{
+        MCGuiNote(@"local '%@', tabs %@, source control %@, tree %@", gSeen[@"local"], gSeen[@"tabs"],
+                  gSeen[@"scm"][@"mode"], gSeen[@"tree"]);
+    });
     MCGuiStep(@"the window closes, and the server with it", ^{
         GCHECK([gC tabs].count == tabsBefore);
         [MCAppDefaults() removeObjectForKey:@"MCSessionBrowserEditable"];

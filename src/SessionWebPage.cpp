@@ -1016,7 +1016,10 @@ body:not(.editable) #caret { display: none; }
     $("scmbtn").setAttribute("aria-pressed", String(scm));
     const r = $("refresh"), what = scm ? "Read the changes again" : "Refresh the tree";
     r.title = what; r.setAttribute("aria-label", what);
-    if (scm) askGit(); else watchGit();
+    // Back to Files: the open folders listed again, since files came and
+    // went while the changes were on show (the tree does not follow the
+    // disk by itself).
+    if (scm) askGit(); else { watchGit(); refreshTree(); }
   }
   function dirOf(p) { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
   function letterEl(letter) {
