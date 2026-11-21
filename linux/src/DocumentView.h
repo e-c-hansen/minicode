@@ -616,7 +616,6 @@ private:
     void enrol();     // known to its link's notices by its id
     void unenrol();
     void tellHostSaved(const std::string* text);
-    uint64_t toldSavedAt_ = UINT64_MAX;   // edits_ when it last did
     struct HostWrite {
         bool knowsText = false;   // the text written: the buffer's then
         std::string text;

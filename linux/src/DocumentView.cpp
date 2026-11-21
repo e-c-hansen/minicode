@@ -964,7 +964,7 @@ bool Document::saveThroughHost(const std::string& body, std::string* error, bool
     // The text the file holds: the buffer's, unless someone's edit came in
     // after the host wrote (then the file's, as written).
     std::string saved = body;
-    if (c.version(id_) == a.version && c.unconfirmed() == 0) {
+    if (c.version(id_) == a.version && c.unconfirmed(id_) == 0) {
         saved = text();
     } else {
         std::string disk;
@@ -987,9 +987,7 @@ bool Document::saveThroughHost(const std::string& body, std::string* error, bool
 void Document::tellHostSaved(const std::string* text) {
     if (kind_ != Kind::Text || !client().isOpen(id_)) return;
     if (text) client().savedAs(id_, Model::utf16FromUtf8(*text));
-    else client().saved(id_);
-    // A count the host sends before it took this is not taken (hostDirty).
-    toldSavedAt_ = edits_;
+    else client().saved(id_);   // fences the host's counts until it took this (Client::saved)
 }
 
 // The host wrote the file for another renderer (a page's save): taken as
@@ -999,7 +997,7 @@ void Document::hostWrote(std::uint64_t version, const Json& json) {
     if (kind_ != Kind::Text || !c.isOpen(id_)) return;
     HostWrite w;
     // The text written, when the buffer's is the host's at that version.
-    w.knowsText = c.unconfirmed() == 0 && c.version(id_) == version;
+    w.knowsText = c.unconfirmed(id_) == 0 && c.version(id_) == version;
     if (w.knowsText) w.text = text();
     w.path = json["path"].asString();
     FolderSearch::TextEncoding e = FolderSearch::TextEncoding::Utf8;
@@ -1043,11 +1041,11 @@ void Document::takeHostWrite() {
 // more than the text against the file (takeHostDirty).
 void Document::hostDirty(bool dirty) {
     Shared::Client& c = client();
-    if (kind_ != Kind::Text || !c.isOpen(id_) || c.unconfirmed() != 0) return;
-    // Unsaved, heard with no edit since the window told the host what the
-    // file holds: maybe sent before the host took that (a reload's edit
-    // flips it, its DocSaved flips it back).
-    if (dirty && edits_ == toldSavedAt_) return;
+    // This document's own messages only: another tab's edits in flight say
+    // nothing of this one's text (Client::unconfirmed(doc)). A count sent
+    // before the host took the window's DocSaved never reaches here: the
+    // client holds it behind the DocSaved's fence (Client::saved).
+    if (kind_ != Kind::Text || !c.isOpen(id_) || c.unconfirmed(id_) != 0) return;
     hostDirty_ = dirty;
     dirtyEdits_ = edits_;
     if (dirtyIdle_) return;

@@ -8648,9 +8648,10 @@ on GTK: docs/notes/session-host.md, "GTK's tabs save through the host
 - **Traps.** The host acknowledges an edit before it sends the DocDirty
   that edit caused, so a reload's edit followed by its DocSaved reaches
   the window as "unsaved" with nothing unconfirmed, before the DocSaved's
-  "saved" (found by reading, not seen): `hostDirty` drops an "unsaved"
-  heard with no edit since the window last told the host its saved text
-  (`toldSavedAt_`). GTK's own
+  "saved" (found by reading, then seen on the Mac): the client now
+  fences it (#299, `Client::saved`), and `hostDirty` and `hostWrote`
+  judge by the document's own unconfirmed messages
+  (`Client::unconfirmed(doc)`); the stopgap `toldSavedAt_` went. GTK's own
   compare runs on every edit, so the host's count only matters where
   the two disagree; the tells above are what keep them agreeing.
 - **Not done.** Save As from a page, and the host following the disk,
