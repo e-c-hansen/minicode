@@ -356,14 +356,15 @@ Json Link::tabsJson(std::uint64_t window, const Model::Window& w) const {
     if (l != windowLayout_.end() && !l->second.isNull()) tabs.set("termLayout", l->second);
     auto p = windowPanes_.find(window);
     if (p != windowPanes_.end()) {
-        if (!p->second.first.isNull()) tabs.set("browser", p->second.first);
-        if (!p->second.second.isNull()) tabs.set("panes", p->second.second);
+        if (!p->second.browser.isNull()) tabs.set("browser", p->second.browser);
+        if (!p->second.panes.isNull()) tabs.set("panes", p->second.panes);
+        if (!p->second.reviews.isNull()) tabs.set("reviews", p->second.reviews);
     }
     return tabs;
 }
 
-void Link::windowPanes(std::uint64_t window, const Model::Window& w, Json browser, Json panes) {
-    windowPanes_[window] = {std::move(browser), std::move(panes)};
+void Link::windowPanes(std::uint64_t window, const Model::Window& w, Json browser, Json panes, Json reviews) {
+    windowPanes_[window] = {std::move(browser), std::move(panes), std::move(reviews)};
     windowTabs(window, w);
 }
 

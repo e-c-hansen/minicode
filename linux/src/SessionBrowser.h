@@ -45,7 +45,8 @@
 // window calls gitChanged when its git or the folder's changed, and the
 // page's Source Control reads again.
 //
-// Left for later: the review pages, which the Mac's has.
+// The window's worktree pages go with its tabs (reportSessionWindow,
+// "reviews"); the core reads and serves them. GTK has no commit page yet.
 #pragma once
 
 #include <cstdint>

@@ -8376,7 +8376,7 @@ built into the GTK app; nothing started one.
 The three things section 126 left out of the page that need no new core
 code: the LaTeX typesets, the pages drawn as pictures, and the page's
 Source Control reading again when git changes. The review pages are still
-to come.
+to come (section 128).
 
 - **What a user meets.** A page showing a `.tex` file shows its typeset
   PDF: from the window's own LaTeX preview when a tab has one (its last PDF
@@ -8434,3 +8434,37 @@ to come.
   checked: real tectonic, and a commit made in a terminal.
 - **Needs the owner's eyes**: a LaTeX document's page in a real browser
   with real tectonic, and the page's Source Control after a commit.
+
+### 128. The session browser, last part: the window's commit and worktree pages (the Mac's SessionBrowser; November 2026)
+
+The review pages section 127 left out. The core already reads and serves
+them (`reviews` in the state, `review` with a `page`, SessionWeb.h and
+SessionWebGit.h); the window only had to say which it has open.
+
+- **What a user meets.** A page lists the window's worktree review pages
+  (Compare with Main) beside its tabs, the one on show in each editor
+  group marked, and shows one read-only: its header, its files and their
+  changes as the window's page has them. Closing the tab takes it from the
+  page's list at the next report.
+- **Code.** `reportSessionWindow` (main.cpp) walks both editor groups
+  (`groupDocuments`, `groupActive`), takes each tab whose `editorPage()` is
+  a `ChangeReviewPage` in worktree mode (kind "worktree", its folder, its
+  `title()`, whether it is the group's tab on show) and hands
+  `Shared::Web::reviewsReportJson` of them to `Link::windowPanes`, which
+  gained a third argument and keeps it beside the browser and panes
+  (`Link::Panes`); `tabsJson` sets `reviews` when there are any, as the
+  Mac's `w.reviews` does, so the half-second report sends it only when it
+  changes.
+- **Differences from the Mac.** GTK has no commit page yet (the panel shows
+  a commit in the diff tab), so only worktree pages are reported; when a
+  commit page comes, it goes in the same loop (kind "commit", the hash).
+  The uncommitted changes' page is left out on both.
+- **Checks.** `session_browser` makes a worktree one commit ahead of main in
+  its scratch folder, opens its `ChangeReviewPage` with `Editor::showPage`,
+  sees the state list it (kind "worktree", "sbt-wt vs main", on show, and
+  the only entry), asks for it with `review` and `page` and gets the file
+  the worktree added, closes the tab and sees `reviews` leave the state;
+  the worktree folder and the repository are removed. Not checked: a
+  commit's page, a page in the second group, and a page opened through the
+  tree's menu (the suite makes the page itself).
+- **Needs the owner's eyes**: a worktree page in a real browser.
