@@ -20,6 +20,9 @@
 #include "TabStrip.h"
 
 #include <algorithm>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <cctype>
 #include <sys/stat.h>
 
@@ -639,6 +642,8 @@ void Editor::focusActiveDocument() {
 // ---------------------------------------------------------------- closing
 
 // The focused group's tab of it, else the other group's.
+static int gTrimsDone = 0;   // malloc_trim runs after big tabs closed (a check reads it)
+
 void Editor::closeTab(Document* d) {
     if (indexOf(d) >= 0) dropTab(d, true);
     else if (inOther(d)) dropOther(d, true);
@@ -676,6 +681,8 @@ void Editor::dropTab(Document* d, bool remember) {
     refreshStrip();
 }
 
+int Editor::trimsDone() { return gTrimsDone; }
+
 // Gone for good: what the slot held for it comes off first.
 void Editor::destroy(Document* d) {
     docs_.erase(d->id());
@@ -694,7 +701,17 @@ void Editor::destroy(Document* d) {
 #endif
     if (d->editorPage() && gtk_widget_get_parent(d->editorPage()->widget()) == slot_)
         gtk_stack_remove(GTK_STACK(slot_), d->editorPage()->widget());
+    // A big text's pieces go back to glibc, which keeps freed memory for the
+    // next allocation: about three times the file stayed resident after the
+    // tab closed. Trimmed once the free is done, in an idle.
+    const bool big = d->buffer() && gtk_text_buffer_get_char_count(d->buffer()) >= (3 << 20);
     delete d;
+#ifdef __GLIBC__
+    if (big) {
+        g_idle_add_full(G_PRIORITY_LOW, [](gpointer) -> gboolean { malloc_trim(0); gTrimsDone++; return G_SOURCE_REMOVE; },
+                        nullptr, nullptr);
+    }
+#endif
 }
 
 void Editor::closeAllTabs() {

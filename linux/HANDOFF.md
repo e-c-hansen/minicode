@@ -2955,8 +2955,8 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   window closed meanwhile).
 - **The tab** is a diff tab with `Document::compare()` set (`setCompare`), so
   it has no path, is read-only, is skipped by sessions and Quick Open, closes
-  like any tab and is titled by `spec.title`; each call makes a tab of its
-  own (the Mac's preview replacement comes with `minicode diff`). F7 and
+  like any tab and is titled by `spec.title`; `mutible diff` makes the
+  agents' preview tab, which the next one replaces (item 149). F7 and
   Shift+F7 are handled by the panes while one has the keyboard
   (`SideBySide::stepHunk`, wrapping), with three rows of context above.
 - **Checked by** the `compare` GUI suite: rows and fillers, the words, syntax
@@ -2977,8 +2977,8 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   undecided hunk's button decides it, a press on a decided hunk's own button
   undecides it. The last choice sends after the grace (3 s); the bar's
   buttons send at once, and `Editor::destroy` calls `tabClosed`, so closing
-  the tab in the grace sends what was decided and before it rejects. Left
-  out: tinting a decided hunk's rows. Trap: two clicks in one check step are
+  the tab in the grace sends what was decided and before it rejects. A
+  rejected hunk's rows are tinted as the Mac's (item 149). Trap: two clicks in one check step are
   one gesture to GTK's click recognizer; click once per step and wait.
 - **`minicode diff`** (`ControlCommands.cpp`, the client allows it): `path`,
   `--base` (`isSafeRef`: never starting with "-"), `other`, `--window` and
@@ -9108,3 +9108,62 @@ show; the file shown last is shown meanwhile).
   on a quiet machine until it paused for `gtk-double-click-time` plus 0.1 s.
   The Mac's summary also has a "Click to open" / "Click to close" tooltip;
   GTK's page spans have none.
+
+### 148. Memory: the find bar's copy, malloc_trim, and what is left (November 2026)
+
+GTK held a big file at about 13 times its size. Three shares were the GTK
+side's; two are fixed, one left alone on purpose.
+
+- **The find bar's copy.** `FindBar::close()` let go of `text_` but not
+  `foundText_`, which holds the same `Text`, so the copy (UTF-8, the file's
+  size) stayed. Both go now (`holdsText()` reports it); a running search
+  holds its own `shared_ptr<Text>` in its Job or Stage, so what it reads
+  stays until it ends. A big text (3 MB or more) also gets a
+  `malloc_trim(0)` 300 ms after the close: the copy is under glibc's 32 MB
+  mmap ceiling, so freeing it only fed the heap's free list.
+- **After a big tab closes.** `Editor::destroy` runs `malloc_trim(0)` in a
+  low-priority idle after `delete d` for a buffer of 3 million characters
+  or more (glibc only; `Editor::trimsDone()` counts the runs).
+- **Left alone: `Document::saved_`.** It is the disk's text as last read or
+  saved and is what dirty means (`matchesSaved`, `rememberDisk`,
+  `checkDirty`), what an external change is compared with
+  (`checkExternalChange`, `externalChangeCheck`) and what the host is reset
+  to after a reload or restore (`hostSavedFromDisk`). It cannot go without
+  changing those, so it stays (1 times the file).
+- **Numbers** (`large_memory`, a 30 MB ASCII log of 80-byte lines, Pss from
+  /proc/self/smaps_rollup, MB; the core's host and mirror shares are not
+  touched here): before opening 126, laid out 529 (+403), after a search for
+  a word on the last line 563 (+34, the bar's copy). Bar closed: 563 before
+  this change (nothing was returned), 530 after. Tab closed: 383 without the
+  trim (+257, 8.6 times the file), 203 to 216 with it (+77 to +90, 2.6 to 3
+  times). What stays is the heap's holes (about 130 MB of heap, small
+  allocations of the buffer and index interleaved), which a trim cannot give
+  back.
+- **Checked.** `large_memory` (new, LargeMemorySuite.cpp): the bar holds a
+  text while it shows and none after `closeFromEditor`, a search after
+  reopening works, the Pss drops by the copy's size after the close, and
+  after the tab's close it is under 5 times the file above its start (the
+  trim ran). find_bar, tabs, backups, save, sessions, preview_tabs pass,
+  `meson test`, root `make test`.
+
+### 149. The compare view's last three pieces (PARITY 3.2 done; November 2026)
+
+- **The diff preview tab** was already in place (`CompareSpec::preview` makes
+  the tab `Model::Preview::AgentDiff`, which `Window::add` replaces, `--keep`
+  turning it off; PARITY's "a tab of its own each call" was stale). What was
+  missing was a check: `compare` now opens three comparisons: the second
+  replaces the first, `keepPreviewTab` (a double-click, Keep Open) keeps the
+  second, the third is a tab of its own. A decision tab (the IDE link's
+  openDiff) is never a preview, as on the Mac.
+- **Tints.** `CompareView::rowTint(left, row)` (also for the checks): 1 the
+  pane's own, 2 the trace of tint (grey, alpha 0.10: the Mac's "dropped") a
+  rejected hunk keeps on the right; an accepted hunk keeps its colours, as
+  on the Mac. `hunkOfRow` is a binary search over the hunks.
+- **A tab's place.** `Document::compareScroll()` (the vertical place and each
+  pane's sideways one) is saved in `Editor::stash` while the compare view
+  shows that tab's data and put back after `CompareView::show`. As the
+  Mac's `diffScroll`, it is not in the session (a remade comparison opens at
+  the top).
+- **Checked.** `compare` (the tints on a rejected, an accepted and an
+  undecided hunk; replace, keep, and the scroll back after another tab).
+- **Not verified.** The look of the tint.

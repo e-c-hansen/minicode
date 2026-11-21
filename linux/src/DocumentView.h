@@ -344,6 +344,10 @@ public:
     // set: titled by `diffTitle`, no file, read-only. Null for a git diff.
     void setCompare(const std::string& title, std::shared_ptr<const CompareData> data);
     const std::shared_ptr<const CompareData>& compare() const { return compare_; }
+    // Where the comparison was scrolled while another tab showed (the Mac's
+    // diffScroll): the shared vertical place and each pane's sideways one.
+    struct CompareScroll { double v = 0, h[2] = {0, 0}; bool have = false; };
+    CompareScroll& compareScroll() { return compareScroll_; }
     // A page (EditorPage.h) is a diff tab too, with this set.
     void setEditorPage(const std::string& title, std::shared_ptr<EditorPage> page);
     const std::shared_ptr<EditorPage>& editorPage() const { return editorPage_; }
@@ -655,6 +659,7 @@ private:
 
     std::string diffTitle_, diffBytes_;
     std::shared_ptr<const CompareData> compare_;
+    CompareScroll compareScroll_;
     std::shared_ptr<EditorPage> editorPage_;
     std::shared_ptr<CompareDecision> decision_;
     bool        diffCommit_ = false;

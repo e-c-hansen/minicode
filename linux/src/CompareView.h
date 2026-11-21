@@ -60,6 +60,11 @@ public:
     // Where the panes are, in rows (the first on show).
     long topRow(bool left) const;
     void scrollToRow(long row);
+    // The place of both panes (vertical, then each one's sideways), kept by
+    // the tab while another shows and put back when it comes on show again.
+    struct Scroll { double v = 0, h[2] = {0, 0}; };
+    Scroll scroll() const;
+    void setScroll(const Scroll& s);
     GtkWidget* focusWidget() const { return area_[1]; }
 
     // ---- for the checks
@@ -76,6 +81,7 @@ public:
     GtkWidget* pane(bool left) const { return area_[left ? 0 : 1]; }
     GtkAdjustment* vadjustment(bool) const { return vadj_; }   // one for both panes
     int rowHeight() const { return rowH_; }
+    int rowTint(bool left, long row) const;
     // The strings drawn marked as changed words on a row of a pane.
     std::vector<std::string> wordsOnRow(bool left, size_t row) const;
     // The syntax style of the byte `col` of row `row`'s text, or -1 for none.
@@ -83,6 +89,7 @@ public:
 
 private:
     void measure();
+    size_t hunkOfRow(long row) const;
     void draw(int side, cairo_t* cr, int width, int height);
     void resized(int side, int w, int h);
     void fitContent();

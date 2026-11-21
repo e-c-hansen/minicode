@@ -1378,7 +1378,7 @@ its server comes first here (2.0).
   `install-skill` done (HANDOFF item 48). Remains: `split` (needs terminal
   tabs, item 4.7), which answers "not on Linux yet". `diff` is done with 3.2; `browse`, `page` and `open-url`/BROWSER with
   3.7.
-- [~] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
+- [x] **3.2 The compare view.** `SideBySide`, word changes, Accept and Reject
   per hunk. Part one done (HANDOFF item 39): `CompareView` and
   `ComparePanes`, a comparison tab through `Editor::showComparison` with
   syntax colors, changed rows and words marked, panes scrolling together, F7
@@ -1387,9 +1387,11 @@ its server comes first here (2.0).
   bar, `lastChoiceGrace` with Send Now, `acceptedText`) and `mutible diff`.
   Compare with Main is done (3.5, HANDOFF items 44 and 85: one scroll, with
   Apply to Main);
-  the IDE link's openDiff is done (3.9). Also the Mac's diff preview tab that each `diff` replaces (every
-  call opens a tab of its own here), choice tints on the rows, and keeping a
-  tab's place.
+  the IDE link's openDiff is done (3.9). The Mac's diff preview tab that each `diff` replaces (`Preview::AgentDiff`,
+  kept by `--keep`, a double-click, an edit's absence being moot as the tab is
+  read-only; a decision tab is never a preview), the trace of tint a rejected
+  hunk keeps on the right, and the tab's scroll kept while another tab shows
+  are done (HANDOFF item 149).
 - [x] **3.3 The inline agent.** `InlineAgent`, with pending edits. Never run
   the real Claude Code in a check: use `tests/fixtures/claude`. Done,
   November 2026 (HANDOFF item 46): Ctrl+I, the bar at the caret, the streamed

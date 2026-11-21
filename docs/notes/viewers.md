@@ -303,6 +303,11 @@ found through that list.
   The last hunk's choice sends the answer only after `lastChoiceGrace` (3 s;
   `sending`, the bar's Send Now), so a misclick can be pressed again and
   taken back; the bar's own buttons and closing the tab send at once.
+  GTK (2026-11-21): `mutible diff` opens the agents' diff preview tab
+  (`Preview::AgentDiff`, kept by `--keep`, a double-click or Keep Open; a
+  decision tab never is one), a rejected hunk's right rows keep only a trace
+  of tint (`CompareView::rowTint`), and a tab keeps its scroll
+  (`Document::compareScroll`, saved in `Editor::stash`) while another shows.
   Trap: laying both panes out to size them took 1.5 s on the main thread
   for 50,000 lines a side; every row has one fixed height (a paragraph
   style), so sizes and row rects are arithmetic and layout is
