@@ -176,7 +176,19 @@ for full-screen programs. Both can be open at once.
   grid's input now clears `_zleReady` and restarts the 0.3 s clock on a
   Ctrl+C, so the command waits for the new prompt's B. In a test, Ctrl+D
   then Ctrl+C to end cat raced cat's exit: the C landed at precmd and cut
-  the prompt mark off; send one of them. `busy` is
+  the prompt mark off; send one of them. **Trap** (2026-11-20, zsh 5.9):
+  a Ctrl+C that reaches zsh while ZLE is still reading and drawing a
+  paste is lost: ZLE takes it while busy, then blocks in read() for
+  the next key as if none had come (zsh's signal handling, apparently
+  queued until just before that read), so no new prompt comes, and the next byte typed wakes ZLE only to abort the line
+  and throw that input away (terminal_paste's flake on CI, where a drop
+  and Ctrl+C went in the same turn: "a fresh prompt" timed out, then
+  the next command's output never came; a pty script reproduced it in
+  6 of 10 tries, and in none of 40 once the paste was on the screen
+  first). A person sees the paste first; a test waits until zsh has
+  drawn it (`PasteDrawn`). Over the session's host it should not
+  happen, since the keys one turn sends reach the pty in one write and
+  the C flushes the paste unread. `busy` is
   also YES while another program holds the foreground. Private keys sent only while ZLE reads: `ESC[9998~`
   beginning-of-line, 9997 end-of-line, 9996 backward-kill-line, 9995
   clear-screen (Cmd+Left, Cmd+Right, Cmd+Delete, Cmd+K); elsewhere on the main
@@ -736,6 +748,7 @@ text is in place in its section.
 - The terminal: **Trap**: GTK suites that wanted a fresh shell typed `exit` and waited for the restart (`shell_integration`, `terminal_marks`); they now make a new terminal and close the others.
 - The terminal: **Trap** (2026-11-16): the queue was one line, and a second `runCommand:` while the first still waited (a prompt between its 133;A and B) replaced it: the first never ran (terminal_reflow's flake on CI, `read` missing from the screen).
 - The terminal: **Trap** (2026-11-18): Ctrl+C typed while ZLE reads left the old B believed until zsh's SIGINT was handled, and a command typed in that moment lost its `ESC [` to the dying line editor and ran as `[9999~read ...` (terminal_paste's flake on CI).
+- The terminal: **Trap** (2026-11-20, zsh 5.9): a Ctrl+C that reaches zsh while ZLE is still reading and drawing a paste is lost: ZLE takes it while busy, then blocks in read() for the next key as if none had come, so no new prompt comes, and the next byte typed wakes ZLE only to abort the line and throw that input away (terminal_paste's flake on CI).
 - The terminal: Trap: the harness can run zsh; an agent's own shell may be refused it by the worktree guard.
 - The terminal: Trap: quote dropped paths with backslashes, never single quotes.
 - The terminal: **Trap** (round 9, 2026-11-19): until then the hint was the view's `toolTip`, and the checks read that property, so they passed while no user ever saw it.
