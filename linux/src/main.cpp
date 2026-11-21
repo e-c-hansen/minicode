@@ -5007,6 +5007,49 @@ static void saveSessionDocument(App* app, uint64_t docId) {
     else saveDocument(app, d);
 }
 
+// An editable page's New File: an untitled tab here, named as a backup of it
+// would be (Untitled-1, ...) beside the folder's files and shown, which the
+// page then shows too.
+static void newSessionFile(App* app) {
+    if (app->dead) return;
+    if (app->link) app->link->dispatch();
+    const std::string folder = app->link ? app->link->folder() : app->rootDir;
+    const std::string name = Backups::untitledPath(folder, [app](const std::string& p) {
+        struct stat st;
+        return lstat(p.c_str(), &st) == 0 || app->editor->documentFor(p) != nullptr;
+    });
+    if (name.empty() || !app->editor->addUntitled(name))
+        flashStatus(app, "The browser's page could not make a new file here");
+    refreshHints(app);
+}
+
+// An editable page's Save As: the tab's text written to `path` (the core
+// held it inside the folder and asked about a file there), and the tab that
+// file from then on, its document's path on the host too, so every view
+// follows; the old file is left as it was. A file open in another tab is
+// refused. `done` hears how it went.
+static void saveSessionDocumentAs(App* app, uint64_t docId, const std::string& path,
+                                  const std::function<void(bool, const std::string&)>& done) {
+    if (app->dead) return;
+    if (app->link) app->link->dispatch();
+    Document* d = app->editor->documentById(docId);
+    if (!d || !app->editor->isOpen(d) || d->kind() != Document::Kind::Text || path.empty()) {
+        done(false, "That document is no longer open in the mutible window.");
+        return;
+    }
+    Document* there = app->editor->documentFor(path);
+    if (there && there != d) {
+        done(false, baseName(path) + " is open in the mutible window: close it there first.");
+        return;
+    }
+    std::string err;
+    const bool ok = there == d && d->diskStamp().exists ? app->editor->saveDocument(d, &err)
+                                                         : app->editor->saveDocumentAs(d, path, &err);
+    if (ok) flashStatus(app, "Saved as " + baseName(path) + " from the browser's page");
+    refreshHints(app);
+    done(ok, ok ? std::string() : (err.empty() ? "It could not be saved." : err));
+}
+
 // An editable page's close button on one of the window's tabs: closed in
 // both groups, as the tab's own close leaves the page nothing of it. One
 // with unsaved changes stays (the core refused it already; typing since may
@@ -5038,6 +5081,11 @@ static SessionBrowser* startedSessionBrowser(App* app, bool editable) {
             treeOpenCb(path, keep ? EditorTabs::OpenFrom::TreeCommandClick : EditorTabs::OpenFrom::TreeClick, app);
         };
         host.close = [app](uint64_t d) { closeSessionDocument(app, d); };
+        host.newFile = [app] { newSessionFile(app); };
+        host.saveAs = [app](uint64_t d, const std::string& path,
+                            std::function<void(bool, const std::string&)> done) {
+            saveSessionDocumentAs(app, d, path, done);
+        };
 #ifdef MUTIBLE_ENABLE_BROWSER
         // The pane shown with the page, the keyboard left where it was.
         if (app->browser)

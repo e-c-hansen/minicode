@@ -512,6 +512,21 @@ bool SessionBrowser::start(const std::shared_ptr<SessionLink::Link>& link, std::
                 later([d](SessionBrowser& s) { s.host_.close(d); });
                 return true;
             };
+        if (host_.newFile)
+            o.newFile = [later]() {
+                later([](SessionBrowser& s) { s.host_.newFile(); });
+                return true;
+            };
+        // The answer goes to the server that asked: `later` drops it for one
+        // stopped meanwhile, and the main loop is where savedAs is called.
+        if (host_.saveAs)
+            o.saveAs = [later](Shared::DocId d, const std::string& path, std::uint64_t ask) {
+                later([d, path, ask](SessionBrowser& s) {
+                    s.host_.saveAs(d, path, [&s, ask](bool ok, const std::string& why) {
+                        if (s.server_) s.server_->savedAs(ask, ok, why);
+                    });
+                });
+            };
         if (host_.browse)
             o.browse = [later](const std::string& url) {
                 later([url](SessionBrowser& s) { s.host_.browse(url); });

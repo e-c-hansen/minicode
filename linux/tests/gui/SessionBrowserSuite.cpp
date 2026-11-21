@@ -256,6 +256,9 @@ Link gL1, gL2;
 Jar gJar1, gJar2, gJar3;
 Conn gHttp, gHttp2, gHttp3, gWs1, gWs3;
 Json gMsg;
+size_t gDocsBefore = 0;
+uint64_t gUntitled = 0;
+std::string gUntitledPath;
 
 const Json* docIn(const Json& st, const std::string& path) {
     for (const Json& d : st["docs"].elements())
@@ -278,6 +281,15 @@ void send(Conn& c, const char* type, uint64_t doc) {
     Json o = Json::object();
     o.set("t", Json(type));
     o.set("doc", Json((int64_t)doc));
+    c.sendJson(o);
+}
+// A page's Save As of document `doc` to `rel` (from the folder).
+void saveAs(Conn& c, uint64_t doc, const std::string& rel, bool overwrite) {
+    Json o = Json::object();
+    o.set("t", Json("saveas"));
+    o.set("doc", Json((int64_t)doc));
+    o.set("path", Json(rel));
+    o.set("overwrite", Json(overwrite));
     c.sendJson(o);
 }
 // An edit inserting `text` at the start of the document `shown`.
@@ -533,6 +545,8 @@ MC_GUI_SUITE(session_browser) {
         GCHECK(gMsg["canSave"].asBool());
         GCHECK(gMsg["canOpen"].asBool());
         GCHECK(gMsg["canClose"].asBool());
+        GCHECK(gMsg["canNew"].asBool());
+        GCHECK(gMsg["canSaveAs"].asBool());
         GCHECK(SB()->browsers() == 1);
         GCHECK(SB()->asking() == 0);
         Json st;
@@ -609,6 +623,106 @@ MC_GUI_SUITE(session_browser) {
     MCGuiStep("now it closes", [] { send(gWs1, "close", docIdOf(gWs1, gFileB)); });
     MCGuiWait("closing", 10, [] { return gWs1.take("closing", &gMsg); });
     MCGuiWait("sb_b.txt closed", 10, [] { return Ed()->documentFor(gFileB) == nullptr; });
+
+    // ---- 5b. New File and Save As from the page
+    MCGuiStep("New File from the page", [] {
+        gDocsBefore = Ed()->documents().size();
+        Json o = Json::object();
+        o.set("t", Json("newfile"));
+        gWs1.sendJson(o);
+    });
+    MCGuiWait("an untitled tab on show in the window", 10, [] {
+        Document* d = Ed()->active();
+        if (!d || Ed()->documents().size() != gDocsBefore + 1 || d->diskStamp().exists) return false;
+        gUntitled = d->id();
+        gUntitledPath = d->path();
+        return true;
+    });
+    MCGuiWait("the page lists it", 10, [] {
+        Json st;
+        if (!gWs1.latest("state", &st)) return false;
+        for (const Json& d : st["docs"].elements())
+            if ((uint64_t)d["id"].asInt() == gUntitled) return true;
+        return false;
+    });
+    MCGuiStep("it is named Untitled-N and not on disk; show it", [] {
+        GCHECK(gUntitledPath.find("/Untitled-") != std::string::npos);
+        GCHECK(access(gUntitledPath.c_str(), F_OK) != 0);
+        send(gWs1, "show", gUntitled);
+    });
+    MCGuiWait("its text", 10, [] { return gWs1.take("doc", &gMsg); });
+    MCGuiStep("typed into through the page", [] { insertAtStart(gWs1, gMsg, "typed on the page\n"); });
+    MCGuiWait("the tab has it, unsaved", 10, [] {
+        Document* d = Ed()->documentById(gUntitled);
+        return d && d->dirty() && d->text() == "typed on the page\n";
+    });
+    MCGuiStep("Save As over a file there, without overwrite", [] {
+        MCGuiWriteFile(MCGuiProjectFile("sb_exists.txt"), "old\n");
+        saveAs(gWs1, gUntitled, "sb_exists.txt", false);
+    });
+    MCGuiWait("savedas", 10, [] { return gWs1.take("savedas", &gMsg); });
+    MCGuiStep("answered exists; the file and the tab are as they were", [] {
+        GCHECK_EQ_STR(gMsg["reason"].asString(), "exists");
+        GCHECK(!gMsg["ok"].asBool());
+        GCHECK(fileHas(MCGuiProjectFile("sb_exists.txt"), "old"));
+        Document* d = Ed()->documentById(gUntitled);
+        GCHECK(d && d->path() == gUntitledPath);
+        saveAs(gWs1, gUntitled, "../sb_outside.txt", false);
+    });
+    MCGuiWait("savedas", 10, [] { return gWs1.take("savedas", &gMsg); });
+    MCGuiStep("a path outside the folder is refused; a dotfile too", [] {
+        GCHECK(!gMsg["ok"].asBool());
+        GCHECK_EQ_STR(gMsg["reason"].asString(), "name");
+        saveAs(gWs1, gUntitled, ".sb_hidden.txt", false);
+    });
+    MCGuiWait("savedas", 10, [] { return gWs1.take("savedas", &gMsg); });
+    MCGuiStep("refused as a dotfile, nothing written; Save As to a new name", [] {
+        GCHECK(!gMsg["ok"].asBool());
+        GCHECK_EQ_STR(gMsg["reason"].asString(), "dotfile");
+        GCHECK(access(MCGuiProjectFile(".sb_hidden.txt").c_str(), F_OK) != 0);
+        saveAs(gWs1, gUntitled, "sb_made.txt", false);
+    });
+    MCGuiWait("savedas", 10, [] { return gWs1.take("savedas", &gMsg); });
+    MCGuiStep("ok with the path; the file holds the typed text", [] {
+        GCHECK(gMsg["ok"].asBool());
+        if (!gMsg["ok"].asBool()) MCGuiNote("%s", gMsg.dump().c_str());
+        GCHECK_EQ_STR(gMsg["path"].asString(), MCGuiProjectFile("sb_made.txt"));
+        GCHECK_EQ_STR(MCGuiReadFile(MCGuiProjectFile("sb_made.txt")), "typed on the page\n");
+    });
+    MCGuiWait("the window's tab names that path, clean", 10, [] {
+        Document* d = Ed()->documentById(gUntitled);
+        return d && d->path() == MCGuiProjectFile("sb_made.txt") && !d->dirty();
+    });
+    MCGuiWait("the page lists it under the new path, clean", 10, [] {
+        const std::string p = MCGuiProjectFile("sb_made.txt");
+        return docIdOf(gWs1, p) == gUntitled && !docDirty(gWs1, p);
+    });
+    MCGuiStep("show it again", [] { send(gWs1, "show", gUntitled); });
+    MCGuiWait("its text", 10, [] { return gWs1.take("doc", &gMsg); });
+    MCGuiStep("typed again", [] { insertAtStart(gWs1, gMsg, "more "); });
+    MCGuiWait("the tab has it", 10, [] {
+        Document* d = Ed()->documentById(gUntitled);
+        return d && d->dirty() && d->text() == "more typed on the page\n";
+    });
+    MCGuiStep("Save As over sb_exists.txt, with overwrite", [] { saveAs(gWs1, gUntitled, "sb_exists.txt", true); });
+    MCGuiWait("savedas", 10, [] { return gWs1.take("savedas", &gMsg); });
+    MCGuiStep("ok; sb_exists.txt replaced, sb_made.txt left as it was, the tab on the new file", [] {
+        GCHECK(gMsg["ok"].asBool());
+        if (!gMsg["ok"].asBool()) MCGuiNote("%s", gMsg.dump().c_str());
+        GCHECK_EQ_STR(MCGuiReadFile(MCGuiProjectFile("sb_exists.txt")), "more typed on the page\n");
+        GCHECK_EQ_STR(MCGuiReadFile(MCGuiProjectFile("sb_made.txt")), "typed on the page\n");
+        Document* d = Ed()->documentById(gUntitled);
+        GCHECK(d && d->path() == MCGuiProjectFile("sb_exists.txt") && !d->dirty());
+    });
+    MCGuiStep("the tab closes from the page; the files go", [] {
+        send(gWs1, "close", gUntitled);
+    });
+    MCGuiWait("closing", 10, [] { return gWs1.take("closing", &gMsg); });
+    MCGuiWait("closed in the window", 10, [] { return Ed()->documentById(gUntitled) == nullptr; });
+    MCGuiStep("files removed", [] {
+        unlink(MCGuiProjectFile("sb_exists.txt").c_str());
+        unlink(MCGuiProjectFile("sb_made.txt").c_str());
+    });
 
     // ---- 4. Deny, Always Allow
     MCGuiStep("a second browser: a fresh link, its page fetched", [] {
@@ -702,6 +816,8 @@ MC_GUI_SUITE(session_browser) {
         GCHECK(!gMsg["canSave"].asBool());
         GCHECK(!gMsg["canOpen"].asBool());
         GCHECK(!gMsg["canClose"].asBool());
+        GCHECK(!gMsg["canNew"].asBool());
+        GCHECK(!gMsg["canSaveAs"].asBool());
         openPath(gWs3, "sb_d.txt", true);
     });
     MCGuiWait("the answer to open", 10, [] { return gWs3.take("opening", &gMsg); });

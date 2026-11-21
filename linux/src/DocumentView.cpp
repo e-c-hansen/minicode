@@ -1089,7 +1089,7 @@ bool Document::isSettingsFile() const {
     return realpath(path_.c_str(), a) && realpath(settings.c_str(), b) && std::string(a) == b;
 }
 
-void Document::setPath(const std::string& path) {
+void Document::setPath(const std::string& path, bool tellHost) {
     const bool wasSettings = isSettingsFile();
     const std::string ext = extensionOf(path);
     if (kind_ == Kind::Text) {
@@ -1108,7 +1108,7 @@ void Document::setPath(const std::string& path) {
     stopWatching();
     path_ = path;
     if (watched) watch();
-    tellHostPath();   // Save As, a rename
+    if (tellHost) tellHostPath();   // a rename
     const bool regrammar = ext != ext_ || wasSettings != isSettingsFile();
     ext_ = ext;
     if (regrammar && kind_ == Kind::Text) startHighlighting();
