@@ -287,6 +287,9 @@ SaveDone saveDocument(const SaveAsk& a) {
     bool bom = a.bom;
     const FolderSearch::FileStamp now = FolderSearch::stampOf(a.path);
     const bool sameStamp = a.stamp.exists && now == a.stamp;
+    // An app's save: it asked its own questions about the disk, and writes
+    // in its tab's encoding, so there is nothing to read the file for.
+    const bool ownTerms = a.overwrite && a.keepEncoding;
     // Nothing there: a file not made yet (nothing was ever read from it or
     // written to it), or one deleted since, which only `overwrite` makes
     // again. False when refused.
@@ -302,7 +305,10 @@ SaveDone saveDocument(const SaveAsk& a) {
         d.created = true;
         return true;
     };
-    if (!sameStamp) {
+    if (!sameStamp && ownTerms) {
+        if (!now.exists) d.created = true;
+        else if (!now.regular) return refuse("notfile", name + " is not a regular file on disk: it was not written.");
+    } else if (!sameStamp) {
         if (!now.exists) {
             if (!missing()) return d;
         } else if (!now.regular) {
@@ -325,12 +331,14 @@ SaveDone saveDocument(const SaveAsk& a) {
                 bool db = false;
                 const bool text = Model::decodeFileText(std::move(bytes), &disk, &de, &db);
                 if (text && disk == a.saved) {
-                    enc = de;
-                    bom = db;
+                    if (!a.keepEncoding) {
+                        enc = de;
+                        bom = db;
+                    }
                 } else if (!a.overwrite) {
                     return refuse("changed", name + " changed on disk since it was read: saving would write "
                                                     "over that change.");
-                } else if (text && !a.stamp.exists) {
+                } else if (text && !a.stamp.exists && !a.keepEncoding) {
                     // Written over: in the encoding the host last wrote it
                     // in when it has one (as Keep Mine writes the tab's),
                     // else the best guess there is, the file's own now.
@@ -371,9 +379,43 @@ Json saveDoneJson(const std::string& path, const SaveDone& done) {
     if (!done.reason.empty()) j.set("reason", Json(done.reason));
     if (!done.why.empty()) j.set("why", Json(done.why));
     if (!done.note.empty()) j.set("note", Json(done.note));
-    if (done.ok) j.set("encoding", Json(std::string(FolderSearch::encodingLabel(done.encoding, done.bom))));
+    if (done.ok) {
+        j.set("encoding", Json(std::string(FolderSearch::encodingLabel(done.encoding, done.bom))));
+        j.set("encodingName", Json(std::string(FolderSearch::encodingName(done.encoding, done.bom))));
+        j.set("stamp", stampJson(done.written));
+    }
     if (done.created) j.set("created", Json(true));
     return j;
+}
+
+Json stampJson(const FolderSearch::FileStamp& s) {
+    Json j = Json::object();
+    j.set("exists", Json(s.exists));
+    j.set("regular", Json(s.regular));
+    j.set("sec", Json((std::int64_t)s.mtimeSec));
+    j.set("nsec", Json((std::int64_t)s.mtimeNsec));
+    j.set("dev", Json(std::to_string(s.device)));
+    j.set("ino", Json(std::to_string(s.inode)));
+    j.set("size", Json(std::to_string(s.size)));
+    return j;
+}
+
+FolderSearch::FileStamp stampFromJson(const Json& j) {
+    FolderSearch::FileStamp s;
+    if (!j.isObject() || !j["exists"].asBool()) return s;
+    auto number = [&](const char* key) -> std::uint64_t {
+        const std::string& t = j[key].asString();
+        if (t.empty() || t.find_first_not_of("0123456789") != std::string::npos) return 0;
+        return std::strtoull(t.c_str(), nullptr, 10);
+    };
+    s.exists = true;
+    s.regular = j["regular"].asBool();
+    s.mtimeSec = j["sec"].asInt();
+    s.mtimeNsec = (long)j["nsec"].asInt();
+    s.device = number("dev");
+    s.inode = number("ino");
+    s.size = number("size");
+    return s;
 }
 
 }  // namespace Shared

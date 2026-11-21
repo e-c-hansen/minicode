@@ -62,7 +62,14 @@
 // whenever a document's unsaved state against the disk flips, whoever
 // made it flip. The host's Welcome says it saves (flag 1), so a renderer
 // never sends DocSave to a host from before it, which would take the line
-// for one that is not a message and drop the connection. Pure C++17, no I/O.
+// for one that is not a message and drop the connection.
+//
+// An app saving through the host (the Mac's tabs, Hello flag 16, to a host
+// whose Welcome has flag 2): its DocSave carries the encoding its tab
+// writes, the answer the file's stamp as written, and every other renderer
+// that hears DocDirty is told the host wrote the file (flag 2, with the
+// version written and the stamp), so a window shows a page's save as its
+// own. Pure C++17, no I/O.
 #pragma once
 
 #include <cstdint>
@@ -94,7 +101,9 @@ enum class Kind {
                  // unsaved documents it has open (a headless host keeps none of
                  // those while it has them: Host::keepBackups); flag 8: it hears
                  // DocDirty (a renderer from before it would drop the connection
-                 // at a kind it does not know)
+                 // at a kind it does not know); flag 16, with 4: the app saves its
+                 // documents through the host (DocSave), so a guest's save of one
+                 // its window shows is not refused
     DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved.
                  // From a renderer that only reads, a view of the document as it is: it
                  // never makes one, and keeps none open (DocGone when there is none, or
@@ -104,7 +113,8 @@ enum class Kind {
     DocEdit,     // doc, base, seq, ops, step; flag 1: outside the undo history (no step:
                  // the history moves past it, as a change made with recording off)
     DocUndo,     // doc, req, redo
-    DocSaved,    // doc: the text as the renderer has it now was written
+    DocSaved,    // doc: the text as the renderer has it now was written; flag 1 (to a
+                 // host whose Welcome has flag 2): the file holds text16 instead
     DocForget,   // doc: the undo history forgotten, the text kept
     DocWatch,    // doc, req, flag (on or off): ops16 with every DocEdited, the text now in DocText
     DocQuery,    // doc, req: answered by DocText (the host's text and state, for checks)
@@ -122,7 +132,9 @@ enum class Kind {
     TermAttach,  // term: answered by TermReplay, TermShell and TermMarks
     // host → renderer
     Welcome,     // client: the renderer's id; v: the base of the ids it makes (kIdRange);
-                 // name: the folder; flag 1: the host saves documents (DocSave)
+                 // name: the folder; flag 1: the host saves documents (DocSave);
+                 // flag 2: it saves for apps too (an app's encoding kept, the stamp
+                 // written in the answer, DocDirty flag 2 to the others)
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
     DocEdited,   // doc, v, by, seq, ops, ops16, flag (1 undo, 2 redo), select
     DocUndone,   // doc, req, outcome
@@ -157,11 +169,16 @@ enum class Kind {
     // Saving through the host (stage 7, SessionFiles.h's saveDocument).
     DocSave,     // renderer → host: doc, req, window (whose folder holds a guest's save),
                  // flag 1: write even though the file changed on disk or went since
-                 // the host's saved text; sent after the renderer's edits, in order
+                 // the host's saved text; sent after the renderer's edits, in order;
+                 // json from an app (not a guest): {"encoding": encodingName}, the
+                 // encoding its tab writes, kept whatever the file holds now
     DocSaveDone, // host → renderer: doc, req, outcome (Done or Refused), v (the version
                  // written), json: saveDoneJson's {path, ok, reason, why, note, encoding}
     DocDirty,    // host → each renderer whose Hello had flag 8: doc, flag 1 (unsaved
-                 // against the disk), v: the document's unsaved state flipped
+                 // against the disk), v: the document's unsaved state flipped. Flag 2:
+                 // the host wrote the file (for another renderer, which had DocSaveDone),
+                 // v the version written, json {path, encodingName, stamp}, sent
+                 // whether or not the state flipped
 };
 
 const char* kindName(Kind k);

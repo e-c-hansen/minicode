@@ -155,6 +155,12 @@ struct Net {
         std::deque<Message> up, down;
         std::map<Shared::DocId, std::unique_ptr<TestMirror>> mirrors;
         std::vector<std::pair<Shared::DocId, bool>> dirties;   // DocDirty heard
+        struct Written {
+            Shared::DocId doc;
+            std::uint64_t version;
+            Json json;
+        };
+        std::vector<Written> writes;   // DocDirty flag 2 heard (Client::hearWrites)
     };
     bool loopback = false, immediate = false;
     Shared::Host host;
@@ -176,7 +182,9 @@ struct Net {
 
     // `hello`: 1 a renderer that only reads, 2 a guest (Client::setGuest), 4
     // an app that keeps backups (Client::setKeepsBackups); with 8 besides,
-    // it hears DocDirty (Client::hearDirty, into Link::dirties).
+    // it hears DocDirty (Client::hearDirty, into Link::dirties, and
+    // hearWrites, into Link::writes); with 16, an app that saves through the
+    // host (Client::setSavesThroughHost).
     Link& add(Unit u, const std::string& name, int hello = 0) {
         links.push_back(std::make_unique<Link>());
         Link* l = links.back().get();
@@ -185,8 +193,13 @@ struct Net {
         if ((hello & 7) == 1) l->client->setReadOnly(true);
         if ((hello & 7) == 2) l->client->setGuest(true);
         if ((hello & 7) == 4) l->client->setKeepsBackups(true);
-        if (hello & 8)
+        if (hello & 8) {
             l->client->hearDirty([l](Shared::DocId d, bool dirty) { l->dirties.push_back({d, dirty}); });
+            l->client->hearWrites([l](Shared::DocId d, std::uint64_t v, const Json& j) {
+                l->writes.push_back({d, v, j});
+            });
+        }
+        if (hello & 16) l->client->setSavesThroughHost(true);
         l->client->connect([this, l](Message&& m) {
             if (immediate) host.handle(l->id, wire(std::move(m)));
             else l->up.push_back(wire(std::move(m)));

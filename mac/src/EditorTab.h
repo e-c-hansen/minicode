@@ -21,6 +21,12 @@
 - (void)tabTextChangedByHost:(MCTab *)t;
 // The link its document goes on: its window's (stage 6).
 - (MCSessionLinkRef *)sessionLinkForTab:(MCTab *)t;
+// The host wrote the tab's file for another renderer (a page's save):
+// `write` (MCSessionWrite, SessionLink.h) says what is on disk now. And the
+// host's word that the tab's text is unsaved against its file or not, sent
+// when that flips and the tab's text was the host's then (stage 7).
+- (void)tab:(MCTab *)t writtenByHost:(id)write;
+- (void)tab:(MCTab *)t dirtyFromHost:(BOOL)dirty;
 @end
 
 // ---------------------------------------------------------------------------

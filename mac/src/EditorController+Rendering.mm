@@ -631,6 +631,9 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
                         MCViewerKindRendersMarkdown(viewer)) && !blank;
     self.savedText = content;
     self.dirty = held && (!disk.text || ![held isEqualToString:content]);
+    // A held buffer counts unsaved against the file as it is now, on the
+    // host too (stage 7: the window's dot follows the host's count).
+    if (held && disk.text) [self sessionTab:_activeTab savedAs:content];
     // A held file gone from disk says so; an untitled buffer (MCTab
     // untitled) never had one.
     if (held && !disk.text && !_activeTab.untitled && ![[NSFileManager defaultManager] fileExistsAtPath:path])

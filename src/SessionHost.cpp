@@ -261,6 +261,7 @@ void Host::onHello(ClientId c, Message& m) {
     r.guest = !r.readOnly && (m.flag & 2) != 0;
     r.keepsBackups = !r.readOnly && !r.guest && (m.flag & 4) != 0;
     r.hearsDirty = (m.flag & 8) != 0;
+    r.savesThroughHost = r.keepsBackups && (m.flag & 16) != 0;
     // Its id base, kept for a second Hello: what it made with it stays its.
     if (!r.idBase) r.idBase = chooseIdBase();
     Message w;
@@ -268,7 +269,7 @@ void Host::onHello(ClientId c, Message& m) {
     w.client = c;
     w.v = r.idBase;
     w.name = folder_;
-    w.flag = 1;   // this host saves (DocSave)
+    w.flag = 1 | 2;   // this host saves (DocSave), for apps too
     send(c, std::move(w));
 }
 
@@ -619,7 +620,11 @@ void Host::onSaved(ClientId, Message& m) {
     // An app wrote it: the host knows no stamp for the file now, so its own
     // next save reads the file and compares it with this text.
     auto it = docs_.find(m.doc);
-    if (it != docs_.end()) it->second.doc.markSaved(FolderSearch::FileStamp());
+    if (it == docs_.end()) return;
+    // Flag 1: the file holds the text sent, not the one the host has (a
+    // window's Keep Mine over a file changed on disk).
+    if (m.flag & 1) it->second.doc.markSavedAs(std::move(m.text16));
+    else it->second.doc.markSaved(FolderSearch::FileStamp());
 }
 
 void Host::onSave(ClientId c, Message& m) {
@@ -640,9 +645,11 @@ void Host::onSave(ClientId c, Message& m) {
         Doc& d = it->second;
         path = d.path;
         const std::string name = path.substr(path.rfind('/') + 1);
-        if (guest && shownByApp(d)) {
+        if (guest && shownByAppSavingItself(d)) {
             // Two writers would each keep a stamp the other's write moves:
             // the app's window saves what it shows, with its own questions.
+            // An app that saves through the host leaves the host the one
+            // writer, and follows its writes (tellWritten).
             done.reason = "app";
             done.why = (name.empty() ? std::string("This document") : name) +
                        " is open in a mutible window: save it there.";
@@ -663,6 +670,15 @@ void Host::onSave(ClientId c, Message& m) {
                 a.encoding = d.doc.encoding();
                 a.bom = d.doc.bom();
                 a.overwrite = (m.flag & 1) != 0;
+                // An app's own encoding, as its tab writes the file.
+                FolderSearch::TextEncoding e;
+                bool b = false;
+                if (!guest && m.json.isObject() &&
+                    FolderSearch::parseEncodingName(m.json["encoding"].asString(), &e, &b)) {
+                    a.encoding = e;
+                    a.bom = b;
+                    a.keepEncoding = true;
+                }
                 done = saveDocument(a);
             }
             if (done.ok) {
@@ -674,7 +690,36 @@ void Host::onSave(ClientId c, Message& m) {
         }
     }
     r.json = saveDoneJson(path, done);
+    if (done.ok) {
+        Json written = Json::object();
+        written.set("path", Json(path));
+        written.set("encodingName", r.json["encodingName"]);
+        written.set("stamp", r.json["stamp"]);
+        tellWritten(m.doc, it->second, c, written);
+    }
     send(c, std::move(r));
+}
+
+void Host::tellWritten(DocId id, Doc& d, ClientId by, const Json& written) {
+    bool anyone = false;
+    for (const auto& [c, r] : renderers_) anyone = anyone || r.hearsDirty;
+    if (!anyone) return;
+    const bool now = d.doc.dirty();
+    const bool flipped = now != d.toldDirty;
+    d.toldDirty = now;
+    for (const auto& [c, r] : renderers_) {
+        if (!r.hearsDirty || (c == by && !flipped)) continue;
+        Message m;
+        m.kind = Kind::DocDirty;
+        m.doc = id;
+        m.flag = now ? 1 : 0;
+        m.v = d.v;
+        if (c != by) {
+            m.flag |= 2;
+            m.json = written;
+        }
+        send(c, std::move(m));
+    }
 }
 
 void Host::tellDirty(DocId id) {
@@ -870,6 +915,15 @@ bool Host::shownByApp(const Doc& d) const {
         if (seat.viewer) continue;
         auto r = renderers_.find(c);
         if (r != renderers_.end() && r->second.keepsBackups) return true;
+    }
+    return false;
+}
+
+bool Host::shownByAppSavingItself(const Doc& d) const {
+    for (const auto& [c, seat] : d.seats) {
+        if (seat.viewer) continue;
+        auto r = renderers_.find(c);
+        if (r != renderers_.end() && r->second.keepsBackups && !r->second.savesThroughHost) return true;
     }
     return false;
 }

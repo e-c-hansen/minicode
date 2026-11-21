@@ -64,6 +64,11 @@ static char kSessionWindowKey;
     [t.session hostSaved:saved];
 }
 
+- (void)sessionTab:(MCTab *)t savedAs:(NSString *)saved {
+    if (!saved) [t.session saved];
+    else [t.session savedAs:saved];
+}
+
 // ---- what MCSessionDoc asks (MCTabOwner's optional methods)
 - (CodeTextView *)textViewShowingSourceOf:(MCTab *)t {
     return t && t == _activeTab && _liveHighlight ? self.textView : nil;
@@ -79,6 +84,107 @@ static char kSessionWindowKey;
     const BOOL dirty = t.gone || ![now isEqualToString:saved];
     [self scheduleBackups];
     if (dirty == t.dirty) return;
+    t.dirty = dirty;
+    [self updateTitle];
+}
+
+// ---------------------------------------------------- saving through the host
+// Stage 7 (docs/notes/session-host.md, "The Mac's tabs save through the
+// host"): the window asks every question it asks (Save As's name, the disk,
+// format and organize on save, the formatter's consent) and the host writes
+// the file, so the host is its one writer and a page may save it too.
+
+- (BOOL)hostWritesText:(NSString *)text ofTab:(MCTab *)t {
+    if (!t.session.hostSavesFile) return NO;
+    // The host writes its own text, so the tab's must be what is to be
+    // written. A text of its own (a keep-sorted sort of a tab behind) goes
+    // in first as an edit; the storage is never set behind the view's back,
+    // and a tab on show writes what it holds, so this never refuses there.
+    if ([text isEqualToString:t.currentText ?: @""]) return YES;
+    return !t.followsStorage && !(t == _activeTab && _liveHighlight);
+}
+
+- (BOOL)writeTextThroughHost:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive {
+    MCSessionDoc *d = t.session;
+    NSString *name = t.currentPath.lastPathComponent;
+    if (![text isEqualToString:t.currentText ?: @""]) t.sourceText = text;   // one edit on the host
+    // An untitled buffer the host held is given its file's path first: the
+    // host writes where its document says.
+    const BOOL wasUntitled = t.untitled;
+    if (wasUntitled) {
+        t.untitled = NO;
+        [d pathChanged];
+    }
+    const MCHostSave r = [d saveOnHostEncoding:(FolderSearch::TextEncoding)t.encoding bom:t.bom];
+    if (!r.ok) {
+        if (wasUntitled) {
+            t.untitled = YES;
+            [d pathChanged];
+        }
+        NSString *why = !r.answered ? @"The session's host did not answer."
+                        : r.why.empty() ? @"The session's host could not write it."
+                                        : @(r.why.c_str());
+        if (interactive) {
+            NSAlert *a = [NSAlert new];
+            a.messageText = [NSString stringWithFormat:@"“%@” could not be saved.", name];
+            a.informativeText = why;
+            [a runModal];
+        } else {
+            [self showStatusNote:[NSString stringWithFormat:@"Could not auto-save %@: %@", name, why]];
+        }
+        return NO;
+    }
+    // The encoding written: a Windows-1252 file whose text holds what it
+    // cannot store is UTF-8 now, and the host's note says so in the Mac's
+    // words.
+    t.encoding = (MCTextEncoding)r.encoding;
+    t.bom = r.bom;
+    if (!r.note.empty()) [self showStatusNote:@(r.note.c_str())];
+    // The text the file holds: the tab's, unless someone's edit came in
+    // after the host wrote (then the file's, as written).
+    NSString *saved = r.inStep ? [t.currentText copy] : MCReadDiskText(t.currentPath, ULLONG_MAX).text;
+    if (!saved) saved = text;
+    MCDiskStamp *stamp = r.written.exists ? MCDiskStampFromFileStamp(r.written) : MCStampOfFile(t.currentPath);
+    [self tab:t tookSaveOf:saved stamp:stamp dirty:![saved isEqualToString:t.currentText ?: @""]];
+    return YES;
+}
+
+// The host wrote the file for another renderer (an editable page's save):
+// the tab takes it as its own save, so its dot, the title and the page's
+// dot agree, and its next save is not taken for a change made outside.
+- (void)tab:(MCTab *)t writtenByHost:(id)write {
+    MCSessionWrite *w = write;
+    if (![self holdsTab:t] || !t.loaded || ![self tabHasTextToWrite:t]) return;
+    if (w.path && ![w.path isEqualToString:t.currentPath ?: @""]) return;   // renamed since
+    // Written over again since: a change made outside, as the disk checks
+    // see it.
+    const FolderSearch::FileStamp now = FolderSearch::stampOf(t.currentPath.fileSystemRepresentation);
+    if (w.stamp.exists && now != w.stamp) return;
+    NSString *saved = w.text;
+    if (w.knowsEncoding) {
+        t.encoding = (MCTextEncoding)w.encoding;
+        t.bom = w.bom;
+    }
+    if (!saved) {   // the tab's text was not the host's then: the file's
+        MCDiskText *disk = MCReadDiskText(t.currentPath, ULLONG_MAX);
+        if (!disk.text) return;
+        saved = disk.text;
+        t.encoding = disk.encoding;
+        t.bom = disk.bom;
+    }
+    t.untitled = NO;
+    [self tab:t tookSaveOf:saved
+           stamp:MCDiskStampFromFileStamp(w.stamp.exists ? w.stamp : now)
+           dirty:![saved isEqualToString:t.currentText ?: @""]];
+}
+
+// The host's count of the tab as unsaved flipped while the tab's text was
+// the host's (MCSessionDoc checks): the window's dot is the host's, as the
+// page's is. Never for a tab whose unsaved state is more than its text
+// against the file (an untitled buffer, a deleted file), nor one not read
+// yet.
+- (void)tab:(MCTab *)t dirtyFromHost:(BOOL)dirty {
+    if (![self holdsTab:t] || !t.loaded || t.heldFromHost || t.untitled || t.gone || t.dirty == dirty) return;
     t.dirty = dirty;
     [self updateTitle];
 }
