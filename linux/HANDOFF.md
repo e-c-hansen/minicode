@@ -2955,8 +2955,8 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   window closed meanwhile).
 - **The tab** is a diff tab with `Document::compare()` set (`setCompare`), so
   it has no path, is read-only, is skipped by sessions and Quick Open, closes
-  like any tab and is titled by `spec.title`; each call makes a tab of its
-  own (the Mac's preview replacement comes with `minicode diff`). F7 and
+  like any tab and is titled by `spec.title`; `mutible diff` makes the
+  agents' preview tab, which the next one replaces (item 149). F7 and
   Shift+F7 are handled by the panes while one has the keyboard
   (`SideBySide::stepHunk`, wrapping), with three rows of context above.
 - **Checked by** the `compare` GUI suite: rows and fillers, the words, syntax
@@ -2977,8 +2977,8 @@ The Mac's `Lsp+Completion.mm` and `SnippetSession.mm` on the GTK side
   undecided hunk's button decides it, a press on a decided hunk's own button
   undecides it. The last choice sends after the grace (3 s); the bar's
   buttons send at once, and `Editor::destroy` calls `tabClosed`, so closing
-  the tab in the grace sends what was decided and before it rejects. Left
-  out: tinting a decided hunk's rows. Trap: two clicks in one check step are
+  the tab in the grace sends what was decided and before it rejects. A
+  rejected hunk's rows are tinted as the Mac's (item 149). Trap: two clicks in one check step are
   one gesture to GTK's click recognizer; click once per step and wait.
 - **`minicode diff`** (`ControlCommands.cpp`, the client allows it): `path`,
   `--base` (`isSafeRef`: never starting with "-"), `other`, `--window` and
@@ -9145,3 +9145,25 @@ side's; two are fixed, one left alone on purpose.
   after the tab's close it is under 5 times the file above its start (the
   trim ran). find_bar, tabs, backups, save, sessions, preview_tabs pass,
   `meson test`, root `make test`.
+
+### 149. The compare view's last three pieces (PARITY 3.2 done; November 2026)
+
+- **The diff preview tab** was already in place (`CompareSpec::preview` makes
+  the tab `Model::Preview::AgentDiff`, which `Window::add` replaces, `--keep`
+  turning it off; PARITY's "a tab of its own each call" was stale). What was
+  missing was a check: `compare` now opens three comparisons: the second
+  replaces the first, `keepPreviewTab` (a double-click, Keep Open) keeps the
+  second, the third is a tab of its own. A decision tab (the IDE link's
+  openDiff) is never a preview, as on the Mac.
+- **Tints.** `CompareView::rowTint(left, row)` (also for the checks): 1 the
+  pane's own, 2 the trace of tint (grey, alpha 0.10: the Mac's "dropped") a
+  rejected hunk keeps on the right; an accepted hunk keeps its colours, as
+  on the Mac. `hunkOfRow` is a binary search over the hunks.
+- **A tab's place.** `Document::compareScroll()` (the vertical place and each
+  pane's sideways one) is saved in `Editor::stash` while the compare view
+  shows that tab's data and put back after `CompareView::show`. As the
+  Mac's `diffScroll`, it is not in the session (a remade comparison opens at
+  the top).
+- **Checked.** `compare` (the tints on a rejected, an accepted and an
+  undecided hunk; replace, keep, and the scroll back after another tab).
+- **Not verified.** The look of the tint.

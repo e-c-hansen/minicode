@@ -15,6 +15,7 @@ CompareView::Color fromRgba(const Rgba& c) {
 // The git panel's diff colors (GitDiffView): removed, added.
 constexpr double kRed[3] = {0xF1 / 255.0, 0x4C / 255.0, 0x4C / 255.0};
 constexpr double kGreen[3] = {0x73 / 255.0, 0xC9 / 255.0, 0x91 / 255.0};
+constexpr double kDropped[3] = {0.5, 0.5, 0.5};   // a rejected hunk: a trace of tint (the Mac's "dropped")
 
 void fill(cairo_t* cr, const double rgb[3], double alpha, double x, double y, double w, double h) {
     cairo_set_source_rgba(cr, rgb[0], rgb[1], rgb[2], alpha);
@@ -256,6 +257,18 @@ void CompareView::scrollToRow(long row) {
     gtk_adjustment_set_value(vadj_, std::clamp((double)row * rowH_, 0.0, max));
 }
 
+CompareView::Scroll CompareView::scroll() const {
+    Scroll s;
+    s.v = gtk_adjustment_get_value(vadj_);
+    for (int i = 0; i < 2; i++) s.h[i] = gtk_adjustment_get_value(hadj_[i]);
+    return s;
+}
+
+void CompareView::setScroll(const Scroll& s) {
+    gtk_adjustment_set_value(vadj_, s.v);
+    for (int i = 0; i < 2; i++) gtk_adjustment_set_value(hadj_[i], s.h[i]);
+}
+
 bool CompareView::step(bool forward) {
     if (!data_ || data_->hunks.empty()) return false;
     const int h = SideBySide::stepHunk(data_->hunks, current_, forward);
@@ -302,6 +315,28 @@ size_t firstPiece(const std::vector<ComparePane::Piece>& v, size_t from) {
 
 }  // namespace
 
+// The hunk a row is in, or a number past them all (choiceOfHunk says 0).
+size_t CompareView::hunkOfRow(long row) const {
+    const auto& hs = data_->hunks;
+    auto it = std::upper_bound(hs.begin(), hs.end(), (size_t)row,
+                               [](size_t r, const SideBySide::Hunk& h) { return r < h.first; });
+    if (it == hs.begin()) return hs.size();
+    --it;
+    return (size_t)row < it->end ? (size_t)(it - hs.begin()) : hs.size();
+}
+
+// A changed row's tint: 1 the pane's own (red left, green right), 2 the
+// trace a rejected hunk keeps on the right, where its change would have been
+// (the Mac's "dropped"); an accepted hunk keeps its own; 0 for no tint.
+int CompareView::rowTint(bool left, long row) const {
+    if (!data_ || row < 0 || row >= (long)data_->rows.size() ||
+        data_->rows[row].kind == SideBySide::Kind::Same ||
+        (left ? data_->panes[0] : data_->panes[1]).line[row] < 0)
+        return 0;
+    if (!left && decision_ && decision_->choiceOfHunk(hunkOfRow(row)) < 0) return 2;
+    return 1;
+}
+
 // Only the rows on screen are shaped: the rows' places are arithmetic.
 void CompareView::draw(int side, cairo_t* cr, int width, int height) {
     cairo_set_source_rgba(cr, bg_.r, bg_.g, bg_.b, 1);
@@ -344,7 +379,10 @@ void CompareView::draw(int side, cairo_t* cr, int width, int height) {
             cairo_restore(cr);
             continue;
         }
-        if (kind != SideBySide::Kind::Same) fill(cr, tint, 0.14, 0, y, width, rowH_);
+        if (kind != SideBySide::Kind::Same) {
+            if (rowTint(side == 0, r) == 2) fill(cr, kDropped, 0.10, 0, y, width, rowH_);
+            else fill(cr, tint, 0.14, 0, y, width, rowH_);
+        }
         const size_t from = pane.starts[r], to = pane.starts[r + 1] - 1;
         // The changed words, stronger.
         const std::string text = pane.rowText(r);

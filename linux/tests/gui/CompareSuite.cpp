@@ -96,6 +96,11 @@ std::vector<size_t> firsts() {
     return v;
 }
 
+Document* gFirst = nullptr;
+Document* gThird = nullptr;
+size_t gTabs = 0;
+long gWas = 0;
+
 }  // namespace
 
 MC_GUI_SUITE(compare) {
@@ -272,8 +277,18 @@ MC_GUI_SUITE(compare) {
         clickHunk(0, false);
     });
     MCGuiWait("rejected", 5, [] { return dec()->choiceOfHunk(0) == -1; });
+    MCGuiStep("a rejected hunk keeps a trace on the right, the left and the rest keep theirs", [] {
+        const long r0 = (long)cv()->data()->hunks[0].first, r2 = (long)cv()->data()->hunks[2].first;
+        GCHECK(cv()->rowTint(false, r0) == 2);   // rejected: only a trace on the right
+        GCHECK(cv()->rowTint(true, r0) == 1);    // the left keeps its red
+        GCHECK(cv()->rowTint(false, r2) == 1);   // undecided: green
+        GCHECK(cv()->rowTint(false, 0) == 0);    // an unchanged row
+    });
     MCGuiStep("the second is accepted", [] { clickHunk(1, true); });
     MCGuiWait("accepted", 5, [] { return dec()->choiceOfHunk(1) == 1; });
+    MCGuiStep("an accepted hunk keeps its own tint", [] {
+        GCHECK(cv()->rowTint(true, (long)cv()->data()->hunks[1].first) == 1);   // the removed line, red
+    });
     MCGuiStep("and the third, the last choice starting the grace", [] { clickHunk(2, true); });
     MCGuiWait("the answer is about to go", 5, [] { return dec()->sending(); });
     MCGuiStep("the bar says so and offers Send Now; nothing is sent yet", [] {
@@ -365,4 +380,57 @@ MC_GUI_SUITE(compare) {
     MCGuiWait("sent as decided", 5, [] { return gTold == 1; });
     MCGuiStep("accepted", [] { GCHECK(gAccepted); });
     MCGuiStep("done", [] { ed()->closeAllTabs(); });
+
+    // ---- the agents' diff preview tab, and a tab's place
+    MCGuiStep("a first comparison opens as the agents' diff preview tab", [] {
+        gTabs = (size_t)ed()->tabCount();
+        gDoc = nullptr;
+        CompareSpec s = smallSpec();
+        s.title = "first (compare)";
+        s.preview = true;
+        ed()->showComparison(s, [](Document* d) { gDoc = d; });
+    });
+    MCGuiWait("shown", 10, [] { return gDoc != nullptr; });
+    MCGuiStep("it is a preview tab; the next comparison replaces it", [] {
+        GCHECK(gDoc->isAgentPreview());
+        GCHECK((size_t)ed()->tabCount() == gTabs + 1);
+        gFirst = gDoc;
+        gDoc = nullptr;
+        CompareSpec s = smallSpec();
+        s.title = "second (compare)";
+        s.preview = true;
+        ed()->showComparison(s, [](Document* d) { gDoc = d; });
+    });
+    MCGuiWait("second shown", 10, [] { return gDoc != nullptr; });
+    MCGuiStep("one tab, the second; a kept tab is not replaced", [] {
+        GCHECK((size_t)ed()->tabCount() == gTabs + 1);
+        GCHECK(gDoc->isAgentPreview());
+        GCHECK_EQ_STR(ed()->diffTitle(), "second (compare)");
+        ed()->keepPreviewTab(gDoc);   // what a double-click on the tab does
+        GCHECK(!gDoc->isAgentPreview());
+        gDoc = nullptr;
+        CompareSpec s = smallSpec();
+        s.title = "third (compare)";
+        s.preview = true;
+        ed()->showComparison(s, [](Document* d) { gDoc = d; });
+    });
+    MCGuiWait("third shown", 10, [] { return gDoc != nullptr; });
+    MCGuiStep("the kept tab stays, the third is a tab of its own", [] {
+        GCHECK((size_t)ed()->tabCount() == gTabs + 2);
+        GCHECK(gDoc->isAgentPreview());
+    });
+    MCGuiStep("the third is scrolled, another tab shown, and the third again", [] {
+        cv()->scrollToRow(120);
+        gThird = gDoc;
+        gWas = cv()->topRow(false);
+        GCHECK(gWas >= 100);
+        for (int i = 0; i < ed()->tabCount(); i++)
+            if (ed()->document(i) != gThird) { ed()->activate(ed()->document(i)); break; }
+    });
+    MCGuiStep("back to it", [] { ed()->activate(gThird); });
+    MCGuiWait("shown again", 5, [] { return ed()->active() == gThird; });
+    MCGuiStep("it is where it was", [] {
+        GCHECK(cv()->topRow(false) == gWas);
+        ed()->closeAllTabs();
+    });
 }

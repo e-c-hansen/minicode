@@ -703,6 +703,11 @@ void Editor::stash() {
     dropOutline();
     capturePlace(d);
     stopPlace();
+    // A comparison keeps where its panes were, as the Mac's diffScroll does.
+    if (d->compare() && compare_ && compare_->data() == d->compare().get()) {
+        const CompareView::Scroll s = compare_->scroll();
+        d->compareScroll() = {s.v, {s.h[0], s.h[1]}, true};
+    }
     if (d->isMarkdown() || d->isNotebook()) clearPage(d);
 #ifdef MUTIBLE_ENABLE_PDF
     if (d->latexPreview()) d->latexPreview()->setActive(false);
@@ -849,6 +854,10 @@ void Editor::showActive() {
                 gtk_stack_add_named(GTK_STACK(slot_), compare_->widget(), "compare");
             }
             compare_->show(d->compare(), d->decision());
+            if (d->compareScroll().have) {
+                const Document::CompareScroll& c = d->compareScroll();
+                compare_->setScroll({c.v, {c.h[0], c.h[1]}});
+            }
             gtk_stack_set_visible_child(GTK_STACK(slot_), compare_->widget());
             break;
         }
