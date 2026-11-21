@@ -126,6 +126,12 @@ public:
     // the palette) opens it at its top; a file row's click, Return and Open
     // Changes at that file. Without it a row shows its raw diff.
     std::function<void(const std::string& path, bool staged, bool preview)> onReview;
+    // A commit's page: the hash, its subject, and whether it goes in the
+    // preview tab (a single click) or is kept (Return, a double-click). The
+    // Mac's onReviewCommit; without it a commit shows its raw diff
+    // (onShowCommit).
+    std::function<void(const std::string& hash, const std::string& subject, bool preview)>
+        onReviewCommit;
     void reviewChanges();
     // Return, Open Changes (kept), and a click (`preview` for a single one).
     void reviewRow(int row, bool preview = false);
@@ -134,9 +140,10 @@ public:
     // modifiers: a single click opens the file's review in the preview tab,
     // the second click of a double-click on the same row keeps it
     // (EditorTabs::treeClick), and a Ctrl or Shift click (choosing rows)
-    // opens nothing. A commit has no page of its own here yet: a click shows
-    // it in the diff tab, as Return does. `sameRow`: the press before was on
-    // this row.
+    // opens nothing. A commit in the graph is the same: a single click shows
+    // its page (ChangeReviewPage.h, `onReviewCommit`) in the preview tab and
+    // the second click of a double-click keeps it; Return keeps it, as the
+    // Mac's does. `sameRow`: the press before was on this row.
     void clickedRow(int row, bool graph, int count, bool sameRow, GdkModifierType mods);
     // A row's raw diff, with its hunk links (GitDiffView.h): its menu's Open
     // as git Diff.
@@ -273,7 +280,7 @@ private:
     std::vector<GitUi::Row> rowsActingWith(int row) const;
     void showDiff(int row);
     void showDiffOf(const GitUi::Row& row, const std::string& top);
-    void showCommit(int row);
+    void showCommit(int row, bool preview = false);
     void showMore();
     void focusList();
     void focusGraph();

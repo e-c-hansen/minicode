@@ -8455,10 +8455,10 @@ SessionWebGit.h); the window only had to say which it has open.
   (`Link::Panes`); `tabsJson` sets `reviews` when there are any, as the
   Mac's `w.reviews` does, so the half-second report sends it only when it
   changes.
-- **Differences from the Mac.** GTK has no commit page yet (the panel shows
-  a commit in the diff tab), so only worktree pages are reported; when a
-  commit page comes, it goes in the same loop (kind "commit", the hash).
-  The uncommitted changes' page is left out on both.
+- **Differences from the Mac.** GTK had no commit page yet, so only worktree
+  pages were reported; the commit page (section 129) now goes in the same
+  loop (kind "commit", the hash). The uncommitted changes' page is left out
+  on both.
 - **Checks.** `session_browser` makes a worktree one commit ahead of main in
   its scratch folder, opens its `ChangeReviewPage` with `Editor::showPage`,
   sees the state list it (kind "worktree", "sbt-wt vs main", on show, and
@@ -8468,3 +8468,45 @@ SessionWebGit.h); the window only had to say which it has open.
   commit's page, a page in the second group, and a page opened through the
   tree's menu (the suite makes the page itself).
 - **Needs the owner's eyes**: a worktree page in a real browser.
+
+### 129. The commit page (the Mac's initForCommitsWithRoot: and showCommit:title:; November 2026)
+
+PARITY 2.9's last big piece: a click on a commit in the Source Control graph
+opens that commit as a review page, as on the Mac, instead of git's text in
+the diff tab.
+
+- **What a user meets.** A single click on a commit shows its page in the
+  preview tab, and each further commit clicked replaces it there; a
+  double-click, or Return on the selected row, keeps it in a tab of its own
+  (the Mac's Return keeps it too, so Return no longer shows the raw diff).
+  The page has the subject, the byline under it (author, when in words, the
+  short hash, "against its first parent" for a merge, with the file counts),
+  the rest of the message, then every file the commit changed against its
+  first parent (against nothing for a root commit), colored with the changed
+  words marked, in one scroll. Plain files: Side by Side and Open on each,
+  no Stage or Discard, no Undo Discard. A commit that changes no files says
+  so. The tab reads "a1b2c3d Subject" and its key is
+  `commit:<root>:<hash>`, so a commit already kept shows that tab.
+- **Code.** `ChangeReviewPage` has a third constructor (panel, root, hash,
+  subject) and `isCommit()`/`commit()`. `reload()` reads on the git thread
+  with the core's `ChangeReview::readCommit` (header, diff-tree, one
+  cat-file batch) into `Data::commit`; `updateSummary` fills the subject,
+  the byline (`ChangeReview::commitByline`) and the body label. A commit page
+  neither asks for the panel's reads nor follows them (a commit never
+  changes), so its destructor leaves `onReviewRefresh` alone, and
+  `reviewPageOf` (the uncommitted changes' page) skips it. `GitPanel` has
+  `onReviewCommit(hash, subject, preview)` set in `makeGitPanel`;
+  `showCommit(row, preview)` calls it (the old raw-diff path, `onShowCommit`,
+  stays for a panel without the hook). `clickedRow` passes `preview` from
+  `EditorTabs::treeClick`, so the second click of a pair keeps the page.
+  main.cpp's `showCommitReview` builds the page and hands it to
+  `Editor::showPage`, which finds a page by its key and replaces the preview
+  tab. `reportSessionWindow` reports a commit page as kind "commit" with its
+  hash.
+- **Not done.** GTK restores no review pages with the session (it restores
+  none at all), so a kept commit page is not restored. GTK has no line
+  history, so its show-commit has nothing to point at.
+- **Checks.** None added here; the next bite adds them to `git_review` and
+  `session_browser`. Smoke-checked with a throwaway suite: two commits, a
+  click on each graph row, the page's title and file count, a double-click
+  keeping it.

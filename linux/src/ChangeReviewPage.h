@@ -60,8 +60,17 @@
 // RowKind::Image row (the rest hidden). An animated GIF shows its first
 // frame.
 //
+// A commit's page (the third constructor, the Mac's initForCommitsWithRoot:
+// and showCommit:title:, a click on a commit in the Source Control graph):
+// its subject, the byline under it (ChangeReview::commitByline, with the
+// counts), the rest of the message, then every file it changed against its
+// first parent (against nothing for a root commit), plain and read once by
+// readCommit on the git thread: Side by Side and Open on each file, no
+// Stage or Discard. Its key is "commit:<root>:<hash>", so a commit already
+// kept shows that tab.
+//
 // Left to the Mac for now: the right click on a selection's lines (and the
-// Keep choices in it), F7 and Shift+F7, a commit's page.
+// Keep choices in it), F7 and Shift+F7.
 #pragma once
 #include <gtk/gtk.h>
 
@@ -85,12 +94,19 @@ public:
     // the title, its branch, and the main branch (or commit) to compare with.
     ChangeReviewPage(GitPanel* panel, const std::string& worktree, const std::string& label,
                      const std::string& branch, const std::string& mainRef);
+    // A commit (the hash as the graph gives it, hex digits) and the subject
+    // the graph showed, for the tab's title.
+    ChangeReviewPage(GitPanel* panel, const std::string& root, const std::string& hash,
+                     const std::string& subject);
     ~ChangeReviewPage() override;
     GtkWidget* widget() override { return root_; }
     GtkWidget* focusWidget() override { return view_; }
     std::string key() const override {
-        return worktree_.empty() ? "review:" + root_s_ : "worktree:" + worktree_;
+        return !commit_.empty() ? "commit:" + root_s_ + ":" + commit_
+               : worktree_.empty() ? "review:" + root_s_ : "worktree:" + worktree_;
     }
+    bool isCommit() const { return !commit_.empty(); }
+    const std::string& commit() const { return commit_; }
     std::string title() const override;
 
     // The window's hooks: open a file at a 1-based line (0: wherever it
@@ -234,6 +250,7 @@ private:
     std::shared_ptr<Data> data_;
     ChangeReview::Opened opened_;
     std::string worktree_, label_, branch_, mainRef_;   // a worktree's page
+    std::string commit_, subject_;                       // a commit's page
     bool applying_ = false, applied_ = false;
     size_t appliedPrint_ = 0;
     std::string appliedMain_;
@@ -267,7 +284,7 @@ private:
     int settleFrames_ = 0, settleHeld_ = 0;
     guint settleTick_ = 0;
 
-    GtkWidget *root_ = nullptr, *title_ = nullptr, *summary_ = nullptr, *messageLabel_ = nullptr,
+    GtkWidget *root_ = nullptr, *title_ = nullptr, *summary_ = nullptr, *bodyLabel_ = nullptr, *messageLabel_ = nullptr,
               *undo_ = nullptr, *scroll_ = nullptr, *view_ = nullptr, *apply_ = nullptr,
               *source_ = nullptr, *noteRow_ = nullptr;
     GtkTextBuffer* buffer_ = nullptr;

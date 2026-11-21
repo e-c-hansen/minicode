@@ -1272,9 +1272,10 @@ its server comes first here (2.0).
   `git_panel`, `git_review`): a file row's single click opens the page at
   that file in the preview tab, a double-click or Return keeps it, Open as
   git Diff shows the raw diff; the page keeps its place after an action;
-  binary pictures show Before and After. Left to do: F7, the right click on
-  selected lines, the commit page (and its preview tab), animated GIFs on
-  the page. A worktree's page with Apply to Main is done (`HANDOFF.md`
+  binary pictures show Before and After. The commit page is done
+  (`HANDOFF.md` item 129): a click on a commit in the graph opens it in the
+  preview tab, a double-click or Return keeps it. Left to do: F7, the right
+  click on selected lines, animated GIFs on the page. A worktree's page with Apply to Main is done (`HANDOFF.md`
   item 85): the tree's Compare with Main opens the review page in its
   worktree mode.
 - [x] **2.10 Change bars and the tree's git colors.** `QuickDiff`,

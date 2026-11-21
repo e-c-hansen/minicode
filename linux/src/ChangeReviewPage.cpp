@@ -137,6 +137,8 @@ struct ChangeReviewPage::Data {
     std::vector<std::array<std::shared_ptr<GdkTexture>, 2>> pictures;
     // A worktree's page: what it is compared with, and the main checkout.
     std::string baseRef, baseLabel, mainPath;
+    // A commit's page: the commit as read.
+    Git::CommitDetail commit;
 };
 
 const char* ChangeReviewPage::titleOf(Act a) {
@@ -178,7 +180,18 @@ ChangeReviewPage::ChangeReviewPage(GitPanel* panel, const std::string& worktree,
     reload();
 }
 
+ChangeReviewPage::ChangeReviewPage(GitPanel* panel, const std::string& root,
+                                   const std::string& hash, const std::string& subject)
+    : panel_(panel), root_s_(root), commit_(hash), subject_(subject) {
+    panelAlive_ = panel->aliveFlag();
+    build();
+    // A commit never changes: the panel's reads are not its own.
+    reload();
+}
+
 std::string ChangeReviewPage::title() const {
+    if (!commit_.empty())
+        return Git::shortHash(commit_) + (subject_.empty() ? "" : " " + subject_);
     if (worktree_.empty()) return "Uncommitted Changes";
     return (label_.empty() ? nameOf(worktree_) : label_) + " vs " + (mainRef_.empty() ? "main" : mainRef_);
 }
@@ -186,7 +199,7 @@ std::string ChangeReviewPage::title() const {
 ChangeReviewPage::~ChangeReviewPage() {
     *alive_ = false;
     if (settleTick_) gtk_widget_remove_tick_callback(view_, settleTick_);
-    if (worktree_.empty() && panelAlive_ && *panelAlive_) {
+    if (worktree_.empty() && commit_.empty() && panelAlive_ && *panelAlive_) {
         panel_->onReviewRefresh = nullptr;
         panel_->setReviewOpen(false);
     }
@@ -220,7 +233,23 @@ void ChangeReviewPage::build() {
     }), this);
     gtk_box_append(GTK_BOX(bar), title_);
     gtk_box_append(GTK_BOX(bar), summary_);
-    if (worktree_.empty()) {
+    if (!commit_.empty()) {
+        // The subject over the byline and counts, then the rest of the
+        // message; nothing else in the bar.
+        gtk_orientable_set_orientation(GTK_ORIENTABLE(bar), GTK_ORIENTATION_VERTICAL);
+        gtk_box_set_spacing(GTK_BOX(bar), 2);
+        gtk_label_set_text(GTK_LABEL(title_), subject_.c_str());
+        gtk_label_set_xalign(GTK_LABEL(title_), 0);
+        gtk_label_set_xalign(GTK_LABEL(summary_), 0);
+        bodyLabel_ = gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(bodyLabel_), 0);
+        gtk_label_set_wrap(GTK_LABEL(bodyLabel_), TRUE);
+        gtk_label_set_selectable(GTK_LABEL(bodyLabel_), TRUE);
+        gtk_widget_set_margin_top(bodyLabel_, 6);
+        gtk_widget_set_visible(bodyLabel_, FALSE);
+        gtk_box_append(GTK_BOX(bar), bodyLabel_);
+        gtk_box_append(GTK_BOX(root_), bar);
+    } else if (worktree_.empty()) {
         gtk_box_append(GTK_BOX(bar), messageLabel_);
         gtk_box_append(GTK_BOX(bar), undo_);
         gtk_box_append(GTK_BOX(root_), bar);
@@ -373,17 +402,21 @@ void ChangeReviewPage::reload() {
     loading_ = true;
     const std::string root = root_s_;
     const ChangeReview::Opened opened = opened_;
-    const std::string worktree = worktree_, mainRef = mainRef_;
+    const std::string worktree = worktree_, mainRef = mainRef_, commit = commit_;
     const unsigned serial = ++readsStarted_;
     ChangeReview::ImageReading images;
     images.size = imageSizeOf;
     images.rowHeight = rowHeight_;
     const int width = gtk_widget_get_width(view_);
-    panel_->runOnGitThread([this, root, opened, worktree, mainRef, serial, images, width,
+    panel_->runOnGitThread([this, root, opened, worktree, mainRef, commit, serial, images, width,
                             alive = alive_] {
         auto d = std::make_shared<Data>();
         d->serial = serial;
-        if (!worktree.empty()) {
+        if (!commit.empty()) {
+            ChangeReview::CommitRead c = ChangeReview::readCommit(root, commit, runner, images);
+            d->read = std::move(c.read);
+            d->commit = std::move(c.commit);
+        } else if (!worktree.empty()) {
             ChangeReview::WorktreeRead w = ChangeReview::readWorktree(worktree, mainRef, runner, images);
             d->read = std::move(w.read);
             d->baseRef = w.baseRef;
@@ -634,6 +667,7 @@ void ChangeReviewPage::fill() {
     if (!error.empty() || p.rows.empty()) {
         rowChar_.clear();
         gtk_text_buffer_set_text(buffer_, !error.empty() ? error.c_str()
+                                          : !commit_.empty() ? "This commit changes no files."
                                           : worktree_.empty() ? "No changes."
                                                               : "No changes against the main branch.", -1);
         gtk_text_buffer_get_bounds(buffer_, &s, &e);
@@ -851,6 +885,27 @@ void ChangeReviewPage::updateSummary() {
     if (files)
         counts = std::to_string(files) + (files == 1 ? " file" : " files") + ", +" +
                  std::to_string(added) + " -" + std::to_string(removed);
+    if (!commit_.empty()) {
+        std::string by = counts;
+        std::string body;
+        if (data_ && data_->read.error.empty() && !data_->commit.hash.empty()) {
+            const Git::CommitDetail& c = data_->commit;
+            const std::string msg = GitUi::validUtf8(c.message);
+            const size_t nl = msg.find('\n');
+            gtk_label_set_text(GTK_LABEL(title_), (nl == std::string::npos ? msg : msg.substr(0, nl)).c_str());
+            body = nl == std::string::npos ? "" : msg.substr(nl + 1);
+            while (!body.empty() && (body[0] == '\n' || body[0] == '\r')) body.erase(0, 1);
+            const std::string line = ChangeReview::commitByline(c.author, c.time, c.hash, c.parents.size(),
+                                                                (long long)time(nullptr));
+            by = counts.empty() ? line : line + "  ·  " + counts;
+            gtk_widget_set_tooltip_text(summary_, c.committer.empty() ? nullptr
+                                                  : ("Committed by " + c.committer).c_str());
+        }
+        gtk_label_set_text(GTK_LABEL(summary_), by.c_str());
+        gtk_label_set_text(GTK_LABEL(bodyLabel_), body.c_str());
+        gtk_widget_set_visible(bodyLabel_, !body.empty());
+        return;
+    }
     if (!worktree_.empty()) {
         std::string parts;
         auto add = [&](const std::string& t) {
