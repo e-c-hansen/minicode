@@ -65,6 +65,11 @@ struct HostOptions {
     // backups of the unsaved documents no app's window has open
     // (Host::keepBackups), owned by this process; "" keeps none.
     std::string backupDir;
+    // Watch the disk (SessionHost::watchDisk, DiskWatch.h): the folder and
+    // what renderers' trees have open, so trees and Source Control follow
+    // it and a clean document no app's window has open follows its file.
+    // `mutible host` does; the checks choose.
+    bool watchDisk = false;
 };
 
 class HostServer {

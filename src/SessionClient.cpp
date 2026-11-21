@@ -21,6 +21,7 @@ void Client::connect(Send send) {
     else if (keepsBackups_) h.flag = 4;
     if (hearsDirty_) h.flag |= 8;
     if (keepsBackups_ && !readOnly_ && !guest_ && savesThroughHost_) h.flag |= 16;
+    if (hearsDisk_) h.flag |= 32;
     send_(std::move(h));
 }
 
@@ -337,6 +338,42 @@ bool Client::saveAnswer(std::uint64_t req, SaveAnswer* out) {
     return true;
 }
 
+std::uint64_t Client::requestReload(DocId id) {
+    if (!doc(id) || !hostWatches()) return 0;
+    Message m;
+    m.kind = Kind::DocReload;
+    m.doc = id;
+    m.req = ++nextReq_;
+    const std::uint64_t req = m.req;
+    // Behind this renderer's edits, so the step it makes follows them.
+    queue(std::move(m));
+    pump();
+    return req;
+}
+
+std::uint64_t Client::watchFolders(std::uint64_t window, const std::vector<std::string>& open, bool hidden) {
+    if (!hostWatches()) return 0;
+    Json req = Json::object();
+    req.set("op", Json("watch"));
+    Json paths = Json::array();
+    for (const std::string& p : open) paths.push(Json(p));
+    req.set("paths", std::move(paths));
+    req.set("hidden", Json(hidden));
+    return requestRead(window, std::move(req));
+}
+
+bool Client::reloadAnswer(std::uint64_t req, SaveAnswer* out) {
+    auto it = replies_.find(req);
+    if (it == replies_.end() || it->second.kind != Kind::DocReloadDone) return false;
+    if (out) {
+        out->ok = it->second.outcome == Outcome::Done;
+        out->version = it->second.v;
+        out->json = std::move(it->second.json);
+    }
+    replies_.erase(it);
+    return true;
+}
+
 // ---------------------------------------------------------------- receiving
 
 void Client::setWake(std::function<void()> wake) {
@@ -410,10 +447,17 @@ void Client::process(Message&& m) {
         if ((m.flag & 2) && writtenListener_) writtenListener_(m.doc, m.v, m.json);
         if (dirtyListener_) dirtyListener_(m.doc, (m.flag & 1) != 0);
         break;
+    case Kind::FsChanged:
+        if (foldersListener_) foldersListener_(m.window, m.json);
+        break;
+    case Kind::DocDisk:
+        if (diskListener_) diskListener_(m.doc, m.flag);
+        break;
     case Kind::DocText:
     case Kind::State:
     case Kind::FsData:
     case Kind::DocSaveDone:
+    case Kind::DocReloadDone:
     case Kind::Pong: {
         const std::uint64_t req = m.req;
         if (!abandoned_.erase(req)) replies_[req] = std::move(m);

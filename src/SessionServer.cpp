@@ -214,6 +214,7 @@ HostServer::Start HostServer::start(const HostOptions& o, std::string* error) {
         },
         o.delayUs);
     host_->setFolder(o.folder);
+    if (o.watchDisk) host_->watchDisk(true);   // before any renderer: the Welcome says it
     if (!o.backupDir.empty()) {
         Host::BackupKeeping k;
         k.store.dir = o.backupDir;

@@ -161,6 +161,9 @@ struct Net {
             Json json;
         };
         std::vector<Written> writes;   // DocDirty flag 2 heard (Client::hearWrites)
+        // The disk heard (Client::hearDisk): FsChanged's json, DocDisk.
+        std::vector<Json> changed;
+        std::vector<std::pair<Shared::DocId, int>> disks;
     };
     bool loopback = false, immediate = false;
     Shared::Host host;
@@ -184,7 +187,8 @@ struct Net {
     // an app that keeps backups (Client::setKeepsBackups); with 8 besides,
     // it hears DocDirty (Client::hearDirty, into Link::dirties, and
     // hearWrites, into Link::writes); with 16, an app that saves through the
-    // host (Client::setSavesThroughHost).
+    // host (Client::setSavesThroughHost); with 32, it hears the disk
+    // (Client::hearDisk, into Link::changed and Link::disks).
     Link& add(Unit u, const std::string& name, int hello = 0) {
         links.push_back(std::make_unique<Link>());
         Link* l = links.back().get();
@@ -200,6 +204,9 @@ struct Net {
             });
         }
         if (hello & 16) l->client->setSavesThroughHost(true);
+        if (hello & 32)
+            l->client->hearDisk([l](std::uint64_t, const Json& j) { l->changed.push_back(j); },
+                                [l](Shared::DocId d, int disk) { l->disks.push_back({d, disk}); });
         l->client->connect([this, l](Message&& m) {
             if (immediate) host.handle(l->id, wire(std::move(m)));
             else l->up.push_back(wire(std::move(m)));

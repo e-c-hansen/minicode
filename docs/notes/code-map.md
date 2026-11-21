@@ -91,7 +91,13 @@ goes here first, with tests; the GUI only displays it.
   it by `confinedPath`, with the apps' trees' dotfile, order and ignore
   rules, for the browser's tree; `host:fs-list`; and its first write,
   `saveDocument`, the host's DocSave by the apps' save rules;
-  `host:save-rules`, `host:save` in tests/session_save_tests.inc), `SessionWebViewers`
+  `host:save-rules`, `host:save` in tests/session_save_tests.inc; and
+  following the disk, `diskAction` and `readDiskText`), `DiskWatch`
+  (stage 7's watching: the core's one platform interface for the disk's
+  notices, inotify on Linux and FSEvents on the Mac, each on a thread or
+  queue of its own behind a pipe the host polls, with the pure `Filter`,
+  which folders count, and `Coalescer`, bursts made one batch;
+  `diskwatch:*` in tests/session_disk_tests.inc), `SessionWebViewers`
   (what the browser's page renders itself: a notebook as a page, a SQLite
   database's tables and rows; `sessionweb:viewers`), `SessionWebTypeset`
   (the LaTeX preview's typesets the app publishes, kept by the document's

@@ -44,7 +44,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/MarkdownEmoji.c
             src/LspEdits.cpp \
             src/TermLinks.cpp src/FolderSearch.cpp src/TextFind.cpp src/TextScan.cpp src/Regex.cpp \
             src/EditSpans.cpp src/FindRules.cpp src/Text.cpp src/Document.cpp src/UndoHistory.cpp \
-            src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/SessionServer.cpp src/HostPty.cpp \
+            src/Ot.cpp src/SessionProtocol.cpp src/SessionHost.cpp src/SessionClient.cpp src/SessionServer.cpp src/HostPty.cpp src/DiskWatch.cpp \
             src/SessionWeb.cpp src/SessionWebPage.cpp src/SessionWebViewers.cpp src/SessionWebTypeset.cpp src/SessionWebGit.cpp src/SessionWebAccess.cpp src/SessionFiles.cpp src/SqliteRead.cpp \
             src/MarkdownEdit.cpp src/MarkdownTasks.cpp \
             src/GitStatus.cpp src/GitGraph.cpp src/GitModel.cpp src/MathTex.cpp src/EditorTabs.cpp \
@@ -73,7 +73,7 @@ CORE_SRC := src/SyntaxHighlighter.cpp src/MarkdownParser.cpp src/MarkdownEmoji.c
 OBJDIR   := build/obj
 # What `mutible host` and `mutible attach` (the headless session host,
 # SessionServer.h) need of the core, linked into the command line's client.
-SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.cpp \
+SESSION_HOST_SRC := src/SessionServer.cpp src/SessionHost.cpp src/SessionClient.cpp src/DiskWatch.cpp \
             src/SessionProtocol.cpp src/Ot.cpp src/HostPty.cpp src/TerminalScreen.cpp \
             src/TerminalStream.cpp src/Document.cpp src/UndoHistory.cpp src/Text.cpp \
             src/EditSpans.cpp src/FolderSearch.cpp src/EditorTabs.cpp src/TextFind.cpp src/TextScan.cpp \
@@ -99,8 +99,13 @@ VARIANT  := $(if $(RELEASE),release,development)
 TESTDIR  := build/test-obj
 TESTFLAGS := -std=c++17 -Wall -Wextra -Isrc -pthread $(MINFLAGS)
 # The system libraries the core links: SQLite (SqliteRead, the session
-# page's database viewer).
-TESTLIBS  := -lsqlite3
+# page's database viewer), and on the Mac CoreServices (DiskWatch's
+# FSEvents: the session's host watching the disk).
+CORELIBS  := -lsqlite3
+ifeq ($(shell uname -s),Darwin)
+  CORELIBS += -framework CoreServices
+endif
+TESTLIBS  := $(CORELIBS)
 TEST_OBJ := $(TESTDIR)/run_tests.cpp.o $(patsubst src/%,$(TESTDIR)/%.o,$(CORE_SRC))
 
 # Parallel by default, one job per core: GNU make 3.81 (the Mac's) cannot tell
@@ -148,7 +153,7 @@ $(OBJDIR)/tools/%.cpp.o: tools/%.cpp $(OBJDIR)/flags.txt
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 $(CLI): $(CLI_OBJ)
-	$(CXX) $(CXXFLAGS) $(CLI_OBJ) -lsqlite3 -o $@
+	$(CXX) $(CXXFLAGS) $(CLI_OBJ) $(CORELIBS) -o $@
 
 # What BROWSER names in mutible's terminals (Terminal.mm): a script that
 # is shell and JavaScript at once, beside the client (in the bundle it is

@@ -1,5 +1,7 @@
 // SessionWeb.cpp — see SessionWeb.h.
 #include "SessionWeb.h"
+
+#include "DiskWatch.h"
 #include "Rename.h"
 
 #include "AutoIndent.h"
@@ -1334,6 +1336,10 @@ struct Server::Conn {
     std::string reviewPage;
     std::uint64_t pageSent = 0;
     bool pageAsked = false;
+    // The folders its tree has open (`watch`): the host watches them and
+    // sends each one's listing again when it changes (a host that watches
+    // the disk, DiskWatch.h).
+    std::set<std::string> watched;
 };
 
 struct Server::Session : Client::Listener, Client::TermListener {
@@ -1418,6 +1424,14 @@ struct Server::Session : Client::Listener, Client::TermListener {
     // Saves asked of the host for pages (DocSave, a headless host's): the
     // request's page and document.
     std::map<std::uint64_t, std::pair<int, DocId>> saveAsks;
+    // Reloads asked of the host for pages (DocReload), the same way.
+    std::map<std::uint64_t, std::pair<int, DocId>> reloadAsks;
+    // The disk (a host that watches it): the folders every page's tree has
+    // open, as the host was last told, and what the host said changed
+    // (FsChanged's json), not yet handed to the pages.
+    std::set<std::string> watchSent;
+    bool watchAsked = false;
+    std::vector<Json> diskNews;
     // The pty's size follows whoever typed last (Host::sizer); TermShell
     // says it where the host's screen reflowed, so the view reflows there
     // too, and the pages get the terminal whole at the new size.
@@ -1551,6 +1565,9 @@ std::string Server::helloText() const {
     // saves.
     hello.set("canSave", Json(opt_.editable && ((bool)opt_.save || (session_ && session_->client->hostSaves()))));
     hello.set("canBrowse", Json(opt_.editable && (bool)opt_.browse));
+    // Reload from Disk: the host's (one that watches the disk), for a
+    // document no app's window has open.
+    hello.set("canReload", Json(opt_.editable && session_ && session_->client->hostWatches()));
     // Opening a file as a window's tab, and closing one, change the
     // window: only a page that may edit. A page that only reads shows
     // files in tabs of its own (readfile).
@@ -1813,6 +1830,7 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     // The tree: reading the folder, and a file for a tab of the page's own,
     // change nothing, so a page that only reads may.
     if (t == "list") return onList(c, j);
+    if (t == "watch") return onWatch(c, j);
     if (t == "readfile") return onReadFile(c, j);
     if (t == "file") return onFile(c, j);
     // A notebook and a database, rendered here from the folder (R3's
@@ -1841,6 +1859,7 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     else if (t == "edit") onEdit(c, j);
     else if (t == "undo") onUndo(c, j);
     else if (t == "save") onSave(c, j);
+    else if (t == "reload") onReload(c, j);
     else if (t == "tkey" || t == "ttext" || t == "tpaste") onTermInput(c, t, j);
     else if (t == "tsize") onTermSize(c, j);
     else if (t == "browse") onBrowse(c, j);
@@ -2073,6 +2092,34 @@ void Server::takeOutcomes() {
             if (c->id == it->second.first && c->welcomed) sendJson(*c, m);
         it = s.saveAsks.erase(it);
     }
+    for (auto it = s.reloadAsks.begin(); it != s.reloadAsks.end();) {
+        Client::SaveAnswer a;
+        if (!s.client->reloadAnswer(it->first, &a)) {
+            ++it;
+            continue;
+        }
+        Json m = Json::object();
+        m.set("t", Json("reloaded"));
+        m.set("doc", Json((int64_t)it->second.second));
+        m.set("ok", Json(a.ok));
+        for (const char* k : {"path", "reason", "why"})
+            if (a.json.has(k)) m.set(k, a.json[k]);
+        for (auto& c : conns_)
+            if (c->id == it->second.first && c->welcomed) sendJson(*c, m);
+        it = s.reloadAsks.erase(it);
+    }
+}
+
+// Reload from Disk for a page that may edit: the host puts the file's text
+// in place of the document's, one step a page can undo.
+void Server::onReload(Conn& c, const Json& j) {
+    const DocId id = (DocId)std::max<int64_t>(0, j["doc"].asInt());
+    if (!opt_.editable) return note(c, "This page only reads: it cannot reload.");
+    if (!session_ || !id || !session_->docs.count(id)) return;
+    if (opt_.window && !session_->allowed.count(id)) return;
+    const std::uint64_t req = session_->client->requestReload(id);
+    if (!req) return note(c, "This host does not reload files: reload from the mutible window.");
+    session_->reloadAsks[req] = {c.id, id};
 }
 
 void Server::onSave(Conn& c, const Json& j) {
@@ -2150,6 +2197,79 @@ void Server::sizeTerminal(TermId t, int cols, int rows) {
     session_->client->resizeTerminal(t, cols, rows);
 }
 
+namespace {
+
+// A listing (SessionFiles.h's "list" answer) as the page's `tree`.
+Json treeMessage(const Json& a) {
+    Json m = Json::object();
+    m.set("t", Json("tree"));
+    m.set("path", a["path"]);
+    if (a.has("error")) {
+        m.set("error", a["error"]);
+        return m;
+    }
+    m.set("root", a["root"]);
+    // Each file the page shows itself says how (fileType's view).
+    Json entries = Json::array();
+    for (const Json& e : a["entries"].elements()) {
+        Json f = e;
+        if (!e["dir"].asBool()) {
+            const std::string view = fileType(e["name"].asString()).view;
+            if (!view.empty()) f.set("view", Json(view));
+        }
+        entries.push(std::move(f));
+    }
+    m.set("entries", std::move(entries));
+    if (a.has("more")) m.set("more", a["more"]);
+    return m;
+}
+
+}  // namespace
+
+// A page's tree says which folders it has open (any page: watching changes
+// nothing); the host hears every page's together.
+void Server::onWatch(Conn& c, const Json& j) {
+    c.watched.clear();
+    for (const Json& p : j["paths"].elements()) {
+        if (c.watched.size() >= 1024) break;
+        if (p.isString() && DiskWatch::cleanRelative(p.asString())) c.watched.insert(p.asString());
+    }
+    updateWatch();
+}
+
+void Server::updateWatch() {
+    if (!session_) return;
+    Session& s = *session_;
+    std::set<std::string> all;
+    for (auto& c : conns_)
+        if (c->welcomed && !c->dead) all.insert(c->watched.begin(), c->watched.end());
+    if (s.watchAsked && all == s.watchSent) return;
+    s.watchSent = all;
+    s.watchAsked = true;
+    const std::uint64_t req =
+        s.client->watchFolders(opt_.window, std::vector<std::string>(all.begin(), all.end()), opt_.showHidden);
+    if (req) s.client->forgetRead(req);
+}
+
+// What the host saw change on disk: each listing to the pages whose tree
+// has that folder open, and Source Control read again (at most once a
+// second, while a page watches it).
+void Server::takeDisk() {
+    if (!session_) return;
+    Session& s = *session_;
+    std::vector<Json> news;
+    news.swap(s.diskNews);
+    for (const Json& j : news) {
+        if (j["git"].asBool()) gitChanged();
+        for (const Json& a : j["listings"].elements()) {
+            const std::string path = a["path"].asString();
+            const Json m = treeMessage(a);
+            for (auto& c : conns_)
+                if (c->welcomed && c->watched.count(path)) sendJson(*c, m);
+        }
+    }
+}
+
 void Server::onList(Conn& c, const Json& j) {
     if (!session_ || !j["path"].isString()) return;
     Session& s = *session_;
@@ -2172,26 +2292,7 @@ void Server::takeReads() {
             ++it;
             continue;
         }
-        Json m = Json::object();
-        m.set("t", Json("tree"));
-        m.set("path", a["path"]);
-        if (a.has("error")) {
-            m.set("error", a["error"]);
-        } else {
-            m.set("root", a["root"]);
-            // Each file the page shows itself says how (fileType's view).
-            Json entries = Json::array();
-            for (const Json& e : a["entries"].elements()) {
-                Json f = e;
-                if (!e["dir"].asBool()) {
-                    const std::string view = fileType(e["name"].asString()).view;
-                    if (!view.empty()) f.set("view", Json(view));
-                }
-                entries.push(std::move(f));
-            }
-            m.set("entries", std::move(entries));
-            if (a.has("more")) m.set("more", a["more"]);
-        }
+        const Json m = treeMessage(a);
         for (auto& c : conns_)
             if (c->id == it->second && c->welcomed) sendJson(*c, m);
         it = s.reads.erase(it);
@@ -2937,6 +3038,15 @@ bool Server::attach() {
     s->client->setWake([this] { wake(); });
     Session* self = s.get();
     s->client->hearDirty([self](DocId, bool) { self->dirtyCame = true; });
+    // The disk: a changed folder's listing for the trees that show it, and
+    // Source Control to read again; a document changed on disk or gone, for
+    // the pages' marks (the state says which).
+    s->client->hearDisk(
+        [self](std::uint64_t, const Json& changed) {
+            self->diskNews.push_back(changed);
+            self->pending = true;
+        },
+        [self](DocId, int) { self->dirtyCame = true; });
     Client* client = s->client.get();
     if (opt_.connect) {
         // A host in this process: it delivers to the client itself.
@@ -3042,6 +3152,9 @@ void Server::lookAtState() {
         o.set("id", d["doc"]);
         o.set("path", d["path"]);
         o.set("dirty", d["dirty"]);
+        // Changed on disk under unsaved changes, or deleted (a host that
+        // watches the disk); nothing when in step.
+        if (d.has("disk")) o.set("disk", d["disk"]);
         docs.push(std::move(o));
     }
     out.set("docs", std::move(docs));
@@ -3310,6 +3423,7 @@ bool Server::run() {
             session_->client->dispatch();
             takeOutcomes();
             takeReads();
+            takeDisk();
             pumpFiles();
             sendTypesets();
             takeGit();
@@ -3362,6 +3476,7 @@ bool Server::run() {
         }
         connections_ = (int)conns_.size();
         if (lostBrowser && browsers_ == 0) detach();
+        else if (lostBrowser) updateWatch();   // its tree's folders, if no other page has them
     }
 }
 

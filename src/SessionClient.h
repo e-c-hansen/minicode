@@ -125,6 +125,32 @@ public:
     // the app's DocSave names, answers with the stamp written, and tells the
     // other renderers it wrote (hearWrites).
     bool hostSavesForApps() const { return (hostFlags_ & 3) == 3; }
+    // ---- the disk (stage 7: the host watches it, DiskWatch.h)
+    // Told what the host saw change on disk, said in its Hello (flag 32), so
+    // a host sends it only to a renderer that knows the messages. `folders`:
+    // FsChanged's window and json {root, listings: [each open folder's "list"
+    // answer again, for the folders watchFolders named that changed], git:
+    // whether Source Control may have changed}. `document`: DocDisk, a
+    // document's file changed under unsaved changes (1), went (2), or is in
+    // step with it again (0). Called inside dispatch(). Before connect().
+    void hearDisk(std::function<void(std::uint64_t window, const Json& changed)> folders,
+                  std::function<void(DocId doc, int disk)> document) {
+        foldersListener_ = std::move(folders);
+        diskListener_ = std::move(document);
+        hearsDisk_ = foldersListener_ || diskListener_;
+    }
+    // Whether the host watches the disk (its Welcome's flag 4): it takes
+    // watchFolders and requestReload. Known once the Welcome is taken.
+    bool hostWatches() const { return (hostFlags_ & 4) != 0; }
+    // The folders this renderer's trees have open in `window`'s folder (0 a
+    // headless host's own), '/'-separated from it, "" the folder itself,
+    // listed with dotfiles when `hidden`: the host watches them (an ignored
+    // folder, a node_modules, only while one is open) and sends each one's
+    // listing again when it changes. Replaces what was said before. The
+    // answer comes as a read's (readAnswer); 0, sending nothing, to a host
+    // that does not watch.
+    std::uint64_t watchFolders(std::uint64_t window, const std::vector<std::string>& open, bool hidden);
+    // (requestReload, below with the saves.)
     Model::Unit unit() const { return unit_; }
 
     // ---- ids: what this renderer opens on the host (documents, terminals,
@@ -242,6 +268,13 @@ public:
         Json json;
     };
     bool saveAnswer(std::uint64_t req, SaveAnswer* out);
+    // The host puts the file's text in place of the document's (Reload from
+    // Disk: one step, undoable, counted saved), after every edit this
+    // renderer sent before. 0, sending nothing, when the document is not
+    // open here or the host does not watch (hostWatches). The answer as
+    // reloadAnswer(req) once dispatched (its json {path, ok, reason, why}).
+    std::uint64_t requestReload(DocId doc);
+    bool reloadAnswer(std::uint64_t req, SaveAnswer* out);
 
     // ---- undo (the host's)
     UndoInfo undoInfo(DocId doc);   // settles first
@@ -361,7 +394,9 @@ private:
     Model::Unit unit_;
     std::string name_;
     bool readOnly_ = false, guest_ = false, keepsBackups_ = false, hearsDirty_ = false;
-    bool savesThroughHost_ = false;
+    bool savesThroughHost_ = false, hearsDisk_ = false;
+    std::function<void(std::uint64_t, const Json&)> foldersListener_;
+    std::function<void(DocId, int)> diskListener_;
     std::function<void(DocId, bool)> dirtyListener_;
     std::function<void(DocId, std::uint64_t, const Json&)> writtenListener_;
     int hostFlags_ = 0;   // the Welcome's

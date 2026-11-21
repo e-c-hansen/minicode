@@ -418,4 +418,35 @@ FolderSearch::FileStamp stampFromJson(const Json& j) {
     return s;
 }
 
+// ---------------------------------------------------------------- the disk
+
+DiskAction diskAction(const DiskLook& l) {
+    if (l.appHasIt) return DiskAction::Nothing;   // the app follows it, and says
+    if (!l.exists) {
+        // A path the document never had a file at (a new file not made
+        // yet) has nothing to lose; one already marked gone is told once.
+        if (!l.hadFile || l.wasGone) return DiskAction::Nothing;
+        return DiskAction::Gone;
+    }
+    // A folder, a FIFO, bytes that are not text or too many of them: never
+    // followed, whatever the document holds.
+    if (!l.text) return DiskAction::Changed;
+    if (l.sameAsSaved) return DiskAction::Same;
+    return l.edited ? DiskAction::Changed : DiskAction::Follow;
+}
+
+DiskText readDiskText(const std::string& path) {
+    DiskText d;
+    std::string bytes;
+    const FolderSearch::ReadStatus r = FolderSearch::readFileStable(path, kMaxFollowed, &bytes, &d.stamp);
+    if (r == FolderSearch::ReadStatus::Missing) return d;   // (a link to nothing too)
+    d.exists = true;
+    if (r == FolderSearch::ReadStatus::NotRegular) return d;
+    d.regular = true;
+    if (r != FolderSearch::ReadStatus::Ok) return d;   // too large, or unreadable
+    d.text = Model::decodeFileText(std::move(bytes), &d.body, &d.encoding, &d.bom);
+    if (!d.text) d.body.clear();
+    return d;
+}
+
 }  // namespace Shared

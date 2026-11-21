@@ -6,8 +6,11 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <set>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -21,6 +24,7 @@ ClientId Host::connect() { return ++nextClient_; }
 
 void Host::disconnect(ClientId c) {
     renderers_.erase(c);
+    if (watches_.erase(c)) watchGen_++;   // its trees' folders are no one's now
     // Its terminals stay for the next renderer; one nobody shows keeps
     // running, its output going only into the host's screen, unthrottled.
     // One whose size was this renderer's takes the next one's.
@@ -76,6 +80,9 @@ bool Host::refusedFromViewer(ClientId c, const Message& m) const {
         return !m.ops.empty() || m.step.id || m.flag;
     case Kind::DocUndo:
     case Kind::TermInput:
+    // A guest's reload: the file's text in place of its document's, one
+    // undoable step; never of a document an app's window has open (onReload).
+    case Kind::DocReload:
     // A guest's save: held to the session's folder, and never of a
     // document an app's window has open (onSave).
     case Kind::DocSave:
@@ -108,6 +115,7 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::DocQuery: onQuery(from, m); break;
     case Kind::DocPath: onPath(from, m); break;
     case Kind::DocDetach: onDetach(from, m); break;
+    case Kind::DocReload: onReload(from, m); break;
     case Kind::WindowTabs:
         windows_[m.window] = {from, std::move(m.json)};
         windowSeen_[m.window] = ++windowOrder_;
@@ -190,6 +198,7 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::DocSaved:
     case Kind::DocSave:
     case Kind::DocPath:
+    case Kind::DocReload:
     case Kind::DocDetach: backupsChanged(); break;
     default: break;
     }
@@ -198,7 +207,8 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::DocEdit:
     case Kind::DocUndo:
     case Kind::DocSaved:
-    case Kind::DocSave: tellDirty(m.doc); break;
+    case Kind::DocSave:
+    case Kind::DocReload: tellDirty(m.doc); break;
     default: break;
     }
 }
@@ -239,6 +249,11 @@ void Host::onRead(ClientId c, Message& m) {
     r.kind = Kind::FsData;
     r.req = m.req;
     r.window = m.window;
+    if (m.json["op"].asString() == "watch") {
+        r.json = onWatchAsk(c, m.window, m.json);
+        send(c, std::move(r));
+        return;
+    }
     const std::string root = readRoot(m.window);
     if (root.empty()) {
         Json e = Json::object();
@@ -262,6 +277,7 @@ void Host::onHello(ClientId c, Message& m) {
     r.keepsBackups = !r.readOnly && !r.guest && (m.flag & 4) != 0;
     r.hearsDirty = (m.flag & 8) != 0;
     r.savesThroughHost = r.keepsBackups && (m.flag & 16) != 0;
+    r.hearsDisk = (m.flag & 32) != 0;
     // Its id base, kept for a second Hello: what it made with it stays its.
     if (!r.idBase) r.idBase = chooseIdBase();
     Message w;
@@ -270,6 +286,7 @@ void Host::onHello(ClientId c, Message& m) {
     w.v = r.idBase;
     w.name = folder_;
     w.flag = 1 | 2;   // this host saves (DocSave), for apps too
+    if (watching_) w.flag |= 4;   // and watches the disk (FsRead's "watch", DocReload)
     send(c, std::move(w));
 }
 
@@ -303,6 +320,7 @@ void Host::onOpen(ClientId c, Message& m) {
         d.doc = Model::Document(Model::utf16FromUtf8(m.text8));
         d.seats[c].base = 0;
         it = docs_.find(m.doc);
+        watchGen_++;   // its folder is watched
     } else {
         // Open already (another renderer's): this one starts from the text
         // as it is.
@@ -338,6 +356,8 @@ void Host::onReset(ClientId c, Message& m) {
     }
     d.doc = Model::Document(now);
     d.history.clear();
+    d.diskLooked = false;
+    setDisk(m.doc, d, 0);   // read afresh: in step with its file
     if (!e.ops16.empty()) {
         d.v++;
         d.log.push_back(e);
@@ -376,6 +396,7 @@ void Host::onClose(ClientId c, Message& m) {
     }
     discardBackup(d);   // closed: what it held is let go of
     docs_.erase(it);
+    watchGen_++;
 }
 
 void Host::onPath(ClientId c, Message& m) {
@@ -387,6 +408,9 @@ void Host::onPath(ClientId c, Message& m) {
         return;
     }
     it->second.path = m.name;
+    it->second.diskLooked = false;
+    it->second.realDir.clear();
+    watchGen_++;
 }
 
 void Host::onDetach(ClientId c, Message& m) {
@@ -625,6 +649,9 @@ void Host::onSaved(ClientId, Message& m) {
     // window's Keep Mine over a file changed on disk).
     if (m.flag & 1) it->second.doc.markSavedAs(std::move(m.text16));
     else it->second.doc.markSaved(FolderSearch::FileStamp());
+    // The app read or wrote the file: in step with it, as the app has it.
+    it->second.diskLooked = false;
+    setDisk(m.doc, it->second, 0);
 }
 
 void Host::onSave(ClientId c, Message& m) {
@@ -686,6 +713,9 @@ void Host::onSave(ClientId c, Message& m) {
                 d.doc.markSaved(done.written);
                 r.outcome = Outcome::Done;
                 r.v = d.v;
+                d.diskSeen = done.written;
+                d.diskLooked = true;
+                setDisk(m.doc, d, 0);
             }
         }
     }
@@ -854,6 +884,7 @@ Json Host::state() const {
         j.set("version", Json((int64_t)d.v));
         j.set("length", Json((int64_t)d.doc.text().size()));
         j.set("dirty", Json(d.doc.dirty()));
+        if (d.disk) j.set("disk", Json(d.disk == 2 ? "gone" : "changed"));
         docs.push(std::move(j));
     }
     s.set("documents", std::move(docs));
@@ -1068,6 +1099,335 @@ std::string Host::backupId(DocId d) const {
 std::string Host::backupPath(DocId d) const {
     auto it = docs_.find(d);
     return it != docs_.end() && it->second.kept.written ? it->second.kept.path : std::string();
+}
+
+// ---------------------------------------------------------------- the disk
+
+namespace {
+
+// `path`'s folder ("/" for a file at the top).
+std::string folderOf(const std::string& path) {
+    const std::size_t slash = path.rfind('/');
+    if (slash == std::string::npos) return std::string();
+    return slash == 0 ? std::string("/") : path.substr(0, slash);
+}
+
+bool isHigh(char16_t c) { return c >= 0xD800 && c <= 0xDBFF; }
+bool isLow(char16_t c) { return c >= 0xDC00 && c <= 0xDFFF; }
+
+// The most folders one renderer may name as open (FsRead's "watch").
+constexpr std::size_t kMaxWatched = 4096;
+// The most listings one FsChanged carries; the rest wait for the tree's
+// next look (its refresh, coming back to the page).
+constexpr std::size_t kMaxChangedListings = 256;
+
+}  // namespace
+
+void Host::setWatching(bool on) {
+    if (watching_ == on) return;
+    watching_ = on;
+    watchGen_++;
+}
+
+int Host::diskState(DocId d) const {
+    auto it = docs_.find(d);
+    return it == docs_.end() ? 0 : it->second.disk;
+}
+
+Json Host::onWatchAsk(ClientId c, std::uint64_t window, const Json& request) {
+    Json a = Json::object();
+    a.set("op", Json("watch"));
+    if (!watching_) {
+        a.set("error", Json(std::string("this host does not watch the disk")));
+        return a;
+    }
+    const std::string root = readRoot(window);
+    if (root.empty()) {
+        a.set("error", Json(std::string("no folder to read in")));
+        return a;
+    }
+    WatchAsk w;
+    w.window = window;
+    w.root = root;
+    w.hidden = request["hidden"].asBool();
+    std::set<std::string> seen;
+    for (const Json& p : request["paths"].elements()) {
+        if (!p.isString() || !DiskWatch::cleanRelative(p.asString())) continue;
+        if (seen.insert(p.asString()).second) w.open.push_back(p.asString());
+        if (w.open.size() >= kMaxWatched) break;
+    }
+    auto it = watches_.find(c);
+    const bool same = it != watches_.end() && it->second.root == w.root && it->second.open == w.open &&
+                      it->second.window == w.window && it->second.hidden == w.hidden;
+    if (!same) {
+        watches_[c] = w;
+        watchGen_++;
+    }
+    a.set("root", Json(root));
+    a.set("watching", Json((std::int64_t)w.open.size()));
+    return a;
+}
+
+std::vector<DiskWatch::Root> Host::watchRoots() const {
+    std::vector<DiskWatch::Root> out;
+    if (!watching_) return out;
+    std::map<std::string, std::set<std::string>> roots;
+    if (!folder_.empty()) roots[folder_];
+    for (const auto& [c, w] : watches_) roots[w.root].insert(w.open.begin(), w.open.end());
+    // A document's folder is watched whatever the ignore files say, so a
+    // file opened from build output follows the disk too.
+    for (const auto& [id, d] : docs_) {
+        if (d.path.empty() || d.path[0] != '/') continue;
+        const std::string dir = folderOf(d.path);
+        for (auto& [root, open] : roots) {
+            std::string rel;
+            if (DiskWatch::relativeTo(root, dir, &rel) && !rel.empty() && DiskWatch::cleanRelative(rel))
+                open.insert(rel);
+        }
+    }
+    for (const auto& [root, open] : roots)
+        out.push_back(DiskWatch::Root{root, std::vector<std::string>(open.begin(), open.end())});
+    return out;
+}
+
+void Host::diskChanged(const std::vector<DiskWatch::Change>& changes) {
+    if (changes.empty() || !watching_) return;
+    // What counts under each root (the filter's rule: not .git's insides,
+    // not what the ignore files ignore unless open), and whether Source
+    // Control may have changed (a change in a folder not ignored).
+    struct Counted {
+        std::vector<DiskWatch::Change> changes;
+        bool git = false;
+    };
+    std::map<std::string, Counted> byRoot;
+    for (const DiskWatch::Root& r : watchRoots()) {
+        DiskWatch::Filter f(r.path, r.open);
+        Counted& k = byRoot[r.path];
+        for (const DiskWatch::Change& c : changes) {
+            std::string rel;
+            if (!DiskWatch::relativeTo(r.path, c.path, &rel)) continue;
+            const DiskWatch::Seen s = f.seen(rel);
+            if (s == DiskWatch::Seen::No) continue;
+            k.changes.push_back(c);
+            if (s == DiskWatch::Seen::Yes) k.git = true;
+        }
+    }
+    auto hits = [](const std::vector<DiskWatch::Change>& cs, const std::string& path) {
+        for (const DiskWatch::Change& c : cs)
+            if (c.path == path || (c.below && DiskWatch::under(path, c.path))) return true;
+        return false;
+    };
+
+    // The trees: each open folder that changed, listed again for the
+    // renderers that have it open and hear the disk.
+    std::map<std::string, Json> listed;   // root, hidden, path -> the listing
+    for (const auto& [c, w] : watches_) {
+        auto who = renderers_.find(c);
+        if (who == renderers_.end() || !who->second.hearsDisk) continue;
+        auto k = byRoot.find(w.root);
+        if (k == byRoot.end() || k->second.changes.empty()) continue;
+        Json listings = Json::array();
+        for (const std::string& rel : w.open) {
+            if (listings.size() >= kMaxChangedListings) break;
+            if (!hits(k->second.changes, rel.empty() ? w.root : w.root + "/" + rel)) continue;
+            const std::string key = w.root + '\n' + (w.hidden ? "1" : "0") + '\n' + rel;
+            auto have = listed.find(key);
+            if (have == listed.end()) {
+                Json req = Json::object();
+                req.set("op", Json("list"));
+                req.set("path", Json(rel));
+                req.set("hidden", Json(w.hidden));
+                have = listed.emplace(key, readWorkspace(w.root, req)).first;
+            }
+            listings.push(have->second);
+        }
+        if (listings.size() == 0 && !k->second.git) continue;
+        Message m;
+        m.kind = Kind::FsChanged;
+        m.window = w.window;
+        Json j = Json::object();
+        j.set("root", Json(w.root));
+        j.set("listings", std::move(listings));
+        j.set("git", Json(k->second.git));
+        m.json = std::move(j);
+        send(c, std::move(m));
+    }
+
+    // The documents whose folder changed.
+    bool any = false;
+    for (auto& [id, d] : docs_) {
+        if (d.path.empty() || d.path[0] != '/') continue;
+        const std::string dir = folderOf(d.path);
+        bool hit = false;
+        for (const auto& [root, k] : byRoot) {
+            if (DiskWatch::under(dir, root)) {
+                hit = hits(k.changes, dir);
+            } else {
+                // Spelled otherwise than the root (/tmp under /private/tmp):
+                // its folder's real place.
+                if (d.realDir.empty()) {
+                    char buf[PATH_MAX];
+                    const std::string real = realpath(dir.c_str(), buf) ? std::string(buf) : std::string();
+                    d.realDir = real.empty() ? dir : real;
+                }
+                hit = DiskWatch::under(d.realDir, root) && hits(k.changes, d.realDir);
+            }
+            if (hit) break;
+        }
+        if (!hit) continue;
+        lookAtDisk(id, d);
+        any = true;
+    }
+    if (any) backupsChanged();
+}
+
+void Host::setDisk(DocId id, Doc& d, int disk) {
+    d.disk = disk;
+    if (d.toldDisk == disk) return;
+    d.toldDisk = disk;
+    for (const auto& [c, r] : renderers_) {
+        if (!r.hearsDisk) continue;
+        Message m;
+        m.kind = Kind::DocDisk;
+        m.doc = id;
+        m.flag = disk;
+        m.v = d.v;
+        send(c, std::move(m));
+    }
+}
+
+void Host::lookAtDisk(DocId id, Doc& d) {
+    // An app's window follows its own tab (it reads the file, and tells the
+    // host what it holds), so the host leaves it alone.
+    if (shownByApp(d)) return;
+    const FolderSearch::FileStamp now = FolderSearch::stampOf(d.path);
+    // The host's own write or read, or nothing new since the last look.
+    if (d.disk == 0 && d.doc.stamp().exists && now == d.doc.stamp()) {
+        d.diskSeen = now;
+        d.diskLooked = true;
+        return;
+    }
+    if (d.diskLooked && now == d.diskSeen) return;
+    DiskText t;
+    if (now.exists) t = readDiskText(d.path);
+    else t.stamp = now;
+    d.diskSeen = t.stamp;
+    d.diskLooked = true;
+    const std::u16string& saved = d.doc.savedText();
+    DiskLook l;
+    l.hadFile = d.doc.stamp().exists || !saved.empty() || d.disk != 0;
+    l.exists = t.exists;
+    l.text = t.text;
+    l.sameAsSaved = t.text && t.body == saved;
+    l.edited = d.doc.text().size() != saved.size() || !(d.doc.text() == saved);
+    l.wasGone = d.doc.gone();
+    switch (diskAction(l)) {
+    case DiskAction::Nothing: break;
+    case DiskAction::Same:
+        d.doc.setEncoding(t.encoding, t.bom);
+        d.doc.confirmSaved(t.stamp);
+        setDisk(id, d, 0);
+        tellDirty(id);   // a file back where it went: no longer unsaved for that
+        break;
+    case DiskAction::Follow:
+        takeDiskText(id, d, t);
+        setDisk(id, d, 0);
+        break;
+    case DiskAction::Changed: setDisk(id, d, 1); break;
+    case DiskAction::Gone:
+        d.doc.setGone(true);
+        setDisk(id, d, 2);
+        tellDirty(id);
+        break;
+    }
+}
+
+void Host::takeDiskText(DocId id, Doc& d, const DiskText& t) {
+    closeStep(d);
+    // The one range in which the two differ, never splitting a surrogate
+    // pair, so the step keeps everything around it as it was.
+    const std::u16string now = d.doc.text().str();
+    const std::u16string& next = t.body;
+    std::size_t p = 0;
+    const std::size_t most = std::min(now.size(), next.size());
+    while (p < most && now[p] == next[p]) p++;
+    if (p > 0 && isHigh(now[p - 1])) p--;
+    std::size_t s = 0;
+    while (s < now.size() - p && s < next.size() - p && now[now.size() - 1 - s] == next[next.size() - 1 - s]) s++;
+    if (s > 0 && isLow(now[now.size() - s])) s--;
+    const Ot::Op op{p, now.size() - p - s, next.substr(p, next.size() - p - s)};
+    if (op.del || !op.ins.empty()) {
+        d.stepInfo = {"Reload from Disk", false};
+        d.history.breakCoalescing();
+        const Selection before{{p, p}};
+        d.history.open(d.stepInfo, before);
+        d.stepOpen = true;
+        d.stepBy = 0;
+        d.stepId = 0;
+        d.stepAfter = before;
+        Entry e = applyOps(d, Ot::primitives(Ot::Ops{op}), Model::Unit::Utf16, true);
+        e.by = 0;
+        d.v++;
+        d.log.push_back(e);
+        closeStep(d);
+        broadcast(id, d, e, 0, 0, 0, 0, nullptr);
+        trimLog(d);
+        tellUndoState(id, d);
+    }
+    d.doc.setEncoding(t.encoding, t.bom);
+    d.doc.markSaved(t.stamp);
+    tellDirty(id);
+}
+
+void Host::onReload(ClientId c, Message& m) {
+    Message r;
+    r.kind = Kind::DocReloadDone;
+    r.doc = m.doc;
+    r.req = m.req;
+    r.outcome = Outcome::Refused;
+    std::string path, reason, why;
+    auto it = docs_.find(m.doc);
+    if (it == docs_.end()) {
+        reason = "notopen";
+        why = "That document is no longer open.";
+    } else {
+        Doc& d = it->second;
+        path = d.path;
+        const std::string name = path.empty() ? std::string("This document") : path.substr(path.rfind('/') + 1);
+        if (path.empty() || path[0] != '/') {
+            reason = "nofile";
+            why = name + " has no file to reload from.";
+        } else if (shownByApp(d)) {
+            // The app's window has its own Reload, and its own questions.
+            reason = "app";
+            why = name + " is open in a mutible window: reload it there.";
+        } else {
+            const DiskText t = readDiskText(path);
+            if (!t.exists) {
+                reason = "gone";
+                why = name + " is not on disk: there is nothing to reload.";
+            } else if (!t.text) {
+                reason = "notext";
+                why = name + " on disk is not text that can be shown here.";
+            } else {
+                takeDiskText(m.doc, d, t);
+                d.diskSeen = t.stamp;
+                d.diskLooked = true;
+                setDisk(m.doc, d, 0);
+                r.outcome = Outcome::Done;
+                r.v = d.v;
+            }
+        }
+    }
+    Json j = Json::object();
+    j.set("path", Json(path));
+    j.set("ok", Json(r.outcome == Outcome::Done));
+    if (!reason.empty()) {
+        j.set("reason", Json(reason));
+        j.set("why", Json(why));
+    }
+    r.json = std::move(j);
+    send(c, std::move(r));
 }
 
 // ---------------------------------------------------------------- terminals
@@ -1509,6 +1869,66 @@ void SessionHost::setFolder(std::string folder) {
     wake();
 }
 
+void SessionHost::watchDisk(bool on) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        queue_.push_back(Item{0, Message(), [this, on] {
+                                  watchDisk_ = on;
+                                  host_.setWatching(on);
+                              }});
+    }
+    wake();
+}
+
+bool SessionHost::diskWatchSettled(int timeoutMs, std::size_t* folders) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(0, timeoutMs));
+    for (;;) {
+        auto st = std::make_shared<std::pair<std::atomic<int>, std::atomic<std::size_t>>>();
+        st->first = -1;
+        st->second = 0;
+        // On the host's thread, after the roots asked last were handed over.
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            queue_.push_back(Item{0, Message(), [this, st] {
+                                      lookAtWatch();
+                                      if (watcher_) {
+                                          st->second = watcher_->folders();
+                                          st->first = watcher_->settled() ? 1 : 0;
+                                      } else {
+                                          st->first = 2;
+                                      }
+                                  }});
+        }
+        wake();
+        while (st->first < 0 && std::chrono::steady_clock::now() < end)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        if (folders) *folders = st->second;
+        if (st->first == 1) return true;
+        if (st->first == 2 || std::chrono::steady_clock::now() >= end) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+void SessionHost::lookAtWatch() {
+    if (!watchDisk_) {
+        watcher_.reset();
+        coalesce_.take();
+        return;
+    }
+    if (host_.watchGeneration() == watchSeen_) return;
+    watchSeen_ = host_.watchGeneration();
+    const std::vector<DiskWatch::Root> roots = host_.watchRoots();
+    std::vector<std::string> paths;
+    for (const DiskWatch::Root& r : roots) paths.push_back(r.path);
+    coalesce_.setRoots(paths);
+    if (roots.empty()) {
+        watcher_.reset();
+        return;
+    }
+    if (!watcher_) watcher_ = DiskWatch::Watcher::make();
+    if (watcher_) watcher_->watch(roots);
+}
+
 void SessionHost::keepBackups(Host::BackupKeeping k) {
     auto shared = std::make_shared<Host::BackupKeeping>(std::move(k));
     {
@@ -1555,6 +1975,12 @@ bool SessionHost::inspect(const std::function<void(const Host&)>& f, int timeout
     return true;
 }
 
+namespace {
+double monoSeconds() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
 // Messages first, then whatever the ptys have, then a wait in poll(2) for
 // either. A terminal's output is read 64 KB a turn, so messages (a key the
 // user typed) never wait behind a program printing without pause.
@@ -1581,20 +2007,38 @@ void SessionHost::loop() {
             // Everything posted is done; what typing left unwritten goes to
             // disk before the host ends (a signal ended it unsaved).
             host_.writeBackupsNow();
+            watcher_.reset();
             return;
         }
-        const int timeout = host_.tick();
+        // The disk: what to watch, if that changed, and a batch that is due.
+        lookAtWatch();
+        if (coalesce_.due(monoSeconds())) host_.diskChanged(coalesce_.take());
+        int timeout = host_.tick();
+        const double toBatch = coalesce_.wait(monoSeconds());
+        if (toBatch >= 0) {
+            const int ms = (int)std::ceil(toBatch * 1000);
+            timeout = timeout < 0 ? ms : std::min(timeout, ms);
+        }
         fds.clear();
         host_.pollSet(&fds);
         polls.assign(1, pollfd{wake_[0], POLLIN, 0});
+        const int watchFd = watcher_ ? watcher_->fd() : -1;
+        if (watchFd >= 0) polls.push_back(pollfd{watchFd, POLLIN, 0});
+        const std::size_t firstPty = polls.size();
         for (const Host::PollFd& f : fds)
             polls.push_back(pollfd{f.fd, (short)((f.read ? POLLIN : 0) | (f.write ? POLLOUT : 0)), 0});
         int n;
         do n = poll(polls.data(), (nfds_t)polls.size(), stopping ? 0 : timeout);
         while (n < 0 && errno == EINTR);
         if (n <= 0) continue;
+        if (watchFd >= 0 && polls[1].revents) {
+            std::vector<DiskWatch::Change> changes;
+            watcher_->take(&changes);
+            const double now = monoSeconds();
+            for (const DiskWatch::Change& c : changes) coalesce_.add(c, now);
+        }
         for (size_t i = 0; i < fds.size(); i++) {
-            const short r = polls[i + 1].revents;
+            const short r = polls[i + firstPty].revents;
             if (!r) continue;
             if (r & POLLOUT) host_.writable(fds[i].term);
             if (r & (POLLIN | POLLHUP | POLLERR)) host_.readable(fds[i].term);

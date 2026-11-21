@@ -59,6 +59,9 @@ core_sources = [
   core_dir / 'SessionWebAccess.cpp',
   core_dir / 'SqliteRead.cpp',
   core_dir / 'SessionFiles.cpp',
+  # The host watches the disk (stage 7): inotify, behind the core's one
+  # platform interface for it.
+  core_dir / 'DiskWatch.cpp',
   # The terminals' ptys belong to the host too (stage 5): a pty per shell,
   # and a headless screen with scrollback fed its bytes, whose marks give
   # the commands and whose replay rebuilds it for a renderer.
