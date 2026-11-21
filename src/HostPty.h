@@ -40,6 +40,16 @@ struct PtySpec {
     int cols = 80, rows = 24;
 };
 
+// TermSpec's hostShell (stage 8, a renderer on another machine): the
+// host's own login shell as a login shell ("-zsh", "-bash"), in the host's
+// environment `hostEnv` ("NAME=value") with `extra` laid over it (a name
+// in `extra` replaces the host's). The shell is `shell` when given, else
+// SHELL in `hostEnv`, else the user's from the password database, else
+// /bin/sh. Pure but for that last look.
+PtySpec ownShellSpec(const std::string& shell, const std::vector<std::string>& hostEnv,
+                     const std::vector<std::string>& extra, const std::string& cwd, int cols,
+                     int rows);
+
 class Pty {
 public:
     // The shell started on a fresh pty; null with `error` when it could

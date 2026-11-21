@@ -36,7 +36,11 @@
 //   - a folder's link (editor.session-host = headless, or MUTIBLE_HOST=
 //     socket): the folder's `mutible host`, found by its socket or started
 //     from Contents/MacOS/mutible-cli, detached, and attached to over the
-//     socket; one per folder, shared by the windows on it.
+//     socket; one per folder, shared by the windows on it;
+//   - a remote link (stage 8, `mutible ssh://host/path`, forRemote): `mutible
+//     host --stdio` on another machine through the user's own ssh, attached
+//     to over ssh's pipes; its window's files are read (readText) and saved
+//     there, its terminals run there, and closing the window ends it.
 // Each document and terminal keeps the link it was opened on. A window
 // closing detaches: its documents, terminals and its record (its tabs)
 // stay on the host, and a window opening on the folder takes the latest
@@ -78,11 +82,9 @@
 #include "FolderSearch.h"
 #include "Json.h"
 #include "SessionClient.h"
+#include "SessionServer.h"
 
-@class MCTab, CodeTextView;
-namespace Shared {
-class HostLink;
-}
+@class MCTab, CodeTextView, MCDiskText;
 
 // editor.session-host (on or headless), or MUTIBLE_SESSION_HOST=on.
 BOOL MCSessionHostEnabled(void);
@@ -114,7 +116,10 @@ struct Held {
 
 class Link {
 public:
-    enum class Kind { InProcess, Socket };
+    // InProcess: the process's host. Socket: a folder's headless host on
+    // this Mac. Remote: `mutible host --stdio` on another machine, through
+    // the user's ssh (stage 8, forRemote).
+    enum class Kind { InProcess, Socket, Remote };
     ~Link();
     Link(const Link&) = delete;
     Link& operator=(const Link&) = delete;
@@ -132,6 +137,26 @@ public:
     // A headless host, there: what a closing window leaves unsaved stays
     // after the app is gone (Keep Unsaved).
     bool keepsUnsaved() const { return kind_ == Kind::Socket && !lost(); }
+    // Which host this is, for moving windows to its replacement: the folder
+    // for a link on this Mac, the machine's ssh:// and the folder for a
+    // remote one (a folder there may be spelled as one here is).
+    std::string key() const;
+
+    // ---- a remote link (Kind::Remote)
+    // Its address as given (ssh://...), its title's "host:path" (the folder
+    // as the address names it, ~ kept), and the file the address named
+    // (spelled under folder(), as the host resolved it), "" for a folder.
+    const std::string& address() const { return address_; }
+    const std::string& label() const { return label_; }
+    const std::string& askedFile() const { return askedFile_; }
+    // Why the connection went (ssh's status and last words, in the
+    // window's words), once lost.
+    const std::string& failure() const { return failure_; }
+    // A file's text read through the host (FsRead "read", piece by piece,
+    // decoded as the Mac decodes a file): nil text when it cannot be read
+    // or does not read as text (MCDiskText's rules), tooLarge past 64 MB.
+    // Never a stamp: the file is on the other machine. Waits on the host.
+    MCDiskText *readText(const std::string &path);
 
     // Told once, on the main queue, when the host goes; the number takes it
     // off again.
@@ -163,12 +188,20 @@ public:
 private:
     friend std::shared_ptr<Link> forFolder(const std::string& root);
     friend std::shared_ptr<Link> processLink();
+    friend std::shared_ptr<Link> forRemote(const std::string& address, std::string* why);
     Link() = default;
     Held free(bool all, const std::string& root);
     bool startSocket(std::string* why);
+    bool startRemote(std::weak_ptr<Link> self, std::string* why);
+    // The client made and spoken through `link`, its messages dispatched on
+    // the main queue through `self`; false (nothing kept) when the host's
+    // Welcome does not come within `timeoutMs`.
+    bool attachClient(std::unique_ptr<Shared::HostLink> link, std::weak_ptr<Link> self, int timeoutMs);
 
     Kind kind_ = Kind::InProcess;
     std::string folder_, socketPath_;
+    std::string address_, label_, machine_, askedFile_, failure_;
+    Shared::SshTarget target_;
     pid_t startedHost_ = 0;
     Shared::Client* client_ = nullptr;            // the process's, or owned_'s
     std::unique_ptr<Shared::Client> owned_;
@@ -187,6 +220,15 @@ private:
 // is made (the windows on the old one move to it).
 std::shared_ptr<Link> forFolder(const std::string& root);
 std::shared_ptr<Link> processLink();
+// A window over SSH (stage 8): `address` is ssh://[user@]host[:port]/path.
+// The live link for that machine and path when there is one, else a new
+// one: the user's ssh ($MUTIBLE_SSH names another program, for the checks)
+// running `mutible host --stdio <path>` there, attached to as a renderer
+// over its pipes. Null, with why in the window's words (ssh needed a
+// password or a host key confirmed, mutible missing or too old there, ssh's
+// own last line), when it cannot be had. Waits for the host's Welcome (at
+// most 30 s: ssh's connection).
+std::shared_ptr<Link> forRemote(const std::string& address, std::string* why);
 // The live folder link whose folder holds `path`, else the process's: for a
 // document or terminal made outside a window's own calls.
 std::shared_ptr<Link> linkForPath(const std::string& path);

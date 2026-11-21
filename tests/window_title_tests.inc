@@ -91,4 +91,23 @@ static void testWindowTitle() {
         in.focus = Focus::Document;
         CHECK(title(in) == "● ~/work/src/main.cpp — mutible  3 of 4 done");
     }
+
+    GROUP("window-title:remote");
+    {
+        // A window over SSH (stage 8): its host and path after what it
+        // shows, or alone where the folder's name would be.
+        using namespace WindowTitle;
+        Input in;
+        in.folder = "/home/eric/proj";
+        in.home = "/Users/me";
+        in.remote = "pi:~/proj";
+        CHECK(title(in) == "pi:~/proj — mutible");
+        in.path = "/home/eric/proj/src/main.c";
+        in.dirty = true;
+        CHECK(title(in) == "● src/main.c — pi:~/proj — mutible");
+        in.focus = Focus::Terminal;
+        CHECK(title(in) == "pi:~/proj — mutible");
+        in.pane = "htop";
+        CHECK(title(in) == "htop — pi:~/proj — mutible");
+    }
 }

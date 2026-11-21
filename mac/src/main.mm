@@ -348,9 +348,12 @@ NSURL * (^MCDockFolderChooser)(void) = nil;
 // paths, each ended by a NUL. Only files in that folder of this user's own
 // temporary folder are read, and each is deleted once read.
 // A request may instead be "web" and web addresses (`mutible
-// https://...`), which go to `web`, the browser window's.
+// https://...`), which go to `web`, the browser window's; or "ssh" and
+// ssh:// addresses (`mutible ssh://host/path`, stage 8), which go to
+// `remote`, each a window on that machine's host.
 static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
-                                              NSMutableArray<NSString *> *web) {
+                                              NSMutableArray<NSString *> *web,
+                                              NSMutableArray<NSString *> *remote) {
     if (!url.isFileURL || ![url.pathExtension isEqualToString:@"mutible-open"]) return nil;
     NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"Mutible-open"]
                         .stringByResolvingSymlinksInPath;
@@ -366,6 +369,11 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
     if ([fields[1] isEqualToString:@"web"]) {
         for (NSUInteger i = 2; i < fields.count; i++)
             if (MCIsWebAddress(fields[i])) [web addObject:fields[i]];
+        return @[];
+    }
+    if ([fields[1] isEqualToString:@"ssh"]) {
+        for (NSUInteger i = 2; i < fields.count; i++)
+            if ([fields[i].lowercaseString hasPrefix:@"ssh://"]) [remote addObject:fields[i]];
         return @[];
     }
     *reuse = [fields[1] isEqualToString:@"reuse"];
@@ -388,15 +396,18 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
     // Web addresses and bookmark files, opened together in the browser
     // window's tabs after the rest (+Bookmarks).
     NSMutableArray<NSString *> *web = [NSMutableArray array];
+    // ssh:// addresses: windows on other machines (stage 8), after the rest.
+    NSMutableArray<NSString *> *remote = [NSMutableArray array];
     NSMutableArray<NSURL *> *all = [NSMutableArray array];
     for (NSURL *url in urls) {
-        NSArray<NSString *> *requested = MCTakeOpenRequest(url, &reuse, web);
+        NSArray<NSString *> *requested = MCTakeOpenRequest(url, &reuse, web, remote);
         if (!requested) { [all addObject:url]; continue; }
         for (NSString *p in requested) [all addObject:[NSURL fileURLWithPath:p]];
     }
     for (NSURL *url in all) {
         if (!url.isFileURL) {
-            if (MCIsWebAddress(url.absoluteString ?: @"")) [web addObject:url.absoluteString];
+            if ([url.scheme.lowercaseString isEqualToString:@"ssh"]) [remote addObject:url.absoluteString];
+            else if (MCIsWebAddress(url.absoluteString ?: @"")) [web addObject:url.absoluteString];
             continue;
         }
         // Resolved, as a path on the command line is, so that /tmp and
@@ -409,7 +420,7 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
         if (address) { [web addObject:address]; continue; }
         [(dir ? folders : files) addObject:p];
     }
-    if (!folders.count && !files.count && !web.count) return;
+    if (!folders.count && !files.count && !web.count && !remote.count) return;
     // Before any "Save changes?" alert, so it is not behind another app.
     if (!MCBenchActive()) [NSApp activateIgnoringOtherApps:YES];
 
@@ -460,6 +471,40 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
     }
     [front.window makeKeyAndOrderFront:nil];
     if (web.count) [self openWebAddressesInBrowserWindow:web];
+    for (NSString *address in remote) [self openRemoteAddress:address];
+}
+
+// `mutible ssh://[user@]host[:port]/path` (stage 8, docs/notes/session-host.md,
+// "The Mac over SSH"): a window whose files, terminals and saving are the
+// other machine's, through `mutible host --stdio` there over the user's own
+// ssh. The window already on that host and folder when there is one. The
+// address naming a file shows it. When ssh or the host there cannot be
+// had, an alert says why (run `ssh host` once in a terminal, mutible not
+// installed there, ...) and nothing opens.
+- (EditorController *)openRemoteAddress:(NSString *)address {
+    std::string why;
+    std::shared_ptr<MCSession::Link> link = MCSession::forRemote(address.UTF8String ?: "", &why);
+    if (!link) {
+        NSAlert *a = [NSAlert new];
+        a.messageText = [NSString stringWithFormat:@"Could not open %@", address];
+        a.informativeText = @(why.c_str()) ?: @"";
+        [a runModal];
+        return nil;
+    }
+    NSString *folder = @(link->folder().c_str());
+    NSString *key = @(link->key().c_str());
+    EditorController *c = nil;
+    for (EditorController *x in self.controllers)
+        if (x.sessionIsRemote && [x.sessionRemoteKey isEqualToString:key] && !x.sessionHostLost) c = x;
+    if (!c) {
+        c = [[EditorController alloc] initWithRootPath:folder];
+        [c useRemoteSessionLink:[[MCSessionLinkRef alloc] initWithLink:link]];
+        [self.controllers addObject:c];
+        [c showWindow];
+    }
+    [c.window makeKeyAndOrderFront:nil];
+    if (!link->askedFile().empty() && [c showFile:@(link->askedFile().c_str())]) [c focusActiveDocument];
+    return c;
 }
 
 // `mutible https://...` and bookmarks opened from Finder: tabs in the

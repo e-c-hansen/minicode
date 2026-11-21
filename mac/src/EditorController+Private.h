@@ -826,6 +826,12 @@ extern NSUInteger MCDirtyFromHostMarks;
 - (BOOL)sessionKeepsUnsaved;
 - (void)sessionDropOnClose:(NSArray<MCTab *> *)tabs;
 - (void)reconnectSessionHost:(id)sender;
+// Stage 8, a window over SSH: a tab's file read through the remote host
+// (nil when the window is on this Mac: read the disk), and whether a tab
+// needs a document on a host whatever editor.session-host says
+// (MCTabOwner: every tab of a remote window does).
+- (MCDiskText *)sessionRemoteTextOf:(MCTab *)t;
+- (BOOL)tabNeedsSession:(MCTab *)t;
 @end
 
 // EditorController+SessionBrowser.mm: what the window's record carries

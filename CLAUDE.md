@@ -405,7 +405,7 @@ session has a display. Check first.
   git_gutter, line_history;
   agents and control: agents, agent_panel, agent_places, agent_task, agentcommands,
   agent_autosave, attention, control, browserpages, browser_tabs, browser_find, bookmarks,
-  idelink, processes, session_web, session_browser, host_reattach;
+  idelink, processes, session_web, session_browser, host_reattach, remote_ssh;
   run only when named: _backups_writer, _backups_restore, _restore_writer,
   _restore_reader.
   A suite's file is usually its name in CamelCase; the exceptions are

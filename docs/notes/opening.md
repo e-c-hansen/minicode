@@ -46,7 +46,10 @@ found through that list.
   paths go to a running app with `open -b ai.ible.mutible`, else `open -a`
   its own bundle (VS Code's `code` rules); `-r` writes a request file to
   `$TMPDIR/Mutible-open/*.mutible-open` (read by `MCTakeOpenRequest` only
-  from the app's own temporary folder); `-n` runs the binary detached;
+  from the app's own temporary folder), as do web addresses (mode "web")
+  and `ssh://` addresses (mode "ssh", stage 8: each opens a window on that
+  machine's `mutible host --stdio` through `openRemoteAddress:`;
+  docs/notes/session-host.md, "The Mac over SSH"); `-n` runs the binary detached;
   "running" is `ps -axo comm=` ending in `/Mutible` (pgrep found nothing from
   Claude Code's shell); `MUTIBLE_LAUNCHER_DRYRUN=1` prints the command.
 - **Never `lsregister` or `open` a build in the repo or a worktree**: Finder

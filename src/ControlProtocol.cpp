@@ -506,7 +506,13 @@ const Help kHelp[] = {
      "    also serves a read-only view of the session to a browser on\n"
      "    127.0.0.1:PORT, and prints the address to open, with its token;\n"
      "    with --edit as well, the page may type into the documents and\n"
-     "    terminals and undo, which is control of this machine.\n"},
+     "    terminals and undo, which is control of this machine.\n"
+     "mutible host --stdio PATH\n"
+     "    The same for one renderer on standard input and output instead of a\n"
+     "    socket, ending when its input closes: what a Mac window opened as\n"
+     "    `mutible ssh://host/path` runs here through ssh. PATH is a folder,\n"
+     "    or a file whose folder it serves; a leading ~ is this machine's home.\n"
+     "    Terminals run in this machine's login shell and environment.\n"},
     {"attach",
      "mutible attach --folder DIR --dump\n"
      "mutible attach --folder DIR --web PORT [--edit]\n"
@@ -647,6 +653,13 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
             }
             if (takeValue(a, i, "folder", v, c.error)) {
                 if (c.error.empty()) c.args.set("folder", absolutePath(v, cwd, home));
+            } else if (sub == "host" && takeValue(a, i, "stdio", v, c.error)) {
+                // Over stdin and stdout, one renderer (stage 8: the Mac over
+                // SSH): a folder, or a file whose folder it serves. A
+                // leading ~ is this machine's home, as the window's address
+                // names it.
+                if (c.error.empty() && v.empty()) c.error = "--stdio needs a folder or a file";
+                if (c.error.empty()) c.args.set("stdio", absolutePath(v, cwd, home));
             } else if (sub == "host" && takeValue(a, i, "idle-minutes", v, c.error)) {
                 char* end = nullptr;
                 const double m = v.empty() ? -1 : std::strtod(v.c_str(), &end);
@@ -668,7 +681,10 @@ CliCommand parseCommandLine(const std::vector<std::string>& argvIn, const std::s
                           " for " + sub;
             }
         }
-        if (c.error.empty() && !c.args.has("folder")) c.error = sub + " needs --folder";
+        if (c.error.empty() && c.args.has("stdio") && (c.args.has("folder") || c.args.has("web")))
+            c.error = "--stdio goes with neither --folder nor --web";
+        if (c.error.empty() && !c.args.has("folder") && !c.args.has("stdio"))
+            c.error = sub == "host" ? "host needs --folder or --stdio" : sub + " needs --folder";
         if (c.error.empty() && sub == "attach" && c.args.has("dump") == c.args.has("web"))
             c.error = "attach needs --dump or --web PORT (one of them)";
         if (c.error.empty() && c.args.has("edit") && !c.args.has("web"))

@@ -27,6 +27,9 @@
 // when that flips and the tab's text was the host's then (stage 7).
 - (void)tab:(MCTab *)t writtenByHost:(id)write;
 - (void)tab:(MCTab *)t dirtyFromHost:(BOOL)dirty;
+// Whether the tab's text goes on a host whatever editor.session-host says:
+// a window over SSH (stage 8), whose files are the remote host's.
+- (BOOL)tabNeedsSession:(MCTab *)t;
 @end
 
 // ---------------------------------------------------------------------------

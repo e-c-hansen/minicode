@@ -404,6 +404,16 @@ public:
     // last with "done". Whether the host takes them (its Welcome's flag 8),
     // known once the Welcome is taken.
     bool hostSearches() const { return (hostFlags_ & 8) != 0; }
+    // Whether the host runs a terminal in its own login shell and
+    // environment (its Welcome's flag 32, TermSpec's hostShell): what a
+    // window on another machine needs (stage 8, the Mac over SSH).
+    bool hostRunsOwnShell() const { return (hostFlags_ & 32) != 0; }
+    // The folder the host serves (its Welcome's name: a headless host's,
+    // resolved on its machine; "" for an app's own), and what else its
+    // Welcome said (its json: `mutible host --stdio` given a file names it,
+    // {"file": path}). Known once the Welcome is taken; main thread.
+    const std::string& hostFolder() const { return hostFolder_; }
+    const Json& welcomeJson() const { return welcome_; }
     // Sends one: its answers come as takeStream(req) once dispatched. 0,
     // sending nothing, to a host that does not take them.
     std::uint64_t requestStream(std::uint64_t window, Json request);
@@ -458,6 +468,8 @@ private:
     std::function<void(DocId, bool)> dirtyListener_;
     std::function<void(DocId, std::uint64_t, const Json&)> writtenListener_;
     int hostFlags_ = 0;   // the Welcome's
+    std::string hostFolder_;   // the Welcome's name
+    Json welcome_;             // the Welcome's json
     Send send_;
     ClientId id_ = 0;
     std::uint64_t idBase_ = 0, idsUsed_ = 0;

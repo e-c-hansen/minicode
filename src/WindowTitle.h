@@ -39,6 +39,10 @@ struct Input {
     std::string folder;      // the window's folder, absolute; "" for none
     std::string home;        // the user's home folder; "" for none
     std::string pane;        // Terminal: its title; Browser: the page's title
+    // A window on another machine (stage 8, the Mac over SSH): "host:path",
+    // shown after what the window shows ("main.c — pi:~/proj — mutible"),
+    // or alone in place of the folder's name.
+    std::string remote;
 };
 
 namespace detail {
@@ -96,7 +100,11 @@ inline std::string subject(const Input &in) {
 
 // The whole title.
 inline std::string title(const Input &in) {
-    const std::string s = subject(in);
+    std::string s = subject(in);
+    if (!in.remote.empty()) {
+        const std::string folderName = in.folder.empty() ? "" : detail::lastPart(in.folder);
+        s = s.empty() || s == folderName ? in.remote : s + " — " + in.remote;
+    }
     if (s.empty()) return "mutible";
     const bool document = in.focus == Focus::Document;
     std::string out = document && in.dirty ? "● " : "";

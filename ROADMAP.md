@@ -9,8 +9,9 @@ up to date with 1.5.15 and the round-7 fixes on 2026-11-08.
 - **A debugger.** Decided against (2026-11-05).
 - **Windows.** Not planned unless that is decided; the core is portable C++,
   but there is no Windows front end of any kind.
-- **Under consideration, not planned**: editing with others at once, and
-  working on a remote machine's folder.
+- **Under consideration, not planned**: editing with others at once.
+  Working on another machine's folder from the Mac is stage 8 of the
+  shared sessions, below.
 
 ## Left to the owner
 
@@ -38,7 +39,7 @@ says what each built and what is left.
 | 6 | `mutible host`, attach, reattach, the host's own backups | Done on both; the default flips later |
 | 6b, 8b | The browser's view, read-only and editable | Done (R3 to R7) |
 | 7 | Workspace I/O in the host | Started: the tree's listings and file reads (2026-11-18), saving from a headless host's page with the host's dirty state (2026-11-21), the Mac's tabs saving through the host, so a page may save what a Mac window shows (2026-11-21), then GTK's the same way (2026-11-21), the host watching the disk (inotify, FSEvents): a page's tree and Source Control follow it, and a clean document no window has open follows its file, one with unsaved changes marked changed on disk with Reload, on the Mac's in-process host and GTK's too (2026-11-21), and Quick Open and Find in Folder on the page as host reads on workers of the host's own (2026-11-21), then the page's writes: New File, Save As held to the folder, and Replace in Folder with a box per line, open documents edited as one step through the host and other files rewritten on a worker, a file changed since the search left alone (2026-11-21). Next: the windows hearing the host's watching instead of their own, GTK's page with New File and Save As, the listings and the writes on a worker too |
-| 8 | The Mac over SSH | Not started |
+| 8 | The Mac over SSH | Started (2026-11-21): `mutible ssh://host/path` opens a Mac window on `mutible host --stdio` run there through the user's own ssh (BatchMode, a clear sentence when ssh would ask something or mutible is missing or too old there); the window's files are read and saved through that host and its terminals run there in the remote's login shell and environment; a dropped connection keeps the text and says so, and Reconnect opens everything there again. Next: a lasting host behind the stdio end (terminals and undo across a drop, reconnecting by itself), the window's tree, Quick Open and Find in Folder through the host's reads, the remote's disk watching, the integration's marks over SSH, then stage 9's git and servers there |
 | 9 | Git, language servers, formatters, agents and LaTeX into the host | Not started |
 
 ## For daily work on the Mac

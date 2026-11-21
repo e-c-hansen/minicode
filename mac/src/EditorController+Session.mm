@@ -146,10 +146,14 @@ static char kSessionWindowKey;
     t.bom = r.bom;
     if (!r.note.empty()) [self showStatusNote:@(r.note.c_str())];
     // The text the file holds: the tab's, unless someone's edit came in
-    // after the host wrote (then the file's, as written).
-    NSString *saved = r.inStep ? [t.currentText copy] : MCReadDiskText(t.currentPath, ULLONG_MAX).text;
+    // after the host wrote (then the file's, as written). A file on another
+    // machine (stage 8) has no stamp here and is not read here.
+    const BOOL remote = [self sessionIsRemote];
+    NSString *saved = r.inStep ? [t.currentText copy] : remote ? nil : MCReadDiskText(t.currentPath, ULLONG_MAX).text;
     if (!saved) saved = text;
-    MCDiskStamp *stamp = r.written.exists ? MCDiskStampFromFileStamp(r.written) : MCStampOfFile(t.currentPath);
+    MCDiskStamp *stamp = remote ? nil
+                         : r.written.exists ? MCDiskStampFromFileStamp(r.written)
+                                            : MCStampOfFile(t.currentPath);
     [self tab:t tookSaveOf:saved stamp:stamp dirty:![saved isEqualToString:t.currentText ?: @""]];
     return YES;
 }
@@ -160,6 +164,7 @@ static char kSessionWindowKey;
 - (void)tab:(MCTab *)t writtenByHost:(id)write {
     MCSessionWrite *w = write;
     if (![self holdsTab:t] || !t.loaded || ![self tabHasTextToWrite:t]) return;
+    if ([self sessionIsRemote]) return;   // no stamps here of a file on another machine
     if (w.path && ![w.path isEqualToString:t.currentPath ?: @""]) return;   // renamed since
     // Written over again since: a change made outside, as the disk checks
     // see it.
@@ -219,8 +224,57 @@ NSUInteger MCDirtyFromHostMarks = 0;
     objc_setAssociatedObject(self, &kSessionWindowKey, w, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [self wireSessionWindow:w];
     [w start];
-    if (wasLost) [EditorController moveWindowsToLink:w.link folder:w.link.link->folder()];
+    if (wasLost) [EditorController moveWindowsToLink:w.link folder:w.link.link->key()];
     return w;
+}
+
+// ---------------------------------------------------- a window over SSH (stage 8)
+// docs/notes/session-host.md, "The Mac over SSH (stage 8)": the window is a
+// renderer of `mutible host --stdio` on the other machine. Its tabs' files
+// are read through that host (FsRead "read") and saved by it, its
+// terminals run there, and nothing of its folder is looked for on this
+// Mac's disk: no stamps, no FSEvents, no restored session.
+
+- (void)useRemoteSessionLink:(id)link {
+    MCSessionLinkRef *ref = link;
+    if (!ref.link || [self existingSessionWindow]) return;
+    MCSessionWindow *w = [[MCSessionWindow alloc] initWithLink:ref folder:_root.path];
+    objc_setAssociatedObject(self, &kSessionWindowKey, w, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [self wireSessionWindow:w];
+    [w start];
+}
+
+- (BOOL)sessionIsRemote {
+    MCSessionWindow *w = [self existingSessionWindow];
+    return w && w.link.link && w.link.link->kind() == MCSession::Link::Kind::Remote;
+}
+
+- (NSString *)sessionRemoteLabel {
+    return [self sessionIsRemote] ? @([self existingSessionWindow].link.link->label().c_str()) : nil;
+}
+
+- (NSString *)sessionRemoteKey {
+    return [self sessionIsRemote] ? @([self existingSessionWindow].link.link->key().c_str()) : nil;
+}
+
+- (BOOL)sessionHostLost {
+    MCSessionWindow *w = [self existingSessionWindow];
+    return w && w.link.link && w.link.link->lost();
+}
+
+- (NSString *)sessionRemoteAddress {
+    return [self sessionIsRemote] ? @([self existingSessionWindow].link.link->address().c_str()) : nil;
+}
+
+- (MCDiskText *)sessionRemoteTextOf:(MCTab *)t {
+    if (![self sessionIsRemote]) return nil;
+    return [self existingSessionWindow].link.link->readText(t.currentPath.fileSystemRepresentation ?: "");
+}
+
+// Every tab of a remote window has its document on the remote host, the
+// setting or not: the host is where its file is.
+- (BOOL)tabNeedsSession:(MCTab *)t {
+    return [self sessionIsRemote];
 }
 
 - (void)wireSessionWindow:(MCSessionWindow *)w {
@@ -290,6 +344,9 @@ NSUInteger MCDirtyFromHostMarks = 0;
 - (void)attachSessionHeld {
     MCSessionWindow *w = [self sessionWindow];
     if (!w || w.link.link->lost()) return;
+    // `mutible host --stdio` starts afresh with each connection: nothing
+    // held, and nothing of it is on this Mac's disk to compare with.
+    if (w.link.link->kind() == MCSession::Link::Kind::Remote) return;
     const MCSession::Held h = [w takeHeld];
     for (const MCSession::HeldDoc &d : h.docs) {
         NSString *path = d.path.empty() ? [self untitledPathBeside:h] : @(d.path.c_str());
@@ -455,6 +512,10 @@ NSUInteger MCDirtyFromHostMarks = 0;
     for (MCSession::Link *l : links)
         if (!l->lost()) l->client().settle(5000);
     [w.reconnectButton removeFromSuperview];
+    // A window over SSH ends its connection with it (stage 8): `mutible
+    // host --stdio` keeps nothing for a next window, and ends as its input
+    // closes, its shells with it.
+    if (w.link.link->kind() == MCSession::Link::Kind::Remote) w.link.link->detach();
 }
 
 // ---------------------------------------------------- the host gone, and back
@@ -462,6 +523,18 @@ NSUInteger MCDirtyFromHostMarks = 0;
 - (void)sessionHostWentAway {
     MCSessionWindow *w = [self existingSessionWindow];
     if (!w || _closing) return;
+    if (w.link.link->kind() == MCSession::Link::Kind::Remote) {
+        // Over SSH: the connection dropped. The text stays in the window;
+        // Reconnect opens it on the other machine again.
+        const std::string &why = w.link.link->failure();
+        [self flashStatus:[NSString stringWithFormat:@"Disconnected from %s%s%s Your text is kept here; Reconnect "
+                                                     @"opens it there again",
+                                                     w.link.link->label().c_str(), why.empty() ? "." : ": ",
+                                                     why.c_str()]];
+        [self showReconnectButton:YES];
+        [self refreshWindowTitle];
+        return;
+    }
     [self flashStatus:[NSString stringWithFormat:@"The session's host for %s went away: undo is off in its "
                                                  @"files and its terminals ended",
                                                  w.link.link->folder().c_str()]];
@@ -499,6 +572,19 @@ NSUInteger MCDirtyFromHostMarks = 0;
         [self showReconnectButton:NO];
         return;
     }
+    if (w.link.link->kind() == MCSession::Link::Kind::Remote) {
+        // Over SSH: the same address again. A host that cannot be had says
+        // why and the window waits, its text kept, for another try.
+        std::string why;
+        std::shared_ptr<MCSession::Link> link = MCSession::forRemote(w.link.link->address(), &why);
+        if (!link) {
+            [self flashStatus:[NSString stringWithFormat:@"Could not reconnect to %s: %s",
+                                                         w.link.link->label().c_str(), why.c_str()]];
+            return;
+        }
+        [EditorController moveWindowsToLink:[[MCSessionLinkRef alloc] initWithLink:link] folder:w.link.link->key()];
+        return;
+    }
     // A host that cannot be had again: the process's own, so nothing typed
     // is lost either way.
     const std::string folder = w.link.link->folder();
@@ -526,6 +612,7 @@ NSUInteger MCDirtyFromHostMarks = 0;
 - (NSString *)hostSavedTextOf:(MCTab *)t {
     if (t.untitled || t.gone) return @"";
     if (t.loaded) return t.savedText ?: @"";
+    if ([self sessionIsRemote]) return nil;   // its file is on the other machine
     MCDiskText *disk = MCReadDiskText(t.currentPath, ULLONG_MAX);
     if (disk.text) return disk.text;
     return [NSFileManager.defaultManager fileExistsAtPath:t.currentPath] ? nil : @"";
@@ -534,19 +621,25 @@ NSUInteger MCDirtyFromHostMarks = 0;
 - (void)moveToSessionLink:(MCSessionLinkRef *)link folder:(const std::string &)folder {
     MCSessionWindow *w = [self existingSessionWindow];
     if (!w || _closing || w.link.link == link.link) return;
-    if (!w.link.link->lost() || w.link.link->folder() != folder) return;
+    // `folder` is the lost link's key(): its folder, and for a host over
+    // SSH its machine too.
+    if (!w.link.link->lost() || w.link.link->key() != folder) return;
     [w moveTo:link folder:w.folder];
     [self.sessionBrowser stop];   // its host went: the next Show serves the new one
     for (MCTab *t in [self tabs]) {
         MCSessionDoc *d = t.session;
-        if (!d || !d.link.link->lost() || d.link.link->folder() != folder) continue;
+        if (!d || !d.link.link->lost() || d.link.link->key() != folder) continue;
         [d rehostOn:link saved:[self hostSavedTextOf:t]];
     }
     for (TerminalView *t in self.terminalPanel.terminals)
-        if (t.sessionLink && t.sessionLink.link->lost() && t.sessionLink.link->folder() == folder) [t rehostOn:link];
+        if (t.sessionLink && t.sessionLink.link->lost() && t.sessionLink.link->key() == folder) [t rehostOn:link];
     [self showReconnectButton:NO];
     [w report];
-    if (link.link->kind() == MCSession::Link::Kind::Socket)
+    [self refreshWindowTitle];
+    if (link.link->kind() == MCSession::Link::Kind::Remote)
+        [self flashStatus:[NSString stringWithFormat:@"Connected to %s again: your files are open there again",
+                                                     link.link->label().c_str()]];
+    else if (link.link->kind() == MCSession::Link::Kind::Socket)
         [self flashStatus:[NSString stringWithFormat:@"The session's host for %s is back: your files are open on "
                                                      @"it again",
                                                      folder.c_str()]];

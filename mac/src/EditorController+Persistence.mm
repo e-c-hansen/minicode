@@ -1051,6 +1051,12 @@ static NSString *MCTabEncodingName(MCTab *t) {
         // Text an input method is still composing is not written; the edit
         // that ends the composition schedules the next auto-save.
         if (t == _activeTab && self.textView.hasMarkedText) continue;
+        // A file on another machine (stage 8): its host writes it, and this
+        // Mac's disk has nothing to say about it.
+        if ([self sessionIsRemote]) {
+            [self writeTabForAutoSave:t];
+            continue;
+        }
         MCDiskStamp *disk = MCStampOfFile(t.currentPath);
         if (!disk && t.fileModDate) {   // deleted or moved: marked, not written again
             [self tabWentMissing:t];

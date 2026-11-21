@@ -1146,6 +1146,24 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
     if ([self hostWritesText:text ofTab:t])
         return [self writeTextThroughHost:text toTab:t interactive:interactive failure:failure];
     NSString *name = t.currentPath.lastPathComponent;
+    // A file on another machine is written by its host alone (stage 8):
+    // never this Mac's file at that path. With the connection gone the save
+    // waits for Reconnect, the text kept here.
+    if ([self sessionIsRemote]) {
+        NSString *why = [NSString stringWithFormat:@"It is on %@, and the connection there is lost. Reconnect "
+                                                   @"(in the status bar) to save it there; your text is kept here.",
+                                                   self.sessionRemoteLabel];
+        if (failure) *failure = why;
+        else if (interactive) {
+            NSAlert *a = [NSAlert new];
+            a.messageText = [NSString stringWithFormat:@"“%@” could not be saved.", name];
+            a.informativeText = why;
+            [a runModal];
+        } else {
+            [self showStatusNote:[NSString stringWithFormat:@"Could not auto-save %@: %@", name, why]];
+        }
+        return NO;
+    }
     std::string bytes, error;
     NSString *unheld = nil;
     const MCTextEncoding encoding = MCEncodingToWrite(text, t.encoding, &unheld);

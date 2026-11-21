@@ -352,6 +352,14 @@ void Host::onHello(ClientId c, Message& m) {
     // And writes for a page: Save As (DocSave's "saveAs"), a new untitled
     // document (DocOpen flag 2), Replace in Folder (FsRead's "replace").
     w.flag |= 16;
+    // And runs a terminal in this machine's own login shell and environment
+    // (TermSpec's hostShell): a renderer on another machine (stage 8).
+    w.flag |= 32;
+    if (!askedFile_.empty()) {
+        Json j = Json::object();
+        j.set("file", Json(askedFile_));
+        w.json = std::move(j);
+    }
     send(c, std::move(w));
 }
 
@@ -1776,6 +1784,8 @@ bool Host::openPty(ClientId c, TermId id, const TermSpec& spec, std::string* err
     p.cwd = spec.cwd;
     p.cols = std::max(2, spec.cols);
     p.rows = std::max(1, spec.rows);
+    // A renderer on another machine asks for this machine's own shell.
+    if (spec.hostShell) p = ownShellSpec(ownShell_, ownEnv_, spec.env, spec.cwd, p.cols, p.rows);
     std::unique_ptr<Pty> pty = Pty::spawn(p, error);
     if (!pty) return false;
     Term& t = terms_[id];
@@ -2221,6 +2231,26 @@ void SessionHost::lookAtWatch() {
     }
     if (!watcher_) watcher_ = DiskWatch::Watcher::make();
     if (watcher_) watcher_->watch(roots);
+}
+
+void SessionHost::setAskedFile(std::string file) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        queue_.push_back(Item{0, Message(), [this, f = std::move(file)] { host_.setAskedFile(f); }});
+    }
+    wake();
+}
+
+void SessionHost::setOwnShell(std::vector<std::string> env, std::string shell) {
+    auto shared = std::make_shared<std::pair<std::vector<std::string>, std::string>>(std::move(env),
+                                                                                       std::move(shell));
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        queue_.push_back(Item{0, Message(), [this, shared] {
+                                  host_.setOwnShell(std::move(shared->first), std::move(shared->second));
+                              }});
+    }
+    wake();
 }
 
 void SessionHost::keepBackups(Host::BackupKeeping k) {

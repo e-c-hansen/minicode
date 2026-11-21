@@ -672,6 +672,9 @@ struct MCHostTermListener : Shared::Client::TermListener {
     BOOL _integrated;            // the shell sends the integration's marks: the
                                  // file was written and the shell is still zsh
     BOOL _integrationFile;       // the shell integration file was written
+    BOOL _remote;                // its shell is on another machine (stage 8, a
+                                 // window over SSH): no pid of this Mac's, no
+                                 // integration, the remote's own shell
     NSTimer *_shellWatch;        // while a command runs: is the shell still zsh?
     struct winsize _winsize;
     CGFloat _fontSize;           // the font size the views were last given
@@ -753,9 +756,13 @@ struct MCHostTermListener : Shared::Client::TermListener {
         _historyIdx = 0;
         _master = -1;
         _lineMode = [AppSettings shared].settings.terminalLineMode();
+        // A window over SSH (stage 8): the shell is the remote host's, on
+        // the grid always (line mode reads a pty of this Mac's).
+        _remote = place.link.link && place.link.link->kind() == MCSession::Link::Kind::Remote;
+        if (_remote) _lineMode = NO;
         // Line mode keeps its own pty: its log reads the tty's echo flag
         // and modes directly, and it is a fallback for a release.
-        _onHost = !_lineMode && MCSessionHostEnabled();
+        _onHost = _remote || (!_lineMode && MCSessionHostEnabled());
         if (_onHost) {
             MCSessionLinkRef *ref = place.link;
             if (!ref)
@@ -1575,7 +1582,9 @@ static std::map<Shared::TermId, std::string> &HostNonces() {
 
 - (NSString *)runningCommand { return self.runningCommands.firstObject; }
 
-- (pid_t)shellPid { return _shellPid; }
+// A shell on another machine has no pid of this Mac's (the Processes
+// panel, the close question's names): 0.
+- (pid_t)shellPid { return _remote ? 0 : _shellPid; }
 
 - (pid_t)foregroundJob {
     if (_closed || _shellPid <= 0 || ![self ptyOpen]) return 0;
@@ -1593,6 +1602,7 @@ static std::map<Shared::TermId, std::string> &HostNonces() {
 // the pid that names it and whether all of it is stopped.
 - (std::vector<std::pair<pid_t, BOOL>>)backgroundJobGroups {
     std::vector<std::pair<pid_t, BOOL>> none;
+    if (_remote) return none;   // its jobs are another machine's processes
     if (_shellPid <= 0 || ![self ptyOpen] || (_integrated && !_seenPrompt)) return none;
     pid_t fg = [self ptyForeground];
     // The pty, as the shell's controlling terminal (macOS answers nothing
@@ -1665,7 +1675,7 @@ static std::map<Shared::TermId, std::string> &HostNonces() {
     NSString *typed = [_runningCommand stringByTrimmingCharactersInSet:
                        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (typed.length) return typed;
-    if (other) {
+    if (other && !_remote) {   // a remote pid names no process here
         char name[2 * MAXCOMLEN + 1] = {0};
         if (proc_name(fg, name, sizeof name) > 0) return @(name);
     }
@@ -1923,7 +1933,7 @@ static BOOL MCIsOtherShell(pid_t pid) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         TerminalView *s = weakSelf;
-        if (!s || s->_closed || s->_commandNumber != commandNumber || s->_atPrompt ||
+        if (!s || s->_closed || s->_remote || s->_commandNumber != commandNumber || s->_atPrompt ||
             ![s ptyOpen] || s->_shellPid <= 0)
             return;
         const pid_t fg = [s ptyForeground];
@@ -2496,10 +2506,12 @@ static NSString *MCBrowserHelperPath(void) {
 - (void)startShell {
     [self stopShell];
 
-    NSString *zdot = IntegrationDirectory(!_lineMode);
+    // The integration is a file of this Mac's, which a shell on another
+    // machine cannot read (stage 8): a remote shell runs without its marks.
+    NSString *zdot = _remote ? nil : IntegrationDirectory(!_lineMode);
     _integrated = zdot != nil;
     _integrationFile = _integrated;
-    if (!_integrated)
+    if (!_integrated && !_remote)
         [self note:@"Could not write the shell integration file; "
                     "commands still run, but without exit status or "
                     "directory tracking." color:0xF48771];
@@ -2633,6 +2645,16 @@ static NSString *MCBrowserHelperPath(void) {
         spec.rows = ws.ws_row;
         spec.scrollback = [AppSettings shared].settings.terminalScrollback();
         spec.nonce = nonce;
+        if (_remote) {
+            // The remote host's own login shell and environment (TermSpec's
+            // hostShell): this Mac's PATH, ZDOTDIR and helpers name nothing
+            // there. Only what the screen here needs goes over it.
+            spec.program.clear();
+            spec.argv.clear();
+            spec.env = {"TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=Mutible"};
+            spec.hostShell = true;
+            spec.nonce.clear();
+        }
         _hostTerm = [self hostClient].newId();   // from the client's range on the host
         if (_integrated) HostNonces()[_hostTerm] = nonce;
         _hostShell = Shared::TermShell();

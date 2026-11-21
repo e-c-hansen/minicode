@@ -476,6 +476,8 @@ void Client::process(Message&& m) {
     case Kind::Welcome:
         id_ = m.client;
         hostFlags_ = m.flag;
+        hostFolder_ = m.name;
+        welcome_ = m.json;
         if (m.v != idBase_) {
             idBase_ = m.v;
             idsUsed_ = 0;

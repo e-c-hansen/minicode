@@ -322,6 +322,11 @@ void Link::dispatch() {
                      folder_.empty() ? "" : " for ", folder_.c_str(), e.c_str());
     if (!client_->lost() || detached_ || lostTold_) return;
     lostTold_ = true;
+    // ssh's end, said in the window's words (the link reaped it before it
+    // told the client).
+    if (kind_ == Kind::Remote)
+        failure_ = Shared::explainSshFailure(target_, socket_ ? socket_->exitStatus() : -1,
+                                             socket_ ? socket_->stderrText() : std::string());
     os_log_error(SessionLog(), "the session's host for %{public}s went away (%{public}s)", folder_.c_str(),
                  socketPath_.c_str());
     const auto listeners = lostListeners_;   // a listener may take itself off
@@ -501,6 +506,19 @@ bool Link::startSocket(std::string *why) {
         }
     }
     kind_ = Kind::Socket;
+    if (!attachClient(std::move(link), Registry()[folder_], 5000)) {
+        *why = "the host at " + path + " did not welcome it";
+        socket_.reset();
+        owned_.reset();
+        client_ = nullptr;
+        return false;
+    }
+    socketPath_ = path;
+    startedHost_ = started;
+    return true;
+}
+
+bool Link::attachClient(std::unique_ptr<Shared::HostLink> link, std::weak_ptr<Link> weak, int timeoutMs) {
     owned_ = std::make_unique<Shared::Client>(Model::Unit::Utf16, "mac");
     owned_->setKeepsBackups(true);   // as the process's client: the windows keep their own
     HearHostSaves(owned_.get());
@@ -509,7 +527,6 @@ bool Link::startSocket(std::string *why) {
     // dispatches them, once per batch. The block holds the link weakly, so
     // a link let go meanwhile is simply not dispatched.
     queued_ = std::make_shared<std::atomic<bool>>(false);
-    std::weak_ptr<Link> weak = Registry()[folder_];
     std::shared_ptr<std::atomic<bool>> q = queued_;
     client_->setWake([q, weak] {
         if (q->exchange(true)) return;
@@ -520,17 +537,96 @@ bool Link::startSocket(std::string *why) {
     });
     link->connect(*client_);
     socket_ = std::move(link);
-    if (!client_->settle(5000) || !client_->idBase()) {
-        *why = "the host at " + path + " did not welcome it";
+    if (!client_->settle(timeoutMs) || !client_->idBase()) {
+        // Closed, not let go: a command's status and last words stay for
+        // the caller to say why, which then lets it go.
+        socket_->close();
+        return false;
+    }
+    return true;
+}
+
+std::string Link::key() const {
+    return kind_ == Kind::Remote ? machine_ + folder_ : folder_;
+}
+
+// `mutible host --stdio <path>` on the target, through the user's ssh (or
+// $MUTIBLE_SSH, the checks' stand-in), attached to over its pipes. False,
+// with why in the window's words, when its Welcome does not come or the
+// host there is too old for a window over SSH; nothing of it is kept then.
+bool Link::startRemote(std::weak_ptr<Link> self, std::string *why) {
+    std::string ssh = EnvString(@"MUTIBLE_SSH");
+    if (ssh.empty()) ssh = "/usr/bin/ssh";
+    std::vector<std::string> env;
+    NSDictionary<NSString *, NSString *> *e = MCEnvironment();
+    for (NSString *k in e) env.push_back(std::string(k.UTF8String ?: "") + "=" + (e[k].UTF8String ?: ""));
+    std::string error;
+    std::unique_ptr<Shared::HostLink> link = Shared::HostLink::spawn(Shared::sshCommand(target_, ssh), env, &error);
+    if (!link) {
+        *why = error;
+        return false;
+    }
+    Shared::HostLink *transport = link.get();
+    kind_ = Kind::Remote;
+    if (!attachClient(std::move(link), self, 30000)) {
+        // close() waited for ssh's end: its status and what it said.
+        *why = Shared::explainSshFailure(target_, transport->exitStatus(), transport->stderrText());
+        socket_.reset();
+        owned_.reset();
+        client_ = nullptr;
+        return false;
+    }
+    if (!client_->hostSavesForApps() || !client_->hostRunsOwnShell() || client_->hostFolder().empty()) {
+        *why = "mutible on " + target_.host + " is too old for a window over SSH. Upgrade it there, then open "
+               "the address again.";
         socket_->close();
         socket_.reset();
         owned_.reset();
         client_ = nullptr;
         return false;
     }
-    socketPath_ = path;
-    startedHost_ = started;
+    folder_ = client_->hostFolder();
+    askedFile_ = client_->welcomeJson()["file"].asString();
     return true;
+}
+
+MCDiskText *Link::readText(const std::string &path) {
+    MCDiskText *d = [MCDiskText new];
+    if (lost() || folder_.empty() || !Under(path, folder_) || path.size() <= folder_.size() + 1) return d;
+    const std::string rel = path.substr(folder_.size() + 1);
+    // 64 MB at most, as the host follows a file (SessionFiles.h's kMaxFollowed).
+    const std::size_t limit = std::size_t(64) << 20;
+    std::string bytes;
+    for (;;) {
+        Json ask = Json::object();
+        ask.set("op", Json("read"));
+        ask.set("path", Json(rel));
+        ask.set("offset", Json((double)bytes.size()));
+        ask.set("length", Json((double)Shared::kMaxReadBytes));
+        ask.set("hidden", Json(true));
+        std::string piece;
+        const std::uint64_t req = client_->requestRead(0, std::move(ask));
+        Json answer;
+        if (!req || !client_->settle(20000) || !client_->readAnswer(req, &answer, &piece)) {
+            if (req) client_->forgetRead(req);
+            return d;
+        }
+        if (!answer["error"].isNull()) return d;
+        const double size = answer["size"].asNumber(0);
+        if (size > (double)limit) {
+            d.tooLarge = YES;
+            return d;
+        }
+        bytes += piece;
+        if (piece.empty() || (double)bytes.size() >= size) break;
+    }
+    FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;
+    if (!FolderSearch::decodeFileText(&bytes, &encoding, &bom)) return d;
+    d.bom = bom;
+    d.encoding = (MCTextEncoding)encoding;
+    d.text = [[NSString alloc] initWithBytes:bytes.data() length:bytes.size() encoding:NSUTF8StringEncoding];
+    return d;
 }
 
 std::shared_ptr<Link> processLink() {
@@ -571,6 +667,47 @@ std::shared_ptr<Link> forFolder(const std::string &root) {
     return processLink();
 }
 
+// Every remote link, by its machine and path as the address named them,
+// while something holds it.
+static std::map<std::string, std::weak_ptr<Link>> &RemoteRegistry() {
+    static auto *r = new std::map<std::string, std::weak_ptr<Link>>();
+    return *r;
+}
+
+std::shared_ptr<Link> forRemote(const std::string &address, std::string *why) {
+    Shared::SshTarget t;
+    std::string error;
+    if (!Shared::parseSshUrl(address, &t, &error)) {
+        if (why) *why = error;
+        return nullptr;
+    }
+    const std::string name = Shared::sshMachineKey(t) + "\n" + t.path;
+    auto &reg = RemoteRegistry();
+    if (std::shared_ptr<Link> have = reg[name].lock(); have && !have->lost()) return have;
+    std::shared_ptr<Link> link(new Link());
+    link->target_ = t;
+    link->address_ = address;
+    link->machine_ = Shared::sshMachineKey(t);
+    reg[name] = link;   // before starting: its wake holds it by this
+    if (!link->startRemote(link, &error)) {
+        os_log_error(SessionLog(), "no window over ssh for %{public}s: %{public}s", address.c_str(), error.c_str());
+        reg.erase(name);
+        if (why) *why = error;
+        return nullptr;
+    }
+    // The title's "host:path": the folder as the address names it, so a
+    // file's address shows its folder.
+    Shared::SshTarget folder = t;
+    if (!link->askedFile_.empty()) {
+        const std::size_t slash = t.path.rfind('/');
+        folder.path = slash == std::string::npos ? "~" : slash == 0 ? "/" : t.path.substr(0, slash);
+    }
+    link->label_ = Shared::sshLabel(folder);
+    os_log(SessionLog(), "a window over ssh: %{public}s, the host's folder %{public}s", address.c_str(),
+           link->folder_.c_str());
+    return link;
+}
+
 std::shared_ptr<Link> linkForPath(const std::string &path) {
     if (!path.empty())
         for (auto &[folder, weak] : Registry())
@@ -589,14 +726,15 @@ bool folderLost(const std::string &root) {
 std::vector<std::shared_ptr<Link>> all() {
     std::vector<std::shared_ptr<Link>> out;
     if (gClient) out.push_back(processLink());
-    for (auto it = Registry().begin(); it != Registry().end();) {
-        if (std::shared_ptr<Link> l = it->second.lock()) {
-            out.push_back(l);
-            ++it;
-        } else {
-            it = Registry().erase(it);
+    for (auto *reg : {&Registry(), &RemoteRegistry()})
+        for (auto it = reg->begin(); it != reg->end();) {
+            if (std::shared_ptr<Link> l = it->second.lock()) {
+                out.push_back(l);
+                ++it;
+            } else {
+                it = reg->erase(it);
+            }
         }
-    }
     return out;
 }
 
