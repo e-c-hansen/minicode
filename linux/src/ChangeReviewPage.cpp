@@ -118,6 +118,121 @@ std::shared_ptr<GdkTexture> pictureOf(const std::string& bytes, std::pair<int, i
     return tex;
 }
 
+// ------------------------------------------------------- animated GIFs
+// An animated GIF's frames are stepped on the main thread while its picture
+// is mapped and inside the text view's window, as MediaView and MdPicture do
+// (gdk-pixbuf's animation API is deprecated with no replacement, hence the
+// silenced warnings). The git thread only collects the bytes; a GIF with one
+// frame stays a still texture with no timer.
+struct PicAnim {
+    GdkPixbufAnimation* anim = nullptr;
+    GdkPixbufAnimationIter* iter = nullptr;
+    GtkWidget *pic = nullptr, *view = nullptr;
+    int w = 0, h = 0;
+    int frames = 0;   // frames shown after the first (for the checks)
+    guint timer = 0;
+};
+
+int gRunningTimers = 0;   // frame timers armed, for the checks
+
+gboolean picAnimTick(gpointer data);
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+// The bytes' animation when they are a GIF of more than one frame, else null.
+GdkPixbufAnimation* animationOf(const std::string& bytes) {
+    if (bytes.compare(0, 4, "GIF8") != 0) return nullptr;
+    GdkPixbufLoader* l = gdk_pixbuf_loader_new();
+    const bool wrote = gdk_pixbuf_loader_write(l, reinterpret_cast<const guchar*>(bytes.data()),
+                                               bytes.size(), nullptr);
+    const bool closed = gdk_pixbuf_loader_close(l, nullptr);
+    GdkPixbufAnimation* a = wrote && closed ? gdk_pixbuf_loader_get_animation(l) : nullptr;
+    if (a && !gdk_pixbuf_animation_is_static_image(a)) g_object_ref(a);
+    else a = nullptr;
+    g_object_unref(l);
+    return a;
+}
+
+void picAnimArm(PicAnim* a, int ms) {
+    a->timer = g_timeout_add(ms, picAnimTick, a);
+    gRunningTimers++;
+}
+
+void picAnimStop(PicAnim* a) {
+    if (a->timer) {
+        g_source_remove(a->timer);
+        gRunningTimers--;
+    }
+    a->timer = 0;
+}
+
+gboolean picAnimTick(gpointer data) {
+    PicAnim* a = static_cast<PicAnim*>(data);
+    a->timer = 0;
+    gRunningTimers--;
+    // Not in the window (scrolled away): wait, step nothing.
+    bool shown = gtk_widget_get_mapped(a->pic);
+    graphene_rect_t r;
+    if (shown && gtk_widget_compute_bounds(a->pic, a->view, &r)) {
+        shown = r.origin.y < gtk_widget_get_height(a->view) && r.origin.y + r.size.height > 0 &&
+                r.origin.x < gtk_widget_get_width(a->view) && r.origin.x + r.size.width > 0;
+    }
+    int delay = 100;
+    if (shown) {
+        if (gdk_pixbuf_animation_iter_advance(a->iter, nullptr)) {
+            GdkPixbuf* pb = gdk_pixbuf_animation_iter_get_pixbuf(a->iter);
+            GdkPixbuf* fit = nullptr;
+            if (gdk_pixbuf_get_width(pb) != a->w || gdk_pixbuf_get_height(pb) != a->h)
+                fit = gdk_pixbuf_scale_simple(pb, a->w, a->h, GDK_INTERP_BILINEAR);
+            GdkTexture* tex = textureFromPixbuf(fit ? fit : pb);
+            gtk_picture_set_paintable(GTK_PICTURE(a->pic), GDK_PAINTABLE(tex));
+            g_object_unref(tex);
+            if (fit) g_object_unref(fit);
+            a->frames++;
+        }
+        const int d = gdk_pixbuf_animation_iter_get_delay_time(a->iter);
+        if (d < 0) return G_SOURCE_REMOVE;   // the last frame stays
+        delay = std::max(d, 20);
+    }
+    picAnimArm(a, delay);
+    return G_SOURCE_REMOVE;
+}
+
+void picAnimStart(PicAnim* a) {
+    if (a->timer) return;
+    const int d = gdk_pixbuf_animation_iter_get_delay_time(a->iter);
+    if (d >= 0) picAnimArm(a, std::max(d, 20));
+}
+
+void picAnimFree(gpointer data) {
+    PicAnim* a = static_cast<PicAnim*>(data);
+    picAnimStop(a);
+    g_clear_object(&a->iter);
+    g_clear_object(&a->anim);
+    delete a;
+}
+
+// Makes `pic` play `bytes` when they are an animated GIF.
+void animatePicture(GtkWidget* pic, GtkWidget* view, const std::string& bytes, int w, int h) {
+    GdkPixbufAnimation* anim = animationOf(bytes);
+    if (!anim) return;
+    auto* a = new PicAnim;
+    a->anim = anim;
+    a->iter = gdk_pixbuf_animation_get_iter(anim, nullptr);
+    a->pic = pic;
+    a->view = view;
+    a->w = w;
+    a->h = h;
+    g_object_set_data_full(G_OBJECT(pic), "mc-pic-anim", a, picAnimFree);
+    g_signal_connect(pic, "map", G_CALLBACK(+[](GtkWidget* w, gpointer) {
+        if (auto* a = static_cast<PicAnim*>(g_object_get_data(G_OBJECT(w), "mc-pic-anim")))
+            picAnimStart(a);
+    }), nullptr);
+    g_signal_connect(pic, "unmap", G_CALLBACK(+[](GtkWidget* w, gpointer) {
+        if (auto* a = static_cast<PicAnim*>(g_object_get_data(G_OBJECT(w), "mc-pic-anim")))
+            picAnimStop(a);
+    }), nullptr);
+}
+G_GNUC_END_IGNORE_DEPRECATIONS
+
 // The column each version gets in a pane `width` wide.
 double columnFor(const ChangeReview::File& f, int width) {
     const int n = (f.oldImage.shown ? 1 : 0) + (f.newImage.shown ? 1 : 0);
@@ -882,6 +997,10 @@ GtkWidget* ChangeReviewPage::pictureBox(size_t fi) {
         gtk_widget_set_size_request(pic, w, h);
         gtk_widget_set_halign(pic, GTK_ALIGN_START);
         gtk_widget_set_tooltip_text(pic, label.c_str());
+        if (fi < data_->read.extras.size())
+            animatePicture(pic, view_,
+                           side ? data_->read.extras[fi].newImage : data_->read.extras[fi].oldImage,
+                           w, h);
         GtkWidget* frame = gtk_frame_new(nullptr);
         gtk_frame_set_child(GTK_FRAME(frame), pic);
         gtk_widget_set_halign(frame, GTK_ALIGN_START);
@@ -1648,6 +1767,20 @@ std::vector<GtkWidget*> ChangeReviewPage::imageWidgets() const {
     for (const Picture& p : pictures_) out.push_back(p.widget);
     return out;
 }
+
+// For the checks: the frames each picture has stepped to after its first
+// (-1: a still picture, no animation).
+std::vector<int> ChangeReviewPage::imageFrames() const {
+    std::vector<int> out;
+    for (const Picture& p : pictures_) {
+        auto* a = static_cast<PicAnim*>(g_object_get_data(G_OBJECT(p.widget), "mc-pic-anim"));
+        out.push_back(a ? a->frames : -1);
+    }
+    return out;
+}
+
+// For the checks: how many frame timers run, in every page.
+int ChangeReviewPage::runningAnimations() { return gRunningTimers; }
 
 std::vector<std::pair<int, int>> ChangeReviewPage::imageSizes() const {
     std::vector<std::pair<int, int>> out;

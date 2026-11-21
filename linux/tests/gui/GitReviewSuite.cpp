@@ -197,6 +197,26 @@ void StepTo(const std::string& chord, size_t b) {
         GCHECK(y >= 0 && y < p->paneHeight());
     });
 }
+// ------------------------------------------------------ animated GIFs
+// A GIF89a of one 1 by 1 pixel per frame, each frame one of two palette
+// colors, 0.1 s a frame, looping; two frames, or one with no loop block.
+std::string Gif(unsigned char r0, unsigned char g0, unsigned char b0, unsigned char r1, unsigned char g1,
+                unsigned char b1, int frames) {
+    std::string g = "GIF89a";
+    g += std::string("\x01\x00\x01\x00\x80\x00\x00", 7);
+    g += std::string({(char)r0, (char)g0, (char)b0, (char)r1, (char)g1, (char)b1});
+    if (frames > 1) g += std::string("\x21\xFF\x0BNETSCAPE2.0\x03\x01\x00\x00\x00", 19);
+    for (int f = 0; f < frames; f++) {
+        g += std::string("\x21\xF9\x04\x04\x0A\x00\x00\x00", 8);
+        g += std::string("\x2C\x00\x00\x00\x00\x01\x00\x01\x00\x00", 10);
+        // LZW, minimum code size 2: clear (4), the pixel, end (5), three bits each.
+        g += f % 2 ? std::string("\x02\x02\x4C\x01\x00", 5) : std::string("\x02\x02\x44\x01\x00", 5);
+    }
+    g += '\x3B';
+    return g;
+}
+std::string Gc() { return MCGuiScratch() + "/gitgifs"; }
+int gFrames0 = 0;   // After's frames when the animation was last looked at
 
 }  // namespace
 
@@ -562,6 +582,62 @@ MC_GUI_SUITE(git_review) {
     });
     CloseRepoWindow();
     Shell("the repository goes", "rm -rf '" + K() + "'");
+    // ======================================================= animated GIFs
+    // The page plays an animated GIF's frames, in its own repository: a.gif
+    // (two frames) committed and changed to another two-frame GIF; s.gif of
+    // one frame, changed to another. Before and After of a.gif step; the
+    // one-frame ones stay still with no timer; closing the page stops them.
+    MCGuiStep("GIFs, and the loader's own word on which animate", [] {
+        MCGuiWriteFile(Gc() + "/a.gif", Gif(255, 0, 0, 0, 255, 0, 2));
+        MCGuiWriteFile(Gc() + "/s.gif", Gif(255, 0, 0, 0, 255, 0, 1));
+        MCGuiWriteFile(Gc() + "/new-a.gif", Gif(0, 0, 255, 255, 255, 0, 2));
+        MCGuiWriteFile(Gc() + "/new-s.gif", Gif(0, 0, 255, 255, 255, 0, 1));
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        for (const char* n : {"a.gif", "new-a.gif", "s.gif", "new-s.gif"}) {
+            GdkPixbufAnimation* a = gdk_pixbuf_animation_new_from_file((Gc() + "/" + n).c_str(), nullptr);
+            const bool animated = a && !gdk_pixbuf_animation_is_static_image(a);
+            const bool want = std::string(n).find("-a.") != std::string::npos || std::string(n) == "a.gif";
+            GCHECK_EQ_STR(std::string(n) + (animated ? " animates" : " is still"),
+                          std::string(n) + (want ? " animates" : " is still"));
+            if (a) g_object_unref(a);
+        }
+        G_GNUC_END_IGNORE_DEPRECATIONS
+    });
+    Shell("committed; both GIFs changed to others",
+          "set -e; cd '" + Gc() + "'; " + G() + " init -q -b main; " + G() + " add a.gif s.gif; " + G() +
+              " commit -qm first; mv new-a.gif a.gif; mv new-s.gif s.gif");
+    MCGuiStep("a Trash of our own", [] { UseScratchTrash(true); });
+    OpenRepoWindow(Gc(), true);
+    MCGuiWait("Review Changes offered", 20, [] {
+        return Panel()->reviewButtonShown() && MCGuiOnScreen(Panel()->reviewButton());
+    });
+    MCGuiStep("a click on Review Changes", [] { MCGuiClick(Panel()->reviewButton()); });
+    MCGuiWait("four pictures, Before and After of each", 20, [] {
+        return Page() && Page()->loaded() && Page()->imageLabels().size() == 4;
+    });
+    MCGuiWait("a.gif's After steps to another frame", 20, [] {
+        const std::vector<int> f = Page() ? Page()->imageFrames() : std::vector<int>();
+        return f.size() == 4 && f[1] >= 1;
+    });
+    MCGuiStep("a.gif's two pictures play, s.gif's two are still", [] {
+        const std::vector<int> f = Page()->imageFrames();
+        MCGuiNote("frames %d %d %d %d, timers %d", f[0], f[1], f[2], f[3], ChangeReviewPage::runningAnimations());
+        GCHECK(f[0] >= 0 && f[1] >= 1);
+        GCHECK_EQ_STR(std::to_string(f[2]) + " " + std::to_string(f[3]), "-1 -1");
+        GCHECK(Page()->imageLabels()[1].rfind("After:", 0) == 0);
+        GCHECK(Page()->imageLabels()[3].rfind("After:", 0) == 0);
+        GCHECK_EQ_STR(std::to_string(ChangeReviewPage::runningAnimations()), "2");
+        gFrames0 = f[1];
+    });
+    MCGuiWait("it goes on stepping", 20, [] { return Page()->imageFrames()[1] >= gFrames0 + 3; });
+    MCGuiStep("the page closes", [] { Ed()->closeAllTabs(); });
+    MCGuiWait("no tabs", 10, [] { return Ed()->tabCount() == 0; });
+    MCGuiPause(0.5);   // a negative check: time for a stray timer to fire
+    MCGuiStep("no frame timer runs", [] {
+        GCHECK_EQ_STR(std::to_string(ChangeReviewPage::runningAnimations()), "0");
+    });
+    Shell("the repository goes", "rm -rf '" + Gc() + "'");
+    CloseRepoWindow();
 
     // ============================================================ commits
     // A click on a commit in the graph opens it as a page (the Mac's

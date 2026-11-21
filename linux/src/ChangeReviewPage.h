@@ -57,8 +57,11 @@
 // pixels and bytes, at its pixel size and never taller than 320 pixels: the
 // sizes are read from the headers and the pictures decoded at the size they
 // are drawn, on the git thread, and laid in the text over the file's first
-// RowKind::Image row (the rest hidden). An animated GIF shows its first
-// frame.
+// RowKind::Image row (the rest hidden). An animated GIF plays: the
+// git thread only collects its bytes, and the main thread steps its frames
+// (gdk-pixbuf's animation) while the picture is mapped and inside the text
+// view's window, a timer per picture that stops on unmap and with the
+// picture; a GIF of one frame stays a still picture.
 //
 // A commit's page (the third constructor, the Mac's initForCommitsWithRoot:
 // and showCommit:title:, a click on a commit in the Source Control graph):
@@ -216,6 +219,10 @@ public:
     std::vector<std::string> imageLabels() const;
     std::vector<GtkWidget*> imageWidgets() const;
     std::vector<std::pair<int, int>> imageSizes() const;
+    // Each picture's frames stepped after its first (-1: a still picture),
+    // and how many frame timers run in all pages; for the checks.
+    std::vector<int> imageFrames() const;
+    static int runningAnimations();
 
 private:
     struct Data;
