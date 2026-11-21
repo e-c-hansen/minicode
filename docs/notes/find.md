@@ -193,7 +193,17 @@ found through that list.
   symlink whose real place is outside the folder is neither read nor
   entered, `insideRoot`), and `onRows`, called on the merging thread with
   each file's rows as they are taken (repeated context dropped between
-  them), so the rows go to the page as they are found.
+  them), so the rows go to the page as they are found. **Replace in Folder
+  from the page** (2026-11-21, SessionSearch.h's "replace", session-host.md
+  "New File, Save As and Replace in Folder from the page") keeps #210's
+  rules: Return in its replace field searches, Replace All is the button
+  and asks; a row's box takes its line out as Dismiss does
+  (`replaceInText`'s skip lines). It replaces only on the rows the search
+  showed, not a fresh `planReplace`: `replaceRows` leaves a file alone
+  whole when a row's line no longer reads as it did or the file holds
+  another count of matches, and a search cut short cannot replace. Unlike
+  the app's, it rewrites a Windows-1252 file (in Windows-1252, when the
+  replacement fits) and files up to 64 MB.
 - **Where Option+Shift+Cmd+F puts the keyboard** (2026-11-20, found by
   `make taskbench-mac`: with nothing searched yet it went to the replace
   field, so the search typed first became the replacement): as VS Code's

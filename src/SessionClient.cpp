@@ -93,6 +93,20 @@ void Client::open(DocId id, const std::string& path, std::string text8, Listener
 
 void Client::view(DocId id, Listener* listener) { open(id, std::string(), std::string(), listener); }
 
+bool Client::openUntitled(DocId id, Listener* listener) {
+    if (!hostWritesForPages()) return false;
+    Doc& d = docs_[id];
+    d = Doc();
+    d.listener = listener;
+    Message m;
+    m.kind = Kind::DocOpen;
+    m.doc = id;
+    m.flag = 2;
+    queue(std::move(m));
+    pump();
+    return true;
+}
+
 void Client::setPath(DocId id, const std::string& path) {
     Doc* d = doc(id);
     if (!d || d->detaching) return;
@@ -343,6 +357,24 @@ std::uint64_t Client::requestSave(DocId id, std::uint64_t window, bool overwrite
     const std::uint64_t req = m.req;
     // Behind this renderer's edits, so what is written holds them.
     queue(std::move(m));
+    pump();
+    return req;
+}
+
+std::uint64_t Client::requestSaveAs(DocId id, std::uint64_t window, const std::string& rel, bool hidden,
+                                    bool overwrite) {
+    if (!doc(id) || !hostWritesForPages()) return 0;
+    Message m;
+    m.kind = Kind::DocSave;
+    m.doc = id;
+    m.window = window;
+    m.flag = overwrite ? 1 : 0;
+    m.json = Json::object();
+    m.json.set("saveAs", Json(rel));
+    m.json.set("hidden", Json(hidden));
+    m.req = ++nextReq_;
+    const std::uint64_t req = m.req;
+    queue(std::move(m));   // behind this renderer's edits
     pump();
     return req;
 }
@@ -934,6 +966,21 @@ std::uint64_t Client::requestStream(std::uint64_t window, Json request) {
     if (!hostSearches()) return 0;
     const std::uint64_t req = requestRead(window, std::move(request));
     streams_[req];
+    return req;
+}
+
+std::uint64_t Client::requestReplace(std::uint64_t window, Json request) {
+    if (!hostWritesForPages()) return 0;
+    request.set("op", Json("replace"));
+    Message m;
+    m.kind = Kind::FsRead;
+    m.window = window;
+    m.json = std::move(request);
+    m.req = ++nextReq_;
+    const std::uint64_t req = m.req;
+    streams_[req];
+    queue(std::move(m));   // behind this renderer's edits
+    pump();
     return req;
 }
 

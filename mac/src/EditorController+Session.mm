@@ -104,7 +104,10 @@ static char kSessionWindowKey;
     return !t.followsStorage && !(t == _activeTab && _liveHighlight);
 }
 
-- (BOOL)writeTextThroughHost:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive {
+- (BOOL)writeTextThroughHost:(NSString *)text
+                       toTab:(MCTab *)t
+                 interactive:(BOOL)interactive
+                     failure:(NSString **)failure {
     MCSessionDoc *d = t.session;
     NSString *name = t.currentPath.lastPathComponent;
     if (![text isEqualToString:t.currentText ?: @""]) t.sourceText = text;   // one edit on the host
@@ -124,7 +127,9 @@ static char kSessionWindowKey;
         NSString *why = !r.answered ? @"The session's host did not answer."
                         : r.why.empty() ? @"The session's host could not write it."
                                         : @(r.why.c_str());
-        if (interactive) {
+        if (failure) {
+            *failure = why;
+        } else if (interactive) {
             NSAlert *a = [NSAlert new];
             a.messageText = [NSString stringWithFormat:@"“%@” could not be saved.", name];
             a.informativeText = why;
@@ -336,6 +341,25 @@ NSUInteger MCDirtyFromHostMarks = 0;
         return false;
     });
     return p.empty() ? nil : @(p.c_str());
+}
+
+- (MCTab *)openUntitledSessionTab {
+    if (![self sessionWindow]) return nil;
+    NSString *path = [self untitledPathBeside:MCSession::Held()];
+    if (!path.length) return nil;
+    MCTab *t = [MCTab new];
+    t.untitled = YES;   // before the document: the host keeps it without a path
+    t.currentPath = path;
+    [self groupAppendTab:t preview:Model::Preview::None];
+    t.sourceText = @"";   // its document on the host, this window's (MCTab setSourceText:)
+    t.savedText = @"";
+    t.heldFromHost = YES;   // shown from its own text: there is no file to read
+    [self recordStamp:nil ofTab:t];
+    [self activateTab:t];
+    t.dirty = NO;   // nothing typed yet: closing it asks nothing
+    [self updateTitle];
+    [self reloadTabStrip];
+    return t;
 }
 
 // After the session restored the rest: the record's tab on show, and the

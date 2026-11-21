@@ -299,6 +299,27 @@ NSString *MCSessionBrowserPeer(int peerPort, int serverPort) {
             return true;
         };
     }
+    if (_editable && _newFile) {
+        void (^newFile)(void) = _newFile;
+        o.newFile = [newFile]() {
+            dispatch_async(dispatch_get_main_queue(), ^{ newFile(); });
+            return true;
+        };
+    }
+    if (_editable && _saveAs) {
+        // The answer goes back through this object, which knows whether the
+        // server it was asked by still runs.
+        void (^saveAs)(uint64_t, NSString *, void (^)(BOOL, NSString *)) = _saveAs;
+        __weak MCSessionBrowser *weakSelf = self;
+        Shared::Web::Server *asking = server.get();
+        o.saveAs = [saveAs, weakSelf, asking](Shared::DocId d, const std::string &path, std::uint64_t ask) {
+            NSString *p = [NSFileManager.defaultManager stringWithFileSystemRepresentation:path.c_str()
+                                                                                    length:path.size()];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                saveAs(d, p, ^(BOOL ok, NSString *why) { [weakSelf answerSaveAs:ask ok:ok why:why of:asking]; });
+            });
+        };
+    }
     if (_editable && _browse) {
         void (^browse)(NSString *) = _browse;
         o.browse = [browse](const std::string &url) {
@@ -408,6 +429,14 @@ NSString *MCSessionBrowserPeer(int peerPort, int serverPort) {
 
 - (void)lookNow {
     if (_server) _server->lookNow();
+}
+
+// The window's answer to a page's Save As, for the server that asked (one
+// stopped since, or another started, hears nothing).
+- (void)answerSaveAs:(uint64_t)ask ok:(BOOL)ok why:(NSString *)why of:(Shared::Web::Server *)asking {
+    if (!_server || _server.get() != asking) return;
+    [self reportTabs];   // the tab's new path, before the page looks
+    _server->savedAs(ask, ok, why.UTF8String ?: "");
 }
 
 // ---- the LaTeX preview's typesets (R3's third slice)

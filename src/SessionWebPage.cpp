@@ -233,6 +233,43 @@ body.sideclosed #side { display: none; }
 #slist .st { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #slist mark { background: rgba(234, 92, 0, .33); color: inherit; border-radius: 2px; }
 #slist .smore { color: var(--muted); font-size: 12px; padding: 4px 10px; }
+/* Replace in Folder (an editable page): the replacement under the query,
+   Replace All beside it; each row and each file a box to leave it out,
+   each match struck through beside what replaces it. */
+#rbox { display: flex; align-items: center; gap: 4px; margin: 0 6px 4px 8px; flex: none; }
+#rq { flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--fg); background: var(--bg);
+      border: 1px solid var(--line); border-radius: 3px; outline: none; padding: 3px 6px; }
+#rq:focus { border-color: var(--accent); }
+#rall { flex: none; font: inherit; font-size: 12px; color: var(--fg); background: none; border: 1px solid var(--line);
+        border-radius: 3px; padding: 2px 8px; cursor: pointer; }
+#rall:disabled { color: var(--muted); cursor: default; }
+#slist input.rpick { display: none; flex: none; width: 1.1em; margin: 0 .4em 0 0; align-self: center; cursor: pointer; }
+#search.replacing #slist input.rpick { display: inline-block; }
+#search.replacing #slist .sl { padding-left: 1.5em; }
+#search.replacing #slist .sl.hit { padding-left: 0; }
+#slist .srow.off .sl.hit .st { opacity: .5; }
+#slist ins { display: none; text-decoration: none; background: rgba(46, 160, 67, .33); border-radius: 2px; }
+#search.preview #slist mark { text-decoration: line-through; }
+#search.preview #slist ins { display: inline; }
+#slist .srow.off mark { text-decoration: none; }
+#slist .srow.off ins { display: none; }
+/* Save As: a path from the folder, completed from the host's listing. */
+#sa { position: fixed; top: 44px; left: 50%; transform: translateX(-50%); width: min(620px, 94vw); z-index: 30;
+      background: var(--sbg); color: var(--sfg); border: 1px solid var(--line); border-radius: 6px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, .45); display: flex; flex-direction: column; max-height: 70vh; }
+#satitle { margin: 8px 10px 0; font-size: 12px; color: var(--muted); }
+#saq { font: inherit; font-size: 14px; margin: 6px; padding: 5px 8px; color: var(--fg); background: var(--bg);
+       border: 1px solid var(--accent); border-radius: 3px; outline: none; flex: none; }
+#salist { overflow: auto; min-height: 0; }
+#salist .qrow { display: flex; gap: 8px; align-items: baseline; padding: 0 10px; line-height: 22px; cursor: pointer;
+                white-space: nowrap; }
+#salist .qrow.sel { background: rgba(78, 161, 247, .28); }
+#salist .qdir { color: var(--muted); font-size: 12px; }
+#sanote { margin: 0; padding: 4px 10px; color: var(--gmod); font-size: 12px; }
+#sabtns { display: flex; justify-content: flex-end; gap: 6px; padding: 6px 8px 8px; }
+#sabtns button { font: inherit; font-size: 12px; color: var(--fg); background: none; border: 1px solid var(--line);
+                 border-radius: 3px; padding: 2px 10px; cursor: pointer; }
+#sabtns #saok { border-color: var(--accent); }
 #code .l.hit { background-color: rgba(234, 92, 0, .18); }
 /* Quick Open: a field and its list over the page, as the app's palette. */
 #qo { position: fixed; top: 44px; left: 50%; transform: translateX(-50%); width: min(620px, 94vw); z-index: 30;
@@ -257,11 +294,11 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #docbar { display: flex; align-items: center; gap: 8px; flex: none; padding: 3px 10px; }
 #docpath { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden;
            text-overflow: ellipsis; flex: 1; min-width: 0; }
-#modebtn, #savebtn, #reloadbtn { background: none; border: 1px solid var(--line); color: var(--fg); font: inherit;
+#modebtn, #savebtn, #saveasbtn, #reloadbtn { background: none; border: 1px solid var(--line); color: var(--fg); font: inherit;
            font-size: 12px; padding: 1px 8px; border-radius: 3px; cursor: pointer; flex: none; }
 #disknote { color: var(--gmod); font-size: 12px; white-space: nowrap; flex: none; }
 .strip button.disk { font-style: italic; }
-#savebtn:not(.dirty) { color: var(--muted); }
+#savebtn:not(.dirty), #saveasbtn { color: var(--muted); }
 #savebtn.dirty::before { content: "\25CF "; font-size: 9px; vertical-align: middle; }
 #code, #term { flex: 1; overflow: auto; min-height: 0;
                font: var(--efs)/var(--lh) ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
@@ -370,7 +407,7 @@ body:not(.editable) #caret { display: none; }
 </style>
 </head>
 <body>
-<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">mutible</span><span id="folder"></span><button id="qobtn" class="panebtn hidden" type="button" title="Go to a file of the folder by name">Go to File</button><button id="webbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the browser on this page">Browser</button><button id="termbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the terminal on this page">Terminal</button><span id="status">connecting</span></header>
+<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">mutible</span><span id="folder"></span><button id="qobtn" class="panebtn hidden" type="button" title="Go to a file of the folder by name">Go to File</button><button id="newbtn" class="panebtn hidden" type="button" title="A new untitled file, named when it is saved">New File</button><button id="webbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the browser on this page">Browser</button><button id="termbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the terminal on this page">Terminal</button><span id="status">connecting</span></header>
 <div id="banner" class="hidden"></div>
 <div id="gate" class="hidden" role="status"></div>
 <div id="wrap">
@@ -379,7 +416,7 @@ body:not(.editable) #caret { display: none; }
   <div id="sidemodes"><button id="filesbtn" type="button" aria-pressed="true" title="The folder's files">Files</button><button id="scmbtn" type="button" aria-pressed="false" title="The folder's uncommitted changes, as the window's Source Control lists them (read-only)">Source Control</button><button id="searchbtn" class="hidden" type="button" aria-pressed="false" title="Find in Folder">Search</button></div>
   <div id="tree" role="tree"></div>
   <div id="git" class="hidden"><p id="gitsum"></p><div id="gitlist" role="list"></div></div>
-  <div id="search" class="hidden"><div id="sbox"><input id="sq" type="text" placeholder="Search" aria-label="Find in Folder" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button id="scase" class="stog" type="button" aria-pressed="false" title="Match Case">Aa</button><button id="sword" class="stog" type="button" aria-pressed="false" title="Match Whole Word">ab</button><button id="sregex" class="stog" type="button" aria-pressed="false" title="Use Regular Expression">.*</button></div><p id="ssum"></p><div id="slist" role="list"></div></div>
+  <div id="search" class="hidden"><div id="sbox"><input id="sq" type="text" placeholder="Search" aria-label="Find in Folder" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button id="scase" class="stog" type="button" aria-pressed="false" title="Match Case">Aa</button><button id="sword" class="stog" type="button" aria-pressed="false" title="Match Whole Word">ab</button><button id="sregex" class="stog" type="button" aria-pressed="false" title="Use Regular Expression">.*</button></div><div id="rbox" class="hidden"><input id="rq" type="text" placeholder="Replace" aria-label="Replace with" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button id="rall" type="button" disabled title="Replace the checked matches in their files (asks first)">Replace All</button></div><p id="ssum"></p><div id="slist" role="list"></div></div>
   <p id="treenote" class="hidden"></p>
 </aside>
 <div id="work">
@@ -387,7 +424,7 @@ body:not(.editable) #caret { display: none; }
  <div id="top">
   <section id="docsec">
     <div id="tabrow"><nav id="tabs" class="strip"></nav></div>
-    <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button><span id="disknote" class="hidden"></span><button id="reloadbtn" class="hidden" type="button" title="Put the file on disk in place of this text (undoable)">Reload</button><button id="savebtn" class="hidden" type="button" title="Save this file to disk">Save</button></div>
+    <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button><span id="disknote" class="hidden"></span><button id="reloadbtn" class="hidden" type="button" title="Put the file on disk in place of this text (undoable)">Reload</button><button id="savebtn" class="hidden" type="button" title="Save this file to disk">Save</button><button id="saveasbtn" class="hidden" type="button" title="Save this text as a file of the folder, which this tab then is">Save As…</button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
     <div id="tex" class="hidden"><p id="texnote" class="hidden"></p><iframe id="texframe" class="hidden" title="Typeset pages"></iframe><div id="texpages" class="hidden" tabindex="0" aria-label="Typeset pages"></div><pre id="texlog" class="hidden"></pre></div>
@@ -413,6 +450,7 @@ body:not(.editable) #caret { display: none; }
 </div>
 </div>
 <div id="toast" class="hidden" role="status"></div>
+<div id="sa" class="hidden" role="dialog" aria-label="Save As"><p id="satitle">Save As, in the session's folder</p><input id="saq" type="text" placeholder="folder/name.ext" aria-label="The file's path in the session's folder" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><div id="salist" role="listbox"></div><p id="sanote" class="hidden"></p><div id="sabtns"><button id="sacancel" type="button">Cancel</button><button id="saok" type="button">Save</button></div></div>
 <div id="qo" class="hidden" role="dialog" aria-label="Go to File"><input id="qoq" type="text" placeholder="Search files by name" aria-label="Go to File" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><div id="qolist" role="listbox"></div><p id="qonote" class="hidden"></p></div>
 <script nonce="{{NONCE}}">
 "use strict";
@@ -426,7 +464,7 @@ body:not(.editable) #caret { display: none; }
   const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
   let ws = null, palette = null, state = null, ended = false, folder = "", termNote = "";
   let editable = false, canSave = false, canBrowse = false, canOpen = false, canClose = false, canReload = false;
-  let canSearch = false;
+  let canSearch = false, canNew = false, canSaveAs = false, canReplace = false;
   const want = { doc: 0, term: 0 };
   let followDoc = true, followTerm = true, termInfo = null;
   const kHist = 5000;
@@ -1584,6 +1622,7 @@ body:not(.editable) #caret { display: none; }
       if (!m.path && !S.mode) $("sidename").textContent = base(T.root) || "Files";
     }
     drawTree();
+    drawSaveAs();   // Save As completes from the same listings
   }
   function openFile(rel, e, keep) {
     treeNote("");
@@ -1797,7 +1836,8 @@ body:not(.editable) #caret { display: none; }
   // name with a line of context either side; a row clicked opens its file
   // at its line. A new query cancels the search before it.
   const S = { mode: false, seq: 0, timer: 0, done: true, last: null, rows: 0, matches: 0, files: 0,
-              group: null, sum: null, query: "", cur: null };
+              group: null, sum: null, query: "", cur: null, req: null, byFile: new Map(), replaceSeq: 0,
+              replacing: false };
   function pressed(id) { return $(id).getAttribute("aria-pressed") === "true"; }
   function openSearch() {
     if (!canSearch) return;
@@ -1822,10 +1862,13 @@ body:not(.editable) #caret { display: none; }
     S.query = q;
     S.done = !q; S.sum = null; S.rows = 0; S.matches = 0; S.files = 0; S.last = null; S.group = null; S.cur = null;
     $("slist").textContent = "";
+    S.req = q ? { query: q, caseSensitive: pressed("scase"), wholeWord: pressed("sword"), regex: pressed("sregex") }
+              : null;
+    S.files = 0; S.byFile = new Map();
     if (!q) post({ t: "search", seq: S.seq, cancel: true });
-    else post({ t: "search", seq: S.seq, query: q, caseSensitive: pressed("scase"), wholeWord: pressed("sword"),
-                regex: pressed("sregex") });
+    else post(Object.assign({ t: "search", seq: S.seq }, S.req));
     drawSearchSum();
+    drawReplace();
   }
   function searchSoon() {
     clearTimeout(S.timer);
@@ -1863,11 +1906,23 @@ body:not(.editable) #caret { display: none; }
       const mk = document.createElement("mark");
       mk.textContent = text.slice(h[0], h[0] + h[1]);
       t.appendChild(mk);
+      // What replaces it, shown beside it while the replace field holds
+      // something (drawReplace fills it in).
+      t.appendChild(document.createElement("ins"));
       at = h[0] + h[1];
     }
     if (at < text.length) t.appendChild(document.createTextNode(text.slice(at)));
     l.append(num, t);
     return l;
+  }
+  // A box that leaves a row (or a file's every row) in or out of Replace All.
+  function pickBox(title) {
+    const b = document.createElement("input");
+    b.type = "checkbox";
+    b.className = "rpick";
+    b.checked = true;
+    b.title = title;
+    return b;
   }
   function addSearchRows(rows) {
     const list = $("slist"), frag = document.createDocumentFragment();
@@ -1882,9 +1937,10 @@ body:not(.editable) #caret { display: none; }
         name.className = "sname"; name.textContent = cut < 0 ? r.path : r.path.slice(cut + 1);
         dir.className = "sdir"; dir.textContent = cut < 0 ? "" : r.path.slice(0, cut);
         count.className = "scount";
-        head.append(name, dir, count);
+        head.append(pickBox("Replace in this file"), name, dir, count);
         frag.appendChild(head);
-        S.group = { path: r.path, count: count, n: 0 };
+        S.group = { path: r.path, count: count, n: 0, head: head, rows: [] };
+        S.byFile.set(r.path, S.group);
         S.files++;
       }
       const row = document.createElement("div");
@@ -1896,21 +1952,108 @@ body:not(.editable) #caret { display: none; }
       row.title = r.path + ":" + r.line;
       const before = r.before || [], after = r.after || [];
       before.forEach((t, k) => row.appendChild(searchLine(" ctx", r.line - before.length + k, t)));
-      row.appendChild(searchLine(" hit", r.line, r.text, r.hl));
+      const hit = searchLine(" hit", r.line, r.text, r.hl);
+      hit.prepend(pickBox((r.count || 1) > 1 ? "Replace the " + r.count + " matches on this line" : "Replace this match"));
+      row.appendChild(hit);
       after.forEach((t, k) => row.appendChild(searchLine(" ctx", r.line + 1 + k, t)));
       frag.appendChild(row);
+      row._row = r;
+      S.group.rows.push(row);
       S.group.n += r.count || 1;
       S.group.count.textContent = S.group.n;
       S.rows++;
       S.matches += r.count || 1;
     }
     list.appendChild(frag);
+    drawReplace();
   }
   function onFound(m) {
     if (m.seq !== S.seq) return;
     if (m.rows && m.rows.length) addSearchRows(m.rows);
     if (m.done) { S.done = true; S.sum = m; }
     drawSearchSum();
+    drawReplace();
+  }
+
+  // ---- Replace in Folder (an editable page, a host that writes for
+  // pages): each row's box leaves it in or out, each file's box all its
+  // rows; Replace All asks first, never on Return (Return searches), and
+  // the host replaces only on the rows as the search showed them, leaving
+  // alone (and naming) a file changed since. Then the search runs again.
+  // What replaces a match, as the page can tell: the text as typed, or for
+  // a regular expression the browser's own replace of the match (the
+  // host's engine is JavaScript's, so groups read the same).
+  function replacementFor(match) {
+    const rep = $("rq").value;
+    if (!S.req || !S.req.regex) return rep;
+    try {
+      return match.replace(new RegExp(S.req.query, S.req.caseSensitive ? "" : "i"), rep);
+    } catch (e) {
+      return rep;
+    }
+  }
+  // The checked rows and their matches: [{path, rows: [{line, text, count, on}]}].
+  function replacePlan() {
+    const files = [];
+    let matches = 0, picked = 0;
+    for (const [path, g] of S.byFile) {
+      const rows = g.rows.map((el) => {
+        const on = !el.classList.contains("off");
+        if (on) { matches += el._row.count || 1; }
+        return { line: el._row.line, text: el._row.text, count: el._row.count || 1, on: on };
+      });
+      if (rows.some((x) => x.on)) picked++;
+      files.push({ path: path, rows: rows });
+    }
+    return { files: files, matches: matches, picked: picked };
+  }
+  function drawReplace() {
+    if (!canReplace) return;
+    const m = S.sum, box = $("search");
+    box.classList.toggle("preview", $("rq").value !== "");
+    if ($("rq").value !== "")
+      for (const mk of $("slist").querySelectorAll("mark")) {
+        const ins = mk.nextSibling;
+        if (ins && ins.tagName === "INS") ins.textContent = replacementFor(mk.textContent);
+      }
+    const plan = replacePlan();
+    // Only a search that ended whole: one cut short would replace in
+    // fewer files than it names.
+    const whole = S.done && S.rows > 0 && m && !m.error && !m.truncated && !m.timedOut && !m.tooSlow && !m.cancelled;
+    const b = $("rall");
+    b.disabled = !whole || !plan.matches || S.replacing;
+    b.title = !S.rows ? "Search for what to replace first"
+            : !whole ? "The search did not end with every match: narrow it first"
+            : "Replace the checked matches in their files (asks first)";
+  }
+  function replaceAll() {
+    if (!canReplace || $("rall").disabled || !S.req) return;
+    const plan = replacePlan(), rep = $("rq").value;
+    const what = plural(plan.matches, "match", "matches") + " in " + plural(plan.picked, "file", "files");
+    if (!window.confirm("Replace " + what + " with " + (rep ? "“" + rep + "”" : "nothing") +
+                        "?\n\nOpen documents are edited (one undo each, saved when you save them); other " +
+                        "files are written now."))
+      return;
+    S.replacing = true;
+    drawReplace();
+    D.replace = Object.assign({ t: "replace", seq: ++S.replaceSeq, replacement: rep, files: plan.files }, S.req);
+    afterSync();
+  }
+  function onReplaced(m) {
+    if (m.seq !== S.replaceSeq) return;
+    S.replacing = false;
+    if (m.error && !m.replaced) { toast(m.error); drawReplace(); return; }
+    let text = "Replaced " + plural(m.replaced || 0, "match", "matches");
+    const parts = [];
+    if (m.files) parts.push(plural(m.files, "file", "files") + " written");
+    if (m.edited) parts.push(plural(m.edited, "open document", "open documents") + " edited, to save");
+    if (parts.length) text += ": " + parts.join(", ");
+    text += ".";
+    const skipped = m.skipped || [];
+    if (skipped.length) text += " " + skipped.map((s) => s.why).join(" ");
+    if (m.error) text += " " + m.error;
+    toast(text);
+    runSearch();   // what is left
   }
 
   function onState(m) {
@@ -1926,6 +2069,12 @@ body:not(.editable) #caret { display: none; }
     sendShow();
     takeWindowPanes();
     dropGoneReviews();
+    // The document on show saved under a new name (Save As): its path here.
+    const shown = D.id > 0 && !L.on ? m.docs.find((d) => d.id === D.id) : null;
+    if (shown && shown.path !== D.path) {
+      D.path = shown.path;
+      $("docpath").textContent = inFolder(shown.path || tabPath(D.id));
+    }
     drawTabs(); drawTermTabs(); drawWeb();
     const page = reviewOn();
     if (page && !reviewAsked) { reviewAsked = true; askReview(page); }
@@ -2365,6 +2514,8 @@ body:not(.editable) #caret { display: none; }
     if (!synced()) return;
     if (D.undo) { post({ t: "undo", doc: D.id, redo: D.undo === 2 }); D.undo = 0; D.moved = true; }
     if (D.save) { post({ t: "save", doc: D.id, overwrite: D.save === 2 }); D.save = 0; }
+    if (D.saveAs) { post(Object.assign({ t: "saveas" }, D.saveAs)); D.saveAs = null; }
+    if (D.replace) { const r = D.replace; D.replace = null; post(r); }
     if (D.reload) { post({ t: "reload", doc: D.id }); D.reload = false; }
     if (D.switchTo) { const id = D.switchTo; D.switchTo = 0; showDoc(id); }
   }
@@ -2478,8 +2629,16 @@ body:not(.editable) #caret { display: none; }
     if (!editable) return toast("This page only reads.");
     if (!canSave) return toast("Nothing here saves to disk yet: save from the mutible window.");
     if (!D.editable || D.id <= 0) return toast("This document cannot be saved from here.");
+    // An untitled document has no file to save to yet: Save As names one.
+    if (canSaveAs && untitled(D.id)) return openSaveAs();
     D.save = overwrite ? 2 : 1;
     afterSync();
+  }
+  // A document of the session's with no file (a window's untitled tab, or
+  // one a page made), by the host's state.
+  function untitled(id) {
+    const d = state && state.docs.find((x) => x.id === id);
+    return !!d && !d.path;
   }
   function docDirty(id) {
     const d = state && state.docs.find((x) => x.id === id);
@@ -2496,6 +2655,8 @@ body:not(.editable) #caret { display: none; }
     const on = editable && canSave && D.editable && D.id > 0 && D.kind !== "large" && !L.on;
     b.classList.toggle("hidden", !on);
     b.classList.toggle("dirty", on && docDirty(D.id));
+    $("saveasbtn").classList.toggle("hidden", !(editable && canSaveAs && D.editable && D.id > 0 && D.kind !== "large" &&
+                                                 !L.on));
     // Changed on disk under unsaved changes, or deleted: said, never
     // written over; Reload puts the file's text in (the host's step, which
     // Undo takes back).
@@ -2515,6 +2676,128 @@ body:not(.editable) #caret { display: none; }
   function onReloaded(m) {
     if (!m.ok) toast(m.why || "The file was not reloaded.");
   }
+  // ---- New File and Save As (stage 7's page-side writes). New File makes
+  // an untitled tab (the window's, or the host's own document on a
+  // headless host) and shows it; Save As names a path in the session's
+  // folder, completed from the host's listings, and the tab is that file
+  // from then on. A file there already is written over only once the
+  // person says so, as for a file changed on disk.
+  function newFile() {
+    if (!editable || !canNew) return;
+    if (L.on) { L.on = ""; hideViewer(); }
+    followDoc = true;   // the window shows its new tab: the page follows it
+    if (!post({ t: "newfile" })) toast("Not connected to the session.");
+  }
+  function onNewFileMade(m) {
+    followDoc = false;
+    showDoc(m.doc);
+  }
+  const SA = { open: false, doc: 0, sel: -1, rows: [], back: null, asked: new Set() };
+  // The window's tab's path for a document (an untitled tab's name).
+  function tabPath(id) {
+    for (const w of (state && state.windows) || [])
+      for (const g of w.groups || []) for (const t of g.tabs || []) if (t.doc === id) return t.path || "";
+    return "";
+  }
+  function openSaveAs() {
+    if (!editable || !canSaveAs) return toast("Save As is the mutible window's here.");
+    if (!D.editable || D.id <= 0 || L.on || D.kind === "large") return toast("This document cannot be saved from here.");
+    closeQuickOpen(false);
+    if (!SA.open) SA.back = document.activeElement;
+    SA.open = true;
+    SA.doc = D.id;
+    SA.sel = -1;
+    SA.asked.clear();
+    $("sa").classList.remove("hidden");
+    const q = $("saq");
+    const d = state && state.docs.find((x) => x.id === D.id);
+    q.value = inFolder((d && d.path) || tabPath(D.id) || "");
+    if (q.value.startsWith("/")) q.value = base(q.value);   // outside the folder: its name, here
+    saNote("");
+    drawSaveAs();
+    q.focus();
+    // The name chosen, without its extension, as a save panel does.
+    const name = q.value.slice(q.value.lastIndexOf("/") + 1), dot = name.lastIndexOf(".");
+    const start = q.value.length - name.length;
+    q.setSelectionRange(start, dot > 0 ? start + dot : q.value.length);
+  }
+  function closeSaveAs(restore) {
+    if (!SA.open) return;
+    SA.open = false;
+    $("sa").classList.add("hidden");
+    const back = SA.back;
+    SA.back = null;
+    if (restore && back && back.focus && document.contains(back)) back.focus({ preventScroll: true });
+  }
+  function saNote(text) {
+    const n = $("sanote");
+    n.textContent = text;
+    n.classList.toggle("hidden", !text);
+  }
+  function saFolder() {
+    const v = $("saq").value, i = v.lastIndexOf("/");
+    return i < 0 ? "" : v.slice(0, i);
+  }
+  // What the typed folder holds whose names start as the typed name does,
+  // folders first, from the host's listing (asked for once when the page
+  // has none of that folder).
+  function drawSaveAs() {
+    if (!SA.open) return;
+    const v = $("saq").value, dir = saFolder(), stem = v.slice(dir ? dir.length + 1 : 0).toLowerCase();
+    const kids = T.kids.get(dir);
+    if (!kids && !SA.asked.has(dir)) { SA.asked.add(dir); listFolder(dir); }
+    SA.rows = (kids || []).filter((e) => !e.outside && e.name.toLowerCase().startsWith(stem) &&
+                                         (e.dir || e.name.toLowerCase() !== stem)).slice(0, 50);
+    if (SA.sel >= SA.rows.length) SA.sel = SA.rows.length - 1;
+    const list = $("salist");
+    list.textContent = "";
+    SA.rows.forEach((e, i) => {
+      const row = document.createElement("div");
+      row.className = "qrow" + (i === SA.sel ? " sel" : "");
+      row.setAttribute("role", "option");
+      row.dataset.i = i;
+      const name = document.createElement("span"), where = document.createElement("span");
+      name.textContent = e.name + (e.dir ? "/" : "");
+      where.className = "qdir";
+      where.textContent = dir;
+      row.append(name, where);
+      list.appendChild(row);
+    });
+    const sel = list.children[SA.sel];
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+  function pickSaveAs(i) {
+    const e = SA.rows[i];
+    if (!e) return;
+    const dir = saFolder(), q = $("saq");
+    q.value = (dir ? dir + "/" : "") + e.name + (e.dir ? "/" : "");
+    SA.sel = -1;
+    drawSaveAs();
+    q.focus();
+  }
+  function submitSaveAs(overwrite) {
+    const path = $("saq").value.trim();
+    if (!path) return saNote("Name the file to save.");
+    saNote("");
+    const ask = { doc: SA.doc, path: path, overwrite: !!overwrite };
+    if (D.id === SA.doc) { D.saveAs = ask; afterSync(); }
+    else if (!post(Object.assign({ t: "saveas" }, ask))) saNote("Not connected to the session.");
+  }
+  function onSavedAs(m) {
+    if (!m.ok) {
+      // A file there already: the person decides, as for a change on disk.
+      if (m.reason === "exists" && SA.open && m.doc === SA.doc) {
+        if (window.confirm(m.why + "\n\nSave anyway?")) submitSaveAs(true);
+        return;
+      }
+      if (SA.open && m.doc === SA.doc) saNote(m.why || "It was not saved.");
+      else toast(m.why || "It was not saved.");
+      return;
+    }
+    closeSaveAs(true);
+    toast(m.note || "Saved as " + inFolder(m.path || ""));
+  }
+
   function onSaved(m) {
     const name = base(m.path || "") || "The file";
     if (m.ok) return toast(m.note || "Saved " + name);
@@ -2618,7 +2901,9 @@ body:not(.editable) #caret { display: none; }
           if (k === "a") { D.a = 0; D.h = total(); D.moved = true; drawSelection(); syncInput(); }
           else if (k === "z") undo(shift);
           else if (k === "y" && !mac) undo(true);
+          else if (k === "s" && shift && canSaveAs) openSaveAs();
           else if (k === "s") save(false);
+          else if (k === "n" && !shift && canNew) newFile();
           else done = false;   // copy, cut and paste: the events below
         } else if (!e.ctrlKey && !e.metaKey && [...e.key].length === 1) {
           replaceSel(e.key, kTyping);
@@ -2826,7 +3111,7 @@ body:not(.editable) #caret { display: none; }
       D.mode = (m.kind === "markdown" && !D.editable) || (m.kind === "code" && D.latex) ? "page" : "code";
       $("code").scrollTop = 0;
     }
-    $("docpath").textContent = inFolder(m.path);
+    $("docpath").textContent = inFolder(m.path || tabPath(m.id));   // an untitled tab: its name
     if (m.kind === "large") {
       D.shadow = []; D.lines = []; reindex(); render();
       $("code").classList.add("hidden"); $("md").classList.add("hidden"); $("modebtn").classList.add("hidden");
@@ -3033,6 +3318,14 @@ body:not(.editable) #caret { display: none; }
           canOpen = !!m.canOpen;
           canClose = !!m.canClose;
           canSearch = !!m.canSearch;
+          canNew = !!m.canNew;
+          canSaveAs = !!m.canSaveAs;
+          canReplace = !!m.canReplace && canSearch;
+          $("newbtn").classList.toggle("hidden", !canNew);
+          $("rbox").classList.toggle("hidden", !canReplace);
+          $("search").classList.toggle("replacing", canReplace);
+          if (!canSaveAs) closeSaveAs(false);
+          drawReplace();
           $("browse").classList.toggle("hidden", !canBrowse);
           $("qobtn").classList.toggle("hidden", !canSearch);
           $("searchbtn").classList.toggle("hidden", !canSearch);
@@ -3071,6 +3364,9 @@ body:not(.editable) #caret { display: none; }
         case "refused": onRefused(m); break;
         case "note": toast(m.text); break;
         case "saved": onSaved(m); break;
+        case "savedas": onSavedAs(m); break;
+        case "newfile": onNewFileMade(m); break;
+        case "replaced": onReplaced(m); break;
         case "reloaded": onReloaded(m); break;
         case "gone":
           if (m.id === want.doc) { D.id = 0; D.flight = null; D.queue = []; showNote("This document was closed."); }
@@ -3209,12 +3505,74 @@ body:not(.editable) #caret { display: none; }
     if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); runSearch(); }
     else if (e.key === "Escape") { e.preventDefault(); e.target.blur(); }
   });
+  // The replacement: its preview as typed; Return searches again, never
+  // replaces (Replace All is the button, and asks).
+  $("rq").addEventListener("input", drawReplace);
+  $("rq").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); runSearch(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.target.blur(); }
+  });
+  $("rall").addEventListener("click", replaceAll);
+  // New File and Save As: the header's button and the doc bar's, and
+  // Command (Control) N and Shift Command S where the browser lets the
+  // page have them; the dialog's field completes from the listings.
+  $("newbtn").addEventListener("click", newFile);
+  $("saveasbtn").addEventListener("click", openSaveAs);
+  $("saq").addEventListener("input", () => { SA.sel = -1; saNote(""); drawSaveAs(); });
+  $("saq").addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    const move = (d) => {
+      if (!SA.rows.length) return;
+      SA.sel = SA.sel < 0 ? (d > 0 ? 0 : SA.rows.length - 1) : (SA.sel + d + SA.rows.length) % SA.rows.length;
+      drawSaveAs();
+    };
+    if (e.key === "ArrowDown") move(1);
+    else if (e.key === "ArrowUp") move(-1);
+    else if (e.key === "Tab" && !e.shiftKey && SA.rows.length) pickSaveAs(SA.sel < 0 ? 0 : SA.sel);
+    else if (e.key === "Enter" && SA.sel >= 0) pickSaveAs(SA.sel);
+    else if (e.key === "Enter") submitSaveAs(false);
+    else if (e.key === "Escape") closeSaveAs(true);
+    else return;
+    e.preventDefault();
+  });
+  $("salist").addEventListener("mousedown", (e) => e.preventDefault());   // the field keeps the keyboard
+  $("salist").addEventListener("click", (ev) => {
+    const row = ev.target.closest(".qrow");
+    if (row) pickSaveAs(parseInt(row.dataset.i, 10));
+  });
+  $("saok").addEventListener("click", () => submitSaveAs(false));
+  $("sacancel").addEventListener("click", () => closeSaveAs(true));
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.altKey || !editable || !(mac ? e.metaKey : e.ctrlKey)) return;
+    if (e.target && e.target.closest && e.target.closest("#term")) return;   // the terminal's keys
+    const k = (e.key || "").toLowerCase();
+    if (k === "n" && !e.shiftKey && canNew) { e.preventDefault(); newFile(); }
+    else if (k === "s" && e.shiftKey && canSaveAs && D.editable && D.id > 0) { e.preventDefault(); openSaveAs(); }
+  });
   for (const id of ["scase", "sword", "sregex"])
     $(id).addEventListener("click", () => {
       $(id).setAttribute("aria-pressed", String(!pressed(id)));
       if ($("sq").value) runSearch();
     });
   $("slist").addEventListener("click", (ev) => {
+    // A row's box, or a file's: in or out of Replace All, nothing opened.
+    if (ev.target.classList && ev.target.classList.contains("rpick")) {
+      const on = ev.target.checked;
+      const head = ev.target.closest(".sfile");
+      const g = head ? S.byFile.get(head.dataset.path) : null;
+      if (g) {
+        for (const r of g.rows) { r.classList.toggle("off", !on); r.querySelector(".rpick").checked = on; }
+      } else {
+        const row = ev.target.closest(".srow");
+        if (row) {
+          row.classList.toggle("off", !on);
+          const f = S.byFile.get(row.dataset.path);
+          if (f) f.head.querySelector(".rpick").checked = f.rows.some((r) => !r.classList.contains("off"));
+        }
+      }
+      drawReplace();
+      return;
+    }
     const row = ev.target.closest(".srow");
     if (!row) return;
     if (S.cur) S.cur.classList.remove("current");
@@ -3386,6 +3744,16 @@ body:not(.editable) #caret { display: none; }
                              (l.classList.contains("hit") ? ">" : " ") + l.querySelector(".sn").textContent + " " +
                              l.querySelector(".st").textContent).join("\n")),
                      marks: [...$("slist").querySelectorAll("mark")].map((m) => m.textContent) }),
+    // New File, Save As and Replace in Folder as drawn: which buttons show,
+    // the dialog's field, its completions and note; the replace row, the
+    // previews beside the matches and each row's box.
+    writes: () => ({ newFile: !$("newbtn").classList.contains("hidden"),
+                     saveAs: !$("saveasbtn").classList.contains("hidden"),
+                     dialog: SA.open, value: $("saq").value, note: $("sanote").textContent,
+                     completions: SA.rows.map((e) => e.name + (e.dir ? "/" : "")),
+                     replace: !$("rbox").classList.contains("hidden"), replaceAll: !$("rall").disabled,
+                     previews: [...$("slist").querySelectorAll("ins")].map((i) => i.textContent),
+                     picks: [...$("slist").querySelectorAll(".srow .rpick")].map((b) => b.checked) }),
     // The line a search's row opened at (from 0, -1 for none), and the
     // caret's line.
     hitLine: () => [...$("lines").children].findIndex((l) => l.classList.contains("hit")),

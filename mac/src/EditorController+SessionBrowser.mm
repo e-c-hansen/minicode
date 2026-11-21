@@ -17,7 +17,11 @@
 // or, with no preview of the file in the window, one the server's own
 // preview typesets from the tab's text or the disk's. The window's open
 // commit and worktree pages go with its tabs too (sessionBrowserReviews),
-// for the page to show read-only; the server reads them itself.
+// for the page to show read-only; the server reads them itself. An
+// editable page's New File is an untitled tab here, and its Save As moves
+// the tab to the path the page named and writes it through the host with
+// no question on this screen (the page asked its person), telling the page
+// how it went.
 #import "EditorController+Private.h"
 #import "AppSettings.h"
 #import "Browser.h"
@@ -130,6 +134,65 @@ static BOOL MCSessionBrowserEditableChoice(void) {
     }
 }
 
+// An editable page's New File: an untitled tab here, shown, which the page
+// then shows too (it follows the window's tab on show).
+- (void)newSessionFile {
+    if (![self openUntitledSessionTab]) [self flashStatus:@"The browser's page could not make a new file here"];
+}
+
+// An editable page's Save As: the tab's text written to `path` (the core
+// held it inside the folder and asked about a file there), and the tab that
+// file from then on, its document's path on the host too, so every view
+// follows; the old file is left as it was on disk. Written with no
+// questions on this screen: the page asked its person. Formatting and
+// keep-sorted on save stay with Cmd+S here.
+- (void)saveSessionDocument:(uint64_t)docId as:(NSString *)path done:(void (^)(BOOL, NSString *))done {
+    [self dispatchSessionLink];
+    MCTab *t = nil;
+    for (MCTab *x in [self tabs])
+        if (x.session && x.session.docId == docId) t = x;
+    if (!t || ![self tabHasTextToWrite:t] || !path.length) {
+        done(NO, @"That document is no longer open in the mutible window.");
+        return;
+    }
+    NSString *text = t.currentText ?: @"";
+    NSString *why = nil;
+    // Its own file: a save.
+    if (!t.untitled &&
+        [path.stringByResolvingSymlinksInPath isEqualToString:t.currentPath.stringByResolvingSymlinksInPath]) {
+        const BOOL ok = [self writeText:text toTab:t interactive:NO failure:&why];
+        done(ok, why);
+        return;
+    }
+    MCTab *there = [self tabForPath:path];
+    if (there && there != t) {
+        done(NO, [NSString stringWithFormat:@"%@ is open in the mutible window: close it there first.",
+                                            path.lastPathComponent]);
+        return;
+    }
+    NSString *old = t.currentPath;
+    t.currentPath = path;   // the host's document follows (DocPath) before the write
+    if (![self writeText:text toTab:t interactive:NO failure:&why]) {
+        t.currentPath = old;
+        done(NO, why ?: @"It could not be saved.");
+        return;
+    }
+    // As a file moved: the strip, the session, the language servers and
+    // the colors follow its new name.
+    t.currentExt = path.pathExtension.lowercaseString;
+    if (t == _activeTab) {
+        [self.lsp documentOpened:self.previewMode ? nil : [self languageServerPath:path]];
+        [self applyHighlighting];
+    } else {
+        [self.lsp tabsChanged];
+    }
+    [self reloadTabStrip];
+    [self saveSession];
+    [self updateTitle];
+    [self showStatusNote:[NSString stringWithFormat:@"Saved as %@ from the browser's page", path.lastPathComponent]];
+    done(YES, nil);
+}
+
 // Which panes the window shows, for the page's layout: the browser pane and
 // the terminal panel open or not (Maximize Pane aside), and the browser's
 // share of the width beside the editor.
@@ -234,6 +297,12 @@ static BOOL MCSessionBrowserEditableChoice(void) {
         b.save = ^(uint64_t docId) { [weakSelf saveSessionDocument:docId]; };
         b.open = ^(NSString *path, BOOL keep) { [weakSelf openSessionPath:path keep:keep]; };
         b.close = ^(uint64_t docId) { [weakSelf closeSessionDocument:docId]; };
+        b.newFile = ^{ [weakSelf newSessionFile]; };
+        b.saveAs = ^(uint64_t docId, NSString *path, void (^done)(BOOL, NSString *)) {
+            EditorController *s = weakSelf;
+            if (s) [s saveSessionDocument:docId as:path done:done];
+            else done(NO, @"The window closed.");
+        };
         b.browse = ^(NSString *url) { [weakSelf openSessionAddress:url]; };
         b.typeset = ^(NSString *path) { [weakSelf typesetForSessionPage:path]; };
         objc_setAssociatedObject(self, &kSessionBrowserKey, b, OBJC_ASSOCIATION_RETAIN_NONATOMIC);

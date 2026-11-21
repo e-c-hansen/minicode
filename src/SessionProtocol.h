@@ -83,7 +83,14 @@
 // have, and DocDisk when a document's file changed under unsaved changes,
 // went, or is in step again. A clean document no app's window has open
 // follows its file (an edit of the host's, one step). DocReload asks the
-// host to put the file's text in place of a document's. Pure C++17, no I/O.
+// host to put the file's text in place of a document's.
+//
+// A page's writes (stage 7, a host whose Welcome has flag 16): DocOpen
+// flag 2 from a guest makes an untitled document; DocSave's json
+// {"saveAs": rel, "hidden"} from a guest names the document's file anew,
+// held inside the session's folder (SessionFiles.h's newFilePath); FsRead's
+// "replace" replaces on the rows a page's search showed (SessionSearch.h),
+// and is refused from a renderer that only reads. Pure C++17, no I/O.
 #pragma once
 
 #include <cstdint>
@@ -122,7 +129,9 @@ enum class Kind {
     DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved.
                  // From a renderer that only reads, a view of the document as it is: it
                  // never makes one, and keeps none open (DocGone when there is none, or
-                 // when the last renderer that edits it closes it)
+                 // when the last renderer that edits it closes it). Flag 2 from a guest,
+                 // to a host whose Welcome has flag 16: a new untitled document (no
+                 // path, no text), let go once nobody has it and it is still empty
     DocReset,    // doc, text8: the text set whole anew (a file read again), history gone
     DocClose,    // doc
     DocEdit,     // doc, base, seq, ops, step; flag 1: outside the undo history (no step:
@@ -152,7 +161,8 @@ enum class Kind {
                  // written in the answer, DocDirty flag 2 to the others); flag 4: it
                  // watches the disk (FsRead's "watch", DocReload); flag 8: it lists
                  // files and searches on workers (FsRead's "files", "search",
-                 // "cancel": SessionSearch.h)
+                 // "cancel": SessionSearch.h); flag 16: it writes for a page (DocOpen
+                 // flag 2, DocSave's "saveAs", FsRead's "replace")
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
     DocEdited,   // doc, v, by, seq, ops, ops16, flag (1 undo, 2 redo), select
     DocUndone,   // doc, req, outcome
@@ -190,7 +200,10 @@ enum class Kind {
                  // flag 1: write even though the file changed on disk or went since
                  // the host's saved text; sent after the renderer's edits, in order;
                  // json from an app (not a guest): {"encoding": encodingName}, the
-                 // encoding its tab writes, kept whatever the file holds now
+                 // encoding its tab writes, kept whatever the file holds now; from a
+                 // guest, to a host whose Welcome has flag 16: {"saveAs": rel,
+                 // "hidden"}, Save As to that path from the folder (flag 1 then
+                 // writes over a file there), the document's path that file after
     DocSaveDone, // host → renderer: doc, req, outcome (Done or Refused), v (the version
                  // written), json: saveDoneJson's {path, ok, reason, why, note, encoding}
     DocDirty,    // host → each renderer whose Hello had flag 8: doc, flag 1 (unsaved

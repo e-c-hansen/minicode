@@ -235,6 +235,52 @@ Json readWorkspace(const std::string& root, const Json& request, std::string* by
     return failed(op, path, "the host has no read \"" + op + "\"");
 }
 
+// ---------------------------------------------------------------- a new path
+
+NewPath newFilePath(const std::string& root, const std::string& rel, bool hidden) {
+    NewPath p;
+    auto refuse = [&](const char* reason, std::string why) {
+        p.reason = reason;
+        p.why = std::move(why);
+        return p;
+    };
+    std::vector<std::string> names;
+    std::string why;
+    if (rel.empty()) return refuse("name", "Name the file to save.");
+    if (rel.back() == '/') return refuse("name", "Name the file, not only its folder.");
+    if (!namesOf(rel, &names, &why)) return refuse("name", "That name is " + why + ": name a file in the session's folder.");
+    for (const std::string& n : names)
+        if (n.size() > 255) return refuse("name", "That name is too long.");
+    const std::string& name = names.back();
+    for (const std::string& n : names)
+        if (!hidden && n[0] == '.')
+            return refuse("dotfile", n + " starts with a dot, and this page shows no dotfiles: name it otherwise, or "
+                                         "turn on Show Hidden Files in the window.");
+    if (root.empty()) return refuse("nofolder", "The session has no folder to save in.");
+    const std::size_t slash = rel.rfind('/');
+    const std::string dirRel = slash == std::string::npos ? std::string() : rel.substr(0, slash);
+    std::string dirAbs;
+    struct stat st;
+    if (!confinedPath(root, dirRel, &dirAbs, &why) || ::stat(dirAbs.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
+        return refuse("nofolder", "There is no folder " + (dirRel.empty() ? std::string("for it") : dirRel) +
+                                      " in the session's folder: a page makes no folders.");
+    p.abs = dirAbs + "/" + name;
+    struct stat lst;
+    if (::lstat(p.abs.c_str(), &lst) == 0) {
+        // Something is there: a regular file inside the folder, by its
+        // real place, or nothing a page may write.
+        const std::string real = realPlace(p.abs);
+        if (real.empty()) return refuse("notfile", name + " is a link to a file that is not there.");
+        if (!inside(realPlace(root), real)) return refuse("outside", name + " leads outside the session's folder.");
+        const bool there = ::stat(p.abs.c_str(), &st) == 0;
+        if (!there || !S_ISREG(st.st_mode))
+            return refuse("notfile", name + (there && S_ISDIR(st.st_mode) ? " is a folder." : " is not a regular file."));
+        p.exists = true;
+    }
+    p.ok = true;
+    return p;
+}
+
 // ---------------------------------------------------------------- saving
 
 namespace {
@@ -259,8 +305,7 @@ SaveDone saveDocument(const SaveAsk& a) {
         return d;
     };
     if (a.path.empty() || a.path[0] != '/')
-        return refuse("nofile", "This document has no file yet: save it from a mutible window, which asks "
-                                "for its name.");
+        return refuse("nofile", "This document has no file yet: Save As gives it a name.");
     if (!a.root.empty()) {
         // Its folder inside the session's, and the file too when it is
         // there: a link out of the folder is never written through.
