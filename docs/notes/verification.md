@@ -93,6 +93,18 @@ found through that list.
   at a time, then the server's), and the harness says
   "left GDK's user time ahead of the X server's" as a LEFT line, and
   puts it back, after any suite that leaves it so.
+- **A blinking caret draws the view every frame** (2026-11-20, GTK).
+  Trap: GTK 4's caret fades in and out, so while a focused text view's
+  caret blinks (the first ten seconds after a focus change or a key) the
+  view is drawn every frame, and a wait for a draw count to stand still
+  (`MCGuiWaitQuiet` on `notesDrawn`, `drawCount`) never sees it stand
+  still. `large_file`'s "drawn" after the 300,000-character line timed
+  out on every local run once `MCGuiSetKeyWindow(nullptr)` gave the
+  window back the X focus (#278); before that the window was inactive
+  and nothing blinked. The harness turns `gtk-cursor-blink` off for the
+  whole run (Harness.cpp, `startWhenWindowIsUp`); `multicaret_perf`
+  had turned it off for its own measure, which the blink cost 500 ms a
+  key.
 - **A long run on a loaded machine** (2026-11-19, GTK, soak #127, round
   2's order replayed beside three other agents' builds). Traps, each a
   wait that held only on a quiet machine:
@@ -253,6 +265,7 @@ text is in place in its section.
 - Verification reality (important) (the rest): **What a suite needs, it sets up**: in CI's order a suite runs after the same few suites every time, so it can pass for months on what they happen to leave and fail in every shuffled order.
 - Verification reality (important) (the rest): **A tooltip takes the next click**: GTK's tooltip is an X window below a resting pointer, and XTest's pointer jumps onto it; the harness hides one over the point before pointer input goes there.
 - Verification reality (important) (the rest): **An in-app drop leaves GDK's user time days ahead**: GTK 4.22's X11 drag sends its XdndDrop with no real time, and once GDK's user time is ahead of the X server's, a presented window gets no keyboard; the harness puts it back after a suite.
+- Verification reality (important) (the rest): **A blinking caret draws the view every frame**: GTK 4's caret fades, so a focused text view is drawn every frame while it blinks and a wait for a draw count to stand still times out; the harness turns `gtk-cursor-blink` off for the whole run.
 - Verification reality (important) (the rest): **A long run on a loaded machine**: GDK hands the window one X event a turn of the main loop, so wait for all of a typed string; VTE is 80 x 24 until the window's first layout; bound the main thread's own work by its CPU (`MCGuiWaitCpu`); a caret blinking keeps the main thread from ever standing still; close the tabs a suite opens.
 - Verification reality (important) (the rest): **A stand-in holds a stage until the suite has seen it, never for a time**: a stage a stand-in program keeps up with `sleep` is a pause in disguise.
 - Verification reality (important) (the rest): **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events through the window then the main menu (`MCGuiPerformMenuKey`, built from the key code; setting the unicode string made the menu refuse a matching key); tree keys through `[window ...

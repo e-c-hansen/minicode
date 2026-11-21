@@ -36,7 +36,6 @@ const char kTyped[] = "abcde";
 
 double gCpu0 = 0, gEditMax = 0, gEditSum = 0;
 int gChars = 0;
-gboolean gBlink = TRUE;
 
 std::string bigText() {
     std::string s;
@@ -114,12 +113,9 @@ void waitForColors(const std::string& what) {
 
 MC_GUI_SUITE(multicaret_perf) {
     MCGuiStep("a Python file of 100,000 lines, needle on one in a hundred", [] {
-        // While the caret blinks GTK draws the view every frame for
-        // seconds after any key (Shift too), about 100 ms of CPU a second at
-        // 100,000 lines, whether there are carets or not; when the measure
-        // caught it, a key cost 500 ms more. Off for the measure.
-        g_object_get(gtk_settings_get_default(), "gtk-cursor-blink", &gBlink, nullptr);
-        g_object_set(gtk_settings_get_default(), "gtk-cursor-blink", FALSE, nullptr);
+        // The harness turns the caret's blink off: GTK draws the view every
+        // frame while it blinks, about 100 ms of CPU a second at 100,000
+        // lines, and when the measure caught it a key cost 500 ms more.
         ed()->closeAllTabs();
         MCGuiWriteFile(F("carets-big.py"), bigText());
         MCGuiOpenFileKept(F("carets-big.py"));
@@ -208,6 +204,5 @@ MC_GUI_SUITE(multicaret_perf) {
     MCGuiStep("the tab closes", [] {
         MCGuiKey("escape");
         ed()->closeAllTabs();
-        g_object_set(gtk_settings_get_default(), "gtk-cursor-blink", gBlink, nullptr);
     });
 }
