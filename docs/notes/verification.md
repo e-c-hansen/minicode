@@ -40,6 +40,15 @@ found through that list.
   behind it), closed. The suites that left either (browser_tabs,
   browser_pages, browser_find, bookmark_save, bookmark_menu, bookmarks,
   terminal_splits) put them back as they end (`MCGuiHideBrowserPane`).
+  On the Mac a tab left unsaved, or on a file no longer on disk, in any
+  window is a LEFT line too (2026-11-21), closed unasked before the
+  settings check, so a write its close makes is put back: the next
+  suite's Close All asked about symbols' deleted renamed.txt
+  (organize_on_save counts the alerts its close shows), and
+  swatch_escape's settings tab, its last color pick's save (0.15 s
+  later) still waiting, was saved over lsp_watch's settings at its
+  first tab switch, turning language servers off. A suite that leaves a
+  tab unsaved, or deletes a file a tab holds, closes the tab itself.
   `MC_GUI_LEAKS=note` prints and changes nothing; "_" suites
   are skipped. A failed check with `MC_GUI_SNAPSHOTS` set leaves a
   picture of the test window (the first ten); CI keeps them as an
@@ -63,6 +72,11 @@ found through that list.
   later suites every tree row was "Untracked (git)" with a tooltip and a
   Worktrees node sat at the tree's top; it now removes the repository,
   the worktree and its files, and waits until the tree has neither.
+  Lists that only grow count too (2026-11-21, Mac `daily_work`): File >
+  Open Recent keeps the 20 most recent folders, and the window the
+  suites share was opened first, so a suite run 62nd found its folder
+  gone from the list; a check of a window's folder there opens a window
+  of its own.
 - **A tooltip takes the next click** (2026-11-19, GTK, soak #127). Trap:
   GTK shows a widget's tooltip just below a resting pointer, as an X
   window of its own over the app's, and XTest's pointer jumps where a

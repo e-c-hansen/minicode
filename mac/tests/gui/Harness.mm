@@ -1,6 +1,7 @@
 // Harness.mm — see Harness.h.
 #import "Harness.h"
 #import "EditorController.h"
+#import "EditorController+Private.h"   // MCTab, closeTabEverywhere:prompt:
 #import "SessionStore.h"
 #include <algorithm>
 #include <cstdio>
@@ -546,6 +547,44 @@ static void CloseTerminalsLeft(const World &was) {
     }
 }
 
+// Every tab left with unsaved changes, or on a file no longer on disk (which
+// the window marks unsaved once it notices), closed unasked. Left open, the
+// next suite's Close All or window close asks about it and the harness's
+// answer saves it, and a settings tab left so was saved over the next
+// suite's settings at its first tab switch (2026-11-21 soak: symbols'
+// deleted renamed.txt, swatch_escape's settings.conf).
+static void CloseUnsavedTabsLeft(NSString *suite, BOOL putBack) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (EditorController *c in [MCGuiControllers() copy]) {
+        NSArray<MCTab *> *tabs = nil;
+        @try {
+            tabs = [c valueForKey:@"tabs"];
+        } @catch (NSException *) {
+        }
+        if (![tabs isKindOfClass:NSArray.class]) continue;
+        NSMutableArray<MCTab *> *left = [NSMutableArray array];
+        NSMutableArray<NSString *> *names = [NSMutableArray array];
+        for (MCTab *t in tabs) {
+            const BOOL missing = t.loaded && t.fileModDate && t.currentPath.length && !t.isDiff &&
+                                 ![fm fileExistsAtPath:t.currentPath];
+            if (!t.dirty && !t.gone && !missing) continue;
+            [left addObject:t];
+            [names addObject:[NSString stringWithFormat:@"%@%@", t.currentPath.lastPathComponent ?: @"untitled",
+                                                        t.dirty ? @"" : @" (deleted)"]];
+        }
+        if (!left.count) continue;
+        Leak(suite, [NSString stringWithFormat:@"left %lu tab(s) unsaved in %@, closed unasked: %@",
+                                               (unsigned long)left.count,
+                                               c.rootPath.lastPathComponent ?: @"a window",
+                                               [names componentsJoinedByString:@", "]], NO);
+        if (!putBack) continue;
+        // A color pick's save, still waiting, would land in the next tab.
+        [NSObject cancelPreviousPerformRequestsWithTarget:c selector:@selector(saveCurrentFile:)
+                                                   object:nil];
+        for (MCTab *t in left) [c closeTabEverywhere:t prompt:NO];
+    }
+}
+
 static void CheckWhatSuiteLeft(NSString *suite) {
     // A "_" suite runs alone in a process of its own, which it may end.
     if (!suite || [suite hasPrefix:@"_"]) return;
@@ -584,6 +623,9 @@ static void CheckWhatSuiteLeft(NSString *suite) {
         // counting its own from none, failed in every soak round).
         if (putBack) CloseTerminalsLeft(was);
     }
+    // Before the two files: closing a settings tab may write it (a color
+    // pick's save), which the settings check below then puts back.
+    CloseUnsavedTabsLeft(suite, putBack);
     // The two files are the harness's to put back between suites, so a suite
     // that changes them needs no step of its own to undo it; said, not failed.
     if (!(now.settings == was.settings || [now.settings isEqualToString:was.settings])) {

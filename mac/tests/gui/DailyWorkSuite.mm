@@ -315,15 +315,24 @@ MC_GUI_SUITE(daily_work) {
     });
 
     // ---- Open Recent and F1
-    MCGuiStep(@"the window's folder is a recent one, in File > Open Recent", ^{
-        NSString *mine = nil;
-        for (NSString *r in MCRecentFolders())
-            if ([r.stringByResolvingSymlinksInPath
-                    isEqualToString:c.rootPath.stringByResolvingSymlinksInPath])
-                mine = r;
-        GCHECK(mine != nil);
-        GCHECK(MenuKey(c, 15, NSEventModifierFlagControl));   // Ctrl+R
-        NSView *palette = MCCommandPaletteIn(c.window);
+    // On a window of the suite's own: the list keeps the 20 most recent
+    // folders, and the window this suite shares with the others was opened
+    // first, so after twenty other suites' folders it had fallen off
+    // (2026-11-21 soak, seed 3983770048, daily_work 62nd in its process).
+    __block EditorController *recent = nil;
+    NSString *recentDir = MCGuiProjectFile(@"daily/recent-folder");
+    MCGuiStep(@"a window's folder is the most recent one, in File > Open Recent", ^{
+        [[NSFileManager defaultManager] createDirectoryAtPath:recentDir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        recent = [(id<MCControlAppHost>)NSApp.delegate controlOpenWindowAtPath:recentDir];
+        GCHECK(recent != nil && recent != c);
+        if (!recent) return;
+        NSArray<NSString *> *recents = MCRecentFolders();
+        NSString *mine = recents.count ? recents[0] : nil;
+        GCHECK([mine.stringByResolvingSymlinksInPath
+                   isEqualToString:recent.rootPath.stringByResolvingSymlinksInPath]);
+        GCHECK(MenuKey(recent, 15, NSEventModifierFlagControl));   // Ctrl+R
+        NSView *palette = MCCommandPaletteIn(recent.window);
         GCHECK(palette != nil);
         GCHECK_EQ_STR(MCCommandPaletteField(palette).stringValue, @">Open Recent > ");
         NSArray<NSString *> *labels = MCCommandPaletteLabels(palette);
@@ -334,7 +343,10 @@ MC_GUI_SUITE(daily_work) {
                                      stringByAppendingString:mine.stringByAbbreviatingWithTildeInPath]]);
         [(NSTextView *)MCCommandPaletteField(palette).currentEditor
             doCommandBySelector:@selector(cancelOperation:)];   // Esc
-        GCHECK(MCCommandPaletteIn(c.window) == nil);
+        GCHECK(MCCommandPaletteIn(recent.window) == nil);
+        [recent.window close];
+        recent = nil;
+        GCHECK(MCGuiController() == c);
     });
     // ---- The Dock icon's menu (RecentFolders.h): the recent folders are the
     // Dock's own list, which a real Dock shows; checked here are its items.

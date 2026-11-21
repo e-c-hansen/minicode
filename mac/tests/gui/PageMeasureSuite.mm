@@ -756,6 +756,19 @@ MC_GUI_SUITE(swatch_escape) {
         GCHECK(!MCSwatchColorPanelOpen());
         GCHECK(!PickReaches(c, 0.1));
         GCHECK(!MCCloseSwatchPanels());   // nothing left to close
+    });
+    // The last pick is saved 0.15 s after it (colorPicked:), which the
+    // steps above, 10 ms apart, never waited for. Left pending, the
+    // settings tab stayed unsaved behind the file put back below, and the
+    // next suite's first tab switch saved it over that suite's settings
+    // (2026-11-21 soak, seed 4247316389: lsp_watch found language servers
+    // off). Saved, then the tab closed, before the settings go back.
+    MCGuiWait(@"the picks are saved", 5, ^BOOL {
+        return ![[c tabForPath:settingsPath] dirty];
+    });
+    MCGuiStep(@"the settings tab closed, the settings put back", ^{
+        if (MCTab *t = [c tabForPath:settingsPath]) GCHECK([c closeTab:t prompt:NO]);
+        GCHECK([c tabForPath:settingsPath] == nil);
         MCGuiSetSettings(kHarnessSettings);
         MCGuiSetKeyWindow(nil);
     });
