@@ -180,8 +180,10 @@ bool pointOnRoot(GtkWidget* widget, double x, double y, int* rootX, int* rootY) 
     if (!MCGuiOnScreen(widget)) return false;
     GtkNative* native = gtk_widget_get_native(widget);
     if (!native) return false;
-    if (x < 0) x = gtk_widget_get_width(widget) / 2.0;
-    if (y < 0) y = gtk_widget_get_height(widget) / 2.0;
+    // Exactly -1 is "the middle"; any other negative is a point left of or
+    // above the widget, as a drag's target is from a row below it.
+    if (x == -1) x = gtk_widget_get_width(widget) / 2.0;
+    if (y == -1) y = gtk_widget_get_height(widget) / 2.0;
     graphene_point_t in, out;
     graphene_point_init(&in, (float)x, (float)y);
     if (!gtk_widget_compute_point(widget, GTK_WIDGET(native), &in, &out)) return false;
