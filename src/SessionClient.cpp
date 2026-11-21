@@ -286,13 +286,33 @@ void Client::noteSelection(DocId id, const Selection& now) {
     if (d && d->depth == 0 && now != d->lastAfter) d->moved = true;
 }
 
+std::size_t Client::unconfirmed(DocId id) const {
+    std::size_t n = inFlight_ && head_.doc == id ? 1 : 0;
+    for (const Message& m : outbox_) n += m.doc == id ? 1 : 0;
+    return n;
+}
+
 void Client::saved(DocId id) {
     if (!doc(id)) return;
     Message m;
     m.kind = Kind::DocSaved;
     m.doc = id;
     queue(std::move(m));
+    fenceDirty(id);
     pump();
+}
+
+// Behind a DocSaved: a Ping whose Pong says the host has taken it, so a
+// DocDirty the host sent before it (an edit's, acknowledged first) is not
+// told after the renderer counted the document saved (SessionClient.h).
+void Client::fenceDirty(DocId id) {
+    if (!dirtyListener_) return;
+    Message p;
+    p.kind = Kind::Ping;
+    p.req = ++nextReq_;
+    fencePings_[p.req] = id;
+    fenced_[id].out++;
+    queue(std::move(p));
 }
 
 bool Client::savedAs(DocId id, std::u16string text) {
@@ -303,6 +323,7 @@ bool Client::savedAs(DocId id, std::u16string text) {
     m.flag = 1;
     m.text16 = std::move(text);
     queue(std::move(m));
+    fenceDirty(id);
     pump();
     return true;
 }
@@ -443,22 +464,46 @@ void Client::process(Message&& m) {
         if (Doc* d = doc(m.doc)) d->broken = true;
         if (!abandoned_.erase(m.req)) replies_[m.req] = std::move(m);
         break;
-    case Kind::DocDirty:
+    case Kind::DocDirty: {
         if ((m.flag & 2) && writtenListener_) writtenListener_(m.doc, m.v, m.json);
-        if (dirtyListener_) dirtyListener_(m.doc, (m.flag & 1) != 0);
+        // Behind a DocSaved the host has not taken yet: held until it has.
+        auto f = fenced_.find(m.doc);
+        if (f != fenced_.end()) {
+            f->second.held = true;
+            f->second.dirty = (m.flag & 1) != 0;
+        } else if (dirtyListener_) {
+            dirtyListener_(m.doc, (m.flag & 1) != 0);
+        }
         break;
+    }
     case Kind::FsChanged:
         if (foldersListener_) foldersListener_(m.window, m.json);
         break;
     case Kind::DocDisk:
         if (diskListener_) diskListener_(m.doc, m.flag);
         break;
+    case Kind::Pong: {
+        auto p = fencePings_.find(m.req);
+        if (p == fencePings_.end()) {
+            if (!abandoned_.erase(m.req)) replies_[m.req] = std::move(m);
+            break;
+        }
+        const DocId id = p->second;
+        fencePings_.erase(p);
+        auto f = fenced_.find(id);
+        if (f == fenced_.end() || --f->second.out > 0) break;
+        const Fence was = f->second;
+        fenced_.erase(f);
+        // The latest the host said once it had taken every DocSaved; nothing
+        // heard, nothing flipped since the listener was last told.
+        if (was.held && dirtyListener_) dirtyListener_(id, was.dirty);
+        break;
+    }
     case Kind::DocText:
     case Kind::State:
     case Kind::FsData:
     case Kind::DocSaveDone:
-    case Kind::DocReloadDone:
-    case Kind::Pong: {
+    case Kind::DocReloadDone: {
         const std::uint64_t req = m.req;
         if (!abandoned_.erase(req)) replies_[req] = std::move(m);
         break;

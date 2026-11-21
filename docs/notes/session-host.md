@@ -264,13 +264,37 @@ top of a turn, never inside a text system callback.
   tab's only when the host wrote the version the mirror is at
   (`MCHostSave inStep`), else it is read from the file.
 - **The host's count of the tab is taken only when the mirror is the
-  host's** (nothing of the window's unconfirmed, none of the host's edits
-  deferred: `mirrorInStep`), at the top of the next turn, the latest of
+  host's** (nothing of the tab's document unconfirmed, `unconfirmed(doc)`,
+  none of the host's edits deferred: `mirrorInStep`), at the top of the
+  next turn, the latest of
   those heard before it, and not when the tab's text changed meanwhile
   (`textGeneration`): a reload's edit and then its DocSaved would
   otherwise flash the dot. Never for an untitled buffer, a deleted file,
   a held tab not shown yet, or a tab not read: their unsaved state is more
   than their text against the file.
+- **The host acknowledges an edit before the DocDirty it caused**
+  (`handle` runs `onEdit`, which sends DocEdited, then `tellDirty`), and
+  DocSaved needs no ack, so the edit's ack lets a DocSaved queued behind
+  it out while the edit's "unsaved" is still to be taken: `mirrorInStep`
+  held (nothing unconfirmed), the "unsaved" reached the tab a turn later,
+  and the DocSaved's "saved" only a round trip after that. Every clean
+  tab's reload flashed its dot, and the save suite's reload step failed
+  `!c.dirty` when it looked in between (CI's session-host pass on #296,
+  2026-11-21; GTK's port of the dot met the same, #297). The core's
+  `Client::saved` and `savedAs` now fence the dirty listener: a Ping goes
+  behind the DocSaved, DocDirty heard before its Pong is held, and the
+  latest held is told at the Pong (`dirtyFenced`, `host:dirty-fence`
+  forces the order). No protocol change, and any app that calls
+  `saved()` gets it; never tell the listener a DocDirty that a DocSaved
+  of the renderer's own is still behind. The GUI check: `save`'s reload
+  step counts `MCDirtyFromHostMarks` (every time the host's count marked
+  a tab unsaved) after waiting on `savePending`. The same CI picture
+  showed a second dot, stuck on a tab reloaded two steps before
+  (enc.txt): its late "saved" came while another tab's typing was in
+  flight, and `mirrorInStep` then counted every document's unconfirmed
+  messages, so the notice was dropped and, the host telling only flips,
+  never came again. A notice about one document is judged by that
+  document's messages alone (`Client::unconfirmed(doc)`).
 - **Where the window's saved text is not the mirror, the host is told.** A
   clean tab following the disk (`takeDiskRead:intoCleanTab:`) sends its
   reload as an edit, which the host would count unsaved against the old
@@ -2782,7 +2806,9 @@ document, and `writeText:toTab:interactive:` writes as before.
 - **Dirty from the host** (`tab:dirtyFromHost:`, from `hostDirty:`): when
   the host's count flips while the mirror is the host's, the window's
   dot is the host's, as the page's is. The traps above say when it is
-  not taken, and where the window tells the host its saved text.
+  not taken, where the window tells the host its saved text, and why a
+  DocDirty heard behind the window's own DocSaved waits for the host to
+  take it (the client's fence, 2026-11-21).
 - **Hot exit, backups, auto-save.** Quitting writes backups, not files,
   so it is unchanged (a headless host keeps the documents as Keep Unsaved
   leaves them). A save leaves the tab clean, so `updateTitle`'s
@@ -2808,7 +2834,13 @@ so though the host never read it, a deleted file made again; DocSaved
 flag 1 counting the document unsaved against another text and clean
 against its own; the stamp's JSON exact through the wire (a device and
 inode past 2^53), a DocSave's encoding through the wire; a host with only
-flag 1 sent no encoding and no `savedAs`. `host:save` and the
+flag 1 sent no encoding and no `savedAs`. `host:dirty-fence` (queued
+messages taken in the order CI met): a reload's edit and `saved()` never
+tell "unsaved", the "saved" told once the host took the DocSaved, typing
+told at once after, a `savedAs` that flips nothing telling nothing, two
+saves out held until the last, another document's edit in flight
+leaving this one in step (`unconfirmed(doc)`), no Ping from a renderer
+that does not hear. `host:save` and the
 `sessionweb:*` groups unchanged. GUI: `host_reattach`'s stage 7 part on a
 headless host (its header): a page's guest over the socket saves a file
 the window shows with typing in it, the window's tab and its strip dot clean and

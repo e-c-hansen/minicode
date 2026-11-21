@@ -241,6 +241,15 @@ public:
     // The selection now, outside a step: moved, typing starts a new step.
     void noteSelection(DocId doc, const Selection& now);
     // The text as the mirror has it now was written to its file.
+    //
+    // Both this and savedAs fence the dirty listener (hearDirty) for the
+    // document until the host has taken the DocSaved: a Ping goes behind
+    // it, and DocDirty heard before its Pong is held, the latest of them
+    // told at the Pong. The host acknowledges an edit before the DocDirty
+    // it caused, so the ack lets the DocSaved out while that "unsaved" is
+    // still on its way: a reload's edit and then its DocSaved would tell
+    // the listener "unsaved" for a round trip after the renderer counted
+    // the document clean (the save suite's reload, CI 2026-11-21).
     void saved(DocId doc);
     // The file holds `text`, which is not the mirror's (a Keep Mine kept the
     // buffer over a file changed on disk): the host counts the document
@@ -248,6 +257,8 @@ public:
     // sending nothing, to a host that would take it for saved() (no
     // hostSavesForApps).
     bool savedAs(DocId doc, std::u16string text);
+    // Whether a DocSaved of the document's is still fenced (checks).
+    bool dirtyFenced(DocId doc) const { return fenced_.count(doc) > 0; }
     // The host writes the document to its file itself (stage 7,
     // SessionFiles.h's saveDocument), after every edit this renderer sent
     // before: `window` names whose folder holds a guest's save (0 for a
@@ -310,6 +321,12 @@ public:
     };
     HostDoc hostDocument(DocId doc);
     std::size_t unconfirmed() const { return outbox_.size() + (inFlight_ ? 1 : 0); }
+    // This renderer's messages about `doc` the host has not taken: whether
+    // what the host says of the document (its unsaved state, a write) is of
+    // the mirror's text. Another document's edits in flight do not count
+    // (they kept the Mac's tab from taking the host's "saved" after a
+    // reload, and its dot stuck: docs/notes/session-host.md).
+    std::size_t unconfirmed(DocId doc) const;
     // What the host said went wrong (an edit that did not fit), oldest
     // first; takeErrors() empties the list.
     std::vector<std::string> takeErrors();
@@ -414,6 +431,15 @@ private:
     void onTerminal(Message& m);
     // Requests whose wait timed out: their answers are dropped on arrival.
     std::set<std::uint64_t> abandoned_;
+    // saved()'s fences: the Ping sent behind each DocSaved, by its request,
+    // and per document how many are out and the latest DocDirty held.
+    struct Fence {
+        int out = 0;
+        bool held = false, dirty = false;
+    };
+    std::map<std::uint64_t, DocId> fencePings_;
+    std::map<DocId, Fence> fenced_;
+    void fenceDirty(DocId doc);
     std::vector<std::string> errors_;
     std::atomic<bool> lost_{false};
 

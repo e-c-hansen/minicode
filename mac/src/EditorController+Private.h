@@ -798,6 +798,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)writeTextThroughHost:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive;
 - (void)tab:(MCTab *)t writtenByHost:(id)write;
 - (void)tab:(MCTab *)t dirtyFromHost:(BOOL)dirty;
+// How many times a tab was marked unsaved by the host's count (checks: a
+// clean tab's reload must never be, docs/notes/session-host.md's traps).
+extern NSUInteger MCDirtyFromHostMarks;
 // Stage 6: the window on its host (SessionWindow.h), nil with the setting
 // off; what a window opening takes (before the session restores the rest,
 // then after it); Open Folder moving it; a window closing detaching; the

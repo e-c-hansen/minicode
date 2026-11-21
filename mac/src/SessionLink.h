@@ -328,6 +328,9 @@ struct MCHostSave {
 // it, as the window does. NO, telling nothing, when the host would not
 // take it (Client::savedAs).
 - (BOOL)savedAs:(NSString *)text;
+// Whether the host has yet to take a saved or savedAs: until it has, what
+// it says of the tab's unsaved state is held (Client::saved's fence).
+@property(nonatomic, readonly) BOOL savePending;
 // Whether the host writes this document's file: open on a host that saves
 // for apps (its Welcome's flag 2), not lost.
 @property(nonatomic, readonly) BOOL hostSavesFile;
