@@ -440,7 +440,14 @@ found through that list.
   anchored on goes, so `keepRows` undoes a scroll gone to 0 after rows go,
   and the keyboard moves to the next row only once the row is out; and the
   tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or
-  the tree goes to the next tab's file.
+  the tree goes to the next tab's file. Trap (GTK checks, 2026-11-21): a
+  check that scrolls the list itself (`gtk_list_view_scroll_to` to row 0)
+  while a keep runs is undone like GTK's jump, since only the tree's own
+  scrolls and the user's wheel and keys end a keep; `tree_clicks` after
+  `session_browser`'s last step (files removed at the top level) never saw
+  its folder (the soak). Bring a row on show with `FileTree::revealPath`,
+  which ends the keep, and a suite that removes rows waits for
+  `keeping()` to be false before it ends.
   A rename kept the tree's place in only about one run of three once
   other suites had run first (2026-11-20, `tree_edits`' "the tree kept
   its place" after `maximize`, `hints_panel` or a tree suite: the tree at
@@ -479,5 +486,6 @@ text is in place in its section.
 - The file tree (GTK): Trap (GTK checks): the tree following the tab leaves open the folders earlier suites opened files from (Find in Folder's results open `replace_in_folder`'s rif4, which holds a.txt to d.txt), so a check finds a tree row by its path (`MCGuiTreeRow`), never by its name (`MCGuiFindLabel`); a check that wants the top row scrolls to the top on every look, as a row coming in above the rows on show stays above the pane.
 - The file tree (GTK): Trap: a name the icon theme lacks draws GTK's missing-image picture (no fallback by dropping parts of the name), so every name is checked with `gtk_icon_theme_has_icon` and each type's list ends with text-x-generic.
 - The file tree (GTK): Trap: GtkListView puts the list at its top a frame or two after the row it is anchored on goes, so `keepRows` undoes a scroll gone to 0 after rows go, and the keyboard moves to the next row only once the row is out; and the tabs Move to Trash closes must not be followed (`TreeFollow::quiet`), or the tree goes to the next tab's file.
+- The file tree (GTK): Trap (GTK checks, 2026-11-21): a check that scrolls the list itself (`gtk_list_view_scroll_to` to row 0) while a keep runs is undone like GTK's jump, since only the tree's own scrolls and the user's wheel and keys end a keep.
 - The file tree (GTK): Trap: a popover on the list that has the keyboard as it closes gives it back only at the window's next after-paint, to the popover's parent, and when the idle that unparents the popover runs first GTK finds no parent and tabs into the window from its start, so the list focuses row 0 and scrolls to its top (GtkListBase's tab behavior "all", then `set_focus_child`'s `scroll_to_item`); the name box's "closed" gives the list the keyboard itself, before the idle (its focus row, the row asked about: no scroll).
 - The file tree (GTK): Trap: the 300 ms that `keepRows` undoes a jump to the top for counted wall time, and on a loaded machine (several builds, load 50) the frame clock may draw no layout in 300 ms, so the jump came after the keep ended and `tree_edits` failed "the tree kept its place" about one run in nine; the keep lasts at least `kKeepFrames` layouts as well, and at most `kKeepMostUs`.
