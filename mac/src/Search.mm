@@ -676,10 +676,12 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     [self.window makeFirstResponder:_queryInput.field];
 }
 
-- (void)showReplace {
+- (void)showReplace { [self showReplaceFocusingReplace:YES]; }
+
+- (void)showReplaceFocusingReplace:(BOOL)focusReplace {
     if (_replaceInput) [self setReplaceShown:YES];
-    [self show];
-    if (_replaceInput) [self.window makeFirstResponder:_replaceInput.field];
+    [self show];   // the keyboard in the query, its text selected
+    if (_replaceInput && focusReplace) [self.window makeFirstResponder:_replaceInput.field];
 }
 
 - (void)seedQuery:(NSString *)query {

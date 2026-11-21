@@ -8,9 +8,10 @@
 // pattern left to std::regex that runs past its time stops the search
 // with a reason. Each hit shows its line number and the lines just above
 // and below (one a neighbouring hit shows already, once), and opens at its
-// own line. A hit in a Windows-1252 file opens it as text at its line,
-// the status bar naming the encoding, and it is saved in it, byte for
-// byte, or as UTF-8, said, once it holds what Windows-1252 cannot.
+// own line with the keyboard in the text, though the tree had it. A hit
+// in a Windows-1252 file opens it as text at its line, the status bar
+// naming the encoding, and it is saved in it, byte for byte, or as UTF-8,
+// said, once it holds what Windows-1252 cannot.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorController+Private.h"
@@ -298,7 +299,9 @@ MC_GUI_SUITE(search) {
         GCHECK(lastTexts.count == 2 && lastTexts[0].hidden && !lastTexts[1].hidden);
         if (lastTexts.count == 2) GCHECK_EQ_STR(lastTexts[1].stringValue, @"hotel");
         MCGuiSnapshot(p.window.contentView, @"search-excerpts");
-        // Opened, a hit goes to its own line, not a line around it.
+        // Opened, a hit goes to its own line, not a line around it, and
+        // its text has the keyboard though the tree had it before.
+        [c.window makeFirstResponder:c.outline];
         [t selectRowIndexes:[NSIndexSet indexSetWithIndex:3] byExtendingSelection:NO];
         [NSApp sendAction:t.doubleAction to:t.target from:t];
     });
@@ -313,6 +316,8 @@ MC_GUI_SUITE(search) {
             if ([text characterAtIndex:i] == '\n') line++;
         MCGuiNote(@"caret at %lu, line %lu", (unsigned long)at, (unsigned long)line);
         GCHECK(line == 7);
+        MCGuiNote(@"the editor window's first responder: %@", c.window.firstResponder.className);
+        GCHECK(c.window.firstResponder == c.textView);
         [NSFileManager.defaultManager removeItemAtPath:[dir stringByAppendingPathComponent:@"excerpt.txt"]
                                                  error:nil];
         Panel(c).includeField.stringValue = scopeInclude ?: @"";

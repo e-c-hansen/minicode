@@ -431,8 +431,16 @@ static NSString *const kKeepUnsavedDetail = @"Keep Unsaved leaves your changes u
                isEqualToString:p.stringByResolvingSymlinksInPath];
 }
 
+// Opened, the file takes the keyboard, as in VS Code and Zed, whatever had
+// it before Cmd+P: the palette gives the keyboard back to that (the tree,
+// the terminal) as it closes, so typing went to the tree (the task
+// benchmark, 1.6.9). A web bookmark gives its page the keyboard itself.
 - (void)openFileFromQuickOpen:(NSString *)path {
     [self revealPath:path open:YES from:EditorTabs::OpenFrom::QuickOpen];
+    if ([self.currentPath isEqualToString:path] ||
+        [self.currentPath.stringByResolvingSymlinksInPath
+            isEqualToString:path.stringByResolvingSymlinksInPath])
+        [self focusActiveDocument];
 }
 
 - (void)insertTab:(MCTab *)tab {

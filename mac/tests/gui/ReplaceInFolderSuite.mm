@@ -11,7 +11,8 @@
 // Option+Cmd+Return asks, as the button does, and Cancel writes nothing;
 // a dismissed row is left alone on disk; and Ctrl+` from the Search window
 // gives the terminal the keyboard, the editor window made key, so typing
-// reaches the shell and not the replace field.
+// reaches the shell and not the replace field. Last, where Option+Shift+
+// Cmd+F puts the keyboard: the query, unless a selection just became it.
 #import "Harness.h"
 #import "EditorController.h"
 #import "Search.h"
@@ -68,7 +69,13 @@ MC_GUI_SUITE(replace_in_folder) {
         [c openReplaceInFolder:nil];
         SearchPanel *p = Panel(c);
         GCHECK(p != nil);
-        GCHECK(p.window.firstResponder == p.replaceField.currentEditor);
+        // Nothing selected: the keyboard in the query, as VS Code's Replace
+        // in Files (1.6.9 put it in the replace field, so the search typed
+        // first became the replacement).
+        MCGuiNote(@"Option+Shift+Cmd+F, nothing selected: %@ in the Search window",
+                  p.window.firstResponder.className);
+        GCHECK(p.replaceShown);
+        GCHECK(p.field.currentEditor != nil && p.window.firstResponder == p.field.currentEditor);
         [p setScope:dir];
         p.field.stringValue = @"cat";
         p.replaceField.stringValue = @"dog";
@@ -459,6 +466,42 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiSetKeyWindow(nil);
         [c toggleTerminal:nil];   // hidden again
     });
+
+    // ---- where Option+Shift+Cmd+F puts the keyboard, as VS Code's Replace
+    // in Files does: a selection on one line becomes the query and the
+    // keyboard goes to the replace field; with none, the query keeps what
+    // it held and has the keyboard, its text selected.
+    MCGuiStep(@"\"cat\" selected in k1.txt: the query, the keyboard in the replace field", ^{
+        GCHECK([c showFile:k1]);
+        [c.window makeFirstResponder:Text(c)];
+        const NSRange cat = [Text(c).string rangeOfString:@"cat"];
+        GCHECK(cat.location != NSNotFound);
+        if (cat.location == NSNotFound) return;
+        Text(c).selectedRange = cat;
+        SearchPanel *p = Panel(c);
+        p.field.stringValue = @"something else";
+        [c openReplaceInFolder:nil];
+        MCGuiNote(@"query %@; first responder %@", p.field.stringValue,
+                  p.window.firstResponder.className);
+        GCHECK_EQ_STR(p.field.stringValue, @"cat");
+        GCHECK(p.replaceShown);
+        GCHECK(p.replaceField.currentEditor != nil &&
+               p.window.firstResponder == p.replaceField.currentEditor);
+    });
+    MCGuiWait(@"the selection's search", 10, ^BOOL { return !Panel(c).busy; });
+    MCGuiStep(@"no selection: the query kept, the keyboard in it, its text selected", ^{
+        [c.window makeFirstResponder:Text(c)];
+        Text(c).selectedRange = NSMakeRange(0, 0);
+        SearchPanel *p = Panel(c);
+        [c openReplaceInFolder:nil];
+        NSText *ed = p.field.currentEditor;
+        MCGuiNote(@"query %@; first responder %@; selected %@", p.field.stringValue,
+                  p.window.firstResponder.className, NSStringFromRange(ed.selectedRange));
+        GCHECK_EQ_STR(p.field.stringValue, @"cat");
+        GCHECK(ed != nil && p.window.firstResponder == ed);
+        GCHECK(NSEqualRanges(ed.selectedRange, NSMakeRange(0, 3)));
+    });
+    MCGuiWait(@"searched", 10, ^BOOL { return !Panel(c).busy; });
 
     MCGuiStep(@"close the panel; Don't Save the tabs", ^{
         [Panel(c).window close];

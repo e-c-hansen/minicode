@@ -1496,6 +1496,26 @@ std::string graphToolTip(const Graph& g, size_t row, long long now, DateFormat d
     return t;
 }
 
+std::string graphRowLabel(const Graph& g, size_t row, long long now) {
+    if (row >= g.commits.size())
+        return "Show " + std::to_string(kGraphBatch) + " more commits";
+    const Git::Commit& c = g.commits[row];
+    std::string t = validUtf8(c.subject) + ", commit " + Git::shortHash(c.hash);
+    if (!c.author.empty()) t += ", " + validUtf8(c.author);
+    if (c.time > 0) t += ", " + Git::relativeTime(c.time, now);
+    auto it = g.labels.find(c.hash);
+    if (it != g.labels.end())
+        for (const Git::Ref& r : it->second) {
+            t += ", ";
+            if (r.kind == Git::RefKind::Tag) t += "tag ";
+            t += validUtf8(r.name);
+            if (r.current) t += " (current)";
+        }
+    if (g.divergence.outgoing.count(c.hash)) t += ", not pushed yet";
+    if (g.divergence.incoming.count(c.hash)) t += ", not pulled yet";
+    return t;
+}
+
 std::vector<std::string> graphDescriptions(const Graph& g) {
     std::vector<std::string> out;
     for (size_t i = 0; i < g.commits.size(); ++i) {

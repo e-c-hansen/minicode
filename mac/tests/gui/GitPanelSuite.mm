@@ -6,6 +6,8 @@
 // with git's own words, and nothing but the index and the commit changed;
 // the status bar's branch shows the name, "*" and the counts, its name
 // opens Switch Branch, its counts sync, and it goes with the repository.
+// The graph's rows read as their commits to VoiceOver, and a press on one
+// opens it.
 #import "Harness.h"
 #import "EditorController.h"
 #import "EditorFont.h"
@@ -303,6 +305,50 @@ MC_GUI_SUITE(git_panel) {
         [Git(c) showCommitAtRow:0];
         GCHECK(!ActiveIsPreview(c));
         GCHECK(PagesOfKind(c, @"commit") == 2);
+    });
+    // To VoiceOver and the Accessibility API each graph row is a cell (the
+    // table's, reading the row view's label) that says the commit, its
+    // subject first, and a press on it opens the commit as a click does
+    // (2026-11-20: the rows were only drawn, so the task benchmark found
+    // a commit on the screen).
+    MCGuiStep(@"the graph's rows read as their commits; pressing \"first\" opens it", ^{
+        if (!git) return;
+        NSTableView *graph = [Git(c) valueForKey:@"graphTable"];
+        NSString *top = [[graph viewAtColumn:0 row:0 makeIfNecessary:YES] accessibilityLabel];
+        NSString *first = [[graph viewAtColumn:0 row:1 makeIfNecessary:YES] accessibilityLabel];
+        NSString *hash = [[Git(c).graphDescriptions[1] componentsSeparatedByString:@" "] firstObject];
+        MCGuiNote(@"the graph reads: \"%@\", \"%@\"", top, first);
+        GCHECK([top hasPrefix:@"Second commit, commit "] && [top containsString:@", main (current)"]);
+        GCHECK([first hasPrefix:[@"first, commit " stringByAppendingString:hash ?: @"?"]]);
+        // Then the author (the harness's) and the age ("just now" here).
+        GCHECK([first containsString:@", GUI Check, "]);
+        id cell = MCGuiAXFind(graph, NSAccessibilityCellRole, first);
+        GCHECK(cell != nil);
+        if (!cell) return;
+        GCHECK(![[ActivePage(c) headerTitle] isEqualToString:@"first"]);
+        // The stand-in answers the older calls only (docs/notes/processes.md).
+        BOOL pressed = NO;
+        if ([cell respondsToSelector:@selector(accessibilityPerformPress)]) {
+            pressed = [cell accessibilityPerformPress];
+        } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            GCHECK([[cell accessibilityActionNames] containsObject:NSAccessibilityPressAction]);
+            [cell accessibilityPerformAction:NSAccessibilityPressAction];
+#pragma clang diagnostic pop
+            pressed = YES;
+        }
+        GCHECK(pressed);
+    });
+    MCGuiWait(@"the pressed commit's page", 15, ^BOOL {
+        if (!git) return YES;
+        MCChangeReviewPage *p = ActivePage(c);
+        return [p isKindOfClass:MCChangeReviewPage.class] && [p.headerTitle isEqualToString:@"first"];
+    });
+    MCGuiStep(@"its row selected", ^{
+        if (!git) return;
+        NSTableView *graph = [Git(c) valueForKey:@"graphTable"];
+        GCHECK(graph.selectedRow == 1);
     });
     MCGuiAsync(@"git agrees: the body kept, b.txt still in HEAD", 15, ^(MCGuiDone done) {
         if (!git) { done(); return; }

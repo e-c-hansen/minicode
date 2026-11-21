@@ -549,6 +549,19 @@ found through that list.
   remembers the first responder (a field, not its field editor, with its
   selection) and puts the keyboard back on Esc, a click outside, or running
   something; the keyboard moving elsewhere closes it.
+- **What opens a place takes the keyboard after the palette closes**
+  (2026-11-20, found by `make taskbench-mac`, which needed Cmd+1 after
+  Cmd+P): a row's `run` closes the palette first, giving the keyboard back
+  to what had it (the tree, the terminal), and opens on the next turn, so
+  an open that does not focus anything left typing in the tree. Quick
+  Open's `openFileFromQuickOpen:` calls `focusActiveDocument` once the file
+  is on show (not for a web bookmark, whose page takes the keyboard
+  itself); Go to Symbol (`goToSymbol`, `focusActiveDocument` on a Markdown
+  page), workspace symbols (`revealLocationNow:`) and Go to Line
+  (`moveToLine:`) already gave the text view the keyboard. The tree's
+  following of the active tab (#197) and `revealPath:` select a row but
+  never take the keyboard. `palette` checks Quick Open and Go to Symbol
+  from the tree.
 - Commands are read from `NSApp.mainMenu` on each open (submenus `update`d;
   enabled, visible, non-alternate items as "Menu > Item", with the first key in
   effect). Return sends the action with `[NSApp sendAction:to:from:]`, the item
@@ -621,6 +634,7 @@ text is in place in its section.
 - The editor's text view (Mac): **Trap: a freed large malloc block stays in the footprint** (macOS 27, 2026-11-19).
 - The editor's text view (Mac): **Trap: anything that lays out all of a large text stays.** Two did on every open after a file with diagnostics or a preview: `needsDisplay = YES` on the text view, which NSTextView answers by laying out every glyph of its bounds (CodeTextView's `setNeedsDisplay:` marks only the visible and prepared rects that way, and since 2026-11-18 the bounds too with `avoidAdditionalLayout:YES`, which lays out nothing: tiles past them kept an older page's ink, see the Markdown notes; clearing ...
 - Folding (Mac): Trap: one region at a time was quadratic (6 s and 18 s for Fold All and Unfold All of 50,000); they go in as one sorted merge and one invalidation (`collapseAll`).
+- The palette, symbols and Go Back (Mac): a row's run gives the keyboard back to what had it before opening, so an open that focuses nothing (Quick Open, until 2026-11-20) left typing in the tree.
 - Several carets and line commands (Mac): **Trap (2026-11-06)**: the window server counts clicks by time alone (HIDClickSpace is (0,0)), so a second click within 0.5 s is clickCount 2 wherever it lands; the old `clickCount > 1` bail sent the owner's quick second Cmd+Shift click to NSTextView.
 - Several carets and line commands (Mac): Trap: AppKit's selection affinity is not the selection's direction (Shift+End to a wrapped paragraph's end left it upstream), and a selection set with `setSelectedRange:` extends from its start whatever affinity it is given; keep AppKit's anchor by moving with its own `...AndModifySelection:` methods (`extendSoleFrom:`). Those paragraph moves never cross the anchor: from {10, 5} with the anchor at 15, moveToEndOfParagraphAndModifySelection: gave {10, 15}, so a move past the anchor starts from an empty selection there (CI's editor_keys caught it).
 - Several carets and line commands (Mac): GUI trap: a simulated key press that changes nothing, wrapped in `MCGuiUndoGroup`, leaves an empty undo group on top that a real key press never opens.

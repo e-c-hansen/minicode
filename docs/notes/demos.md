@@ -257,13 +257,16 @@ clicks, ScreenCaptureKit and Vision read the screen.
   its title, or from outside (git's index, the port, files on disk), and its
   palette steps end on its CPU (`quiet`); where none can tell, the result is
   "unverified" and marked * in the table (Zed's finder task: its text is
-  read from the screen, the keyboard's place cannot be). mutible 1.6.9 gives
-  the keyboard back to the file tree when Quick Open closes (found
-  2026-11-20; its open steps end on the window's title, and its multicursor
-  path pays Cmd+1, Focus the editor), and its commit graph's rows carry no
-  AX text (its history click is read from the screen); its folder search's
-  Option+Shift+Cmd+F, with nothing searched yet, puts the keyboard in the
-  replacement field, so its replace path searches first (Shift+Cmd+F).
+  read from the screen, the keyboard's place cannot be). mutible 1.6.9
+  gave the keyboard back to the file tree when Quick Open closed, its
+  commit graph's rows carried no AX text, and its Option+Shift+Cmd+F with
+  nothing searched yet put the keyboard in the replacement field (found
+  2026-11-20), so its multicursor path paid Cmd+1, its history click was
+  read from the screen, and its replace path searched first with
+  Shift+Cmd+F. All three were fixed the same day, and those steps take the
+  direct path: Cmd+P ends with the keyboard in the text (AXTextArea
+  focused), history presses the AXCell named by the commit's subject, and
+  replace is Option+Shift+Cmd+F, the search, Tab, the replacement.
   mutible has no history of one file: its history task uses the branch's
   commit graph. Chromium's AX tree costs VS Code some CPU and memory, and
   every app pays for being queried. Chords are posted by US key positions.
