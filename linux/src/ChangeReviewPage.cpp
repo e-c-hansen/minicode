@@ -657,6 +657,21 @@ void ChangeReviewPage::scrollToRow(size_t row) {
     gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(view_), &it, 0, TRUE, 0, 0);
 }
 
+long ChangeReviewPage::caretRow() const {
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_mark(buffer_, &it, gtk_text_buffer_get_insert(buffer_));
+    return (long)rowAtOffset(gtk_text_iter_get_offset(&it));
+}
+
+void ChangeReviewPage::selectRowText(size_t row) {
+    if (row >= rowChar_.size()) return;
+    GtkTextIter a, b;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &a, rowChar_[row]);
+    gtk_text_buffer_get_iter_at_offset(buffer_, &b, rowChar_[row]);
+    gtk_text_iter_forward_to_line_end(&b);
+    gtk_text_buffer_select_range(buffer_, &b, &a);
+}
+
 size_t ChangeReviewPage::rowAtOffset(int offset) const {
     auto it = std::upper_bound(rowChar_.begin(), rowChar_.end(), offset);
     return it == rowChar_.begin() ? 0 : (size_t)(it - rowChar_.begin() - 1);
