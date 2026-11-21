@@ -27,13 +27,19 @@
 //     documents keep four typesets, the oldest dropped;
 //   - the page's Source Control (`git` watch) reads again after a commit
 //     made in the folder;
+//   - a worktree's review page open in the window is listed in the state's
+//     `reviews` (kind, title, on show), `review` with its `page` gives its
+//     files, and closing the tab drops it from the list (GTK has no commit
+//     page, so a commit's is not checked here);
 //   - closing the window stops its server (the port refuses).
 // Nothing opens a real browser (SessionBrowser::opener), and the state file,
 // the files and the windows are put back.
 #include "Harness.h"
 
+#include "ChangeReviewPage.h"
 #include "Document.h"
 #include "Editor.h"
+#include "GitPanel.h"
 #include "IdeLink.h"
 #include "Latex.h"
 #include "Json.h"
@@ -356,6 +362,36 @@ void runGit(const std::vector<std::string>& args) {
     cmd += " >/dev/null 2>&1";
     GCHECK(system(cmd.c_str()) == 0);
 }
+
+// The `reviews` of the latest state: the entry with this id, or null.
+bool reviewListed(Conn& c, const std::string& id, Json* out) {
+    Json st;
+    if (!c.latest("state", &st)) return false;
+    for (const Json& w : st["windows"].elements())
+        for (const Json& r : w["reviews"].elements())
+            if (r["id"].asString() == id) {
+                *out = r;
+                return true;
+            }
+    return false;
+}
+// How many review pages the latest state lists, in all its windows.
+size_t reviewCount(Conn& c) {
+    Json st;
+    size_t n = 0;
+    if (c.latest("state", &st))
+        for (const Json& w : st["windows"].elements()) n += w["reviews"].size();
+    return n;
+}
+// The window's worktree page, or null.
+Document* worktreeTab() {
+    for (Document* d : Ed()->documents())
+        if (d->editorPage())
+            if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get()))
+                if (r->isWorktree()) return d;
+    return nullptr;
+}
+std::string gWtPath, gWtId;
 
 std::string gTectonicWas;
 bool gHadTectonic = false;
@@ -844,6 +880,83 @@ MC_GUI_SUITE(session_browser) {
         if (!gWs3.latest("git", &gMsg)) return false;
         return gMsg["version"].asInt() > gVersion && gMsg.dump().find("sbt_new.txt") == std::string::npos;
     });
+
+    // ---- 7. A worktree's review page
+    MCGuiStep("a worktree one commit ahead of main, its review page open in the window", [] {
+        gWtPath = MCGuiScratch() + "/sbt_wt";
+        runGit({"worktree", "add", "-q", gWtPath, "-b", "sbt-branch"});
+        MCGuiWriteFile(gWtPath + "/sbt_wt.txt", "from the worktree\n");
+        const std::string cmd = "git -C '" + gWtPath +
+                                "' add sbt_wt.txt && git -C '" + gWtPath +
+                                "' -c user.name=t -c user.email=t@example.com commit -q -m wt >/dev/null 2>&1";
+        GCHECK(system(cmd.c_str()) == 0);
+        gWtId = "worktree:" + gWtPath;
+        GCHECK(MCGuiApp().git != nullptr);
+        auto page = std::make_shared<ChangeReviewPage>(MCGuiApp().git, gWtPath, "sbt-wt", "sbt-branch", "main");
+        Ed()->showPage(page);
+    });
+    MCGuiWait("the state lists it, on show, with its title", 20, [] {
+        Json r;
+        return reviewListed(gWs3, gWtId, &r) && r["onShow"].asBool();
+    });
+    MCGuiStep("kind worktree, the page's title; the uncommitted changes' page is not one", [] {
+        Json r;
+        if (!GCHECK(reviewListed(gWs3, gWtId, &r))) return;
+        GCHECK_EQ_STR(r["kind"].asString(), "worktree");
+        GCHECK_EQ_STR(r["title"].asString(), "sbt-wt vs main");
+        GCHECK(reviewCount(gWs3) == 1);
+        gMark = gWs3.msgs.size();
+        Json o = Json::object();
+        o.set("t", Json("review"));
+        o.set("page", Json(gWtId));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("the read is done (pending, then reviewread)", 20, [] {
+        gWs3.pump();
+        for (size_t i = gMark; i < gWs3.msgs.size(); i++)
+            if (gWs3.msgs[i]["t"].asString() == "reviewread" && gWs3.msgs[i]["page"].asString() == gWtId) return true;
+        return false;
+    });
+    MCGuiStep("ask again, as the page does", [] {
+        gMark = gWs3.msgs.size();
+        Json o = Json::object();
+        o.set("t", Json("review"));
+        o.set("page", Json(gWtId));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("the review of that page, with its file", 20, [] {
+        gWs3.pump();
+        for (size_t i = gMark; i < gWs3.msgs.size(); i++) {
+            const Json& m = gWs3.msgs[i];
+            if (m["t"].asString() == "review" && m["page"].asString() == gWtId && !m["pending"].asBool()) {
+                gMsg = m;
+                return true;
+            }
+        }
+        return false;
+    });
+    MCGuiStep("its header says what it compares and it has the one file; the tab closes", [] {
+        GCHECK_EQ_STR(gMsg["title"].asString(), "sbt_wt compared with main");
+        GCHECK(gMsg["files"].size() == 1);
+        GCHECK(gMsg.dump().find("sbt_wt.txt") != std::string::npos);
+        GCHECK(gMsg["error"].isNull());
+        Document* d = worktreeTab();
+        if (!GCHECK(d != nullptr)) return;
+        Ed()->closeTab(d);
+    });
+    MCGuiWait("the state no longer lists it", 20, [] {
+        Json r;
+        return !reviewListed(gWs3, gWtId, &r) && reviewCount(gWs3) == 0;
+    });
+    MCGuiStep("the worktree, the repository and the files go back", [] {
+        Json o = Json::object();
+        o.set("t", Json("review"));
+        o.set("page", Json(gWtId));
+        o.set("watch", Json(false));
+        gWs3.sendJson(o);
+        GCHECK(worktreeTab() == nullptr);
+    });
+
     MCGuiStep("the stand-in, the repository and the files go back", [] {
         Json o = Json::object();
         o.set("t", Json("git"));
@@ -852,7 +965,7 @@ MC_GUI_SUITE(session_browser) {
         gWs3.shut();
         if (gHadTectonic) EnvLock::envSet("MUTIBLE_TECTONIC", gTectonicWas.c_str(), TRUE);
         else EnvLock::envUnset("MUTIBLE_TECTONIC");
-        const std::string cmd = "rm -rf '" + MCGuiProject() + "/.git' '" + MCGuiScratch() + "/sb_tectonic'";
+        const std::string cmd = "rm -rf '" + MCGuiProject() + "/.git' '" + MCGuiScratch() + "/sb_tectonic' '" + gWtPath + "'";
         GCHECK(system(cmd.c_str()) == 0);
         for (const char* n : {"sbt_nt1.tex", "sbt_nt2.tex", "sbt_nt3.tex", "sbt_nt4.tex", "sbt_tab.tex", "sbt_bad.tex",
                               "sbt_base.txt", "sbt_new.txt"})

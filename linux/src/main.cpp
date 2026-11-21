@@ -63,6 +63,7 @@
 #include "SessionBrowser.h"
 #include "SessionLink.h"
 #include "SessionWeb.h"   // the session browser's report of the panes
+#include "SessionWebGit.h"   // the report of its worktree pages
 #include "TermDockRecord.h"
 #include "FileTree.h"
 #include "HintsColumns.h"
@@ -4892,8 +4893,29 @@ static void reportSessionWindow(App* app) {
     terminalOpen = app->termDock && app->layout->terminalShown();
 #endif
     Json panes = Shared::Web::panesReportJson(browserOpen, terminalOpen, app->layout->state().browserFraction);
+    // The worktree pages in either group's strip (GTK has no commit page
+    // yet, and the uncommitted changes' page has its own under Source
+    // Control), and whether each is the tab on show in its group.
+    Json reviews;
+    {
+        std::vector<Shared::Web::ReviewPage> pages;
+        for (int g = 0; g < 2; g++) {
+            Document* shown = app->editor->groupActive(g);
+            for (Document* d : app->editor->groupDocuments(g)) {
+                auto* r = d->editorPage() ? dynamic_cast<ChangeReviewPage*>(d->editorPage().get()) : nullptr;
+                if (!r || !r->isWorktree()) continue;
+                Shared::Web::ReviewPage p;
+                p.kind = "worktree";
+                p.path = r->worktree();
+                p.title = r->title();
+                p.onShow = d == shown;
+                pages.push_back(std::move(p));
+            }
+        }
+        if (!pages.empty()) reviews = Shared::Web::reviewsReportJson(pages);
+    }
     app->link->windowPanes(app->editor->sessionWindowId(), app->editor->window(), std::move(browser),
-                           std::move(panes));
+                           std::move(panes), std::move(reviews));
     reportTerminals(app);
 }
 

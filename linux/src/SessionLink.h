@@ -107,8 +107,8 @@ public:
     // Shared::Web::browserReportJson) and which panes it shows ("panes",
     // panesReportJson), sent with its tabs from now on (when they differ)
     // for the session browser's page (SessionBrowser.h); null leaves either
-    // out.
-    void windowPanes(std::uint64_t window, const Model::Window& w, Json browser, Json panes);
+    // out; and its commit and worktree pages ("reviews", reviewsReportJson).
+    void windowPanes(std::uint64_t window, const Model::Window& w, Json browser, Json panes, Json reviews = Json());
     // The window's id on the host, the one its tabs are reported under,
     // made now when it has none (the session browser serves only its tabs).
     std::uint64_t hostWindowId(std::uint64_t window) { return hostWindow(window); }
@@ -186,7 +186,10 @@ private:
     std::map<std::uint64_t, std::uint64_t> hostWindow_;
     std::map<std::uint64_t, std::vector<std::uint64_t>> windowTerms_;
     std::map<std::uint64_t, Json> windowLayout_;
-    std::map<std::uint64_t, std::pair<Json, Json>> windowPanes_;   // browser, panes
+    struct Panes {
+        Json browser, panes, reviews;
+    };
+    std::map<std::uint64_t, Panes> windowPanes_;
     // The browsers' views on the in-process host, by their id there: each
     // message the host sends one of them goes to its client, under the
     // lock, so letting one go stops its deliveries at once.
