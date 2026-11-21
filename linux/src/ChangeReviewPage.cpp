@@ -1394,6 +1394,8 @@ std::string ChangeReviewPage::pageText() const {
 }
 
 std::string ChangeReviewPage::headerDetail() const { return gtk_label_get_text(GTK_LABEL(summary_)); }
+std::string ChangeReviewPage::headerTitle() const { return gtk_label_get_text(GTK_LABEL(title_)); }
+std::string ChangeReviewPage::bodyText() const { return bodyLabel_ ? gtk_label_get_text(GTK_LABEL(bodyLabel_)) : ""; }
 std::string ChangeReviewPage::messageText() const { return gtk_label_get_text(GTK_LABEL(messageLabel_)); }
 size_t ChangeReviewPage::blockCount() const { return data_ ? data_->page.blockRows.size() : 0; }
 size_t ChangeReviewPage::fileCount() const {

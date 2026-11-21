@@ -12,9 +12,16 @@
 // made outside, with the panel hidden, shows on the page by itself; and
 // Stage on a block in the middle of a page taller than the pane leaves the
 // file's next block where the staged one was on screen (the Mac's #217).
+//
+// Then commits, in a repository of their own: a single click on a commit in
+// the graph shows its page in the preview tab (title, subject, byline, body,
+// its files without Stage or Discard), a click on another replaces it, a
+// double-click or Return keeps it, a click on a kept one shows that tab, and
+// a commit with no files says so.
 #include "GitChecks.h"
 
 #include "ChangeReviewPage.h"
+#include "Document.h"
 #include "GitRun.h"
 
 using namespace gitchecks;
@@ -70,6 +77,56 @@ void Press(const std::string& title, std::function<long()> row) {
         gBefore = Page()->pageText();
         MCGuiClick(Page()->buttonWidget(title, (size_t)row()));
     });
+}
+
+// ------------------------------------------------------------ commit pages
+std::string C() { return MCGuiScratch() + "/gitcommits"; }
+std::string gShort[3];   // the short hashes: root, second, empty
+Editor* Ed() { return RepoWindow().editor; }
+std::vector<Document*> CommitTabs() {
+    std::vector<Document*> out;
+    if (Editor* e = Ed())
+        for (Document* d : e->documents())
+            if (d->editorPage())
+                if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get()))
+                    if (r->isCommit()) out.push_back(d);
+    return out;
+}
+// The page on show, when it is a commit's.
+ChangeReviewPage* CommitPage() {
+    ChangeReviewPage* p = Page();
+    return p && p->isCommit() && p->loaded() ? p : nullptr;
+}
+// The graph row whose line has this subject, or -1.
+int GraphRowOf(const std::string& subject) {
+    const std::vector<std::string> g = Panel() ? Panel()->graphDescriptions() : std::vector<std::string>();
+    for (size_t i = 0; i < g.size(); i++)
+        if (g[i].find(" " + subject) != std::string::npos) return (int)i;
+    return -1;
+}
+GtkWidget* GraphRowWidget(const std::string& subject) {
+    const int row = GraphRowOf(subject);
+    GtkWidget* w = row >= 0 && Panel() ? Panel()->graphRowWidget(row) : nullptr;
+    return MCGuiOnScreen(w) ? w : nullptr;
+}
+// A real click on a commit's row in the graph (twice: a double-click).
+void ClickCommit(const std::string& subject, bool twice = false) {
+    WaitOnScreen("the message box", [] { return Panel()->messageView(); });
+    MCGuiStep("the pointer off the rows", [] { MCGuiMoveTo(Panel()->messageView()); });
+    MCGuiPause(0.6);   // time is the condition: the last click is no part of this one's double-click
+    MCGuiWait(subject + " in the graph, on screen", 15, [subject] { return GraphRowWidget(subject) != nullptr; });
+    MCGuiStep(std::string(twice ? "a double-click on " : "a click on ") + subject, [subject, twice] {
+        GtkWidget* w = GraphRowWidget(subject);
+        GCHECK(w != nullptr);
+        if (!w) return;
+        if (twice) MCGuiDoubleClick(w);
+        else MCGuiClick(w);
+    });
+}
+// A commit page of this title is on show.
+bool OnShow(const std::string& title) {
+    ChangeReviewPage* p = CommitPage();
+    return p && p->title() == title;
 }
 
 }  // namespace
@@ -260,5 +317,98 @@ MC_GUI_SUITE(git_review) {
         GCHECK(std::abs(y - gPressedY) <= 4);
         GCHECK(p->firstVisibleRow() > p->rowOfFile("m1.txt", false));
     });
+    CloseRepoWindow();
+
+    // ============================================================ commits
+    // A click on a commit in the graph opens it as a page (the Mac's
+    // initForCommitsWithRoot:): single click in the preview tab, replaced by
+    // the next; a double-click or Return keeps it; a kept one is shown again.
+    Shell("a repository: a root commit, one with a body (a file changed, one added), an empty one",
+          "set -e; mkdir -p '" + C() + "'; cd '" + C() + "'; " + G() +
+              " init -q -b main; printf 'one\\n' > a.txt; " + G() + " add -A; " + G() +
+              " commit -qm 'Root commit'; printf 'one\\ntwo\\n' > a.txt; printf 'bee\\n' > b.txt; " + G() +
+              " add -A; " + G() + " commit -q -m 'Second commit' -m 'The body of it.'; " + G() +
+              " commit -q --allow-empty -m 'Nothing here'");
+    MCGuiStep("a Trash of our own", [] { UseScratchTrash(true); });
+    OpenRepoWindow(C(), true);
+    MCGuiWait("the graph lists the three commits", 20, [] {
+        return GraphRowOf("Root commit") >= 0 && GraphRowOf("Second commit") >= 0 && GraphRowOf("Nothing here") >= 0;
+    });
+    MCGuiStep("their short hashes, from git", [] {
+        for (int i = 0; i < 3; i++) {
+            const std::string rev = i == 0 ? "HEAD~2" : i == 1 ? "HEAD~1" : "HEAD";
+            gShort[i] = GitText({"rev-parse", "--short=7", rev});
+            while (!gShort[i].empty() && gShort[i].back() == '\n') gShort[i].pop_back();
+            GCHECK_EQ_STR(std::to_string(gShort[i].size()), "7");
+        }
+        Ed()->closeAllTabs();
+    });
+
+    ClickCommit("Second commit");
+    MCGuiWait("its page, in the preview tab", 20, [] {
+        return OnShow(gShort[1] + " Second commit") && Ed()->previewTab() != nullptr && CommitTabs().size() == 1;
+    });
+    MCGuiWait("both files listed", 15, [] { return CommitPage() && CommitPage()->fileCount() == 2; });
+    MCGuiStep("the subject, the byline, the body, the files, and no Stage or Discard", [] {
+        ChangeReviewPage* p = CommitPage();
+        if (!GCHECK(p != nullptr)) return;
+        GCHECK_EQ_STR(p->headerTitle(), "Second commit");
+        std::string author = GitText({"log", "-1", "--format=%an", "HEAD~1"});
+        while (!author.empty() && author.back() == '\n') author.pop_back();
+        const std::string by = p->headerDetail();
+        MCGuiNote("byline: %s (author %s)", by.c_str(), author.c_str());
+        GCHECK(by.find(gShort[1]) != std::string::npos);
+        GCHECK(!author.empty() && by.find(author) != std::string::npos);
+        GCHECK(by.find("2 files") != std::string::npos);
+        GCHECK_EQ_STR(p->bodyText(), "The body of it.");
+        GCHECK(p->shows("a.txt") && p->shows("b.txt"));
+        GCHECK(p->rowOfFile("a.txt", false) >= 0 && p->rowOfFile("b.txt", false) >= 0);
+        for (const char* f : {"a.txt", "b.txt"})
+            for (const std::string& b : p->buttonsOfRow((size_t)p->rowOfFile(f, false)))
+                GCHECK(b.find("Stage") == std::string::npos && b.find("Discard") == std::string::npos);
+        for (size_t b = 0; b < p->blockCount(); b++)
+            GCHECK(p->buttonsOfRow((size_t)p->rowOfBlock(b)).empty());
+        GCHECK_EQ_STR(std::to_string(Ed()->tabCount()), "1");
+    });
+
+    // ------------------------------------- the root commit replaces it
+    ClickCommit("Root commit");
+    MCGuiWait("the root commit's page, 1 file, in the one preview tab", 20, [] {
+        return OnShow(gShort[0] + " Root commit") && CommitPage()->fileCount() == 1 && Ed()->tabCount() == 1 &&
+               Ed()->previewTab() != nullptr;
+    });
+    MCGuiStep("one commit tab", [] { GCHECK_EQ_STR(std::to_string(CommitTabs().size()), "1"); });
+
+    // ---------------------------------------- a double-click keeps a page
+    ClickCommit("Second commit", true);
+    MCGuiWait("the second commit's page, kept (not the preview)", 20, [] {
+        return OnShow(gShort[1] + " Second commit") && Ed()->previewTab() == nullptr && Ed()->tabCount() == 1;
+    });
+    ClickCommit("Root commit");
+    MCGuiWait("another click: a second tab, the root commit's, in preview", 20, [] {
+        return OnShow(gShort[0] + " Root commit") && Ed()->tabCount() == 2 && Ed()->previewTab() != nullptr;
+    });
+
+    // ------------------------------------ a commit already kept shows it
+    ClickCommit("Second commit");
+    MCGuiWait("the kept tab shows, no new tab", 20, [] {
+        return OnShow(gShort[1] + " Second commit") && Ed()->tabCount() == 2 && Ed()->previewTab() != Ed()->active();
+    });
+    MCGuiStep("two commit tabs still", [] { GCHECK_EQ_STR(std::to_string(CommitTabs().size()), "2"); });
+
+    // --------------------------- a commit with no files; Return keeps it
+    ClickCommit("Nothing here");
+    MCGuiWait("its page replaces the preview tab and says so", 20, [] {
+        ChangeReviewPage* p = CommitPage();
+        return OnShow(gShort[2] + " Nothing here") && Ed()->tabCount() == 2 &&
+               p->pageText() == "This commit changes no files." && Ed()->previewTab() != nullptr;
+    });
+    MCGuiStep("Return on the selected graph row", [] { MCGuiKey("enter"); });
+    MCGuiWait("kept: no preview tab, still two tabs", 15, [] {
+        return OnShow(gShort[2] + " Nothing here") && Ed()->previewTab() == nullptr && Ed()->tabCount() == 2;
+    });
+    MCGuiStep("the pages close", [] { Ed()->closeAllTabs(); });
+    MCGuiWait("no tabs", 10, [] { return Ed()->tabCount() == 0 && CommitTabs().empty(); });
+    Shell("the repository goes", "rm -rf '" + C() + "'");
     CloseRepoWindow();
 }

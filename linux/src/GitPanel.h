@@ -231,6 +231,7 @@ public:
     GtkWidget* commitButton() const { return commitButton_; }
     // A row's widget while it is on screen, for a click; null otherwise.
     GtkWidget* rowWidget(int row) const;
+    GtkWidget* graphRowWidget(int row) const;   // a commit's row in the graph, or null
     GtkWidget* menu() const { return menu_; }   // a right click menu, while it is up
 
 private:
