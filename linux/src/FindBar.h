@@ -127,6 +127,7 @@ public:
     bool countInErrorColor() const;
     bool queryOutlined() const;      // the red outline of "No results"
     std::size_t textCopies() const { return textCopies_; }
+    bool holdsText() const { return text_ || foundText_; }   // a copy of the buffer's text is kept
     int highlighted() const { return highlighted_; }   // matches tagged now
     // The main thread's CPU time for the last Replace All's edits, and the
     // worker's for finding them, in milliseconds.

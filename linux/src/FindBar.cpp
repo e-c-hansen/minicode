@@ -13,6 +13,9 @@
 #include "Utf8Offsets.h"
 
 #include <algorithm>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -744,7 +747,25 @@ void FindBar::close() {
     if (searchTimer_) g_source_remove(searchTimer_);
     searchTimer_ = 0;
     whenCurrent_ = nullptr;
-    text_.reset();   // the copy goes with the bar
+    // The copy goes with the bar: both holders of it. A search still running
+    // holds its own shared_ptr (Job, Stage), so what it reads stays until it ends.
+    // A big copy: its UTF-8, or its UTF-16 once that is made (a non-ASCII
+    // text lets go of the UTF-8 then).
+    auto bigCopy = [](const std::shared_ptr<Text>& t) {
+        return t && (t->utf8.size() >= (3u << 20) || t->u16.size() * 2 >= (3u << 20));
+    };
+    const bool big = bigCopy(text_) || bigCopy(foundText_);
+    text_.reset();
+    foundText_.reset();
+#ifdef __GLIBC__
+    // glibc keeps what a big copy freed for the next allocation: given back
+    // once the free, and a search ending on its worker, are done.
+    if (big)
+        g_timeout_add_full(G_PRIORITY_LOW, 300, [](gpointer) -> gboolean { malloc_trim(0); return G_SOURCE_REMOVE; },
+                           nullptr, nullptr);
+#else
+    (void)big;
+#endif
     selectOnArrival_ = false;
     if (scopeA_) {   // VS Code drops the scope with the widget
         dropScope();

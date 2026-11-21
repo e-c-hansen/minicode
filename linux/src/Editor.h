@@ -115,6 +115,8 @@ public:
     void refreshUndoMenu();
     const std::string& undoLabel(bool redo) const { return redo ? redoLabel_ : undoLabel_; }
     GtkTextBuffer* buffer() const { return buffer_; }
+    // Times malloc_trim ran after a big tab closed (glibc only).
+    static int trimsDone();
     // The view's own drawing passes, the ruler and the line-number gutter
     // (CodeView.h).
     CodeView*      codeView() const { return code_; }
