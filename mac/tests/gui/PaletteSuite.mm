@@ -2,7 +2,9 @@
 // window. Shift+Cmd+P lists the menu's commands with their keys, a fuzzy
 // query ranks word starts first, Return runs the command and puts the
 // keyboard back, and the command comes first next time; Cmd+P lists the
-// folder's files and opens one; Ctrl+G goes to a line and column; Esc
+// folder's files and opens one, the keyboard in its text even when the
+// tree had it (and Go to Symbol from the tree too); Ctrl+G goes to a line
+// and column; Esc
 // changes nothing; deleting the ">" turns commands into files.
 #import "Harness.h"
 #import "EditorController.h"
@@ -106,6 +108,50 @@ MC_GUI_SUITE(palette) {
         Command(c, @selector(insertNewline:));
     });
     MCGuiWait(@"opened", 5, ^BOOL { return [[c valueForKey:@"currentPath"] hasSuffix:@"quick-open-target.md"]; });
+    MCGuiStep(@"the keyboard in the opened file's text", ^{
+        MCGuiNote(@"first responder after Quick Open: %@", c.window.firstResponder.className);
+        GCHECK(c.window.firstResponder == Text(c));
+    });
+    // From the tree (1.6.9: the palette gave the keyboard back to the tree
+    // as it closed, so typing after Cmd+P went to the tree, not the file).
+    MCGuiStep(@"Cmd+P with the tree holding the keyboard", ^{
+        GCHECK([c showFile:MCGuiProjectFile(@"README.md")]);
+        NSOutlineView *tree = [c valueForKey:@"outline"];
+        [c.window makeFirstResponder:tree];
+        GCHECK(c.window.firstResponder == tree);
+        GCHECK(MCGuiPerformMenuKey(c.window, 35, NSEventModifierFlagCommand, nil, nil));
+        GCHECK(Palette(c) != nil);
+    });
+    MCGuiWait(@"listed from the tree", 10, ^BOOL { return MCCommandPaletteFilesListed(Palette(c)); });
+    MCGuiStep(@"\"qot\", Return", ^{
+        Type(c, @"qot");
+        GCHECK([Selected(c) containsString:@"quick-open-target.md"]);
+        Command(c, @selector(insertNewline:));
+    });
+    MCGuiWait(@"opened from the tree", 5, ^BOOL {
+        return [[c valueForKey:@"currentPath"] hasSuffix:@"quick-open-target.md"];
+    });
+    MCGuiStep(@"the keyboard in the file's text, not the tree", ^{
+        MCGuiNote(@"first responder after Quick Open from the tree: %@",
+                  c.window.firstResponder.className);
+        GCHECK(c.window.firstResponder == Text(c));
+        // Go to Symbol from the tree too: the heading, the keyboard in the text.
+        [c.window makeFirstResponder:[c valueForKey:@"outline"]];
+        GCHECK(MCGuiPerformMenuKey(c.window, 31, NSEventModifierFlagCommand | NSEventModifierFlagShift,
+                                   nil, nil));
+        GCHECK(Palette(c) != nil);
+        GCHECK_EQ_STR(MCCommandPaletteField(Palette(c)).stringValue, @"@");
+    });
+    MCGuiWait(@"the file's heading listed", 10, ^BOOL {
+        return [Labels(c) containsObject:@"Target"] && Selected(c) != nil;
+    });
+    MCGuiStep(@"Return goes to it, the keyboard in the text", ^{
+        Command(c, @selector(insertNewline:));
+        GCHECK(Palette(c) == nil);
+    });
+    MCGuiWait(@"the keyboard in the text after Go to Symbol", 5, ^BOOL {
+        return c.window.firstResponder == Text(c);
+    });
     MCGuiStep(@"\">\" deleted in the commands lists files", ^{
         GCHECK(MCGuiPerformMenuKey(c.window, 35, NSEventModifierFlagCommand | NSEventModifierFlagShift,
                                    nil, nil));

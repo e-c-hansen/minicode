@@ -50,6 +50,11 @@ typedef NS_ENUM(NSInteger, MCOpenFileState) {
 - (void)show;
 // Show with the keyboard in the replace field (Replace in Folder).
 - (void)showReplace;
+// Replace in Folder as VS Code's Replace in Files opens it: the replace row
+// shown, the keyboard in the replace field only when `focusReplace` (the
+// query was just taken from the editor's selection), else in the query with
+// its text selected, so a first Option+Shift+Cmd+F types the search.
+- (void)showReplaceFocusingReplace:(BOOL)focusReplace;
 // Its window, which belongs to the editor window that made it: keys pressed
 // in it are that editor window's menu targets.
 @property(nonatomic, strong, readonly) NSWindow *window;

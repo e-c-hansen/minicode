@@ -35,23 +35,30 @@
     [self.searchPanel show];
 }
 
-// Option+Shift+Cmd+F: the same window, the keyboard in its replace field.
+// Option+Shift+Cmd+F: the same window with its replace row, as VS Code's
+// Replace in Files opens it (findOrReplaceInFiles): the keyboard in the
+// replace field when the selection just became the query, else in the
+// query, its text selected. With nothing searched yet it went to the
+// replace field, so the search typed first became the replacement (the
+// task benchmark, 1.6.9).
 - (void)openReplaceInFolder:(id)sender {
     [self makeSearchPanel];
-    [self seedSearchFromSelection];
-    [self.searchPanel showReplace];
+    const BOOL seeded = [self seedSearchFromSelection];
+    [self.searchPanel showReplaceFocusingReplace:seeded];
 }
 
-- (void)seedSearchFromSelection {
-    if (self.window.firstResponder != self.textView || self.editorScroll.hidden) return;
+// The editor's selection on one line becomes the query; YES when it did.
+- (BOOL)seedSearchFromSelection {
+    if (self.window.firstResponder != self.textView || self.editorScroll.hidden) return NO;
     NSRange sel = self.textView.selectedRange;
     NSString *text = self.textView.string;
-    if (sel.length == 0 || sel.length > 1000 || NSMaxRange(sel) > text.length) return;
+    if (sel.length == 0 || sel.length > 1000 || NSMaxRange(sel) > text.length) return NO;
     NSString *s = [text substringWithRange:sel];
     if ([s rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]].location != NSNotFound)
-        return;
+        return NO;
     if (self.searchPanel.regex) s = [NSRegularExpression escapedPatternForString:s];
     [self.searchPanel seedQuery:s];
+    return YES;
 }
 
 - (void)makeSearchPanel {

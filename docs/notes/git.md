@@ -239,7 +239,20 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   on show (`showReadAgain`) between its press and the action. Commit and worktree pages get the same (Side
   by Side, Open). `git_review` and `worktree_review` find them through
   `MCGuiAXFind` (the harness's walk of the accessibility tree), and
-  `git_review` stages a block by pressing one. New,
+  `git_review` stages a block by pressing one. **The graph's rows**
+  (2026-11-20, found by `make taskbench-mac`, which read the commit off
+  the screen): the table wraps each `MCGitGraphCell` in an AXRow and an
+  AXCell stand-in that reads the view's `accessibilityLabel` and passes
+  AXPress on to its `accessibilityPerformPress` (a scratch probe of a
+  view-based NSTableView showed both), so the cell view is not an
+  element itself. The label is `GitUi::graphRowLabel` ("Raise the limit,
+  commit a1b2c3d, Ann, 2 hours ago, main (current), not pushed yet", the
+  subject first; "Show 200 more commits"; `git-ui:graph`); a press queues
+  the commit's full hash and `pressedGraphCommit:` finds it in the graph
+  on show then (a read may have moved the rows, as on the review page),
+  selects it and opens it as a click does (the preview tab), beeping when
+  it is gone; "Show more" loads more. `git_panel` reads two rows' labels
+  and opens a commit by pressing its cell. New,
   deleted, binary, submodule, conflicted and `add -N` files go whole
   (`wholeOnlyReason`). **GTK** (2026-11-19, `linux/HANDOFF.md` item 118,
   GUI `git_panel` and `git_review`) has the same over the same core: a file

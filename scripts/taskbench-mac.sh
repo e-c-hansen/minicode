@@ -456,10 +456,10 @@ goto_clamp() {   # goto_clamp <app>
 
 open_py() {   # open_py <app> <file>: Cmd+P to a Python file with the keyboard in it
     case "$1" in
-        # mutible 1.6.9 gives the keyboard back to the file tree when Quick
-        # Open closes (watched 2026-11-20, axdump: AXOutline focused), so its
-        # step ends on the window's title, as Zed's does.
-        mutible) open_by_name "$2" "window~$2" "focus AXTextField=$2" ;;
+        # REFERENCE.md: Quick Open puts the keyboard in the file it opens,
+        # as VS Code's does (since 2026-11-20; 1.6.9 gave it back to the
+        # file tree, watched with axdump: AXOutline focused).
+        mutible) open_by_name "$2" "window~$2 && focus AXTextArea" "focus AXTextField=$2" ;;
         vscode) vscode_open_by_name "$2" "window~$2 && focus AXTextArea" ;;
         zed) open_by_name "$2" "window~$2" ;;
     esac
@@ -515,16 +515,16 @@ steps_rename_zed() {
 # 9. replace ----------------------------------------------------------------
 
 steps_replace_mutible() {
-    # REFERENCE.md: Find in Folder (Shift+Cmd+F), then Option+Shift+Cmd+F
-    # "adds the replacement" with the keyboard in its field, and Option+Cmd+
-    # Return is Replace All, after its question ("Replace 3 matches in 3
-    # files?"). Option+Shift+Cmd+F alone, with nothing searched yet, opens
-    # with the keyboard in the replacement field (watched 2026-11-20), so the
-    # search comes first.
-    echo "key cmd+shift+f => focus AXTextField @10"
+    # REFERENCE.md: Replace in Folder (Option+Shift+Cmd+F) opens the folder
+    # search with its replacement, the keyboard in the search field when
+    # nothing is selected, as VS Code's Replace in Files (since 2026-11-20;
+    # 1.6.9 put it in the replacement field, so the search came first from
+    # Shift+Cmd+F); Tab goes on to the replacement; Option+Cmd+Return is
+    # Replace All, after its question ("Replace 3 matches in 3 files?").
+    echo "key cmd+alt+shift+f => focus AXTextField @10"
     echo "type warehouse-a => ax AXTextField=warehouse-a @5"
-    echo "key cmd+alt+shift+f => focus AXTextField @5"
-    echo "type warehouse-b => ax AXTextField=warehouse-b @5"
+    echo "key tab => focus AXTextField @5"
+    echo "type warehouse-b => ax AXTextField=warehouse-a && ax AXTextField=warehouse-b @5"
     echo "key cmd+alt+return => ax *~Replace 3 matches @15"
     echo "press AXButton=Replace => sh $CHECKS/file-replaced @30"
 }
@@ -557,10 +557,12 @@ steps_replace_zed() {
 steps_history_mutible() {
     # The commit graph is the branch's history, not the file's (mutible has
     # no history of one file); a click on a commit opens its page, every
-    # file it changed as it changed them. The graph's rows carry no AX text
-    # (1.6.9, found 2026-11-20), so the commit is found on the screen.
-    echo "key cmd+shift+g => screen Raise the limit @10"
-    echo "sclick Raise the limit => text TB_PAST_VERSION || screen TB_PAST_VERSION @15"
+    # file it changed as it changed them. REFERENCE.md: VoiceOver (so AX)
+    # reads each graph row as its commit, the subject first, and pressing
+    # it opens the commit as a click does (since 2026-11-20; 1.6.9's rows
+    # had no AX text, so the commit was found on the screen).
+    echo "key cmd+shift+g => ax AXCell~Raise the limit @10"
+    echo "press AXCell~Raise the limit => text TB_PAST_VERSION || screen TB_PAST_VERSION @15"
 }
 steps_history_vscode() {
     open_py vscode app.py
@@ -621,9 +623,6 @@ steps_theme_zed() {
 
 multicursor_steps() {   # multicursor_steps <app>
     open_py "$1" orders.py
-    # mutible leaves the keyboard in the file tree after Quick Open (above);
-    # Cmd+1 is its Focus the editor (REFERENCE.md), the cursor at the start.
-    if [ "$1" = mutible ]; then echo "key cmd+1 => focus AXTextArea @5"; fi
     echo "key cmd+shift+l => none"
     echo "type amount => none"
     echo "key cmd+s => sh $CHECKS/file-multicursor @15"

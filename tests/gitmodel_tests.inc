@@ -532,6 +532,16 @@ static void testGitModel() {
     CHECK(tip.find("main, origin/main") != std::string::npos);
     CHECK(graphToolTip(g, 1, 0).find("Not pulled yet") != std::string::npos);
     CHECK(graphToolTip(g, 3, 0) == "Load the next 200 commits");
+    // What VoiceOver reads: the subject first, the hash, author, age, the
+    // labels and where the commit is.
+    CHECK(graphRowLabel(g, 0, 1700000000 + 7200) ==
+          "Merge feature, commit ccccccc, Ann, 2 hours ago, main (current), origin/main, "
+          "not pushed yet");
+    CHECK(graphRowLabel(g, 1, 1700000000 + 7200) ==
+          "Feature work, commit fffffff, Ann, 2 hours ago, feature, not pulled yet");
+    CHECK(graphRowLabel(g, 2, 1700000000 + 7200) ==
+          "First, commit bbbbbbb, Ann, 2 hours ago, tag v1.0");
+    CHECK(graphRowLabel(g, 3, 0) == "Show 200 more commits");
     CHECK(graphKey(gs, 200, false, true, refs) != graphKey(gs, 400, false, true, refs));
     CHECK(graphKey(gs, 200, false, true, refs) != graphKey(gs, 200, true, true, refs));
     CHECK(graphKey(gs, 200, false, true, refs) == graphKey(gs, 200, false, true, refs));

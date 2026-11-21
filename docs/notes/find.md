@@ -185,6 +185,18 @@ found through that list.
   question (`FolderReplaceFile::outside`). Replace Match replaces only while
   the row's line still reads as searched. `replaceOneAt` maps a result's byte
   column to a tab's UTF-16.
+- **Where Option+Shift+Cmd+F puts the keyboard** (2026-11-20, found by
+  `make taskbench-mac`: with nothing searched yet it went to the replace
+  field, so the search typed first became the replacement): as VS Code's
+  `findOrReplaceInFiles`, `openReplaceInFolder:` shows the replace row and
+  gives the replace field the keyboard only when `seedSearchFromSelection`
+  just made the editor's one-line selection the query
+  (`showReplaceFocusingReplace:`), else the query, its text selected (an
+  NSTextField selects all as it takes the keyboard), whether or not it
+  holds an earlier search. Tab goes on to the replace field (the window's
+  key loop). Opening a result (double-click, Return) leaves the keyboard
+  in the editor's text (`jumpToLine:`), though the tree had it before.
+  `replace_in_folder` checks all three cases, `search` the result's open.
 - **Find in Folder's keys and dismissed rows** (2026-11-18, after a round 9
   walker on 1.6.3). Return in any of the window's fields searches, the
   replace field's too (VS Code's searchWidget submits the search there);
@@ -264,4 +276,5 @@ text is in place in its section.
 - The find bar in a large file: the first match found from the top read "? of …" until the count's pass reached it, and large_file's "1 of " check passed only when the whole count (a few tens of ms for one match in 100 MB) ended before the harness polled; on main after #249 it lost that race twice. A match found from the top is the first of all, so its index (0) is sent with it (`fromTop` in `searchInStages`), and the label is "1 of …" at once.
 - The find bar in a large file: the old marks stayed because nothing redrew between a query's change and its results; drawing already skipped stale results, so the fix is to redraw at once and to draw only matches for the query and text as they are now (`_shownGen`, `_shownVersion`).
 - Find in Folder's keys: the Search window floats over the editor window and stays key, so a command run from it through AppDelegate's `[self current]` changed the editor window's panes (Toggle Terminal showed the terminal and called `focusInput`) while every key typed after still went to Search: a walker's `python3 -m pytest -q` and Return landed in the replace field, where Return was Replace All, and a file was rewritten. A command that shows a pane must make the editor window key (`currentForPane:`), Return in a field of that window must never write files, and Dismiss must reach Replace All, which re-plans the whole folder and had ignored the rows taken out of the results.
+- Where Option+Shift+Cmd+F puts the keyboard: the replace field took it with nothing searched yet, so the search typed first became the replacement; only a selection just made the query sends it there, as in VS Code.
 - A GTK search under the keyboard: a search clears the list at once (`clearResults`) and its rows come later from the worker, and the row that had the keyboard goes with its row; when a frame falls between the two, GTK's deferred focus move finds the list empty and leaves the window no focus at all, so the next key did nothing and a Down only put the keyboard back on the first row (GtkListView's arrows, from no focused row, start at its focus position, which the new rows reset to 0).
