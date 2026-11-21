@@ -234,6 +234,7 @@ static char kPdfOpensAtTop;
         pageIndex = [self.pdfView.document indexForPage:was.page];
         point = was.point;
     }
+    MCPDFAnalyseOnlyScans(self.pdfView, doc);   // no Vision pass over a PDF of text
     self.pdfView.document = doc;
     MCPDFUseOverlayScrollers(self.pdfView);
     if (reload && pageIndex < doc.pageCount) {
