@@ -277,7 +277,7 @@ bool MCGuiTextLaidOut(GtkWidget* textView);
 // ---- input: real X events from XTest (Input.cpp)
 // Keys go to the key window: MCGuiSetKeyWindow's, else the newest app window.
 // Each call gives it the X focus first, as a window manager would.
-void MCGuiSetKeyWindow(GtkWindow* window);   // null: the newest
+void MCGuiSetKeyWindow(GtkWindow* window);   // null: the newest, given the X focus now
 GtkWindow* MCGuiKeyWindow();
 GtkWindow* MCGuiPinnedKeyWindow();   // MCGuiSetKeyWindow's, while still mapped; else null
 void MCGuiFocusKeyWindow();

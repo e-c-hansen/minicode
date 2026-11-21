@@ -41,6 +41,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.sidebarIconsRow = a->sidebarIconsRow;
     w.sidebarStack = a->sidebar;
     w.gitShown = a->gitShown;
+    w.sessionBrowser = a->sessionBrowser;
     w.rootDir = a->rootDir;
 #ifdef MUTIBLE_ENABLE_TERMINAL
     w.terminal = a->terminal;

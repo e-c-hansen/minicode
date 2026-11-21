@@ -538,4 +538,6 @@ MC_GUI_SUITE(agent_panel) {
         GCHECK_EQ_STR(bufferText(), kOriginal);
         bar()->note = gS->realNote;
     });
+    // The settings as the suite found them (the harness's LEFT line).
+    MCGuiStep("the settings as found", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
 }

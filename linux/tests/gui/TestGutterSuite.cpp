@@ -300,4 +300,6 @@ MC_GUI_SUITE(test_gutter) {
         else EnvLock::envUnset("SHELL");
         gtk_widget_grab_focus(ed()->textView());
     });
+    // The settings as the suite found them (the harness's LEFT line).
+    MCGuiStep("the settings as found", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
 }

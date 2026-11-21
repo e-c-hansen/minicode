@@ -224,7 +224,19 @@ setprop log.tag.MutibleGit DEBUG` on Android.
   `accessibilityHitTest:` returns them. `accessibilityPerformPress` checks
   the button is still there and queues the press on the main queue:
   Discard asks, and a modal question inside the AX call would hold the
-  caller until its timeout. Commit and worktree pages get the same (Side
+  caller until its timeout. **Trap: a read lands between an AX press and
+  its action** (2026-11-20, git_review FLAKY twice on main, then red on
+  #275): the queued press compared the page's data with the read it was
+  pressed on and dropped itself, without a word, when any read had
+  landed, and a panel refresh's read, often of nothing new, lands at
+  any time (one queued while the suite's step ran). An element finds its
+  button by what it acts on (`rowNow`: its own row while its read shows,
+  else `ChangeReview::buttonRow`, the file by key and the block by its
+  index, while that file's `fingerprintOf` is unchanged;
+  `review:button-row`), so the press lands after a read of the same
+  changes and beeps once they moved, never on another block that took
+  the row; its frame follows the same way. `git_review` puts such a read
+  on show (`showReadAgain`) between its press and the action. Commit and worktree pages get the same (Side
   by Side, Open). `git_review` and `worktree_review` find them through
   `MCGuiAXFind` (the harness's walk of the accessibility tree), and
   `git_review` stages a block by pressing one. New,
@@ -443,5 +455,6 @@ text is in place in its section.
 - Git panel (all three ports): **Header trap**: `StatusBranchItem.h` takes NSStrings, not `Git::StatusBranch`, because `EditorController+Private.h` imports it and every GUI suite imports that.
 - Git panel (all three ports): **Tool guard trap**: in a worktree-isolated agent session, git commands in compound or unusual forms are refused (even a filename containing "git"); use plain `cd x && git ...` lines or a script file.
 - Git panel (all three ports): **Trap**: a scroll to an iter just after the GTK review page's text is replaced uses line heights GTK has not measured, and the page went to its top (the top-row anchor did so too); `scrollRowTo` scrolls to a mark, then a tick callback (`onSettle`) puts the row right each frame until it holds three, and the reveal, the acted place and the top row all go through it.
+- Git panel (all three ports): **Trap: a read lands between an AX press and its action** (2026-11-20, git_review FLAKY twice on main, then red on #275): the queued press compared the page's data with the read it was pressed on and dropped itself, without a word, when any read had landed, and a panel refresh's read, often of nothing new, lands at any time (one queued while the suite's step ran).
 - Git panel (all three ports): **Apply to Main checks and applies the same files** (round 10's defect 6, 2026-11-19): the check ran on the page's read and the apply on a fresh `git diff <base>` with no pathspec, so a file the agent changed after the read was patched into main over the user's own edit, unchecked, and an untracked file made since was dropped; the apply reads the worktree again and refuses anything new, checks main again, and holds the diff to the paths asked about. And after `apply --3way` a rename is one status entry: restoring only its new path left the source's deletion staged; unstage `origPath` too.
 - Git panel (all three ports): **A refusal's note settles on the read after it** (2026-11-19, main's CI after #245): a worktree page settled every note on the read on show, but a refused Apply to Main asks the user to look over the read that follows (it shows the file changed since), so that read took the note away; `_noteSettlesOnNextRead` settles a refusal's note on the next read. In a check, wait for the read that shows the change (its row), never for any later read: one started before the write can land first.

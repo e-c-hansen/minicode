@@ -309,6 +309,56 @@ static void testChangeReview() {
         CHECK(s.rows[rowFor(s, staged, a)].newLine == 8);
     }
 
+    GROUP("review:button-row");
+    {
+        // A press the Accessibility API queued finds its button again in a
+        // later layout of the same changes: here the stretch above g.txt's
+        // second block opened, so every row after it moved down.
+        File f1 = file("a\n", "b\n");
+        std::string base, edited;
+        for (int i = 1; i <= 30; i++) {
+            base += std::to_string(i) + "\n";
+            edited += (i == 2 ? std::string("X") : i == 20 ? std::string("Y") : std::to_string(i)) + "\n";
+        }
+        File g = file(base.c_str(), edited.c_str());
+        g.path = "g.txt";
+        File gs = file("p\n", "q\n", Section::Staged);
+        gs.path = "g.txt";
+        std::vector<FileDiff> files = {diffFile(gs, ""), diffFile(f1, ""), diffFile(g, "")};
+        Page p = layout(files, {});
+        const long gHeader = fileRow(p, files, "W:g.txt");
+        CHECK(gHeader > 0);
+        CHECK(buttonRow(p, files, "W:g.txt", -1) == gHeader);
+        // The staged g.txt is another file: its own header.
+        CHECK(buttonRow(p, files, "S:g.txt", -1) == fileRow(p, files, "S:g.txt"));
+        CHECK(buttonRow(p, files, "S:g.txt", -1) != gHeader);
+        std::vector<size_t> gBlocks;
+        for (size_t r : p.blockRows)
+            if ((long)r > gHeader) gBlocks.push_back(r);
+        CHECK(gBlocks.size() == 2);
+        if (gBlocks.size() == 2) {
+            CHECK(buttonRow(p, files, "W:g.txt", 0) == (long)gBlocks[0]);
+            CHECK(buttonRow(p, files, "W:g.txt", 1) == (long)gBlocks[1]);
+            long gap = -1;
+            for (size_t r = gBlocks[0]; r < gBlocks[1]; r++)
+                if (p.rows[r].kind == RowKind::Gap) gap = p.rows[r].gap;
+            CHECK(gap >= 0);
+            Opened open;
+            open[files[2].file.key()].insert((int)gap);
+            Page q = layout(files, open);
+            const long moved = buttonRow(q, files, "W:g.txt", 1);
+            CHECK(moved > (long)gBlocks[1]);
+            CHECK(moved >= 0 && q.rows[(size_t)moved].blockStart && q.rows[(size_t)moved].block == 1 &&
+                  q.rows[(size_t)moved].file == 2);
+            CHECK(buttonRow(q, files, "W:g.txt", 0) == (long)gBlocks[0]);
+        }
+        // No such block, no such file: none.
+        CHECK(buttonRow(p, files, "W:g.txt", 2) == -1);
+        CHECK(buttonRow(p, files, "W:gone.txt", -1) == -1);
+        CHECK(buttonRow(p, files, "W:gone.txt", 0) == -1);
+        CHECK(buttonRow(Page(), {}, "W:g.txt", 0) == -1);
+    }
+
     GROUP("review:acted-place");
     {
         // Stage on the first of g.txt's two blocks: the second takes its

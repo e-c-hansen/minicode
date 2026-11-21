@@ -464,6 +464,22 @@ tree's first row, which scrolled the list to its top, and the renamed
 row was then centered from there. The box gives the list the keyboard
 as it closes (`docs/notes/tree.md`, the GTK traps).
 
+Mac `terminal_paste`, "a fresh prompt" (FLAKY on main's run 44648363440
+for 1.6.7, attempt 1, and on PR #272's run 44836263748, gui-checks-2
+both times; fixed in the suite 2026-11-20, to be called fixed after five
+green runs): a file or picture dropped at zsh's prompt and Ctrl+C sent
+in the same turn. zsh 5.9 loses a SIGINT that comes while ZLE is still
+reading and drawing the paste (docs/notes/terminal.md, "Typing for the
+user"): no new prompt came, and the next drop's or command's bytes only
+woke ZLE to abort the line, so "it runs" or "zsh reads the path back
+whole" timed out next and "the prompt" after it passed. The failure
+pictures show the dropped path still in the line editor, then the next
+drop's text appended to it. The suite waits until zsh has drawn the
+paste before each Ctrl+C. Not a stall: gui-checks-1 logged steps
+throughout, and the session's host job, whose keys one turn sends reach
+the pty in one write (the C flushing the paste unread), passed both
+times.
+
 Still open from that soak:
 
 - Seen in one round each: Mac `organize_on_save` (an alert count off by

@@ -48,3 +48,14 @@ void MCPDFUseOverlayScrollers(PDFView *view);
 // view's insets and the first rescale to the pane's width put it: part way
 // down a tall page, which showed only its foot.
 void MCPDFShowFirstPageTop(PDFView *view);
+// PDFKit's page analysis only for a scan. A PDFView with a document runs
+// Vision over each page it shows (text recognition, tables, forms): a
+// machine-learning model compiled and a whole core busy for two seconds
+// and more on opening even a two-page PDF of plain text, and again on every
+// reload (each LaTeX typeset). The taskbench timed it as a PDF taking 2.2 s
+// to open (2026-11-20; the page itself drew in about 30 ms). It only gives
+// selectable text to a page with none of its own, so it stays on when the
+// first page has no text (a scanned PDF) and is off otherwise. Call before
+// handing the view the document.
+BOOL MCPDFAnalysesPages(PDFDocument *doc);
+void MCPDFAnalyseOnlyScans(PDFView *view, PDFDocument *doc);

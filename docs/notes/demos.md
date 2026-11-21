@@ -121,7 +121,7 @@ task table, each app's steps, the fixture, and the report;
 `tools/taskbench-mac.m` (built as `build/taskbench-mac`) drives one app
 through one task's steps and measures it. No third-party tools: the
 Accessibility API finds elements and reads results, CGEvent posts keys and
-clicks.
+clicks, ScreenCaptureKit and Vision read the screen.
 
 - **Running it**: `make taskbench-mac` drives the apps (it takes the screen;
   ask the owner first, and never run it unattended on the owner's Mac).
@@ -129,56 +129,107 @@ clicks.
   path, `--show <task>` each app's steps, `--check` the Accessibility
   permission, the apps found and their versions, and the disk; none of the
   three drives anything. `APPS`, `TASKS`, `LOG_MB` (500), and `KEEP=1` (keep
-  `/private/tmp/mutible-taskbench`) narrow or keep a run. The terminal it
-  runs in needs Accessibility permission (`taskbench-mac check` says so when
-  it is missing), and Screen Recording for Zed's results (read from the
-  screen; without it they read as unverified). Report: `build/taskbench-mac.txt` (a table per task),
-  `build/taskbench-mac.csv` (a row per task and app), and
-  `build/taskbench-mac-steps.csv` (every step's time).
-- **The tasks** (the table's six; add a row and a `steps_<id>_<app>` per
-  app): review the uncommitted changes and stage one hunk (`git diff
+  the scratch folder) narrow or keep a run; `TASKBENCH_DIR` moves the
+  scratch folder (`/private/tmp/mutible-taskbench`; its name must hold
+  "taskbench"), which two agents running it at once need (one emptied the
+  other's on 2026-11-20); `KEEP_APP=1` leaves the last task's app running
+  to look at (`axdump`, `screentext`, `run --pid`); `TASKBENCH_TRACE=DIR`
+  writes each step's CPU samples and every frame Vision reads. The terminal
+  it runs in needs Accessibility permission (`taskbench-mac check` says so
+  when it is missing), and Screen Recording for results read from the
+  screen (without it they read as unverified). Report:
+  `build/taskbench-mac.txt` (a table per task), `build/taskbench-mac.csv`
+  (a row per task and app), and `build/taskbench-mac-steps.csv` (every
+  step's time, its resolution, and how its end was observed). Repetitions
+  are left out (the owner, 2026-11-20).
+- **The tasks** (the table's twelve; add a row and a `steps_<id>_<app>` per
+  app). Ours: review the uncommitted changes and stage one hunk (`git diff
   --cached`), open a PDF, PNG, MP4, CSV, notebook, and SQLite file (each read
   as "shown", "opens as text", or "refused"), stop a server left running on a
   port (the port closes), open a localhost page in the app (the server logs
   the request), open a 500 MB log cold and find a line near its end, and open
-  one file from Finder cold to a window with the keyboard in the text. The
-  fixture (a git repo with changes in two files and a new one, the media,
-  `site/index.html`, a lone file) is made fresh for every task and app; the
-  log only for its task, and deleted after.
-- **Measures**: wall time per step from the input sent to its condition
-  true, polled every 10 ms (never a fixed sleep), summed per task (a poll
-  that walks a large AX tree, as VS Code's is, takes longer, and the steps
-  CSV's `poll_ms` gives each step's slowest poll: its resolution); inputs as
-  clicks, key chords, typed keystrokes (one a character), and Finder opens;
-  CPU as user + system time of the app's process tree over the steps
-  (`proc_pid_rusage`, with the time of children it reaped, and the last
-  seen time of launchd-parented helpers that exit); memory as the tree's
-  physical footprint, the peak over the steps (100 ms samples) and settled
-  (once the tree has used under 5% of a core for a second). The tree is
+  one file from Finder cold to a window with the keyboard in the text.
+  Neutral ones (2026-11-20, "tasks we did not choose, where VS Code and Zed
+  are expected to be strong"): go to a definition in another file (F12,
+  the window's title), rename a function across three files (F2, checked
+  on disk), replace a string in three files (checked on disk), open app.py's
+  version from an older commit (its line read through AX or from the
+  screen), switch to a light theme (the window's brightness, read from the
+  screen in all three), and rename a variable used four times with a cursor
+  on each (Shift+Cmd+L, checked on disk). The fixture (a git repo with four
+  commits, changes in two files and a new one, the media, `site/index.html`,
+  `report.py` and `orders.py` for the neutral tasks, a lone file) is made
+  fresh for every task and app; the log only for its task, and deleted
+  after.
+- **Measures**: a step's wall time runs from the last event its input
+  posted (the moment an AXPress is sent, which can block while the app
+  handles it) to the moment its result happened, summed per task. For a
+  condition read by polling (AX, a file, git, a port) that is when the poll
+  found it, every 10 ms (never a fixed sleep), so a poll's length is its
+  resolution (VS Code's AX tree takes longest). For a `quiet` condition it is
+  when the app's CPU activity stopped, and for a screen read when the first
+  frame showing the result was on screen (below), so the benchmark's own
+  waiting is never in the wall time (2026-11-20: run 2 put the 150 ms quiet
+  window and the OCR into every Zed step, so typing "report.pdf" scored 1,172
+  ms). The steps CSV has each step's `res_ms` (its resolution) and
+  `observed`: ax, file, git, port, cpu-quiet, or screen. Inputs are clicks,
+  key chords, typed keystrokes (one a character), and Finder opens; CPU is
+  user + system time of the app's process tree over the steps
+  (`proc_pid_rusage`, with the time of children it reaped, and the last seen
+  time of launchd-parented helpers that exit). Memory is the tree's physical
+  footprint, sampled every 10 ms by a thread from the launch through the
+  settle (once the tree is quiet for a second), so the peak is over all of
+  it: run 2 sampled only during steps, and mutible's finder task showed a
+  settled 265 MB over a peak of 100. The report asserts peak ≥ settled and
+  fails (exit 5, "MEASURING FAULT") on a row where it is not. The tree is
   membench's: the app and every process whose parent or responsible pid is
-  in it, so WebKit's and Electron's helpers count. A task on the project
-  launches the app first, timed apart as its launch; a cold task's first
-  input starts the app, so its launch is in the task.
+  in it, so WebKit's and Electron's helpers and the language servers count. A
+  task on the project launches the app first, timed apart as its launch
+  (its settle back-dated as a step's is); a cold task's first input starts
+  the app, so its launch is in the task.
+- **Quiet and settled**: an app at rest is not always at zero (Zed redraws
+  about every 12 ms while a picker is open), so quiet is judged against the
+  CPU's own settled level: each 10 ms sample's CPU, against the median of
+  the quiet window; a sample at least 1 ms over it is busy, except a lone
+  one under 2 ms over (a caret's blink); a window is quiet when its median is
+  under 20% of a core and nothing in it is busy. `quiet MS` reads the app's
+  own process (its UI answering; a language server starting beside Zed held
+  its go-to-line step 700 ms when the whole tree was read), `settle MS` and
+  a `view`'s settle the whole tree (helpers render views). Zed's and VS
+  Code's caret blink is off in their quiet settings (`cursor_blink`,
+  `editor.cursorBlinking: solid`): Zed's blink costs about 5 ms a blink, as
+  much as a real answer. mutible's AppKit caret blinks under the threshold.
 - **Fairness**: each app takes its shortest documented path with its own
   default keys, cited beside its steps in the script; a task an app cannot
   do is "cannot" with the reason (VS Code and Zed have no process view,
   Zed no browser). Opening a file by name is Cmd+P in all three, though a
   tree click is shorter in each, because Zed's tree cannot be reached
-  through AX. What an app needs once (VS Code's folder trust, its PDF and
-  SQLite extensions, counted as their GUI path's inputs) is setup, counted
-  apart and not timed; settings that only keep an app quiet (no update
-  checks, no telemetry) are not counted.
+  through AX. What an app needs once (VS Code's folder trust, its PDF,
+  SQLite, and Python extensions, counted as their GUI path's inputs) is
+  setup, counted apart and not timed; VS Code's extensions are a task's own
+  (`$VSEXT/<task>`), so one task's extension does not run in another's.
+  Settings that only keep an app quiet (no update checks, no telemetry, no
+  caret blink) are not counted. The language server tasks: mutible and Zed
+  both run the owner's installed basedpyright (`~/.local/bin`, which each
+  found with nothing set up for it), VS Code Pylance from the
+  Python extension. F12 and F2 are pressed once the cursor is on the name,
+  as a person presses them, so a server still starting is in the step;
+  waiting for the tree to settle first was dropped, since VS Code's stayed
+  busy 30 to 90 s while Pylance indexed, which F12 does not wait for.
 - **Reading an app with no AX tree** (2026-11-20): Zed is read from its
-  pixels. `screen TEXT` and `!screen TEXT` capture its front window with
-  `screencapture -l` and recognise the text with Vision (a system
-  framework; the terminal needs Screen Recording permission), and a `view`
-  whose window has no AX tree is classified the same way ("refused (on
-  screen: "Could not open file")", "opens as text (on screen: ...)",
-  "shown (read from the screen)"). A read takes 300 to 1,000 ms, which is
-  the step's resolution (`poll_ms`); only the recognising after the
-  picture that ends a step is kept out of its wall time, never the reads
-  that found the condition false. `taskbench-mac screentext PID` prints
-  what Vision reads.
+  pixels. A ScreenCaptureKit stream of the app's windows delivers a frame
+  each time they change (30 a second at most), stamped with when it was
+  shown; `screen TEXT`, `!screen TEXT`, and `luma>X` ask the newest frame,
+  and once one holds, the frames since the last that did not are halved down
+  to the first that does: the step ends at that frame's time. The stream is
+  started, with a frame in, before the input of a step that reads the
+  screen. Vision (the accurate level, else the fast one) reads the front
+  window's part of a frame; a `view` whose window has no AX tree is
+  classified from it ("refused (on screen: "Could not open file")", "opens
+  as text (on screen: ...)", "shown (read from the screen)"), and `sclick
+  TEXT` clicks where TEXT shows (Zed's File History list, mutible's commit
+  graph). `taskbench-mac screentext PID` prints what Vision reads,
+  `capturetest PID` how long the stream takes to start.
 - **Isolation**: VS Code on `--user-data-dir` and `--extensions-dir`, Zed on
   `--user-data-dir` (1.29 has it) and a scratch HOME, mutible on a scratch
   HOME, CFFIXED_USER_HOME, TMPDIR and defaults suite as the GUI checks use;
@@ -199,29 +250,32 @@ clicks.
   event it accounts for, the owner's before the run and then each event the
   tool posts, and an event newer than that is someone at the Mac. Keys and
   clicks are posted only while the app being driven is in front (asked
-  through AX each time), so nothing is ever typed into another app.
+  through AX each time), so nothing is ever typed into another app. Two
+  runs at once stop each other this way (each sees the other's events).
 - **Caveats**: AX reads only what an app exposes. Zed shows almost no AX
-  tree, so its results are read from the screen (above) or from outside
-  (git's index, the port), and its palette steps wait for its CPU to settle
-  (`quiet`); where neither can tell, the result is "unverified" and marked
-  * in the table (Zed's finder task: its text is read from the screen, the
-  keyboard's place cannot be). The palette's typed text is read back from
-  the field in mutible and VS Code (VS Code's also by its "1 Results"
-  count), and waited on for 150 ms of quiet only in Zed. mutible's review
-  page and processes rows were drawn without AX elements until 2026-11-20
-  (the review task staged from the editor, the server task picked the
-  list's second row); now its review task presses "Stage change 1 in
-  app.py" and its server task the Stop named "on port N", as VoiceOver
-  would. Chromium's AX tree costs VS Code some CPU and memory, and every
-  app pays for being queried. Chords are posted by US key positions. Every
-  step was watched on screen on 2026-11-20 (one app and task at a time,
-  `KEEP=1`, `axdump`, `screentext`); a step that differs from the app's
-  docs says what was watched beside it in the script.
+  tree beyond its window's title, so its results are read from the screen,
+  its title, or from outside (git's index, the port, files on disk), and its
+  palette steps end on its CPU (`quiet`); where none can tell, the result is
+  "unverified" and marked * in the table (Zed's finder task: its text is
+  read from the screen, the keyboard's place cannot be). mutible 1.6.9 gives
+  the keyboard back to the file tree when Quick Open closes (found
+  2026-11-20; its open steps end on the window's title, and its multicursor
+  path pays Cmd+1, Focus the editor), and its commit graph's rows carry no
+  AX text (its history click is read from the screen); its folder search's
+  Option+Shift+Cmd+F, with nothing searched yet, puts the keyboard in the
+  replacement field, so its replace path searches first (Shift+Cmd+F).
+  mutible has no history of one file: its history task uses the branch's
+  commit graph. Chromium's AX tree costs VS Code some CPU and memory, and
+  every app pays for being queried. Chords are posted by US key positions.
+  Every step was watched on screen on 2026-11-20 (one app and task at a
+  time, `KEEP=1 KEEP_APP=1`, `axdump`, `screentext`); a step that differs
+  from the app's docs says what was watched beside it in the script.
 - **Working out a step**: `taskbench-mac run --pid PID` drives a copy a
   kept run left running (it must be the `--exe`'s), so a step can be tried
   without a relaunch; `axdump PID [DEPTH] [manual]` (`manual` sets
   `AXManualAccessibility` on an Electron app started without the flag and
-  waits 3 s for its tree); `screentext PID` for Zed.
+  waits 3 s for its tree); `screentext PID` and `windows PID` for Zed;
+  `ocr PNG` for a frame `TASKBENCH_TRACE` kept.
 
 ## Traps
 
@@ -282,3 +336,31 @@ clicks.
 - **A magic that the viewer itself prints**: Zed's image viewer shows
   "PNG" in its size line, which read as "opens as text"; the PNG's magic is
   its IHDR chunk name.
+- **A view's time runs until the app is quiet**: `view` waits for the
+  window title, then for the tree to settle for 300 ms (or 3 s; quiet as
+  Measures says), so work an app does after drawing counts. mutible's PDF at
+  2,210 ms (1.6.9) was drawn in about 30 ms; the rest was PDFKit's
+  Vision pass over the pages (viewers.md, PDFs). `sample PID` during the
+  step says what keeps it busy.
+- **Vision's accurate level read nothing** in a frame of Zed's image viewer
+  (a large picture beside the tabs and the tree) while its fast level read
+  every line: `Recognise` falls back to the fast level when the accurate
+  one finds no text (the picture read as "unverified" until then).
+- **A wait for the tree to settle is not a wait for the app**: Zed redraws
+  every frame while a picker is open, its caret blink costs as much as an
+  answer, and a language server starting beside it kept its whole tree busy
+  for 700 ms after a go-to-line that showed at once. Quiet is relative to
+  the settled level, UI steps read the app's own process, and the caret
+  blink is off (Measures).
+- **VS Code's editors show no text through AX until one has the keyboard**
+  (the diff editor a Timeline click opens): `text` found nothing there and
+  walking every text area for it took 32 s; its history step reads the
+  screen.
+- **AXPress blocks while the app handles it** (299 ms for VS Code's Replace
+  button): a step's wall starts when the press is sent, not when the call
+  returns, or the app's time would hide in the input's.
+- **Two agents running taskbench at once** shared
+  `/private/tmp/mutible-taskbench`, and one's `rm -rf` emptied the other's
+  run; each also sees the other's posted events as the owner's. Give each
+  its own `TASKBENCH_DIR`, and check `ps` for a running `taskbench-mac run`
+  first.

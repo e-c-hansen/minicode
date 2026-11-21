@@ -38,6 +38,7 @@ class IdeLinkServer;
 class AgentsPanel;
 class HintsColumns;
 class SidebarIcons;
+class SessionBrowser;
 
 // One editor window's parts. Pointers are the app's own and stay valid until
 // the window closes; terminal and browser are null in a build without them.
@@ -83,6 +84,7 @@ struct MCGuiAppWindow {
     GtkWidget*  sidebarIconsRow = nullptr;
     GtkWidget*  sidebarStack = nullptr;
     bool        gitShown = false;
+    SessionBrowser* sessionBrowser = nullptr;   // View > Session Browser's server; null until first used
     std::string rootDir;
 };
 

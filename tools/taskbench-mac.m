@@ -7,12 +7,19 @@
 // opens it) each followed by a result condition polled every 10 ms (a window
 // title, an element's text, the keyboard's place, a shell command such as
 // `git diff --cached`, a port closing). Measured per step: wall time from the
-// input sent to the condition true. Per task: the inputs counted (clicks, key
-// chords, keystrokes of typed text, Finder opens), the CPU time of the app's
-// whole process tree (user + system, proc_pid_rusage, including children it
-// reaped), and its physical footprint, peak and settled (procmem-mac's
-// method: the process and every process whose parent or responsible pid is
-// in the tree).
+// last event the input posted to the moment its result happened, which for
+// most conditions is when the poll found it, but for a `quiet` condition is
+// when the tree's CPU activity stopped and for a screen read when the first
+// frame showing it was on screen, so the benchmark's own waiting (the quiet
+// window, Vision's reading) is never in a step's wall time; each step says
+// how its end was observed (ax, file, git, port, cpu-quiet, screen). Per
+// task: the inputs counted (clicks, key chords, keystrokes of typed text,
+// Finder opens), the CPU time of the app's whole process tree (user +
+// system, proc_pid_rusage, including children it reaped), and its physical
+// footprint, peak and settled (procmem-mac's method: the process and every
+// process whose parent or responsible pid is in the tree). A thread samples
+// the tree every 10 ms from the launch through the settle, so the peak is
+// over all of it and never below the settled footprint.
 //
 //   taskbench-mac check                      AX trust and the owner's idle time
 //   taskbench-mac idle-wait SECONDS STATE    wait until the owner has been idle
@@ -21,6 +28,8 @@
 //   taskbench-mac axdump PID [DEPTH] [manual] print an app's windows' AX tree
 //   taskbench-mac screentext PID             print the text Vision reads in an app's front window
 //   taskbench-mac tree PID                   print a tree's CPU and footprint
+//   taskbench-mac windows PID                print an app's on-screen windows
+//   taskbench-mac ocr PNG                    print what Vision reads in a picture
 //   taskbench-mac media DIR                  write report.pdf, picture.png, clip.mp4
 //   taskbench-mac biglog PATH MB NEEDLE      write a log of MB megabytes, NEEDLE near its end
 //
@@ -33,6 +42,8 @@
 //   type TEXT              typed text, one input per character
 //   press SPEC             AXPress on an element, else a click at its centre (one click)
 //   click SPEC | dclick SPEC | rclick SPEC   a mouse click at its centre (one, two, one)
+//   sclick TEXT            a click on TEXT where it shows in the front window, read from
+//                          the screen by Vision (for an app with no AX tree; one click)
 //   menu A>B>C             menu bar items pressed in turn (one click each)
 //   finder CMD             a shell command that opens a file as Finder does (one input)
 //   launch CMD             a shell command that starts the app (setup, no inputs)
@@ -57,10 +68,19 @@
 //   focus ROLE | focus SPEC   the keyboard's element
 //   sh CMD                 a shell command exits 0
 //   port-closed N          nothing accepts on 127.0.0.1:N or [::1]:N
-//   quiet MS               the tree used under 5% of a core for MS ms ("settled, unverified")
+//   text TEXT              a text area or static text in the focused window holds TEXT
+//   quiet MS               the app's own process has been quiet for MS ms ("settled,
+//                          unverified"): its median CPU under 20% of a core and no
+//                          sample busy (1 ms over that level a 10 ms sample, a lone
+//                          blink under 2 ms over aside); the step ends at the last busy
+//                          sample (QuietAt). Its own process, so a language server
+//                          starting beside it does not hold up its UI's answer
+//   settle MS              the same of the whole tree (after a launch)
 //   screen TEXT | !screen TEXT   the app's front window shows TEXT / text without it,
-//                          read from its pixels by Vision (for an app with no AX tree;
-//                          spaces ignored, case kept; slow, so put it after cheap terms)
+//                          read from a ScreenCaptureKit stream of its windows by Vision
+//                          (for an app with no AX tree; spaces ignored, case kept); the
+//                          step ends at the first frame that showed it
+//   luma>X | luma<X        the front window's mean brightness (0 to 1), from the stream
 //   view NAME MAGIC        NAME's window is up and settled; then "opens as text" when a
 //                          text area starts with MAGIC, "refused" when the app says it
 //                          cannot show it, "shown" otherwise; without an AX tree the
@@ -73,10 +93,14 @@
 // IOHIDSystem) is someone at the keyboard or mouse, and `run` exits 3 at once.
 //
 // `run` prints, and writes to --out, a line a step (step, n, kind, inputs,
-// input ms, wall ms, slowest poll ms, status, what matched, the step), a
-// `pid` line once the app's pid is known, and a last `summary` line of
-// key=value fields. The slowest poll is the step's time resolution: a poll
-// that walks a large AX tree takes as long as the walk.
+// input ms, wall ms, slowest poll ms, resolution ms, how the end was
+// observed, status, what matched, the step), a `pid` line once the app's pid
+// is known, and a last `summary` line of key=value fields. The resolution is
+// the slowest poll for a condition read by polling (a poll that walks a large
+// AX tree takes as long as the walk), the CPU sample's length for a quiet
+// one, and the gap since the frame before for a screen read (34 ms at most).
+// TASKBENCH_TRACE=DIR writes each step's CPU samples (cpu.txt) and every
+// frame Vision reads there.
 //
 // Exit codes: 0 done, 1 a step failed, 2 usage or setup error, 3 owner input,
 // 4 no Accessibility permission.
@@ -85,7 +109,10 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
+#import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <Vision/Vision.h>
+#include <os/lock.h>
+#include <pthread.h>
 #include <IOKit/IOKitLib.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -146,8 +173,11 @@ static void LoadState(void) {
     gLastKnownInput = s.doubleValue;
 }
 
+static double gLastPostMono = 0;   // CLOCK_UPTIME_RAW ms of the last event this tool posted
+
 static void NotePosted(void) {
     gLastKnownInput = WallMs();
+    gLastPostMono = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e6;
     SaveState();
 }
 
@@ -212,33 +242,89 @@ static NSArray<NSNumber *> *TreeOf(pid_t root, NSData *links, NSMutableDictionar
 
 typedef struct {
     double cpuMs;       // user + system of the live tree, with what its members reaped
+    double ownMs;       // the app's own process (its UI), without its helpers and servers
     double footprintMB; // physical footprint of the live tree
     int count;
 } TreeSample;
 
 // What exited members had used when last seen (launchd reaps a helper whose
-// parent is launchd, so its time would otherwise vanish with it).
+// parent is launchd, so its time would otherwise vanish with it). Touched
+// only by whichever thread samples (the sampler, or `tree` on its own).
 static NSMutableDictionary<NSNumber *, NSNumber *> *gOrphanCpu;
 static double gGoneCpuMs = 0;
 
+// The tree's members, found in C (the sampler runs this every 10 ms, so no
+// sets of objects): a pid bitmap grown to a fixed point over the links.
+enum { kMaxPid = 1 << 20 };
+static int TreeMembers(pid_t root, pid_t *out, pid_t *outPpid, int cap) {
+    static uint8_t *in;
+    static ProcLink *links;
+    static int linksCap;
+    if (!in) in = calloc(kMaxPid / 8, 1);
+    int n = proc_listallpids(NULL, 0);
+    if (n <= 0) return 0;
+    if (n * 2 > linksCap) {
+        linksCap = n * 2;
+        links = realloc(links, (size_t)linksCap * sizeof(ProcLink));
+    }
+    pid_t *pids = calloc((size_t)linksCap, sizeof(pid_t));
+    n = proc_listallpids(pids, (int)(linksCap * sizeof(pid_t)));
+    int m = 0;
+    BOOL alive = NO;
+    for (int i = 0; i < n; i++) {
+        if (pids[i] <= 0 || pids[i] >= kMaxPid) continue;
+        struct proc_bsdshortinfo b;
+        if (proc_pidinfo(pids[i], PROC_PIDT_SHORTBSDINFO, 0, &b, sizeof b) != sizeof b) continue;
+        links[m++] = (ProcLink){pids[i], (pid_t)b.pbsi_ppid, gResponsible ? gResponsible(pids[i]) : pids[i]};
+        if (pids[i] == root) alive = YES;
+    }
+    free(pids);
+    if (!alive) return 0;
+#define IN(p) ((p) > 0 && (p) < kMaxPid && (in[(p) >> 3] & (1 << ((p) & 7))))
+#define SET(p) (in[(p) >> 3] |= (uint8_t)(1 << ((p) & 7)))
+    SET(root);
+    BOOL changed;
+    do {
+        changed = NO;
+        for (int i = 0; i < m; i++)
+            if (!IN(links[i].pid) && (IN(links[i].ppid) || IN(links[i].rpid))) {
+                SET(links[i].pid);
+                changed = YES;
+            }
+    } while (changed);
+    int k = 0;
+    for (int i = 0; i < m; i++)
+        if (IN(links[i].pid) && k < cap) {
+            out[k] = links[i].pid;
+            outPpid[k] = links[i].ppid;
+            k++;
+        }
+    for (int i = 0; i < m; i++) in[links[i].pid >> 3] = 0;   // cleared for the next call
+#undef IN
+#undef SET
+    return k;
+}
+
 static TreeSample SampleTree(pid_t root) {
-    TreeSample s = {0, 0, 0};
+    TreeSample s = {0, 0, 0, 0};
     if (root <= 0) return s;
-    NSMutableDictionary *ppids = [NSMutableDictionary dictionary];
-    NSArray *members = TreeOf(root, ListLinks(), ppids);
+    enum { kCap = 4096 };
+    static pid_t members[kCap], ppids[kCap];
+    const int n = TreeMembers(root, members, ppids, kCap);
     if (!gOrphanCpu) gOrphanCpu = [NSMutableDictionary dictionary];
     NSMutableSet *seen = [NSMutableSet set];
-    for (NSNumber *p in members) {
+    for (int i = 0; i < n; i++) {
         struct rusage_info_v4 ru;
-        if (proc_pid_rusage(p.intValue, RUSAGE_INFO_V4, (rusage_info_t *)&ru) != 0) continue;
+        if (proc_pid_rusage(members[i], RUSAGE_INFO_V4, (rusage_info_t *)&ru) != 0) continue;
         const double cpu = (double)(ru.ri_user_time + ru.ri_system_time + ru.ri_child_user_time +
                                     ru.ri_child_system_time) * gTickNs / 1e6;
         s.cpuMs += cpu;
+        if (members[i] == root) s.ownMs = cpu;
         s.footprintMB += ru.ri_phys_footprint / 1048576.0;
         s.count++;
-        if (p.intValue != root && [ppids[p] intValue] == 1) {
-            gOrphanCpu[p] = @(cpu);
-            [seen addObject:p];
+        if (members[i] != root && ppids[i] == 1) {
+            gOrphanCpu[@(members[i])] = @(cpu);
+            [seen addObject:@(members[i])];
         }
     }
     for (NSNumber *p in gOrphanCpu.allKeys)
@@ -752,35 +838,172 @@ static BOOL PortOpen(int port) {
 
 // ------------------------------------------------------------------ measuring
 
-static double gPeakMB = 0, gLastSampleAt = 0;
-static BOOL gMeasuring = NO;
-static TreeSample gLast;
-static NSMutableArray<NSArray<NSNumber *> *> *gCpuRing;   // [t, cpu]
+// A thread samples the app's tree every 10 ms from the moment its pid is
+// known (the launch) until the run ends (after the settle), whatever the
+// main thread is doing: the CPU and the footprint, with their times. So the
+// peak is over every sample from launch through settle (never below the
+// settled footprint, which is the last sample), and a `quiet` step can say
+// when the tree's activity stopped, not only when the benchmark noticed.
 
-static void Sample(void) {
-    gLast = SampleTree(gPid);
-    gLastSampleAt = MonoMs();
-    if (gMeasuring && gLast.footprintMB > gPeakMB) gPeakMB = gLast.footprintMB;
-    if (!gCpuRing) gCpuRing = [NSMutableArray array];
-    [gCpuRing addObject:@[ @(gLastSampleAt), @(gLast.cpuMs) ]];
-    while (gCpuRing.count > 2 && gLastSampleAt - gCpuRing[1][0].doubleValue > 60000) [gCpuRing removeObjectAtIndex:0];
+typedef struct {
+    double t, cpu, mb, own;   // own: the app process's CPU (a `quiet` term's)
+} Pt;
+
+enum { kRing = 1 << 15 };   // 32768 samples at 10 ms: over five minutes
+static Pt gRing[kRing];
+static long gRingN = 0;   // samples taken; sample i is gRing[i % kRing]
+static os_unfair_lock gMeasureLock = OS_UNFAIR_LOCK_INIT;
+static double gPeakMB = 0, gPeakAt = 0;
+static const double kSampleMs = 10;
+static double gSampleGapMaxMs = 0;   // the longest gap between two samples: the CPU's resolution
+
+static void *SamplerMain(void *unused) {
+    (void)unused;
+    double last = 0;
+    for (;;) {
+        @autoreleasepool {
+            const double tick = MonoMs();
+            const pid_t pid = gPid;
+            if (pid > 0) {
+                TreeSample s = SampleTree(pid);
+                const double t = MonoMs();
+                os_unfair_lock_lock(&gMeasureLock);
+                if (s.count > 0) {
+                    gRing[gRingN % kRing] = (Pt){t, s.cpuMs, s.footprintMB, s.ownMs};
+                    gRingN++;
+                    if (s.footprintMB > gPeakMB) {
+                        gPeakMB = s.footprintMB;
+                        gPeakAt = t;
+                    }
+                    if (last > 0 && t - last > gSampleGapMaxMs) gSampleGapMaxMs = t - last;
+                    last = t;
+                }
+                os_unfair_lock_unlock(&gMeasureLock);
+            }
+            SleepMs(MAX(1, kSampleMs - (MonoMs() - tick)));
+        }
+    }
+    return NULL;
 }
 
-// YES when the tree has used under 5% of a core over the last `ms`.
-// Only samples since the step's input count, so a step's quiet never comes
-// from before the app saw the input.
+static void StartSampler(void) {
+    static pthread_t th;
+    if (th) return;
+    pthread_attr_t a;
+    pthread_attr_init(&a);
+    pthread_attr_set_qos_class_np(&a, QOS_CLASS_USER_INTERACTIVE, 0);
+    pthread_create(&th, &a, SamplerMain, NULL);
+}
+
+// The newest sample (t 0 when there is none yet).
+static Pt Latest(void) {
+    os_unfair_lock_lock(&gMeasureLock);
+    Pt p = gRingN ? gRing[(gRingN - 1) % kRing] : (Pt){0, 0, 0, 0};
+    os_unfair_lock_unlock(&gMeasureLock);
+    return p;
+}
+
+// Waits for a sample taken after now, so a reading at a step's edge is of
+// that moment (20 ms at most).
+static Pt Fresh(void) {
+    const double now = MonoMs();
+    Pt p = Latest();
+    for (int i = 0; i < 20 && gPid && p.t < now; i++) {
+        SleepMs(2);
+        p = Latest();
+    }
+    return p;
+}
+
+// Samples since `from` (with the one before it, as the CPU's starting point).
+static NSData *SamplesSince(double from) {
+    os_unfair_lock_lock(&gMeasureLock);
+    long first = gRingN - 1;
+    while (first > 0 && first > gRingN - kRing + 1 && gRing[first % kRing].t >= from) first--;
+    NSMutableData *d = [NSMutableData dataWithCapacity:(NSUInteger)(gRingN - first) * sizeof(Pt)];
+    for (long i = MAX(first, 0); i < gRingN; i++) [d appendBytes:&gRing[i % kRing] length:sizeof(Pt)];
+    os_unfair_lock_unlock(&gMeasureLock);
+    return d;
+}
+
+// Quiet and busy are judged against the tree's own settled level, since an
+// app at rest is not always at zero (Zed redraws about every 12 ms, about
+// 1 ms of CPU each, while a picker is open). Each sample's CPU is put per
+// 10 ms. Over a window, the level is the median sample. A sample is busy
+// when it is over the level by 1 ms or more; a lone busy sample under 2 ms
+// over (a caret's blink) does not count. A window is quiet when its level
+// is under 2 ms (20% of a core) and nothing in it counts as busy.
+static const double kLevelMaxMs = 2.0, kBusyOverMs = 1.0, kBlinkOverMs = 2.0;
+
+typedef struct {
+    double t, c, dt;   // the sample's time, its CPU per 10 ms, its length
+} Use;
+
+static int CompareDouble(const void *a, const void *b) {
+    const double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y;
+}
+
+static BOOL CountsBusy(const Use *u, long n, long i, double level) {
+    if (u[i].c <= level + kBusyOverMs) return NO;
+    if (u[i].c > level + kBlinkOverMs) return YES;
+    return (i > 0 && u[i - 1].c > level + kBusyOverMs) || (i + 1 < n && u[i + 1].c > level + kBusyOverMs);
+}
+
+// YES when the tree has been quiet for the last `ms`, counting only samples
+// since `from` (the step's input), so a step's quiet never comes from
+// before the app saw it. *endAt (when given) is when the tree's activity
+// stopped: the time of the last sample since `from` that counts as busy
+// against the quiet window's level, or `from` when none does; *resMs that
+// sample's length.
 static double gQuietFrom = 0;
 
-static BOOL Quiet(double ms) {
-    if (!gPid || gCpuRing.count < 2) return NO;
-    NSArray *last = gCpuRing.lastObject;
-    for (NSInteger i = (NSInteger)gCpuRing.count - 2; i >= 0; i--) {
-        if (gCpuRing[i][0].doubleValue < gQuietFrom) break;
-        double dt = [last[0] doubleValue] - gCpuRing[i][0].doubleValue;
-        if (dt >= ms) return ([last[1] doubleValue] - gCpuRing[i][1].doubleValue) < 0.05 * dt;
+// `own`: the app's own process (a step's `quiet`: its UI answering, not a
+// language server starting beside it), else the whole tree (`settle`, and
+// the settle before the footprint is read).
+static BOOL QuietAt(double ms, double from, BOOL own, double *endAt, double *resMs) {
+    if (!gPid) return NO;
+    NSData *d = SamplesSince(from);
+    const Pt *p = d.bytes;
+    const long np = (long)(d.length / sizeof(Pt));
+    if (np < 3) return NO;
+    NSMutableData *ud = [NSMutableData dataWithLength:(NSUInteger)(np - 1) * sizeof(Use)];
+    Use *u = ud.mutableBytes;
+    long n = 0;
+    for (long i = 1; i < np; i++) {
+        const double dt = p[i].t - p[i - 1].t;
+        if (dt <= 0) continue;
+        const double used = own ? p[i].own - p[i - 1].own : p[i].cpu - p[i - 1].cpu;
+        u[n++] = (Use){p[i].t, used * 10 / dt, dt};
     }
-    return NO;
+    if (n < 2 || u[n - 1].t - MAX(from, p[0].t) < ms) return NO;
+    long w0 = n - 1;   // the window: samples in the last `ms`
+    while (w0 > 0 && u[n - 1].t - u[w0 - 1].t <= ms && u[w0 - 1].t - u[w0 - 1].dt >= from) w0--;
+    const long wn = n - w0;
+    double *sorted = malloc((size_t)wn * sizeof(double));
+    for (long i = 0; i < wn; i++) sorted[i] = u[w0 + i].c;
+    qsort(sorted, (size_t)wn, sizeof(double), CompareDouble);
+    const double level = sorted[wn / 2];
+    free(sorted);
+    if (level >= kLevelMaxMs) return NO;
+    for (long i = w0; i < n; i++)
+        if (CountsBusy(u, n, i, level)) return NO;
+    if (endAt) {
+        *endAt = from;
+        if (resMs) *resMs = kSampleMs;
+        for (long k = w0 - 1; k >= 0; k--) {
+            if (u[k].t <= from) break;
+            if (CountsBusy(u, n, k, level)) {
+                *endAt = u[k].t;
+                if (resMs) *resMs = u[k].dt;
+                break;
+            }
+        }
+    }
+    return YES;
 }
+
+static BOOL Settled(double ms) { return QuietAt(ms, gQuietFrom, NO, NULL, NULL); }
 
 // ------------------------------------------------------------------ conditions
 
@@ -788,63 +1011,353 @@ static NSRegularExpression *gRefused;
 
 // ------------------------------------------------------------------ the screen
 //
-// An app that shows no AX tree (Zed) is read from its pixels: its front
-// window captured by screencapture(1) and its text recognised by Vision,
-// both on this Mac. A read takes 300 to 1,000 ms, which is the step's time
-// resolution (its poll_ms); the recognising after the picture that ends a
-// step is the benchmark's time, not the app's, so it is kept out of the
-// step's wall time (gHarnessMs). It needs Screen Recording permission for
-// the terminal; without it nothing is read, which reads as unverified.
+// An app that shows no AX tree (Zed) is read from its pixels. A
+// ScreenCaptureKit stream of the app's windows delivers a frame each time
+// what they show changes (30 a second at most), stamped with the time it
+// was shown; Vision reads the text in the front window's part of a frame.
+// A `screen` term asks the newest frame; once one holds, the frames between
+// the last that did not and that one are halved down to the first that
+// does, and the step ends at that frame's time: when the result was on
+// screen, not when the reading finished, so the reading (300 to 1,000 ms a
+// frame) is never in a step's wall time. The stream is started before the
+// input of a step that reads the screen, so the frame before the input is
+// there to compare with. It needs Screen Recording permission for the
+// terminal; without it nothing is read, which reads as unverified.
 
-static double gHarnessMs = 0;
+@interface TBFrame : NSObject {
+  @public
+    double t;
+    CGImageRef img;
+    CGRect display;   // the display's bounds in global points, top left origin
+    double scale;     // image pixels per point
+    NSMutableDictionary *cache;
+}
+@end
+@implementation TBFrame
+- (void)dealloc {
+    if (img) CGImageRelease(img);
+}
+@end
 
-static CGWindowID FrontWindowOf(pid_t pid) {
+static NSMutableArray<TBFrame *> *gFrames;
+static os_unfair_lock gFrameLock = OS_UNFAIR_LOCK_INIT;
+// Frames older than the newest at or before this are dropped as they come.
+static double gFramesKeepFrom = INFINITY;
+static const NSUInteger kMaxFrames = 24;   // past it, middle frames go first
+
+static void KeepFramesFrom(double t) {
+    os_unfair_lock_lock(&gFrameLock);
+    gFramesKeepFrom = t;
+    while (gFrames.count >= 2 && gFrames[1]->t <= gFramesKeepFrom) [gFrames removeObjectAtIndex:0];
+    os_unfair_lock_unlock(&gFrameLock);
+}
+
+@interface TBCapture : NSObject <SCStreamOutput, SCStreamDelegate> {
+  @public
+    SCStream *stream;
+    pid_t pid;
+    CGRect display;
+    double scale;
+    volatile BOOL failed;
+}
+@end
+@implementation TBCapture
+- (void)stream:(SCStream *)s didOutputSampleBuffer:(CMSampleBufferRef)sb ofType:(SCStreamOutputType)type {
+    (void)s;
+    if (type != SCStreamOutputTypeScreen || !CMSampleBufferIsValid(sb)) return;
+    CFArrayRef atts = CMSampleBufferGetSampleAttachmentsArray(sb, false);
+    if (!atts || CFArrayGetCount(atts) < 1) return;
+    NSDictionary *info = (__bridge NSDictionary *)CFArrayGetValueAtIndex(atts, 0);
+    if ([info[SCStreamFrameInfoStatus] integerValue] != SCFrameStatusComplete) return;
+    CVPixelBufferRef pb = CMSampleBufferGetImageBuffer(sb);
+    if (!pb) return;
+    NSNumber *shown = info[SCStreamFrameInfoDisplayTime];   // mach time, as CLOCK_UPTIME_RAW counts
+    const double t = shown ? shown.unsignedLongLongValue * gTickNs / 1e6 : MonoMs();
+    CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+    const size_t w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb), bpr = CVPixelBufferGetBytesPerRow(pb);
+    CFDataRef data = CFDataCreate(NULL, CVPixelBufferGetBaseAddress(pb), (CFIndex)(bpr * h));
+    CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+    if (!data) return;
+    CGDataProviderRef prov = CGDataProviderCreateWithCFData(data);
+    CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGImageRef img = CGImageCreate(w, h, 8, 32, bpr, cs,
+                                   kCGBitmapByteOrder32Little | (CGBitmapInfo)kCGImageAlphaPremultipliedFirst, prov,
+                                   NULL, false, kCGRenderingIntentDefault);
+    CGColorSpaceRelease(cs);
+    CGDataProviderRelease(prov);
+    CFRelease(data);
+    if (!img) return;
+    TBFrame *f = [TBFrame new];
+    f->t = t;
+    f->img = img;
+    f->display = display;
+    f->scale = scale;
+    f->cache = [NSMutableDictionary dictionary];
+    os_unfair_lock_lock(&gFrameLock);
+    if (!gFrames) gFrames = [NSMutableArray array];
+    [gFrames addObject:f];
+    while (gFrames.count >= 2 && gFrames[1]->t <= gFramesKeepFrom) [gFrames removeObjectAtIndex:0];
+    while (gFrames.count > kMaxFrames) [gFrames removeObjectAtIndex:gFrames.count / 2];
+    os_unfair_lock_unlock(&gFrameLock);
+}
+- (void)stream:(SCStream *)s didStopWithError:(NSError *)error {
+    (void)s;
+    (void)error;
+    failed = YES;
+}
+@end
+
+static TBCapture *gCapture;
+static double gCaptureTriedAt = -1e9;
+
+// The app's front normal window: its bounds in global points (top left
+// origin), or CGRectNull.
+static CGRect FrontWindowBounds(pid_t pid, CGWindowID *idOut) {
     NSArray *wins = CFBridgingRelease(CGWindowListCopyWindowInfo(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
     for (NSDictionary *w in wins)
-        if ([w[(__bridge id)kCGWindowOwnerPID] intValue] == pid && [w[(__bridge id)kCGWindowLayer] intValue] == 0)
-            return [w[(__bridge id)kCGWindowNumber] unsignedIntValue];
-    return 0;
+        if ([w[(__bridge id)kCGWindowOwnerPID] intValue] == pid && [w[(__bridge id)kCGWindowLayer] intValue] == 0) {
+            CGRect r;
+            if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge id)kCGWindowBounds], &r))
+                continue;
+            if (r.size.width < 50 || r.size.height < 50) continue;
+            if (idOut) *idOut = [w[(__bridge id)kCGWindowNumber] unsignedIntValue];
+            return r;
+        }
+    return CGRectNull;
+}
+
+static CGWindowID FrontWindowOf(pid_t pid) {
+    CGWindowID wid = 0;
+    FrontWindowBounds(pid, &wid);
+    return wid;
+}
+
+static void StopCapture(void) {
+    if (!gCapture) return;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [gCapture->stream stopCaptureWithCompletionHandler:^(NSError *e) {
+        (void)e;
+        dispatch_semaphore_signal(sem);
+    }];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));
+    gCapture = nil;
+    os_unfair_lock_lock(&gFrameLock);
+    [gFrames removeAllObjects];
+    os_unfair_lock_unlock(&gFrameLock);
+}
+
+// A stream of the app's windows on the display its front window is on,
+// started once and kept for the run. NO until the app has a window to show.
+static BOOL EnsureCapture(pid_t pid) {
+    if (pid <= 0) return NO;
+    if (gCapture && gCapture->pid == pid && !gCapture->failed) return YES;
+    if (MonoMs() - gCaptureTriedAt < 200) return NO;
+    gCaptureTriedAt = MonoMs();
+    StopCapture();
+    if (!CGPreflightScreenCaptureAccess()) return NO;
+    const CGRect wb = FrontWindowBounds(pid, NULL);
+    if (CGRectIsNull(wb)) return NO;
+    __block SCShareableContent *content = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [SCShareableContent getShareableContentExcludingDesktopWindows:YES onScreenWindowsOnly:NO
+                                                 completionHandler:^(SCShareableContent *c, NSError *e) {
+                                                     (void)e;
+                                                     content = c;
+                                                     dispatch_semaphore_signal(sem);
+                                                 }];
+    if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC))) return NO;
+    SCRunningApplication *app = nil;
+    for (SCRunningApplication *a in content.applications)
+        if (a.processID == pid) app = a;
+    if (!app) return NO;
+    SCDisplay *disp = content.displays.firstObject;
+    for (SCDisplay *d in content.displays)
+        if (CGRectContainsPoint(CGDisplayBounds(d.displayID), CGPointMake(CGRectGetMidX(wb), CGRectGetMidY(wb))))
+            disp = d;
+    if (!disp) return NO;
+    TBCapture *c = [TBCapture new];
+    c->pid = pid;
+    c->display = CGDisplayBounds(disp.displayID);
+    // Pixels per point: the display's own (2 on a Retina panel), so Vision
+    // reads the small text of a find bar's count; TASKBENCH_SCREEN_SCALE
+    // overrides it.
+    c->scale = getenv("TASKBENCH_SCREEN_SCALE")
+                   ? atof(getenv("TASKBENCH_SCREEN_SCALE"))
+                   : (double)CGDisplayPixelsWide(disp.displayID) / MAX(1.0, c->display.size.width);
+    {
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(disp.displayID);
+        if (mode && !getenv("TASKBENCH_SCREEN_SCALE"))
+            c->scale = (double)CGDisplayModeGetPixelWidth(mode) / MAX(1.0, c->display.size.width);
+        if (mode) CGDisplayModeRelease(mode);
+    }
+    if (c->scale < 1) c->scale = 1;
+    SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:disp includingApplications:@[ app ]
+                                                      exceptingWindows:@[]];
+    SCStreamConfiguration *cfg = [SCStreamConfiguration new];
+    cfg.width = (size_t)(c->display.size.width * c->scale);
+    cfg.height = (size_t)(c->display.size.height * c->scale);
+    cfg.minimumFrameInterval = CMTimeMake(1, 30);
+    cfg.pixelFormat = kCVPixelFormatType_32BGRA;
+    cfg.showsCursor = NO;
+    cfg.queueDepth = 5;
+    c->stream = [[SCStream alloc] initWithFilter:filter configuration:cfg delegate:c];
+    static dispatch_queue_t q;
+    if (!q) q = dispatch_queue_create("taskbench.frames", DISPATCH_QUEUE_SERIAL);
+    if (![c->stream addStreamOutput:c type:SCStreamOutputTypeScreen sampleHandlerQueue:q error:nil]) return NO;
+    __block NSError *startErr = nil;
+    dispatch_semaphore_t s2 = dispatch_semaphore_create(0);
+    [c->stream startCaptureWithCompletionHandler:^(NSError *e) {
+        startErr = e;
+        dispatch_semaphore_signal(s2);
+    }];
+    if (dispatch_semaphore_wait(s2, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)) || startErr) return NO;
+    gCapture = c;
+    return YES;
+}
+
+// Started, and its first frame in, before a step's input (2 s at most).
+static void CaptureBeforeInput(void) {
+    const double until = MonoMs() + 2000;
+    while (MonoMs() < until) {
+        if (EnsureCapture(gPid)) {
+            os_unfair_lock_lock(&gFrameLock);
+            const NSUInteger n = gFrames.count;
+            os_unfair_lock_unlock(&gFrameLock);
+            if (n) return;
+        }
+        SleepMs(20);
+    }
 }
 
 static int RunShell(NSString *cmd);
 
-// The text Vision reads in the app's front window, a line each, or nil.
+// Vision's accurate level, else its fast one: the accurate level read
+// nothing at all in a frame of Zed's image viewer (a large picture beside the
+// tabs and tree), where the fast level read every line.
+static NSArray<VNRecognizedTextObservation *> *Recognise(CGImageRef img) {
+    if (!img) return @[];
+    for (int fast = 0; fast < 2; fast++) {
+        VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
+        req.recognitionLevel = fast ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
+        req.usesLanguageCorrection = NO;
+        VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:img options:@{}];
+        if ([h performRequests:@[ req ] error:nil] && req.results.count) return req.results;
+    }
+    return @[];
+}
+
+static NSString *TextOf(NSArray<VNRecognizedTextObservation *> *obs) {
+    NSMutableArray *lines = [NSMutableArray array];
+    for (VNRecognizedTextObservation *o in obs) {
+        VNRecognizedText *best = [o topCandidates:1].firstObject;
+        if (best.string.length) [lines addObject:best.string];
+    }
+    return [lines componentsJoinedByString:@"\n"];
+}
+
+// A frame's part that shows the app's front window, and that window's
+// bounds in global points.
+static CGImageRef CropToWindow(TBFrame *f, CGRect *boundsOut) {
+    CGRect wb = FrontWindowBounds(gPid, NULL);
+    if (CGRectIsNull(wb)) wb = f->display;
+    if (boundsOut) *boundsOut = wb;
+    CGRect px = CGRectMake((wb.origin.x - f->display.origin.x) * f->scale, (wb.origin.y - f->display.origin.y) * f->scale,
+                           wb.size.width * f->scale, wb.size.height * f->scale);
+    px = CGRectIntersection(px, CGRectMake(0, 0, CGImageGetWidth(f->img), CGImageGetHeight(f->img)));
+    if (CGRectIsEmpty(px)) return NULL;
+    return CGImageCreateWithImageInRect(f->img, px);
+}
+
+static NSArray<VNRecognizedTextObservation *> *FrameObservations(TBFrame *f, CGRect *boundsOut) {
+    CGRect wb;
+    CGImageRef crop = CropToWindow(f, &wb);
+    if (boundsOut) *boundsOut = wb;
+    if (!crop) return @[];
+    NSArray *obs = f->cache[@"obs"];
+    if (!obs) {
+        obs = Recognise(crop);
+        f->cache[@"obs"] = obs;
+        // TASKBENCH_TRACE=DIR: every frame read, as a picture named for its time.
+        if (getenv("TASKBENCH_TRACE")) {
+            NSString *png = [NSString stringWithFormat:@"%s/frame-%.0f.png", getenv("TASKBENCH_TRACE"), f->t];
+            CGImageDestinationRef d = CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:png],
+                                                                      CFSTR("public.png"), 1, NULL);
+            if (d) {
+                CGImageDestinationAddImage(d, crop, NULL);
+                CGImageDestinationFinalize(d);
+                CFRelease(d);
+            }
+        }
+    }
+    CGImageRelease(crop);
+    return obs;
+}
+
+static NSString *FrameText(TBFrame *f) {
+    NSString *s = f->cache[@"text"];
+    if (!s) {
+        s = TextOf(FrameObservations(f, NULL));
+        f->cache[@"text"] = s;
+    }
+    return s;
+}
+
+// Mean luminance (0 dark to 1 light) of the front window's part.
+static double FrameLuma(TBFrame *f) {
+    NSNumber *cached = f->cache[@"luma"];
+    if (cached) return cached.doubleValue;
+    CGImageRef crop = CropToWindow(f, NULL);
+    if (!crop) return -1;
+    enum { S = 48 };
+    uint8_t px[S * S * 4];
+    CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef ctx = CGBitmapContextCreate(px, S, S, 8, S * 4, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, S, S), crop);
+    double sum = 0;
+    for (int i = 0; i < S * S; i++) sum += (0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2]) / 255;
+    CGContextRelease(ctx);
+    CGColorSpaceRelease(cs);
+    CGImageRelease(crop);
+    const double l = sum / (S * S);
+    f->cache[@"luma"] = @(l);
+    return l;
+}
+
+// The newest frame, or nil.
+static TBFrame *NewestFrame(void) {
+    os_unfair_lock_lock(&gFrameLock);
+    TBFrame *f = gFrames.lastObject;
+    os_unfair_lock_unlock(&gFrameLock);
+    return f;
+}
+
+// The text Vision reads in the app's front window, a line each, or nil:
+// from the stream's newest frame when it runs, else a capture of the
+// window (screencapture), as `screentext` and a first read before a stream
+// can start need.
 static NSString *ScreenText(pid_t pid) {
-    double shot = MonoMs();
+    if (gCapture && gCapture->pid == pid && !gCapture->failed) {
+        TBFrame *f = NewestFrame();
+        NSString *t = f ? FrameText(f) : nil;
+        if (t.length) return t;
+    }
     NSString *text = nil;
     CGWindowID wid = FrontWindowOf(pid);
     NSString *png = [NSTemporaryDirectory() stringByAppendingPathComponent:
                                                 [NSString stringWithFormat:@"taskbench-screen-%d.png", getpid()]];
     const BOOL captured =
         wid && RunShell([NSString stringWithFormat:@"/usr/sbin/screencapture -x -o -l%u '%@'", wid, png]) == 0;
-    shot = MonoMs();   // the picture is of a moment no later than this
     if (captured) {
         CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:png], NULL);
         CGImageRef img = src ? CGImageSourceCreateImageAtIndex(src, 0, NULL) : NULL;
         if (img) {
-            VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
-            req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
-            req.usesLanguageCorrection = NO;
-            VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:img options:@{}];
-            if ([h performRequests:@[ req ] error:nil]) {
-                NSMutableArray *lines = [NSMutableArray array];
-                for (VNRecognizedTextObservation *o in req.results) {
-                    VNRecognizedText *best = [o topCandidates:1].firstObject;
-                    if (best.string.length) [lines addObject:best.string];
-                }
-                text = [lines componentsJoinedByString:@"\n"];
-            }
+            text = TextOf(Recognise(img));
             CGImageRelease(img);
         }
         if (src) CFRelease(src);
     }
     [NSFileManager.defaultManager removeItemAtPath:png error:nil];
-    // Only the reading after the last picture is kept out of wall time: a
-    // condition that holds on this read held when the picture was taken,
-    // and the time of a read that found it not yet true is time the app
-    // took. (Not added up: subtracting every read would hide the app's.)
-    gHarnessMs = MonoMs() - shot;
     return text;
 }
 
@@ -861,6 +1374,83 @@ static BOOL ScreenHas(NSString *screen, NSString *want) {
     return screen.length && want.length && [Flat(screen) rangeOfString:Flat(want)].location != NSNotFound;
 }
 
+// Where TEXT shows in the app's front window (the newest frame), in global
+// points, for a click on what a person reads there.
+static BOOL ScreenPoint(NSString *want, CGPoint *out) {
+    if (!EnsureCapture(gPid)) return NO;
+    TBFrame *f = NewestFrame();
+    if (!f) return NO;
+    CGRect wb;
+    for (VNRecognizedTextObservation *o in FrameObservations(f, &wb)) {
+        VNRecognizedText *best = [o topCandidates:1].firstObject;
+        if (!ScreenHas(best.string, want)) continue;
+        CGRect box = o.boundingBox;   // normalised, origin at the bottom left
+        NSRange r = [best.string rangeOfString:want options:NSCaseInsensitiveSearch];
+        if (r.location != NSNotFound) {
+            VNRectangleObservation *sub = [best boundingBoxForRange:r error:nil];
+            if (sub) box = sub.boundingBox;
+        }
+        *out = CGPointMake(wb.origin.x + (box.origin.x + box.size.width / 2) * wb.size.width,
+                           wb.origin.y + (1 - (box.origin.y + box.size.height / 2)) * wb.size.height);
+        return YES;
+    }
+    return NO;
+}
+
+static BOOL FrameHolds(TBFrame *f, NSString *term) {
+    NSNumber *c = f->cache[term];
+    if (c) return c.boolValue;
+    BOOL yes = NO;
+    if ([term hasPrefix:@"screen "]) yes = ScreenHas(FrameText(f), [term substringFromIndex:7]);
+    else if ([term hasPrefix:@"!screen "]) {
+        NSString *s = FrameText(f);
+        yes = s.length && !ScreenHas(s, [term substringFromIndex:8]);   // nothing read is not "gone"
+    } else if ([term hasPrefix:@"luma>"]) {
+        const double l = FrameLuma(f);
+        yes = l >= 0 && l > [term substringFromIndex:5].doubleValue;
+    } else if ([term hasPrefix:@"luma<"]) {
+        const double l = FrameLuma(f);
+        yes = l >= 0 && l < [term substringFromIndex:5].doubleValue;
+    }
+    f->cache[term] = @(yes);
+    return yes;
+}
+
+// A screen term: YES once a frame since the step's input holds; *at is the
+// first such frame's time (never before the input), *res the gap since the
+// frame before it (a new frame comes within a thirtieth of a second of a
+// change, so at most 34 ms).
+static BOOL ScreenTerm(NSString *term, NSMutableDictionary *state, double *at, double *res) {
+    if (!EnsureCapture(gPid)) return NO;
+    os_unfair_lock_lock(&gFrameLock);
+    NSArray<TBFrame *> *frames = [gFrames copy];
+    os_unfair_lock_unlock(&gFrameLock);
+    if (!frames.count) return NO;
+    const double no = state[@"no"] ? [state[@"no"] doubleValue] : -INFINITY;
+    TBFrame *newest = frames.lastObject;
+    if (newest->t <= no) return NO;
+    if (!FrameHolds(newest, term)) {
+        state[@"no"] = @(newest->t);
+        KeepFramesFrom(MAX(newest->t, gQuietFrom));
+        return NO;
+    }
+    NSMutableArray<TBFrame *> *cand = [NSMutableArray array];
+    for (TBFrame *f in frames)
+        if (f->t > no) [cand addObject:f];
+    NSInteger lo = 0, hi = (NSInteger)cand.count - 1;   // cand[hi] holds
+    while (lo < hi) {
+        const NSInteger mid = (lo + hi) / 2;
+        if (FrameHolds(cand[mid], term)) hi = mid;
+        else lo = mid + 1;
+    }
+    TBFrame *first = cand[hi];
+    const NSUInteger idx = [frames indexOfObjectIdenticalTo:first];
+    const double prev = idx > 0 ? frames[idx - 1]->t : first->t - 34;
+    *at = MAX(first->t, gQuietFrom);
+    *res = MIN(first->t - prev, 34.0);
+    return YES;
+}
+
 static NSString *Excerpt(NSString *s) {
     s = [[s componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsJoinedByString:@" / "];
     return s.length > 70 ? [[s substringToIndex:70] stringByAppendingString:@"..."] : s;
@@ -868,7 +1458,11 @@ static NSString *Excerpt(NSString *s) {
 
 // What the screen shows for a view the AX tree cannot read.
 static NSString *ClassifyScreen(NSString *magic) {
+    CaptureBeforeInput();   // running, with a frame in
     NSString *screen = ScreenText(gPid);
+    if (getenv("TASKBENCH_TRACE"))
+        fprintf(stderr, "classify: %lu characters read, newest frame %.0f\n", (unsigned long)screen.length,
+                NewestFrame() ? NewestFrame()->t : -1);
     if (!screen.length) return @"unverified (no accessibility tree, no text on screen)";
     // The line that decided it, as the report's evidence.
     for (NSString *line in [screen componentsSeparatedByString:@"\n"])
@@ -908,52 +1502,128 @@ static NSString *ClassifyView(NSString *magic) {
     return @"shown";
 }
 
+// Any text area (its first 20,000 characters) or static text in the focused
+// window holds TEXT: a file's content as an editor exposes it.
+static BOOL AXHasText(NSString *want) {
+    id w = FocusedWindow(gApp);
+    if (!w) return NO;
+    __block BOOL found = NO;
+    Walk(@[ w ], kMaxNodes, ^BOOL(AXUIElementRef e, Node n, int depth) {
+        (void)depth;
+        if ([n.role isEqualToString:@"AXTextArea"]) {
+            NSString *pre = AXPrefix(e, 20000);
+            if (pre && [pre rangeOfString:want].location != NSNotFound) found = YES;
+        } else if ([n.role isEqualToString:@"AXStaticText"]) {
+            if ((n.value && [n.value rangeOfString:want].location != NSNotFound) ||
+                (n.title && [n.title rangeOfString:want].location != NSNotFound))
+                found = YES;
+        }
+        return !found;
+    });
+    return found;
+}
+
 static NSString *gViewResult;
 
-// One term. `state` keeps a view term's timing between polls.
+// How a step's end was observed, and when: set by each term that holds.
+// The time is when the result happened, as far as the term can tell: an AX
+// read, a shell check, a port, the moment the check found it (so the poll's
+// length is its resolution); a `quiet` term, the last busy CPU sample; a
+// screen term, the first frame that showed it; a view, the later of its
+// title showing and its CPU settling.
+static double gTermAt, gTermRes;
+static NSString *gTermKind;
+
 static BOOL Term(NSString *t, NSMutableDictionary *state) {
     t = [t stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-    if ([t isEqualToString:@"none"]) return YES;
-    if ([t hasPrefix:@"sh "]) return RunShell([t substringFromIndex:3]) == 0;
-    if ([t hasPrefix:@"port-closed "]) return !PortOpen([t substringFromIndex:12].intValue);
-    if ([t hasPrefix:@"quiet "]) {
-        if (!gPid) return NO;
-        return Quiet([t substringFromIndex:6].doubleValue);
-    }
-    if (!gPid) return NO;
-    if ([t isEqualToString:@"window"]) return Windows(gApp).count > 0;
-    if ([t hasPrefix:@"window~"] || [t hasPrefix:@"window="]) {
+    gTermAt = -1;
+    gTermRes = -1;
+    gTermKind = @"ax";
+    BOOL yes = NO;
+    if ([t isEqualToString:@"none"]) {
+        gTermKind = @"none";
+        yes = YES;
+    } else if ([t hasPrefix:@"sh "]) {
+        NSString *cmd = [t substringFromIndex:3];
+        gTermKind = [cmd rangeOfString:@"git"].location != NSNotFound ? @"git" : @"file";
+        yes = RunShell(cmd) == 0;
+    } else if ([t hasPrefix:@"port-closed "]) {
+        gTermKind = @"port";
+        yes = !PortOpen([t substringFromIndex:12].intValue);
+    } else if ([t hasPrefix:@"quiet "] || [t hasPrefix:@"settle "]) {
+        gTermKind = @"cpu-quiet";
+        double end = 0, res = 0;
+        const BOOL own = [t hasPrefix:@"quiet "];
+        yes = gPid && QuietAt([t substringFromIndex:own ? 6 : 7].doubleValue, gQuietFrom, own, &end, &res);
+        if (yes) {
+            gTermAt = end;
+            gTermRes = res;
+        }
+    } else if (!gPid) {
+        return NO;
+    } else if ([t isEqualToString:@"window"]) {
+        yes = Windows(gApp).count > 0;
+    } else if ([t hasPrefix:@"window~"] || [t hasPrefix:@"window="]) {
         NSString *want = [t substringFromIndex:7];
         NSString *title = AXStr((__bridge AXUIElementRef)FocusedWindow(gApp), kAXTitleAttribute);
-        return TextMatches(title, want, [t characterAtIndex:6] == '=');
-    }
-    if ([t hasPrefix:@"screen "]) return ScreenHas(ScreenText(gPid), [t substringFromIndex:7]);
-    if ([t hasPrefix:@"!screen "]) {
-        NSString *s = ScreenText(gPid);
-        return s.length && !ScreenHas(s, [t substringFromIndex:8]);   // nothing read is not "gone"
-    }
-    if ([t hasPrefix:@"ax "]) return FindElement(gApp, [t substringFromIndex:3]) != nil;
-    if ([t hasPrefix:@"!ax "]) return FindElement(gApp, [t substringFromIndex:4]) == nil;
-    if ([t hasPrefix:@"focus "]) {
+        yes = TextMatches(title, want, [t characterAtIndex:6] == '=');
+    } else if ([t hasPrefix:@"screen "] || [t hasPrefix:@"!screen "] || [t hasPrefix:@"luma"]) {
+        gTermKind = @"screen";
+        NSMutableDictionary *st = state[t] ?: (state[t] = [NSMutableDictionary dictionary]);
+        double at = 0, res = 0;
+        yes = ScreenTerm(t, st, &at, &res);
+        if (yes) {
+            gTermAt = at;
+            gTermRes = res;
+        }
+    } else if ([t hasPrefix:@"ax "]) {
+        yes = FindElement(gApp, [t substringFromIndex:3]) != nil;
+    } else if ([t hasPrefix:@"!ax "]) {
+        yes = FindElement(gApp, [t substringFromIndex:4]) == nil;
+    } else if ([t hasPrefix:@"text "]) {
+        yes = AXHasText([t substringFromIndex:5]);
+    } else if ([t hasPrefix:@"focus "]) {
         id f = AXObj(gApp, kAXFocusedUIElementAttribute);
         if (!f) return NO;
         Spec s = ParseSpec([t substringFromIndex:6]);
-        return NodeMatches(NodeOf((__bridge AXUIElementRef)f), s);
-    }
-    if ([t hasPrefix:@"view "]) {
+        yes = NodeMatches(NodeOf((__bridge AXUIElementRef)f), s);
+    } else if ([t hasPrefix:@"view "]) {
         NSArray *a = [[t substringFromIndex:5] componentsSeparatedByString:@" "];
         NSString *name = a.firstObject, *magic = a.count > 1 ? [[a subarrayWithRange:NSMakeRange(1, a.count - 1)] componentsJoinedByString:@" "] : @"";
         NSString *title = AXStr((__bridge AXUIElementRef)FocusedWindow(gApp), kAXTitleAttribute);
         if (!TextMatches(title, name, NO)) return NO;
         if (!state[@"seen"]) state[@"seen"] = @(MonoMs());
+        const double seen = [state[@"seen"] doubleValue];
         // Settled: quiet for 300 ms, or 3 s after its window came up.
-        if (!Quiet(300) && MonoMs() - [state[@"seen"] doubleValue] < 3000) return NO;
+        double end = 0, res = 0;
+        const BOOL quiet = QuietAt(300, gQuietFrom, NO, &end, &res);   // the tree: helpers render views
+        if (!quiet && MonoMs() - seen < 3000) return NO;
         gViewResult = ClassifyView(magic);
-        return gViewResult != nil;
+        yes = gViewResult != nil;
+        if (yes) {
+            if (!quiet) {
+                gTermAt = MonoMs();   // never settled: the 3 s are the app's
+                gTermKind = @"cpu-quiet";
+            } else if (end > seen) {
+                gTermAt = end;
+                gTermRes = res;
+                gTermKind = @"cpu-quiet";
+            } else {
+                gTermAt = seen;
+            }
+        }
+    } else {
+        fprintf(stderr, "taskbench: unknown condition term \"%s\"\n", t.UTF8String);
+        return NO;
     }
-    fprintf(stderr, "taskbench: unknown condition term \"%s\"\n", t.UTF8String);
-    return NO;
+    if (yes && gTermAt < 0) gTermAt = MonoMs();
+    return yes;
 }
+
+// When the alternative that held happened (the latest of its terms), how
+// that was observed, and its resolution (-1: the poll's).
+static double gCondAt, gCondRes;
+static NSString *gCondKind;
 
 // The label of the alternative that holds, or nil.
 static NSString *Condition(NSString *cond, NSMutableDictionary *state) {
@@ -972,18 +1642,33 @@ static NSString *Condition(NSString *cond, NSMutableDictionary *state) {
         NSMutableDictionary *st = state[@(i)] ?: (state[@(i)] = [NSMutableDictionary dictionary]);
         BOOL all = YES;
         gViewResult = nil;
-        for (NSString *term in [alt componentsSeparatedByString:@" && "])
+        double at = -1, res = -1;
+        NSString *kind = @"none";
+        for (NSString *term in [alt componentsSeparatedByString:@" && "]) {
             if (!Term(term, st)) {
                 all = NO;
                 break;
             }
+            if (gTermAt >= at) {
+                at = gTermAt;
+                res = gTermRes;
+                kind = gTermKind;
+            }
+        }
         if (!all) continue;
+        gCondAt = at;
+        gCondRes = res;
+        gCondKind = kind;
         if (gViewResult) return label ? [NSString stringWithFormat:@"%@: %@", label, gViewResult] : gViewResult;
         if (label) return label;
-        if ([alt hasPrefix:@"quiet "]) return @"settled (unverified)";
+        if ([alt hasPrefix:@"quiet "] || [alt hasPrefix:@"settle "]) return @"settled (unverified)";
         return alts.count > 1 ? [@"ok: " stringByAppendingString:alt] : @"ok";
     }
     return nil;
+}
+
+static BOOL NeedsScreen(NSString *cond) {
+    return [cond rangeOfString:@"screen "].location != NSNotFound || [cond rangeOfString:@"luma"].location != NSNotFound;
 }
 
 // ------------------------------------------------------------------ steps
@@ -995,36 +1680,50 @@ typedef struct {
 static int CountTotal(Counts c) { return c.clicks + c.chords + c.keys + c.opens; }
 
 static BOOL gAborted = NO;
-static double gPollMaxMs = 0;   // the last condition's slowest poll: its time resolution
+static double gPollMaxMs = 0;   // the last condition's slowest poll
 
 // Poll until the condition holds or the deadline. Returns the matched label,
 // "" when it timed out, nil when the owner touched the keyboard or mouse.
-static NSString *Await(NSString *cond, double timeoutMs) {
+// gCondAt, gCondKind and gCondRes say when and how the result was seen.
+static NSString *Await(NSString *cond, double timeoutMs, double from) {
     NSMutableDictionary *state = [NSMutableDictionary dictionary];
-    gQuietFrom = MonoMs();
-    const double deadline = MonoMs() + timeoutMs;
-    const BOOL quietTerms = [cond rangeOfString:@"quiet "].location != NSNotFound ||
-                            [cond rangeOfString:@"view "].location != NSNotFound;
+    gQuietFrom = from;
+    const BOOL screen = NeedsScreen(cond);
+    if (screen) KeepFramesFrom(gQuietFrom);   // the frame before the input stays, to compare with
+    double deadline = MonoMs() + timeoutMs;
     gPollMaxMs = 0;
+    NSString *result = nil;
     for (;;) {
         const double tick = MonoMs();
-        gHarnessMs = 0;   // only the read in the poll that ends the step counts (ScreenText)
         if (OwnerTouched()) {
             gAborted = YES;
-            return nil;
+            result = nil;
+            break;
         }
         LookForNewPid();
-        if (gPid && (quietTerms || tick - gLastSampleAt >= 100)) Sample();
+        if (screen && gPid) EnsureCapture(gPid);   // a cold start's window: as soon as it shows
         NSString *m = Condition(cond, state);
         const double took = MonoMs() - tick;
         if (took > gPollMaxMs) gPollMaxMs = took;
-        if (m) return m;
-        if (MonoMs() > deadline) return @"";
+        if (m) {
+            result = m;
+            break;
+        }
+        // A read that took the benchmark over a second (the first screen
+        // read of a newly built tool took 32 s) is not the app's time to
+        // answer: the timeout moves on by as much.
+        if (took > 1000) deadline += took;
+        if (MonoMs() > deadline) {
+            result = @"";
+            break;
+        }
         // Every 10 ms; a poll that walked a large AX tree took longer, and
         // the app gets a third of that again before the next, so the
         // benchmark's questions do not keep it busy.
         SleepMs(MAX(10 - took, took / 3));
     }
+    if (screen) KeepFramesFrom(INFINITY);
+    return result;
 }
 
 // Find an element for a press or click, waiting up to `ms` for it.
@@ -1042,6 +1741,21 @@ static id AwaitElement(NSString *spec, double ms) {
         }
         if (MonoMs() > deadline) return nil;
         SleepMs(10);
+    }
+}
+
+// Find TEXT on screen for a click, waiting up to `ms` for it.
+static BOOL AwaitScreenPoint(NSString *text, double ms, CGPoint *out) {
+    const double deadline = MonoMs() + ms;
+    for (;;) {
+        if (OwnerTouched()) {
+            gAborted = YES;
+            return NO;
+        }
+        LookForNewPid();
+        if (gPid && ScreenPoint(text, out)) return YES;
+        if (MonoMs() > deadline) return NO;
+        SleepMs(50);
     }
 }
 
@@ -1075,6 +1789,26 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                                      @"no editor (is )?available"
                              options:NSRegularExpressionCaseInsensitive error:nil];
     gSource = CGEventSourceCreate(kCGEventSourceStatePrivate);
+    StartSampler();
+    // Vision's first recognition in a newly built tool took 32 s: done once
+    // here, on a picture of a word, before any step reads the screen.
+    if ([text rangeOfString:@"screen "].location != NSNotFound || [text rangeOfString:@"sclick "].location != NSNotFound ||
+        [text rangeOfString:@"view "].location != NSNotFound) {
+        CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+        CGContextRef ctx = CGBitmapContextCreate(NULL, 400, 100, 8, 0, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+        CGContextSetRGBFillColor(ctx, 1, 1, 1, 1);
+        CGContextFillRect(ctx, CGRectMake(0, 0, 400, 100));
+        NSGraphicsContext *g = [NSGraphicsContext graphicsContextWithCGContext:ctx flipped:NO];
+        [NSGraphicsContext saveGraphicsState];
+        NSGraphicsContext.currentContext = g;
+        [@"taskbench" drawAtPoint:NSMakePoint(20, 30) withAttributes:@{NSFontAttributeName : [NSFont systemFontOfSize:40]}];
+        [NSGraphicsContext restoreGraphicsState];
+        CGImageRef img = CGBitmapContextCreateImage(ctx);
+        Recognise(img);
+        CGImageRelease(img);
+        CGContextRelease(ctx);
+        CGColorSpaceRelease(cs);
+    }
     if (OwnerTouched()) {
         Emit(@"aborted\tinput from the keyboard or mouse before the run");
         return 3;
@@ -1129,11 +1863,12 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
         // The task's measurement starts with its first counted step.
         if (!setup && ![verb isEqualToString:@"launch"] && !started) {
             started = YES;
-            if (gPid) Sample();
-            cpuStart = gPid ? gLast.cpuMs : 0;
-            gPeakMB = gPid ? gLast.footprintMB : 0;
-            gMeasuring = YES;
+            cpuStart = gPid ? Fresh().cpu : 0;
         }
+
+        // A step read from the screen has the stream running, with a frame of
+        // the moment before its input, before the input is sent.
+        if (gPid && (NeedsScreen(cond) || [verb isEqualToString:@"sclick"])) CaptureBeforeInput();
 
         Counts c = {0, 0, 0, 0};
         double settleMs = 0;   // waiting for a click's target to hold still: the app's time, so in wall
@@ -1174,9 +1909,15 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                 status = kNotInFront;
             } else {
                 BOOL done = NO;
+                // AXPress returns once the app has handled it, which can take
+                // the app hundreds of ms: the step's wall starts when it is sent.
+                const double pressAt = MonoMs();
                 if ([verb isEqualToString:@"press"])
                     done = AXUIElementPerformAction((__bridge AXUIElementRef)el, kAXPressAction) == kAXErrorSuccess;
-                if (done) NotePosted();
+                if (done) {
+                    NotePosted();
+                    gLastPostMono = pressAt;
+                }
                 CGPoint p;
                 if (!done && !Activate()) {
                     status = kNotInFront;
@@ -1193,6 +1934,19 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                 }
                 if (!done) status = @"error: element has no press action or frame";
                 if ([status isEqualToString:@"ok"]) c.clicks = [verb isEqualToString:@"dclick"] ? 2 : 1;
+            }
+        } else if ([verb isEqualToString:@"sclick"]) {
+            // A click on text read from the screen (an app with no AX tree).
+            // Finding it is the benchmark's reading, so it is input time.
+            CGPoint p;
+            if (!AwaitScreenPoint(arg, optional ? 2000 : timeoutMs, &p)) {
+                if (gAborted) break;
+                status = optional ? @"skipped: not shown" : @"error: text not found on screen";
+            } else if (!Activate()) {
+                status = kNotInFront;
+            } else {
+                PostClick(p, kCGMouseButtonLeft, 1);
+                c.clicks = 1;
             }
         } else if ([verb isEqualToString:@"menu"]) {
             id parent = gApp ? AXObj(gApp, kAXMenuBarAttribute) : nil;
@@ -1213,18 +1967,25 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                     status = [NSString stringWithFormat:@"error: no menu item %@", want];
                     break;
                 }
+                const double pressAt = MonoMs();
                 AXUIElementPerformAction((__bridge AXUIElementRef)item, kAXPressAction);
                 NotePosted();
+                gLastPostMono = pressAt;
                 c.clicks++;
                 parent = item;
             }
         } else if (![verb isEqualToString:@"none"]) {
             status = [NSString stringWithFormat:@"error: unknown input %@", verb];
         }
-        const double inputMs = MonoMs() - t0 - settleMs;
-        const double t1 = MonoMs();
+        // The step's wall starts with the last event the input posted, not
+        // after the pause the tool takes between keys (the app may already be
+        // answering in it).
+        const double t1 = gLastPostMono > t0 ? gLastPostMono : MonoMs();
+        const double inputMs = MAX(0, t1 - t0 - settleMs);
         NSString *m = @"";
-        gHarnessMs = 0;
+        gCondAt = -1;
+        gCondRes = -1;
+        gCondKind = @"none";
         if (gAborted) break;
         // A step read from the app's CPU settling, or a soft condition that
         // never held, is unverified. The task is unverified when its last
@@ -1232,7 +1993,7 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
         // only waited for the app to settle leaves the result verified.
         BOOL stepUnverified = NO, settledOnly = NO;
         if ([status isEqualToString:@"ok"]) {
-            m = Await(cond, timeoutMs);
+            m = Await(cond, timeoutMs, t1);
             if (!m) break;   // the owner
             if (!m.length) {
                 status = softCond ? @"unverified" : @"timeout";
@@ -1244,8 +2005,12 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                 if (!setup) viewUnverified = YES;
             }
         }
-        // Reading the screen is the benchmark's time, not the app's.
-        const double wall = MAX(0, MonoMs() - t1 + settleMs - gHarnessMs);
+        // The step ends when its result happened (gCondAt), not when the
+        // benchmark confirmed it: a quiet step at its last busy CPU sample,
+        // a screen read at the first frame that showed it.
+        const double endAt = gCondAt >= 0 ? gCondAt : MonoMs();
+        const double wall = MAX(0, endAt - t1) + settleMs;
+        const double res = gCondRes >= 0 ? gCondRes : gPollMaxMs;
         const BOOL skipped = [status hasPrefix:@"skipped"];
         if (skipped) c = (Counts){0, 0, 0, 0};
         if ([verb isEqualToString:@"launch"]) {
@@ -1265,11 +2030,30 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
             lastUnverified = stepUnverified;
             lastSettled = settledOnly;
         }
-        if (gPid) Sample();
-        if (!setup && ![verb isEqualToString:@"launch"]) cpuEnd = gLast.cpuMs;
-        Emit([NSString stringWithFormat:@"step\t%d\t%@\t%d\t%.0f\t%.0f\t%.0f\t%@\t%@\t%@", n,
+        if (gPid && !setup && ![verb isEqualToString:@"launch"]) cpuEnd = Fresh().cpu;
+        // TASKBENCH_TRACE=DIR: the step's CPU samples (ms since its input,
+        // CPU ms in the sample, footprint MB), to check where a quiet step ended.
+        if (getenv("TASKBENCH_TRACE") && gPid) {
+            NSData *d = SamplesSince(t1);
+            const Pt *p = d.bytes;
+            NSMutableString *tr = [NSMutableString stringWithFormat:@"# step %d end %.0f: %@\n", n, endAt - t1, line];
+            for (NSUInteger i = 1; i < d.length / sizeof(Pt); i++)
+                [tr appendFormat:@"%.0f %.2f %.2f %.0f\n", p[i].t - t1, p[i].cpu - p[i - 1].cpu,
+                                 p[i].own - p[i - 1].own, p[i].mb];
+            NSString *path = [NSString stringWithFormat:@"%s/cpu.txt", getenv("TASKBENCH_TRACE")];
+            NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+            if (!fh) {
+                [@"" writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:nil];
+                fh = [NSFileHandle fileHandleForWritingAtPath:path];
+            }
+            [fh seekToEndOfFile];
+            [fh writeData:[tr dataUsingEncoding:NSUTF8StringEncoding]];
+            [fh closeFile];
+        }
+        Emit([NSString stringWithFormat:@"step\t%d\t%@\t%d\t%.0f\t%.0f\t%.0f\t%.0f\t%@\t%@\t%@\t%@", n,
                                         setup ? @"setup" : [verb isEqualToString:@"launch"] ? @"launch" : @"task",
-                                        CountTotal(c), inputMs, wall, gPollMaxMs, status, Clean(m), Clean(line)]);
+                                        CountTotal(c), inputMs, wall, gPollMaxMs, res,
+                                        m.length ? gCondKind : @"-", status, Clean(m), Clean(line)]);
         gPollMaxMs = 0;
         if (gPid) Emit([NSString stringWithFormat:@"pid\t%d", gPid]);
         if (![status isEqualToString:@"ok"] && ![status isEqualToString:@"unverified"] && !skipped) {
@@ -1288,7 +2072,6 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
         Emit(@"aborted\tinput from the keyboard or mouse during the run");
         return 3;
     }
-    gMeasuring = NO;
     // Settled: once the tree has been quiet for a second (30 s at most).
     double settled = 0;
     if (gPid) {
@@ -1300,12 +2083,15 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                 Emit(@"aborted\tinput from the keyboard or mouse during the run");
                 return 3;
             }
-            Sample();
-            if (Quiet(1000)) break;
+            if (Settled(1000)) break;
             SleepMs(50);
         }
-        settled = gLast.footprintMB;
+        settled = Latest().mb;
     }
+    os_unfair_lock_lock(&gMeasureLock);
+    const double peak = gPeakMB;
+    os_unfair_lock_unlock(&gMeasureLock);
+    StopCapture();
     const double cpu = cpuStart >= 0 ? cpuEnd - cpuStart : 0;
     const BOOL unverified = viewUnverified || lastUnverified;
     if (lastSettled) [matched addObject:@"the result was read from the app's CPU settling"];
@@ -1315,7 +2101,7 @@ static int Run(NSString *exe, NSString *stepsPath, NSString *outPath) {
                        @"matched=%@",
                        failed ? @"failed" : unverified ? @"unverified" : @"ok", gPid, taskWall, CountTotal(task),
                        task.clicks, task.chords, task.keys, task.opens, setupInputs, setupWall, launchMs, cpu,
-                       gPeakMB, settled, [matched componentsJoinedByString:@"; "]]);
+                       peak, settled, [matched componentsJoinedByString:@"; "]]);
     if (gOut) fclose(gOut);
     return failed ? 1 : 0;
 }
@@ -1599,8 +2385,44 @@ int main(int argc, const char *argv[]) {
         }
         if ([cmd isEqualToString:@"screentext"] && argc == 3) {
             NSString *s = ScreenText((pid_t)atoi(argv[2]));
-            printf("%s\n(%.0f ms)\n", (s ?: @"(nothing read)").UTF8String, gHarnessMs);
+            printf("%s\n", (s ?: @"(nothing read)").UTF8String);
             return s.length ? 0 : 1;
+        }
+        if ([cmd isEqualToString:@"ocr"] && argc == 3) {   // what Vision reads in a picture
+            CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:@(argv[2])], NULL);
+            CGImageRef img = src ? CGImageSourceCreateImageAtIndex(src, 0, NULL) : NULL;
+            VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
+            req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+            req.usesLanguageCorrection = NO;
+            NSError *err = nil;
+            VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:img options:@{}];
+            BOOL ok = img && [h performRequests:@[ req ] error:&err];
+            printf("%s\n%s\n", ok ? "ok" : "failed", (err.description ?: TextOf(req.results ?: @[])).UTF8String);
+            return ok ? 0 : 1;
+        }
+        if ([cmd isEqualToString:@"capturetest"] && argc == 3) {   // how long the stream takes to start
+            gPid = atoi(argv[2]);
+            double t0 = MonoMs();
+            BOOL ok = EnsureCapture(gPid);
+            double t1 = MonoMs();
+            CaptureBeforeInput();
+            double t2 = MonoMs();
+            TBFrame *f = NewestFrame();
+            NSString *txt = f ? FrameText(f) : nil;
+            printf("start %s %.0f ms, first frame %.0f ms, read %.0f ms, %lu characters\n", ok ? "ok" : "failed", t1 - t0,
+                   t2 - t1, MonoMs() - t2, (unsigned long)txt.length);
+            StopCapture();
+            return 0;
+        }
+        if ([cmd isEqualToString:@"windows"] && argc == 3) {
+            NSArray *wins = CFBridgingRelease(CGWindowListCopyWindowInfo(
+                kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+            for (NSDictionary *w in wins)
+                if ([w[(__bridge id)kCGWindowOwnerPID] intValue] == atoi(argv[2]))
+                    printf("%u layer=%d %s \"%s\"\n", [w[(__bridge id)kCGWindowNumber] unsignedIntValue],
+                           [w[(__bridge id)kCGWindowLayer] intValue], [w[(__bridge id)kCGWindowBounds] description].UTF8String,
+                           [w[(__bridge id)kCGWindowName] ?: @"" UTF8String]);
+            return 0;
         }
         if ([cmd isEqualToString:@"tree"] && argc == 3) {
             TreeSample s = SampleTree((pid_t)atoi(argv[2]));

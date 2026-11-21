@@ -99,4 +99,6 @@ MC_GUI_SUITE(markdown_tables) {
         ed()->closeAllTabs();
         MCGuiSetSettings("lsp.enabled = false\ntheme = dark-plus\n");
     });
+    // The settings as the suite found them (the harness's LEFT line).
+    MCGuiStep("the settings as found", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
 }
