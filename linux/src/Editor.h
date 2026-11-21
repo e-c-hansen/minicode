@@ -175,6 +175,9 @@ public:
     int indexOf(const Document* d) const;
     Document* documentFor(const std::string& path) const;   // its tab, or null
     Document* documentById(uint64_t id) const;               // by Document::id, or null (a window's DocId)
+    // Told each time a tab's LaTeX preview typesets (began, made a PDF, or
+    // failed: LatexPreview::TypesetCb), for the session browser's page.
+    std::function<void(const std::string& path, GBytes* pdf, const std::string& error)> typesetHook;
     // Put a tab on show (the keyboard stays where it is).
     void activate(Document* d);
     // A tab by index, by step (wrapping) or by number (1 to 8, 9 the last),

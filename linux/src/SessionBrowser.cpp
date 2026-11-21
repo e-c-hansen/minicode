@@ -17,12 +17,103 @@
 #include <sstream>
 
 #include "Json.h"
+#ifdef MUTIBLE_ENABLE_PDF
+#include <cairo.h>
+#include <poppler.h>
+
+#include <algorithm>
+#include <cmath>
+
+#include "Latex.h"
+#endif
 #include "SessionLink.h"
 #include "SessionWeb.h"
 
 const char* const SessionBrowser::kTermNote = "Terminals opened while the session host is on appear here";
 std::function<void(std::function<void()>)> SessionBrowser::askDelay;
 std::function<void(const std::string&)> SessionBrowser::opener;
+
+#ifdef MUTIBLE_ENABLE_PDF
+// ---------------------------------------------------------- pages as pictures
+// The page's typeset drawn page by page (Options::typesetPageSizes and
+// typesetPageRender, the Mac's TypesetPages.mm). Both run on threads of the
+// server's own, so each call opens its own document from the bytes and
+// touches no GTK.
+namespace {
+
+PopplerDocument* openPdf(const std::string& pdf) {
+    if (pdf.empty()) return nullptr;
+    GBytes* bytes = g_bytes_new(pdf.data(), pdf.size());
+    GError* err = nullptr;
+    PopplerDocument* doc = poppler_document_new_from_bytes(bytes, nullptr, &err);
+    g_bytes_unref(bytes);
+    if (err) g_error_free(err);
+    if (doc && poppler_document_get_n_pages(doc) <= 0) {
+        g_object_unref(doc);
+        doc = nullptr;
+    }
+    return doc;
+}
+
+bool pageSizes(const std::string& pdf, std::vector<Shared::Web::PageSize>* sizes) {
+    PopplerDocument* doc = openPdf(pdf);
+    if (!doc) return false;
+    const int n = poppler_document_get_n_pages(doc);
+    sizes->clear();
+    bool ok = (std::size_t)n <= Shared::Web::kMaxTypesetPages;
+    for (int i = 0; ok && i < n; i++) {
+        PopplerPage* page = poppler_document_get_page(doc, i);
+        double w = 0, h = 0;
+        if (page) poppler_page_get_size(page, &w, &h);   // the crop box, turned by its rotation
+        if (page) g_object_unref(page);
+        if (!(w > 0 && h > 0)) ok = false;
+        else sizes->push_back(Shared::Web::PageSize{w, h});
+    }
+    g_object_unref(doc);
+    return ok && !sizes->empty();
+}
+
+cairo_status_t writePng(void* closure, const unsigned char* data, unsigned int length) {
+    static_cast<std::string*>(closure)->append(reinterpret_cast<const char*>(data), length);
+    return CAIRO_STATUS_SUCCESS;
+}
+
+bool renderPage(const std::string& pdf, int pageIndex, int width, std::string* png) {
+    if (width <= 0 || pageIndex < 0) return false;
+    PopplerDocument* doc = openPdf(pdf);
+    if (!doc) return false;
+    PopplerPage* page = pageIndex < poppler_document_get_n_pages(doc) ? poppler_document_get_page(doc, pageIndex)
+                                                                       : nullptr;
+    bool ok = false;
+    double w = 0, h = 0;
+    if (page) poppler_page_get_size(page, &w, &h);
+    if (page && w > 0 && h > 0) {
+        const double scale = width / w;
+        const double height = std::max(1.0, std::ceil(h * scale));
+        if (width * height <= Shared::Web::kMaxPagePixels * 1.01) {
+            cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, (int)height);
+            cairo_t* cr = cairo_create(surface);
+            if (cairo_status(cr) == CAIRO_STATUS_SUCCESS) {
+                cairo_set_source_rgb(cr, 1, 1, 1);
+                cairo_paint(cr);
+                cairo_scale(cr, scale, scale);
+                poppler_page_render(page, cr);
+                cairo_surface_flush(surface);
+                std::string out;
+                ok = cairo_surface_write_to_png_stream(surface, writePng, &out) == CAIRO_STATUS_SUCCESS;
+                if (ok) *png = std::move(out);
+            }
+            cairo_destroy(cr);
+            cairo_surface_destroy(surface);
+        }
+    }
+    if (page) g_object_unref(page);
+    g_object_unref(doc);
+    return ok;
+}
+
+}  // namespace
+#endif
 
 // What the server's threads and the main loop's sources hold of the object:
 // `self` is cleared, on the main loop, as it goes, so a callback that comes
@@ -439,6 +530,16 @@ bool SessionBrowser::start(const std::shared_ptr<SessionLink::Link>& link, std::
             s.askAbout(id, browser, browserId, from, peer, generation);
         });
     };
+#ifdef MUTIBLE_ENABLE_PDF
+    // A page showing a LaTeX document: the window says what it has (any
+    // page: a typeset reads a copy and changes nothing of the user's).
+    if (host_.previewOf && host_.source)
+        o.typeset = [later](const std::string& path) {
+            later([path](SessionBrowser& s) { s.typesetFor(path); });
+        };
+    o.typesetPageSizes = pageSizes;
+    o.typesetPageRender = renderPage;
+#endif
     o.remembered = [](const std::string& browserId) { return isRemembered(browserId); };
     o.showHidden = showHidden;
     o.termNote = kTermNote;
@@ -521,7 +622,107 @@ void SessionBrowser::askAbout(std::uint64_t question, const std::string& browser
     else show();
 }
 
+void SessionBrowser::gitChanged() {
+    if (server_) server_->gitChanged();
+}
+
+void SessionBrowser::typesetOf(const std::string& path, GBytes* pdf, const std::string& error) {
+    if (!server_ || path.empty()) return;
+    if (pdf) {
+        gsize n = 0;
+        const char* d = static_cast<const char*>(g_bytes_get_data(pdf, &n));
+        server_->typesetReady(path, std::make_shared<const std::string>(d ? d : "", n));
+    } else if (!error.empty()) {
+        server_->typesetFailed(path, error);
+    } else {
+        server_->typesetWorking(path);
+    }
+}
+
+#ifdef MUTIBLE_ENABLE_PDF
+// A typeset the server made for a page with no tab's preview: a text buffer
+// of its own under a LatexPreview that is never shown.
+struct SessionBrowser::Hidden {
+    std::string path;
+    GtkTextBuffer* buffer = nullptr;
+    LatexPreview* preview = nullptr;
+    ~Hidden() {
+        delete preview;   // before the buffer it reads
+        if (buffer) g_object_unref(buffer);
+    }
+};
+
+static const size_t kHiddenTypesets = 4;
+
+// What `preview` has: the last PDF first, so a page has it to show while
+// another typeset runs, then working or failed.
+void SessionBrowser::tellPreview(const std::string& path, LatexPreview* preview) {
+    GBytes* pdf = preview->typesetPdf();
+    const std::string failure = preview->typesetFailure();
+    if (pdf) typesetOf(path, pdf, "");
+    if (preview->typesetting() || (!pdf && failure.empty())) {
+        typesetOf(path, nullptr, "");
+        if (!preview->typesetting()) preview->compileNow();   // nothing was running: begin
+    } else if (!failure.empty()) {
+        typesetOf(path, nullptr, failure);
+    }
+}
+
+void SessionBrowser::typesetFor(const std::string& path) {
+    if (!server_ || path.empty()) return;
+    if (LatexPreview* l = host_.previewOf(path)) {
+        tellPreview(path, l);
+        return;
+    }
+    std::string text;
+    if (!host_.source(path, &text) || !g_utf8_validate(text.data(), (gssize)text.size(), nullptr)) {
+        server_->typesetFailed(path, "The file could not be read as UTF-8 text.");
+        return;
+    }
+    std::shared_ptr<Hidden> h;
+    for (size_t i = 0; i < hidden_.size(); i++)
+        if (hidden_[i]->path == path) {
+            h = hidden_[i];
+            hidden_.erase(hidden_.begin() + (long)i);   // now the newest
+            break;
+        }
+    if (!h) {
+        while (hidden_.size() >= kHiddenTypesets) hidden_.erase(hidden_.begin());   // the oldest, stopped
+        h = std::make_shared<Hidden>();
+        h->path = path;
+        h->buffer = gtk_text_buffer_new(nullptr);
+        gtk_text_buffer_set_text(h->buffer, text.data(), (gint)text.size());
+        h->preview = new LatexPreview(h->buffer);
+        h->preview->setPath(path);
+        h->preview->setOnTypeset([this](const std::string& p, GBytes* pdf, const std::string& error) {
+            typesetOf(p, pdf, error);
+        });
+        hidden_.push_back(h);
+        h->preview->compileNow();   // at once, as a tab's preview does when it is made
+        return;
+    }
+    hidden_.push_back(h);
+    GtkTextIter a, b;
+    gtk_text_buffer_get_bounds(h->buffer, &a, &b);
+    char* old = gtk_text_buffer_get_text(h->buffer, &a, &b, FALSE);
+    const bool same = text == old;
+    g_free(old);
+    if (!same) {   // typesets again only when the text changed
+        gtk_text_buffer_set_text(h->buffer, text.data(), (gint)text.size());
+        h->preview->compileNow();
+    }
+    tellPreview(path, h->preview);
+}
+
+void SessionBrowser::stopHidden() { hidden_.clear(); }
+#else
+void SessionBrowser::typesetFor(const std::string&) {}
+void SessionBrowser::tellPreview(const std::string&, LatexPreview*) {}
+void SessionBrowser::stopHidden() {}
+#endif
+
 void SessionBrowser::stop() {
+    stopHidden();
     if (timer_) {
         g_source_remove(timer_);
         timer_ = 0;

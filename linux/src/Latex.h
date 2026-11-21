@@ -79,6 +79,20 @@ public:
     using PdfCb = std::function<void(GBytes* pdf, const std::string& error)>;
     void pdfForBuffer(PdfCb done);
 
+    // Tells the owner each time the typeset's state changes, for the session
+    // browser's page (the Mac's LatexView.onTypeset): `pdf` is the new PDF
+    // when one was made; else `error` is why none was (the log), or both are
+    // empty when a typeset began. Called on the main loop, with the document's
+    // path as the preview has it.
+    using TypesetCb = std::function<void(const std::string& path, GBytes* pdf, const std::string& error)>;
+    void setOnTypeset(TypesetCb cb) { onTypeset_ = std::move(cb); }
+    // What the preview has now: the last PDF it made (null until one was),
+    // why the last typeset failed ("" when it did not), and whether one runs.
+    GBytes* typesetPdf() const { return pdfBytes_; }
+    const std::string& typesetFailure() const { return failure_; }
+    bool typesetting() const { return proc_ != nullptr; }
+    const std::string& path() const { return path_; }
+
     // Where tectonic is, or empty: MUTIBLE_TECTONIC, then the copy the app
     // downloads into ~/.local/share/mutible/bin, then PATH.
     static std::string tectonicPath();
@@ -242,6 +256,11 @@ private:
     GtkWidget* popAdd_   = nullptr;   // "Add item", for spans in a list
 
     std::string path_;
+    TypesetCb onTypeset_;
+    std::string failure_;
+    void tellTypeset(GBytes* pdf, const std::string& error) {
+        if (onTypeset_) onTypeset_(path_, pdf, error);
+    }
     OpenProblemFn openProblem_;
     std::vector<LatexLog::Problem> problems_;
     std::vector<std::string> problemFiles_;   // the file each is about
