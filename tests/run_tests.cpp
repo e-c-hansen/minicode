@@ -104,6 +104,8 @@
 #include <sys/xattr.h>   // setxattr, for the atomic write's extended attributes
 #endif
 
+#include "AllocCount.h"   // the binary's counting operator new (host:memory)
+
 // --------------------------------------------------------------- tiny harness
 static int g_pass = 0, g_fail = 0;
 static const char *g_group = "";
@@ -11926,6 +11928,7 @@ static void testMultiCaretOccurrences() {
 #include "undo_history_tests.inc"
 #include "session_model_tests.inc"
 #include "session_host_tests.inc"
+#include "session_memory_tests.inc"
 #include "session_save_tests.inc"
 #include "session_terminal_tests.inc"
 #include "session_server_tests.inc"
@@ -12143,6 +12146,7 @@ int main() {
     testTextModel();
     testUndoHistory();
     testSessionHost();
+    testSessionMemory();
     testSessionSave();
     testSessionTerminals();
     testSessionServer();

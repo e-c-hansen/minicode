@@ -9,6 +9,12 @@
 // both address it, a version that every change moves on, and apply(), the
 // multi-range edit in the shape of EditSpans.
 //
+// Each chunk's string is shared and never changed once made: an edit puts
+// new strings in place of the ones it touches. So a copy of the text as it
+// was (freeze(), a Frozen: a document's saved text, Document.h) costs a
+// pointer a chunk, and the two hold one string for every chunk the edits
+// since have not touched; comparing them skips those chunks.
+//
 // Lines end at \n, \r\n or \r, as LSP counts them (Lsp::PositionIndex);
 // U+2029 is not a break here, unlike LineIndex. A code point is a unit
 // that is not the low half of a surrogate pair, so a lone surrogate counts
@@ -44,9 +50,33 @@ bool hasLoneSurrogate(const std::u16string& s);
 // Code points in s (a lone surrogate is one).
 std::size_t countCodePoints(const std::u16string& s);
 
+// A text as it was when frozen (Text::freeze), never changed after: the
+// chunks' strings it had then, shared with the text until its edits replace
+// them. A document's saved text (Document.h).
+class Frozen {
+public:
+    Frozen() = default;
+    // A text of its own (not a Text's), cut into chunks as a Text is.
+    explicit Frozen(const std::u16string& text);
+    std::size_t size() const { return size_; }
+    bool empty() const { return size_ == 0; }
+    // The whole text, copied.
+    std::u16string str() const;
+    bool operator==(const std::u16string& s) const;
+    bool operator!=(const std::u16string& s) const { return !(*this == s); }
+
+private:
+    friend class Text;
+    std::vector<std::shared_ptr<const std::u16string>> pieces_;   // none empty
+    std::size_t size_ = 0;
+};
+
 class Text {
 public:
-    static constexpr std::size_t kChunk = 1024;   // a new chunk's size, in units
+    // A new chunk's size, in units: with its terminator 2,048 bytes in
+    // libc++'s string (whose capacity rounds up to 1,023), as macOS's
+    // allocator rounds 2,050 bytes up to 2,560.
+    static constexpr std::size_t kChunk = 1020;
 
     // One replacement: `length` at `start`, both in the text before the
     // batch, replaced by `text`.
@@ -57,6 +87,9 @@ public:
 
     Text() = default;
     explicit Text(const std::u16string& text);
+    // Decoded straight into chunks, as utf16FromUtf8 decodes it, with no
+    // UTF-16 copy of the whole text on the way.
+    static Text fromUtf8(const std::string& utf8);
 
     std::size_t size() const { return size_; }                 // UTF-16 units
     std::size_t codePoints() const { return pointCount_; }
@@ -104,12 +137,21 @@ public:
     std::shared_ptr<const std::u16string> snapshot() const;
     bool operator==(const std::u16string& s) const;
     bool operator==(const Text& o) const;
+    // Exact; a chunk still shared with `f` is not compared unit by unit.
+    bool operator==(const Frozen& f) const;
     bool operator!=(const std::u16string& s) const { return !(*this == s); }
     std::size_t chunks() const { return chunks_.size(); }
+    // The text as it is now, sharing its chunks (see the top of the file).
+    Frozen freeze() const;
+    // f(const char16_t* units, std::size_t count) for each chunk in order.
+    template <class F>
+    void eachChunk(F f) const {
+        for (const Chunk& c : chunks_) f(c.text->data(), c.text->size());
+    }
 
 private:
     struct Chunk {
-        std::u16string text;
+        std::shared_ptr<const std::u16string> text;   // never empty, never changed
         // Line starts s with the unit before them in this chunk, as
         // s - the chunk's start (1 to its length).
         std::vector<std::uint32_t> starts;

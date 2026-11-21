@@ -71,8 +71,12 @@ void Client::pump() {
         if (needsAck) {
             m.seq = ++seq_;
             inFlight_ = true;
+            // Kept without a reset's text, which is never needed again
+            // (copying it would hold the whole file twice until the ack).
+            std::string text8 = std::move(m.text8);
+            m.text8.clear();
             head_ = m;
-            head_.text8.clear();
+            m.text8 = std::move(text8);
         }
         send_(std::move(m));
     }

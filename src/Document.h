@@ -17,6 +17,11 @@
 //     written back; a text holding a lone surrogate cannot be written.
 //   - Large files are VS Code's (LargeFile.h).
 //
+// The saved text is a Frozen (Text.h): the text's own chunks as they were
+// when read or written, shared until edits replace them, so a document
+// holds one copy of its text, not two, and dirty() compares only the
+// chunks edited since.
+//
 // The ports keep their own documents until the session moves into the
 // core (stages 3 and 4); the language server client's copy of each file is
 // already a Model::Text. Pure C++17; no I/O (the caller reads and writes,
@@ -48,6 +53,8 @@ public:
     // A new document, with no file behind it yet: clean, written as UTF-8.
     Document() = default;
     explicit Document(const std::u16string& text);
+    // The same from a text already made (Text::fromUtf8).
+    explicit Document(Text text);
 
     // Read from a file: its bytes and the stamp taken before reading them.
     // False, and nothing changed, when the bytes are not text.
@@ -68,7 +75,13 @@ public:
     void replace(std::size_t a, std::size_t b, const std::u16string& with);
 
     bool dirty() const;
-    const std::u16string& savedText() const { return saved_; }
+    // The saved text, copied whole: for a check, or a save that compares
+    // the file with it. savedIs and savedSize ask without the copy.
+    std::u16string savedText() const { return saved_.str(); }
+    bool savedIs(const std::u16string& text) const { return saved_ == text; }
+    std::size_t savedSize() const { return saved_.size(); }
+    // The text is not the saved text (dirty() without the file gone).
+    bool differsFromSaved() const;
     // The text as it is now was written, and the file's stamp as written.
     void markSaved(const FolderSearch::FileStamp& written);
     // The file holds `saved`, not the text as it is now (an app kept its
@@ -102,15 +115,14 @@ public:
 
 private:
     Text text_;
-    std::u16string saved_;
+    Frozen saved_;
     FolderSearch::FileStamp stamp_;
     FolderSearch::TextEncoding encoding_ = FolderSearch::TextEncoding::Utf8;
     bool bom_ = false, gone_ = false, large_ = false;
     // dirty() compares only when the text moved on since it last did.
     mutable std::uint64_t comparedAt_ = 0;
     mutable bool differs_ = false;
-    void take(std::u16string text, FolderSearch::TextEncoding encoding, bool bom,
-              const FolderSearch::FileStamp& stamp);
+    void take(FolderSearch::TextEncoding encoding, bool bom, const FolderSearch::FileStamp& stamp);
 };
 
 }  // namespace Model

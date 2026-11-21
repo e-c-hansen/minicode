@@ -406,7 +406,10 @@ void Host::onOpen(ClientId c, Message& m) {
     if (it == docs_.end()) {
         Doc& d = docs_[m.doc];
         d.path = m.name;
-        d.doc = Model::Document(Model::utf16FromUtf8(m.text8));
+        // Decoded into the text's chunks, which its saved text shares: one
+        // UTF-16 copy, and none of the whole on the way.
+        d.doc = Model::Document(Model::Text::fromUtf8(m.text8));
+        std::string().swap(m.text8);
         d.seats[c].base = 0;
         it = docs_.find(m.doc);
         watchGen_++;   // its folder is watched
@@ -429,28 +432,37 @@ void Host::onReset(ClientId c, Message& m) {
         return;
     }
     Doc& d = it->second;
-    d.seats[c].base = std::max(d.seats[c].base, m.base);
     closeStep(d);
-    std::u16string now = Model::utf16FromUtf8(m.text8);
+    const std::size_t old16 = d.doc.text().size(), oldCp = d.doc.text().codePoints();
+    d.doc = Model::Document(Model::Text::fromUtf8(m.text8));
+    std::string().swap(m.text8);
+    // The reset in the log, and to the other renderers, as the whole text
+    // deleted and the new one put in: only when someone needs it, since it
+    // is two more copies of the text. Its sender has it already, and moves
+    // past it at once: its next edit goes once this is acknowledged (one in
+    // flight at a time), on this version. Needed when another renderer has
+    // the document open, the sender watches it, or the sender asked for no
+    // acknowledgement (which then carries the edit).
+    bool othersNeed = !m.seq;
+    for (const auto& [k, seat] : d.seats) othersNeed = othersNeed || k != c || seat.watch;
     Entry e;
     e.by = c;
-    const std::size_t old16 = d.doc.text().size(), oldCp = d.doc.text().codePoints();
-    if (old16) {
+    if (old16 && othersNeed) {
         e.ops16.push_back(Ot::Op{0, old16, std::u16string()});
         e.opsCp.push_back(Ot::Op{0, oldCp, std::u16string()});
     }
-    if (!now.empty()) {
-        e.ops16.push_back(Ot::Op{0, 0, now});
-        e.opsCp.push_back(Ot::Op{0, 0, now});
+    if (d.doc.text().size() && othersNeed) {
+        e.ops16.push_back(Ot::Op{0, 0, d.doc.text().str()});
+        e.opsCp.push_back(Ot::Op{0, 0, e.ops16.back().ins});
     }
-    d.doc = Model::Document(now);
     d.history.clear();
     d.diskLooked = false;
     setDisk(m.doc, d, 0);   // read afresh: in step with its file
-    if (!e.ops16.empty()) {
+    if (old16 || d.doc.text().size()) {
         d.v++;
         d.log.push_back(e);
     }
+    d.seats[c].base = d.v;
     broadcast(m.doc, d, e, c, m.seq, 0, 0, nullptr);
     trimLog(d);
     tellUndoState(m.doc, d);
@@ -1223,7 +1235,7 @@ namespace {
 // disk after now is seen as one; a stamp that cannot match when it holds
 // something else already (it changed since the buffer was based on it); and
 // never there when there is none and the buffer never had a file's text.
-void diskBase(const std::string& path, const std::u16string& saved, Backups::Entry* e) {
+void diskBase(const std::string& path, const Model::Document& doc, Backups::Entry* e) {
     e->diskExisted = false;
     e->diskMtime = 0;
     e->diskInode = 0;
@@ -1232,7 +1244,7 @@ void diskBase(const std::string& path, const std::u16string& saved, Backups::Ent
     FolderSearch::FileStamp st;
     const FolderSearch::ReadStatus r = FolderSearch::readFileStable(path, 512ull << 20, &bytes, &st);
     if (r == FolderSearch::ReadStatus::Missing) {
-        e->diskExisted = !saved.empty();   // gone, when the buffer had text from it
+        e->diskExisted = doc.savedSize() > 0;   // gone, when the buffer had text from it
         return;
     }
     e->diskExisted = true;
@@ -1243,7 +1255,7 @@ void diskBase(const std::string& path, const std::u16string& saved, Backups::Ent
     FolderSearch::TextEncoding enc;
     bool bom = false;
     if (!FolderSearch::decodeFileText(&bytes, &enc, &bom)) return;
-    if (Model::utf16FromUtf8(bytes) != saved) return;
+    if (!doc.savedIs(Model::utf16FromUtf8(bytes))) return;
     e->diskMtime = mtime;
     e->fileEncoding = FolderSearch::encodingName(enc, bom);
 }
@@ -1257,7 +1269,7 @@ void Host::writeBackup(DocId id, Doc& d) {
     e.id = d.kept.id;
     e.path = keptPath(id, d);
     e.root = keep_.root.empty() ? folder_ : keep_.root;
-    diskBase(d.path, d.doc.savedText(), &e);
+    diskBase(d.path, d.doc, &e);
     if (keep_.wallNow) {
         e.saved = keep_.wallNow();
     } else {
@@ -1515,13 +1527,12 @@ void Host::lookAtDisk(DocId id, Doc& d) {
     else t.stamp = now;
     d.diskSeen = t.stamp;
     d.diskLooked = true;
-    const std::u16string& saved = d.doc.savedText();
     DiskLook l;
-    l.hadFile = d.doc.stamp().exists || !saved.empty() || d.disk != 0;
+    l.hadFile = d.doc.stamp().exists || d.doc.savedSize() > 0 || d.disk != 0;
     l.exists = t.exists;
     l.text = t.text;
-    l.sameAsSaved = t.text && t.body == saved;
-    l.edited = d.doc.text().size() != saved.size() || !(d.doc.text() == saved);
+    l.sameAsSaved = t.text && d.doc.savedIs(t.body);
+    l.edited = d.doc.differsFromSaved();
     l.wasGone = d.doc.gone();
     switch (diskAction(l)) {
     case DiskAction::Nothing: break;

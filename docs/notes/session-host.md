@@ -395,9 +395,30 @@ top of a turn, never inside a text system callback.
   document send UTF-8 (`doc.open`, `doc.reset`); a text holding one (none
   read from a file: such a file goes to Quick Look) becomes U+FFFD in the
   host's copy, and the mirror check would say so.
-- The host keeps a UTF-16 copy and its saved text, and the language server
-  sync a third copy: about 150 MB more for a 25 MB file. Large-file mode
-  has no server, so two.
+- **The host keeps one UTF-16 copy of a document** (2026-11-21), about
+  2.2 times the file's size for ASCII: Model::Document's saved text is a
+  `Frozen` (Text.h), the text's own chunk strings as they were when read
+  or written, which edits replace and never change, so saved and current
+  share every chunk not edited since, and dirty() skips those (exact
+  otherwise, unit by unit). DocOpen and DocReset decode their UTF-8
+  straight into chunks (`Text::fromUtf8`), with no whole UTF-16
+  temporary, and the message's UTF-8 is let go of at once. A reset goes
+  into the log, as two more copies (the text in both units), only when
+  another renderer has the document open, its sender watches it, or the
+  sender sent no seq; the sender's base becomes the reset's version, its
+  next edit going only after the acknowledgement. The client keeps no copy
+  of a reset's text in its message in flight. `host:memory` counts it
+  (AllocCount.h, the test binary's operator new; MC_HOST_MEMORY_MB): for a
+  24 MB file of 80-byte lines the host went from 99.6 MB (Mac's DocOpen)
+  and 195.6 MB (GTK's empty DocOpen then DocReset, two copies in the log
+  until the next edit) to 52.9 MB, with 76.8 MB at most while opening
+  (was 172 and 412); 240 MB: from 996 and 1,956 MB to 529 MB. What the
+  language server's sync keeps (the client's watched copy, a Text, and
+  the server client's own) is on top: large-file mode has no server.
+  `Document::savedText()` copies the whole saved text; ask `savedIs`,
+  `savedSize` and `differsFromSaved` instead where that will do.
+  `Text::kChunk` is 1,020 units so a chunk's string is 2,048 bytes in
+  libc++ (macOS's allocator rounds 2,050 up to 2,560).
 - **`Client::dispatch()` takes only what was queued when it was called.**
   A listener that acknowledges terminal output as it takes it (the
   `term:*` rig, `SessionWeb`'s server thread) lets the host send more at
