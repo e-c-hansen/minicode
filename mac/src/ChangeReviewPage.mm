@@ -16,6 +16,7 @@
 #include "AgentView.h"
 #include "SyntaxHighlighter.h"
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <string>
 #include <time.h>
@@ -697,10 +698,18 @@ NSString *LabelOf(Act act, NSString *title, const ChangeReview::FileDiff &fd, co
 // through the Accessibility API find it, read its name ("Stage change 1 in
 // app.py") and press it. Made for the rows on screen when the text view's
 // children are asked for, kept while the same read is on show.
-@interface MCReviewButtonElement : NSAccessibilityElement
+@interface MCReviewButtonElement : NSAccessibilityElement {
+@public
+    std::weak_ptr<ReviewData> made;   // the read it was made for
+    std::string fileKey;              // what it acts on: the file ("W:app.py")...
+    int block;                        // ...and its block there, -1 for a file's button
+    size_t fileFingerprint;           // that file's changes as read (ChangeReview::fingerprintOf)
+    std::weak_ptr<ReviewData> seen;   // the last other read rowNow looked in...
+    long seenRow;                     // ...and what it found there
+}
 @property(nonatomic, weak) MCReviewTextView *view;
 @property(nonatomic) NSInteger act;   // an Act
-@property(nonatomic) size_t row;
+@property(nonatomic) size_t row;      // its row in the read it was made for
 @property(nonatomic, copy) NSString *title, *label, *help;
 @end
 
@@ -720,10 +729,34 @@ NSString *LabelOf(Act act, NSString *title, const ChangeReview::FileDiff &fd, co
 - (id)accessibilityWindow { return self.view.window; }
 - (id)accessibilityTopLevelUIElement { return self.view.window; }
 
+// Its row in the read on show now. A read lands whenever the panel
+// refreshes (files changing, the window coming to the front), often with
+// nothing new: the element's own row while the read it was made for is on
+// show, else the same file's same block, as long as that file's changes
+// are the same; -1 once they moved, so a press never lands on another
+// block that took the row.
+- (long)rowNow {
+    MCReviewTextView *v = self.view;
+    const std::shared_ptr<ReviewData> d = [v reviewData];
+    if (!d) return -1;
+    if (d == made.lock()) return (long)self.row;
+    if (d == seen.lock()) return seenRow;
+    long r = ChangeReview::buttonRow(d->page, d->diffs, fileKey, block);
+    if (r >= 0 && (d->page.rows[(size_t)r].file >= d->diffs.size() ||
+                   ChangeReview::fingerprintOf(d->diffs, {d->diffs[d->page.rows[(size_t)r].file].file.path}) !=
+                       fileFingerprint))
+        r = -1;
+    seen = d;
+    seenRow = r;
+    return r;
+}
+
 // The button's rect now: pinned to the visible right edge, so it moves
 // with a sideways scroll. Zero once the row has it no more.
 - (NSRect)rectInView {
-    for (const Button &b : [self.view buttonsForRow:self.row])
+    const long row = [self rowNow];
+    if (row < 0) return NSZeroRect;
+    for (const Button &b : [self.view buttonsForRow:(size_t)row])
         if ((NSInteger)b.act == self.act) return b.rect;
     return NSZeroRect;
 }
@@ -737,21 +770,25 @@ NSString *LabelOf(Act act, NSString *title, const ChangeReview::FileDiff &fd, co
 
 // The press runs after the Accessibility API has its answer: Discard asks
 // first, and a modal question inside the call would hold the caller until
-// it timed out.
+// it timed out. A read may land in between (CI, 2026-11-20: a panel
+// refresh's read queued while git_review's step ran replaced the page's
+// data, and the press, which then wanted the very same read, was dropped
+// without a word), so the button is looked for again then, by what it
+// acts on (rowNow), and a press whose changes moved meanwhile beeps.
 - (BOOL)accessibilityPerformPress {
     MCReviewTextView *v = self.view;
     if (!v || NSIsEmptyRect([self rectInView])) return NO;
-    const std::shared_ptr<ReviewData> asked = [v reviewData];
     const Act act = (Act)self.act;
-    const size_t row = self.row;
     dispatch_async(dispatch_get_main_queue(), ^{
-        // The same read still on show, or the row may be another's.
-        if ([v reviewData] != asked) return;
-        for (const Button &b : [v buttonsForRow:row])
-            if (b.act == act) {
-                [v.owner reviewView:v pressedButton:act row:row];
-                return;
-            }
+        if (!v.owner || !v.window) return;   // its page went meanwhile
+        const long row = [self rowNow];
+        if (row >= 0)
+            for (const Button &b : [v buttonsForRow:(size_t)row])
+                if (b.act == act) {
+                    [v.owner reviewView:v pressedButton:act row:(size_t)row];
+                    return;
+                }
+        NSBeep();
     });
     return YES;
 }
@@ -775,6 +812,7 @@ NSString *LabelOf(Act act, NSString *title, const ChangeReview::FileDiff &fd, co
     }
     NSMutableArray *out = [NSMutableArray array];
     if (!d || d->page.rows.empty()) return out;
+    std::map<size_t, size_t> fingerprints;   // by file, made once for its buttons
     const NSRect vis = self.visibleRect;
     const long first = std::max(0L, [self rowAtY:NSMinY(vis)]);
     long last = [self rowAtY:NSMaxY(vis) - 1];
@@ -792,6 +830,14 @@ NSString *LabelOf(Act act, NSString *title, const ChangeReview::FileDiff &fd, co
                 e.title = b.title;
                 e.label = LabelOf(b.act, b.title, d->diffs[pr.file], pr);
                 e.help = TipOf(b.act, b.title, d->diffs[pr.file], pr);
+                const ChangeReview::File &file = d->diffs[pr.file].file;
+                e->made = d;
+                e->fileKey = file.key();
+                e->block = pr.kind == RowKind::File ? -1 : pr.block;
+                auto known = fingerprints.find(pr.file);
+                if (known == fingerprints.end())
+                    known = fingerprints.emplace(pr.file, ChangeReview::fingerprintOf(d->diffs, {file.path})).first;
+                e->fileFingerprint = known->second;
                 _axButtons[key] = e;
             }
             [out addObject:e];
@@ -1992,6 +2038,10 @@ NSString *LabelOf(Act act, NSString *title, const ChangeReview::FileDiff &fd, co
     auto d = std::make_shared<ReviewData>(*_data);
     d->page = ChangeReview::layout(d->diffs, _opened);
     [self show:d];
+}
+
+- (void)showReadAgain {
+    if (_data) [self show:std::make_shared<ReviewData>(*_data)];
 }
 
 - (void)openLineAtRow:(size_t)row {

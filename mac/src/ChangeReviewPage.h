@@ -117,6 +117,10 @@
 - (NSRect)buttonRect:(NSString *)title row:(NSInteger)row;
 // A click at a point in the text view: a button, or a folded stretch.
 - (BOOL)pressAtPoint:(NSPoint)point;
+// The read on show put on show again as a new read of the same changes,
+// as a panel refresh that found nothing new does (a press the
+// Accessibility API queued must still land after one).
+- (void)showReadAgain;
 // Main-thread CPU time of the last read put on show, in milliseconds.
 @property(nonatomic, readonly) double lastShowCpuMilliseconds;
 @end
