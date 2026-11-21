@@ -730,6 +730,112 @@ MC_GUI_SUITE(session_browser) {
         gWs3.shut();
     });
 
+    // ---- 4b. Quick Open and Find in Folder on the window's host (stage 7's workers)
+    MCGuiStep("two files in a folder, the read-only page's socket again", [] {
+        MCGuiWriteFile(MCGuiProjectFile("sbq/calc.py"), "def calc():\n    zqx_marker = 1\n    return zqx_marker\n");
+        MCGuiWriteFile(MCGuiProjectFile("sbq/pkg/util.py"), "def helper():\n    return 42  # zqx_marker\n");
+        openSocket(gWs3, gL1, gJar3);
+    });
+    MCGuiWait("hello", 10, [] { return gWs3.take("hello", &gMsg); });
+    MCGuiStep("Quick Open asks for the files named like sbq", [] {
+        // Not an empty query: the page shows only its first rows, and the
+        // suites before this one may leave the folder hundreds of files
+        // that sort before sbq/ (CI's run listed 235).
+        Json o = Json::object();
+        o.set("t", Json("files"));
+        o.set("seq", Json(1));
+        o.set("query", Json("sbq"));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("the host's listing, not one still under way", 20, [] {
+        Json m;
+        while (gWs3.take("files", &m)) {
+            if (m["seq"].asInt() != 1 || m["listing"].asBool()) continue;
+            gMsg = m;
+            return true;
+        }
+        return false;
+    });
+    MCGuiStep("it lists both, the nested one too", [] {
+        std::string paths;
+        for (const Json& r : gMsg["rows"].elements()) paths += r["path"].asString() + "|";
+        MCGuiNote("quick open: %s", paths.c_str());
+        GCHECK(gMsg["error"].isNull());
+        GCHECK(paths.find("sbq/calc.py|") != std::string::npos);
+        GCHECK(paths.find("sbq/pkg/util.py|") != std::string::npos);
+        Json o = Json::object();
+        o.set("t", Json("files"));
+        o.set("seq", Json(2));
+        o.set("query", Json("sbqclc"));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("a query ranks them", 20, [] {
+        Json m;
+        while (gWs3.take("files", &m))
+            if (m["seq"].asInt() == 2) {
+                gMsg = m;
+                return true;
+            }
+        return false;
+    });
+    MCGuiStep("calc.py first, the matched letters marked; nothing opened in the window", [] {
+        const Json& rows = gMsg["rows"];
+        if (!GCHECK(rows.size() >= 1)) return;
+        MCGuiNote("ranked: %s", rows.dump().substr(0, 300).c_str());
+        GCHECK_EQ_STR(rows.elements()[0]["path"].asString(), "sbq/calc.py");
+        GCHECK(rows.elements()[0]["pos"].size() == 6);
+        GCHECK(Ed()->documentFor(MCGuiProjectFile("sbq/calc.py")) == nullptr);
+        Json o = Json::object();
+        o.set("t", Json("search"));
+        o.set("seq", Json(3));
+        o.set("query", Json("zqx_marker"));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("Find in Folder's last answer", 20, [] {
+        gWs3.pump();
+        for (const Json& m : gWs3.msgs)
+            if (m["t"].asString() == "found" && m["seq"].asInt() == 3 && m["done"].asBool()) return true;
+        return false;
+    });
+    MCGuiStep("rows from both files, with context and marks; the host's counts", [] {
+        std::string seen;
+        int rows = 0, withHl = 0, nested = 0;
+        Json last;
+        for (const Json& m : gWs3.msgs) {
+            if (m["t"].asString() != "found" || m["seq"].asInt() != 3) continue;
+            last = m;
+            for (const Json& r : m["rows"].elements()) {
+                rows++;
+                if (r["hl"].size() > 0) withHl++;
+                if (r["path"].asString() == "sbq/pkg/util.py") nested++;
+                seen += r["path"].asString() + ":" + std::to_string(r["line"].asInt()) + " ";
+            }
+        }
+        MCGuiNote("search: %s / %s", seen.c_str(), last.dump().substr(0, 300).c_str());
+        GCHECK(rows == 3 && withHl == 3 && nested == 1);
+        GCHECK(last["error"].isNull() && !last["truncated"].asBool());
+        GCHECK(last["filesMatched"].asInt() == 2 && last["totalMatches"].asInt() == 3);
+        GCHECK(Ed()->documentFor(MCGuiProjectFile("sbq/pkg/util.py")) == nullptr);
+    });
+    MCGuiStep("a one-letter query is too short to search", [] {
+        Json o = Json::object();
+        o.set("t", Json("search"));
+        o.set("seq", Json(4));
+        o.set("query", Json("z"));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("the answer says so", 20, [] {
+        gWs3.pump();
+        for (const Json& m : gWs3.msgs)
+            if (m["t"].asString() == "found" && m["seq"].asInt() == 4) return m["short"].asBool() && m["done"].asBool();
+        return false;
+    });
+    MCGuiStep("the socket and the files go back", [] {
+        gWs3.shut();
+        const std::string cmd = "rm -rf '" + MCGuiProjectFile("sbq") + "'";
+        GCHECK(system(cmd.c_str()) == 0);
+    });
+
 #ifdef MUTIBLE_ENABLE_PDF
     // ---- 5. LaTeX typesets and the page's Source Control (a stand-in tectonic)
     MCGuiStep("a stand-in tectonic; the page's socket", [] {
