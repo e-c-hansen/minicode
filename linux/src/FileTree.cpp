@@ -1345,6 +1345,11 @@ void FileTree::afterRowsGone() {
 // meanwhile ends it (stopKeeping).
 namespace {
 constexpr gint64 kKeepUs = 300 * 1000;
+// A starved frame clock (a loaded machine) may draw no frame in kKeepUs: the
+// jump to the top comes a frame or two after the change, so the keep lasts
+// at least this many layouts, and never past kKeepMostUs.
+constexpr int kKeepFrames = 4;
+constexpr gint64 kKeepMostUs = 5 * G_USEC_PER_SEC;
 }
 
 void FileTree::keepRows(guint pos, guint removed) {
@@ -1379,6 +1384,8 @@ void FileTree::keepRows(guint pos, guint removed) {
     }
     if (!keepRow_) return;
     keepUntil_ = g_get_monotonic_time() + kKeepUs;
+    keepLimit_ = g_get_monotonic_time() + kKeepMostUs;
+    keepFrames_ = 0;
     scheduleFrame();
 }
 
@@ -1387,7 +1394,10 @@ void FileTree::stopKeeping() { holdRow(&keepRow_, nullptr); }
 void FileTree::applyKeep() {
     if (!keepRow_ || !listView_) return;
     const guint pos = gtk_tree_list_row_get_position(keepRow_);
-    if (g_get_monotonic_time() > keepUntil_ || pos == GTK_INVALID_LIST_POSITION) {
+    ++keepFrames_;
+    const gint64 now = g_get_monotonic_time();
+    if ((now > keepUntil_ && keepFrames_ > kKeepFrames) || now > keepLimit_ ||
+        pos == GTK_INVALID_LIST_POSITION) {
         stopKeeping();
         return;
     }
