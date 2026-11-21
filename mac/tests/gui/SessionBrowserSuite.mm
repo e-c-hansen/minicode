@@ -1038,10 +1038,16 @@ MC_GUI_SUITE(session_browser) {
         NSString *notes = [NSString stringWithContentsOfFile:notesPath encoding:NSUTF8StringEncoding error:nil];
         return [notes isEqualToString:@"built here\nmade there\n"] && [TV(gC).string isEqualToString:@"built = 1"];
     });
-    MCGuiStep(@"it asked first; the window's tab is unsaved, made.py on disk as it was; Undo in the window", ^{
+    // Read() answers later: the question is looked for in a wait, never in
+    // gSeen as a step finds it (CI on #307 read the Save As question there).
+    MCGuiWait(@"it asked first, naming the matches, files and replacement", 20, ^BOOL {
         Read();
+        return [gSeen[@"asked"] hasPrefix:@"Replace 2 matches in 2 files with “built”?"];
+    });
+    MCGuiStep(@"the window's tab is unsaved, made.py on disk as it was; Undo in the window", ^{
         MCGuiNote(@"asked: %@; toast: %@", gSeen[@"asked"], gSeen[@"toast"]);
-        GCHECK([gSeen[@"asked"] hasPrefix:@"Replace 2 matches in 2 files with “built”?"]);
+        GCHECK_EQ_STR([gSeen[@"asked"] componentsSeparatedByString:@"\n"].firstObject,
+                      @"Replace 2 matches in 2 files with “built”?");
         GCHECK(Active(gC).dirty);
         NSString *made = [NSString stringWithContentsOfFile:madePath encoding:NSUTF8StringEncoding error:nil];
         GCHECK_EQ_STR(made, @"made = 1");
