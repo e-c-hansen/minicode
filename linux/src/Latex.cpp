@@ -5,6 +5,7 @@
 #include "Latex.h"
 
 #include "LatexClick.h"
+#include "MarkdownEdit.h"
 #include "PageWords.h"
 #include "Question.h"
 #include "PdfView.h"
@@ -1463,6 +1464,46 @@ void LatexPreview::startAddItem() {
     showPopover("New list entry", "", false, editAnchor_);
 }
 
+// The box's edit made on `now`, the text as it is when it is applied: its
+// span (adding an entry, its list) found again there from `base`, the text
+// the box opened on (MarkdownEdit::rebaseSpan). 1 with `*out` made, 0 when
+// there is nothing to change, -1 when the span is not in `now` once,
+// exactly as the box showed it.
+static int latexEditOnto(const std::string& base, const std::string& now, LatexSpan span,
+                         LatexList list, bool adding, int itemIndex, const std::string& text,
+                         LatexDoc::Edit* out) {
+    if (adding) {
+        if (text.empty()) return 0;
+        const auto r = MarkdownEdit::rebaseSpan(base, list.start, list.end, now);
+        if (r.first == std::string::npos) return -1;
+        const std::size_t from = list.start;
+        for (std::size_t& at : list.itemBodyStart) at = at - from + r.first;
+        for (std::size_t& at : list.itemBodyEnd) at = at - from + r.first;
+        list.end = r.second;
+        list.start = r.first;
+        *out = LatexDoc::addItem(now, list, itemIndex, text);
+        return 1;
+    }
+    const auto r = MarkdownEdit::rebaseSpan(base, span.start, span.end, now);
+    if (r.first == std::string::npos) return -1;
+    span.start = r.first;
+    span.end = r.second;
+    if (now.compare(span.start, span.end - span.start, text) == 0) return 0;
+    *out = LatexDoc::replaceSpan(now, span, text);
+    return 1;
+}
+
+// An edit that could not go in: its text on the clipboard and the bar
+// saying why, never dropped unseen (the Mac's keepLostEdit:file:, its words).
+void LatexPreview::keepLostEdit(const std::string& text, const std::string& file) {
+    if (!text.empty())
+        gdk_clipboard_set_text(gtk_widget_get_clipboard(popText_), text.c_str());
+    const std::string name = file.empty() ? std::string("The file") : baseNameOf(file);
+    setStatus(name + " changed while the box was open, and so did the text you edited, so "
+                     "your edit was not applied; your text is on the clipboard",
+              false);
+}
+
 void LatexPreview::commitEdit() {
     if (!editValid_) return;
     const std::string text = editText();
@@ -1474,22 +1515,23 @@ void LatexPreview::commitEdit() {
         return;
     }
 
-    // The span's bytes index editSrc_. If the buffer changed while the
-    // popover was open, they may no longer be the same text: refuse.
+    // The span's bytes index editSrc_, the text the box opened on. The edit
+    // is made on the buffer as it is now (an agent may have rewritten some
+    // other part), the span found again in it; refused only when the span
+    // itself changed.
     const std::string current = bufferText();
-    if (current != editSrc_) {
-        setStatus("The source changed while you were editing, so nothing was replaced",
-                  false);
+    LatexDoc::Edit edit;
+    const int made = latexEditOnto(editSrc_, current, editSpan_, editList_, adding, editItem_,
+                                   text, &edit);
+    if (made < 0) {
+        // Only a draft that differs from what the box opened with is lost.
+        const std::string& was = editSrc_;
+        const bool changed = editSpan_.end > was.size() || editSpan_.start > editSpan_.end ||
+                             was.compare(editSpan_.start, editSpan_.end - editSpan_.start, text) != 0;
+        if (adding || changed) keepLostEdit(text, path_);
         return;
     }
-    LatexDoc::Edit edit;
-    if (adding) {
-        if (text.empty()) return;
-        edit = LatexDoc::addItem(current, editList_, editItem_, text);
-    } else {
-        if (text == current.substr(editSpan_.start, editSpan_.end - editSpan_.start)) return;
-        edit = LatexDoc::replaceSpan(current, editSpan_, text);
-    }
+    if (made == 0) return;
     spliceBuffer(current, edit.source);
     setStatus(adding ? "Added a list entry" : "Typesetting…", true);
     compileNow();
@@ -1546,19 +1588,18 @@ void LatexPreview::commitInputEdit(const std::string& text, bool adding) {
             now = "\x01";   // unreadable: never the text the box opened on
         }
     }
-    if (now != editInputSrc_) {
-        setStatus(name + " changed while the box was open, so the edit was not made", false);
+    LatexDoc::Edit edit;
+    const int made = latexEditOnto(editInputSrc_, now, editSpan_, editList_, adding, editItem_,
+                                   text, &edit);
+    if (made < 0) {
+        // Only a draft that differs from what the box opened with is lost.
+        const std::string& was = editInputSrc_;
+        const bool changed = editSpan_.end > was.size() || editSpan_.start > editSpan_.end ||
+                             was.compare(editSpan_.start, editSpan_.end - editSpan_.start, text) != 0;
+        if (adding || changed) keepLostEdit(text, file);
         return;
     }
-    LatexDoc::Edit edit;
-    if (adding) {
-        if (text.empty()) return;
-        edit = LatexDoc::addItem(now, editList_, editItem_, text);
-    } else {
-        const std::size_t a = std::min(editSpan_.start, now.size());
-        if (now.substr(a, std::min(editSpan_.end, now.size()) - a) == text) return;
-        edit = LatexDoc::replaceSpan(now, editSpan_, text);
-    }
+    if (made == 0) return;
     if (!inputs_.edit || !inputs_.edit(file, now, edit.source)) {
         setStatus(name + " could not be changed", false);
         return;

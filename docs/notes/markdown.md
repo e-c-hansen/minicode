@@ -276,6 +276,10 @@ found through that list.
   note (`MCKeepLostMarkdownEdit`). `markdown_page` rewrites the file
   under an open box both ways. Trap: never splice a box's edit at the
   offsets it opened with into text that changed since.
+  GTK (HANDOFF 146): `Editor::commitMdEdit` does the same, on `active_->text()` as it
+  is then, the block found again by `rebaseSpan`; only its own text changed
+  gives the clipboard and the bell. `edit_boxes` rewrites the buffer under an
+  open box both ways.
   The box opens on the double-clicked word (2026-11-15, D2's first step):
   `MarkdownEdit::sourceOffsetFor` finds the page's word in the block's
   Markdown by the 40 characters either side (letters and digits compared,

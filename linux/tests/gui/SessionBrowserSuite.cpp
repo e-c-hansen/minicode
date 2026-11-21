@@ -255,7 +255,7 @@ int gOpened = 0;
 Link gL1, gL2;
 Jar gJar1, gJar2, gJar3;
 Conn gHttp, gHttp2, gHttp3, gWs1, gWs3;
-Json gMsg;
+Json gMsg, gReplaced;
 size_t gDocsBefore = 0;
 uint64_t gUntitled = 0;
 std::string gUntitledPath;
@@ -547,6 +547,7 @@ MC_GUI_SUITE(session_browser) {
         GCHECK(gMsg["canClose"].asBool());
         GCHECK(gMsg["canNew"].asBool());
         GCHECK(gMsg["canSaveAs"].asBool());
+        GCHECK(gMsg["canReplace"].asBool());
         GCHECK(SB()->browsers() == 1);
         GCHECK(SB()->asking() == 0);
         Json st;
@@ -722,6 +723,84 @@ MC_GUI_SUITE(session_browser) {
     MCGuiStep("files removed", [] {
         unlink(MCGuiProjectFile("sb_exists.txt").c_str());
         unlink(MCGuiProjectFile("sb_made.txt").c_str());
+    });
+
+    // ---- 3b. Replace in Folder from the page (the Mac's 93d21328; the core
+    // server offers it when the host saves for pages and searches)
+    MCGuiStep("two files with a marker, one open in a tab", [] {
+        MCGuiWriteFile(MCGuiProjectFile("sbr/rep_open.txt"), "zqrep one\nkeep\n");
+        MCGuiWriteFile(MCGuiProjectFile("sbr/rep_disk.txt"), "keep\nzqrep two\n");
+        openPath(gWs1, "sbr/rep_open.txt", true);   // as the page opens a file
+    });
+    MCGuiWait("the tab is open", 10, [] { return Ed()->documentFor(MCGuiProjectFile("sbr/rep_open.txt")) != nullptr; });
+    MCGuiStep("the page searches for the marker", [] {
+        Json o = Json::object();
+        o.set("t", Json("search"));
+        o.set("seq", Json(41));
+        o.set("query", Json("zqrep"));
+        gWs1.sendJson(o);
+    });
+    MCGuiWait("the search is done", 20, [] {
+        gWs1.pump();
+        for (const Json& m : gWs1.msgs)
+            if (m["t"].asString() == "found" && m["seq"].asInt() == 41 && m["done"].asBool()) return true;
+        return false;
+    });
+    MCGuiStep("a replace of the rows it showed", [] {
+        std::map<std::string, Json> byFile;
+        std::vector<std::string> order;
+        for (const Json& m : gWs1.msgs) {
+            if (m["t"].asString() != "found" || m["seq"].asInt() != 41) continue;
+            for (const Json& r : m["rows"].elements()) {
+                const std::string path = r["path"].asString();
+                if (!byFile.count(path)) {
+                    byFile[path] = Json::array();
+                    order.push_back(path);
+                }
+                Json row = Json::object();
+                row.set("line", r["line"]);
+                row.set("text", r["text"]);
+                row.set("count", r["count"]);
+                row.set("on", Json(true));
+                byFile[path].push(row);
+            }
+        }
+        MCGuiNote("search rows in %d files", (int)order.size());
+        GCHECK(order.size() == 2);
+        Json files = Json::array();
+        for (const std::string& path : order) {
+            Json f = Json::object();
+            f.set("path", Json(path));
+            f.set("rows", byFile[path]);
+            files.push(f);
+        }
+        Json o = Json::object();
+        o.set("t", Json("replace"));
+        o.set("seq", Json(42));
+        o.set("query", Json("zqrep"));
+        o.set("replacement", Json("zqdone"));
+        o.set("files", files);
+        gWs1.sendJson(o);
+    });
+    MCGuiWait("replaced", 20, [] {
+        gWs1.pump();
+        for (const Json& m : gWs1.msgs)
+            if (m["t"].asString() == "replaced" && m["seq"].asInt() == 42) {
+                gReplaced = m;
+                return true;
+            }
+        return false;
+    });
+    MCGuiStep("two matches; the file on disk written, the open tab edited and unsaved", [] {
+        MCGuiNote("replaced: %s", gReplaced.dump().substr(0, 300).c_str());
+        GCHECK(gReplaced["error"].isNull());
+        GCHECK(gReplaced["replaced"].asInt() == 2 && gReplaced["files"].asInt() + gReplaced["edited"].asInt() == 2);
+        GCHECK_EQ_STR(MCGuiReadFile(MCGuiProjectFile("sbr/rep_disk.txt")), "keep\nzqdone two\n");
+        GCHECK_EQ_STR(MCGuiReadFile(MCGuiProjectFile("sbr/rep_open.txt")), "zqrep one\nkeep\n");
+    });
+    MCGuiWait("a tab open in the window shows the new text, unsaved", 10, [] {
+        Document* d = Ed()->documentFor(MCGuiProjectFile("sbr/rep_open.txt"));
+        return d && d->dirty() && d->text() == "zqdone one\nkeep\n";
     });
 
     // ---- 4. Deny, Always Allow

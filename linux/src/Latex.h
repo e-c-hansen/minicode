@@ -219,6 +219,7 @@ private:
     std::string inputFileForTag(int tag) const;
     const LatexDoc* docOfInputFile(const std::string& file, std::string* source);
     void commitInputEdit(const std::string& text, bool adding);
+    void keepLostEdit(const std::string& text, const std::string& file);
     void showPagesStatus();
 
     static void onBufferChanged(GtkTextBuffer* buf, gpointer self);
