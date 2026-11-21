@@ -747,4 +747,6 @@ MC_GUI_SUITE(agents) {
     MCGuiWait("the tree has no repository and no Worktrees node", 15, [] {
         return !MCGuiApp().treeColors->inRepository() && treeLabel("Worktrees") == nullptr;
     });
+    // The X focus given back to the window that stayed (the harness's LEFT line).
+    MCGuiStep("the first window has the keyboard again", [] { MCGuiSetKeyWindow(nullptr); });
 }

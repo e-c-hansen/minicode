@@ -525,5 +525,6 @@ MC_GUI_SUITE(idelink) {
     MCGuiStep("no lock file of ours is left", [] {
         for (const char* n : {"40001.lock"}) GCHECK(!MCGuiFileExists(lockDir() + "/" + n));
         GCHECK(ide()->lockPath().empty());
+        MCGuiSetSettings("lsp.enabled = false\n");   // as found; the link's default is off
     });
 }

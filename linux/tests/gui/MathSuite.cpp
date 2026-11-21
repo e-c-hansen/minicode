@@ -270,5 +270,7 @@ MC_GUI_SUITE(markdown_math) {
         GCHECK(note.find("Download tectonic") != std::string::npos);
         ed()->closeAllTabs();
     });
+    // The settings as the suite found them (the harness's LEFT line).
+    MCGuiStep("the settings as found", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
 }
 #endif

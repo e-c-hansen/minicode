@@ -215,10 +215,16 @@ void button(int b, bool down) {
 // becomes null rather than a freed pointer that MCGuiPinnedKeyWindow reads
 // (CI on #104: SIGSEGV in MCGuiPinnedKeyWindow between agents and
 // agent_panel).
+// Null, "the first window has the keyboard again" after a suite closed a
+// window or a question, also gives that window the X focus now: with no
+// window manager the focus stayed on the window that closed and the app's
+// was inactive until the next key or the suite's end (the harness's LEFT
+// line after tabs, sessions, tree_focus, lsp_tabs, git_sync, git_gutter).
 void MCGuiSetKeyWindow(GtkWindow* window) {
     if (gKeyWindow) g_object_remove_weak_pointer(G_OBJECT(gKeyWindow), (gpointer*)&gKeyWindow);
     gKeyWindow = window;
     if (gKeyWindow) g_object_add_weak_pointer(G_OBJECT(gKeyWindow), (gpointer*)&gKeyWindow);
+    if (!window) MCGuiFocusKeyWindow();
 }
 
 GtkWindow* MCGuiPinnedKeyWindow() {

@@ -341,6 +341,8 @@ MC_GUI_SUITE(latin1_files) {
             }
         }
     });
+    // The X focus given back to the window that stayed (the harness's LEFT line).
+    MCGuiStep("the first window has the keyboard again", [] { MCGuiSetKeyWindow(nullptr); });
 }
 
 MC_GUI_SUITE(_latin1_restore) {

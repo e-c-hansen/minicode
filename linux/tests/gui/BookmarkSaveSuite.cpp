@@ -225,4 +225,6 @@ MC_GUI_SUITE(bookmark_save) {
     // The pane hidden: left on show it took the right side's width from
     // the editor of the suites after it (tab_strip's, in the soak).
     MCGuiHideBrowserPane();
+    // The settings as the suite found them (the harness's LEFT line).
+    MCGuiStep("the settings as found", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
 }
