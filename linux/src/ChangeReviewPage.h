@@ -69,8 +69,15 @@
 // Stage or Discard. Its key is "commit:<root>:<hash>", so a commit already
 // kept shows that tab.
 //
-// Left to the Mac for now: the right click on a selection's lines (and the
-// Keep choices in it), F7 and Shift+F7.
+// F7 and Shift+F7 (the page's key controller, as the compare view's) step to
+// the next or previous change block across files, wrapping, a quarter of the
+// way down the pane (ChangeReview::stepBlock). A right click on selected
+// changed lines of one file offers Stage Selected Lines and Discard Selected
+// Lines... (Unstage Selected Lines in the staged list); on a conflict's rows,
+// Keep Current, Keep Incoming and Keep Both. They run the block buttons' way
+// (ChangeReview::linesResult, the same question and Trash copy for Discard);
+// a commit's or a worktree's page, and a click with nothing selected, keep
+// the text view's own menu (Copy).
 #pragma once
 #include <gtk/gtk.h>
 
@@ -174,6 +181,14 @@ public:
     GtkWidget* undoButton() const { return undo_; }
     GtkWidget* buttonWidget(const std::string& title, size_t row) const;
     void scrollToRow(size_t row);
+    // F7 (forward) or Shift+F7: the next or previous block; false with no
+    // blocks. The block's row after a step, or -1.
+    bool stepBlock(bool forward);
+    long currentBlockRow() const { return currentBlockRow_; }
+    // The right click's items for a click on `row` (-1: none) and the
+    // selection now, by title; runMenuItem runs one as a click on it does.
+    std::vector<std::string> menuItems(long row);
+    bool runMenuItem(const std::string& title);
     // The row's top `y` pixels below the pane's top: a scroll to a mark now
     // (GTK waits for the lines around it to be laid out), then put right on
     // each frame until it holds (onSettle), since a page just made and not
@@ -217,6 +232,13 @@ private:
     static const char* titleOf(Act a);
     void act(Act a, size_t row);
     void runOp(ChangeReview::Op op, size_t fi, long block);
+    // The same on a read: a block, or (block < 0) the chosen lines.
+    void runOpOn(std::shared_ptr<Data> d, ChangeReview::Op op, size_t fi, long block,
+                 std::vector<int> oldLines, std::vector<int> newLines);
+    static gboolean onKey(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
+                          gpointer self);
+    static void onRightPressed(GtkGestureClick*, int, double x, double y, gpointer self);
+    void installMenu();
     void writeIndex(std::u16string text, size_t fi, std::shared_ptr<Data> d,
                     const GitUi::ActionPlan& plan);
     void writeDiscard(std::u16string text, size_t fi, std::shared_ptr<Data> d,
@@ -244,6 +266,15 @@ private:
     void actionPosted() { actedFrom_ = readsStarted_ + 1; }
     GtkWidget* pictureBox(size_t fi);
     static void onPressed(GtkGestureClick*, int n, double x, double y, gpointer self);
+
+    long currentBlockRow_ = -1;
+    struct MenuItem {
+        std::string title;
+        std::function<void()> run;
+    };
+    std::vector<MenuItem> menu_;
+    GMenuModel* baseExtra_ = nullptr;
+    bool baseKept_ = false;
 
     GitPanel* panel_;
     std::string root_s_;

@@ -8521,3 +8521,43 @@ the diff tab.
   the hash is in the id, `commit:<hash>`), `review` with that page answers
   pending, reviewread, then its files, and closing it empties `reviews`.
   The page's `headerTitle()` and `bodyText()` are for these checks.
+
+### 130. The review page's F7 and the right click on selected lines (the Mac's stepBlock: and menuForRow:; November 2026)
+
+The last two items of PARITY 2.9's review page.
+
+- **What a user meets.** F7 and Shift+F7, with the page's text view focused,
+  go to the next or previous change block across files, wrapping at the ends,
+  the block's row a quarter of the way down the pane and the caret on it (the
+  window's bell when the page has no block). A right click on selected
+  changed lines of one file adds, above the text view's own Copy, Stage
+  Selected Lines and Discard Selected Lines... in the Changes list, Unstage
+  Selected Lines in the staged list; a right click on a conflict's rows in
+  Changes adds Keep Current, Keep Incoming and Keep Both. A click with
+  nothing selected, and every row of a commit's or a worktree's page (plain
+  sections), keep the text view's menu as it was.
+- **Code.** `ChangeReviewPage` has its own key controller (F7 is not a window
+  action on GTK: the compare view takes it the same way) calling
+  `stepBlock(forward)`, which asks the core's `ChangeReview::stepBlock` from
+  the current block when that is on screen, else from the top row (the
+  Mac's rule). A capture-phase right-click gesture (never claimed) runs
+  `menuItems(row)`, which reads the selection's changed rows
+  (`RowKind::Removed`/`Added`, their `oldLine`/`newLine`, the first file's
+  only) and `installMenu()`, which sets the text view's extra menu (a
+  section of `review.itemN` actions, the window's own extra menu kept below).
+  `runOp` became `runOpOn(data, op, file, block, oldLines, newLines)`: a
+  block uses `blockResult`, lines (`block < 0`) `ChangeReview::plan(.., true)`,
+  `anyChanged` and `linesResult`; both then take the block buttons' road
+  (the same question for Discard, the Trash copy and Undo Discard,
+  `writeIndex`, the checks that the file and index are as read). The menu
+  holds the read it was made from. `menuItems` and `runMenuItem` are public
+  for the checks.
+- **Not done.** The Mac's menu also has Stage Change, Discard Change, Open
+  File and Show Side by Side for the clicked row; GTK has the buttons for
+  those, so they are not repeated. Keep acts on the clicked row's conflict,
+  as the Mac's does.
+- **Checks.** None added here; the next bite adds them to `git_review`.
+  Smoke-checked with a throwaway suite: a file changed in two places and a
+  second file, F7 three times and around the end and Shift+F7 back, then one
+  added line of a two-line change selected and Stage Selected Lines run, the
+  index holding only that line.
