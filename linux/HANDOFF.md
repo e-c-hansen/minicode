@@ -8655,10 +8655,15 @@ on GTK: docs/notes/session-host.md, "GTK's tabs save through the host
   the two disagree; the tells above are what keep them agreeing.
 - **Not done.** Save As from a page, and the host following the disk,
   as on the Mac (session-host.md's "Still to do").
-- **Checks.** None committed here; the next bite gives GTK's
-  `host_reattach` the Mac's stage 7 part. Smoke-checked with a throwaway
-  suite: in process, Ctrl+S written by the host (a viewer on the host
-  heard the write with the file's stamp, the host counting it saved);
-  over a headless host, a page's guest saving a file the window showed
-  with typing in it, the tab clean and in step with the file's stamp,
-  then the window's Ctrl+S with no question, heard by the guest.
+- **Checks.** `host_reattach`'s stage 7 part, on a fresh headless host (its header):
+  a page's guest over the socket saves a file the window shows with typing
+  in it, the window's tab and its strip dot clean and in step with the
+  file's stamp, the host counting it saved; the window types and saves
+  (Ctrl+S) with no question and the guest hears the host's write with the
+  file's stamp; a UTF-16 file saved from the window byte for byte with its
+  mark; an agent's write, then Keep Mine and Ctrl+S, the window's text
+  written over it; a directory where the file was, which the host refuses
+  ("is not a regular file on disk"), the save dialog showing that sentence
+  and the tab still unsaved; the host killed, then Ctrl+S written by the
+  window itself. Not checked: an untitled buffer's Save As refused (its
+  path put back), which needs the file chooser.
