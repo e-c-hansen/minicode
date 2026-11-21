@@ -1,6 +1,7 @@
 // ChangeReviewPage.cpp — see ChangeReviewPage.h.
 #include "ChangeReviewPage.h"
 
+#include <climits>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -198,6 +199,7 @@ std::string ChangeReviewPage::title() const {
 
 ChangeReviewPage::~ChangeReviewPage() {
     *alive_ = false;
+    if (baseExtra_) g_object_unref(baseExtra_);
     if (settleTick_) gtk_widget_remove_tick_callback(view_, settleTick_);
     if (worktree_.empty() && commit_.empty() && panelAlive_ && *panelAlive_) {
         panel_->onReviewRefresh = nullptr;
@@ -336,6 +338,18 @@ void ChangeReviewPage::build() {
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
     g_signal_connect(click, "released", G_CALLBACK(onPressed), this);
     gtk_widget_add_controller(view_, GTK_EVENT_CONTROLLER(click));
+
+    GtkEventController* keys = gtk_event_controller_key_new();
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(onKey), this);
+    gtk_widget_add_controller(view_, keys);
+
+    // The right click: seen first (capture) and never claimed, so the text
+    // view still makes its own menu, with these items added before it shows.
+    GtkGesture* right = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(right), GDK_BUTTON_SECONDARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(right), GTK_PHASE_CAPTURE);
+    g_signal_connect(right, "pressed", G_CALLBACK(onRightPressed), this);
+    gtk_widget_add_controller(view_, GTK_EVENT_CONTROLLER(right));
 
     // A plain row's height, which the layout sizes a picture's rows by.
     PangoLayout* line = gtk_widget_create_pango_layout(view_, "Xg");
@@ -1064,6 +1078,162 @@ GtkWidget* ChangeReviewPage::buttonWidget(const std::string& title, size_t row) 
     return nullptr;
 }
 
+// ------------------------------------------------------- F7 and the menu
+bool ChangeReviewPage::stepBlock(bool forward) {
+    if (!data_ || data_->page.blockRows.empty()) return false;
+    const long top = topRow();
+    long from;
+    if (currentBlockRow_ >= 0 && (size_t)currentBlockRow_ < rowChar_.size() &&
+        rowScreenY((size_t)currentBlockRow_) >= 0 &&
+        rowScreenY((size_t)currentBlockRow_) < paneHeight())
+        from = currentBlockRow_;
+    else
+        from = forward ? top - 1 : top;
+    const long next = ChangeReview::stepBlock(data_->page, from, forward);
+    if (next < 0) return false;
+    currentBlockRow_ = next;
+    // A quarter of the way down, as the compare view puts a change.
+    scrollRowTo((size_t)next, paneHeight() / 4);
+    GtkTextIter it;
+    gtk_text_buffer_get_iter_at_offset(buffer_, &it, rowChar_[(size_t)next]);
+    gtk_text_buffer_place_cursor(buffer_, &it);
+    return true;
+}
+
+gboolean ChangeReviewPage::onKey(GtkEventControllerKey*, guint key, guint, GdkModifierType mods,
+                                 gpointer selfp) {
+    auto* self = static_cast<ChangeReviewPage*>(selfp);
+    if (key != GDK_KEY_F7) return FALSE;
+    if (!self->stepBlock(!(mods & GDK_SHIFT_MASK))) gtk_widget_error_bell(self->view_);
+    return TRUE;
+}
+
+std::vector<std::string> ChangeReviewPage::menuItems(long row) {
+    menu_.clear();
+    if (data_ && !data_->page.rows.empty()) {
+        auto d = data_;
+        const ChangeReview::Page& p = d->page;
+        GtkTextIter a, b;
+        long fileOfLines = -1, firstLineRow = -1;
+        std::vector<int> oldLines, newLines;
+        if (gtk_text_buffer_get_selection_bounds(buffer_, &a, &b)) {
+            const int from = gtk_text_iter_get_offset(&a), to = gtk_text_iter_get_offset(&b);
+            for (size_t r = 0; r < p.rows.size() && r < rowChar_.size(); r++) {
+                const int rs = rowChar_[r];
+                const int re = r + 1 < rowChar_.size() ? rowChar_[r + 1] : INT_MAX;
+                if (re <= from || rs >= to) continue;
+                const PageRow& pr = p.rows[r];
+                if (pr.kind != RowKind::Removed && pr.kind != RowKind::Added) continue;
+                if (fileOfLines < 0) {
+                    fileOfLines = (long)pr.file;
+                    firstLineRow = (long)r;
+                }
+                if ((long)pr.file != fileOfLines) continue;
+                if (pr.kind == RowKind::Removed) oldLines.push_back(pr.oldLine);
+                else newLines.push_back(pr.newLine);
+            }
+        }
+        if (fileOfLines >= 0 && (size_t)fileOfLines < d->read.diffs.size()) {
+            const size_t fi = (size_t)fileOfLines, at = (size_t)firstLineRow;
+            const Section s = d->read.diffs[fi].file.section;
+            auto add = [&](const char* title, Op op) {
+                menu_.push_back({title, [this, d, op, fi, at, oldLines, newLines] {
+                                     rememberActedRow(at, op);
+                                     runOpOn(d, op, fi, -1, oldLines, newLines);
+                                 }});
+            };
+            if (s == Section::Changes) {
+                add("Stage Selected Lines", Op::Stage);
+                add("Discard Selected Lines\u2026", Op::Discard);
+            } else if (s == Section::Staged) {
+                add("Unstage Selected Lines", Op::Unstage);
+            }
+        }
+        if (row >= 0 && (size_t)row < p.rows.size() && p.rows[(size_t)row].kind == RowKind::Conflict &&
+            d->read.diffs[p.rows[(size_t)row].file].file.section == Section::Changes) {
+            const size_t fi = p.rows[(size_t)row].file;
+            const long block = p.rows[(size_t)row].block;
+            for (MergeConflicts::Keep k : {MergeConflicts::Keep::Current,
+                                           MergeConflicts::Keep::Incoming,
+                                           MergeConflicts::Keep::Both})
+                menu_.push_back({k == MergeConflicts::Keep::Current    ? "Keep Current"
+                                 : k == MergeConflicts::Keep::Incoming ? "Keep Incoming"
+                                                                       : "Keep Both",
+                                 [this, k, fi, block] { keepConflict(k, fi, block); }});
+        }
+    }
+    std::vector<std::string> out;
+    for (const MenuItem& m : menu_) out.push_back(m.title);
+    return out;
+}
+
+bool ChangeReviewPage::runMenuItem(const std::string& title) {
+    for (const MenuItem& m : menu_)
+        if (m.title == title) {
+            auto run = m.run;
+            run();
+            return true;
+        }
+    return false;
+}
+
+void ChangeReviewPage::onRightPressed(GtkGestureClick*, int, double x, double y, gpointer selfp) {
+    auto* self = static_cast<ChangeReviewPage*>(selfp);
+    long row = -1;
+    if (self->data_) {
+        int bx = 0, by = 0;
+        gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(self->view_), GTK_TEXT_WINDOW_WIDGET,
+                                              (int)x, (int)y, &bx, &by);
+        GtkTextIter it;
+        gtk_text_view_get_iter_at_location(GTK_TEXT_VIEW(self->view_), &it, bx, by);
+        row = (long)self->rowAtOffset(gtk_text_iter_get_offset(&it));
+    }
+    self->menuItems(row);
+    self->installMenu();
+}
+
+// The items as the text view's extra menu (after its own, Copy among them),
+// with whatever extra menu the window gave it kept below them.
+void ChangeReviewPage::installMenu() {
+    if (!baseKept_) {
+        baseExtra_ = gtk_text_view_get_extra_menu(GTK_TEXT_VIEW(view_));
+        if (baseExtra_) g_object_ref(baseExtra_);
+        baseKept_ = true;
+    }
+    if (menu_.empty()) {
+        gtk_text_view_set_extra_menu(GTK_TEXT_VIEW(view_), baseExtra_);
+        return;
+    }
+    using Box = std::pair<ChangeReviewPage*, size_t>;
+    static auto runItem = +[](GSimpleAction*, GVariant*, gpointer p) {
+        auto* box = static_cast<Box*>(p);
+        if (box->second < box->first->menu_.size()) {
+            auto run = box->first->menu_[box->second].run;
+            run();
+        }
+    };
+    static auto freeBox = +[](gpointer p, GClosure*) { delete static_cast<Box*>(p); };
+    GSimpleActionGroup* group = g_simple_action_group_new();
+    GMenu* items = g_menu_new();
+    for (size_t i = 0; i < menu_.size(); i++) {
+        const std::string name = "item" + std::to_string(i);
+        GSimpleAction* act = g_simple_action_new(name.c_str(), nullptr);
+        g_signal_connect_data(act, "activate", G_CALLBACK(runItem), new Box{this, i}, freeBox,
+                              (GConnectFlags)0);
+        g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(act));
+        g_object_unref(act);
+        g_menu_append(items, menu_[i].title.c_str(), ("review." + name).c_str());
+    }
+    GMenu* model = g_menu_new();
+    g_menu_append_section(model, nullptr, G_MENU_MODEL(items));
+    if (baseExtra_) g_menu_append_section(model, nullptr, baseExtra_);
+    gtk_widget_insert_action_group(view_, "review", G_ACTION_GROUP(group));
+    gtk_text_view_set_extra_menu(GTK_TEXT_VIEW(view_), G_MENU_MODEL(model));
+    g_object_unref(items);
+    g_object_unref(model);
+    g_object_unref(group);
+}
+
 // ------------------------------------------------------------------ actions
 void ChangeReviewPage::say(const std::string& text, bool ok) {
     message_ = text;
@@ -1160,19 +1330,30 @@ void ChangeReviewPage::runApply(std::shared_ptr<Data> d, const std::string& main
 }
 
 void ChangeReviewPage::runOp(Op op, size_t fi, long block) {
-    auto d = data_;
-    if (!d || fi >= d->read.diffs.size() || block < 0) {
+    runOpOn(data_, op, fi, block, {}, {});
+}
+
+void ChangeReviewPage::runOpOn(std::shared_ptr<Data> d, Op op, size_t fi, long block,
+                               std::vector<int> oldLines, std::vector<int> newLines) {
+    const bool lines = block < 0 && !(oldLines.empty() && newLines.empty());
+    if (!d || fi >= d->read.diffs.size() || (block < 0 && !lines)) {
         actedPending_ = false;
         return;
     }
     const FileDiff& fd = d->read.diffs[fi];
-    const GitUi::ActionPlan plan = ChangeReview::plan(fd, op, false);
+    const GitUi::ActionPlan plan = ChangeReview::plan(fd, op, lines);
     if (!plan.refusal.empty()) {
         actedPending_ = false;   // refused: nothing moves
         finish(plan.refusal, false);
         return;
     }
-    const std::u16string result = ChangeReview::blockResult(fd, (size_t)block, op);
+    if (lines && !ChangeReview::anyChanged(fd, oldLines, newLines)) {
+        actedPending_ = false;
+        finish("No changed line is selected.", false);
+        return;
+    }
+    const std::u16string result = lines ? ChangeReview::linesResult(fd, oldLines, newLines, op)
+                                        : ChangeReview::blockResult(fd, (size_t)block, op);
     auto go = [this, op, result, fi, d, plan, alive = alive_] {
         if (!*alive) return;
         if (op == Op::Discard) writeDiscard(result, fi, d, plan);
