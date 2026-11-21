@@ -8604,3 +8604,61 @@ The last two items of PARITY 2.9's review page.
   tab closes no timer (one short pause, a negative check).
 - **Not done.** Pictures scrolled away keep a 100 ms wake-up timer while
   the page is mapped, which does no drawing.
+
+### 132. Tabs save through the host (stage 7; the Mac's writeTextThroughHost:, tab:writtenByHost: and tab:dirtyFromHost:; November 2026)
+
+The Mac's "tabs save through the host" (stage 7's second write, its #294)
+on GTK: docs/notes/session-host.md, "GTK's tabs save through the host
+(stage 7's third write)".
+
+- **What a user meets.** Nothing new on screen: Ctrl+S, Save All, the
+  close question's Save and auto-save write as before, with the same
+  questions, the same failure dialog ("Could not save “x”") and the same
+  note when a Windows-1252 file is saved as UTF-8, but the session's host
+  writes the file. What changes: an editable page of a headless host
+  (`mutible host`, `attach --web --edit`) may now save a file a GTK
+  window shows, and the window's tab takes that save as its own (clean,
+  no question at the next Ctrl+S, the file watch not taking it for a
+  change outside); and the tab's dot follows the host's count while the
+  tab is the host's text.
+- **Code.** `SessionLink::Link::makeClient` says flag 16 in every Hello
+  (`setSavesThroughHost`) and hears DocDirty and the host's writes,
+  handed to the document by its id (`Link::listen`, `DocNotices`, which
+  `Document` implements; it enrols when made and on `rehost`).
+  `Document::save` keeps its two refusals (a link to nothing, a file not
+  writable), then, when `hostSavesFile()` (a host whose Welcome has flag
+  2, not lost, not detached), `saveThroughHost`: the turn's step closed,
+  an untitled buffer's path told first (put back on failure),
+  `requestSave` with overwrite and the encoding's name, `settle(10000)`
+  (the client's wait, no main-loop turn), then the encoding written, the
+  host's note, the text the file holds (the buffer's when in step, else
+  the file's) and `rememberDisk` with the answer's stamp; no DocSaved
+  after it. Refused or unanswered: false with the host's sentence. A host
+  lost meanwhile: the window's own write. `hostWrote` and `hostDirty`
+  keep what they heard and take it at the top of the next turn
+  (`takeHostWrite`: the path and the stamp must still be the ones
+  written; `takeHostDirty`: `edits_` unmoved, not untitled, gone, unread
+  or loading). `DocumentHost::documentWrittenByHost` runs the editor's
+  save tail, now `Editor::tookSave` (a preview tab kept, the LaTeX
+  previews and the language server told, the strip and the title).
+  Where the saved text moves without a host write the host is told
+  (`tellHostSaved`): the window's own write, a clean tab following the
+  disk and Reload (`applyDiskText`), a change on disk asked about, a held
+  tab read (the last two with the file's text, DocSaved flag 1).
+- **Traps.** The host acknowledges an edit before it sends the DocDirty
+  that edit caused, so a reload's edit followed by its DocSaved reaches
+  the window as "unsaved" with nothing unconfirmed, before the DocSaved's
+  "saved" (found by reading, not seen): `hostDirty` drops an "unsaved"
+  heard with no edit since the window last told the host its saved text
+  (`toldSavedAt_`). GTK's own
+  compare runs on every edit, so the host's count only matters where
+  the two disagree; the tells above are what keep them agreeing.
+- **Not done.** Save As from a page, and the host following the disk,
+  as on the Mac (session-host.md's "Still to do").
+- **Checks.** None committed here; the next bite gives GTK's
+  `host_reattach` the Mac's stage 7 part. Smoke-checked with a throwaway
+  suite: in process, Ctrl+S written by the host (a viewer on the host
+  heard the write with the file's stamp, the host counting it saved);
+  over a headless host, a page's guest saving a file the window showed
+  with typing in it, the tab clean and in step with the file's stamp,
+  then the window's Ctrl+S with no question, heard by the guest.

@@ -172,6 +172,19 @@ void Link::makeClient() {
     // The windows back up their unsaved files themselves (Persistence.h), so
     // a headless host keeps no backup of a document while one has it open.
     client_->setKeepsBackups(true);
+    // Its tabs save through a host that saves for apps (stage 7: Hello flag
+    // 16, so a page may save a file a window shows), and hear the host's
+    // count of each document as unsaved and its writes for others, which go
+    // to the document by its id (listen). On the main loop, inside dispatch.
+    client_->setSavesThroughHost(true);
+    client_->hearDirty([this](Shared::DocId doc, bool dirty) {
+        auto it = notices_.find(doc);
+        if (it != notices_.end()) it->second->hostDirty(dirty);
+    });
+    client_->hearWrites([this](Shared::DocId doc, std::uint64_t v, const Json& json) {
+        auto it = notices_.find(doc);
+        if (it != notices_.end()) it->second->hostWrote(v, json);
+    });
     // The host's messages arrive on its thread (or the socket's reader);
     // the main loop dispatches them, once per batch.
     std::shared_ptr<Wake> w = wake_;
@@ -306,6 +319,11 @@ Link::~Link() {
     socket_.reset();
     host_.reset();                   // the in-process host's thread joined
     client_.reset();
+}
+
+void Link::unlisten(Shared::DocId doc, DocNotices* n) {
+    auto it = notices_.find(doc);
+    if (it != notices_.end() && it->second == n) notices_.erase(it);
 }
 
 void Link::detach() {

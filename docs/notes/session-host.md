@@ -279,6 +279,16 @@ top of a turn, never inside a text system callback.
   the file's text now: DocSaved flag 1 with that text (`savedAs:`), sent
   only to a host whose Welcome has flag 2, since an older host would take
   it for "the buffer was written".
+- **The host acknowledges an edit before the DocDirty it causes**
+  (`Host::handle` broadcasts, then `tellDirty`), so on GTK a reload's
+  edit followed by its DocSaved reaches the document as "unsaved" with
+  nothing unconfirmed (the ack in, the DocSaved out), before the
+  DocSaved's "saved": taken at the next turn, it would flash the dot.
+  `Document::hostDirty` drops an "unsaved" heard with no edit since the
+  window last told the host its saved text (`toldSavedAt_`, set by
+  `tellHostSaved`). GTK's own compare runs on every edit, so the host's
+  count matters only where the two disagree, and those tells are what
+  keep them agreeing.
 - **The window's edited mark is every tab's** (`documentEdited` is
   `hasUnsavedChanges`): a check that one tab became clean reads that
   tab's `dirty` and its strip item's dot, never the window's mark, which
@@ -619,10 +629,11 @@ document, terminal (dying ones included) or window is held
   below): clipped when larger, panned to the cursor since step 3, and at
   the pty's own grid when smaller, so plain output wraps where the pty
   wraps (2026-11-18, "VTE pans").
-- Saving, dirty and the disk are the app's while one of its windows has
-  the document open; the host saves what none has, for a browser's page
-  (stage 7's first write, "Saving through the host", below), and follows
-  the disk for what none has ("The host watches the disk", below). Backups are
+- The disk's questions are the app's while one of its windows has the
+  document open; the host writes the file, for a browser's page (stage
+  7's first write, "Saving through the host", below) and for the Mac's
+  and GTK's windows (its second and third writes), and follows the disk
+  for what no window has ("The host watches the disk", below). Backups are
   the app's while one of its windows has the document open, and the
   headless host's once none has (step 3, below).
 
@@ -2640,8 +2651,9 @@ host does not have.
   is there, so a link out is refused (`outside`) and a link to nothing too
   (`notfile`). And while an app's window that saves by itself has the
   document open (a seat of a renderer whose Hello had flag 4 and not 16,
-  `shownByAppSavingItself`: GTK's; the Mac's save through the host since
-  stage 7's second write), the guest's save is refused (`app`, "x is open
+  `shownByAppSavingItself`: neither app's now, since the Mac's and
+  GTK's tabs save through the host, stage 7's second and third writes;
+  an app from before them), the guest's save is refused (`app`, "x is open
   in a mutible window: save it there"): two writers would each keep a
   stamp the other's write moves, and the app has its own questions. A
   renderer that is neither guest nor reader (an app) is not held to the
@@ -2675,9 +2687,9 @@ host does not have.
   `why`.
 - **The Mac** (since stage 7's second write, below): its page still
   saves through the window (`Options::save`, the disk questions on its
-  screen), and its tabs' saves are now the host's writes. GTK is
-  unchanged: it writes its files itself and tells the host `DocSaved`,
-  so a page's save of a file a GTK window shows is still refused.
+  screen), and its tabs' saves are now the host's writes. GTK's too
+  since stage 7's third write (below), so a page may save a file a GTK
+  window shows.
 
 #### Checks
 
@@ -2737,8 +2749,9 @@ document, and `writeText:toTab:interactive:` writes as before.
   Mine), `Document::markSavedAs`.
 - **The rule for a guest's save** is now "refused while an app that saves
   by itself has it open" (`shownByAppSavingItself`: a seat of a renderer
-  with flag 4 and not 16, GTK's today); the Mac's windows no longer hold
-  a page off.
+  with flag 4 and not 16, an app from before stage 7); the Mac's windows
+  no longer hold a page off, nor GTK's since its tabs save through the
+  host (stage 7's third write, below).
 - **The write** (`EditorController+Session.mm`, `writeTextThroughHost:`):
   everything before it is the window's as it was: Save As's name,
   `mayWriteTab:` (Keep Mine, Reload, Cancel; gone asks), Save All's
@@ -2810,6 +2823,79 @@ changed and deleted files, and auto-save through it. Not run here (no
 GUI on this machine for the builder): every GUI check above; the dot's
 look and timing on screen need the owner's eyes.
 
+### GTK's tabs save through the host (stage 7's third write)
+
+The Mac's second write on GTK (linux/HANDOFF.md item 132). GTK always has
+a host (in process by default, headless with `MUTIBLE_HOST=socket` or
+`editor.session-host = headless`), so every GTK save of a tab with a host
+document is the host's write: the host is the file's one writer, and a
+page may save a file a GTK window shows.
+
+- **The link** (`linux/src/SessionLink.cpp`, `makeClient`): every client
+  says flag 16 in its Hello (`setSavesThroughHost`, with 4), and hears
+  DocDirty and the host's writes (`hearDirty`, `hearWrites`), handed to the
+  document by its id (`Link::listen`, `DocNotices`; each document enrols
+  when made and on `rehost`, and unenrols when it goes).
+- **The write** (`Document::save`, `saveThroughHost`): everything before
+  it is the window's as it was (keep-sorted on the tab on show, organize
+  and format on save, the LaTeX inputs) and GTK's own two refusals stay
+  the window's (a link to nothing, a file not writable), since the host,
+  for an app, writes through both. Then, when `hostSavesFile()` (open on
+  a host whose Welcome has flag 2, not lost, not detached), the turn's
+  step closes (`closeOutside`), an untitled buffer the host held is given
+  its path (`tellHostPath`, put back with `setPath` when the write
+  fails), `requestSave` with overwrite and the tab's encoding
+  (`FolderSearch::encodingName`) goes behind every edit, and `settle(10
+  s)` waits: the client's own wait, which takes the host's messages and
+  never turns the main loop, so nothing of the window's reenters. Refused
+  or unanswered: `save` is false with the host's sentence, so Ctrl+S's
+  dialog ("Could not save “x”") and auto-save's status line say it as
+  they said GTK's own errors. A host lost meanwhile: the window writes it
+  itself, as before stage 7. Written: the encoding from `encodingName`,
+  the host's note (the words GTK's own save used) for the status bar, the
+  text the file holds (the buffer's when the host wrote the version the
+  buffer is at with nothing unconfirmed, else the file's, read), and
+  `rememberDisk` with the answer's stamp; then `Editor::saveDocument`'s
+  tail as before (`tookSave`: a preview tab kept, the LaTeX previews and
+  the language server told, the strip and the title), and the backups'
+  planner drops the clean tab's backup as after its own write.
+- **A page's save** (`hostWrote`, then `takeHostWrite` at the top of the
+  next turn, the latest heard): the text written when the buffer was the
+  host's at that version, the path (renamed since: nothing), the file's
+  stamp still the one written (else a change outside, for the disk
+  checks), the encoding, the text (or the file's, read), `rememberDisk`
+  with the host's stamp, and `DocumentHost::documentWrittenByHost`
+  (`tookSave`). The file watch's check then finds the file's text the
+  saved text: no change, no question, and the next Ctrl+S asks nothing.
+- **Dirty from the host** (`hostDirty`, then `takeHostDirty`): heard
+  only with nothing unconfirmed, taken only if `edits_` has not moved
+  since, never for an untitled buffer (`hostPath_` not the path), a file
+  never read or gone, or one loading or not read yet. GTK's own compare
+  runs on every edit, so this only matters where the two disagree, which
+  the window keeps from happening by telling the host wherever its saved
+  text moves without a host write (`tellHostSaved`): its own write (a
+  host without flag 2, or one lost), a clean tab following the disk and
+  Reload (`applyDiskText`: DocSaved), a change on disk asked about
+  (`checkExternalChange`: DocSaved flag 1 with the file's text), a held
+  tab read (`attachHeld`: the same).
+- **Auto-save** writes through the host with no question
+  (`Persistence::autoSaveNow` checks the disk first, as before); quitting
+  writes backups, not files, as before.
+
+#### Checks
+
+None committed yet (the next bite gives GTK's `host_reattach` the Mac's
+stage 7 part). Since every GTK save of a tab now goes through the host,
+in process by default, the whole GTK run and CI's loopback pass exercise
+it (save, backups, format, latin1_files's note, auto_save). Smoke-checked
+with a throwaway suite: in process, Ctrl+S written by the host (a viewer
+heard the write with the file's stamp); over a headless host, a page's
+guest saving a file the window showed with typing in it, the tab clean
+and in step with the file's stamp, then the window's Ctrl+S with no
+question, heard by the guest. `MUTIBLE_HOST=socket` for the backups
+suite fails as it did before this (its SIGKILLed children leave their
+documents on the headless host); CI runs no such pass.
+
 ### The host watches the disk (stage 7)
 
 Before this, a headless host's page read its tree and Source Control again
@@ -2823,7 +2909,8 @@ with them.
   (the Welcome says it, flag 4): `mutible host` (`HostOptions::watchDisk`,
   set by `runHost`; the checks choose, default off) and the Mac's own
   in-process host (`SessionLink.mm`'s `Start`, for a window's page). GTK's
-  in-process host does not (it has no page server yet); a GTK window on a
+  in-process host does not yet, though it serves a page too
+  (linux/src/SessionBrowser.cpp); a GTK window on a
   headless host has the headless host's watching, as any renderer does.
 - **What it watches** (`Host::watchRoots`, handed to the watcher whenever
   `watchGeneration` moves): the headless host's folder and every window
@@ -2952,16 +3039,18 @@ and no GUI suite checks the Mac's own host watching for its page.
 
 ### Still to do
 
-- **Stage 7, after the watching** (in order of value): GTK's tabs
-  saving through the host the same way (its Hello's flag 16, its writer
-  asking the host), so a page may save what a GTK window shows; the
-  windows hearing the host's watching instead of their own streams
-  ("The host watches the disk", what could move); Save As and a new
-  file's name from the page (the Mac's Save As writes its new path
-  through the host now, but the page cannot name a file); Quick Open's
-  list and Find in Folder as host reads; the heavier reads, the listings
-  FsChanged carries, and the write on a worker rather than the host's
-  thread.
+- **Stage 7, after the watching and the Mac's and GTK's saves** (in order
+  of value): the GUI checks of GTK's saves through the host (a page's
+  guest saving a file a GTK window shows, the window's save heard as the
+  host's write, the dot following the host's count), as host_reattach has
+  them on the Mac; GTK's in-process host watching the disk for its page,
+  as the Mac's does; the windows hearing the host's watching instead of
+  their own streams ("The host watches the disk", what could move); Save
+  As and a new file's name from the page (the Mac's Save As writes its new
+  path through the host now, but the page cannot name a file); Quick
+  Open's list and Find in Folder as host reads; the heavier reads, the
+  listings FsChanged carries, and the write on a worker rather than the
+  host's thread.
 - Lines are re-sent whole per edit; a long line typed into from a browser
   wants character splices.
 - No snapshot or patch messages exist yet: the view polls the host's state

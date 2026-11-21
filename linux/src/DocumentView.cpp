@@ -14,6 +14,7 @@
 #include "MultiEdit.h"
 #include "SemanticColors.h"
 #include "WrapIndentTags.h"
+#include "SessionFiles.h"
 #include "SessionLink.h"
 #include "MarkdownTasks.h"
 #include "StartupLog.h"
@@ -192,7 +193,11 @@ Document::Document(DocumentHost* host, DocumentTags* tags, std::shared_ptr<Sessi
     // from the start, so typing into a new file is followed too. A held
     // one's text comes back as one insertion (attachHeld waits for it).
     client().open(id_, "", "", this);
+    enrol();
 }
+
+void Document::enrol() { link_->listen(id_, this); }
+void Document::unenrol() { link_->unlisten(id_, this); }
 
 void Document::attachHeld(const std::string& path, bool hostNamed) {
     clearSource();
@@ -213,7 +218,12 @@ void Document::attachHeld(const std::string& path, bool hostNamed) {
     const std::string text = this->text();
     sniffCsv(text);
     std::string disk;
-    if (readText(path, disk, &encoding_) == Read::Ok) rememberDisk(disk);
+    if (readText(path, disk, &encoding_) == Read::Ok) {
+        rememberDisk(disk);
+        // The buffer counts unsaved against the file as it is now, on the
+        // host too (stage 7: the host's count and the tab's dot agree).
+        tellHostSaved(&disk);
+    }
     noteLargeFile(text);
     GtkTextIter start;
     gtk_text_buffer_get_start_iter(buffer_, &start);
@@ -239,8 +249,10 @@ void Document::rehost(std::shared_ptr<SessionLink::Link> link) {
     if (outsideIdle_) g_source_remove(outsideIdle_);
     outsideIdle_ = 0;
     outsideOpen_ = false;
+    unenrol();
     link_ = std::move(link);
     id_ = client().newId();
+    enrol();
     hostPath_.clear();
     if (kind_ != Kind::Text) return;
     // The file's text as last read or saved is the host's saved text, and
@@ -284,6 +296,10 @@ Document::~Document() {
     // Saved, or let go when asked: its unsaved text is not kept any more. A
     // crash or a SIGKILL never gets here, and leaves the backup.
     if (backup_.written) BackupStore::shared().remove(backup_.id);
+    unenrol();
+    if (writeIdle_) g_source_remove(writeIdle_);
+    if (dirtyIdle_) g_source_remove(dirtyIdle_);
+    writeIdle_ = dirtyIdle_ = 0;
     if (!detached_ && client().isOpen(id_)) client().close(id_);
     folds_.reset();
     wrap_.reset();   // while the buffer is there to leave
@@ -551,14 +567,20 @@ void Document::spliceText(const std::string& to) {
 // equal counts compare the bytes, a few milliseconds at the 16 MB limit.
 // Inside a user action (a paste, typing over a selection, a reload) the
 // comparison waits for its end.
-void Document::rememberDisk(const std::string& content) {
+void Document::rememberDisk(const std::string& content, const FolderSearch::FileStamp* written) {
     diskKnown_ = true;
     saved_ = content;
     savedChars_ = g_utf8_strlen(content.data(), (gssize)content.size());
     diskQuestion_ = false;
     diskStamp_ = DiskStamp();
     struct stat st;
-    if (!path_.empty() && stat(path_.c_str(), &st) == 0) {
+    if (written && written->exists) {
+        // The stamp the write left, so a writer after it is a change.
+        diskStamp_.exists = true;
+        diskStamp_.mtime = (double)written->mtimeSec + written->mtimeNsec / 1e9;
+        diskStamp_.inode = written->inode;
+        diskStamp_.size = (int64_t)written->size;
+    } else if (!path_.empty() && stat(path_.c_str(), &st) == 0) {
         diskStamp_.exists = true;
         diskStamp_.mtime = (double)st.st_mtim.tv_sec + st.st_mtim.tv_nsec / 1e9;
         diskStamp_.inode = (uint64_t)st.st_ino;
@@ -796,13 +818,6 @@ bool Document::save(std::string* error) {
     if (!canSave()) return true;
     saveNote_.clear();
     const std::string body = text();
-    // In the file's encoding, as read. A character Windows-1252 cannot store
-    // (an arrow, an emoji) has the file written as UTF-8, and said so: never
-    // a '?' in its place, never a question on every save (the Mac's C3b).
-    FileEncoding encoding = encoding_;
-    std::string unheld;
-    if (!FolderSearch::canEncode(body, encoding.encoding, &unheld)) encoding = FileEncoding();
-    const std::string bytes = FolderSearch::encodeFileText(body, encoding.encoding, encoding.bom);
 
     // Write through a symlink to the file it names (a dotfile repo links its
     // files into place), and keep the file's permissions. The write itself is
@@ -821,15 +836,35 @@ bool Document::save(std::string* error) {
     }
     const std::string target = resolved ? resolved : path_;
     free(resolved);
+    struct stat st;
+    const bool exists = stat(target.c_str(), &st) == 0;
+    if (exists && access(target.c_str(), W_OK) != 0) {
+        if (error) *error = std::string("The file is not writable: ") + strerror(errno);
+        return false;
+    }
+    // Stage 7: on a host that saves for apps, the host writes it by the same
+    // rules (SessionFiles.h's saveDocument: through a link, hard links and
+    // other owners in place, the encoding kept), after everything the
+    // window asked, so it is the file's one writer. A host lost meanwhile:
+    // written here, as before.
+    if (hostSavesFile()) {
+        bool lost = false;
+        if (saveThroughHost(body, error, &lost)) return true;
+        if (!lost) return false;
+        if (error) error->clear();
+    }
+
+    // In the file's encoding, as read. A character Windows-1252 cannot store
+    // (an arrow, an emoji) has the file written as UTF-8, and said so: never
+    // a '?' in its place, never a question on every save (the Mac's C3b).
+    FileEncoding encoding = encoding_;
+    std::string unheld;
+    if (!FolderSearch::canEncode(body, encoding.encoding, &unheld)) encoding = FileEncoding();
+    const std::string bytes = FolderSearch::encodeFileText(body, encoding.encoding, encoding.bom);
     int mode = 0666;
     bool inPlace = false;
-    struct stat st;
-    if (stat(target.c_str(), &st) == 0) {
+    if (exists) {
         mode = st.st_mode & 07777;
-        if (access(target.c_str(), W_OK) != 0) {
-            if (error) *error = std::string("The file is not writable: ") + strerror(errno);
-            return false;
-        }
         // The atomic rename puts a new file in the old one's place. That new
         // file belongs to us and has no other names, so it would cut a hard
         // link, take a group-writable file away from its owner, and fail in
@@ -864,8 +899,174 @@ bool Document::save(std::string* error) {
     encoding_ = encoding;
     rememberDisk(body);   // so this save is not taken for someone else's
     markDirty(false);
-    client().saved(id_);
+    tellHostSaved(nullptr);
     return true;
+}
+
+// ---------------------------------------------------------------- saving through the host
+//
+// Stage 7 (docs/notes/session-host.md, "GTK's tabs save through the host"),
+// the Mac's writeTextThroughHost: and MCSessionDoc's saveOnHostEncoding:bom:.
+// The window asks everything it asks first (keep-sorted, organize and format
+// on save, the link and permission checks above); the host then writes the
+// document's text, which is the buffer's (every edit goes before the
+// DocSave), in the document's encoding over whatever is on disk, so the host
+// is the file's one writer and a page may save it too.
+
+bool Document::hostSavesFile() const {
+    return kind_ == Kind::Text && !detached_ && !link_->lost() && client().isOpen(id_) &&
+           client().hostSavesForApps();
+}
+
+// Waits for the answer, at most 10 s (in one process a round trip through the
+// host's thread; a headless host's over its socket). The wait takes only the
+// host's messages, never a turn of the main loop, but someone's edits it
+// puts in the buffer meanwhile are why the text the file holds is the
+// buffer's only when the host wrote the version the buffer is at.
+bool Document::saveThroughHost(const std::string& body, std::string* error, bool* lostMeanwhile) {
+    Shared::Client& c = client();
+    closeOutside();   // what this turn recorded goes first
+    // An untitled buffer the host held is given its file's path first: the
+    // host writes where its document says. Put back if the write fails.
+    const std::string hostPathBefore = hostPath_;
+    tellHostPath();
+    const uint64_t req =
+        c.requestSave(id_, 0, true, FolderSearch::encodingName(encoding_.encoding, encoding_.bom));
+    Shared::Client::SaveAnswer a;
+    const bool answered = req && c.settle(10000) && c.saveAnswer(req, &a);
+    if (!answered || !a.ok) {
+        if (hostPath_ != hostPathBefore && !c.lost()) {
+            hostPath_ = hostPathBefore;
+            c.setPath(id_, hostPathBefore);
+        }
+        if (!answered && c.lost()) {   // the window writes it, as before stage 7
+            *lostMeanwhile = true;
+            return false;
+        }
+        const std::string why = answered ? a.json["why"].asString() : std::string();
+        if (!answered)
+            g_printerr("mutible: the session's host did not answer a save of %s\n", path_.c_str());
+        if (error)
+            *error = !answered    ? "The session's host did not answer."
+                     : why.empty() ? "The session's host could not write it."
+                                   : why;
+        return false;
+    }
+    // The encoding written: a Windows-1252 file whose text holds what it
+    // cannot store is UTF-8 now, and the host's note says so in save's words.
+    FolderSearch::TextEncoding e = encoding_.encoding;
+    bool bom = encoding_.bom;
+    if (FolderSearch::parseEncodingName(a.json["encodingName"].asString(), &e, &bom)) {
+        encoding_.encoding = e;
+        encoding_.bom = bom;
+    }
+    saveNote_ = a.json["note"].asString();
+    // The text the file holds: the buffer's, unless someone's edit came in
+    // after the host wrote (then the file's, as written).
+    std::string saved = body;
+    if (c.version(id_) == a.version && c.unconfirmed() == 0) {
+        saved = text();
+    } else {
+        std::string disk;
+        if (readText(path_, disk) == Read::Ok) saved = disk;
+    }
+    // The stamp the host wrote it with, so the write is not taken for a
+    // change made outside. Never DocSaved after the host's own write: that
+    // would take the host's stamp away.
+    const FolderSearch::FileStamp written = Shared::stampFromJson(a.json["stamp"]);
+    rememberDisk(saved, &written);
+    checkDirty();
+    return true;
+}
+
+// The host is told the file holds the buffer's text (null) or `text` (the
+// file's, not the buffer's: DocSaved flag 1, only to a host that saves for
+// apps), where the document's text as last read or saved moves without a
+// save through the host: its own write, a clean tab following the disk, a
+// change on disk asked about, a held tab read.
+void Document::tellHostSaved(const std::string* text) {
+    if (kind_ != Kind::Text || !client().isOpen(id_)) return;
+    if (text) client().savedAs(id_, Model::utf16FromUtf8(*text));
+    else client().saved(id_);
+    // A count the host sends before it took this is not taken (hostDirty).
+    toldSavedAt_ = edits_;
+}
+
+// The host wrote the file for another renderer (a page's save): taken as
+// this document's own save at the top of the next turn, the latest heard.
+void Document::hostWrote(std::uint64_t version, const Json& json) {
+    Shared::Client& c = client();
+    if (kind_ != Kind::Text || !c.isOpen(id_)) return;
+    HostWrite w;
+    // The text written, when the buffer's is the host's at that version.
+    w.knowsText = c.unconfirmed() == 0 && c.version(id_) == version;
+    if (w.knowsText) w.text = text();
+    w.path = json["path"].asString();
+    FolderSearch::TextEncoding e = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;
+    w.knowsEncoding = FolderSearch::parseEncodingName(json["encodingName"].asString(), &e, &bom);
+    w.encoding.encoding = e;
+    w.encoding.bom = bom;
+    w.stamp = Shared::stampFromJson(json["stamp"]);
+    hostWrite_ = std::move(w);
+    if (writeIdle_) return;
+    writeIdle_ = g_idle_add_full(G_PRIORITY_DEFAULT, [](gpointer p) -> gboolean {
+        Document* d = static_cast<Document*>(p);
+        d->writeIdle_ = 0;
+        d->takeHostWrite();
+        return G_SOURCE_REMOVE;
+    }, this, nullptr);
+}
+
+void Document::takeHostWrite() {
+    HostWrite w = std::move(hostWrite_);
+    hostWrite_ = HostWrite();
+    if (kind_ != Kind::Text || loading() || unread_ || path_.empty()) return;
+    if (!w.path.empty() && w.path != path_) return;   // renamed since
+    // Written over again since: a change made outside, as the disk checks
+    // see it.
+    const FolderSearch::FileStamp now = FolderSearch::stampOf(path_);
+    if (w.stamp.exists && now != w.stamp) return;
+    std::string saved = w.text;
+    FileEncoding encoding = w.knowsEncoding ? w.encoding : encoding_;
+    if (!w.knowsText && readText(path_, saved, &encoding) != Read::Ok) return;   // the file's
+    encoding_ = encoding;
+    rememberDisk(saved, w.stamp.exists ? &w.stamp : &now);
+    checkDirty();
+    host_->documentWrittenByHost(this);
+}
+
+// The host's count of the document as unsaved flipped while the buffer was
+// the host's text (nothing of this window's unconfirmed): the dot follows
+// it, as a page's does, at the top of the next turn, the latest heard, and
+// only if the text has not changed since. Never where the unsaved state is
+// more than the text against the file (takeHostDirty).
+void Document::hostDirty(bool dirty) {
+    Shared::Client& c = client();
+    if (kind_ != Kind::Text || !c.isOpen(id_) || c.unconfirmed() != 0) return;
+    // Unsaved, heard with no edit since the window told the host what the
+    // file holds: maybe sent before the host took that (a reload's edit
+    // flips it, its DocSaved flips it back).
+    if (dirty && edits_ == toldSavedAt_) return;
+    hostDirty_ = dirty;
+    dirtyEdits_ = edits_;
+    if (dirtyIdle_) return;
+    dirtyIdle_ = g_idle_add_full(G_PRIORITY_DEFAULT, [](gpointer p) -> gboolean {
+        Document* d = static_cast<Document*>(p);
+        d->dirtyIdle_ = 0;
+        d->takeHostDirty();
+        return G_SOURCE_REMOVE;
+    }, this, nullptr);
+}
+
+void Document::takeHostDirty() {
+    if (edits_ != dirtyEdits_ || dirty_ == hostDirty_) return;
+    // Not an untitled buffer (the host has no path for it), a file never
+    // read or gone, one still being read or not read yet.
+    if (kind_ != Kind::Text || loading() || unread_ || path_.empty() || hostPath_ != path_ ||
+        !diskKnown_ || goneFromDisk())
+        return;
+    markDirty(hostDirty_);
 }
 
 std::string Document::takeSaveNote() {
@@ -1001,6 +1202,9 @@ void Document::checkExternalChange() {
     if (host_->documentChangedOnDisk(this)) {
         rememberDisk(content);
         checkDirty();   // the change may be the very edits made here
+        // The host counts the buffer against the file as it is now too
+        // (stage 7: its count and the dot agree).
+        tellHostSaved(&content);
     }
 }
 
@@ -1060,6 +1264,9 @@ void Document::applyDiskText(const std::string& content, const FileEncoding& enc
         }
     }
     checkDirty();
+    // The session's host counts it saved too: the reload went to it as an
+    // edit, which it would count unsaved against the file's old text.
+    if (!dirty()) tellHostSaved(nullptr);
     refreshTaskCount();
     host_->documentReloaded(this);
 }

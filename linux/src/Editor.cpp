@@ -1195,12 +1195,16 @@ bool Editor::saveDocument(Document* d, std::string* error) {
     if (!d || !d->canSave()) return true;
     if (!d->save(error)) return false;
     d->tellHostPath();   // an untitled buffer the host held now has a file
+    tookSave(d);
+    return true;
+}
+
+void Editor::tookSave(Document* d) {
     if (d->isPreviewTab() || d->isAgentPreview()) keepPreviewTab(d);   // saved: kept, as in VS Code
     latexFileSaved(d);
     if (observer_) observer_->documentSaved(d);
     refreshStrip();
     if (d == active_) titleChanged();
-    return true;
 }
 
 void Editor::checkExternalChange() {
