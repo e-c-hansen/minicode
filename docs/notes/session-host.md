@@ -2916,17 +2916,23 @@ page may save a file a GTK window shows.
 
 #### Checks
 
-None committed yet (the next bite gives GTK's `host_reattach` the Mac's
-stage 7 part). Since every GTK save of a tab now goes through the host,
-in process by default, the whole GTK run and CI's loopback pass exercise
-it (save, backups, format, latin1_files's note, auto_save). Smoke-checked
-with a throwaway suite: in process, Ctrl+S written by the host (a viewer
-heard the write with the file's stamp); over a headless host, a page's
-guest saving a file the window showed with typing in it, the tab clean
-and in step with the file's stamp, then the window's Ctrl+S with no
-question, heard by the guest. `MUTIBLE_HOST=socket` for the backups
-suite fails as it did before this (its SIGKILLed children leave their
-documents on the headless host); CI runs no such pass.
+`host_reattach`'s stage 7 part, on a fresh headless host (its header):
+a page's guest over the socket saves a file the window shows with typing
+in it, the window's tab and its strip dot clean and in step with the
+file's stamp, the host counting it saved; the window types and saves
+(Ctrl+S) with no question and the guest hears the host's write with the
+file's stamp; a UTF-16 file saved from the window byte for byte with its
+mark; an agent's write, then Keep Mine and Ctrl+S, the window's text
+written over it; a directory where the file was, which the host refuses
+("is not a regular file on disk"), the save dialog showing that sentence
+and the tab still unsaved; the host killed, then Ctrl+S written by the
+window itself. Not checked: an untitled buffer's Save As refused (its
+path put back), which needs the file chooser.
+Since every GTK save of a tab goes through the host, in process by default,
+the whole GTK run exercises it too (save, backups, format, latin1_files's
+note, auto_save). `MUTIBLE_HOST=socket` for the backups suite fails as it
+did before this (its SIGKILLed children leave their documents on the
+headless host); CI runs no such pass.
 
 ### The host watches the disk (stage 7)
 
@@ -3072,11 +3078,8 @@ and no GUI suite checks the Mac's own host watching for its page.
 ### Still to do
 
 - **Stage 7, after the watching and the Mac's and GTK's saves** (in order
-  of value): the GUI checks of GTK's saves through the host (a page's
-  guest saving a file a GTK window shows, the window's save heard as the
-  host's write, the dot following the host's count), as host_reattach has
-  them on the Mac; GTK's in-process host watching the disk for its page,
-  as the Mac's does; the windows hearing the host's watching instead of
+  of value): GTK's in-process host watching the disk for its page, as the
+  Mac's does; the windows hearing the host's watching instead of
   their own streams ("The host watches the disk", what could move); Save
   As and a new file's name from the page (the Mac's Save As writes its new
   path through the host now, but the page cannot name a file); Quick
