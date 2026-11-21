@@ -16,10 +16,20 @@
 // tabs with the caret placed, hides the other's sidebar, and quits; a fifth
 // app launched with no path from the home folder, as the dock launches it,
 // gets both windows back with their own tabs, caret, size and sidebar.
+//
+// Pages (TabSessions::PageTab): a sixth app opens a git folder, opens a
+// file, a kept commit page, a second file and the Uncommitted Changes page
+// (on show), and closes its window; a seventh gets the pages back among the
+// files in the same order, the review still on show, and a page the record
+// holds twice is made once.
 #include "Harness.h"
 
+#include "ChangeReviewPage.h"
 #include "DocumentView.h"
 #include "Editor.h"
+#include "GitChecks.h"
+#include "GitGraph.h"
+#include "GitPanel.h"
 #include "Persistence.h"
 #include "TabSessions.h"
 #include "TabStrip.h"
@@ -96,6 +106,15 @@ std::string Numbered(const char* word, int lines) {
     std::string s;
     for (int i = 1; i <= lines; i++) s += std::string(word) + " line " + std::to_string(i) + "\n";
     return s;
+}
+
+// ---- pages
+std::string Pages() { return MCGuiScratch() + "/sespg"; }
+std::string PagesHash() { return MCGuiScratch() + "/sespg-hash"; }
+std::string FirstCommit() {
+    std::string h = MCGuiReadFile(PagesHash());
+    while (!h.empty() && (h.back() == '\n' || h.back() == ' ')) h.pop_back();
+    return h;
 }
 
 const std::string kThree = Numbered("three", 400);
@@ -297,6 +316,43 @@ MC_GUI_SUITE(sessions) {
         GCHECK(all.count(Persistence::keyFor(MCGuiProject())) == 1);
         for (int i = 0; i < kSavers; i++) Persistence::putSession(key(i), TabSessions::Session());
     });
+
+    // ---- the review and a commit's page
+    gitchecks::Shell("the repository",
+                     "set -e; mkdir -p '" + Pages() + "'; cd '" + Pages() + "'; " + gitchecks::G() +
+                         " init -q -b main; printf 'a\\n' > a.txt; printf 'b\\n' > b.txt; " +
+                         gitchecks::G() + " add -A; " + gitchecks::G() + " commit -qm first; " +
+                         gitchecks::G() + " rev-list --max-parents=0 HEAD > '" + PagesHash() +
+                         "'; printf 'changed\\n' >> a.txt");
+    MCGuiAsync("a sixth app opens the pages and closes its window", 90, [](MCGuiDone done) {
+        MCGuiRunChild("_pages_first", Pages(), [done](int status, std::string out) {
+            GCHECK(status == 0);
+            if (status != 0) MCGuiNote("pages (%d):\n%s", status, out.c_str());
+            done();
+        });
+    });
+    MCGuiStep("the session keeps both pages, the files between them, and the one on show", [] {
+        const TabSessions::Session s = SavedFor(Pages());
+        GCHECK(s.tabs.size() == 2 && s.pages.size() == 2);
+        if (s.pages.size() != 2) return;
+        GCHECK_EQ_STR(s.pages[0].kind + " at " + std::to_string(s.pages[0].at), "commit at 1");
+        GCHECK_EQ_STR(s.pages[0].title, Git::shortHash(FirstCommit()) + " first");
+        GCHECK_EQ_STR(s.pages[1].kind + " at " + std::to_string(s.pages[1].at), "review at 3");
+        GCHECK_EQ_STR(std::to_string(s.activePage), "1");
+        // A second record of the same commit and of the review, as a
+        // crashed save or an older copy may leave.
+        TabSessions::Session twice = s;
+        twice.pages.push_back(s.pages[0]);
+        twice.pages.push_back(s.pages[1]);
+        Persistence::putSession(Persistence::keyFor(Pages()), twice);
+    });
+    MCGuiAsync("a seventh app opens the folder again", 90, [](MCGuiDone done) {
+        MCGuiRunChild("_pages_again", Pages(), [done](int status, std::string out) {
+            GCHECK(status == 0);
+            if (status != 0) MCGuiNote("pages again (%d):\n%s", status, out.c_str());
+            done();
+        });
+    });
 }
 
 // ----------------------------------- the first child: open, move, close
@@ -378,6 +434,43 @@ MC_GUI_SUITE(_sessions_again) {
     MCGuiStep("a file opened in preview", [] { MCGuiOpenFile(In("extra.txt")); });
     MCGuiWait("replaces the preview tab that came back", 10, [] {
         return Row() == "one.txt two.md pipe >[extra.txt] huge.log three.txt";
+    });
+}
+
+// -------------------------------- the pages' first app: open them, a quit
+MC_GUI_SUITE(_pages_first) {
+    MCGuiStep("a file, a kept commit page, a file, then the review page", [] {
+        GCHECK(MCGuiApp().rootDir == Pages());
+        GCHECK(ed()->tabCount() == 0);
+        MCGuiOpenFileKept(Pages() + "/a.txt");
+        MCGuiApp().git->onReviewCommit(FirstCommit(), "first", false);
+        MCGuiOpenFileKept(Pages() + "/b.txt");
+        MCGuiApp().git->onReview("", false, false);
+    });
+    MCGuiWait("all four, the review on show", 15, [] {
+        return Row() == "a.txt " + Git::shortHash(FirstCommit()) + " first b.txt >Uncommitted Changes";
+    });
+    MCGuiStep("Ctrl+Shift+W", [] { MCGuiKey("ctrl+shift+w"); });
+    MCGuiWait("the window closes", 10, [] { return MCGuiAppWindows().empty(); });
+}
+
+// ------------------------------------ the pages' second app: pages back
+MC_GUI_SUITE(_pages_again) {
+    MCGuiWait("the window has the four tabs back", 15, [] { return ed() && ed()->tabCount() == 4; });
+    MCGuiStep("in their order, the review on show, no page made twice", [] {
+        MCGuiNote("row: %s", Row().c_str());
+        GCHECK_EQ_STR(Row(), "a.txt " + Git::shortHash(FirstCommit()) + " first b.txt >Uncommitted Changes");
+        GCHECK(ed()->currentPage() && dynamic_cast<ChangeReviewPage*>(ed()->currentPage()));
+        GCHECK(ed()->active() && ed()->active()->editorPage());
+    });
+    MCGuiWait("the review read git", 15, [] {
+        auto* p = dynamic_cast<ChangeReviewPage*>(ed()->currentPage());
+        return p && p->loaded() && p->fileCount() == 1;
+    });
+    MCGuiStep("alt+2 shows the commit's page, read as well", [] { MCGuiKey("alt+2"); });
+    MCGuiWait("its two files", 15, [] {
+        auto* p = dynamic_cast<ChangeReviewPage*>(ed()->currentPage());
+        return p && p->isCommit() && p->loaded() && p->fileCount() == 2;
     });
 }
 

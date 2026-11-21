@@ -447,6 +447,8 @@ public:
     // keeps that tab. The keyboard stays where it was: the caller gives it
     // to the page for a kept open.
     Document* showPage(std::shared_ptr<EditorPage> page, bool preview = false);
+    // A page in a tab at `index`, not on show (a session coming back).
+    Document* addPageAt(std::shared_ptr<EditorPage> page, int index);
     EditorPage* currentPage() const;   // the active tab's page, or null
     CompareView* compareView() const { return compare_; }
     bool isComparison() const { return active_ && active_->compare(); }

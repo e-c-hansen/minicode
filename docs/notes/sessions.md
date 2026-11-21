@@ -215,8 +215,13 @@ found through that list.
   agent's proposed change (`decisionPrompt`), agent preview tabs, the old
   shared diff tab, and a revision the record refuses (`isComparedRev`: no
   option, no `..`, nothing but letters, digits and `._/~^-`; a commit's
-  ref is hex only). Pages are a key of their own, so an older mutible and
-  the GTK port read the files as before and leave the pages out.
+  ref is hex only). Pages are a key of their own, so an older mutible
+  reads the files as before and leaves the pages out. The GTK port keeps
+  and brings back the review and commit pages the same way
+  (`Persistence::Host::pageRecord` and `restorePage`, `Editor::addPageAt`,
+  `linux/HANDOFF.md` item 134), a duplicate in the record left out before
+  it is made, since a review page owns the panel's refresh; comparisons
+  are still the Mac's only.
 - **Sessions** (since stage 3c, 2026-11-17, `SessionStore.{h,mm}`): a
   folder's `TabSessions::Session` in sessions.json
   (`~/Library/Application Support/Mutible/sessions.json`, NSHomeDirectory,

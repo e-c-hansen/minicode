@@ -436,6 +436,17 @@ Document* Editor::showPage(std::shared_ptr<EditorPage> page, bool preview) {
     return d;
 }
 
+// A page of a saved session put back (Persistence::restoreSession): its
+// own tab at `index` among the tabs, not on show, unless a tab has its key.
+Document* Editor::addPageAt(std::shared_ptr<EditorPage> page, int index) {
+    for (Document* t : documentsOf(win_->tabs()))
+        if (t->editorPage() && t->editorPage()->key() == page->key()) return t;
+    Document* d = newDocument();
+    d->setEditorPage(page->title(), page);
+    win_->insert(d->id(), "", index);
+    return d;
+}
+
 EditorPage* Editor::currentPage() const { return active_ ? active_->editorPage().get() : nullptr; }
 
 // ---------------------------------------------------------------- switching

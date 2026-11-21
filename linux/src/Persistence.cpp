@@ -203,6 +203,15 @@ TabSessions::Session Persistence::session() {
         for (Document* d : editor_->documents())
             if (isFile(d) && (!shown || d->lastUsed() > shown->lastUsed())) shown = d;
     for (Document* d : editor_->documents()) {
+        // The review and a commit's page come back made again, at their
+        // place among the tabs (the Mac's pageTabOf:into:).
+        TabSessions::PageTab page;
+        if (host_.pageRecord && host_.pageRecord(d, &page)) {
+            page.at = (int)(s.tabs.size() + s.pages.size());
+            if (d == editor_->active()) s.activePage = (int)s.pages.size();
+            s.pages.push_back(page);
+            continue;
+        }
         if (!isFile(d)) continue;
         if (d == shown) s.active = (int)s.tabs.size();
         if (d->isPreviewTab()) s.preview = (int)s.tabs.size();
@@ -307,7 +316,7 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
     });
     const std::string previewFile = r.preview >= 0 ? r.files[(size_t)r.preview] : "";
     for (const std::string& f : extra) r.files.push_back(f);
-    if (r.files.empty() && conflicts.empty()) return;
+    if (r.files.empty() && conflicts.empty() && saved.pages.empty()) return;
     if (r.active < 0) r.active = 0;
 
     std::map<std::string, const TabSessions::Tab*> tabFor;
@@ -364,7 +373,16 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
     // The other backups of files back now: copies beside them, after the
     // session's tabs.
     const std::string copiesNote = restoreConflicts(conflicts);
+    // The review and the commit pages, made again where they were among
+    // the tabs; the one that was on show is shown instead of a file.
+    Document* pageShown = nullptr;
+    if (host_.restorePage)
+        for (size_t i = 0; i < saved.pages.size(); i++) {
+            Document* p = host_.restorePage(saved.pages[i], std::max(0, saved.pages[i].at));
+            if (p && (int)i == saved.activePage) pageShown = p;
+        }
     if (groups.split) editor_->restoreGroups(groups);
+    else if (pageShown) editor_->activate(pageShown);
     else if (shown) editor_->activate(shown);
     if (!copiesNote.empty() && host_.note) host_.note(copiesNote);
     // Asked about once the window is up and the tab on show (the question
