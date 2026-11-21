@@ -33,6 +33,17 @@ BOOL Rows(EditorController *c, NSArray<NSString *> *rows) {
 id ActiveTab(EditorController *c) { return [c valueForKey:@"activeTab"]; }
 id ActivePage(EditorController *c) { return [ActiveTab(c) valueForKey:@"page"]; }
 BOOL ActiveIsPreview(EditorController *c) { return [[ActiveTab(c) valueForKey:@"preview"] boolValue]; }
+// The panel's diff tab for `name` in front: not merely isDiff, which a
+// review page or a comparison also sets. showDiffAtRow: runs git diff on
+// the panel's queue, so the review page the steps before kept stays in
+// front until it answers; a wait on isDiff alone passed at once and the
+// title was read from the review page (CI, 2026-11-20 and 2026-11-21).
+BOOL ShowsDiffOf(EditorController *c, NSString *name) {
+    return [[c valueForKey:@"isDiff"] boolValue] && ActivePage(c) == nil &&
+           [ActiveTab(c) valueForKey:@"comparison"] == nil &&
+           ![[c valueForKey:@"diffIsCommit"] boolValue] &&
+           [[c valueForKey:@"diffName"] isEqualToString:name];
+}
 NSUInteger PagesOfKind(EditorController *c, NSString *kind) {
     NSUInteger n = 0;
     for (id t in [c valueForKey:@"tabs"])
@@ -194,11 +205,16 @@ MC_GUI_SUITE(git_panel) {
         if (!git) return;
         [Git(c) showDiffAtRow:RowOf(c, @"S M a.txt")];
     });
-    MCGuiWait(@"the diff", 10, ^BOOL { return !git || [[c valueForKey:@"isDiff"] boolValue]; });
+    MCGuiWait(@"the diff", 10, ^BOOL { return !git || ShowsDiffOf(c, @"a.txt"); });
     MCGuiStep(@"its lines; Cmd+S writes nothing", ^{
         if (!git) return;
         NSTextView *diff = [c valueForKey:@"diffView"];
-        GCHECK([c.window.title hasPrefix:@"a.txt (diff)"]);
+        NSString *title = c.window.title;
+        MCGuiCheck([title hasPrefix:@"a.txt (diff)"],
+                   [NSString stringWithFormat:@"the title starts \"a.txt (diff)\" (got \"%@\")", title],
+                   __FILE__, __LINE__);
+        if (![diff.string containsString:@"-two"] || ![diff.string containsString:@"+TWO"])
+            MCGuiNote(@"the diff view holds: %@", diff.string);
         GCHECK(diff != nil && [diff.string containsString:@"-two"] && [diff.string containsString:@"+TWO"]);
         [c saveCurrentFile:nil];
         GCHECK_EQ_STR([NSString stringWithContentsOfFile:[repo stringByAppendingPathComponent:@"a.txt"]
@@ -859,7 +875,7 @@ MC_GUI_SUITE(git_actions) {
         // Its diff is one commit for another: no hunk links.
         [Git(c) showDiffAtRow:RowOf(c, @"W M lib")];
     });
-    MCGuiWait(@"its diff", 10, ^BOOL { return [[c valueForKey:@"isDiff"] boolValue]; });
+    MCGuiWait(@"its diff", 10, ^BOOL { return ShowsDiffOf(c, @"lib"); });
     MCGuiStep(@"no hunk links on a gitlink's diff; staging it still works", ^{
         NSTextView *diff = [c valueForKey:@"diffView"];
         MCGuiNote(@"lib's diff: %@", diff.string);
