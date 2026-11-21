@@ -3176,6 +3176,12 @@ static void makeTestGutter(App* app) {
     };
 }
 
+// The window's git, or the folder's, changed: a page showing Source Control
+// reads again (the Mac's sessionFolderChangedOnDisk).
+static void sessionGitChanged(App* app) {
+    if (!app->dead && app->sessionBrowser) app->sessionBrowser->gitChanged();
+}
+
 // The Source Control panel's object, made with the window as the Mac's is
 // (EditorController+Git.mm's ensureGitPanel), so autofetch and View > Source
 // Control's commands (GitPanel.h) work before it is first shown; its widget
@@ -3258,6 +3264,7 @@ static void makeGitPanel(App* app) {
 #endif
     };
     app->git->onRefreshed = [app] {
+        sessionGitChanged(app);
         if (!app->dead && app->gitGutter) app->gitGutter->refreshSoon();
     };
 }
@@ -4939,6 +4946,28 @@ static SessionBrowser* startedSessionBrowser(App* app, bool editable) {
                 if (!app->dead) showWebAddresses(app, {url}, false);
             };
 #endif
+#ifdef MUTIBLE_ENABLE_PDF
+        // A page's LaTeX document: the open tab's preview when it has one,
+        // else the tab's text or the file's, for a typeset of the server's own.
+        host.previewOf = [app](const std::string& path) -> LatexPreview* {
+            Document* d = app->dead ? nullptr : app->editor->documentFor(path);
+            return d ? d->latexPreview() : nullptr;
+        };
+        host.source = [app](const std::string& path, std::string* text) {
+            if (app->dead) return false;
+            Document* d = app->editor->documentFor(path);
+            if (d && d->kind() == Document::Kind::Text && !d->unread() && !d->loading()) {
+                *text = d->text();
+                return true;
+            }
+            char* data = nullptr;
+            gsize len = 0;
+            if (!g_file_get_contents(path.c_str(), &data, &len, nullptr)) return false;
+            text->assign(data, len);
+            g_free(data);
+            return true;
+        };
+#endif
         host.report = [app] { reportSessionWindow(app); };
         app->sessionBrowser = new SessionBrowser(GTK_WINDOW(app->window), std::move(host));
     }
@@ -5379,6 +5408,7 @@ static App* newWindow(const std::string& root, const std::string& file,
         if (app->dead) return;
         if (app->git) app->git->refresh();
         if (app->treeColors) app->treeColors->changedOnDisk(path);
+        sessionGitChanged(app);
     });
     // The rows' git colors (TreeGitColors.h).
     app->treeColors = new TreeGitColors();
@@ -5391,12 +5421,19 @@ static App* newWindow(const std::string& root, const std::string& file,
     app->treeColors->onChange = [app] {
         if (!app->dead && app->tree) app->tree->redecorate();
         updateSidebarIcons(app);   // Source Control's count
+        sessionGitChanged(app);    // a commit or stage made elsewhere
     };
     app->treeColors->setRoot(app->rootDir);
     setupWorktrees(app);
     useSessionLink(app, app->rootDir);
     StartupLog::mark("window: the session's host");
     app->editor = new Editor(app->link);
+#ifdef MUTIBLE_ENABLE_PDF
+    // Every typeset of a tab's LaTeX preview goes to the page, when served.
+    app->editor->typesetHook = [app](const std::string& path, GBytes* pdf, const std::string& error) {
+        if (!app->dead && app->sessionBrowser) app->sessionBrowser->typesetOf(path, pdf, error);
+    };
+#endif
     // What the folder's host holds for a window opening (stage 6, step 2):
     // the latest record a closed window left, its documents (attached
     // before the session restores the rest) and terminals (the dock takes

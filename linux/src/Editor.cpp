@@ -1421,6 +1421,11 @@ LatexPreview* Editor::makeLatex(Document* d) {
     if (!d->latexPreview()) {
         LatexPreview* l = new LatexPreview(d->buffer());
         l->pdfView()->setShownCallback(onPdfShown, this);
+        // Every typeset of it goes to the session browser's page, when one
+        // is served (the Mac's wireSessionTypesetOf).
+        l->setOnTypeset([this](const std::string& path, GBytes* pdf, const std::string& error) {
+            if (typesetHook) typesetHook(path, pdf, error);
+        });
         // A problem row: its file in a tab (an \\input file too), at the line.
         l->setOpenProblem([this](const std::string& path, int line) {
             if (path.empty() || !openFile(path, EditorTabs::OpenFrom::Other)) return;

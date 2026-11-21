@@ -556,6 +556,7 @@ void LatexPreview::close() {
     inputDocs_.clear();
     editFile_.clear();
     path_.clear();
+    failure_.clear();
     gtk_stack_set_visible_child_name(GTK_STACK(stack_), "pdf");
     setStatus("", false);
     answerWaiters("The document was closed before it was typeset.");
@@ -617,6 +618,8 @@ void LatexPreview::compileNow() {
     const std::string tool = tectonicPath();
     if (tool.empty()) {
         showTectonicMissing();
+        failure_ = "tectonic is not installed. The LaTeX preview offers to download it.";
+        tellTypeset(nullptr, failure_);
         answerWaiters("tectonic is not installed. The LaTeX preview offers to download it.");
         return;
     }
@@ -672,6 +675,7 @@ void LatexPreview::compileNow() {
     runScratchName_ = name ? name : "";
     g_free(name);
     setStatus("Typesetting…", true);
+    tellTypeset(nullptr, "");
     g_subprocess_communicate_async(proc_, nullptr, nullptr,
         [](GObject* src, GAsyncResult* res, gpointer data) {
             Job* job = static_cast<Job*>(data);
@@ -726,7 +730,9 @@ void LatexPreview::finishCompile(Job* job, GBytes* output, bool ok) {
                 sync_ = SyncTexIndex::parse(readGzipFile(job->synctex));
                 syncScratch_ = job->scratch;
                 doc_ = LatexDoc::parse(pdfSrc_);
+                failure_.clear();
                 showDocument();
+                tellTypeset(pdfBytes_, "");
             } else {
                 problem = "The PDF tectonic wrote could not be read: " + loadErr;
             }
@@ -896,6 +902,8 @@ void LatexPreview::refreshWarnings(bool good) {
 }
 
 void LatexPreview::showFailure(const std::string& log) {
+    failure_ = log.empty() ? "The document did not typeset." : log;
+    tellTypeset(nullptr, failure_);
     if (!typesetProblems_) {   // not a typeset's: no problems to list
         problems_.clear();
         problemFiles_.clear();
