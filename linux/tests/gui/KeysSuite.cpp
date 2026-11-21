@@ -199,8 +199,12 @@ MC_GUI_SUITE(keys) {
     MCGuiStep("an editor with nothing unsaved, with the keyboard", [] {
         MCGuiSetKeyWindow(nullptr);
         MCGuiFocusKeyWindow();
+        // And no document of a language on show: a language's command takes
+        // its keys there (Markdown's Toggle Task Alt+C, Match Case's
+        // elsewhere), and tabs, before this in order, leaves a .md on show.
+        // Closed without asking, an edit left unsaved goes with them.
+        MCGuiApp().editor->closeAllTabs();
         gtk_widget_grab_focus(MCGuiApp().editor->textView());
-        if (MCGuiApp().editor->dirty()) MCGuiKey("ctrl+s");
     });
     MCGuiWait("saved, and the editor has the keyboard", 10, [] {
         return !MCGuiApp().editor->dirty() && editorHasKeyboard();

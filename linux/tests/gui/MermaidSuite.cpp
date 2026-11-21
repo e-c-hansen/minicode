@@ -184,6 +184,7 @@ MC_GUI_SUITE(mermaid) {
         GCHECK(ed()->sidePane()->pageText().find("After.") != std::string::npos);
         MCGuiKey("ctrl+alt+v");
         ed()->closeAllTabs();
+        MCGuiSetSettings("lsp.enabled = false\n");   // the theme as found
     });
 }
 
