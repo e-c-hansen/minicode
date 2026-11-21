@@ -8763,3 +8763,23 @@ show; the file shown last is shown meanwhile).
   HEAD and the disk (none for the preview tab, which `--keep` turns into
   one that remakes) and the file against file. `idelink`: an agent's
   decision comparison has no recipe.
+
+### 136. Checks for the page's Quick Open and Find in Folder (stage 7; November 2026)
+
+- **What.** The Mac's #303 gave the session's browser page Quick Open and
+  Find in Folder as host reads on workers (`src/SessionSearch`,
+  `ReadWorkers`). GTK needed no code: its in-process host serves them as
+  they stand, the worker answers reaching the page through the web
+  server's `takeStreams`, run by the loop that serves the page.
+- **Checks.** `session_browser`, section 4b, on the read-only page's
+  socket (the GTK suite speaks the page's websocket and runs no
+  JavaScript, so the page's own keys and clicks stay the Mac's checks): a
+  `files` message for "sbq" lists both of its files, the nested one too,
+  once the listing is no longer under way (not an empty query: the page
+  shows only its first rows, and CI's folder held 235 files by then, so
+  sbq/ fell past them; that was a FLAKY line on the PR); a query ranks them with the matched
+  letters (`pos`) and opens nothing in the window; a `search` answers in
+  `found` rows from both files with their highlights and the host's
+  counts (2 files, 3 matches), the window opening nothing; a one-letter
+  query is answered `short`. The files are made in a folder of their own
+  and removed at the end.
