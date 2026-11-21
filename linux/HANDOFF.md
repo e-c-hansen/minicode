@@ -8898,3 +8898,32 @@ show; the file shown last is shown meanwhile).
   commit; a click on the counts syncs (level again, the bare remote has the
   commit); a click on the name opens the picker; detached HEAD shows the
   short hash.
+
+### 141. New File and Save As from the session browser's page (stage 7; November 2026)
+
+- **What.** The Mac's #307 let an editable page make files and name them.
+  GTK's page now has both: `SessionBrowser::Host` gains `newFile` and
+  `saveAs`, set in `main.cpp` (`newSessionFile`, `saveSessionDocumentAs`),
+  and `SessionBrowser.cpp` fills `Options::newFile` and `Options::saveAs`
+  from them, so the hello says `canNew` and `canSaveAs`. Both options come
+  on the server's thread and hop to the main loop (the `later` helper,
+  which drops them for a server stopped meanwhile); the answer is
+  `Server::savedAs(ask, ok, why)` called there.
+- **New File** is `Editor::addUntitled`: a document with no path on the
+  host, a tab named Untitled-N (`Backups::untitledPath`) and on show; the
+  page follows the window's tab, so it is told no `newfile`.
+- **Save As** is `Editor::saveDocumentAs`: `Document::setPath(path, false)`
+  (a new argument, `tellHost`) names the tab, `saveDocument` writes it
+  through the host as Ctrl+S does (`saveThroughHost` tells the host the new
+  path first, and puts the old one back if the write fails), and a failure
+  puts the tab's name back. The core has asked about a file there already
+  and held the path inside the folder; a file open in another tab is
+  refused, as on the Mac.
+- **Checks.** `session_browser`, section 5b, on the editable page's
+  socket: the hello's `canNew` and `canSaveAs` (and neither on the
+  read-only page's); `newfile` makes an untitled tab on show, listed in the
+  page's state; text typed through the page, then `saveas` over a file
+  there answers `exists` and leaves both alone, `../x` is `name` and a
+  dotfile `dotfile`, a new name writes the typed text, the tab names the
+  path and is clean, and the page's state lists it under the new path; with
+  `overwrite` another file is replaced and the first left as it was.

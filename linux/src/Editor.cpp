@@ -1211,6 +1211,28 @@ bool Editor::saveDocument(Document* d, std::string* error) {
     return true;
 }
 
+bool Editor::saveDocumentAs(Document* d, const std::string& path, std::string* error) {
+    if (!d || !d->canSave()) {
+        if (error) *error = "That document cannot be saved as a file.";
+        return false;
+    }
+    // The host's path follows with the write (saveThroughHost gives it first
+    // and puts it back on a failure), so an untitled buffer is never named
+    // there for a file that was not written.
+    const std::string old = d->path();
+    d->setPath(path, false);
+    if (!saveDocument(d, error)) {
+        d->setPath(old, false);
+        return false;
+    }
+    // A write the window made itself (a host that does not save for it)
+    // told the host nothing: it hears the new path now. After a write
+    // through the host it has it already, and this does nothing more.
+    d->setPath(path);
+    if (d == active_) notifyDocument();   // a new name is a new document to a language server
+    return true;
+}
+
 void Editor::tookSave(Document* d) {
     if (d->isPreviewTab() || d->isAgentPreview()) keepPreviewTab(d);   // saved: kept, as in VS Code
     latexFileSaved(d);

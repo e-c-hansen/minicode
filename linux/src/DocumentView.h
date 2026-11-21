@@ -376,7 +376,9 @@ public:
     // The file now lives at `path` (a rename): the buffer, its undo and the
     // watch stay; the grammar changes with the extension, and a file that is
     // no longer Markdown or LaTeX loses its preview flag.
-    void setPath(const std::string& path);
+    // `tellHost` false leaves the host's path as it was (Save As gives it
+    // with the write, and puts it back when the write fails).
+    void setPath(const std::string& path, bool tellHost = true);
 
     // Changes made to the file by something else. Compares what is on disk
     // with the text last read or saved: no change, nothing; a clean document

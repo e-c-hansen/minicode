@@ -208,6 +208,10 @@ public:
     // host holds with no path, shown under `path`, a name for a file not on
     // disk yet (Document::attachHeld).
     Document* attachTab(uint64_t heldId, const std::string& path, bool hostNamed = true);
+    // An untitled tab at the end of the row, put on show: a new document on
+    // the host with no path, shown under `name`, a name for a file not on
+    // disk yet (a page's New File). Ctrl+S, or saveDocumentAs, writes it.
+    Document* addUntitled(const std::string& name);
     // The window closes and detaches (stage 6, step 2): every document stays
     // on the host but those in `drop` (the question's Don't Save), which
     // close there with their tabs; the window's record stays for the
@@ -314,6 +318,10 @@ public:
     // save (no tab, a picture, a message, a diff) writes nothing and is true.
     bool save(std::string* error = nullptr);
     bool saveDocument(Document* d, std::string* error);
+    // Writes `d`'s text to `path` and makes that its file, its tab and its
+    // document on the host following, over any file there (the caller asked
+    // already). On failure the old name is back and `error` says why.
+    bool saveDocumentAs(Document* d, const std::string& path, std::string* error);
     // What a save leaves, whoever wrote the file (this window, or the
     // session's host for a page, documentWrittenByHost): a preview tab kept,
     // the LaTeX previews and the language server told, the strip and title.

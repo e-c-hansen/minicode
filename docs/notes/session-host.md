@@ -3310,8 +3310,8 @@ names them, and replaces across the folder. A reader sees none of it.
 - **The server** (`SessionWeb.cpp`): the hello's `canNew` (an app's
   `Options::newFile`, or a headless view with no `save`, no window and a
   host that writes for pages), `canSaveAs` (an app's `Options::saveAs`, or
-  no `save` and such a host; GTK's page, with `save` and no `saveAs`, has
-  neither), `canReplace` (editable, such a host, and one that searches).
+  no `save` and such a host; GTK's page has both (HANDOFF 139),
+  `SessionBrowser::Host::newFile` and `saveAs`, see "The GTK app" below), `canReplace` (editable, such a host, and one that searches).
   `newfile` calls `Options::newFile` (the Mac: `openUntitledSessionTab`,
   the window's untitled tab, Untitled-1, -2, ... as a restored buffer is
   named, which the page then follows as the window's tab on show) or has
@@ -3342,6 +3342,18 @@ names them, and replaces across the folder. A reader sees none of it.
   stopped meanwhile. Unlike the Mac's own Save As (a new tab on the new
   file, the old tab closed) the tab and its document stay, so every page
   keeps showing it.
+- **The GTK app** (`linux/src/SessionBrowser.cpp`, `main.cpp`'s
+  `newSessionFile` and `saveSessionDocumentAs`): the same two options,
+  each hopped from the server's thread to the main loop (`later`), and
+  `Server::savedAs` called there. New File is `Editor::addUntitled`, an
+  untitled tab named by `Backups::untitledPath` with a new document on the
+  host and no path, put on show. Save As is `Editor::saveDocumentAs`:
+  `Document::setPath(path, false)` names the tab without telling the host,
+  then the window's own `saveDocument` writes it, through the host when the
+  window's host is in process (`saveThroughHost`, which gives the host the
+  path first and puts it back if the write fails), and the document's path
+  on the host follows (DocPath). A failure puts the old name back. A tab
+  already on that file is refused as on the Mac.
 - **The page**: New File in the header (`#newbtn`) and <kbd>⌘N</kbd>
   where the browser gives it to the page (most keep it); Save As… in the
   doc bar (`#saveasbtn`) and <kbd>⇧⌘S</kbd>; Save on a document the state

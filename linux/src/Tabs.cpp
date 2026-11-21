@@ -333,6 +333,15 @@ Document* Editor::attachTab(uint64_t heldId, const std::string& path, bool hostN
     return d;
 }
 
+Document* Editor::addUntitled(const std::string& name) {
+    Document* d = newDocument();
+    d->attachHeld(name, false);
+    win_->append(d->id(), name);
+    refreshStrip();
+    activate(d);
+    return d;
+}
+
 void Editor::detachFromHost(const std::set<uint64_t>& drop) {
     if (!link_ || link_->lost()) return;
     // The record first, while the window still lists its tabs.

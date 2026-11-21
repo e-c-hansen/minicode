@@ -83,6 +83,17 @@ public:
         // Closes the window's tab for a document on the host; the core has
         // refused a tab with unsaved changes, and the window checks again.
         std::function<void(std::uint64_t docId)> close;
+        // A page's New File: an untitled tab, put on show, which the page
+        // then shows too. Unset: the page has no New File.
+        std::function<void()> newFile;
+        // A page's Save As: the window's tab for `docId` written to `path`
+        // (the core held it inside the folder and asked about a file there)
+        // and that file from then on, its document's path on the host too.
+        // `done` says how it went, once, on the main loop; a failure says
+        // why. Unset: the page has no Save As.
+        std::function<void(std::uint64_t docId, const std::string& path,
+                           std::function<void(bool ok, const std::string& why)> done)>
+            saveAs;
         // Opens an http or https address in the window's browser pane; unset
         // in a build without the pane (the page then offers no address).
         std::function<void(const std::string& url)> browse;
