@@ -92,6 +92,7 @@
 #include "FindBar.h"
 #include "FolderConsent.h"
 #include "Formatting.h"
+#include "StatusBranchItem.h"
 #include "TreeGitColors.h"
 #include "SidebarIcons.h"
 #include "TreeFollow.h"
@@ -181,6 +182,7 @@ struct App {
     // The editor's change bars and the tree's git colors (PARITY.md 2.10).
     GitGutter*     gitGutter = nullptr;
     TreeGitColors* treeColors = nullptr;
+    StatusBranchItem* branchItem = nullptr;   // the status bar's left end
     // The ▶ beside each test in a test file (TestGutter.h).
     TestGutter*    testGutter = nullptr;
     SearchPanel* search = nullptr;   // Find in Folder, created on first use
@@ -3331,6 +3333,9 @@ static void makeGitPanel(App* app) {
         return false;
 #endif
     };
+    app->git->onSynced = [app] {
+        if (!app->dead && app->treeColors) app->treeColors->lookSoon();
+    };
     app->git->onRefreshed = [app] {
         sessionGitChanged(app);
         if (!app->dead && app->gitGutter) app->gitGutter->refreshSoon();
@@ -5372,13 +5377,18 @@ static void onWindowRemoved(GtkApplication*, GtkWindow* window, gpointer) {
     delete app->nav;       // before the editor whose buffers it watches
     app->nav = nullptr;
     FolderConsent::unlisten(app->consentListener);
-    if (app->git) app->git->onRefreshed = nullptr;
+    if (app->git) {
+        app->git->onRefreshed = nullptr;
+        app->git->onSynced = nullptr;
+    }
     delete app->gitGutter;   // before the editor whose view and buffers it watches
     app->gitGutter = nullptr;
     delete app->testGutter;  // the same
     app->testGutter = nullptr;
     delete app->treeColors;  // before the tree it colors
     app->treeColors = nullptr;
+    delete app->branchItem;  // after the colors that told it; its widgets go with the window
+    app->branchItem = nullptr;
     delete app->sidebarIcons;   // its widgets go with the window
     app->sidebarIcons = nullptr;
     if (app->tree) app->tree->setDecorator(nullptr);
@@ -5516,6 +5526,10 @@ static App* newWindow(const std::string& root, const std::string& file,
         if (!app->dead && app->tree) app->tree->redecorate();
         updateSidebarIcons(app);   // Source Control's count
         sessionGitChanged(app);    // a commit or stage made elsewhere
+    };
+    // The status bar's branch reads the same status (StatusBranchItem.h).
+    app->treeColors->onBranchChange = [app] {
+        if (!app->dead && app->branchItem) app->branchItem->show(app->treeColors->statusBranch());
     };
     app->treeColors->setRoot(app->rootDir);
     setupWorktrees(app);
@@ -5791,6 +5805,13 @@ static App* newWindow(const std::string& root, const std::string& file,
 
     GtkWidget* statusBar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_add_css_class(statusBar, "minicode-status");
+    // The branch at the left end, as VS Code's bottom left: its name switches
+    // branch and its counts sync, the Source Control panel's own commands.
+    app->branchItem = new StatusBranchItem();
+    app->branchItem->onSwitchBranch = [app] { if (!app->dead && app->git) app->git->chooseBranch(); };
+    app->branchItem->onSync = [app] { if (!app->dead && app->git) app->git->sync(); };
+    app->branchItem->show(app->treeColors->statusBranch());
+    gtk_box_append(GTK_BOX(statusBar), app->branchItem->widget());
     gtk_box_append(GTK_BOX(statusBar), app->statusLabel);
     // Reconnect: shown while the folder's headless host is gone (stage 6,
     // step 2), it finds or starts the host again.

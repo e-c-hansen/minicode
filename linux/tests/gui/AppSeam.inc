@@ -37,6 +37,7 @@ static MCGuiAppWindow appWindowParts(App* a) {
     w.changeBars = a->gitGutter;
     w.tests = a->testGutter;
     w.treeColors = a->treeColors;
+    w.branchItem = a->branchItem;
     w.sidebarIcons = a->sidebarIcons;
     w.sidebarIconsRow = a->sidebarIconsRow;
     w.sidebarStack = a->sidebar;

@@ -32,6 +32,7 @@ class FormatOffer;
 class GitGutter;
 class TestGutter;
 class TreeGitColors;
+class StatusBranchItem;
 class ProblemsPanel;
 class ProcessesPanel;
 class IdeLinkServer;
@@ -77,6 +78,7 @@ struct MCGuiAppWindow {
     GitGutter*  changeBars = nullptr;      // the editor's change bars (2.10)
     TestGutter* tests = nullptr;           // the ▶ beside each test (TestGutter.h)
     TreeGitColors* treeColors = nullptr;   // the tree's colors (2.10)
+    StatusBranchItem* branchItem = nullptr;   // the status bar's branch (StatusBranchItem.h)
     // The sidebar's row of panel icons (SidebarIcons.h), its holder (hidden
     // by workbench.sidebar-icons = off), the stack of panels under it, and
     // whether Source Control is the panel on show.

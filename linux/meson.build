@@ -404,6 +404,7 @@ gui_sources = [
   # install and undo (A13; the core's ClaudeUsage and ClaudeStatusLine).
   'src/UsageView.cpp',
   'src/StatusLineOffer.cpp',
+  'src/StatusBranchItem.cpp',
   'src/EvidencePage.cpp',
   'src/AgentWorktrees.cpp',
   'src/ChangeReviewPage.cpp',

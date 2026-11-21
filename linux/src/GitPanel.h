@@ -99,6 +99,10 @@ public:
     // A status was read and shown: the editor's change bars look again
     // (GitGutter.h).
     std::function<void()> onRefreshed;
+    // A fetch, pull, push or sync ran, panel shown or not: it moved only
+    // refs, which the tree's watches miss, so the status bar's branch
+    // (StatusBranchItem.h) reads the status again.
+    std::function<void()> onSynced;
 
     // The window's commands (View > Source Control and the palette), added
     // to its action map as Keys.cpp names them ("gitfetch", ...).
