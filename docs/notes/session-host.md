@@ -3678,8 +3678,10 @@ at the Mac's disk at that path.
   host's files without the ignored log and opening src/util.c; Find in
   Folder's "2 matches in 2 files" (the log left out) from the host, a
   row opening src/main.c, Replace All refused with its sentence and the
-  file untouched; `ssh://standin/<folder>/src/fresh.txt` opening an empty
-  untitled tab in the folder's window, typed into and made by Cmd+S; and,
+  file untouched; `ssh://standin/<folder>/src/fresh.txt` opening a window
+  on src (an address's file serves its own folder, so this is a second
+  window) with an empty untitled tab, typed into and made by Cmd+S, then
+  closed with its host, and notes.txt put back on show in the first; and,
   after Reconnect, a file made on disk coming into the tree from the new
   host. Not run here (the builder had no screen to use): CI runs it. The
   look of the dimmed rows and the search's progress line need the owner's
@@ -3709,6 +3711,13 @@ at the Mac's disk at that path.
 - **A line that is not a message ends `--stdio` silently** (the connection
   is dropped, as any peer's is), so a hand test must send real kinds
   (`session.hello`, not `Hello`).
+- **An address naming a file serves that file's folder.** `ssh://host/proj/
+  src/x.c` is a host of proj/src, a key of its own, so it opens a second
+  window beside one on proj (#322's first CI run expected the tab in the
+  proj window, left the src window open, and every later suite drove that
+  window as the newest: dozens of failures in replace_in_folder,
+  semantic_tokens, snippets, ...). A suite that opens a window closes it,
+  and steps that type into a tab put that tab on show first.
 - **A listener inside the link's dispatch may be inside a read's wait.**
   `Client::read` (the tree's listing) processes every message that comes
   meanwhile, FsChanged's included, so the disk listener only queues the
