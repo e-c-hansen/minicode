@@ -22,10 +22,16 @@
 //   - Cmd+P lists the host's files (the ignored one left out) and opens one;
 //     Find in Folder searches on the host, its rows open their files, and
 //     Replace All says it does not work over SSH; New Folder says so too.
-//   - `ssh://standin/<folder>/src/fresh.txt`, a file not there yet: a
-//     window on src (the folder an address's file is in) with an empty
-//     untitled tab at that path, which Cmd+S makes through the host; it
-//     closes, its host with it, and the first window shows notes.txt again.
+//   - Addresses the open window's folder holds, as its host resolves them:
+//     src/util.c's opens in that window through its host (no new window, no
+//     ssh run), main.c's through a link to the folder and by ".." lands on
+//     its tab, and the folder's own address brings the window to front.
+//   - `ssh://standin/<folder>/src/fresh.txt`, a file not there yet: an
+//     empty untitled tab of the open window at that path, which Cmd+S makes
+//     through its host.
+//   - `ssh://other/...` (another machine) and a file outside the folder:
+//     each a window of its own on the file's folder, closed with its host;
+//     the first window shows notes.txt again.
 //   - A terminal: its shell is the host's child (`ps` of its parent says
 //     mutible-cli) in the host's environment (the stand-in's variable).
 //   - The connection drops (the stand-in's process group killed): the
@@ -61,6 +67,7 @@ NSString *gFolder, *gFile, *gSsh, *gArgs, *gPidFile;
 EditorController *gC, *gFreshWindow;
 TerminalView *gTerm;
 pid_t gHostA, gHostB, gHostFresh;
+NSUInteger gWindowsBefore;   // the windows before an address the open one holds
 
 NSString *RealPath(NSString *path) {
     char buf[PATH_MAX];
@@ -345,16 +352,115 @@ MC_GUI_SUITE(remote_ssh) {
         GCHECK_EQ_STR(Read([gFolder stringByAppendingPathComponent:@"src/main.c"]), @"int needle = 1;\n");
         [p.window orderOut:nil];
     });
-    // ---- a new file's address. An address naming a file serves that
-    // file's folder (here src), so it opens a window of its own on that
-    // folder, as any file's address in a subfolder does; it is closed after.
-    MCGuiStep(@"ssh://standin/<folder>/src/fresh.txt, not there yet, opens an empty untitled tab", ^{
+    // ---- addresses an open window's folder holds. As a local file goes
+    // to the window whose folder holds it, a file's address on the same
+    // machine opens in the window over SSH whose folder holds it, through
+    // that window's host (no ssh run, no second window), by the host's own
+    // resolving (a link to the folder, "..").
+    MCGuiStep(@"ssh://standin/<folder>/src/util.c opens in the open window, through its host", ^{
+        GCHECK([gC showFile:gFile]);
+        NSString *util = [gFolder stringByAppendingPathComponent:@"src/util.c"];
+        if (MCTab *open = TabFor(gC, util)) GCHECK([gC closeTab:open prompt:NO]);
+        GCHECK(TabFor(gC, util) == nil);
+        gWindowsBefore = MCGuiControllers().count;
+        NSURL *url = [NSURL URLWithString:[@"ssh://standin" stringByAppendingString:util]];
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
+        GCHECK(NewAlerts().count == 0);
+        GCHECK(MCGuiControllers().count == gWindowsBefore);
+        GCHECK(RemoteWindow() == gC && RemoteWindowOn([gFolder stringByAppendingPathComponent:@"src"]) == nil);
+        GCHECK(StandInPid() == gHostA);   // no ssh run for it
+        GCHECK_EQ_STR(gC.currentPath, util);
+        MCTab *t = TabFor(gC, util);
+        GCHECK(t != nil && t.session != nil && t.fileModDate == nil);
+        GCHECK_EQ_STR(t.currentText, @"// a needle here\n");
+    });
+    MCGuiStep(@"the same file through a link to the folder, and by \"..\": the same window and tab", ^{
+        NSString *alias = [MCGuiScratch() stringByAppendingPathComponent:@"remote-alias"];
+        [NSFileManager.defaultManager createSymbolicLinkAtPath:alias withDestinationPath:gFolder error:nil];
+        GCHECK([gC showFile:gFile]);
+        NSString *mainC = [gFolder stringByAppendingPathComponent:@"src/main.c"];
+        NSURL *url = [NSURL URLWithString:[@"ssh://standin" stringByAppendingString:[alias stringByAppendingPathComponent:@"src/main.c"]]];
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
+        GCHECK(MCGuiControllers().count == gWindowsBefore);
+        GCHECK(StandInPid() == gHostA);
+        GCHECK_EQ_STR(gC.currentPath, mainC);   // spelled under the window's folder, as the host resolved it
+        GCHECK(TabFor(gC, [alias stringByAppendingPathComponent:@"src/main.c"]) == nil);
+        GCHECK([gC showFile:gFile]);
+        url = [NSURL URLWithString:[NSString stringWithFormat:@"ssh://standin%@/src/../src/main.c", gFolder]];
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
+        GCHECK(MCGuiControllers().count == gWindowsBefore);
+        GCHECK_EQ_STR(gC.currentPath, mainC);
+        GCHECK(NewAlerts().count == 0);
+    });
+    MCGuiStep(@"ssh://standin/<folder> again: the open window comes to front, no other opens", ^{
+        NSURL *url = [NSURL URLWithString:[@"ssh://standin" stringByAppendingString:gFolder]];
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
+        url = [NSURL URLWithString:[NSString stringWithFormat:@"ssh://standin%@/", [MCGuiScratch() stringByAppendingPathComponent:@"remote-alias"]]];
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
+        GCHECK(NewAlerts().count == 0);
+        GCHECK(MCGuiControllers().count == gWindowsBefore);
+        GCHECK(RemoteWindow() == gC);
+        GCHECK(StandInPid() == gHostA);
+    });
+    // ---- a new file's address in the open window's folder: a tab of that
+    // window, empty and untitled at its path, which Cmd+S makes through the
+    // window's host.
+    MCGuiStep(@"ssh://standin/<folder>/src/fresh.txt, not there yet, opens an empty untitled tab there", ^{
         NSString *fresh = [gFolder stringByAppendingPathComponent:@"src/fresh.txt"];
         NSURL *url = [NSURL URLWithString:[@"ssh://standin" stringByAppendingString:fresh]];
         [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
         if (NewAlerts().count) MCGuiNote(@"alerts in this suite: %@ (%@)", NewAlerts(), MCGuiLastAlertInformative());
         GCHECK(NewAlerts().count == 0);
+        GCHECK(MCGuiControllers().count == gWindowsBefore);
+        GCHECK(StandInPid() == gHostA);
+        MCTab *t = TabFor(gC, fresh);
+        if (!t) MCGuiNote(@"its tabs: %@", [[gC valueForKey:@"tabs"] valueForKey:@"currentPath"]);
+        GCHECK(t != nil && t.untitled && !t.dirty);
+        GCHECK_EQ_STR(t.currentText, @"");
+        GCHECK(![NSFileManager.defaultManager fileExistsAtPath:fresh]);
+        GCHECK_EQ_STR(gC.currentPath, fresh);
+        if (!t) return;
+        TypeAtEnd(gC, @"fresh\n");
+        GCHECK(t.dirty);
+        [gC saveCurrentFile:nil];
+    });
+    MCGuiWait(@"made by the window's host's save", 10, ^BOOL {
+        NSString *fresh = [gFolder stringByAppendingPathComponent:@"src/fresh.txt"];
+        MCTab *t = TabFor(gC, fresh);
+        return [Read(fresh) isEqualToString:@"fresh\n"] && t && !t.dirty && !t.untitled;
+    });
+    // ---- what no open window holds: another machine's address (the
+    // stand-in serves the same disk, so only the machine differs), and a
+    // file outside the folder. Each opens a window on the file's folder,
+    // closed after with its host.
+    MCGuiStep(@"ssh://other/<folder>/src/util.c: another machine, a window of its own", ^{
+        NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"ssh://other%@/src/util.c", gFolder]];
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
+        GCHECK(NewAlerts().count == 0);
         gFreshWindow = RemoteWindowOn([gFolder stringByAppendingPathComponent:@"src"]);
+        GCHECK(gFreshWindow != nil && gFreshWindow != gC);
+        if (!gFreshWindow) return;
+        gHostFresh = StandInPid();
+        GCHECK(gHostFresh > 0 && gHostFresh != gHostA);
+        GCHECK([gFreshWindow.sessionRemoteLabel hasPrefix:@"other:"]);
+        GCHECK_EQ_STR(gFreshWindow.currentPath, [gFolder stringByAppendingPathComponent:@"src/util.c"]);
+        [gFreshWindow.window performClose:nil];
+        gFreshWindow = nil;
+    });
+    MCGuiWait(@"that window gone, and its host with it", 15, ^BOOL {
+        return RemoteWindow() == gC && MCGuiControllers().count == gWindowsBefore && (gHostFresh <= 0 || Gone(gHostFresh));
+    });
+    MCGuiStep(@"ssh://standin/<outside>/elsewhere.txt: outside the folder, a window of its own", ^{
+        if (gHostFresh > 0 && !Gone(gHostFresh)) kill(-gHostFresh, SIGKILL);   // the suite's own, by its recorded pid
+        gHostFresh = 0;
+        NSString *outside = [RealPath(MCGuiScratch()) stringByAppendingPathComponent:@"remote-outside"];
+        [NSFileManager.defaultManager createDirectoryAtPath:outside withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *file = [outside stringByAppendingPathComponent:@"elsewhere.txt"];
+        MCGuiWriteFile(file, @"elsewhere\n");
+        NSURL *url = [NSURL URLWithString:[@"ssh://standin" stringByAppendingString:file]];
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
+        GCHECK(NewAlerts().count == 0);
+        gFreshWindow = RemoteWindowOn(outside);
         GCHECK(gFreshWindow != nil && gFreshWindow != gC);
         if (!gFreshWindow) {
             NSMutableArray *roots = [NSMutableArray array];
@@ -363,30 +469,13 @@ MC_GUI_SUITE(remote_ssh) {
             return;
         }
         gHostFresh = StandInPid();
-        MCTab *t = TabFor(gFreshWindow, fresh);
-        if (!t) MCGuiNote(@"its tabs: %@", [[gFreshWindow valueForKey:@"tabs"] valueForKey:@"currentPath"]);
-        GCHECK(t != nil && t.untitled && !t.dirty);
-        GCHECK_EQ_STR(t.currentText, @"");
-        GCHECK(![NSFileManager.defaultManager fileExistsAtPath:fresh]);
-        GCHECK_EQ_STR(gFreshWindow.currentPath, fresh);
-        TypeAtEnd(gFreshWindow, @"fresh\n");
-        GCHECK(t.dirty);
-        [gFreshWindow saveCurrentFile:nil];
-    });
-    MCGuiWait(@"made by the host's save", 10, ^BOOL {
-        NSString *fresh = [gFolder stringByAppendingPathComponent:@"src/fresh.txt"];
-        MCTab *t = gFreshWindow ? TabFor(gFreshWindow, fresh) : nil;
-        return !gFreshWindow || ([Read(fresh) isEqualToString:@"fresh\n"] && t && !t.dirty && !t.untitled);
-    });
-    MCGuiStep(@"that window closes", ^{
-        NSString *fresh = [gFolder stringByAppendingPathComponent:@"src/fresh.txt"];
-        GCHECK_EQ_STR(Read(fresh), @"fresh\n");
+        GCHECK(gHostFresh > 0 && gHostFresh != gHostA);
+        GCHECK_EQ_STR(TabFor(gFreshWindow, file).currentText, @"elsewhere\n");
         [gFreshWindow.window performClose:nil];
         gFreshWindow = nil;
     });
-    MCGuiWait(@"gone, and its host with it", 15, ^BOOL {
-        return RemoteWindow() == gC && RemoteWindowOn([gFolder stringByAppendingPathComponent:@"src"]) == nil &&
-               (gHostFresh <= 0 || Gone(gHostFresh));
+    MCGuiWait(@"that window gone too, and its host", 15, ^BOOL {
+        return RemoteWindow() == gC && MCGuiControllers().count == gWindowsBefore && (gHostFresh <= 0 || Gone(gHostFresh));
     });
     MCGuiStep(@"the first window's notes.txt on show again", ^{
         if (gHostFresh > 0 && !Gone(gHostFresh)) kill(-gHostFresh, SIGKILL);   // the suite's own, by its recorded pid

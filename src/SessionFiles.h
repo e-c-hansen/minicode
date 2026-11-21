@@ -69,7 +69,24 @@ bool confinedPath(const std::string& root, const std::string& rel, std::string* 
 // kMaxReadBytes from `offset` (none past the end; "length" 0 gives the
 // size alone). The file is opened at its real place, not following a
 // symlink there, so a link swapped in after the check is refused.
+//   {"op": "locate", "path": asked}
+//     -> {"op": "locate", "path": asked, "inside": bool, and when inside
+//        "rel": its path from the folder ("" for the folder itself), "dir"
+//        (a folder), "new" (a file not there yet in a folder that is)}
+// where `asked` is a path as an ssh:// address names it ("~", "~/x" or
+// "/x"; locateInFolder): whether the file or folder it names is this
+// folder's, by the host's own resolving (a Mac's window over SSH asks
+// before opening another, stage 8). Nothing is told of a path outside.
 Json readWorkspace(const std::string& root, const Json& request, std::string* bytes = nullptr);
+
+// The "locate" read: `asked` resolved as `mutible host --stdio asked` would
+// resolve it on this machine (`~` as `home`, a relative path from `home`,
+// "." and ".." taken out by name, as the CLI's absolutePath does; then the
+// folder's real place, symlinks followed, and a file's name kept as given,
+// as Shared::stdioTarget does), and whether that is `root` or inside it by
+// real places. A file there whose real place is outside (a link out of the
+// folder), a missing folder and a name that is none are not inside.
+Json locateInFolder(const std::string& root, const std::string& asked, const std::string& home);
 
 // ---- naming a file from a browser's page (Save As, a new file's name)
 // The path a page names for a file it saves as (`rel`, '/'-separated from

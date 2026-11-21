@@ -163,6 +163,21 @@ public:
     // The address named a file not there yet (the Welcome's "new"): the
     // window opens it empty, and its first save makes it.
     bool askedFileNew() const { return askedFileNew_; }
+    // Which machine and account (Shared::sshMachineKey: ssh://[user@]host
+    // [:port]), the same for every folder there.
+    const std::string& machine() const { return machine_; }
+    // Where an ssh:// address's path (`asked`, "~", "~/x" or "/x", as the
+    // target names it) is on this link's host, resolved there (FsRead
+    // "locate": the remote's ~ and real places, SessionFiles.h): inside
+    // this folder or not, and when inside its path spelled under folder(),
+    // whether it is a folder, and whether it is a file not there yet.
+    // False when the host did not say (gone, too old for the read, no
+    // answer within `timeoutMs`). Waits on the host.
+    struct Located {
+        bool inside = false, dir = false, isNew = false;
+        std::string path;
+    };
+    bool locate(const std::string &asked, Located *out, int timeoutMs = 5000);
     // What the remote host saw change on disk (FsChanged's json: {root,
     // listings, git}, for the folders Client::watchFolders named), told on
     // the main queue inside dispatch() (perhaps inside a wait: a listener

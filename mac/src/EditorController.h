@@ -127,6 +127,14 @@
 // The file an ssh:// address named, shown (showFile:); `isNew` when it is
 // not there yet: its tab opens empty, and its first save makes it there.
 - (BOOL)showRemoteFile:(NSString *)path isNew:(BOOL)isNew;
+// Where an ssh:// address is in this window's folder, as its host resolves
+// it (the remote's ~ and real places, never this Mac's disk): the path
+// spelled under the window's folder, nil when the address is another
+// machine's or account's (Shared::sshMachineKey differs), outside the
+// folder, or the host did not say (gone, too old). `isRoot` says it is
+// the folder itself, `isDir` a folder, `isNew` a file not there yet in a
+// folder that is. Waits on the host (5 s at most).
+- (NSString *)remotePathOfAddress:(NSString *)address isRoot:(BOOL *)isRoot isDir:(BOOL *)isDir isNew:(BOOL *)isNew;
 @end
 
 // EditorController+SessionBrowser.mm (SessionBrowser.h)

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <dirent.h>
 #include <fcntl.h>
+#include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -226,12 +227,82 @@ bool confinedPath(const std::string& root, const std::string& rel, std::string* 
     return false;
 }
 
+Json locateInFolder(const std::string& root, const std::string& asked, const std::string& home) {
+    Json j = Json::object();
+    j.set("op", Json("locate"));
+    j.set("path", Json(asked));
+    j.set("inside", Json(false));
+    const std::string realRoot = root.empty() ? std::string() : realPlace(root);
+    if (realRoot.empty() || asked.empty() || asked.find('\0') != std::string::npos) return j;
+    // As the CLI takes --stdio's path (ControlProtocol's absolutePath): ~
+    // expanded, relative from home, "." and ".." by name.
+    std::string p = asked;
+    if (p == "~") p = home;
+    else if (p.compare(0, 2, "~/") == 0) p = home + p.substr(1);
+    if (p.empty() || p[0] != '/') p = home + "/" + p;
+    std::vector<std::string> parts;
+    for (std::size_t at = 0; at <= p.size();) {
+        std::size_t slash = p.find('/', at);
+        if (slash == std::string::npos) slash = p.size();
+        const std::string part = p.substr(at, slash - at);
+        if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!part.empty() && part != ".") {
+            parts.push_back(part);
+        }
+        at = slash + 1;
+    }
+    std::string norm;
+    for (const std::string& part : parts) norm += "/" + part;
+    if (norm.empty()) norm = "/";
+    auto relOf = [&](const std::string& real) {
+        return real == realRoot ? std::string() : real.substr(realRoot == "/" ? 1 : realRoot.size() + 1);
+    };
+    struct stat st;
+    const bool there = ::stat(norm.c_str(), &st) == 0;
+    if (there && S_ISDIR(st.st_mode)) {
+        const std::string real = realPlace(norm);
+        if (real.empty() || !inside(realRoot, real)) return j;
+        j.set("inside", Json(true));
+        j.set("rel", Json(relOf(real)));
+        j.set("dir", Json(true));
+        return j;
+    }
+    if (norm == "/") return j;
+    const std::size_t slash = norm.rfind('/');
+    const std::string name = norm.substr(slash + 1);
+    const std::string realDir = realPlace(slash == 0 ? std::string("/") : norm.substr(0, slash));
+    if (name.empty() || realDir.empty() || !inside(realRoot, realDir)) return j;
+    if (::stat(realDir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) return j;
+    const std::string file = (realDir == "/" ? std::string() : realDir) + "/" + name;
+    struct stat lst;
+    if (::lstat(file.c_str(), &lst) == 0) {
+        // A link out of the folder is not the folder's (its tree dims it
+        // and never opens it): such an address keeps a window of its own.
+        const std::string real = realPlace(file);
+        if (!real.empty() && !inside(realRoot, real)) return j;
+    }
+    const std::string dirRel = relOf(realDir);
+    j.set("inside", Json(true));
+    j.set("rel", Json(dirRel.empty() ? name : dirRel + "/" + name));
+    if (!there) j.set("new", Json(true));
+    return j;
+}
+
 Json readWorkspace(const std::string& root, const Json& request, std::string* bytes) {
     const std::string op = request["op"].asString();
     const std::string path = request["path"].asString();
     if (bytes) bytes->clear();
     if (op == "list") return listFolder(root, path, request["hidden"].asBool());
     if (op == "read") return readFile(root, request, bytes);
+    if (op == "locate") {
+        // The host's own home, as the CLI expands --stdio's ~.
+        const char* env = std::getenv("HOME");
+        std::string home = env && *env ? env : "";
+        if (home.empty())
+            if (const struct passwd* pw = ::getpwuid(::getuid()); pw && pw->pw_dir) home = pw->pw_dir;
+        return locateInFolder(root, path, home.empty() ? std::string("/") : home);
+    }
     return failed(op, path, "the host has no read \"" + op + "\"");
 }
 
