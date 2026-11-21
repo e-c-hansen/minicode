@@ -81,6 +81,13 @@ public:
 
     // The size programs see (TIOCSWINSZ; the kernel sends SIGWINCH).
     void resize(int cols, int rows);
+    // The size last set (spawn, resize) given back if a program has set
+    // another; true when it had. Readline (bash's line editor) reads the
+    // size and writes it back each time it takes the terminal (at every
+    // prompt, and after a SIGWINCH): a resize between its read and its
+    // write is undone, and the pty is left at the old size while the
+    // screen is at the new one (term:size's failure, 2026-11-21).
+    bool keepSize();
     // The foreground process group (tcgetpgrp), 0 when none can be read.
     int foreground() const;
     // The terminal's modes say a password is being read (ECHO off,
@@ -111,6 +118,7 @@ private:
     Pty() = default;
     int fd_ = -1;
     int pid_ = -1;
+    unsigned short cols_ = 0, rows_ = 0;   // the size set last
     std::string out_;
     std::size_t outStart_ = 0;
     bool hungUp_ = false, reaped_ = false, killed_ = false;
