@@ -23,6 +23,7 @@
 #import <WebKit/WebKit.h>
 #include <sqlite3.h>
 #import <AVFoundation/AVFoundation.h>
+#import <AVKit/AVKit.h>
 #import <ImageIO/ImageIO.h>
 #import <Quartz/Quartz.h>
 #import <objc/runtime.h>
@@ -485,13 +486,61 @@ MC_GUI_SUITE(previews) {
         GCHECK_EQ_STR(ActiveName(c), @"photo.heic");
         GCHECK_EQ_STR(ActiveKind(c), @"image");
     });
-    MCGuiStep(@"a .mov from Finder opens as a preview tab", ^{
+    MCGuiStep(@"a .mov from Finder opens as a preview tab, paused, its frame not analysed", ^{
+        if (!haveMovie) return;
+        EditorController *c = MCGuiController();
+        const double c0 = MCGuiThreadCpuMs();
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:Fixture(@"clip.mov")]]];
+        const double opened = MCGuiThreadCpuMs() - c0;
+        GCHECK_EQ_STR(ActiveName(c), @"clip.mov");
+        GCHECK_EQ_STR(ActiveKind(c), @"media");
+        AVPlayerView *pv = [c valueForKey:@"playerView"];
+        GCHECK(pv.player.currentItem != nil && pv.player.rate == 0);
+        // Live Text on the paused first frame (VisionKit) waits for a play:
+        // it cost several hundred ms of CPU after every video opened.
+        if (@available(macOS 13.0, *)) GCHECK(!pv.allowsVideoFrameAnalysis);
+        MCGuiNote(@"main-thread CPU to open it: %.0f ms", opened);
+        GCHECK_TIME(opened, 250, @"main-thread CPU to open a short movie");
+    });
+    // AVKit's bar is put up once the item is ready: one given an item still
+    // loading animated for about 600 ms after.
+    MCGuiWait(@"its transport bar shows once it is ready", 5, ^BOOL {
+        if (!haveMovie) return YES;
+        AVPlayerView *pv = [MCGuiController() valueForKey:@"playerView"];
+        return pv.player.currentItem.status == AVPlayerItemStatusReadyToPlay &&
+               pv.controlsStyle == AVPlayerViewControlsStyleInline;
+    });
+    MCGuiStep(@"Shift+Cmd+Space plays it", ^{
+        if (!haveMovie) return;
+        EditorController *c = MCGuiController();
+        GCHECK([c canTogglePlayback]);
+        [c togglePlayback:nil];
+        GCHECK(((AVPlayerView *)[c valueForKey:@"playerView"]).player.rate != 0);
+    });
+    MCGuiWait(@"and a frame paused from then on may be analysed", 5, ^BOOL {
+        if (!haveMovie) return YES;
+        if (@available(macOS 13.0, *))
+            return ((AVPlayerView *)[MCGuiController() valueForKey:@"playerView"]).allowsVideoFrameAnalysis;
+        return YES;
+    });
+    MCGuiStep(@"(paused again)", ^{
+        if (!haveMovie) return;
+        EditorController *c = MCGuiController();
+        AVPlayer *p = ((AVPlayerView *)[c valueForKey:@"playerView"]).player;
+        if (p.rate != 0) [c togglePlayback:nil];
+        GCHECK(p.rate == 0);
+    });
+    MCGuiStep(@"another file shown lets the player and its bar go", ^{
         if (!haveMovie) return;
         EditorController *c = MCGuiController();
         [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
-                                                      openURLs:@[[NSURL fileURLWithPath:Fixture(@"clip.mov")]]];
-        GCHECK_EQ_STR(ActiveName(c), @"clip.mov");
-        GCHECK_EQ_STR(ActiveKind(c), @"media");
+                                                      openURLs:@[[NSURL fileURLWithPath:Fixture(@"picture.png")]]];
+        GCHECK_EQ_STR(ActiveKind(c), @"image");
+        AVPlayerView *pv = [c valueForKey:@"playerView"];
+        // A bar left on the hidden view kept the app busy for half a second.
+        GCHECK(pv.player == nil && pv.controlsStyle == AVPlayerViewControlsStyleNone);
+        GCHECK(![c canTogglePlayback]);
     });
 
     // ---- R4.2: Space in the tree

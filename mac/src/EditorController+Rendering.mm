@@ -289,12 +289,51 @@ static char kPdfOpensAtTop;
         [item addObserver:self forKeyPath:key options:0 context:kMediaItemContext];
 }
 
+// AVPlayerView looks for text, objects, and people in a paused frame
+// (allowsVideoFrameAnalysis, VisionKit's Live Text, on by default from
+// macOS 13), and a file here opens paused on its first frame, so every
+// video shown started that analysis at once, in the app and in
+// mediaanalysisd, after the frame was up (the taskbench's MP4).
+// It is off until `player` first plays, and on from then, so a frame
+// paused while watching can still be read. nil stops watching.
+- (void)analyseFramesOncePlayed:(AVPlayer *)player {
+    if (@available(macOS 13.0, *)) {
+        NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+        [nc removeObserver:self name:AVPlayerRateDidChangeNotification object:nil];
+        if (!player) return;
+        self.playerView.allowsVideoFrameAnalysis = NO;
+        [nc addObserver:self selector:@selector(mediaRateChanged:)
+                   name:AVPlayerRateDidChangeNotification object:player];
+    }
+}
+
+- (void)mediaRateChanged:(NSNotification *)note {
+    AVPlayer *player = note.object;
+    // AVFoundation may post from another thread.
+    __weak EditorController *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        EditorController *me = weakSelf;
+        if (!me || player != me.playerView.player || player.rate == 0) return;
+        if (@available(macOS 13.0, *)) {
+            me.playerView.allowsVideoFrameAnalysis = YES;
+            [[NSNotificationCenter defaultCenter] removeObserver:me
+                                                            name:AVPlayerRateDidChangeNotification
+                                                          object:player];
+        }
+    });
+}
+
 // Pause and let go of the player, so nothing keeps playing once another file,
 // folder or message takes the slot, or the window closes.
 - (void)stopMedia {
     MCMarkdownMediaStopAll(self.window);   // a Markdown page's players too
+    [self analyseFramesOncePlayed:nil];
     [self.playerView.player pause];
     [self observeMediaItem:nil];
+    // The transport bar goes too: left on the hidden view, it kept the app
+    // busy at the display's rate for half a second after another file
+    // showed.
+    self.playerView.controlsStyle = AVPlayerViewControlsStyleNone;
     self.playerView.player = nil;
     self.isMedia = NO;
 }
@@ -314,6 +353,9 @@ static char kPdfOpensAtTop;
         return;
     }
     if (item.status != AVPlayerItemStatusReadyToPlay) return;
+    // The transport bar, now that the item is ready (showMediaAtPath:).
+    if (self.playerView.controlsStyle != AVPlayerViewControlsStyleInline)
+        self.playerView.controlsStyle = AVPlayerViewControlsStyleInline;
     CMTime d = item.duration;
     self.mediaSeconds = CMTIME_IS_NUMERIC(d) ? CMTimeGetSeconds(d) : -1;
     self.mediaPixels = item.presentationSize;
@@ -331,7 +373,6 @@ static char kPdfOpensAtTop;
     if (!asset.playable) return NO;
     if (!self.playerView) {
         AVPlayerView *v = [[AVPlayerView alloc] initWithFrame:NSZeroRect];
-        v.controlsStyle = AVPlayerViewControlsStyleInline;
         v.showsFullScreenToggleButton = YES;
         v.videoGravity = AVLayerVideoGravityResizeAspect;
         v.wantsLayer = YES;
@@ -352,6 +393,13 @@ static char kPdfOpensAtTop;
     } else {
         player = [AVPlayer playerWithPlayerItem:item];
         player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
+        [self analyseFramesOncePlayed:player];   // before the view shows its first frame
+        // No transport bar until the item is ready (mediaItemChanged:):
+        // AVKit's bar (SwiftUI) given an item still loading animated into
+        // its ready state for about 600 ms at a tenth of a core, even for
+        // a short local file, and kept the app busy that long; one made
+        // once the item is ready starts in that state.
+        self.playerView.controlsStyle = AVPlayerViewControlsStyleNone;
         self.playerView.player = player;
         self.mediaPixels = NSZeroSize;
         self.mediaSeconds = -1;
