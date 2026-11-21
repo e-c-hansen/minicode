@@ -6,6 +6,7 @@
 // it is installed.
 #import "Harness.h"
 #import "EditorController.h"
+#import "EditorController+Private.h"   // tabForPath:, closeTab:prompt:
 #import "Navigation.h"
 #import "PalettePanel.h"
 #import "Lsp.h"
@@ -308,6 +309,13 @@ MC_GUI_SUITE(symbols) {
         [Nav(c) goForward];
         GCHECK([[c valueForKey:@"currentPath"] isEqualToString:shapes]);
         for (NSString *e in Nav(c).entries) GCHECK(![e containsString:@"renamed.txt"]);
+        // Its tab goes too: a tab whose file was deleted is marked unsaved
+        // ("(deleted)"), and a later suite's Close All asked to save it
+        // (2026-11-21 soak, seed 3983770048: organize_on_save's alerts).
+        MCTab *gone = [c tabForPath:moved];
+        GCHECK(gone != nil);
+        if (gone) GCHECK([c closeTab:gone prompt:NO]);
+        GCHECK([c tabForPath:moved] == nil);
     });
 
     // ------------------------------------------------- a Markdown preview

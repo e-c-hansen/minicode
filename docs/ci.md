@@ -482,8 +482,7 @@ times.
 
 Still open from that soak:
 
-- Seen in one round each: Mac `organize_on_save` (an alert count off by
-  one as its servers were turned off), GTK `tree_clicks`,
+- Seen in one round each: GTK `tree_clicks`,
   `editor_keys` (again in the fourth pass's loaded replay), `agents`
   and `attention` (issue #127 has each one's first failure).
 
@@ -505,6 +504,35 @@ Found while checking this: `search` failed twice on PR #8 once the leak
 check closed a window `previews` had left open. The suite had searched
 the whole project instead of its own folder, and passed only because that
 leftover window, on another folder, was the newest. Fixed in the suite.
+
+The soak of 95fa4755 (2026-11-21, run 44898401650) failed three Mac
+suites once each, all order (fixed in the suites and the harness, to be
+called fixed after five soak rounds without them):
+
+- `lsp_watch`, "the folders are watched" (seed 4247316389, behind
+  `swatch_escape`): the failure picture shows "Language servers off"
+  and a settings.conf tab. swatch_escape's last color pick is saved
+  0.15 s after it, and its steps, 10 ms apart, ended first and put the
+  settings file back under the still unsaved tab; lsp_watch's
+  `showFile:` left that tab, which saves a pick's tab as it goes, the
+  harness answered "changed on disk" with Keep Mine, and the old text,
+  `lsp.enabled = false`, went over lsp_watch's settings. swatch_escape
+  waits for the save and closes the tab before it puts the file back.
+- `organize_on_save`, "the tabs closed" (seed 3983770048; an earlier
+  soak's one round of it, listed as still open, was likely the same): its Close All showed a
+  "Save changes?" alert. `symbols`, first in that process's order,
+  deleted renamed.txt under its open tab, which the window marks
+  "(deleted)" and unsaved; that tab was still open in the shared window
+  13 suites later. symbols closes it now.
+- `daily_work`, "the window's folder is a recent one" (seed
+  3983770048, 62nd in its process): File > Open Recent keeps 20
+  folders, and the shared window's, opened first, had fallen off behind
+  18 other suites' folders (the log lists them). The check opens a
+  window of its own and finds its folder first in the list.
+
+The harness now says `LEFT` for a tab left unsaved, or on a file no
+longer on disk, in any window, and closes it unasked before it checks
+the settings file (docs/notes/verification.md, "What a suite leaves").
 
 ## Branch protection (on since 2026-11-14)
 
