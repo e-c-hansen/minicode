@@ -63,7 +63,14 @@
 // read-only (only Side by Side; no Apply to Main), a picture's Before and
 // After decoded from the server's /picture/ addresses at their pixel
 // sizes, the window opening nothing, and each page's tab going when the
-// window closes it.
+// window closes it. Quick Open (stage 7's heavier reads, on the host's
+// workers): Command P in the editable page lists the folder's files as the
+// host listed them, a query ranks them by the palette's matching with the
+// matched letters marked, and Return opens the file in the window, which
+// the page then shows; Shift Command F in the read-only page searches the
+// folder on the host, its rows grouped by file with a line of context
+// either side and the matches marked, and a row clicked opens its file in
+// a tab of the page's own at that line, the window opening nothing.
 #import "Harness.h"
 #import <WebKit/WebKit.h>
 #import "EditorController.h"
@@ -366,6 +373,10 @@ NSString *const kRead =
     @" pageFetched: window.__pageFetch || null,"
     @" scm: window.mcSessionView ? window.mcSessionView.git() : null,"
     @" review: window.mcSessionView ? window.mcSessionView.review() : null,"
+    @" qo: window.mcSessionView && window.mcSessionView.quickOpen ? window.mcSessionView.quickOpen() : null,"
+    @" search: window.mcSessionView && window.mcSessionView.search ? window.mcSessionView.search() : null,"
+    @" hit: window.mcSessionView && window.mcSessionView.hitLine ? window.mcSessionView.hitLine() : -1,"
+    @" caret: window.mcSessionView && window.mcSessionView.caretLine ? window.mcSessionView.caretLine() : -1,"
     @" mdShown: !document.getElementById('md').classList.contains('hidden')})";
 
 // Script run in the page (a click on its controls), its failure noted.
@@ -559,6 +570,30 @@ MCTab *TabOfPage(EditorController *c, id page) {
     for (MCTab *t in [c groupTabs])
         if (t.page == page) return t;
     return nil;
+}
+
+// A key pressed on the page itself (not in a field), as a browser sends
+// it: `options` a JavaScript object of the event's modifiers.
+void PageKey(NSString *key, NSString *options) {
+    Eval([NSString stringWithFormat:
+        @"(() => { document.dispatchEvent(new KeyboardEvent('keydown', Object.assign({key: '%@', bubbles: true,"
+        @" cancelable: true}, %@))); return 1; })()", key, options]);
+}
+
+// Text typed into the page's field `field` (an input event, as typing
+// sends), then, with `key`, that key pressed in it.
+void FieldText(NSString *field, NSString *text, NSString *key) {
+    NSData *quoted = [NSJSONSerialization dataWithJSONObject:@[ text ] options:0 error:nil];
+    Eval([NSString stringWithFormat:
+        @"(() => { const f = document.getElementById('%@'); f.value = %@[0];"
+        @" f.dispatchEvent(new Event('input', {bubbles: true}));"
+        @" %@ return 1; })()", field, [[NSString alloc] initWithData:quoted encoding:NSUTF8StringEncoding],
+        key ? [NSString stringWithFormat:@"f.dispatchEvent(new KeyboardEvent('keydown', {key: '%@', bubbles: true,"
+                                         @" cancelable: true}));", key] : @""]);
+}
+
+NSDictionary *Seen(NSString *key) {
+    return [gSeen[key] isKindOfClass:NSDictionary.class] ? gSeen[key] : nil;
 }
 
 // A click on the page's tab strip button named `name`.
@@ -860,6 +895,29 @@ MC_GUI_SUITE(session_browser) {
         Read();
         return [gSeen[@"text"] isEqualToString:TV(gC).string] && [TV(gC).string hasPrefix:@"def helper"];
     });
+    MCGuiStep(@"Command P in the page: Quick Open", ^{ PageKey(@"p", @"{metaKey: true}"); });
+    MCGuiWait(@"lists the folder's files as the host listed them", 20, ^BOOL {
+        Read();
+        return [Seen(@"qo")[@"open"] boolValue] &&
+               [[Seen(@"qo")[@"rows"] componentsJoinedByString:@"|"] isEqualToString:@"calc.py|data.csv|logo.png|pkg/util.py"];
+    });
+    MCGuiStep(@"a query typed into it", ^{ FieldText(@"qoq", @"clc", nil); });
+    MCGuiWait(@"ranks them by the palette's matching, the matched letters marked", 20, ^BOOL {
+        Read();
+        return [[Seen(@"qo")[@"rows"] componentsJoinedByString:@"|"] isEqualToString:@"calc.py"] &&
+               [[Seen(@"qo")[@"marked"] componentsJoinedByString:@"|"] isEqualToString:@"clc"];
+    });
+    MCGuiStep(@"Return", ^{
+        GCHECK([Active(gC).currentPath hasSuffix:@"/pkg/util.py"]);
+        FieldText(@"qoq", @"clc", @"Enter");
+    });
+    MCGuiWait(@"opens the file in the window", 20, ^BOOL {
+        return [Active(gC).currentPath hasSuffix:@"/calc.py"];
+    });
+    MCGuiWait(@"and the page shows it, Quick Open closed", 20, ^BOOL {
+        Read();
+        return [gSeen[@"text"] isEqualToString:TV(gC).string] && ![Seen(@"qo")[@"open"] boolValue];
+    });
     MCGuiStep(@"a picture in the page's tree", ^{
         GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
         ClickRow(@"logo.png");
@@ -1157,6 +1215,45 @@ MC_GUI_SUITE(session_browser) {
     MCGuiWait(@"its close button closes it on the page, back to the window's tab", 20, ^BOOL {
         Read();
         return [gSeen[@"local"] isEqualToString:@""] && ![gSeen[@"tabs"] containsString:@"util.py"] &&
+               [gSeen[@"text"] isEqualToString:TV(gC).string];
+    });
+    MCGuiStep(@"Shift Command F in the read-only page: Find in Folder in its sidebar", ^{
+        PageKey(@"f", @"{metaKey: true, shiftKey: true}");
+    });
+    MCGuiWait(@"the sidebar shows Search", 20, ^BOOL {
+        Read();
+        return [Seen(@"search")[@"mode"] boolValue];
+    });
+    MCGuiStep(@"a query typed into it", ^{ FieldText(@"sq", @"return", @"Enter"); });
+    MCGuiWait(@"the host's rows, grouped by file, a line of context either side, the matches marked", 20, ^BOOL {
+        Read();
+        NSDictionary *s = Seen(@"search");
+        return [s[@"done"] boolValue] && [s[@"files"] count] == 2 &&
+               [[s[@"files"] lastObject] isEqualToString:@"pkg/util.py 1"];
+    });
+    MCGuiStep(@"what the rows show; then the second file's row clicked", ^{
+        NSDictionary *s = Seen(@"search");
+        MCGuiNote(@"search: %@ / %@ / %@", s[@"summary"], s[@"files"], s[@"rows"]);
+        GCHECK([[s[@"files"] firstObject] hasPrefix:@"calc.py "]);
+        GCHECK_EQ_STR([s[@"rows"] lastObject], @" 1 def helper():\n>2 return 42");
+        GCHECK([s[@"marks"] count] >= 2 && [[s[@"marks"] lastObject] isEqualToString:@"return"]);
+        GCHECK([s[@"summary"] hasSuffix:@"in 2 files"]);
+        Eval(@"(() => { const r = [...document.querySelectorAll('#slist .srow')].pop(); if (r) r.click(); return !!r; })()");
+    });
+    MCGuiWait(@"opens its file in a tab of the page's own, at that line", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@"pkg/util.py"] && [gSeen[@"hit"] intValue] == 1 &&
+               [gSeen[@"caret"] intValue] == 1;
+    });
+    MCGuiStep(@"the window opened nothing; the tab closed, and back to Files", ^{
+        GCHECK(MCTabNamed(gC, @"util.py") == nil);
+        GCHECK([gC tabs].count == tabsBefore);
+        CloseTab(@"util.py");
+        Eval(@"(() => { document.getElementById('filesbtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"the window's tab again, and the tree", 20, ^BOOL {
+        Read();
+        return [gSeen[@"local"] isEqualToString:@""] && ![Seen(@"search")[@"mode"] boolValue] &&
                [gSeen[@"text"] isEqualToString:TV(gC).string];
     });
     MCGuiStep(@"a picture clicked in the read-only page's tree", ^{ ClickRow(@"logo.png"); });

@@ -105,6 +105,13 @@
 // host's thread, as the listings are (capped); the watching itself is on
 // the watcher's own thread or queue.
 //
+// The heavier reads (stage 7, SessionSearch.h): FsRead's "files" (Quick
+// Open's list) and "search" (Find in Folder) run on worker threads of the
+// host's own (ReadWorkers), never on its thread, and answer as they go (a
+// search in batches, the last "done"); "cancel" stops one. The loop polls
+// readsFd() and calls takeReads(), which sends what the workers answered.
+// The Welcome says the host takes them (flag 8).
+//
 // Pure C++17 and POSIX: SessionHost's thread polls the ptys (poll(2)) and a
 // pipe that wakes it for messages; Host does the I/O only when the loop
 // calls it (readable, writable, tick).
@@ -128,6 +135,7 @@
 #include "HostPty.h"
 #include "SavePlan.h"
 #include "SessionProtocol.h"
+#include "SessionSearch.h"
 #include "TerminalScreen.h"
 #include "TerminalStream.h"
 #include "UndoHistory.h"
@@ -148,6 +156,9 @@ public:
     // Where the host's messages go: to renderer `to`.
     using Sink = std::function<void(ClientId to, Message&& m)>;
     explicit Host(Sink sink) : sink_(std::move(sink)) {}
+    ~Host();   // cancels the workers' reads and waits for them
+    Host(const Host&) = delete;
+    Host& operator=(const Host&) = delete;
 
     // A renderer joins: its id, to be named in every handle(). Nothing is
     // sent until its Hello.
@@ -220,6 +231,23 @@ public:
     // For checks: a document's disk state (0 in step, 1 changed on disk,
     // 2 gone).
     int diskState(DocId d) const;
+
+    // ---- the heavier reads (SessionSearch.h), on the host's workers
+    // Readable while the workers have answers waiting (-1 before the first
+    // such read): the loop polls it, then calls takeReads, which sends them.
+    int readsFd() const { return workers_ ? workers_->fd() : -1; }
+    void takeReads();
+    // For checks: waits (at most `timeoutMs`) for an answer and sends what
+    // came; false when none came. And how many reads run.
+    bool waitReads(int timeoutMs);
+    std::size_t readsRunning() const { return workers_ ? workers_->running() : 0; }
+    // For checks: the time a read may take, in seconds (< 0: the op's own),
+    // and the workers themselves (made if need be).
+    void setReadSeconds(double s) { readSeconds_ = s; }
+    ReadWorkers& readWorkers() {
+        if (!workers_) workers_ = std::make_unique<ReadWorkers>();
+        return *workers_;
+    }
 
     // ---- terminals: what the loop polls, and what it calls when a pty is
     // ready. A terminal's renderers are the one that opened it and every
@@ -484,6 +512,10 @@ private:
     // (a headless host's own), else of the window the request names.
     void onRead(ClientId c, Message& m);
     std::string readRoot(std::uint64_t window) const;
+    // The workers of the heavier reads, made at the first; their time limit
+    // for checks.
+    std::unique_ptr<ReadWorkers> workers_;
+    double readSeconds_ = -1;
 };
 
 // A Host on a thread of its own. Messages from renderers go in with post()

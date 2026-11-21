@@ -286,7 +286,7 @@ Parsed parse(const std::u16string& text) {
 
 std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
                                    const std::atomic<bool>* cancel, bool* truncated,
-                                   bool useIgnoreFiles) {
+                                   bool useIgnoreFiles, bool dotfiles, bool confine) {
     namespace fs = std::filesystem;
     std::vector<std::string> out;
     if (truncated) *truncated = false;
@@ -294,6 +294,12 @@ std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
     const fs::path canonRoot = fs::canonical(root, ec);
     if (ec) return out;
     std::set<std::string> seen = {canonRoot.string()};
+    // Whether a real place is the root's or under it (`confine`).
+    const std::string top = canonRoot.string();
+    auto inside = [&top](const std::string& real) {
+        return real == top || (real.size() > top.size() && real.compare(0, top.size(), top) == 0 &&
+                               (top.back() == '/' || real[top.size()] == '/'));
+    };
     struct Dir {
         std::string full, rel;
         FolderSearch::Ignore::Rules rules;
@@ -315,6 +321,7 @@ std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
             if (ec) break;
             std::string name = it->path().filename().string();
             if (name.empty() || FolderSearch::isSkippedFile(name)) continue;
+            if (!dotfiles && name[0] == '.') continue;
             names.push_back(std::move(name));
         }
         std::sort(names.begin(), names.end());
@@ -332,6 +339,10 @@ std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
                 continue;
             }
             if (!fs::is_regular_file(st)) continue;   // pipes, sockets, devices
+            if (confine && fs::is_symlink(fs::symlink_status(full, ec))) {
+                const fs::path real = fs::canonical(full, ec);
+                if (ec || !inside(real.string())) continue;
+            }
             if (out.size() >= maxFiles) {
                 if (truncated) *truncated = true;
                 return out;
@@ -341,6 +352,7 @@ std::vector<std::string> listFiles(const std::string& root, size_t maxFiles,
         for (const auto& sd : subdirs) {
             const fs::path canon = fs::canonical(sd.first, ec);
             if (ec) continue;
+            if (confine && !inside(canon.string())) continue;   // a link out of the folder
             if (!seen.insert(canon.string()).second) continue;   // a loop, or seen already
             queue.push_back({sd.first, sd.second,
                              useIgnoreFiles ? here.rules.enter(sd.first, sd.second) : here.rules});
@@ -364,8 +376,22 @@ std::vector<Match> rankFiles(const std::vector<std::u16string>& paths,
         size_t rec = 0;
     };
     std::vector<Ranked> out;
+    // What every match holds, in order: the query's characters, spaces
+    // skipped. A path without them is passed over before any alignment
+    // (most paths, for most queries; the session's page ranks for each key
+    // typed, on its server's thread).
+    std::u16string need;
+    for (char16_t c : q)
+        if (c != ' ') need.push_back(c);
+    auto holds = [&need](const std::u16string& path) {
+        size_t k = 0;
+        for (size_t j = 0; j < path.size() && k < need.size(); j++)
+            if (lower(path[j]) == need[k]) k++;
+        return k == need.size();
+    };
     for (size_t i = 0; i < paths.size(); i++) {
         const std::u16string& path = paths[i];
+        if (!need.empty() && !holds(path)) continue;
         Ranked r;
         r.m.index = i;
         r.m.tier = Tier::Prefix;
@@ -408,60 +434,6 @@ std::vector<Match> rankFiles(const std::vector<std::u16string>& paths,
     std::vector<Match> result;
     for (size_t i = 0; i < out.size() && i < limit; i++) result.push_back(std::move(out[i].m));
     return result;
-}
-
-std::vector<SymbolRow> symbolRows(const std::vector<Lsp::Symbol>& symbols,
-                                  const std::u16string& query, bool byKind, int caretSymbol,
-                                  int* preselect, size_t limit) {
-    std::vector<Entry> entries;
-    entries.reserve(symbols.size());
-    for (const Lsp::Symbol& sym : symbols) {
-        Entry e;
-        e.label = e.title = Lsp::toUtf16(sym.name);
-        entries.push_back(std::move(e));
-    }
-    std::vector<Match> ranked = rank(entries, query, {});
-    if (ranked.size() > limit) ranked.resize(limit);
-    std::vector<SymbolRow> rows;
-    auto symbolRow = [](Match m) {
-        SymbolRow r;
-        r.symbol = m.index;
-        r.match = std::move(m);
-        return r;
-    };
-    if (!byKind) {
-        for (Match& m : ranked) rows.push_back(symbolRow(std::move(m)));
-    } else {
-        std::vector<int> kinds;   // in the order their first symbol comes
-        for (const Match& m : ranked) {
-            int k = symbols[m.index].kind;
-            if (std::find(kinds.begin(), kinds.end(), k) == kinds.end()) kinds.push_back(k);
-        }
-        for (int k : kinds) {
-            size_t n = 0;
-            for (const Match& m : ranked) n += symbols[m.index].kind == k;
-            SymbolRow h;
-            h.heading = true;
-            h.text = Lsp::toUtf16(Lsp::symbolKindPlural(k) + " (" + std::to_string(n) + ")");
-            rows.push_back(std::move(h));
-            for (const Match& m : ranked)
-                if (symbols[m.index].kind == k) rows.push_back(symbolRow(m));
-        }
-    }
-    if (preselect) {
-        *preselect = -1;
-        const std::u16string q = trimmed(query);
-        for (size_t i = 0; i < rows.size(); i++) {
-            if (rows[i].heading) continue;
-            if (*preselect < 0) *preselect = int(i);
-            if (q.empty() && caretSymbol >= 0 && rows[i].symbol == size_t(caretSymbol)) {
-                *preselect = int(i);
-                break;
-            }
-            if (!q.empty() || caretSymbol < 0) break;
-        }
-    }
-    return rows;
 }
 
 }  // namespace CommandPalette

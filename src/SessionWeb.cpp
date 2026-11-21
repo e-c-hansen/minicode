@@ -5,10 +5,13 @@
 #include "Rename.h"
 
 #include "AutoIndent.h"
+#include "CommandPalette.h"
 #include "Csv.h"
+#include "FileDetails.h"
 #include "IdeLink.h"
 #include "MarkdownHtml.h"
 #include "SessionFiles.h"
+#include "SessionSearch.h"
 #include "SessionServer.h"
 #include "SessionWebGit.h"
 #include "Settings.h"
@@ -1340,6 +1343,14 @@ struct Server::Conn {
     // sends each one's listing again when it changes (a host that watches
     // the disk, DiskWatch.h).
     std::set<std::string> watched;
+    // Quick Open: its last `files` ask, and whether it waits for a listing
+    // under way (answered again when it comes).
+    Json filesAsk;
+    bool filesWaiting = false;
+    // Find in Folder: its search on the host (the request, 0 for none) and
+    // the page's number for it.
+    std::uint64_t searchReq = 0;
+    std::int64_t searchSeq = 0;
 };
 
 struct Server::Session : Client::Listener, Client::TermListener {
@@ -1432,6 +1443,18 @@ struct Server::Session : Client::Listener, Client::TermListener {
     std::set<std::string> watchSent;
     bool watchAsked = false;
     std::vector<Json> diskNews;
+    // Quick Open: the folder's files as the host last listed them (and as
+    // UTF-16, for the ranking), the listing under way (0 for none), and
+    // when the last came.
+    std::vector<std::string> files;
+    std::vector<std::u16string> files16;
+    bool filesListed = false, filesTruncated = false;
+    std::string filesError;
+    std::uint64_t filesReq = 0;
+    Clock::time_point filesAt;
+    // Find in Folder: the searches the host runs for pages, by request:
+    // the page's number.
+    std::map<std::uint64_t, int> searches;
     // The pty's size follows whoever typed last (Host::sizer); TermShell
     // says it where the host's screen reflowed, so the view reflows there
     // too, and the pages get the terminal whole at the new size.
@@ -1568,6 +1591,9 @@ std::string Server::helloText() const {
     // Reload from Disk: the host's (one that watches the disk), for a
     // document no app's window has open.
     hello.set("canReload", Json(opt_.editable && session_ && session_->client->hostWatches()));
+    // Quick Open and Find in Folder: any page, on a host that runs them
+    // (its Welcome's flag 8).
+    hello.set("canSearch", Json(session_ && session_->client->hostSearches()));
     // Opening a file as a window's tab, and closing one, change the
     // window: only a page that may edit. A page that only reads shows
     // files in tabs of its own (readfile).
@@ -1852,6 +1878,9 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     // Source Control (R3's fourth slice): git only reads, so any page.
     if (t == "git") return onGit(c, j);
     if (t == "review") return onReview(c, j);
+    // Quick Open and Find in Folder: the host only reads, so any page.
+    if (t == "files") return onFiles(c, j);
+    if (t == "search") return onSearch(c, j);
     // The rest changes the session or the window: only from a page that
     // may (each says so to one that only reads).
     if (t == "open") onOpen(c, j);
@@ -2321,6 +2350,183 @@ void Server::takeReads() {
         for (auto& c : conns_)
             if (c->id == it->second.first && c->welcomed) sendJson(*c, m);
         it = s.tables.erase(it);
+    }
+    takeStreams();
+}
+
+// ---- Quick Open and Find in Folder (SessionSearch.h)
+
+Json quickOpenJson(const std::vector<std::string>& paths, const std::vector<std::u16string>& paths16,
+                   const std::string& query, const std::vector<std::string>& recent, std::size_t limit) {
+    std::vector<std::u16string> recent16;
+    for (const std::string& r : recent) {
+        if (recent16.size() >= 50) break;
+        recent16.push_back(Model::utf16FromUtf8(r));
+    }
+    // One more than shown, to say whether there are more.
+    const std::vector<CommandPalette::Match> ranked =
+        CommandPalette::rankFiles(paths16, Model::utf16FromUtf8(query), recent16, limit + 1);
+    Json rows = Json::array();
+    for (std::size_t i = 0; i < ranked.size() && i < limit; i++) {
+        const CommandPalette::Match& m = ranked[i];
+        if (m.index >= paths.size()) continue;
+        const std::string& path = paths[m.index];
+        Json row = Json::object();
+        row.set("path", Json(path));
+        Json pos = Json::array();
+        for (std::size_t p : m.positions) pos.push(Json((int64_t)p));
+        row.set("pos", std::move(pos));
+        row.set("kind", Json(FileIcon::kindName(FileIcon::kindOf(path))));
+        const std::string view = fileType(path).view;
+        if (!view.empty()) row.set("view", Json(view));
+        rows.push(std::move(row));
+    }
+    Json out = Json::object();
+    out.set("rows", std::move(rows));
+    out.set("more", Json(ranked.size() > limit));
+    return out;
+}
+
+void Server::onFiles(Conn& c, const Json& j) {
+    if (!session_) return;
+    Session& s = *session_;
+    c.filesAsk = j;
+    c.filesWaiting = false;
+    if (!s.client->hostSearches()) {
+        Json m = Json::object();
+        m.set("t", Json("files"));
+        m.set("seq", j["seq"]);
+        m.set("rows", Json::array());
+        m.set("error", Json("This session's host cannot list its files for Quick Open (it is from an older mutible)."));
+        return sendJson(c, m);
+    }
+    // Listed when there is no listing, and again when the palette opens
+    // (`fresh`), at most once a second: files come and go meanwhile.
+    const bool stale = !s.filesListed || (j["fresh"].asBool() && msSince(s.filesAt) >= 1000);
+    if (stale && !s.filesReq) {
+        Json req = Json::object();
+        req.set("op", Json("files"));
+        req.set("hidden", Json(opt_.showHidden));
+        s.filesReq = s.client->requestStream(opt_.window, std::move(req));
+    }
+    if (s.filesListed) answerFiles(c);
+    c.filesWaiting = s.filesReq != 0;   // answered (again) when the listing comes
+}
+
+void Server::answerFiles(Conn& c) {
+    if (!session_) return;
+    Session& s = *session_;
+    const Json& ask = c.filesAsk;
+    std::vector<std::string> recent;
+    for (const Json& r : ask["recent"].elements())
+        if (r.isString() && recent.size() < 50) recent.push_back(r.asString());
+    std::string query = ask["query"].asString();
+    if (query.size() > 1024) query.resize(1024);
+    Json m = quickOpenJson(s.files, s.files16, query, recent);
+    m.set("t", Json("files"));
+    m.set("seq", ask["seq"]);
+    m.set("query", Json(query));
+    m.set("truncated", Json(s.filesTruncated));
+    m.set("listing", Json(s.filesReq != 0));
+    if (!s.filesError.empty()) m.set("error", Json(s.filesError));
+    sendJson(c, m);
+}
+
+void Server::onSearch(Conn& c, const Json& j) {
+    if (!session_) return;
+    Session& s = *session_;
+    cancelSearch(c);
+    c.searchSeq = j["seq"].asInt();
+    if (j["cancel"].asBool()) return;
+    auto finish = [&](const char* key, Json value) {
+        Json m = Json::object();
+        m.set("t", Json("found"));
+        m.set("seq", Json((int64_t)c.searchSeq));
+        m.set("rows", Json::array());
+        m.set("done", Json(true));
+        m.set(key, std::move(value));
+        sendJson(c, m);
+    };
+    if (!s.client->hostSearches())
+        return finish("error", Json("This session's host cannot search its folder (it is from an older mutible)."));
+    std::string query = j["query"].asString();
+    if (query.size() > 4096) query.resize(4096);
+    Json req = Json::object();
+    req.set("op", Json("search"));
+    req.set("query", Json(query));
+    req.set("caseSensitive", Json(j["caseSensitive"].asBool()));
+    req.set("wholeWord", Json(j["wholeWord"].asBool()));
+    req.set("regex", Json(j["regex"].asBool()));
+    req.set("include", Json(j["include"].asString().substr(0, 4096)));
+    req.set("exclude", Json(j["exclude"].asString().substr(0, 4096)));
+    req.set("hidden", Json(opt_.showHidden));
+    if (!FolderSearch::isSearchable(query, searchOptions(req))) return finish("short", Json(true));
+    if (s.searches.size() >= kMaxReadJobs)
+        return finish("error", Json("Too many searches at once; try again in a moment."));
+    c.searchReq = s.client->requestStream(opt_.window, std::move(req));
+    if (c.searchReq) s.searches[c.searchReq] = c.id;
+}
+
+void Server::cancelSearch(Conn& c) {
+    if (!c.searchReq) return;
+    if (session_) {
+        session_->client->cancelStream(c.searchReq, opt_.window);
+        session_->searches.erase(c.searchReq);
+    }
+    c.searchReq = 0;
+}
+
+// What the host's workers answered: the listing for Quick Open (every page
+// waiting on it answered from it), and each search's rows to its page.
+void Server::takeStreams() {
+    if (!session_) return;
+    Session& s = *session_;
+    if (s.filesReq) {
+        std::vector<Json> got;
+        if (s.client->takeStream(s.filesReq, &got)) {
+            s.filesReq = 0;
+            for (Json& a : got) {
+                if (!a["done"].asBool()) continue;
+                if (a.has("error")) {
+                    s.filesError = a["error"].asString();
+                    continue;
+                }
+                s.files.clear();
+                s.files16.clear();
+                for (const Json& f : a["files"].elements()) {
+                    s.files.push_back(f.asString());
+                    s.files16.push_back(Model::utf16FromUtf8(f.asString()));
+                }
+                s.filesTruncated = a["truncated"].asBool();
+                s.filesError.clear();
+            }
+            s.filesListed = true;
+            s.filesAt = Clock::now();
+            for (auto& c : conns_)
+                if (c->filesWaiting && c->welcomed && !c->dead) {
+                    c->filesWaiting = false;
+                    answerFiles(*c);
+                }
+        }
+    }
+    for (auto it = s.searches.begin(); it != s.searches.end();) {
+        std::vector<Json> got;
+        const bool done = s.client->takeStream(it->first, &got);
+        Conn* page = nullptr;
+        for (auto& c : conns_)
+            if (c->id == it->second && c->searchReq == it->first && c->welcomed && !c->dead) page = c.get();
+        if (page)
+            for (Json& a : got) {
+                a.set("t", Json("found"));
+                a.set("seq", Json((int64_t)page->searchSeq));
+                sendJson(*page, a);
+            }
+        if (done) {
+            if (page) page->searchReq = 0;
+            it = s.searches.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
@@ -3094,7 +3300,11 @@ void Server::detach() {
     session_->client.reset();
     session_.reset();
     pages_.clear();   // the review pages were the session's window's
-    for (auto& c : conns_) c->reviewPage.clear();
+    for (auto& c : conns_) {
+        c->reviewPage.clear();
+        c->searchReq = 0;   // the host cancels a renderer's reads as it goes
+        c->filesWaiting = false;
+    }
 }
 
 void Server::lookAtState() {
@@ -3464,6 +3674,7 @@ bool Server::run() {
             if ((*it)->dead) {
                 if ((*it)->file && (*it)->file->req && session_)
                     session_->client->forgetRead((*it)->file->req);
+                cancelSearch(**it);   // its search answers no one now
                 if ((*it)->counted) {
                     browsers_--;
                     lostBrowser = true;

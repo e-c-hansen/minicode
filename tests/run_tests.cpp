@@ -11934,6 +11934,7 @@ static void testMultiCaretOccurrences() {
 #include "session_web_tests.inc"
 #include "session_web_review_tests.inc"
 #include "session_disk_tests.inc"
+#include "session_search_tests.inc"
 #include "lsp_trust_tests.inc"
 #include "lsp_clangd_tests.inc"
 #include "multiedit_tests.inc"
@@ -12151,6 +12152,7 @@ int main() {
     testSessionWebGit();
     testSessionWebReviewPages();
     testSessionDisk();
+    testSessionSearch();
     testLspProjectCode();
     testLspClangdFlags();
     testMultiEdit();

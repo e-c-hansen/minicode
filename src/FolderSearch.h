@@ -149,6 +149,18 @@ struct FolderSearchOptions {
     // that read it (several at once). The tests raise the cancel flag from
     // it, so a cancel lands mid-walk however fast the walk is.
     std::function<void()> onFileRead;
+    // A browser's page of the session (SessionSearch.h): names starting
+    // with '.' left out, files and folders, as the page's tree leaves them
+    // out while it shows no dotfiles; and whatever a symlink leads to
+    // outside the folder searched left out (the files, and the folders
+    // never entered), so nothing outside the session's folder is read.
+    bool          skipDotfiles = false;
+    bool          confine = false;
+    // Called on the calling thread with each file's rows as the search
+    // takes them, in the walk's order (repeated context already dropped
+    // between them), so a caller can pass results on before it ends. The
+    // result still holds every row.
+    std::function<void(const std::vector<FolderSearchMatch>& fileRows)> onRows;
 };
 
 // A file left out of a search that a reader would expect searched.

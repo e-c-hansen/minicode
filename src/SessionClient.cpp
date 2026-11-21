@@ -499,9 +499,25 @@ void Client::process(Message&& m) {
         if (was.held && dirtyListener_) dirtyListener_(id, was.dirty);
         break;
     }
+    case Kind::FsData: {
+        // A heavier read's answers (requestStream) go to its stream, several
+        // for one request; anything else is a read's one answer.
+        auto s = streams_.find(m.req);
+        if (s == streams_.end()) {
+            if (!abandoned_.erase(m.req)) replies_[m.req] = std::move(m);
+            break;
+        }
+        const bool last = m.json["done"].asBool();
+        if (s->second.cancelled) {
+            if (last) streams_.erase(s);
+            break;
+        }
+        s->second.answers.push_back(std::move(m.json));
+        if (last) s->second.done = true;
+        break;
+    }
     case Kind::DocText:
     case Kind::State:
-    case Kind::FsData:
     case Kind::DocSaveDone:
     case Kind::DocReloadDone: {
         const std::uint64_t req = m.req;
@@ -912,6 +928,42 @@ bool Client::readAnswer(std::uint64_t req, Json* out, std::string* bytes) {
 
 void Client::forgetRead(std::uint64_t req) {
     if (!replies_.erase(req)) abandoned_.insert(req);
+}
+
+std::uint64_t Client::requestStream(std::uint64_t window, Json request) {
+    if (!hostSearches()) return 0;
+    const std::uint64_t req = requestRead(window, std::move(request));
+    streams_[req];
+    return req;
+}
+
+bool Client::takeStream(std::uint64_t req, std::vector<Json>* out) {
+    auto s = streams_.find(req);
+    if (s == streams_.end()) return false;
+    for (Json& j : s->second.answers) out->push_back(std::move(j));
+    s->second.answers.clear();
+    if (!s->second.done) return false;
+    streams_.erase(s);
+    return true;
+}
+
+void Client::cancelStream(std::uint64_t req, std::uint64_t window) {
+    auto s = streams_.find(req);
+    if (s == streams_.end()) return;
+    if (s->second.done) {   // nothing more comes
+        streams_.erase(s);
+        return;
+    }
+    s->second.cancelled = true;
+    s->second.answers.clear();
+    Message m;
+    m.kind = Kind::FsRead;
+    m.window = window;
+    m.json = Json::object();
+    m.json.set("op", Json("cancel"));
+    m.json.set("req", Json((int64_t)req));
+    m.req = ++nextReq_;   // answered by nothing
+    sendNow(std::move(m));
 }
 
 Json Client::read(std::uint64_t window, Json request, int timeoutMs) {

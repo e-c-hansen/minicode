@@ -59,6 +59,7 @@ core_sources = [
   core_dir / 'SessionWebAccess.cpp',
   core_dir / 'SqliteRead.cpp',
   core_dir / 'SessionFiles.cpp',
+  core_dir / 'SessionSearch.cpp',
   # The host watches the disk (stage 7): inotify, behind the core's one
   # platform interface for it.
   core_dir / 'DiskWatch.cpp',
@@ -159,6 +160,7 @@ core_sources = [
   # The palette's matching, modes and Quick Open's walk, and the outline
   # Go to Symbol lists without a server (PalettePanel.cpp shows them).
   core_dir / 'CommandPalette.cpp',
+  core_dir / 'CommandPaletteSymbols.cpp',
   core_dir / 'SymbolOutline.cpp',
   # Bracket boxes and Go to Bracket, bracket-pair colors, and auto-closing
   # pairs over the carets' rules (BracketView.cpp, BracketColors.cpp,

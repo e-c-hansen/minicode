@@ -380,6 +380,23 @@ public:
     void forgetRead(std::uint64_t req);
     // The same, waiting: null when the host did not answer in time.
     Json read(std::uint64_t window, Json request, int timeoutMs = 10000);
+    // The heavier reads (SessionSearch.h: "files", "search"), on the host's
+    // workers, answered as they go: several answers for one request, the
+    // last with "done". Whether the host takes them (its Welcome's flag 8),
+    // known once the Welcome is taken.
+    bool hostSearches() const { return (hostFlags_ & 8) != 0; }
+    // Sends one: its answers come as takeStream(req) once dispatched. 0,
+    // sending nothing, to a host that does not take them.
+    std::uint64_t requestStream(std::uint64_t window, Json request);
+    // The answers that came since the last take, appended to *out: true
+    // once the last ("done") is among them, and the request is forgotten.
+    bool takeStream(std::uint64_t req, std::vector<Json>* out);
+    // Stops one (FsRead's "cancel", in `window`'s folder as it was asked):
+    // what still comes for it is dropped, and the request forgotten at its
+    // last answer.
+    void cancelStream(std::uint64_t req, std::uint64_t window);
+    // Requests whose answers are still to come or to be taken (checks).
+    std::size_t streams() const { return streams_.size(); }
 
     // ---- windows
     void windowTabs(std::uint64_t window, Json tabs);
@@ -431,6 +448,13 @@ private:
     void onTerminal(Message& m);
     // Requests whose wait timed out: their answers are dropped on arrival.
     std::set<std::uint64_t> abandoned_;
+    // The heavier reads (requestStream): the answers not taken yet, whether
+    // the last came, and whether the renderer stopped it (cancelStream).
+    struct Stream {
+        std::vector<Json> answers;
+        bool done = false, cancelled = false;
+    };
+    std::map<std::uint64_t, Stream> streams_;
     // saved()'s fences: the Ping sent behind each DocSaved, by its request,
     // and per document how many are out and the latest DocDirty held.
     struct Fence {

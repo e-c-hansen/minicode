@@ -573,7 +573,12 @@ found through that list.
   skips and ignore files, dotfiles listed, symlinked folders once, 20,000
   files, cancelled on close); the name
   matches before the path; recent tabs and `MCQuickOpenRecent` first. Go to
-  Line takes "42", "42:7" or "42,7".
+  Line takes "42", "42:7" or "42,7". `rankFiles` passes over a path that
+  does not hold the query's letters in order before it aligns any
+  (2026-11-21; the session's browser page ranks the host's listing for
+  each key typed, on its server's thread: docs/notes/session-host.md,
+  "Quick Open and Find in Folder in the page"), and `listFiles` takes
+  `dotfiles` and `confine` for that page (the Mac passes neither).
 - Symbols: `textDocument/documentSymbol` from the main server (`Lsp::Symbol`, a
   tree flattened parent first; `symbolAt` selects the caret's), else
   `SymbolOutline` (Markdown headings, LaTeX sections, Python def and class, the

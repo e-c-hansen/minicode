@@ -190,8 +190,19 @@ top of a turn, never inside a text system callback.
   tell why and reconnects every 2 s for ever. Only a socket with no
   credential cookie at all is refused (403).
 - **A tree listing runs on the host's thread**, between typing messages;
-  hence `kMaxListed`. Stage 7's bigger reads belong on a worker, and so
-  does the host's save (synchronous there, an F_FULLFSYNC each, for now).
+  hence `kMaxListed`. Stage 7's bigger reads go on the host's workers
+  (`ReadWorkers`, "Quick Open and Find in Folder in the page", below:
+  "files" and "search"); the listings, a file's read and the host's save
+  (synchronous, an F_FULLFSYNC each) are still on its thread for now.
+- **A search is several FsData for one request** (the last with "done"):
+  the client keeps them apart from the one-answer reads
+  (`requestStream`, `takeStream`; `replies_` holds one answer a request,
+  and a second would overwrite the first). Only a renderer that asked
+  with `requestStream` gets them, and only from a host whose Welcome has
+  flag 8, so no renderer from before them ever sees two answers. A
+  "cancel" has no answer: the client sends it with a request number it
+  never waits on, and drops what still comes for the cancelled request,
+  forgetting it at its last answer (always sent, saying "cancelled").
 - **The host follows no document an app's window has open**
   (`shownByApp`, stage 7's watching): the window follows its own tab and
   sends its reload as an edit, then DocSaved; the host following it too
@@ -3079,16 +3090,153 @@ Reload with the file's text in the page and the mark gone). Not run here:
 the page's look (the note, Reload, the italic tab) needs the owner's eyes,
 and no GUI suite checks the Mac's own host watching for its page.
 
+### Quick Open and Find in Folder in the page (stage 7's heavier reads)
+
+Before this the page could only browse its tree. Now <kbd>⌘P</kbd> (Go to
+File in the header) is Quick Open and <kbd>⇧⌘F</kbd> (the sidebar's
+Search) is Find in Folder, on every page, a reader's too: both only read.
+The host runs them on workers of its own (`src/SessionSearch.{h,cpp}`),
+the first of stage 7's reads off its thread.
+
+- **The protocol** (additive, no new kind): FsRead ops "files" (Quick
+  Open's list), "search" (Find in Folder) and "cancel" (stops one; no
+  answer of its own), offered by the host's Welcome flag 8
+  (`Client::hostSearches`). A search is answered by several FsData for
+  one req, rows in batches, the last with "done" and the counts; "files"
+  by one. An older host answers "no read" to these ops (FsRead is not
+  new, so nothing drops), but `Client::requestStream` sends nothing to a
+  host without flag 8, and the page's hello says `canSearch` false, so
+  the page shows neither.
+- **The workers** (`ReadWorkers`, owned by `Host`, made at the first such
+  read): a thread a read, at most `kMaxReadJobs` (8) on a host (one more
+  is answered at once, "too many searches"), answers queued under a lock
+  and a pipe written once per batch of them, which `SessionHost::loop`
+  polls (`Host::readsFd`) and drains at its top (`Host::takeReads`, which
+  sends FsData to renderers still connected). A renderer that goes has
+  its reads cancelled (`disconnect`); `~Host` cancels every read and
+  joins each thread. A guard thread per read (`Guard` in the .cpp)
+  raises the walk's stop flag when the renderer cancels or the time is
+  up, and sends a batch that has waited `kBatchMs` (100 ms) though no new
+  row came; a batch goes at once past `kBatchRows` (500). The checks pump
+  a threadless `Host` with `waitReads`, and slow a search down with
+  `ReadWorkers::eachFile` (FolderSearch's `onFileRead`).
+- **Files** ("files", `hidden`): `CommandPalette::listFiles`, Quick Open's
+  own walk (Find in Folder's skips, the ignore files, breadth first, at
+  most `kMaxListedFiles`, 20,000), with two new arguments the Mac leaves
+  off: `dotfiles` false unless the tree shows them, and `confine`, which
+  neither lists nor enters a symlink whose real place is outside the
+  folder (the Mac's Quick Open follows one, as before). 15 s at most.
+- **Search** ("search", query and the three toggles, `include`,
+  `exclude`, `hidden`): `FolderSearch::search` with the Mac's options
+  (`kMaxSearchRows` 20,000, `contextLines` 1, repeats dropped) and two
+  new ones, `skipDotfiles` and `confine` (a link out is neither read nor
+  entered: `insideRoot`, the real path under the root's), and
+  `onRows`, called on the merging thread with each file's rows as they
+  are taken (repeated context dropped between them), which is what lets
+  the rows go before the search ends. Each row is `searchRowJson`: path,
+  line, column (code points), the display text, `hl` the matches in that
+  text in UTF-16 units (TextFind::findAllInLine over the display text, as
+  the Mac's row draws them), before, after, count. The last answer says
+  filesSearched, filesMatched, totalMatches, rowCount, truncated (the row
+  cap), tooSlow (the regex fallback's 2 s on a line, as the app),
+  timedOut (`kSearchSeconds`, 30 s, the host's own limit: it serves
+  others), cancelled, error (a regex that does not compile), skipped.
+- **The server** (`SessionWeb.cpp`): `files {seq, query, recent, fresh}`
+  ranks the host's listing, kept on the session (`Session::files`, with
+  UTF-16 copies), by `quickOpenJson` (`CommandPalette::rankFiles`, the
+  app's palette matching, `recent` first among equals, 100 rows with
+  `pos`, `kind`, `view`); with no listing, or `fresh` (the palette
+  opening) a second after the last, it asks the host for one and answers
+  the pages waiting when it comes. Ranking is on the server's thread:
+  `rankFiles` now passes over a path that does not hold the query's
+  letters in order before any alignment, so a typed name costs a few ms
+  over 20,000 paths (`search:files` bounds it, and the worst case, a
+  query every path holds). `search {seq, ...}` cancels that page's last
+  search (`cancelSearch`) and starts the new one (`requestStream`); its
+  answers go to the page as `found {seq, rows, done, ...}`
+  (`takeStreams`, after each dispatch); a query too short to search
+  answers `short` at once. A page that goes has its search cancelled; the
+  session detaching drops them all (the host cancels the renderer's reads
+  as it goes). `CommandPalette::symbolRows` moved to
+  `CommandPaletteSymbols.cpp` so `mutible-cli` links `CommandPalette.cpp`
+  without the language servers' names.
+- **The page**: Quick Open is `#qo`, a field over the page with its list
+  (the name, then the folder, matched letters bold), asking at each input
+  (`QO.seq`, older answers dropped), the arrows, Return, a click, Escape
+  and a click outside closing it; the pick goes through `openFile` with
+  the row's `kind` and `view`, so a picture opens in the page's viewer
+  and a text file as the tree's click (the window's tab on an editable
+  page, a tab of the page's own on a reader's), kept. Find in Folder is
+  the sidebar's third mode (`setSideMode("search")`, `#search`): the field
+  with Aa, ab and .* inside, searched a quarter second after the last key
+  or at once on Return or a toggle; `found` rows are appended as they
+  come, a sticky file header with its count per file, each row its
+  context lines muted and its hit line with `<mark>`s; the summary counts
+  as they come and says why it stopped. A row's click is `openAt(path,
+  line, col)`: `openFile(..., {kind: "text"})`, then, once that file is
+  on show (`takeGoLine` from `onDoc`, `showLocal` and `takePending`, or
+  at once when it already is), its line in code mode, the caret at the
+  match's column, the line marked `.hit` and scrolled a third down. ↻
+  searches again; a reconnect asks again for both. The document keydown
+  takes <kbd>⌘P</kbd> and <kbd>⇧⌘F</kbd> (Control elsewhere, but not in the
+  terminal off a Mac, where they are the shell's). `mcSessionView`
+  gained `quickOpen()`, `search()`, `hitLine()` and `caretLine()`.
+- **Not in this slice**: Replace (Replace in Folder stays the app's; the
+  page has no replace field), files to include and exclude on the page
+  (the protocol takes them), the window going to the line too (an
+  editable page's click opens the window's tab as the tree's does; the
+  line is the page's). GTK's in-process host is a `SessionHost` too, so
+  its page has both, but no GTK check drives them there.
+
+#### Checks
+
+`search:files` (Quick Open's list over a scratch folder: an ignored log,
+a build folder, node_modules, dotfiles with and without `hidden`, a link
+inside followed once, a folder link and a file link out of the folder
+left out; the Mac's own list still following the link out;
+`quickOpenJson`'s ranking, positions, kinds, views, recent first and
+`more`; 20,000 paths ranked within a bound for a typed name and for the
+worst case); `search:rows` (the rows, the context with repeats dropped,
+`hl` in UTF-16 past an é and an emoji, the column, the counts, nothing
+outside or ignored, dotfiles with `hidden`, case, whole word, a regex and
+its marks, a regex that does not compile, a query too short, include, an
+unknown op); `search:batches` (300 rows from twelve slowed files in more
+than one batch, in the walk's order); `search:caps` (20,050 matching
+lines cut at 20,000, truncated; a slowed search stopped by its time
+limit, timedOut and not cancelled, its rows kept); `search:cancel` (a
+cancel mid-walk: one last answer, cancelled, fewer files searched);
+`search:host` (a Host over the encoding: Welcome flag 8, a guest's list
+and a reader's search through `requestStream` and `takeStream`, a
+cancelled search dropped by the client and forgotten at its last
+answer, a renderer that goes having its read stopped, eight at once and
+the ninth refused, no folder for the window named, a client of a host
+without flag 8 sending nothing, FsData through the encoding);
+`sessionweb:search` (a headless host and a read-only page over the wire:
+`canSearch`, the listing ranked, a query's one row, a search's rows with
+context and marks, a new search replacing the last, a short query, a
+cancel, nothing outside or ignored). GUI: `session_browser`, on the
+editable page, <kbd>⌘P</kbd> lists the window's folder as the host listed
+it, "clc" leaves calc.py with its letters marked, Return opens it in the
+window and the page shows it; on the read-only page, <kbd>⇧⌘F</kbd> shows
+Search, "return" lists two files grouped with their counts, the second's
+row its context line and hit line with the match marked, and a click
+opens it in a tab of the page's own at that line (the caret and the
+mark on it), the window opening nothing. Not run here (no GUI on this
+machine for the builder): the GUI checks above; the look of Quick Open
+and the search results, real keys in Safari and Chrome, and a phone need
+the owner's eyes.
+
 ### Still to do
 
-- **Stage 7, after the watching and the Mac's and GTK's saves** (in order
-  of value): the windows hearing the host's watching instead of
-  their own streams ("The host watches the disk", what could move); Save
-  As and a new file's name from the page (the Mac's Save As writes its new
-  path through the host now, but the page cannot name a file); Quick
-  Open's list and Find in Folder as host reads; the heavier reads, the
-  listings FsChanged carries, and the write on a worker rather than the
-  host's thread.
+- **Stage 7, after the watching, the Mac's and GTK's saves, and Quick
+  Open and Find in Folder** (in order of value): the windows hearing
+  the host's watching instead of their own streams ("The host watches the
+  disk", what could move); Save As and a new file's name from the page
+  (the Mac's Save As writes its new path through the host now, but the
+  page cannot name a file); Replace in Folder from the page (the host's
+  `planReplace` and writes, with the app's questions); the listings
+  FsChanged carries, a file's read and the write on a worker rather than
+  the host's thread.
 - Lines are re-sent whole per edit; a long line typed into from a browser
   wants character splices.
 - No snapshot or patch messages exist yet: the view polls the host's state

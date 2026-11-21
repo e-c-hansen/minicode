@@ -49,7 +49,11 @@
 // window, json: {"op", ...}} asks the host to read in the session's folder,
 // and FsData {req, json, bytes} answers; "list" lists one folder for a
 // tree, "read" gives a piece of a file's bytes (in `bytes`, base64 on the
-// wire) for a viewer. A new read is a new "op", not a new message.
+// wire) for a viewer. A new read is a new "op", not a new message. A host
+// whose Welcome has flag 8 takes the heavier reads on workers of its own
+// (SessionSearch.h): "files" (Quick Open's list), "search" (Find in Folder,
+// answered by several FsData for one req, the last with "done") and
+// "cancel" (no answer of its own).
 //
 // Saving (stage 7's first write): DocSave {doc, req, window, flag 1:
 // overwrite} asks the host to write a document's text to its file itself,
@@ -146,7 +150,9 @@ enum class Kind {
                  // name: the folder; flag 1: the host saves documents (DocSave);
                  // flag 2: it saves for apps too (an app's encoding kept, the stamp
                  // written in the answer, DocDirty flag 2 to the others); flag 4: it
-                 // watches the disk (FsRead's "watch", DocReload)
+                 // watches the disk (FsRead's "watch", DocReload); flag 8: it lists
+                 // files and searches on workers (FsRead's "files", "search",
+                 // "cancel": SessionSearch.h)
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
     DocEdited,   // doc, v, by, seq, ops, ops16, flag (1 undo, 2 redo), select
     DocUndone,   // doc, req, outcome
@@ -167,7 +173,8 @@ enum class Kind {
                  // folder first), json: the request ({"op": "list", "path", "hidden"} or
                  // {"op": "read", "path", "offset", "length", "hidden"});
                  // changes nothing, so a renderer that only reads may send it
-    FsData,      // host → renderer: req, json: the answer (or {"error"}), bytes: a read's
+    FsData,      // host → renderer: req, json: the answer (or {"error"}), bytes: a read's;
+                 // a "search" is answered by several, the last with "done"
     // A window that closes detaches, and one that opens reattaches (stage 6,
     // step 2; renderer → host). New kinds rather than flags on DocClose and
     // TermClose, so that a host from before them refuses them ("the host

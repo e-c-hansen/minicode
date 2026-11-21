@@ -11,7 +11,8 @@
 // positions map straight onto NSRange. Which commands exist and whether they
 // are enabled is the GUI's business (mac/src/PalettePanel.mm walks the main
 // menu); everything here works on their labels alone. The one piece of I/O
-// is listFiles, the walk Quick Open lists, run off the main thread.
+// is listFiles, the walk Quick Open lists, run off the main thread (and on
+// the session host's worker for a browser's page, SessionSearch.h).
 #pragma once
 #include "LspClient.h"   // Lsp::Symbol
 
@@ -102,9 +103,14 @@ Parsed parse(const std::u16string& text);
 // Symlinked folders are followed once each. Nearer files come first
 // (breadth first, each folder's files in byte order), at most maxFiles;
 // *truncated says it stopped at the cap. A raised cancel stops it early.
+// For a browser's page of the session (SessionSearch.h): without
+// `dotfiles`, names starting with '.' are left out, files and folders (the
+// page's tree shows none then); with `confine`, a symlink whose real place
+// is outside root is neither listed nor entered.
 std::vector<std::string> listFiles(const std::string& root, size_t maxFiles = 20000,
                                    const std::atomic<bool>* cancel = nullptr,
-                                   bool* truncated = nullptr, bool useIgnoreFiles = true);
+                                   bool* truncated = nullptr, bool useIgnoreFiles = true,
+                                   bool dotfiles = true, bool confine = false);
 
 // The files that match query, best first. A query without '/' is matched
 // against the file name first (any such match beats one that needs the
