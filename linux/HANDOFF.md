@@ -9048,3 +9048,38 @@ show; the file shown last is shown meanwhile).
   a Stage File); `processes` reads the server row's label and its Stop.
 - **Not verified.** Orca reading either; the exited-process note has no
   committed check.
+
+### 146. Edit boxes keep an agent's rewrite; Replace in Folder checked from the page (November 2026)
+
+- **What.** The Mac's 8efec157 (`MarkdownEdit::rebaseSpan`) on GTK. The
+  Markdown block box (`Editor::commitMdEdit`) and the LaTeX preview's box
+  (`LatexPreview::commitEdit`, and `commitInputEdit` for an `\input` file)
+  used to refuse when the buffer changed at all; the Markdown box put the
+  draft on the clipboard with a bell. They now make the edit on the text as
+  it is then, the block, span or list (adding an entry) found again by
+  `rebaseSpan`: the same offsets when the change is after, shifted when
+  before, else the one place holding its exact bytes. Only when the span's
+  own text changed (or is there twice) is the edit refused as before:
+  clipboard and bell for Markdown, clipboard and the bar's note for LaTeX.
+  The LaTeX box's refusal text changed to say the text it edited changed
+  too. Part 2: `session_browser` checks Replace in Folder from the page: the
+  hello says `canReplace`, a search then a replace of its rows writes the
+  closed file and edits the open tab (unsaved, `edited: 1`). It passed
+  through the core server and host unchanged, so no GTK fix was needed.
+- **Checked.** `edit_boxes` (21 passed): a box opened on the first
+  paragraph, the second rewritten with `Document::spliceText`, the draft
+  applied at its block with the agent's change kept; then the first
+  paragraph rewritten, nothing applied. `latex_inputs` (37 passed): the
+  same two cases on the document's own text, the second paragraph's span
+  shifted by a longer first rewrite; the refusal's bar text. `session_browser`
+  (201 passed). `meson test` and `make test` pass.
+- **Traps.** `Document::spliceText` alone leaves a Markdown page showing the
+  old render (only the box's own apply and Ctrl+Z re-render it), so the
+  check undoes with Ctrl+Z instead of splicing back. A `session_browser`
+  step that overwrites `gMsg` breaks the next section's first check, which
+  reads the last `closing` answer: keep a step's answer in its own Json.
+  A tab for the replace check is opened with the page's own `open` message.
+- **Not verified.** The clipboard's content after a refusal is not read back
+  (GDK's clipboard read is asynchronous): the buffer and the status text are.
+  The `\input` file path's rebase has no committed check. The checks were
+  not run against the old code to see them fail.

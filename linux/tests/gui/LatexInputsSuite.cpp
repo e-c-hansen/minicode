@@ -16,6 +16,11 @@
 //     document is typeset again;
 //   - a click on the document's own text still edits the document, in a box
 //     with no file named;
+//   - a box on the document's own text opened before an agent rewrote some
+//     other part of the buffer still applies, at the span's place in the
+//     new text (MarkdownEdit::rebaseSpan, the Mac's 8efec157); when the
+//     span itself was rewritten nothing is applied, the draft goes to the
+//     clipboard and the bar says why;
 //   - with the chapter open in a tab and changed there, the box opens on the
 //     tab's text, and the edit goes into that tab.
 #include "Harness.h"
@@ -72,7 +77,7 @@ bool pointOf(const std::string& word, double* x, double* y) {
     return false;
 }
 
-std::string gChapter;
+std::string gChapter, gOrigMain;
 Document* chapterTab() { return ed()->documentFor(F("chapter.tex")); }
 
 std::string replaced(std::string s, const std::string& a, const std::string& b) {
@@ -193,6 +198,43 @@ MC_GUI_SUITE(latex_inputs) {
                       replaced(replaced(gChapter, "lemur", "ocelot"), "marmot", "badger"));
         GCHECK_EQ_STR(slurp(F("main.tex")), slurp(fixture("main.tex")));
     });
+    // ---- an agent's rewrite under an open box on the document's own text
+    MCGuiStep("a box on the heron paragraph; its own text then rewritten in the buffer", [] {
+        gOrigMain = ed()->active()->text();
+        double x = 0, y = 0;
+        GCHECK(pointOf("heron", &x, &y));
+        latex()->doubleClick(0, x, y);
+        GCHECK(latex()->editing());
+        latex()->setEditText(replaced(latex()->editText(), "heron", "stork"));
+        ed()->active()->spliceText(replaced(gOrigMain, "patient heron", "patient ibis"));
+        GCHECK(latex()->editing());
+        latex()->commitEdit();
+    });
+    MCGuiStep("refused: the agent's text kept, nothing of the draft, the bar says why", [] {
+        const std::string t = ed()->active()->text();
+        GCHECK_EQ_STR(t, replaced(gOrigMain, "patient heron", "patient ibis"));
+        const std::string status = latex()->status();
+        g_print("status: %s\n", status.c_str());
+        GCHECK(status.find("your text is on the clipboard") != std::string::npos);
+        ed()->active()->spliceText(gOrigMain);
+    });
+    MCGuiWait("typeset again", 30, [] { return typeset(2); });
+    MCGuiStep("a box on the heron paragraph; the walrus paragraph rewritten in the buffer", [] {
+        double x = 0, y = 0;
+        GCHECK(pointOf("heron", &x, &y));
+        latex()->doubleClick(0, x, y);
+        GCHECK(latex()->editing());
+        latex()->setEditText(replaced(latex()->editText(), "heron", "egret"));
+        // Longer text before the span: the span's offsets shift.
+        ed()->active()->spliceText(replaced(gOrigMain, "walrus", "enormous otter"));
+        latex()->commitEdit();
+    });
+    MCGuiStep("applied at the heron paragraph, the other change kept", [] {
+        GCHECK_EQ_STR(ed()->active()->text(),
+                      replaced(replaced(gOrigMain, "walrus", "enormous otter"), "heron", "egret"));
+        ed()->active()->spliceText(gOrigMain);
+    });
+    MCGuiWait("typeset after the box", 30, [] { return typeset(2); });
     MCGuiStep("closing the tabs, the chapter as it was", [] {
         if (Document* t = chapterTab()) ed()->closeTab(t);
         ed()->closeAllTabs();

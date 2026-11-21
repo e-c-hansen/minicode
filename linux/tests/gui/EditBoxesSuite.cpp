@@ -10,6 +10,11 @@
 //   - Only Escape and Cancel drop the draft: a click elsewhere in the
 //     window applies it, as one undo step; so do Ctrl+S (which then saves)
 //     and showing another tab.
+//   - A box opened before an agent rewrote some other part of the file
+//     still applies its edit, at the block's place in the new text
+//     (MarkdownEdit::rebaseSpan, the Mac's 8efec157); when the block's own
+//     text was rewritten, nothing is applied and the draft goes to the
+//     clipboard with a bell.
 //   - The tree's name box (Rename, F2 in the tree) keeps its typing through
 //     the same switch.
 #include "Harness.h"
@@ -39,6 +44,14 @@ std::string bufferText() {
 }
 
 bool has(const std::string& s, const std::string& what) { return s.find(what) != std::string::npos; }
+
+// The text the editor's view shows (the page's, when it is on show).
+bool viewShows(const std::string& needle) {
+    GtkTextBuffer* b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(ed()->textView()));
+    GtkTextIter s, e, m;
+    gtk_text_buffer_get_start_iter(b, &s);
+    return gtk_text_iter_forward_search(&s, needle.c_str(), GTK_TEXT_SEARCH_TEXT_ONLY, &m, &e, nullptr);
+}
 
 void doubleClickText(const std::string& needle) {
     GtkTextView* tv = GTK_TEXT_VIEW(ed()->textView());
@@ -163,6 +176,55 @@ MC_GUI_SUITE(edit_boxes) {
     MCGuiStep("Escape", [] { MCGuiKey("Escape"); });
     MCGuiWait("closed, nothing applied", 5, [] { return !ed()->blockEditorOpen(); });
     MCGuiStep("the text as it was", [] { GCHECK_EQ_STR(bufferText(), kPage); });
+
+    // ---- an agent's rewrite under an open box (the buffer changed through
+    // the document's own edit path, as a reload or an agent's write does)
+    openAndType("another block rewritten", "Rebased ");
+    MCGuiStep("the second paragraph rewritten behind the box", [] {
+        Document* d = ed()->documentFor(F("page.md"));
+        GCHECK(d != nullptr);
+        if (d) d->spliceText("# Boxes\n\nFirst paragraph words.\n\nAgent paragraph words.\n");
+    });
+    MCGuiStep("a click elsewhere applies the draft", [] { MCGuiClick(GTK_WIDGET(MCGuiApp().statusBar)); });
+    MCGuiWait("applied at the block, the agent's change kept", 5, [] {
+        return !ed()->blockEditorOpen() &&
+               bufferText() == "# Boxes\n\nRebased \n\nAgent paragraph words.\n";
+    });
+    // Ctrl+Z on the page takes back the last change to the source (the box's
+    // edit, then the agent's) and shows the page again.
+    for (int i = 0; i < 2; i++) {
+        MCGuiStep("Ctrl+Z on the page", [] {
+            MCGuiFocusKeyWindow();
+            ed()->focusActiveDocument();
+            MCGuiKey("ctrl+z");
+        });
+        MCGuiWait("one step taken back", 5, [i] {
+            return i == 0 ? bufferText() == "# Boxes\n\nFirst paragraph words.\n\nAgent paragraph words.\n"
+                          : bufferText() == kPage;
+        });
+    }
+    MCGuiWait("the page shows its first paragraph again", 10, [] {
+        return ed()->inPreview() && viewShows("First");
+    });
+    openAndType("own block rewritten", "Lost ");
+    MCGuiStep("the first paragraph itself rewritten behind the box", [] {
+        Document* d = ed()->documentFor(F("page.md"));
+        GCHECK(d != nullptr);
+        if (d) d->spliceText("# Boxes\n\nFirst agent words.\n\nSecond paragraph words.\n");
+        MCGuiClick(GTK_WIDGET(MCGuiApp().statusBar));
+    });
+    MCGuiWait("refused: closed, the agent's text as it was", 5, [] {
+        return !ed()->blockEditorOpen();
+    });
+    MCGuiStep("nothing of the draft in the buffer", [] {
+        GCHECK_EQ_STR(bufferText(), "# Boxes\n\nFirst agent words.\n\nSecond paragraph words.\n");
+    });
+    MCGuiStep("Ctrl+Z takes the agent's change back", [] {
+        MCGuiFocusKeyWindow();
+        ed()->focusActiveDocument();
+        MCGuiKey("ctrl+z");
+    });
+    MCGuiWait("the page's text again", 5, [] { return bufferText() == kPage; });
 
     openAndType("Ctrl+S", "Saved ");
     MCGuiStep("Ctrl+S", [] { MCGuiKey("ctrl+s"); });

@@ -104,6 +104,11 @@ found through that list.
   clipboard and the bar says so (`keepLostEdit:file:`). `latex` has an
   agent rewrite the file while the box is open, in the full preview and
   beside the source, and the rewrite of the edited sentence itself.
+  GTK (HANDOFF 146): `LatexPreview::commitEdit` and `commitInputEdit` make the
+  edit on the buffer as it is then, the span or list found again by
+  `rebaseSpan` (`latexEditOnto`); a rewritten span puts the draft on the
+  clipboard (`keepLostEdit`) and the bar says so. `latex_inputs` checks both
+  outcomes on the document's own text.
   **Trap**: with the box kept open across an app switch, an agent's
   rewrite read into the clean tab had the draft spliced at the old
   offsets (full preview) or the old text plus the edit put back over the

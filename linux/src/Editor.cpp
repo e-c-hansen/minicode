@@ -2924,22 +2924,29 @@ void Editor::commitMdEdit() {
     // while the popover was open, they may no longer be the same text.
     if (active_ != mdEditDoc_) return;
     if (mdInPane_ ? !(side_ && sideDoc_ == active_) : !inMarkdownPage()) return;
-    if (active_->text() != mdEditSrc_) {
-        // The buffer changed underneath: keep what was typed.
+    // Made on the text as it is now: when the file changed elsewhere
+    // meanwhile (an agent's rewrite), the block is found again in it
+    // (MarkdownEdit::rebaseSpan); refused only when its own text changed.
+    const std::string now = active_->text();
+    MarkdownEdit::Block at = mdBlock_;
+    const auto r = MarkdownEdit::rebaseSpan(mdEditSrc_, at.start, at.end, now);
+    if (r.first == std::string::npos) {
         if (!text.empty()) {
             gdk_clipboard_set_text(gtk_widget_get_clipboard(view_), text.c_str());
             gtk_widget_error_bell(view_);   // no status line here: the text is on the clipboard
         }
         return;
     }
+    at.start = r.first;
+    at.end = r.second;
     std::string edited;
     if (adding) {
         if (text.empty()) return;
-        edited = MarkdownEdit::addItem(mdEditSrc_, mdBlock_, text);
+        edited = MarkdownEdit::addItem(now, at, text);
     } else {
-        edited = MarkdownEdit::replace(mdEditSrc_, mdBlock_, text);
+        edited = MarkdownEdit::replace(now, at, text);
     }
-    if (edited == mdEditSrc_) return;
+    if (edited == now) return;
     if (mdInPane_) applySourceFromPane(edited); else applyMarkdownSource(edited);
 }
 
