@@ -18,6 +18,11 @@
 // its files without Stage or Discard), a click on another replaces it, a
 // double-click or Return keeps it, a click on a kept one shows that tab, and
 // a commit with no files says so.
+//
+// And F7 and Shift+F7 on the review page (the blocks of two files in order,
+// wrapping), the right click on selected lines (Stage, Unstage and Discard
+// Selected Lines, none with nothing selected) and on a conflict's rows (Keep
+// Current), in repositories of their own.
 #include "GitChecks.h"
 
 #include "ChangeReviewPage.h"
@@ -47,9 +52,9 @@ long NextBlockAfter(long row) {
 
 // The page's rows as the core lays them out for the repository as it is
 // now, read by the same git (a check's own read, never the page's).
-std::string CoreText() {
+std::string CoreText(const std::string& dir = R()) {
     ChangeReview::Read r = ChangeReview::readUncommitted(
-        R(), [](const std::string& dir, const std::vector<std::string>& args, const std::string& in) {
+        dir, [](const std::string& dir, const std::vector<std::string>& args, const std::string& in) {
             GitResult g = runGit(dir, args, in.empty() ? nullptr : &in);
             ChangeReview::GitOut o;
             o.ok = g.ok();
@@ -127,6 +132,70 @@ void ClickCommit(const std::string& subject, bool twice = false) {
 bool OnShow(const std::string& title) {
     ChangeReviewPage* p = CommitPage();
     return p && p->title() == title;
+}
+
+// ------------------------------------------------- F7 and the right click
+std::string K() { return MCGuiScratch() + "/gitreviewkeys"; }
+// The open context menu: a mapped popover under the window showing `label`.
+GtkWidget* PopoverWith(GtkWidget* root, const std::string& label) {
+    if (!root || !gtk_widget_get_mapped(root)) return nullptr;
+    if (GTK_IS_POPOVER(root) && MCGuiFindLabel(root, label)) return root;
+    for (GtkWidget* c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c))
+        if (GtkWidget* hit = PopoverWith(c, label)) return hit;
+    return nullptr;
+}
+GtkWidget* Menu(const std::string& label) { return PopoverWith(GTK_WIDGET(RepoWindow().window), label); }
+// A real right click on a row's text.
+void RightClickRow(const std::string& what, std::function<long()> row) {
+    MCGuiStep("the row of " + what + " on screen", [row] {
+        const long r = row();
+        GCHECK(r >= 0);
+        if (r >= 0 && Page()) Page()->scrollToRow((size_t)r);
+    });
+    MCGuiWait(what + " in view", 10, [row] {
+        const long r = row();
+        return r >= 0 && Page() && Page()->rowScreenY((size_t)r) >= 0 &&
+               Page()->rowScreenY((size_t)r) < Page()->paneHeight() - 20;
+    });
+    // Time is the condition: a click soon after another near it is a
+    // double-click to GTK, which opens no menu.
+    MCGuiPause(0.6);
+    MCGuiStep("the keyboard in the text view, as after a drag over the lines", [] {
+        MCGuiFocusKeyWindow();   // a question just answered left the window without the keyboard
+        gtk_widget_grab_focus(GTK_WIDGET(Page()->textView()));
+    });
+    MCGuiWait("the text view has it", 10, [] { return Focused(GTK_WIDGET(Page()->textView())); });
+    MCGuiStep("the pointer on it", [row] {
+        MCGuiMoveTo(GTK_WIDGET(Page()->textView()), gtk_widget_get_width(GTK_WIDGET(Page()->textView())) - 60,
+                    Page()->rowScreenY((size_t)row()) + 8);   // past the line: its buttons sit before its text
+    });
+    MCGuiStep("a right click on " + what, [row] {
+        gBefore = Page()->pageText();
+        MCGuiClick(GTK_WIDGET(Page()->textView()), gtk_widget_get_width(GTK_WIDGET(Page()->textView())) - 60,
+                   Page()->rowScreenY((size_t)row()) + 8, 3);
+    });
+}
+// The menu is closed again, for the next click.
+void CloseMenu() {
+    MCGuiStep("Escape closes the menu", [] { MCGuiKey("escape"); });
+    MCGuiWait("the menu closed", 10, [] { return Menu("Copy") == nullptr; });
+}
+// F7 or Shift+F7 lands on block `b`: its row on screen, the caret on it.
+void StepTo(const std::string& chord, size_t b) {
+    MCGuiStep(chord, [chord] { MCGuiKey(chord); });
+    MCGuiWait(chord + " lands on block " + std::to_string(b), 15, [b] {
+        ChangeReviewPage* p = Page();
+        const long row = p ? p->rowOfBlock(b) : -1;
+        return row >= 0 && p->currentBlockRow() == row && p->caretRow() == row;
+    });
+    MCGuiStep("block " + std::to_string(b) + "'s row on screen", [b] {
+        ChangeReviewPage* p = Page();
+        const long row = p->rowOfBlock(b);
+        const double y = p->rowScreenY((size_t)row);
+        MCGuiNote("block %zu: row %ld at %.0f of %.0f, caret on row %ld", b, row, y, p->paneHeight(),
+                  p->caretRow());
+        GCHECK(y >= 0 && y < p->paneHeight());
+    });
 }
 
 }  // namespace
@@ -319,6 +388,181 @@ MC_GUI_SUITE(git_review) {
     });
     CloseRepoWindow();
 
+    // ================================== F7 and the right click on lines
+    // f.txt changed in two places, g.txt in one (two added lines).
+    Shell("a repository; f.txt changed twice, g.txt once (two lines added)",
+          "set -e; mkdir -p '" + K() + "'; cd '" + K() + "'; " + G() +
+              " init -q -b main; printf 'a\\nb\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nl\\nm\\n' > f.txt; "
+              "printf 'x\\ny\\nz\\n' > g.txt; " + G() + " add -A; " + G() + " commit -qm first; "
+              "printf 'a\\nB\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nL\\nm\\n' > f.txt; "
+              "printf 'x\\nP\\nQ\\ny\\nz\\n' > g.txt");
+    MCGuiStep("a Trash of our own", [] { UseScratchTrash(true); });
+    OpenRepoWindow(K(), true);
+    MCGuiWait("Review Changes offered", 15, [] {
+        return Panel()->reviewButtonShown() && MCGuiOnScreen(Panel()->reviewButton());
+    });
+    MCGuiStep("a click on Review Changes", [] { MCGuiClick(Panel()->reviewButton()); });
+    MCGuiWait("the page lists three blocks", 15, [] { return Ready() && Page()->blockCount() == 3; });
+    MCGuiWait("the text view on screen", 10, [] { return MCGuiOnScreen(GTK_WIDGET(Page()->textView())); });
+    MCGuiStep("the text view has the keyboard", [] { gtk_widget_grab_focus(GTK_WIDGET(Page()->textView())); });
+    MCGuiWait("it has it", 10, [] { return Focused(GTK_WIDGET(Page()->textView())); });
+    StepTo("f7", 0);
+    StepTo("f7", 1);
+    StepTo("f7", 2);
+    StepTo("f7", 0);         // wraps to the first
+    StepTo("shift+f7", 2);   // and back to the last
+    StepTo("shift+f7", 1);
+
+    // ---- Stage Selected Lines on one added line of a two-line change
+    MCGuiStep("P (the first added line) selected", [] {
+        GCHECK_EQ_STR(Page()->rowText((size_t)Page()->rowOfBlock(2)), "P");
+        Page()->selectRowText((size_t)Page()->rowOfBlock(2));
+    });
+    RightClickRow("the selected line", [] { return Page()->rowOfBlock(2); });
+    MCGuiWait("the menu offers the line items", 10, [] { return Menu("Stage Selected Lines") != nullptr; });
+    MCGuiStep("Stage and Discard (not Unstage), with Copy", [] {
+        GtkWidget* m = Menu("Stage Selected Lines");
+        GCHECK(MenuHas(m, "Discard Selected Lines…") && MenuHas(m, "Copy"));
+        GCHECK(!MenuHas(m, "Unstage Selected Lines"));
+        MCGuiSnapshot(GTK_WIDGET(RepoWindow().window), "git-review-lines-menu");
+    });
+    MCGuiStep("a click on Stage Selected Lines", [] {
+        MCGuiClick(MenuItem(Menu("Stage Selected Lines"), "Stage Selected Lines"));
+    });
+    MCGuiWait("staged, and shown", 15, [] {
+        return Page()->messageText() == "Staged the selected lines of g.txt." && Page()->pageText() != gBefore &&
+               Page()->rowOfFile("g.txt", true) >= 0;
+    });
+    MCGuiWait("the page lists the index as it is", 15, [] { return Page()->pageText() == CoreText(K()); });
+    MCGuiStep("only that line is in the index", [] {
+        const std::string cached = GitText({"diff", "--cached", "--", "g.txt"});
+        GCHECK(cached.find("+P") != std::string::npos && cached.find("+Q") == std::string::npos);
+        GCHECK_EQ_STR(GitText({"diff", "--cached", "--name-only"}), "g.txt\n");
+        const std::string work = GitText({"diff", "--", "g.txt"});
+        GCHECK(work.find("+Q") != std::string::npos && work.find("+P") == std::string::npos);
+        GCHECK_EQ_STR(Page()->pageText(), CoreText(K()));
+    });
+
+    // ---- Unstage Selected Lines in the staged list
+    MCGuiStep("the staged P selected", [] {
+        const long header = Page()->rowOfFile("g.txt", true);
+        const long row = NextBlockAfter(header);
+        GCHECK(row > header);
+        if (row > header) Page()->selectRowText((size_t)row);
+    });
+    RightClickRow("the staged line", [] { return NextBlockAfter(Page()->rowOfFile("g.txt", true)); });
+    MCGuiWait("the menu offers Unstage Selected Lines", 10, [] { return Menu("Unstage Selected Lines") != nullptr; });
+    MCGuiStep("Unstage alone; a click on it", [] {
+        GtkWidget* m = Menu("Unstage Selected Lines");
+        GCHECK(!MenuHas(m, "Stage Selected Lines") && !MenuHas(m, "Discard Selected Lines…"));
+        MCGuiClick(MenuItem(m, "Unstage Selected Lines"));
+    });
+    MCGuiWait("the index is empty again", 15, [] {
+        return Page()->messageText().find("Unstaged") == 0 && Page()->rowOfFile("g.txt", true) < 0 &&
+               Page()->rowOfFile("g.txt", false) >= 0;
+    });
+    MCGuiStep("nothing cached, the work tree as it was", [] {
+        MCGuiNote("message: %s", Page()->messageText().c_str());
+        GCHECK_EQ_STR(GitText({"diff", "--cached"}), "");
+        GCHECK_EQ_STR(MCGuiReadFile(In("g.txt")), "x\nP\nQ\ny\nz\n");
+    });
+
+    // ---- Discard Selected Lines... asks, then takes only that line
+    for (int pass = 0; pass < 2; pass++) {
+        MCGuiStep("g.txt's first added line selected", [] {
+            const long row = NextBlockAfter(Page()->rowOfFile("g.txt", false));
+            GCHECK(row >= 0);
+            if (row >= 0) {
+                GCHECK_EQ_STR(Page()->rowText((size_t)row), "P");
+                Page()->selectRowText((size_t)row);
+            }
+        });
+        RightClickRow("the line to discard", [] { return NextBlockAfter(Page()->rowOfFile("g.txt", false)); });
+        MCGuiWait("the menu", 10, [] { return Menu("Discard Selected Lines…") != nullptr; });
+        MCGuiStep("a click on Discard Selected Lines...", [] {
+            MCGuiClick(MenuItem(Menu("Discard Selected Lines…"), "Discard Selected Lines…"));
+        });
+        MCGuiWait("it asks", 10, QuestionUp);
+        if (pass == 0) {
+            MCGuiStep("naming the file; Cancel", [] {
+                MCGuiNote("question: %s", QuestionText().c_str());
+                GCHECK(QuestionText().find("g.txt") != std::string::npos);
+                Answer("Cancel");
+            });
+            MCGuiWait("the question goes", 10, QuestionGone);
+            MCGuiStep("nothing changed", [] {
+                MCGuiSetKeyWindow(nullptr);
+                GCHECK_EQ_STR(MCGuiReadFile(In("g.txt")), "x\nP\nQ\ny\nz\n");
+            });
+        }
+    }
+    MCGuiStep("Discard Lines", [] { Answer("Discard Lines"); });
+    MCGuiWait("discarded", 15, [] {
+        return Page()->messageText().find("Discarded") == 0 && MCGuiReadFile(In("g.txt")) == "x\nQ\ny\nz\n";
+    });
+    MCGuiStep("only that line went; Undo Discard offered", [] {
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiNote("message: %s", Page()->messageText().c_str());
+        GCHECK_EQ_STR(MCGuiReadFile(In("g.txt")), "x\nQ\ny\nz\n");
+        GCHECK(gtk_widget_get_visible(Page()->undoButton()));
+    });
+    MCGuiWait("Undo Discard on screen", 10, [] { return MCGuiOnScreen(Page()->undoButton()); });
+    MCGuiStep("a click on Undo Discard", [] { MCGuiClick(Page()->undoButton()); });
+    MCGuiWait("the line is back", 15, [] { return MCGuiReadFile(In("g.txt")) == "x\nP\nQ\ny\nz\n"; });
+
+    // ---- the right click with nothing selected: the text view's own menu
+    MCGuiStep("the caret on g.txt's block, nothing selected", [] {
+        Page()->stepBlock(true);
+        GCHECK(Page()->caretRow() >= 0);
+    });
+    RightClickRow("g.txt's block, nothing selected", [] { return Page()->rowOfBlock(2); });
+    MCGuiWait("the menu, with Copy", 10, [] { return Menu("Copy") != nullptr; });
+    MCGuiStep("none of the line items", [] {
+        GtkWidget* m = Menu("Copy");
+        std::string all;
+        for (const std::string& l : MenuLabels(m)) all += l + "|";
+        MCGuiNote("menu: %s", all.c_str());
+        GCHECK(!MenuHas(m, "Stage Selected Lines") && !MenuHas(m, "Discard Selected Lines…") &&
+               !MenuHas(m, "Unstage Selected Lines"));
+    });
+    CloseMenu();
+
+    CloseRepoWindow();
+    Shell("the repository goes", "rm -rf '" + K() + "'");
+
+    // ---- a conflict's rows
+    Shell("a repository whose merge stops on a conflict in c.txt",
+          "set -e; mkdir -p '" + K() + "'; cd '" + K() + "'; " + G() + " init -q -b main; " + G() +
+              " config merge.conflictStyle diff3; printf '1\\n2\\n3\\n4\\n5\\n' > c.txt; " + G() +
+              " add -A; " + G() + " commit -qm base; " + G() + " checkout -qb topic; "
+              "sed -i 's/^2$/two topic/' c.txt; " + G() + " commit -qam topic; " + G() + " checkout -q main; "
+              "sed -i 's/^2$/two main/' c.txt; " + G() + " commit -qam main; " + G() +
+              " merge -q topic >/dev/null 2>&1 || true; grep -q '^<<<<<<< HEAD' c.txt");
+    OpenRepoWindow(K(), true);
+    MCGuiWait("Review Changes offered", 15, [] {
+        return Panel()->reviewButtonShown() && MCGuiOnScreen(Panel()->reviewButton());
+    });
+    MCGuiStep("a click on Review Changes", [] { MCGuiClick(Panel()->reviewButton()); });
+    MCGuiWait("c.txt's conflict on the page", 15, [] {
+        return Page() && Page()->loaded() && Page()->rowOfFile("c.txt", false) >= 0 && Page()->blockCount() > 0;
+    });
+    RightClickRow("the conflict's first row", [] { return NextBlockAfter(Page()->rowOfFile("c.txt", false)); });
+    MCGuiWait("the menu offers the three choices", 10, [] { return Menu("Keep Current") != nullptr; });
+    MCGuiStep("Keep Current, Keep Incoming and Keep Both; a click on Keep Current", [] {
+        GtkWidget* m = Menu("Keep Current");
+        GCHECK(MenuHas(m, "Keep Incoming") && MenuHas(m, "Keep Both") && MenuHas(m, "Copy"));
+        MCGuiClick(MenuItem(m, "Keep Current"));
+    });
+    MCGuiWait("c.txt resolved to the current side", 15, [] {
+        return MCGuiReadFile(In("c.txt")) == "1\ntwo main\n3\n4\n5\n";
+    });
+    MCGuiStep("no conflict markers", [] {
+        MCGuiNote("c.txt: %s; message: %s", MCGuiReadFile(In("c.txt")).c_str(), Page()->messageText().c_str());
+        GCHECK(MCGuiReadFile(In("c.txt")).find("<<<<<<<") == std::string::npos);
+    });
+    CloseRepoWindow();
+    Shell("the repository goes", "rm -rf '" + K() + "'");
+
     // ============================================================ commits
     // A click on a commit in the graph opens it as a page (the Mac's
     // initForCommitsWithRoot:): single click in the preview tab, replaced by
@@ -410,5 +654,8 @@ MC_GUI_SUITE(git_review) {
     MCGuiStep("the pages close", [] { Ed()->closeAllTabs(); });
     MCGuiWait("no tabs", 10, [] { return Ed()->tabCount() == 0 && CommitTabs().empty(); });
     Shell("the repository goes", "rm -rf '" + C() + "'");
+    // The copies this suite's discards put in the scratch Trash go too: the
+    // next suite that checks the Trash empty (git_actions) may run after.
+    Shell("our Trash emptied", "rm -rf '" + ScratchTrash() + "'/*");
     CloseRepoWindow();
 }

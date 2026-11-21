@@ -78,6 +78,9 @@ MC_GUI_SUITE(git_actions) {
               " add -A; " + G() + " commit -qm first; " + G() + " checkout -q -b feature; echo f > f.txt; " +
               G() + " add -A; " + G() + " commit -qm feat; " + G() +
               " checkout -q main; printf 'one\\nTWO\\n' > a.txt; rm b.txt; echo new > c.txt");
+    // Empty: its first check is that nothing is in it yet, whatever another
+    // suite's discards left there (git_review's).
+    Shell("a Trash of our own, empty", "rm -rf '" + ScratchTrash() + "'/*");
     MCGuiStep("a Trash of our own", [] { UseScratchTrash(true); });
     OpenRepoWindow(R(), true);
     MCGuiWait("three changes", 15, [] { return Rows(kChanges3); });

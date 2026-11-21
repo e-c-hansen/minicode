@@ -8556,8 +8556,17 @@ The last two items of PARITY 2.9's review page.
   File and Show Side by Side for the clicked row; GTK has the buttons for
   those, so they are not repeated. Keep acts on the clicked row's conflict,
   as the Mac's does.
-- **Checks.** None added here; the next bite adds them to `git_review`.
-  Smoke-checked with a throwaway suite: a file changed in two places and a
-  second file, F7 three times and around the end and Shift+F7 back, then one
-  added line of a two-line change selected and Stage Selected Lines run, the
-  index holding only that line.
+- **Checks.** In `git_review` (a section of its own, real keys and real
+  right clicks, no fallback): F7 three times and around the end, Shift+F7
+  back, each block's row on screen with the caret on it (check-only
+  `caretRow()` and `selectRowText()`); a right click on one selected added
+  line of a two-line change offers Stage and Discard Selected Lines above
+  Copy, Stage puts only that line in the index ("Staged the selected lines
+  of g.txt."), the staged list offers Unstage Selected Lines alone and the
+  index is empty after it, Discard asks (Cancel changes nothing, Discard
+  Lines takes only that line) and Undo Discard brings it back, and a right
+  click with nothing selected has none of the items; on a merge conflict's
+  rows Keep Current, Keep Incoming and Keep Both are offered and Keep
+  Current resolves the file to the current side. Trap: a right click soon
+  after another near it is a double-click to GTK and opens no menu, so the
+  check waits 0.6 s before each (time is the condition).

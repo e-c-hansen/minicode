@@ -207,6 +207,10 @@ public:
     double rowScreenY(size_t row) const;
     double paneHeight() const;
     long firstVisibleRow() const { return topRow(); }
+    // For the checks only: the row the caret is on, and a selection of one
+    // row's text (the caret at its end), as a drag over it makes.
+    long caretRow() const;
+    void selectRowText(size_t row);
     // The pictures on show, in page order: each one's label ("Before: 4 ×
     // 3 pixels, 75 bytes"), its widget, and the size it is drawn at.
     std::vector<std::string> imageLabels() const;
