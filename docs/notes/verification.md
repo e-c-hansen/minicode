@@ -75,6 +75,24 @@ found through that list.
   click, press, drag or wheel goes there (`uncover` in Input.cpp), with
   a note ("a tooltip (...) over the point to click, hidden first");
   anything else over the point is left for the check to see.
+- **An in-app drop leaves GDK's user time days ahead** (2026-11-20,
+  GTK 4.22, soak #127). Trap: GTK 4.22's X11 drag sends its XdndDrop
+  with no real time (GdkDrag's "drop-performed" signal carries no
+  argument, and the X11 handler takes the time as one; GTK's main
+  branch keeps the release's time), and the drop target, the app itself
+  for a tree row dragged onto the editor or the terminal, takes the
+  register's leftover as the user's latest time. GDK keeps only a later
+  one, so in about half the drops it stays ahead of the X server's
+  clock, and every `gtk_window_present` after it asks for the X focus
+  with a time X ignores: the window is raised without the keyboard.
+  After `tree_drags`, `preview_tabs`' slow double-click on a Find in
+  Folder result left the keyboard in that window (the second press never
+  reached the list) and `replace_in_folder`'s editor window stayed
+  inactive, in about one run of four. `tree_drags` puts the time back
+  as it ends (`MCGuiPutBackUserTime`, Input.cpp: a quarter of X's clock
+  at a time, then the server's), and the harness says
+  "left GDK's user time ahead of the X server's" as a LEFT line, and
+  puts it back, after any suite that leaves it so.
 - **A long run on a loaded machine** (2026-11-19, GTK, soak #127, round
   2's order replayed beside three other agents' builds). Traps, each a
   wait that held only on a quiet machine:
@@ -234,6 +252,7 @@ text is in place in its section.
 
 - Verification reality (important) (the rest): **What a suite needs, it sets up**: in CI's order a suite runs after the same few suites every time, so it can pass for months on what they happen to leave and fail in every shuffled order.
 - Verification reality (important) (the rest): **A tooltip takes the next click**: GTK's tooltip is an X window below a resting pointer, and XTest's pointer jumps onto it; the harness hides one over the point before pointer input goes there.
+- Verification reality (important) (the rest): **An in-app drop leaves GDK's user time days ahead**: GTK 4.22's X11 drag sends its XdndDrop with no real time, and once GDK's user time is ahead of the X server's, a presented window gets no keyboard; the harness puts it back after a suite.
 - Verification reality (important) (the rest): **A long run on a loaded machine**: GDK hands the window one X event a turn of the main loop, so wait for all of a typed string; VTE is 80 x 24 until the window's first layout; bound the main thread's own work by its CPU (`MCGuiWaitCpu`); a caret blinking keeps the main thread from ever standing still; close the tabs a suite opens.
 - Verification reality (important) (the rest): **A stand-in holds a stage until the suite has seen it, never for a time**: a stage a stand-in program keeps up with `sleep` is a pause in disguise.
 - Verification reality (important) (the rest): **Harness traps**: key-monitor keys go through `[NSApp sendEvent:]` with the window's number (`MCGuiSendKeyToApp`); menu keys as CGEvent-made events through the window then the main menu (`MCGuiPerformMenuKey`, built from the key code; setting the unicode string made the menu refuse a matching key); tree keys through `[window ...

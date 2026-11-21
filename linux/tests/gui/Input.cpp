@@ -527,6 +527,51 @@ void drag(int ax, int ay, int bx, int by, int clicksBefore, Window window) {
 
 bool MCGuiInputPending() { return gPendingGestures > 0; }
 
+// Trap (2026-11-20, tree_drags then preview_tabs and replace_in_folder):
+// GTK 4.22's X11 drag sends its XdndDrop with no real time. GdkDrag's
+// "drop-performed" signal carries no argument and the X11 drag's handler
+// takes the time as one (gdkdrag-x11.c; GTK's main branch keeps the
+// release's time instead), so the message holds whatever that register
+// held. The drop target, the app itself for a row dragged from its tree,
+// takes it as the user's latest time (xdnd_drop_filter), and GDK keeps only
+// a later one by X's wrapping order: in about half the drops it is days
+// ahead of the server's clock and no real press or key replaces it. Every
+// gtk_window_present then asks X for the focus with that time, which X
+// ignores as later than its own; the window is raised without the keyboard
+// (preview_tabs' result double-clicked to keep it left the keyboard in Find
+// in Folder's window, and replace_in_folder's editor window stayed
+// inactive). A stray time behind the server's goes at the next press or key.
+namespace {
+// GDK's order of two X times (XSERVER_TIME_IS_LATER), which wrap at 32 bits.
+bool laterThan(guint32 a, guint32 b) {
+    return (a > b && a - b < 0x7fffffffu) || (a < b && b - a > 0x7fffffffu);
+}
+GdkSurface* appSurface() {
+    GtkWindow* w = MCGuiApp().window;
+    return w ? gtk_native_get_surface(GTK_NATIVE(w)) : nullptr;
+}
+}  // namespace
+
+bool MCGuiUserTimeAhead() {
+    GdkSurface* s = appSurface();
+    const guint32 user = gdk_x11_display_get_user_time(Gdk());
+    return s && user != GDK_CURRENT_TIME && laterThan(user, gdk_x11_get_server_time(s));
+}
+
+// GDK takes only a later user time, so the way back is forward: a quarter
+// of X's clock at a time until the server's own time is later, then that.
+void MCGuiPutBackUserTime() {
+    GdkSurface* s = appSurface();
+    if (!s) return;
+    const guint32 server = gdk_x11_get_server_time(s);
+    guint32 user = gdk_x11_display_get_user_time(Gdk());
+    for (int i = 0; i < 4 && user != GDK_CURRENT_TIME && !laterThan(server, user); i++) {
+        user += 0x40000000u;
+        gdk_x11_surface_set_user_time(s, user);
+    }
+    gdk_x11_surface_set_user_time(s, server);
+}
+
 // As a hand switches apps with the mouse: a click on another program's
 // window, then the X focus given to it, as a window manager gives it. The
 // window is the harness's own, on a connection of its own (a client other
