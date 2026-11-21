@@ -427,6 +427,10 @@ private:
         TermShell shell, sent;
         bool told = false;            // TermShell was sent once
         std::chrono::steady_clock::time_point nextLook;
+        // When fit() last resized it: for a while after, look() gives the
+        // pty that size back if a program wrote back the one it read
+        // before (Pty::keepSize).
+        std::chrono::steady_clock::time_point sizedAt;
     };
     // Shells hung up and not yet reaped; `tell` get TermExited once reaped
     // (every renderer of a shell that ended by itself; those but the one

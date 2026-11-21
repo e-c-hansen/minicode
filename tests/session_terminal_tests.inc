@@ -373,8 +373,9 @@ struct SizeRig {
         }
     }
     // The pty's own size (TIOCGWINSZ on its master) once the host has done
-    // everything `from` sent; "" when there is no such pty.
-    std::string winsize(Seat& from, Shared::TermId t) {
+    // everything `from` sent, and the host's screen's in `screen`; "" when
+    // there is no such pty.
+    std::string winsize(Seat& from, Shared::TermId t, std::string* screen = nullptr) {
         from.client->settle();
         std::string s;
         host->inspect([&](const Shared::Host& h) {
@@ -382,8 +383,28 @@ struct SizeRig {
             const int fd = h.ptyFd(t);
             if (fd >= 0 && ioctl(fd, TIOCGWINSZ, &ws) == 0)
                 s = std::to_string(ws.ws_col) + "x" + std::to_string(ws.ws_row);
+            const TerminalScreen* sc = h.screen(t);
+            if (screen && sc) *screen = std::to_string(sc->cols()) + "x" + std::to_string(sc->rows());
         });
         return s;
+    }
+    // The size the host chose is `want`, and the pty has it. The host
+    // decides at once, but the pty may briefly have another: sh's readline
+    // writes back the size it read whenever it takes the terminal, undoing
+    // a resize between the two, and the host puts the size back at its
+    // next look (Host::look, at most 200 ms later). So the pty is waited
+    // for to agree with the host's screen, then compared; a failure prints
+    // both.
+    bool sized(Seat& from, Shared::TermId t, const char* want, int line) {
+        std::string got, screen;
+        const bool agreed = wait([&] {
+            got = winsize(from, t, &screen);
+            return !got.empty() && got == screen;
+        });
+        if (agreed && got == want) return true;
+        std::printf("  term:size line %d: the pty is \"%s\", not %s (the host's screen %s)\n", line,
+                    got.c_str(), want, screen.c_str());
+        return false;
     }
     std::pair<size_t, size_t> counts() {
         std::pair<size_t, size_t> c{SIZE_MAX, SIZE_MAX};
@@ -572,53 +593,71 @@ static void testSessionTerminals() {
         // The shell state that follows the replay says the pty's size.
         CHECK(rig.wait([&] { return b.replays == 1 && b.shell.cols == 80 && b.shell.rows == 24; }));
         b.client->resizeTerminal(1, 50, 20);
-        CHECK(rig.winsize(b, 1) == "80x24");
+        CHECK(rig.sized(b, 1, "80x24", __LINE__));
         a.client->resizeTerminal(1, 90, 30);   // the opener, before anyone typed
-        CHECK(rig.winsize(a, 1) == "90x30");
+        CHECK(rig.sized(a, 1, "90x30", __LINE__));
         CHECK(rig.wait([&] { return a.shell.cols == 90 && b.shell.cols == 90 && b.shell.rows == 30; }));
         // b types: its size, before the shell reads what it typed.
         b.client->terminalInput(1, "stty size\n");
         CHECK(rig.wait([&] { return b.has("20 50"); }));
-        CHECK(rig.winsize(b, 1) == "50x20");
+        CHECK(rig.sized(b, 1, "50x20", __LINE__));
         CHECK(rig.wait([&] { return a.shell.cols == 50 && a.shell.rows == 20 && b.shell.cols == 50; }));
         // The opener resizes but is not the typist: kept, not taken.
         a.client->resizeTerminal(1, 100, 40);
-        CHECK(rig.winsize(a, 1) == "50x20");
+        CHECK(rig.sized(a, 1, "50x20", __LINE__));
         int hostCols = 0;
         rig.host->inspect([&](const Shared::Host& h) { hostCols = h.screen(1) ? h.screen(1)->cols() : 0; });
         CHECK(hostCols == 50);
         // An answer to a query from a is not typing (a space, which the
         // shell takes as the start of the next line).
         a.client->terminalInput(1, " ", true);
-        CHECK(rig.winsize(a, 1) == "50x20");
+        CHECK(rig.sized(a, 1, "50x20", __LINE__));
         // a types: the size it said while it was not the typist.
         a.client->terminalInput(1, "stty size\n");
         CHECK(rig.wait([&] { return a.has("40 100"); }));
-        CHECK(rig.winsize(a, 1) == "100x40");
+        CHECK(rig.sized(a, 1, "100x40", __LINE__));
         b.client->terminalInput(1, ":\n");
-        CHECK(rig.winsize(b, 1) == "50x20");
+        CHECK(rig.sized(b, 1, "50x20", __LINE__));
         // The typist goes: the latest typist still there.
         rig.drop(b);
-        CHECK(rig.winsize(a, 1) == "100x40");
+        CHECK(rig.sized(a, 1, "100x40", __LINE__));
         CHECK(rig.wait([&] { return a.shell.cols == 100 && a.shell.rows == 40; }));
         // c attaches and says its size: a typed, so a's holds.
         SizeRig::Seat& c = rig.add();
         c.client->attachTerminal(1, &c);
         CHECK(rig.wait([&] { return c.replays == 1 && c.shell.cols == 100; }));
         c.client->resizeTerminal(1, 60, 15);
-        CHECK(rig.winsize(c, 1) == "100x40");
+        CHECK(rig.sized(c, 1, "100x40", __LINE__));
         // a goes too: nobody there has typed and the opener is gone, so
         // the first that attached with a size, c.
         rig.drop(a);
-        CHECK(rig.winsize(c, 1) == "60x15");
+        CHECK(rig.sized(c, 1, "60x15", __LINE__));
         // Alone, c is followed as one renderer always was.
         c.client->resizeTerminal(1, 70, 18);
-        CHECK(rig.winsize(c, 1) == "70x18");
+        CHECK(rig.sized(c, 1, "70x18", __LINE__));
         c.client->terminalInput(1, "stty size\n");
         CHECK(rig.wait([&] { return c.has("18 70"); }));
         c.client->resizeTerminal(1, 72, 19);
-        CHECK(rig.winsize(c, 1) == "72x19");
+        CHECK(rig.sized(c, 1, "72x19", __LINE__));
         CHECK(rig.wait([&] { return c.shell.cols == 72 && c.shell.rows == 19; }));
+        // A program writes back the size it read before that resize (bash's
+        // readline, at every prompt and after a SIGWINCH, which lost a
+        // resize under load): the host gives the pty its size back, and the
+        // shell reads that.
+        std::string stale;
+        rig.host->inspect([&](const Shared::Host& h) {
+            struct winsize ws {};
+            ws.ws_col = 70;
+            ws.ws_row = 18;
+            const int fd = h.ptyFd(1);
+            ioctl(fd, TIOCSWINSZ, &ws);
+            ws = {};
+            if (ioctl(fd, TIOCGWINSZ, &ws) == 0) stale = std::to_string(ws.ws_col) + "x" + std::to_string(ws.ws_row);
+        });
+        CHECK(stale == "70x18");
+        CHECK(rig.sized(c, 1, "72x19", __LINE__));
+        c.client->terminalInput(1, "stty size\n");
+        CHECK(rig.wait([&] { return c.has("19 72"); }));
 
         // Before anyone types, the opener gone: the first renderer that
         // attached with a size, not a later one, nor one that said none.
@@ -635,16 +674,16 @@ static void testSessionTerminals() {
         CHECK(rig.wait([&] { return e.replays == 1 && f.replays == 1 && g.replays == 1; }));
         f.client->resizeTerminal(2, 61, 16);   // e says no size (as a dump)
         g.client->resizeTerminal(2, 62, 17);
-        CHECK(rig.winsize(g, 2) == "81x25");
+        CHECK(rig.sized(g, 2, "81x25", __LINE__));
         // e types with no size to give: nothing moves.
         e.client->terminalInput(2, ":\n");
-        CHECK(rig.winsize(e, 2) == "81x25");
+        CHECK(rig.sized(e, 2, "81x25", __LINE__));
         rig.drop(d);
-        CHECK(rig.winsize(g, 2) == "61x16");
+        CHECK(rig.sized(g, 2, "61x16", __LINE__));
         CHECK(rig.wait([&] { return g.shell.cols == 61 && e.shell.cols == 61; }));
         // e says a size now: it typed last, so the pty takes it.
         e.client->resizeTerminal(2, 63, 18);
-        CHECK(rig.winsize(e, 2) == "63x18");
+        CHECK(rig.sized(e, 2, "63x18", __LINE__));
         c.client->closeTerminal(1);
         e.client->closeTerminal(2);
         CHECK(rig.wait([&] { return rig.counts() == std::pair<size_t, size_t>(0, 0); }));

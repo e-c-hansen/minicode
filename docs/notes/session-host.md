@@ -175,6 +175,19 @@ top of a turn, never inside a text system callback.
 
 ## Traps
 
+- **bash's readline writes the pty's size back** (`term:size` on CI,
+  2026-11-21): each time it takes the terminal (every prompt, and after a
+  SIGWINCH) it reads the size and sets it again (`set_winsize` in
+  `rltty.c`), so a resize between the read and the write is undone. The
+  pty was left at the old size while the host's screen, every renderer
+  and `TermShell` said the new one, and `fit()` saw nothing to do at the
+  next resize (it compares with the screen). A typed command followed at
+  once by a size change (a typist going, a quick second resize) lost it
+  under load; zsh does not do this, macOS's `/bin/sh` is bash 3.2. For 5 s
+  after it resizes, `Host::look` (on output, and every 200 ms) checks the
+  pty against the size it set and puts it back (`Pty::keepSize`, a new
+  SIGWINCH); after that a program's own `stty cols` stands. A check of the
+  pty's size waits for it to agree with the host's screen (`SizeRig::sized`).
 - **Cookies are not kept apart by port** (the browser view, 2026-11-18):
   a cookie for 127.0.0.1 goes to every port of it, so a view's credential
   is named for its port and scoped to its own path (`/v/ID/`); scoped to
@@ -590,7 +603,9 @@ alone: `src/SessionServer.{h,cpp}` over `SessionHost`. GTK attaches with
   never reflowing a program's screen to its view: a larger pty clipped
   around the cursor (tmux pans), a smaller one at the top left with the
   rest empty. It keeps sending its view's size, so its next key gives the
-  pty that size with no other message. With one renderer nothing changed.
+  pty that size with no other message. With one renderer nothing changed. A
+  size a program wrote back (bash's readline, Traps) is put back for 5 s
+  after the host resized.
 - **Lifetime** (the owner's answer): `run()` returns once there has been no
   connection for `idleMs` (10 minutes; `--idle-minutes`, fractions allowed,
   for checks) and `Host::busyReason()` is empty: no document dirty, no
@@ -630,7 +645,8 @@ the command line's parsing. Real sockets and shells, under TSan in CI.
 pty's own winsize and `stty size`: up to four renderers on one terminal,
 the opener's size until another types, a resize from one that is not the
 typist kept but not taken, an answer that is not typing, the typist going
-(to the latest typist left, then the first attached), and one alone.
+(to the latest typist left, then the first attached), one alone, and a
+stale size written back to the pty (as readline does) put back.
 
 ### Ids (done, 2026-11-18)
 

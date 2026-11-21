@@ -185,6 +185,8 @@ std::unique_ptr<Pty> Pty::spawn(const PtySpec& spec, std::string* error) {
     std::unique_ptr<Pty> p(new Pty());
     p->fd_ = master;
     p->pid_ = pid;
+    p->cols_ = ws.ws_col;
+    p->rows_ = ws.ws_row;
     return p;
 }
 
@@ -249,7 +251,17 @@ void Pty::resize(int cols, int rows) {
     struct winsize ws = {};
     ws.ws_col = (unsigned short)(cols < 2 ? 2 : cols);
     ws.ws_row = (unsigned short)(rows < 2 ? 2 : rows);
+    cols_ = ws.ws_col;
+    rows_ = ws.ws_row;
     ioctl(fd_, TIOCSWINSZ, &ws);
+}
+
+bool Pty::keepSize() {
+    struct winsize ws = {};
+    if (fd_ < 0 || !cols_ || ioctl(fd_, TIOCGWINSZ, &ws) != 0) return false;
+    if (ws.ws_col == cols_ && ws.ws_row == rows_) return false;
+    resize(cols_, rows_);
+    return true;
 }
 
 int Pty::foreground() const {

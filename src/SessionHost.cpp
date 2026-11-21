@@ -1888,6 +1888,7 @@ void Host::fit(TermId id, Term& t) {
     const int cols = v->cols, rows = v->rows;
     t.screen.resize(cols, rows);
     if (t.pty) t.pty->resize(cols, rows);
+    t.sizedAt = std::chrono::steady_clock::now();
     t.shell.cols = cols;
     t.shell.rows = rows;
     if (t.screen.takeDirty().marks) sendMarks(id, t);
@@ -1923,11 +1924,20 @@ void Host::sendMarks(TermId id, Term& t) {
 
 void Host::look(Term& t) {
     if (!t.pty) return;
+    const auto now = std::chrono::steady_clock::now();
+    // A resize bash's readline undid (it reads the size and writes it back
+    // whenever it takes the terminal: a resize between the two is lost, the
+    // pty left at the old size while the screen and every renderer are at
+    // the new). Put back, which sends the shell SIGWINCH again; only for a
+    // while after the host resized, so a program's own `stty cols` stands.
+    // Looks come with output (readline's prompt follows its write) and
+    // every 200 ms.
+    if (now - t.sizedAt < std::chrono::seconds(5)) t.pty->keepSize();
     t.shell.foreground = t.pty->foreground();
     t.shell.raw = t.pty->raw();
     t.shell.echoOff = t.pty->echoOff();
     t.shell.signalsOff = t.pty->signalsOff();
-    t.nextLook = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    t.nextLook = now + std::chrono::milliseconds(200);
 }
 
 void Host::output(TermId id, Term& t, std::string&& bytes) {
