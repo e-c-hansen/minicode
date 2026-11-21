@@ -29,10 +29,23 @@ MC_GUI_SUITE(paste) {
         term = [c valueForKey:@"terminal"];
         GCHECK(term != nil);
     });
-    MCGuiWait(@"its prompt", 20, ^BOOL { return term.atPrompt && !term.busy; });
+    // ZLE reading, with bracketed paste on: before ZLE starts it is off,
+    // and the wait below for it to go off would pass on a command that was
+    // only queued.
+    MCGuiWait(@"its prompt, ZLE reading, bracketed paste on", 20, ^BOOL {
+        return term.atPrompt && !term.busy && [[term valueForKey:@"zleReady"] boolValue] &&
+               Grid(term).screen->bracketedPaste();
+    });
     // A program that reads nothing for two seconds, then counts lines.
     MCGuiStep(@"sleep 2, then wc -l", ^{ [term runCommand:@"sleep 2; wc -l"]; });
-    MCGuiWait(@"it runs", 10, ^BOOL { return term.busy; });
+    // busy is YES as soon as the line is typed, before zsh has read it and
+    // turned bracketed paste off as ZLE ends. A paste in between went in
+    // markers, wc got the closing one as text, and the Ctrl+D after it
+    // landed mid-line, flushing that line instead of ending wc's input
+    // (CI, 2026-11-21: the 90 s wait for the count timed out).
+    MCGuiWait(@"it runs, bracketed paste off", 10, ^BOOL {
+        return term.busy && !Grid(term).screen->bracketedPaste();
+    });
     MCGuiStep(@"paste 244 KB into it, then Ctrl+D", ^{
         NSMutableString *text = [NSMutableString string];
         for (int i = 0; i < kLines; i++)
