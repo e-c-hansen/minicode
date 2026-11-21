@@ -9,14 +9,37 @@
 #include "Keys.h"
 #include "MultiEdit.h"
 #include "Settings.h"
+#include "TextScan.h"
 #include "Utf8Offsets.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <ctime>
 #include <mutex>
 
 namespace {
+
+// A text of this many characters or more is searched in stages (the Mac's
+// kStagedUnits); a word seeded in one over kSeedHoldChars is not searched
+// until a key, an option or Return (LargeFile::kSizeThreshold).
+constexpr int kStagedChars = 1 << 20;
+constexpr int kSeedHoldChars = 20 * 1024 * 1024;
+
+bool allAscii(const std::string& s) {
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
+    std::size_t n = s.size(), i = 0;
+    for (; i + 8 <= n; i += 8) {
+        std::uint64_t w;
+        std::memcpy(&w, p + i, 8);
+        if (w & 0x8080808080808080ull) return false;
+    }
+    for (; i < n; i++)
+        if (p[i] & 0x80) return false;
+    return true;
+}
 
 double threadCpuMs() {
     timespec ts{};
@@ -145,12 +168,20 @@ std::string tip(const char* what, const char* id, const char* also = nullptr) {
 // turned into UTF-16 by the first worker that reads it.
 struct FindBar::Text {
     std::string utf8;
-    std::once_flag once;
+    std::once_flag once, asciiOnce;
     std::u16string u16;
+    bool ascii = false;
+    // Whether every byte is under 0x80, so a byte is a character and a
+    // staged search reads the bytes as they are (kept, then, while a big
+    // text is searched: another worker may be reading them).
+    void prepare() {
+        std::call_once(asciiOnce, [this] { ascii = allAscii(utf8); });
+    }
     const std::u16string& units() {
+        prepare();
         std::call_once(once, [this] {
             u16 = utf16::fromUtf8(utf8);
-            std::string().swap(utf8);
+            if (!(ascii && utf8.size() >= (std::size_t)kStagedChars)) std::string().swap(utf8);
         });
         return u16;
     }
@@ -159,6 +190,10 @@ struct FindBar::Text {
 // One search, or one Replace All's changes, on a worker thread.
 struct FindBar::Job {
     bool replace = false;
+    // Staged: a big text, searched in stages whose results go to the main
+    // loop as they are ready (Stage). Nav: Find Next by scanning.
+    bool staged = false, nav = false, forward = true;
+    std::size_t anchor = 0, visLo = 0, visHi = 0, selStart = 0, selEnd = 0;
     FindBar* self = nullptr;
     std::weak_ptr<int> alive;
     unsigned long gen = 0, version = 0;
@@ -170,6 +205,22 @@ struct FindBar::Job {
     FindRules::Found found;
     std::vector<FindRules::Change> changes;
     double workerMs = 0;
+};
+
+// One stage's result, on its way from a worker to the main loop. It is
+// applied only when its search is still the running one and the query and
+// the text are those it was found for.
+struct FindBar::Stage {
+    FindBar* self = nullptr;
+    std::weak_ptr<int> alive;
+    unsigned long gen = 0, version = 0;
+    std::shared_ptr<std::atomic<bool>> cancel;
+    std::shared_ptr<Text> text;
+    int kind = 0;   // 1 the lines on screen, 2 the first match, 3 a part of the count,
+                    // 4 the count done, 5 Find Next's match
+    std::vector<TextFind::Match> units, points;
+    bool truncated = false, firstOfAll = false, none = false;
+    double ms = 0;
 };
 
 // ================================================================ the bar
@@ -418,12 +469,24 @@ bool FindBar::scope(int* start, int* end) const {
     return true;
 }
 
-bool FindBar::resultsCurrent() const {
+bool FindBar::marksCurrent() const {
     return resultsGen_ == queryGen_ && resultsVersion_ == textVersion_;
 }
 
+// Complete: not while a staged search is still counting.
+bool FindBar::resultsCurrent() const { return marksCurrent() && !counting_; }
+
+std::string FindBar::countTip() const {
+    const char* t = gtk_widget_get_tooltip_text(count_);
+    return t ? t : "";
+}
+
+bool FindBar::stagedText() const {
+    return buf_ && gtk_text_buffer_get_char_count(buf_) >= kStagedChars;
+}
+
 long FindBar::currentIndex() const {
-    if (!resultsCurrent() || !buf_) return -1;
+    if (!marksCurrent() || !buf_) return -1;
     int s = 0, e = 0;
     selectionOf(buf_, &s, &e);
     return TextFind::indexOf(found_.points, (std::size_t)s, (std::size_t)(e - s));
@@ -537,6 +600,10 @@ void FindBar::detach() {
     if (cancel_) cancel_->store(true);
     cancel_.reset();
     searching_ = false;
+    counting_ = false;
+    seedPending_ = false;
+    whenFirst_ = nullptr;
+    if (navCancel_) navCancel_->store(true);
     whenCurrent_ = nullptr;
     dropScope();
     removeAllTags();
@@ -646,9 +713,12 @@ void FindBar::show(GtkWidget* field, bool replace) {
     updateVisibility();
     if (field && gtk_widget_get_visible(box_)) focusField(field);
     if (!wasShown || seeded) {
-        queryChanged();
-        // A word at the caret: its own occurrence is the one to select.
-        if (seeded && word) anchor_ = wordAt;
+        // A word at the caret in a file over 20 MB is put in the box and
+        // not searched (the Mac's seedWithoutSearching).
+        if (seeded && word && buf_ && gtk_text_buffer_get_char_count(buf_) > kSeedHoldChars)
+            holdSeed(wordAt);
+        else   // A word at the caret: its own occurrence is the one to select.
+            queryChanged(seeded && word ? (long)wordAt : -1);
     }
     showCount();
 }
@@ -667,6 +737,10 @@ void FindBar::close() {
     if (cancel_) cancel_->store(true);
     cancel_.reset();
     searching_ = false;
+    counting_ = false;
+    seedPending_ = false;
+    whenFirst_ = nullptr;
+    if (navCancel_) navCancel_->store(true);
     if (searchTimer_) g_source_remove(searchTimer_);
     searchTimer_ = 0;
     whenCurrent_ = nullptr;
@@ -786,7 +860,12 @@ void FindBar::updateSelectionButton() {
 
 // ------------------------------------------------------------ searching
 
-void FindBar::queryChanged() {
+// The query as the box and the options say, and its search started.
+// `anchorOverride` (characters) is where the first match is looked for from
+// when it is not the caret: a seeded word's own occurrence.
+void FindBar::queryChanged(long anchorOverride) {
+    seedPending_ = false;
+    whenFirst_ = nullptr;
     TextFind::Options o;
     o.caseSensitive = matchCase();
     o.wholeWord = wholeWord();
@@ -799,8 +878,56 @@ void FindBar::queryChanged() {
         selectionOf(buf_, &s, &e);
         anchor_ = (std::size_t)s;
     }
+    if (anchorOverride >= 0) anchor_ = (std::size_t)anchorOverride;
     selectOnArrival_ = true;
     search();
+}
+
+// A word seeded in a big file: in the box, its query made, nothing searched
+// and no old match left (a key, an option or Return searches it).
+void FindBar::holdSeed(std::size_t wordAt) {
+    TextFind::Options o;
+    o.caseSensitive = matchCase();
+    o.wholeWord = wholeWord();
+    o.regex = regex();
+    o.preserveCase = preserveCase();
+    query_ = TextFind::Query::make(query(), o);
+    queryGen_++;
+    if (cancel_) cancel_->store(true);
+    cancel_.reset();
+    if (searchTimer_) g_source_remove(searchTimer_);
+    searchTimer_ = 0;
+    searching_ = counting_ = false;
+    whenCurrent_ = nullptr;
+    whenFirst_ = nullptr;
+    selectOnArrival_ = false;
+    found_ = FindRules::Found();
+    foundText_.reset();
+    resultsGen_ = (unsigned long)-1;
+    seedPending_ = true;
+    seedAt_ = wordAt;
+    schedulePaint();
+}
+
+void FindBar::releaseSeed() { queryChanged((long)seedAt_); }
+
+// The lines on screen and 50 either side, in characters.
+void FindBar::visibleRange(std::size_t* lo, std::size_t* hi) {
+    GdkRectangle vis{0, 0, 0, 0};
+    gtk_text_view_get_visible_rect(GTK_TEXT_VIEW(view_), &vis);
+    GtkTextIter first, last;
+    if (vis.height > 0) {
+        gtk_text_view_get_line_at_y(GTK_TEXT_VIEW(view_), &first, vis.y, nullptr);
+        gtk_text_view_get_line_at_y(GTK_TEXT_VIEW(view_), &last, vis.y + vis.height, nullptr);
+    } else {
+        gtk_text_buffer_get_iter_at_mark(buf_, &first, gtk_text_buffer_get_insert(buf_));
+        last = first;
+    }
+    const int margin = 50;
+    gtk_text_buffer_get_iter_at_line(buf_, &first, std::max(0, gtk_text_iter_get_line(&first) - margin));
+    if (!gtk_text_iter_forward_lines(&last, margin + 1)) gtk_text_buffer_get_end_iter(buf_, &last);
+    *lo = (std::size_t)offsetOf(first);
+    *hi = (std::size_t)offsetOf(last);
 }
 
 std::shared_ptr<FindBar::Text> FindBar::currentText() {
@@ -828,6 +955,7 @@ void FindBar::search() {
     cancel_.reset();
     if (searchTimer_) g_source_remove(searchTimer_);
     searchTimer_ = 0;
+    counting_ = false;
     if (!shown_ || !buf_) return;
     if (!query_.usable()) {
         searching_ = false;
@@ -858,6 +986,24 @@ void FindBar::search() {
     job->cancel = std::make_shared<std::atomic<bool>>(false);
     cancel_ = job->cancel;
     searching_ = true;
+    if (stagedText() && job->scopeEnd <= job->scopeStart) {
+        // A big text: the screen, the first match from the caret, then the
+        // count, each sent as it is ready; what an older query or text
+        // marked goes now, not when the first of these arrives.
+        job->staged = true;
+        job->anchor = anchor_;
+        visibleRange(&job->visLo, &job->visHi);
+        counting_ = true;
+        countedPart_ = false;
+        firstAt_ = (std::size_t)-1;
+        firstOfAll_ = false;
+        if (!marksCurrent() || !found_.points.empty()) {
+            found_ = FindRules::Found();
+            foundText_.reset();
+            resultsGen_ = (unsigned long)-1;
+            schedulePaint();
+        }
+    }
     GTask* task = g_task_new(nullptr, nullptr, onDone, nullptr);
     g_task_set_task_data(task, job, [](gpointer p) { delete static_cast<Job*>(p); });
     g_task_run_in_thread(task, worker);
@@ -865,9 +1011,261 @@ void FindBar::search() {
     showCount();
 }
 
+// A big text's search on a worker (see search()): the stages go to the main
+// loop as Stage messages. The matches are TextScan's, which are
+// TextFind::findAll's, in UTF-16 units; for a text of ASCII bytes searched as
+// they are, units are characters. Otherwise the text is read as UTF-16 and
+// the matches turned to characters, as FindRules::findAll does.
+void FindBar::stagedWork(Job* job, double startMs) {
+    Text& t = *job->text;
+    t.prepare();
+    const bool ascii = t.ascii;
+    const std::u16string* u = ascii ? nullptr : &t.units();
+    const std::size_t length = ascii ? t.utf8.size() : u->size();
+    TextScan::Text st;
+    if (ascii) {
+        st = TextScan::Text::utf8(t.utf8.data(), length, true);
+    } else {
+        st = TextScan::Text::utf16(length, [u](std::size_t start, std::size_t n, char16_t* out) {
+            std::memcpy(out, u->data() + start, n * sizeof(char16_t));
+        });
+    }
+    TextScan::Options opt;
+    opt.cancel = job->cancel.get();
+    const TextFind::Query& q = job->query;
+    auto toUnits = [&](std::size_t point) {
+        return ascii ? std::min(point, length) : EditSpans::unitsAt(*u, point);
+    };
+    auto toPoints = [&](const std::vector<TextFind::Match>& units) {
+        std::vector<TextFind::Match> out;
+        out.reserve(units.size());
+        std::vector<std::size_t> cp;
+        if (!ascii) {
+            std::vector<std::size_t> at;
+            at.reserve(units.size() * 2);
+            for (const TextFind::Match& m : units) {
+                at.push_back(m.start);
+                at.push_back(m.start + m.length);
+            }
+            cp = EditSpans::codePoints(*u, at);
+        }
+        for (std::size_t i = 0; i < units.size(); i++) {
+            TextFind::Match p;
+            p.start = ascii ? units[i].start : cp[2 * i];
+            p.length = ascii ? units[i].length : cp[2 * i + 1] - cp[2 * i];
+            out.push_back(p);
+        }
+        return out;
+    };
+    auto post = [&](int kind, std::vector<TextFind::Match> units, bool truncated, bool firstOfAll) {
+        Stage* m = new Stage;
+        m->self = job->self;
+        m->alive = job->alive;
+        m->gen = job->gen;
+        m->version = job->version;
+        m->cancel = job->cancel;
+        m->text = job->text;
+        m->kind = kind;
+        m->truncated = truncated;
+        m->firstOfAll = firstOfAll;
+        m->points = toPoints(units);
+        m->units = std::move(units);
+        m->ms = threadCpuMs() - startMs;
+        g_idle_add_full(G_PRIORITY_DEFAULT, [](gpointer p) -> gboolean {
+            std::unique_ptr<Stage> msg(static_cast<Stage*>(p));
+            if (msg->alive.expired()) return G_SOURCE_REMOVE;   // the bar went with its window
+            if (msg->cancel->load()) return G_SOURCE_REMOVE;    // a newer search or an edit
+            msg->self->stagedArrived(msg.get());
+            return G_SOURCE_REMOVE;
+        }, m, nullptr);
+    };
+
+    if (job->nav) {
+        // Find Next or Previous from the selection, wrapping.
+        const std::size_t s = toUnits(job->selStart), e = toUnits(job->selEnd);
+        TextFind::Match m;
+        bool cancelled = false, got;
+        if (job->forward) {
+            got = TextScan::findFirst(st, q, e, length, &m, opt, &cancelled);
+            if (!got && !cancelled) got = TextScan::findFirst(st, q, 0, e, &m, opt, &cancelled);
+        } else {
+            got = TextScan::findLast(st, q, 0, s, &m, opt, &cancelled);
+            if (!got && !cancelled) got = TextScan::findLast(st, q, s, length, &m, opt, &cancelled);
+        }
+        if (cancelled) return;
+        std::vector<TextFind::Match> one;
+        if (got) one.push_back(m);
+        post(5, std::move(one), false, false);
+        return;
+    }
+
+    // 1: the lines on screen (bytes only: there a character is a byte).
+    if (ascii && job->visHi > job->visLo) {
+        std::vector<TextFind::Match> v;
+        TextScan::scan(st, q, job->visLo, std::min(job->visHi, length),
+                       [&](const TextFind::Match& m) {
+                           v.push_back(m);
+                           return v.size() < FindRules::kMatchLimit;
+                       }, opt);
+        if (job->cancel->load()) return;
+        post(1, std::move(v), false, false);
+    }
+    // 2: the first match from the caret, wrapping.
+    {
+        const std::size_t a = toUnits(job->anchor);
+        TextFind::Match m;
+        bool cancelled = false, wrapped = false;
+        bool got = TextScan::findFirst(st, q, a, length, &m, opt, &cancelled);
+        if (!got && !cancelled && a > 0) {
+            got = TextScan::findFirst(st, q, 0, a, &m, opt, &cancelled);
+            wrapped = true;
+        }
+        if (cancelled) return;
+        std::vector<TextFind::Match> one;
+        if (got) one.push_back(m);
+        // The first of all when it was looked for from the top.
+        post(2, std::move(one), false, got && (a == 0 || wrapped));
+    }
+    // 3: every match from the top, at most kMatchLimit kept, sent in parts.
+    std::vector<TextFind::Match> kept;
+    bool truncated = false;
+    auto lastPart = std::chrono::steady_clock::now();
+    const bool done = TextScan::scan(st, q, 0, length, [&](const TextFind::Match& m) {
+        if (kept.size() == FindRules::kMatchLimit) {
+            truncated = true;
+            return false;
+        }
+        kept.push_back(m);
+        if (ascii && (kept.size() & 255) == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - lastPart >= std::chrono::milliseconds(100)) {
+                lastPart = now;
+                post(3, kept, false, false);
+            }
+        }
+        return true;
+    }, opt);
+    if (!done || job->cancel->load()) return;
+    post(4, std::move(kept), truncated, false);
+}
+
+// A stage's result, on the main thread.
+void FindBar::stagedArrived(Stage* m) {
+    if (m->kind == 5) {   // Find Next's match
+        if (m->gen != queryGen_ || m->version != textVersion_ || !buf_) return;
+        if (m->points.empty()) {
+            gtk_widget_error_bell(view_);
+            return;
+        }
+        const TextFind::Match& p = m->points[0];
+        if ((int)(p.start + p.length) > gtk_text_buffer_get_char_count(buf_)) return;
+        selectInText((int)(p.start + p.length), (int)p.start);
+        gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(view_), gtk_text_buffer_get_insert(buf_), 0.05,
+                                     FALSE, 0, 0);
+        showCount();
+        schedulePaint();
+        return;
+    }
+    if (m->gen != queryGen_ || m->version != textVersion_ || !counting_) return;
+    auto holdMarks = [&] {
+        foundText_ = m->text;
+        resultsGen_ = m->gen;
+        resultsVersion_ = m->version;
+    };
+    if (m->kind == 1) {   // the lines on screen: marks, nothing selected
+        found_ = FindRules::Found();
+        found_.units = std::move(m->units);
+        found_.points = std::move(m->points);
+        holdMarks();
+    } else if (m->kind == 2) {   // the first match from the caret
+        if (!m->points.empty()) {
+            holdMarks();
+            const TextFind::Match& p = m->points[0];
+            auto at = std::lower_bound(found_.points.begin(), found_.points.end(), p.start,
+                                       [](const TextFind::Match& x, std::size_t s) { return x.start < s; });
+            const std::size_t i = (std::size_t)(at - found_.points.begin());
+            if (at == found_.points.end() || at->start != p.start) {
+                found_.points.insert(at, p);
+                found_.units.insert(found_.units.begin() + (long)i, m->units[0]);
+            }
+            firstAt_ = p.start;
+            firstOfAll_ = m->firstOfAll;
+            if (selectOnArrival_) {
+                selectOnArrival_ = false;
+                selectMatch(i);
+            }
+        }
+        selectOnArrival_ = false;
+        lastFirstMs_ = m->ms;
+        auto then = std::move(whenFirst_);
+        whenFirst_ = nullptr;
+        showCount();
+        schedulePaint();
+        if (then) then();
+        return;
+    } else {   // 3, a part of the count, or 4, the end of it
+        found_ = FindRules::Found();
+        found_.units = std::move(m->units);
+        found_.points = std::move(m->points);
+        found_.truncated = m->truncated;
+        holdMarks();
+        countedPart_ = true;
+        if (m->kind == 4) {
+            counting_ = false;
+            searching_ = false;
+            cancel_.reset();
+            lastCountMs_ = m->ms;
+            selectOnArrival_ = false;
+            auto first = std::move(whenFirst_);
+            whenFirst_ = nullptr;
+            auto then = std::move(whenCurrent_);
+            whenCurrent_ = nullptr;
+            showCount();
+            schedulePaint();
+            if (first) first();
+            if (then) then();
+            return;
+        }
+    }
+    showCount();
+    schedulePaint();
+}
+
+// Find Next or Previous while the count is still running (or past the
+// matches kept): the text searched from the selection on its own, so it
+// never waits for the count.
+void FindBar::navigate(bool forward) {
+    if (!buf_) return;
+    int s = 0, e = 0;
+    selectionOf(buf_, &s, &e);
+    if (navCancel_) navCancel_->store(true);
+    navCancel_ = std::make_shared<std::atomic<bool>>(false);
+    auto* job = new Job;
+    job->nav = true;
+    job->forward = forward;
+    job->self = this;
+    job->alive = life_;
+    job->gen = queryGen_;
+    job->version = textVersion_;
+    job->text = currentText();
+    job->query = query_;
+    job->selStart = (std::size_t)s;
+    job->selEnd = (std::size_t)e;
+    job->cancel = navCancel_;
+    GTask* task = g_task_new(nullptr, nullptr, onDone, nullptr);
+    g_task_set_task_data(task, job, [](gpointer p) { delete static_cast<Job*>(p); });
+    g_task_run_in_thread(task, worker);
+    g_object_unref(task);
+}
+
 void FindBar::worker(GTask* task, gpointer, gpointer data, GCancellable*) {
     Job* job = static_cast<Job*>(data);
     const double t0 = threadCpuMs();
+    if (job->staged || job->nav) {
+        if (!job->cancel->load()) stagedWork(job, t0);
+        g_task_return_boolean(task, TRUE);
+        return;
+    }
     if (!job->cancel || !job->cancel->load()) {
         const std::u16string& text = job->text->units();
         if (job->replace)
@@ -884,6 +1282,7 @@ void FindBar::worker(GTask* task, gpointer, gpointer data, GCancellable*) {
 void FindBar::onDone(GObject*, GAsyncResult* res, gpointer) {
     Job* job = static_cast<Job*>(g_task_get_task_data(G_TASK(res)));
     if (job->alive.expired()) return;   // the bar went with its window
+    if (job->staged || job->nav) return;   // its stages came by themselves
     if (job->replace) job->self->replaced(job);
     else job->self->arrived(job);
 }
@@ -938,6 +1337,7 @@ void FindBar::findNext(bool forward) {
         showFind();
         return;
     }
+    if (seedPending_ && shown_) releaseSeed();   // Return: the seeded word's search, now
     if (!shown_) {   // the last query again, the keyboard left where it is
         shown_ = true;
         updateSelectionButton();
@@ -947,6 +1347,11 @@ void FindBar::findNext(bool forward) {
     }
     if (!query_.usable()) {
         gtk_widget_error_bell(view_);
+        return;
+    }
+    if (counting_) {   // not waiting for the count: the text searched from the selection
+        if (selectOnArrival_) whenFirst_ = [this, forward] { navigate(forward); };
+        else navigate(forward);
         return;
     }
     whenCurrent([this, forward] {
@@ -972,10 +1377,41 @@ void FindBar::showCount() {
     st.truncated = found_.truncated;
     st.currentIndex = currentIndex();
     st.tooSlow = query_.tooSlow();
-    const FindRules::Count c = FindRules::count(st);
     const bool can = canReplace() && st.hasQuery;
     gtk_widget_set_sensitive(replaceOne_, can);
     gtk_widget_set_sensitive(replaceAll_, can);
+    if ((seedPending_ || counting_) && st.hasQuery && st.queryError.empty()) {
+        // A seeded word waits for a key; a staged search is counting.
+        // The Mac's words (MCEditorFind's showCount).
+        std::string text = "\xe2\x80\xa6";   // …
+        std::string tip;
+        if (seedPending_) {
+            text.clear();
+            tip = "Press Enter to find it, or type to search";
+        } else if (marksCurrent() && buf_ && firstAt_ != (std::size_t)-1) {
+            // The match selected and its number once the matches before it
+            // are counted ("1 of …", "? of …"). After a part of the count the
+            // matches held are every one from the top to where it has got,
+            // so an index among them is the match's number; before the first
+            // part they are only the screen's and the first from the caret.
+            int s = 0, e = 0;
+            selectionOf(buf_, &s, &e);
+            long i = countedPart_ ? currentIndex() : -1;
+            if (i < 0 && firstOfAll_ && (std::size_t)s == firstAt_ && e > s) i = 0;
+            text = i >= 0 ? std::to_string(i + 1) + " of \xe2\x80\xa6" : "? of \xe2\x80\xa6";
+            if (countedPart_)
+                tip = std::to_string(found_.points.size()) + " matches counted so far";
+        }
+        gtk_label_set_text(GTK_LABEL(count_), text.c_str());
+        gtk_widget_remove_css_class(count_, "error");
+        gtk_widget_remove_css_class(findInput_, "error");
+        gtk_widget_set_tooltip_text(count_, tip.empty() ? nullptr : tip.c_str());
+        gtk_widget_set_tooltip_text(findInput_, nullptr);
+        gtk_widget_set_sensitive(prev_, TRUE);
+        gtk_widget_set_sensitive(next_, TRUE);
+        return;
+    }
+    const FindRules::Count c = FindRules::count(st);
     if (c.keep) return;
     gtk_label_set_text(GTK_LABEL(count_), c.text.c_str());
     if (c.error || c.noResults) gtk_widget_add_css_class(count_, "error");
@@ -1139,7 +1575,7 @@ void FindBar::paint() {
     if (!buf_ || MultiEdit::applying()) return;
     ensureTags();
     clearMatchTags();
-    if (!shown_ || !resultsCurrent() || found_.points.empty()) return;
+    if (!shown_ || !marksCurrent() || found_.points.empty()) return;
     // Mine above every other tag's background, the selected match on top.
     GtkTextTagTable* table = gtk_text_buffer_get_tag_table(buf_);
     const int top = gtk_text_tag_table_get_size(table) - 1;

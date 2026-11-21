@@ -107,8 +107,18 @@ public:
     bool findInSelection() const { return scopeA_ != nullptr; }
     // The scope, in characters; false when Find in Selection is off.
     bool scope(int* start, int* end) const;
-    // There are results for the query and the text as they are.
+    // There are complete results for the query and the text as they are.
     bool resultsCurrent() const;
+    // A staged search of a big text is counting: the matches held are those
+    // found so far (the screen's, the first from the caret, then the rest).
+    bool counting() const { return counting_; }
+    // The word seeded in a file over 20 MB, in the box and not searched yet.
+    bool seedPending() const { return seedPending_; }
+    // The worker's CPU time to the first match, in milliseconds, of the last
+    // staged search; and to the end of the count.
+    double lastFirstMatchMs() const { return lastFirstMs_; }
+    double lastCountMs() const { return lastCountMs_; }
+    std::string countTip() const;
     // The matches found for them, in characters.
     const std::vector<TextFind::Match>& matches() const { return found_.points; }
     long currentIndex() const;
@@ -142,6 +152,7 @@ public:
 private:
     struct Job;
     struct Text;
+    struct Stage;
 
     void build();
     void show(GtkWidget* field, bool replace);
@@ -159,8 +170,16 @@ private:
     void selectionChanged();
 
     // Searching (see the Mac's MCEditorFind, whose steps these are).
-    void queryChanged();
+    void queryChanged(long anchorOverride = -1);
     void search();
+    // A text of kStagedChars or more is searched in stages (see search()).
+    bool stagedText() const;
+    void stagedArrived(Stage* m);
+    void navigate(bool forward);          // Find Next by scanning, while counting
+    void holdSeed(std::size_t wordAt);    // a word seeded in a big file, not searched
+    void releaseSeed();
+    bool marksCurrent() const;            // the matches held are for this query and text
+    void visibleRange(std::size_t* lo, std::size_t* hi);
     std::shared_ptr<Text> currentText();
     void arrived(Job* job);
     void replaced(Job* job);
@@ -180,6 +199,7 @@ private:
     void removeAllTags();
 
     static void worker(GTask* task, gpointer source, gpointer data, GCancellable* c);
+    static void stagedWork(Job* job, double startMs);
     static void onDone(GObject* source, GAsyncResult* res, gpointer data);
 
     Editor*        editor_ = nullptr;
@@ -244,6 +264,17 @@ private:
     guint paintIdle_ = 0;
     guint selectionIdle_ = 0;          // the selection moved: the count and button follow
     int highlighted_ = 0;
+
+    // Staged searching of a big text.
+    bool counting_ = false;
+    bool countedPart_ = false;              // a part of the count came: matches from the top
+    bool seedPending_ = false;
+    std::size_t seedAt_ = 0;
+    std::size_t firstAt_ = (std::size_t)-1;   // the first match, selected, found from the top
+    bool firstOfAll_ = false;
+    std::function<void()> whenFirst_;          // Find Next typed before the first match
+    std::shared_ptr<std::atomic<bool>> navCancel_;
+    double lastFirstMs_ = 0, lastCountMs_ = 0;
 
     double lastReplaceAllMs_ = 0, lastReplaceAllWorkerMs_ = 0;
     // Searches still running when the bar goes find it gone through this.

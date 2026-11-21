@@ -32,6 +32,7 @@
 #include "LargeFileView.h"
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -266,6 +267,8 @@ size_t gTypedKeys = 0;
 const char* kServer = "large";
 int gLine1 = 0, gNeedle = 0, gTail = 0;   // the 5 MB line's file: where things are
 std::string gClip;   // what the clipboard held
+int gLog2 = 0, gLogNeedle = 0, gLogLen = 0, gAccentAt = 0;   // the find bar's log: line 2, the needle, its length
+double gMemchrMs = 0;
 
 }  // namespace
 
@@ -776,5 +779,169 @@ MC_GUI_SUITE(large_file) {
         GCHECK(caretOnScreen());
         gMeter.stop();
         ed()->closeAllTabs();
+    });
+
+    // ------------------------------------------------ the find bar in a big text
+    // (FindBar.h, the Mac's EditorFind: a text of 1M characters or more is
+    // searched in stages; a word seeded in one over 20 MB waits for a key.)
+    MCGuiStep("a 22 MB log", [] {
+        gMeter.start();
+        ed()->closeAllTabs();
+        std::string s;
+        s.reserve(23u << 20);
+        for (int i = 0; s.size() < (22u << 20); i++) {
+            s += "2026-11-21 10:00:00 INFO request " + std::to_string(i) + " served in " +
+                 std::to_string(i % 97) + " ms\n";
+            if (i == 0) gLog2 = (int)s.size();
+        }
+        gLogNeedle = (int)s.size() + 26;
+        s += "2026-11-21 10:00:01 ERROR NEEDLE-4242 on the last line\n";
+        gLogLen = (int)s.size();
+        // What a pass over the bytes costs at the least on this thread.
+        const double c0 = MCGuiThreadCpuMs();
+        const bool none = memchr(s.data(), '#', s.size()) == nullptr;
+        gMemchrMs = MCGuiThreadCpuMs() - c0 + (none ? 0 : 1);
+        MCGuiWriteFile(F("log22.txt"), s);
+        MCGuiOpenFileKept(F("log22.txt"));
+    });
+    MCGuiWait("it is in", 60, [] { return loaded(F("log22.txt")) && gtk_text_buffer_get_char_count(buf()) == gLogLen; });
+    MCGuiStep("the caret in the word 2026 on line 2, Ctrl+F", [] {
+        GCHECK(doc()->isLargeFile());
+        gtk_widget_grab_focus(ed()->textView());
+        GtkTextIter it;
+        gtk_text_buffer_get_iter_at_offset(buf(), &it, gLog2 + 2);
+        gtk_text_buffer_place_cursor(buf(), &it);
+        MCGuiKey("ctrl+f");
+    });
+    MCGuiWait("the find field laid out", 10, [] {
+        GtkWidget* e = MCGuiApp().findBar->findField();
+        return MCGuiApp().findBar->shown() && gtk_widget_get_mapped(e) && gtk_widget_get_height(e) > 10;
+    });
+    MCGuiStep("the word is in the box and not searched", [] {
+        FindBar* b = MCGuiApp().findBar;
+        MCGuiNote("seeded: \"%s\", count \"%s\"", b->query().c_str(), b->countText().c_str());
+        GCHECK_EQ_STR(b->query(), "2026");
+        GCHECK(b->seedPending());
+        GCHECK(b->matches().empty() && b->highlighted() == 0 && !b->counting());
+        GCHECK_EQ_STR(gtk_label_get_text(GTK_LABEL(b->countLabel())), "");
+        GCHECK(b->countTip().find("Press Enter to find it") != std::string::npos);
+        GCHECK(caret() == gLog2 + 2);   // the caret and the text as they were
+        gMeter.reset();
+        MCGuiClick(b->findField());
+    });
+    MCGuiWait("the field has the keyboard", 10, [] {
+        GtkWidget* e = MCGuiApp().findBar->findField();
+        return gtk_widget_has_focus(e) && !gtk_editable_get_selection_bounds(GTK_EDITABLE(e), nullptr, nullptr);
+    });
+    MCGuiStep("Return", [] {
+        GCHECK(MCGuiApp().findBar->seedPending());
+        MCGuiKey("Return");
+    });
+    MCGuiWait("it goes to the word's next occurrence, line 3", 30, [] {
+        GtkTextIter a, b;
+        return gtk_text_buffer_get_selection_bounds(buf(), &a, &b) &&
+               gtk_text_iter_get_offset(&a) == 2 * gLog2 &&
+               gtk_text_iter_get_offset(&b) == gtk_text_iter_get_offset(&a) + 4;
+    });
+    MCGuiWait("the count done: the matches kept, the screen marked", 30, [] {
+        FindBar* b = MCGuiApp().findBar;
+        return !b->seedPending() && !b->counting() && b->matches().size() == 20000 && b->highlighted() > 0;
+    });
+    MCGuiStep("3 of 20000+, and the stages' timings", [] {
+        FindBar* b = MCGuiApp().findBar;
+        GCHECK_EQ_STR(b->countText(), "3 of 20000+");
+        MCGuiNote("22 MB, 20,000 matches counted: %.1f ms of the worker's CPU; first match %.1f ms",
+                  b->lastCountMs(), b->lastFirstMatchMs());
+        GCHECK_TIME(b->lastCountMs(), 1000.0, "20,000 matches counted in a 22 MB log");
+        checkStall("the seed's search");
+    });
+    MCGuiStep("a new query: the old one's marks go at once", [] {
+        FindBar* b = MCGuiApp().findBar;
+        GCHECK(b->highlighted() > 20);
+        gtk_editable_set_text(GTK_EDITABLE(b->findField()), "NEEDLE-4242");
+        // The paint is an idle of the main loop: run what is due, which is
+        // before the worker's first match could be here.
+        while (g_main_context_iteration(nullptr, FALSE)) {}
+        MCGuiNote("marks after the change: %d, matches %zu", b->highlighted(), b->matches().size());
+        GCHECK(b->highlighted() <= 1);
+        for (const TextFind::Match& m : b->matches()) GCHECK_EQ_STR(textAt((int)m.start, 11), "NEEDLE-4242");
+        GCHECK(!b->seedPending());
+    });
+    MCGuiWait("the first match on the last line selected", 30, [] {
+        GtkTextIter a, b;
+        return gtk_text_buffer_get_selection_bounds(buf(), &a, &b) &&
+               gtk_text_iter_get_offset(&a) == gLogNeedle && gtk_text_iter_get_offset(&b) == gLogNeedle + 11;
+    });
+    MCGuiWait("the count done", 30, [] { return !MCGuiApp().findBar->counting(); });
+    MCGuiStep("1 of 1, and the first match's time", [] {
+        FindBar* b = MCGuiApp().findBar;
+        GCHECK_EQ_STR(b->countText(), "1 of 1");
+        MCGuiNote("NEEDLE-4242 on the last line of 22 MB: first match %.1f ms of the worker's CPU "
+                  "(count %.1f), a memchr pass %.1f ms", b->lastFirstMatchMs(), b->lastCountMs(),
+                  gMemchrMs);
+        GCHECK_TIME(b->lastFirstMatchMs(), std::max(150.0, 8 * gMemchrMs), "the first match on the last line");
+        checkStall("a first match on the last line");
+    });
+    MCGuiStep("a match on every line, found from the top; Return at once goes on", [] {
+        FindBar* b = MCGuiApp().findBar;
+        gtk_widget_grab_focus(ed()->textView());
+        GtkTextIter it;
+        gtk_text_buffer_get_start_iter(buf(), &it);
+        gtk_text_buffer_place_cursor(buf(), &it);
+        gtk_widget_grab_focus(b->findField());
+        gtk_editable_set_text(GTK_EDITABLE(b->findField()), "request");
+        GCHECK(b->counting());   // no waiting for the count
+        b->findNext(true);       // before the first match came: after it
+    });
+    MCGuiWait("the second 'request', line 2's", 30, [] {
+        GtkTextIter a, b;
+        return gtk_text_buffer_get_selection_bounds(buf(), &a, &b) &&
+               gtk_text_iter_get_offset(&a) == gLog2 + 25 && gtk_text_iter_get_offset(&b) == gLog2 + 32;
+    });
+    MCGuiWait("counted", 30, [] { return !MCGuiApp().findBar->counting(); });
+    MCGuiStep("20000+ for a match on every line", [] {
+        FindBar* b = MCGuiApp().findBar;
+        GCHECK_EQ_STR(b->countText(), "2 of 20000+");
+        GCHECK(b->matches().size() == 20000);
+        checkStall("finding and counting a match on every line");
+        b->close();
+        ed()->closeAllTabs();
+    });
+
+    // ------------------------------------------------ accents: characters, not bytes
+    MCGuiStep("a 1.3 MB text with accents", [] {
+        std::string s;
+        int chars = 0;
+        for (int i = 0; chars < 1300000; i++) {
+            const std::string line = "caf\xc3\xa9 r\xc3\xa9sum\xc3\xa9 " + std::to_string(i) + "\n";
+            s += line;
+            chars += (int)g_utf8_strlen(line.c_str(), -1);
+        }
+        gAccentAt = chars + 7;   // "café é " is 7 characters before the needle
+        s += "caf\xc3\xa9 \xc3\xa9 NEEDLE\xc3\xa9X\n";
+        MCGuiWriteFile(F("accents.txt"), s);
+        MCGuiOpenFileKept(F("accents.txt"));
+    });
+    MCGuiWait("it is in", 60, [] { return loaded(F("accents.txt")); });
+    MCGuiStep("Ctrl+F, the needle typed", [] {
+        FindBar* b = MCGuiApp().findBar;
+        gtk_widget_grab_focus(ed()->textView());
+        GtkTextIter it;
+        gtk_text_buffer_get_start_iter(buf(), &it);
+        gtk_text_buffer_place_cursor(buf(), &it);
+        b->showFind();
+        gtk_editable_set_text(GTK_EDITABLE(b->findField()), "needle\xc3\xa9");
+    });
+    MCGuiWait("selected by characters", 30, [] {
+        GtkTextIter a, b;
+        return gtk_text_buffer_get_selection_bounds(buf(), &a, &b) &&
+               gtk_text_iter_get_offset(&a) == gAccentAt && gtk_text_iter_get_offset(&b) == gAccentAt + 7;
+    });
+    MCGuiWait("counted", 30, [] { return !MCGuiApp().findBar->counting(); });
+    MCGuiStep("1 of 1", [] {
+        GCHECK_EQ_STR(MCGuiApp().findBar->countText(), "1 of 1");
+        MCGuiApp().findBar->close();
+        ed()->closeAllTabs();
+        gMeter.stop();
     });
 }

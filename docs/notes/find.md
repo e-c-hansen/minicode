@@ -116,6 +116,32 @@ found through that list.
   match in `GCHECK_TIME(firstMatchCpuMs, MAX(150, 8 × a memchr pass))` of
   the queue's CPU, "1 of 1", and a match on every line counted with under
   50 ms of main-thread CPU between two fires of a 2 ms timer.
+- **The same on GTK** (2026-11-21, `linux/HANDOFF.md` item 143, `FindBar.cpp`
+  `stagedWork`/`stagedArrived`): a buffer of 1M characters or more (and no
+  Find in Selection scope) is searched through `TextScan` in stages, each
+  posted to the main loop as a `Stage` message (`g_idle_add`; one applies
+  only when its job's cancel flag is clear and its query generation and text
+  version are current, so a late result of an old search never lands). The
+  text is the bar's one copy of the buffer per edit (`Text`): `prepare()`
+  finds whether it is all ASCII, and then the bytes are scanned as they are
+  (characters are bytes, the lines on screen go first), else the copy is
+  turned to UTF-16 and read in blocks, the matches turned to characters
+  once (no lines-on-screen stage there, since a character offset is not a
+  position in the units). Stage 2 is the first match from the caret, selected
+  at once, "1 of …" when found from the top and "? of …" else, then "N of …" once a part of the count reaches it (the tooltip "N matches counted so far", the Mac's words); stage 3 keeps
+  at most `kMatchLimit` (20,000) matches, posted every 100 ms, and ends
+  with the count "of 20000+" as every GTK search does (the Mac counts them
+  all). `counting()` is true until it ends; `resultsCurrent()` is false
+  meanwhile, `marksCurrent()` (what paint and the selected mark read) is
+  not. Find Next while counting scans from the selection on its own worker
+  (`navigate`), or after the first match when typed before it. The old
+  query's marks are dropped when a staged search starts. A word seeded in a
+  buffer of more than 20 MB (`kSeedHoldChars`) is `seedPending()`: in the
+  box, no search, an empty count with a tooltip, until a key, an option or
+  Return (`releaseSeed`, from the word's own occurrence). **Trap:** the
+  worker's `Text::units()` frees the UTF-8 bytes once it has made UTF-16;
+  an ASCII text of this size keeps them, because another worker of the same
+  version may be scanning them.
 - Find in Folder's window is VS Code's search view (searchview.css): query
   and replace with their toggles inside, Replace All beside, files to
   include/exclude (`FolderSearch::PathFilter`, VS Code's queryBuilder rules)
