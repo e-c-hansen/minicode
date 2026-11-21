@@ -25,6 +25,7 @@
 #include "Harness.h"
 
 #include "ChangeReviewPage.h"
+#include "ComparePanes.h"
 #include "DocumentView.h"
 #include "Editor.h"
 #include "GitChecks.h"
@@ -333,11 +334,14 @@ MC_GUI_SUITE(sessions) {
     });
     MCGuiStep("the session keeps both pages, the files between them, and the one on show", [] {
         const TabSessions::Session s = SavedFor(Pages());
-        GCHECK(s.tabs.size() == 2 && s.pages.size() == 2);
-        if (s.pages.size() != 2) return;
+        GCHECK(s.tabs.size() == 2 && s.pages.size() == 3);
+        if (s.pages.size() != 3) return;
         GCHECK_EQ_STR(s.pages[0].kind + " at " + std::to_string(s.pages[0].at), "commit at 1");
         GCHECK_EQ_STR(s.pages[0].title, Git::shortHash(FirstCommit()) + " first");
         GCHECK_EQ_STR(s.pages[1].kind + " at " + std::to_string(s.pages[1].at), "review at 3");
+        GCHECK_EQ_STR(s.pages[2].kind + " at " + std::to_string(s.pages[2].at), "compare at 4");
+        GCHECK_EQ_STR(s.pages[2].left.rev + "|" + s.pages[2].right.rev + "|" + s.pages[2].left.label,
+                      "HEAD||HEAD: a.txt");
         GCHECK_EQ_STR(std::to_string(s.activePage), "1");
         // A second record of the same commit and of the review, as a
         // crashed save or an older copy may leave.
@@ -450,18 +454,44 @@ MC_GUI_SUITE(_pages_first) {
     MCGuiWait("all four, the review on show", 15, [] {
         return Row() == "a.txt " + Git::shortHash(FirstCommit()) + " first b.txt >Uncommitted Changes";
     });
+    MCGuiStep("and a comparison of a.txt at HEAD with the disk, not on show", [] {
+        CompareSpec spec;   // as `mutible diff --keep` makes it
+        spec.title = "a.txt (HEAD vs disk)";
+        spec.leftLabel = "HEAD: a.txt";
+        spec.rightLabel = "a.txt (working copy)";
+        spec.leftText = "a\n";
+        spec.rightText = "a\nchanged\n";
+        spec.path = Pages() + "/a.txt";
+        spec.left = {Pages() + "/a.txt", "HEAD", ""};
+        spec.right = {Pages() + "/a.txt", "", ""};
+        spec.quiet = true;
+        ed()->showComparison(spec);
+    });
+    MCGuiWait("five tabs, the review still on show", 15, [] {
+        return Row() == "a.txt " + Git::shortHash(FirstCommit()) +
+                            " first b.txt >Uncommitted Changes a.txt (HEAD vs disk)";
+    });
     MCGuiStep("Ctrl+Shift+W", [] { MCGuiKey("ctrl+shift+w"); });
     MCGuiWait("the window closes", 10, [] { return MCGuiAppWindows().empty(); });
 }
 
 // ------------------------------------ the pages' second app: pages back
 MC_GUI_SUITE(_pages_again) {
-    MCGuiWait("the window has the four tabs back", 15, [] { return ed() && ed()->tabCount() == 4; });
+    MCGuiWait("the window has the five tabs back", 15, [] { return ed() && ed()->tabCount() == 5; });
     MCGuiStep("in their order, the review on show, no page made twice", [] {
         MCGuiNote("row: %s", Row().c_str());
-        GCHECK_EQ_STR(Row(), "a.txt " + Git::shortHash(FirstCommit()) + " first b.txt >Uncommitted Changes");
+        GCHECK_EQ_STR(Row(), "a.txt " + Git::shortHash(FirstCommit()) +
+                                 " first b.txt >Uncommitted Changes a.txt (HEAD vs disk)");
         GCHECK(ed()->currentPage() && dynamic_cast<ChangeReviewPage*>(ed()->currentPage()));
         GCHECK(ed()->active() && ed()->active()->editorPage());
+    });
+    MCGuiStep("the comparison read HEAD's a.txt and the disk's again", [] {
+        Document* d = ed()->document(4);
+        const CompareData* c = d && d->compare() ? d->compare().get() : nullptr;
+        GCHECK(c != nullptr);
+        if (!c) return;
+        GCHECK_EQ_STR(c->spec.leftText + "|" + c->spec.rightText, "a\n|a\nchanged\n");
+        GCHECK_EQ_STR(c->spec.leftLabel + "|" + c->spec.rightLabel, "HEAD: a.txt|a.txt (working copy)");
     });
     MCGuiWait("the review read git", 15, [] {
         auto* p = dynamic_cast<ChangeReviewPage*>(ed()->currentPage());

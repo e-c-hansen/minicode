@@ -205,6 +205,7 @@ bool exists(const std::string& path) {
 }
 
 std::shared_ptr<Run> gRun;
+Document* gRemade = nullptr;   // a comparison made again from its recipe
 std::shared_ptr<Raw> gRaw;
 Json gJson;
 int gListener = -1;
@@ -339,6 +340,15 @@ MC_GUI_SUITE(control) {
             GCHECK_EQ_STR(d->compare()->spec.title, "d1.txt \xE2\x86\x94 d2.txt");
             GCHECK(d->compare()->changedRows == 2);   // one changed, one added
             GCHECK(d->compare()->hunks.size() == 2);
+            // Both sides are read from disk again with the tab, kept apart from the
+            // agents' preview, which is not brought back.
+            const CompareSpec& sp = d->compare()->spec;
+            GCHECK_EQ_STR(sp.left.path, F("d1.txt"));
+            GCHECK_EQ_STR(sp.right.path, F("d2.txt"));
+            GCHECK(sp.left.rev.empty() && sp.right.rev.empty());
+            GCHECK(sp.preview);
+            TabSessions::PageTab page;
+            GCHECK(!Editor::comparisonPage(d, &page));
         }
     });
     MCGuiStep("mutible diff of a committed file against HEAD, with the keyboard in the tree", [] {
@@ -359,6 +369,35 @@ MC_GUI_SUITE(control) {
         const CompareData* d = ed()->active() ? ed()->active()->compare().get() : nullptr;
         GCHECK(d && d->spec.leftText == "alpha\nbeta\n" && d->spec.rightText == "alpha\nBETA\n");
         GCHECK(d && d->changedRows == 1);
+    });
+    MCGuiStep("it carries a recipe: HEAD's and the disk's, as the preview tab keeps none", [] {
+        const CompareData* d = ed()->active() ? ed()->active()->compare().get() : nullptr;
+        if (!GCHECK(d != nullptr)) return;
+        GCHECK_EQ_STR(d->spec.left.path, F("repo") + "/f.txt");
+        GCHECK_EQ_STR(d->spec.right.path, F("repo") + "/f.txt");
+        GCHECK_EQ_STR(d->spec.left.rev, "HEAD");
+        GCHECK_EQ_STR(d->spec.right.rev, "");
+        TabSessions::PageTab page;
+        GCHECK(!Editor::comparisonPage(ed()->active(), &page));   // the agents' preview tab
+        gRun = runClient({"diff", F("repo") + "/f.txt", "--keep"});
+    });
+    MCGuiWait("the client returns", 30, [] { return gRun->done; });
+    MCGuiStep("with --keep the tab has a recipe that makes it again", [] {
+        GCHECK(gRun->exitCode == 0);
+        TabSessions::PageTab page;
+        GCHECK(Editor::comparisonPage(ed()->active(), &page));
+        GCHECK_EQ_STR(page.left.rev, "HEAD");
+        GCHECK_EQ_STR(page.left.label, "HEAD: control/repo/f.txt");
+        gRemade = nullptr;
+        ed()->remakeComparison(page, 0, false, [](Document* d) { gRemade = d; });
+    });
+    MCGuiWait("made again", 20, [] { return gRemade != nullptr; });
+    MCGuiStep("with HEAD's text and the disk's", [] {
+        const CompareData* d = gRemade->compare().get();
+        GCHECK(d && d->spec.leftText == "alpha\nbeta\n" && d->spec.rightText == "alpha\nBETA\n");
+        GCHECK(ed()->document(0) == gRemade);
+        ed()->closeTab(gRemade);
+        ed()->closeTab(ed()->active());   // the --keep tab
     });
     MCGuiStep("--base names another commit; a bad one, a missing file and a folder are errors", [] {
         gRun = runClient({"diff", F("repo") + "/f.txt", "--base", "nosuchrev"});

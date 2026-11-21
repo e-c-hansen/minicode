@@ -1624,6 +1624,24 @@ void ChangeReviewPage::sideBySide(size_t fi) {
         c.rightText = utf8(f.newText);
     }
     c.fileName = f.path;
+    // How it is made again with its tab (a conflict's sides and a worktree's
+    // are not): the index, HEAD, the commit and its parent, or the file on
+    // disk, as the page read them.
+    if (!data_->read.top.empty() && !sides && !(f.section == Section::Plain && isWorktree())) {
+        c.left.path = data_->read.top + "/" + oldPath;
+        c.right.path = data_->read.top + "/" + f.path;
+        if (f.section == Section::Plain) {
+            const Git::CommitDetail& cd = data_->commit;
+            c.left.rev = cd.parents.empty() ? cd.hash + "^" : cd.parents[0];
+            c.right.rev = cd.hash;
+        } else if (staged) {
+            c.left.rev = "HEAD";
+            c.right.rev = ":";
+        } else {
+            c.left.rev = ":";
+            c.right.rev = "";
+        }
+    }
     // (Neither side of a conflict's comparison is the file on disk.)
     if ((f.section == Section::Changes && !sides) || (f.section == Section::Plain && f.newExists))
         c.path = data_->read.top + "/" + f.path;

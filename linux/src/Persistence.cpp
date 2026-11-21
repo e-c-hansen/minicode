@@ -203,10 +203,11 @@ TabSessions::Session Persistence::session() {
         for (Document* d : editor_->documents())
             if (isFile(d) && (!shown || d->lastUsed() > shown->lastUsed())) shown = d;
     for (Document* d : editor_->documents()) {
-        // The review and a commit's page come back made again, at their
-        // place among the tabs (the Mac's pageTabOf:into:).
+        // The review, a commit's page and a comparison with a recipe come
+        // back made again, at their place among the tabs (the Mac's
+        // pageTabOf:into:).
         TabSessions::PageTab page;
-        if (host_.pageRecord && host_.pageRecord(d, &page)) {
+        if (Editor::comparisonPage(d, &page) || (host_.pageRecord && host_.pageRecord(d, &page))) {
             page.at = (int)(s.tabs.size() + s.pages.size());
             if (d == editor_->active()) s.activePage = (int)s.pages.size();
             s.pages.push_back(page);
@@ -373,14 +374,21 @@ void Persistence::restoreSession(const TabSessions::Session* own) {
     // The other backups of files back now: copies beside them, after the
     // session's tabs.
     const std::string copiesNote = restoreConflicts(conflicts);
-    // The review and the commit pages, made again where they were among
-    // the tabs; the one that was on show is shown instead of a file.
+    // The review, the commit pages and the comparisons, made again where
+    // they were among the tabs; the one that was on show is shown instead
+    // of a file. A comparison's two sides are read on a thread, and its tab
+    // comes in at its place once they are (on show then, if it was).
     Document* pageShown = nullptr;
-    if (host_.restorePage)
-        for (size_t i = 0; i < saved.pages.size(); i++) {
-            Document* p = host_.restorePage(saved.pages[i], std::max(0, saved.pages[i].at));
-            if (p && (int)i == saved.activePage) pageShown = p;
+    for (size_t i = 0; i < saved.pages.size(); i++) {
+        const TabSessions::PageTab& page = saved.pages[i];
+        const int at = std::max(0, page.at);
+        if (page.kind == "compare") {
+            editor_->remakeComparison(page, at, (int)i == saved.activePage);
+            continue;
         }
+        Document* p = host_.restorePage ? host_.restorePage(page, at) : nullptr;
+        if (p && (int)i == saved.activePage) pageShown = p;
+    }
     if (groups.split) editor_->restoreGroups(groups);
     else if (pageShown) editor_->activate(pageShown);
     else if (shown) editor_->activate(shown);

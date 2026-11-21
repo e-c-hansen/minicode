@@ -1031,6 +1031,8 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
                     spec.leftLabel = shortA;
                     spec.rightLabel = shortB;
                     spec.path = other;
+                    spec.left = {path, "", ""};   // both read from disk again with the tab
+                    spec.right = {other, "", ""};
                     spec.title = leaf(path) + " \xE2\x86\x94 " + leaf(other);
                 }
             } else {
@@ -1044,6 +1046,8 @@ void registerControlCommands(Dispatcher& d, ControlHost host) {
                     spec.leftLabel = missing ? ref + ": (not in " + ref + ")" : ref + ": " + shortA;
                     spec.rightLabel = shortA + " (working copy)";
                     spec.path = path;
+                    spec.left = {path, ref, ""};   // the repository's at the revision and the disk's, again with the tab
+                    spec.right = {path, "", ""};
                     spec.title = leaf(path) + " (" + ref + " \xE2\x86\x94 working copy)";
                 }
             }

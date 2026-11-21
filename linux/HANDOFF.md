@@ -8720,3 +8720,46 @@ on GTK: docs/notes/session-host.md, "GTK's tabs save through the host
   with both pages written twice in the record the next launch has the four
   tabs in the same order, the review on show and read, and the commit's
   page read when shown.
+
+### 135. Comparisons come back with the session, made again from their recipe (the Mac's MCComparison leftPath/leftRev/rightPath/rightRev; November 2026)
+
+A comparison is kept in the session as `TabSessions::PageTab` kind
+"compare" (docs/notes/sessions.md, "Tabs that show no file come back made
+again"), beside item 134's review and commit pages.
+`Persistence::session()` asks `Editor::comparisonPage` about each tab
+before the host's `pageRecord`; `restoreSession` hands a "compare" page to
+`Editor::remakeComparison(page, at, shown)`, whose tab comes in at `at`
+once a thread has read the two sides (on show then when it was the page on
+show; the file shown last is shown meanwhile).
+
+- **The recipe.** `CompareSpec::left` and `right`, each a
+  `TabSessions::ComparedSide {path, rev, label}`: rev "" the file on disk,
+  ":" the index, else a revision. An empty path is no recipe. Set where the
+  Mac sets it: the review page's `sideBySide` (index against disk for an
+  unstaged file, HEAD against the index for a staged one, a commit's parent
+  against the commit, "<hash>^" for a root commit) and `mutible diff` (a
+  revision against the disk, a file against a file). Left out as on the
+  Mac: a worktree's page, a conflict's two sides, IdeLinkServer's and
+  AgentWorktrees' comparisons.
+- **Reading it.** `Editor::comparisonPage(const Document*, PageTab*)` (static)
+  gives the "compare" record (title, the file name the colors go by, both
+  sides with their labels; `at` is for the caller), or false for a tab with
+  no recipe, a proposed change (`decisionPrompt`, a decision), the agents'
+  preview tab (`mutible diff` without `--keep`), or a revision
+  `TabSessions::isComparedRev` refuses.
+- **Making it again.** `Editor::remakeComparison(page, at, show, done)`:
+  the two sides are read on the worker thread (`sideText` in Tabs.cpp: the
+  repository's `<rev>:<rel>` from the file's realpath's top level, or the
+  file; a side it lacks, not text, or over 16 MB reads empty), lined up
+  there as `showComparison` does, and the tab is inserted at `at` (clamped),
+  put on show only when `show`. `showComparison` and it share
+  `openComparison`; the window gone meanwhile drops the tab, as before. A
+  tab made again has `spec.path` set to the right side's path when that
+  side is the disk.
+- **Checks.** `git_review`: Side by Side on a staged file, an unstaged file,
+  a commit's file and the root commit's carries the recipe, and
+  `remakeComparison` from `comparisonPage` gives the same texts, labels,
+  title and row counts, not on show. `control`: `mutible diff` carries
+  HEAD and the disk (none for the preview tab, which `--keep` turns into
+  one that remakes) and the file against file. `idelink`: an agent's
+  decision comparison has no recipe.
