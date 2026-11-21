@@ -308,11 +308,13 @@ top of a turn, never inside a text system callback.
   edit followed by its DocSaved reaches the document as "unsaved" with
   nothing unconfirmed (the ack in, the DocSaved out), before the
   DocSaved's "saved": taken at the next turn, it would flash the dot.
-  `Document::hostDirty` drops an "unsaved" heard with no edit since the
-  window last told the host its saved text (`toldSavedAt_`, set by
-  `tellHostSaved`). GTK's own compare runs on every edit, so the host's
-  count matters only where the two disagree, and those tells are what
-  keep them agreeing.
+  The client fences it (#299: `Client::saved` and `savedAs` send a Ping
+  behind the DocSaved and hold the document's DocDirty until its Pong,
+  passing on only the latest), and `Document::hostDirty` judges a count
+  by that document's own unconfirmed messages (`Client::unconfirmed(doc)`),
+  never every tab's; GTK's own stopgap (`toldSavedAt_`) is gone. GTK's
+  own compare runs on every edit, so the host's count matters only where
+  the two disagree, and those tells are what keep them agreeing.
 - **The window's edited mark is every tab's** (`documentEdited` is
   `hasUnsavedChanges`): a check that one tab became clean reads that
   tab's `dirty` and its strip item's dot, never the window's mark, which
