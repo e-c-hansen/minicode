@@ -50,6 +50,14 @@ found through that list.
   and `ssh://` addresses (mode "ssh", stage 8: each opens a window on that
   machine's `mutible host --stdio` through `openRemoteAddress:`;
   docs/notes/session-host.md, "The Mac over SSH"); `-n` runs the binary detached;
+  an `ssh://` address goes as a local path does (2026-11-21): a file
+  that an open remote window's folder on the same machine and account
+  holds (`Shared::sshMachineKey`) opens in the innermost such window,
+  through its host, a missing one in an existing folder as a new untitled
+  tab, and a window's own folder brings it to front; "holds" is the
+  window's host's answer (FsRead "locate": the remote's `~` and real
+  places, never the Mac's disk or the address's spelling); else a new
+  window on the address's folder (a file's own folder), as before;
   "running" is `ps -axo comm=` ending in `/Mutible` (pgrep found nothing from
   Claude Code's shell); `MUTIBLE_LAUNCHER_DRYRUN=1` prints the command.
 - **Never `lsregister` or `open` a build in the repo or a worktree**: Finder

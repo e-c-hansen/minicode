@@ -477,11 +477,36 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
 // `mutible ssh://[user@]host[:port]/path` (stage 8, docs/notes/session-host.md,
 // "The Mac over SSH"): a window whose files, terminals and saving are the
 // other machine's, through `mutible host --stdio` there over the user's own
-// ssh. The window already on that host and folder when there is one. The
-// address naming a file shows it. When ssh or the host there cannot be
-// had, an alert says why (run `ssh host` once in a terminal, mutible not
+// ssh. As a local path goes (application:openURLs:): a file that an open
+// window's folder on the same machine and account holds opens in that
+// window (the innermost), through its host, and an address of a window's
+// own folder brings that window to front; the open windows' hosts say
+// where the address is, by the remote's own ~ and real places. Else a new
+// window on the address's folder (a file's folder for a file), or the
+// window already on that link. When ssh or the host there cannot be had,
+// an alert says why (run `ssh host` once in a terminal, mutible not
 // installed there, ...) and nothing opens.
 - (EditorController *)openRemoteAddress:(NSString *)address {
+    EditorController *held = nil;
+    NSString *heldPath = nil;
+    BOOL heldNew = NO;
+    for (EditorController *x in self.controllers) {
+        if (!x.sessionIsRemote || x.sessionHostLost) continue;
+        BOOL isRoot = NO, isDir = NO, isNew = NO;
+        NSString *p = [x remotePathOfAddress:address isRoot:&isRoot isDir:&isDir isNew:&isNew];
+        // A folder below a window's opens a window of its own, as a local
+        // folder does.
+        if (!p || (isDir && !isRoot)) continue;
+        if (held && held.rootPath.length >= x.rootPath.length) continue;   // the innermost folder
+        held = x;
+        heldPath = isDir ? nil : p;
+        heldNew = isNew;
+    }
+    if (held) {
+        [held.window makeKeyAndOrderFront:nil];
+        if (heldPath && [held showRemoteFile:heldPath isNew:heldNew]) [held focusActiveDocument];
+        return held;
+    }
     std::string why;
     std::shared_ptr<MCSession::Link> link = MCSession::forRemote(address.UTF8String ?: "", &why);
     if (!link) {

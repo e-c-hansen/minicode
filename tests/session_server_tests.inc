@@ -728,6 +728,62 @@ static void testSessionServer() {
         CHECK(!Shared::stdioTarget("", &t, &why));
     }
 
+    GROUP("hostserver:locate");
+    {
+        // FsRead "locate" (stage 8: a Mac's window over SSH asks its host
+        // whether an ssh:// address is in its folder before opening another
+        // window): the address's path resolved as --stdio resolves it, by
+        // this machine's ~ and real places, and only inside-or-not told.
+        namespace fs = std::filesystem;
+        const std::string home = Shared::resolveFolder(scratchFolder());
+        const std::string proj = home + "/proj";
+        fs::create_directories(proj + "/src");
+        fs::create_directories(home + "/elsewhere");
+        {
+            std::ofstream f(proj + "/src/a.txt");
+            f << "a\n";
+        }
+        {
+            std::ofstream f(home + "/elsewhere/out.txt");
+            f << "out\n";
+        }
+        fs::create_directory_symlink(proj, home + "/alias");
+        fs::create_symlink(home + "/elsewhere/out.txt", proj + "/src/leak.txt");
+        auto at = [&](const std::string& asked) { return Shared::locateInFolder(proj, asked, home); };
+        Json j = at("~/proj/src/a.txt");
+        CHECK(j["op"].asString() == "locate" && j["path"].asString() == "~/proj/src/a.txt");
+        CHECK(j["inside"].asBool() && j["rel"].asString() == "src/a.txt" && !j["dir"].asBool() &&
+              !j["new"].asBool());
+        // The same file by its absolute path, through a link, and with ".."
+        CHECK(at(proj + "/src/a.txt")["rel"].asString() == "src/a.txt");
+        CHECK(at("~/alias/src/a.txt")["rel"].asString() == "src/a.txt");
+        CHECK(at("~/elsewhere/../proj/src/a.txt")["rel"].asString() == "src/a.txt");
+        // The folder itself, by ~ and through the link; a folder below it.
+        j = at("~/proj");
+        CHECK(j["inside"].asBool() && j["rel"].asString().empty() && j["dir"].asBool());
+        CHECK(at(home + "/alias/")["inside"].asBool() && at(home + "/alias/")["rel"].asString().empty());
+        j = at("~/proj/src");
+        CHECK(j["inside"].asBool() && j["rel"].asString() == "src" && j["dir"].asBool());
+        // A file not there yet in a folder that is: inside, and new.
+        j = at("~/proj/src/fresh.txt");
+        CHECK(j["inside"].asBool() && j["rel"].asString() == "src/fresh.txt" && j["new"].asBool());
+        // Outside: another folder, the folder's parent, a missing folder, a
+        // link out of the folder, the root, nothing.
+        for (const std::string& out : {std::string("~/elsewhere/out.txt"), std::string("~"), std::string("~/elsewhere"),
+                                       std::string("~/proj/missing/x.txt"), std::string("~/proj/src/leak.txt"),
+                                       std::string("/"), std::string(""), std::string("~/proj/src/a.txt/x")}) {
+            j = at(out);
+            CHECK(!j["inside"].asBool() && j["rel"].isNull());
+            if (j["inside"].asBool()) std::printf("  inside: %s\n", out.c_str());
+        }
+        // Through readWorkspace, as the host answers FsRead (its own HOME).
+        Json ask = Json::object();
+        ask.set("op", Json("locate"));
+        ask.set("path", Json(proj + "/src/a.txt"));
+        j = Shared::readWorkspace(proj, ask);
+        CHECK(j["error"].isNull() && j["inside"].asBool() && j["rel"].asString() == "src/a.txt");
+    }
+
     GROUP("hostserver:spawn");
     {
         // A command's pipes as a link (HostLink::spawn, what carries a host

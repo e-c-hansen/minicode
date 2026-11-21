@@ -3534,7 +3534,9 @@ through its host, so this is mostly a transport.
   name holds, a bad port or a line break in the path is refused. The
   launcher sends `ssh://` arguments as a request file of mode "ssh" (as
   "web"); `application:openURLs:` takes those and ssh:// URLs and calls
-  `openRemoteAddress:` (main.mm).
+  `openRemoteAddress:` (main.mm), which first asks the open windows'
+  hosts whether one holds the address ("Addresses an open window holds",
+  below).
 - **The Mac's link** (`MCSession::forRemote`, Link::Kind::Remote): one per
   machine and path as addressed, its client attached through the same
   `attachClient` as a folder's socket link, waiting at most 30 s for the
@@ -3654,7 +3656,8 @@ at the Mac's disk at that path.
   path and for what it refuses), its Welcome `{"file", "new": true}`
   (`Link::askedFileNew`). The window marks the path new
   (`showRemoteFile:isNew:`, from `openRemoteAddress:`, so a window already
-  open on the folder learns it too; a fresh window from
+  open on the folder learns it too, as does one whose host located the
+  address in its folder, "new" in its answer; a fresh window from
   `startRemoteWorkspace`), and `loadActiveTab` opens a new path whose read
   fails as an empty tab, `untitled` (unsaved, not "(deleted)", no
   auto-save), clean until typed in; Cmd+S goes through
@@ -3694,14 +3697,67 @@ at the Mac's disk at that path.
   host's files without the ignored log and opening src/util.c; Find in
   Folder's "2 matches in 2 files" (the log left out) from the host, a
   row opening src/main.c, Replace All refused with its sentence and the
-  file untouched; `ssh://standin/<folder>/src/fresh.txt` opening a window
-  on src (an address's file serves its own folder, so this is a second
-  window) with an empty untitled tab, typed into and made by Cmd+S, then
-  closed with its host, and notes.txt put back on show in the first; and,
+  file untouched; `ssh://standin/<folder>/src/fresh.txt` with an empty
+  untitled tab, typed into and made by Cmd+S (since the next section, a
+  tab of the open window; at first a window of its own on src); and,
   after Reconnect, a file made on disk coming into the tree from the new
   host. Not run here (the builder had no screen to use): CI runs it. The
   look of the dimmed rows and the search's progress line need the owner's
   eyes, as does a real ssh to the ThinkPad.
+
+#### Addresses an open window holds (2026-11-21, third slice)
+
+Before this, `mutible ssh://host/proj/src/a.txt` opened a second window
+serving src (the file's folder: the address starts a host of its own)
+even with a window on `ssh://host/proj` open. Now an ssh:// address goes
+as a local path does (docs/notes/opening.md): a file that an open
+window's folder holds opens in that window, and the address of a window's
+own folder brings it to front.
+
+- **Who decides** (`openRemoteAddress:`, main.mm): before `forRemote`,
+  each open remote window not disconnected is asked
+  (`remotePathOfAddress:isRoot:isDir:isNew:`, EditorController+Remote.mm):
+  the address's machine and account must be the window's link's
+  (`Shared::sshMachineKey`, as `forRemote`'s registry compares them: user,
+  host and port as written, so `pi` and `eric@pi` are two), and then the
+  window's host says where the path is (`Link::locate`, FsRead "locate",
+  5 s at most on the main thread). A file inside goes to the window with
+  the innermost folder (its rootPath longest), through
+  `showRemoteFile:isNew:`, so it is read through that window's host and a
+  missing file in an existing folder opens as #322's new untitled tab; the
+  folder itself brings its window to front. A folder below a window's
+  folder opens a window of its own, as a local folder does. Anything else
+  (no window holds it, another machine, a host that did not answer or is
+  too old for the read) falls to `forRemote` as before: a new window on the
+  address's folder, or the window on that very link.
+- **The remote's paths, never the Mac's** (`Shared::locateInFolder`,
+  SessionFiles.h): the host resolves the asked path as `mutible host
+  --stdio` would (`~` as its own HOME, else the password database's;
+  "." and ".." by name, as the CLI's `absolutePath`; then the folder's
+  real place, symlinks followed, and a file's name kept, as
+  `stdioTarget`), and compares real places with its folder's. It answers
+  only `inside` and, when inside, `rel` from the folder, `dir` and `new`:
+  nothing of a path outside, so the read stays confined like every other.
+  A file there that is a link out of the folder is not inside (the tree
+  never opens one), and keeps a window of its own. The Mac spells the
+  path under the link's folder (the Welcome's, resolved), as the window's
+  rows and tabs are spelled, so a link to the folder or a `..` in the
+  address lands on the tab already open.
+- **Checks.** `make test`: `hostserver:locate` (a file by `~`, by its
+  absolute path, through a link to the folder and with `..`; the folder by
+  `~` and through the link with a trailing slash; a folder below; a new
+  file; outside: another folder, the home itself, a missing folder, a link
+  out of the folder, `/`, an empty path, a file as a folder; and through
+  `readWorkspace` with the host's own HOME). `make guitest
+  SUITES=remote_ssh`: src/util.c's address opening in the open window
+  (its tab closed first) with no new window and no ssh run (the
+  stand-in's pid unchanged), main.c's through a link to the folder and by
+  `..` landing on the tab spelled under the folder, the folder's address
+  and the link's with a trailing slash bringing the window to front, the
+  new file's tab in the open window made by Cmd+S through its host, and
+  `ssh://other/...` (another machine; the stand-in serves the same disk)
+  and a file in a scratch folder outside each opening a window of their
+  own, closed with their hosts. Not run here: CI runs it.
 
 #### Traps
 
@@ -3728,12 +3784,19 @@ at the Mac's disk at that path.
   is dropped, as any peer's is), so a hand test must send real kinds
   (`session.hello`, not `Hello`).
 - **An address naming a file serves that file's folder.** `ssh://host/proj/
-  src/x.c` is a host of proj/src, a key of its own, so it opens a second
-  window beside one on proj (#322's first CI run expected the tab in the
-  proj window, left the src window open, and every later suite drove that
-  window as the newest: dozens of failures in replace_in_folder,
-  semantic_tokens, snippets, ...). A suite that opens a window closes it,
+  src/x.c`, when no open window holds it, is a host of proj/src, a key of
+  its own, so it opens a window on src (#322's first CI run expected the
+  tab in the proj window, left the src window open, and every later suite
+  drove that window as the newest: dozens of failures in
+  replace_in_folder, semantic_tokens, snippets, ...; since the third slice
+  the proj window takes it, but another machine's address or a file
+  outside still opens a window). A suite that opens a window closes it,
   and steps that type into a tab put that tab on show first.
+- **Compare remote paths on the remote.** The open window's folder is the
+  host's real path, and an address may say `~`, go through a link or hold
+  `..`; neither the Mac's disk (the stand-in's folder happens to be on it,
+  so a local realpath would pass the GUI check and fail on a real remote)
+  nor the address's spelling decides, only the host's "locate".
 - **A listener inside the link's dispatch may be inside a read's wait.**
   `Client::read` (the tree's listing) processes every message that comes
   meanwhile, FsChanged's included, so the disk listener only queues the

@@ -49,8 +49,11 @@
 // window, json: {"op", ...}} asks the host to read in the session's folder,
 // and FsData {req, json, bytes} answers; "list" lists one folder for a
 // tree, "read" gives a piece of a file's bytes (in `bytes`, base64 on the
-// wire) for a viewer. A new read is a new "op", not a new message. A host
-// whose Welcome has flag 8 takes the heavier reads on workers of its own
+// wire) for a viewer, "locate" says whether a path as an ssh:// address
+// names it is in the folder (stage 8: a Mac window over SSH asks before
+// opening another; a host without it answers its error). A new read is a
+// new "op", not a new message. A host whose Welcome has flag 8 takes the
+// heavier reads on workers of its own
 // (SessionSearch.h): "files" (Quick Open's list), "search" (Find in Folder,
 // answered by several FsData for one req, the last with "done") and
 // "cancel" (no answer of its own).

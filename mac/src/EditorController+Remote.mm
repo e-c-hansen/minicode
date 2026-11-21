@@ -119,6 +119,25 @@ static char kRemoteWorkspaceKey;
     return [self showFile:path];
 }
 
+// Asked by openRemoteAddress: before it opens another window, as a local
+// file goes to the window whose folder holds it. Same machine and account
+// as the link compares them (sshMachineKey), then the host's own answer.
+- (NSString *)remotePathOfAddress:(NSString *)address isRoot:(BOOL *)isRoot isDir:(BOOL *)isDir isNew:(BOOL *)isNew {
+    *isRoot = *isDir = *isNew = NO;
+    MCSessionLinkRef *ref = [self sessionRemoteLink];
+    if (!ref.link || ref.link->lost() || _closing) return nil;
+    Shared::SshTarget t;
+    std::string error;
+    if (!Shared::parseSshUrl(address.UTF8String ?: "", &t, &error)) return nil;
+    if (Shared::sshMachineKey(t) != ref.link->machine()) return nil;
+    MCSession::Link::Located where;
+    if (!ref.link->locate(t.path, &where) || !where.inside) return nil;
+    *isRoot = where.path == ref.link->folder();
+    *isDir = where.dir;
+    *isNew = where.isNew;
+    return @(where.path.c_str());
+}
+
 // New File in the tree over SSH: a kept tab on the file, empty and
 // untitled at its path, which its first save (Cmd+S) makes on the host.
 // A name the folder has already is refused, as on this Mac.
