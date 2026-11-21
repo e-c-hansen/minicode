@@ -342,6 +342,8 @@ private:
     GtkTreeListRow* keepRow_ = nullptr;    // a reference
     double      keepY_ = 0;
     gint64      keepUntil_ = 0;
+    gint64      keepLimit_ = 0;
+    int         keepFrames_ = 0;
     gulong      layoutId_ = 0;             // on frameClock_
 
     // Drag and drop (see "drag and drop" in FileTree.cpp).
