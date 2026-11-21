@@ -11,11 +11,11 @@ namespace Model {
 namespace {
 bool isHigh(char16_t c) { return c >= 0xD800 && c <= 0xDBFF; }
 bool isLow(char16_t c) { return c >= 0xDC00 && c <= 0xDFFF; }
-}  // namespace
 
-std::u16string utf16FromUtf8(const std::string& s) {
-    std::u16string out;
-    out.reserve(s.size());
+// UTF-8 to UTF-16, each unit given to put(char16_t) in order: the one
+// decoder of utf16FromUtf8 and Text::fromUtf8.
+template <class Put>
+void decodeUtf8(const std::string& s, Put put) {
     size_t i = 0;
     while (i < s.size()) {
         unsigned char c = (unsigned char)s[i];
@@ -25,24 +25,31 @@ std::u16string utf16FromUtf8(const std::string& s) {
         else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; n = 2; }
         else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; n = 3; }
         else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; n = 4; }
-        else { out += (char16_t)0xFFFD; i++; continue; }
-        if (i + n > s.size()) { out += (char16_t)0xFFFD; break; }
+        else { put((char16_t)0xFFFD); i++; continue; }
+        if (i + n > s.size()) { put((char16_t)0xFFFD); break; }
         bool bad = false;
         for (size_t k = 1; k < n; k++) {
             unsigned char cc = (unsigned char)s[i + k];
             if ((cc & 0xC0) != 0x80) { bad = true; break; }
             cp = (cp << 6) | (cc & 0x3F);
         }
-        if (bad) { out += (char16_t)0xFFFD; i++; continue; }
+        if (bad) { put((char16_t)0xFFFD); i++; continue; }
         i += n;
         if (cp >= 0x10000) {
             cp -= 0x10000;
-            out += (char16_t)(0xD800 + (cp >> 10));
-            out += (char16_t)(0xDC00 + (cp & 0x3FF));
+            put((char16_t)(0xD800 + (cp >> 10)));
+            put((char16_t)(0xDC00 + (cp & 0x3FF)));
         } else {
-            out += (char16_t)cp;
+            put((char16_t)cp);
         }
     }
+}
+}  // namespace
+
+std::u16string utf16FromUtf8(const std::string& s) {
+    std::u16string out;
+    out.reserve(s.size());
+    decodeUtf8(s, [&out](char16_t u) { out += u; });
     return out;
 }
 
@@ -95,15 +102,44 @@ size_t countCodePoints(const std::u16string& s) {
 }
 
 // ------------------------------------------------------------------- Text
+namespace {
+std::shared_ptr<const std::u16string> shared(std::u16string s) {
+    return std::make_shared<const std::u16string>(std::move(s));
+}
+}  // namespace
+
 Text::Text(const std::u16string& text) : size_(text.size()) {
     chunks_.reserve(text.size() / kChunk + 1);
     for (size_t at = 0; at < text.size(); at += kChunk) {
         Chunk c;
-        c.text = text.substr(at, kChunk);
+        c.text = shared(text.substr(at, kChunk));
         chunks_.push_back(std::move(c));
     }
     for (size_t k = 0; k < chunks_.size(); k++) rescan(k);
     rebuild();
+}
+
+Text Text::fromUtf8(const std::string& utf8) {
+    Text t;
+    t.chunks_.reserve(utf8.size() / kChunk + 1);
+    std::u16string piece;
+    piece.reserve(kChunk);
+    auto flush = [&t, &piece]() {
+        Chunk c;
+        t.size_ += piece.size();
+        c.text = shared(std::move(piece));
+        t.chunks_.push_back(std::move(c));
+        piece = std::u16string();
+        piece.reserve(kChunk);
+    };
+    decodeUtf8(utf8, [&](char16_t u) {
+        piece += u;
+        if (piece.size() == kChunk) flush();
+    });
+    if (!piece.empty()) flush();
+    for (size_t k = 0; k < t.chunks_.size(); k++) t.rescan(k);
+    t.rebuild();
+    return t;
 }
 
 void Text::add(std::vector<size_t>& tree, size_t k, long delta) {
@@ -140,7 +176,7 @@ void Text::rebuild() {
     startCount_ = 0;
     pointCount_ = 0;
     for (size_t k = 0; k < n; k++) {
-        units_[k + 1] += chunks_[k].text.size();
+        units_[k + 1] += chunks_[k].text->size();
         startsIn_[k + 1] += chunks_[k].starts.size();
         pointsIn_[k + 1] += chunks_[k].points;
         startCount_ += chunks_[k].starts.size();
@@ -155,7 +191,7 @@ void Text::rebuild() {
 }
 
 char16_t Text::unitBefore(size_t k) const {
-    return k > 0 && k - 1 < chunks_.size() ? chunks_[k - 1].text.back() : 0;
+    return k > 0 && k - 1 < chunks_.size() ? chunks_[k - 1].text->back() : 0;
 }
 
 // A line starts after \n, and after a \r not followed by \n (the unit after
@@ -165,8 +201,8 @@ char16_t Text::unitBefore(size_t k) const {
 void Text::rescan(size_t k) {
     Chunk& c = chunks_[k];
     c.starts.clear();
-    const size_t n = c.text.size();
-    const char16_t* t = c.text.data();
+    const size_t n = c.text->size();
+    const char16_t* t = c.text->data();
     char16_t prev = unitBefore(k);
     size_t points = 0;
     for (size_t i = 0; i < n; i++) {
@@ -174,7 +210,7 @@ void Text::rescan(size_t k) {
             c.starts.push_back((uint32_t)(i + 1));
         } else if (t[i] == u'\r') {
             const bool nextIsNewline = i + 1 < n ? t[i + 1] == u'\n'
-                                       : k + 1 < chunks_.size() && chunks_[k + 1].text[0] == u'\n';
+                                       : k + 1 < chunks_.size() && (*chunks_[k + 1].text)[0] == u'\n';
             if (!nextIsNewline) c.starts.push_back((uint32_t)(i + 1));
         }
         if (!(isLow(t[i]) && isHigh(prev))) points++;
@@ -211,36 +247,36 @@ size_t Text::unitOf(size_t point) const {
     // at most `point`, and with its own more than that.
     const size_t k = find(pointsIn_, point);
     size_t rest = point - before(pointsIn_, k);
-    const Chunk& c = chunks_[k];
+    const std::u16string& c = *chunks_[k].text;
     const size_t chunkStart = before(units_, k);
     // No pair ends in this chunk: every unit is a code point.
-    if (c.points == c.text.size()) return chunkStart + rest;
+    if (chunks_[k].points == c.size()) return chunkStart + rest;
     char16_t prev = unitBefore(k);
-    for (size_t i = 0; i < c.text.size(); i++) {
-        const char16_t u = c.text[i];
+    for (size_t i = 0; i < c.size(); i++) {
+        const char16_t u = c[i];
         if (!(isLow(u) && isHigh(prev))) {
             if (rest == 0) return chunkStart + i;
             rest--;
         }
         prev = u;
     }
-    return chunkStart + c.text.size();
+    return chunkStart + c.size();
 }
 
 size_t Text::codePointOf(size_t unit) const {
     if (unit >= size_) return pointCount_;
     const size_t k = chunkAt(unit);
-    const Chunk& c = chunks_[k];
+    const std::u16string& c = *chunks_[k].text;
     const size_t at = unit - before(units_, k);
     size_t count = before(pointsIn_, k);
-    if (c.points == c.text.size()) return count + at;
+    if (chunks_[k].points == c.size()) return count + at;
     char16_t prev = unitBefore(k);
     for (size_t i = 0; i < at; i++) {
-        if (!(isLow(c.text[i]) && isHigh(prev))) count++;
-        prev = c.text[i];
+        if (!(isLow(c[i]) && isHigh(prev))) count++;
+        prev = c[i];
     }
     // The low half of a pair: the pair's own code point, counted already.
-    if (isLow(c.text[at]) && isHigh(prev)) count--;
+    if (isLow(c[at]) && isHigh(prev)) count--;
     return count;
 }
 
@@ -262,24 +298,25 @@ void Text::replaceUnits(size_t a, size_t b, const std::u16string& with) {
         return;
     }
     size_t ka = chunkAt(a), kb = chunkAt(b);
-    std::u16string merged = chunks_[ka].text.substr(0, a - before(units_, ka));
+    std::u16string merged = chunks_[ka].text->substr(0, a - before(units_, ka));
     merged += with;
-    merged.append(chunks_[kb].text, b - before(units_, kb), std::u16string::npos);
+    merged.append(*chunks_[kb].text, b - before(units_, kb), std::u16string::npos);
     // A small piece joins a neighbour, so chunks stay a quarter full at
     // least and their number follows the text's size.
     const size_t kMin = kChunk / 4, kMax = kChunk * 2;
     if (merged.size() < kMin && kb + 1 < chunks_.size()) {
-        merged += chunks_[++kb].text;
+        merged += *chunks_[++kb].text;
     } else if (merged.size() < kMin && ka > 0) {
-        merged.insert(0, chunks_[--ka].text);
+        merged.insert(0, *chunks_[--ka].text);
     }
     const size_t count = merged.empty()        ? 0
                          : merged.size() <= kMax ? 1
                                                  : (merged.size() + kChunk - 1) / kChunk;
     size_ = size_ - (b - a) + with.size();
+    // New strings, never the old ones changed: a Frozen may share those.
     auto piece = [&](size_t i, size_t& at) {
         const size_t len = (merged.size() - at) / (count - i);
-        std::u16string p = merged.substr(at, len);
+        std::shared_ptr<const std::u16string> p = shared(merged.substr(at, len));
         at += len;
         return p;
     };
@@ -291,9 +328,9 @@ void Text::replaceUnits(size_t a, size_t b, const std::u16string& with) {
         size_t at = 0;
         for (size_t i = 0; i < count; i++) {
             Chunk& c = chunks_[ka + i];
-            const long was = (long)c.text.size();
+            const long was = (long)c.text->size();
             c.text = piece(i, at);
-            add(units_, ka + i, (long)c.text.size() - was);
+            add(units_, ka + i, (long)c.text->size() - was);
         }
         for (size_t k = first; k <= ka + count && k < chunks_.size(); k++) {
             const long was = (long)chunks_[k].starts.size(), wasPoints = (long)chunks_[k].points;
@@ -353,7 +390,7 @@ bool Text::apply(const std::vector<EditSpans::Span>& spans, const std::vector<st
 
 char16_t Text::at(size_t i) const {
     const size_t k = chunkAt(i);
-    return chunks_[k].text[i - before(units_, k)];
+    return (*chunks_[k].text)[i - before(units_, k)];
 }
 
 std::u16string Text::slice(size_t start, size_t length) const {
@@ -364,7 +401,7 @@ std::u16string Text::slice(size_t start, size_t length) const {
     out.reserve(length);
     size_t k = chunkAt(start), off = start - before(units_, k);
     while (out.size() < length && k < chunks_.size()) {
-        const std::u16string& t = chunks_[k].text;
+        const std::u16string& t = *chunks_[k].text;
         const size_t n = std::min(t.size() - off, length - out.size());
         out.append(t, off, n);
         k++;
@@ -376,7 +413,7 @@ std::u16string Text::slice(size_t start, size_t length) const {
 std::u16string Text::str() const {
     std::u16string out;
     out.reserve(size_);
-    for (const Chunk& c : chunks_) out += c.text;
+    for (const Chunk& c : chunks_) out += *c.text;
     return out;
 }
 
@@ -389,25 +426,81 @@ bool Text::operator==(const std::u16string& s) const {
     if (s.size() != size_) return false;
     size_t at = 0;
     for (const Chunk& c : chunks_) {
-        if (s.compare(at, c.text.size(), c.text) != 0) return false;
-        at += c.text.size();
+        if (s.compare(at, c.text->size(), *c.text) != 0) return false;
+        at += c.text->size();
     }
     return true;
 }
 
-bool Text::operator==(const Text& o) const {
-    if (o.size_ != size_ || o.pointCount_ != pointCount_ || o.startCount_ != startCount_)
-        return false;
-    // Two walks over chunks that may be cut in different places.
+namespace {
+// Two texts of the same length as strings in order, cut in different
+// places (piece(i) the i-th string's shared pointer): equal unit for unit.
+// A string both hold at the same place is the same units, not compared.
+template <class A, class B>
+bool sameUnits(size_t na, A pieceA, size_t nb, B pieceB) {
     size_t i = 0, j = 0, oi = 0, oj = 0;
-    while (i < chunks_.size() && j < o.chunks_.size()) {
-        const std::u16string& a = chunks_[i].text;
-        const std::u16string& b = o.chunks_[j].text;
+    while (i < na && j < nb) {
+        const std::shared_ptr<const std::u16string>& pa = pieceA(i);
+        const std::shared_ptr<const std::u16string>& pb = pieceB(j);
+        if (oi == 0 && oj == 0 && pa == pb) {
+            i++, j++;
+            continue;
+        }
+        const std::u16string& a = *pa;
+        const std::u16string& b = *pb;
         const size_t n = std::min(a.size() - oi, b.size() - oj);
         if (a.compare(oi, n, b, oj, n) != 0) return false;
         oi += n, oj += n;
         if (oi == a.size()) i++, oi = 0;
         if (oj == b.size()) j++, oj = 0;
+    }
+    return true;
+}
+}  // namespace
+
+bool Text::operator==(const Text& o) const {
+    if (o.size_ != size_ || o.pointCount_ != pointCount_ || o.startCount_ != startCount_)
+        return false;
+    return sameUnits(
+        chunks_.size(), [this](size_t i) -> const auto& { return chunks_[i].text; },
+        o.chunks_.size(), [&o](size_t j) -> const auto& { return o.chunks_[j].text; });
+}
+
+bool Text::operator==(const Frozen& f) const {
+    if (f.size_ != size_) return false;
+    return sameUnits(
+        chunks_.size(), [this](size_t i) -> const auto& { return chunks_[i].text; },
+        f.pieces_.size(), [&f](size_t j) -> const auto& { return f.pieces_[j]; });
+}
+
+Frozen Text::freeze() const {
+    Frozen f;
+    f.pieces_.reserve(chunks_.size());
+    for (const Chunk& c : chunks_) f.pieces_.push_back(c.text);
+    f.size_ = size_;
+    return f;
+}
+
+// ----------------------------------------------------------------- Frozen
+Frozen::Frozen(const std::u16string& text) : size_(text.size()) {
+    pieces_.reserve(text.size() / Text::kChunk + 1);
+    for (size_t at = 0; at < text.size(); at += Text::kChunk)
+        pieces_.push_back(shared(text.substr(at, Text::kChunk)));
+}
+
+std::u16string Frozen::str() const {
+    std::u16string out;
+    out.reserve(size_);
+    for (const auto& p : pieces_) out += *p;
+    return out;
+}
+
+bool Frozen::operator==(const std::u16string& s) const {
+    if (s.size() != size_) return false;
+    size_t at = 0;
+    for (const auto& p : pieces_) {
+        if (s.compare(at, p->size(), *p) != 0) return false;
+        at += p->size();
     }
     return true;
 }

@@ -24,19 +24,40 @@ bool decodeFileText(std::string bytes, std::u16string* text, FolderSearch::TextE
     return true;
 }
 
-Document::Document(const std::u16string& text) : text_(text), saved_(text) {
+namespace {
+// LargeFile::isLargeText over a Text's chunks: its size, then its lines as
+// LineIndex counts them (U+2029 too, and a \r\n across two chunks once).
+bool isLargeText(const Text& t) {
+    const std::size_t n = t.size();
+    if (n > LargeFile::kSizeThreshold) return true;
+    if (n < LargeFile::kLineCountThreshold) return false;
+    std::size_t lines = 1;
+    bool lastWasCr = false;
+    t.eachChunk([&](const char16_t* u, std::size_t count) {
+        if (lines > LargeFile::kLineCountThreshold) return;
+        if (lastWasCr && u[0] == u'\n') lines--;   // counted at the \r
+        lines += LargeFile::countLines(u, count, LargeFile::kLineCountThreshold) - 1;
+        lastWasCr = u[count - 1] == u'\r';
+    });
+    return lines > LargeFile::kLineCountThreshold;
+}
+}  // namespace
+
+Document::Document(const std::u16string& text) : Document(Text(text)) {}
+
+Document::Document(Text text) : text_(std::move(text)) {
+    saved_ = text_.freeze();
     comparedAt_ = text_.version();
-    large_ = LargeFile::isLargeText(text.data(), text.size());
+    large_ = isLargeText(text_);
 }
 
-void Document::take(std::u16string text, FolderSearch::TextEncoding encoding, bool bom,
-                    const FolderSearch::FileStamp& stamp) {
+void Document::take(FolderSearch::TextEncoding encoding, bool bom, const FolderSearch::FileStamp& stamp) {
     encoding_ = encoding;
     bom_ = bom;
     stamp_ = stamp;
     gone_ = false;
-    large_ = LargeFile::isLargeText(text.data(), text.size());
-    saved_ = std::move(text);
+    large_ = isLargeText(text_);
+    saved_ = text_.freeze();
     differs_ = false;
 }
 
@@ -47,7 +68,7 @@ bool Document::load(std::string bytes, const FolderSearch::FileStamp& stamp) {
     if (!decodeFileText(std::move(bytes), &text, &e, &b)) return false;
     // One change of the text, so its version moves on (never back).
     if (!(text_ == text)) text_.replace(0, text_.size(), text);
-    take(std::move(text), e, b, stamp);
+    take(e, b, stamp);
     comparedAt_ = text_.version();
     return true;
 }
@@ -67,17 +88,18 @@ void Document::replace(std::size_t a, std::size_t b, const std::u16string& with)
     text_.replace(a, b, with);
 }
 
-bool Document::dirty() const {
-    if (gone_) return true;
+bool Document::dirty() const { return gone_ || differsFromSaved(); }
+
+bool Document::differsFromSaved() const {
     if (comparedAt_ != text_.version()) {
         comparedAt_ = text_.version();
-        differs_ = text_.size() != saved_.size() || !(text_ == saved_);
+        differs_ = !(text_ == saved_);
     }
     return differs_;
 }
 
 void Document::markSaved(const FolderSearch::FileStamp& written) {
-    saved_ = text_.str();
+    saved_ = text_.freeze();
     stamp_ = written;
     gone_ = false;
     differs_ = false;
@@ -85,10 +107,12 @@ void Document::markSaved(const FolderSearch::FileStamp& written) {
 }
 
 void Document::markSavedAs(std::u16string saved) {
-    saved_ = std::move(saved);
+    // The text's own chunks when it is the text (an app telling the host
+    // the file it read holds what its buffer holds), else a copy.
+    differs_ = !(text_ == saved);
+    saved_ = differs_ ? Frozen(saved) : text_.freeze();
     stamp_ = FolderSearch::FileStamp();
     gone_ = false;
-    differs_ = text_.size() != saved_.size() || !(text_ == saved_);
     comparedAt_ = text_.version();
 }
 

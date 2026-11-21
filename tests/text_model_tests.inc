@@ -314,6 +314,103 @@ static void testTextModel() {
         std::string lines;
         for (int i = 0; i < 300001; i++) lines += "\n";
         CHECK(many.load(lines, stampAt(1, 1, lines.size())) && many.large());
+        // Counted over the text's chunks: a \r ending one chunk and a \n
+        // starting the next are one break, as in the whole string. "x" puts
+        // every \r at an odd unit, and each chunk ends at one.
+        static_assert(Model::Text::kChunk % 2 == 0, "a \r ends each chunk below");
+        for (size_t breaks : {LargeFile::kLineCountThreshold - 1, LargeFile::kLineCountThreshold}) {
+            std::u16string t = u"x";
+            for (size_t i = 0; i < breaks; i++) t += u"\r\n";
+            const Model::Document d(t);
+            CHECK(d.large() == LargeFile::isLargeText(t.data(), t.size()));
+            CHECK(d.large() == (breaks == LargeFile::kLineCountThreshold));
+        }
+    }
+
+    GROUP("text:from-utf8");
+    {
+        // Decoded straight into chunks, unit for unit as utf16FromUtf8:
+        // bytes that are not UTF-8, a sequence cut short at the end, and a
+        // pair or a three-byte character across a chunk's edge.
+        std::mt19937 rng(23);
+        const std::string bits[] = {"a", "\n", "\r", "\r\n", "\xC3\xA9", "\xE2\x82\xAC", "\xF0\x9F\x98\x80",
+                                    "\xFF", "\xC3", "\xE2\x82", "\x80", "\xED\xA0\x80"};
+        bool same = true;
+        for (int round = 0; round < 300; round++) {
+            std::string s;
+            const int n = round < 100 ? (int)(rng() % 40) : (int)(rng() % 3000);
+            for (int i = 0; i < n; i++) s += bits[rng() % (sizeof bits / sizeof bits[0])];
+            const std::u16string want = Model::utf16FromUtf8(s);
+            const Model::Text t = Model::Text::fromUtf8(s), u(want);
+            same = same && t == want && t.size() == want.size() && t.lines() == u.lines() &&
+                   t.codePoints() == u.codePoints() && t.position(t.size()) == u.position(u.size());
+        }
+        CHECK(same);
+        for (size_t at : {Model::Text::kChunk - 1, Model::Text::kChunk - 2}) {
+            std::string s(at, 'a');
+            s += "\xF0\x9F\x98\x80\xE2\x82\xAC" "b";
+            const Model::Text t = Model::Text::fromUtf8(s);
+            CHECK(t == Model::utf16FromUtf8(s) && t.codePoints() == at + 3 && t.chunks() == 2);
+        }
+        CHECK(Model::Text::fromUtf8("").size() == 0 && Model::Text::fromUtf8("").chunks() == 0);
+    }
+
+    GROUP("text:frozen");
+    {
+        // A text frozen keeps what it was, whatever is done to the text
+        // after, and compares with it exactly: chunks still shared are
+        // skipped, and a text edited back to the same units is equal again
+        // though no chunk is shared any more.
+        std::u16string plain;
+        for (int i = 0; i < 5000; i++) plain += u"line " + Model::utf16FromUtf8(std::to_string(i)) + u"\n";
+        Model::Text t(plain);
+        const Model::Frozen f = t.freeze();
+        CHECK(t == f && f == plain && f.size() == plain.size() && f.str() == plain);
+        t.replace(10, 11, u"Z");
+        CHECK(!(t == f) && f == plain && f.str() == plain);
+        t.replace(10, 11, plain.substr(10, 1));
+        CHECK(t == f);
+        // Same length, a unit changed far from the first edit.
+        t.replace(plain.size() - 3, plain.size() - 2, u"?");
+        CHECK(!(t == f));
+        t.replace(plain.size() - 3, plain.size() - 2, plain.substr(plain.size() - 3, 1));
+        CHECK(t == f);
+        // Cut in other places: everything moved by a unit at the start.
+        t.replace(0, 0, u"Q");
+        t.replace(0, 1, u"");
+        CHECK(t == f && t.str() == plain);
+        // Its own text, and an empty one.
+        const Model::Frozen own(plain), none;
+        CHECK(t == own && own == plain && none.empty() && none == u"" && Model::Text() == none);
+        CHECK(!(Model::Text(u"a") == none) && !(Model::Text() == own));
+        // A copy of a Text shares its chunks and is changed on its own.
+        Model::Text copy = t;
+        copy.replace(0, 1, u"#");
+        CHECK(t == plain && copy != plain && copy.str().substr(1) == plain.substr(1));
+    }
+
+    GROUP("document:saved-shared");
+    {
+        // The saved text is the text's chunks: dirty compares exactly, a
+        // save or a reload makes the text the saved one again, and
+        // markSavedAs keeps a text of its own only when it differs.
+        std::u16string plain;
+        for (int i = 0; i < 3000; i++) plain += u"0123456789abcdef\n";
+        Model::Document d(plain);
+        CHECK(!d.dirty() && d.savedIs(plain) && d.savedSize() == plain.size() && d.savedText() == plain);
+        d.replace(4000, 4001, u"!");
+        CHECK(d.dirty() && d.differsFromSaved() && d.savedIs(plain));
+        d.replace(4000, 4001, plain.substr(4000, 1));
+        CHECK(!d.dirty() && !d.differsFromSaved());
+        d.replace(0, 0, u"new ");
+        d.markSaved(stampAt(5, 1, 1));
+        CHECK(!d.dirty() && d.savedIs(u"new " + plain));
+        d.markSavedAs(plain);
+        CHECK(d.dirty() && d.savedIs(plain) && d.savedText() == plain);
+        d.markSavedAs(u"new " + plain);
+        CHECK(!d.dirty() && d.savedIs(u"new " + plain));
+        d.setGone(true);
+        CHECK(d.dirty() && !d.differsFromSaved());
     }
 
     GROUP("lsp:sync-code-points");
