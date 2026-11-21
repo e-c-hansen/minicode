@@ -8783,3 +8783,35 @@ show; the file shown last is shown meanwhile).
   counts (2 files, 3 matches), the window opening nothing; a one-letter
   query is answered `short`. The files are made in a folder of their own
   and removed at the end.
+
+### 137. bash's prompt without vte.sh's marks: a line typed after a resize is drawn whole (November 2026)
+
+- **What failed.** The soak's `agent_panel` timed out in "the shell is up"
+  in 2 rounds of 3 (run 44898401650, and its `agents` failures after it
+  in round 2 followed from it). The pictures show the prompt with the
+  cursor on the "e" of "project$" and no `true` anywhere: the line typed
+  had been echoed in the wrong place and written over. CI's prompt is 92
+  columns; the terminal had changed width under a prompt that wrapped at
+  one width and fit at the other.
+- **Cause.** Debian's and Ubuntu's `/etc/bash.bashrc` reads VTE's
+  `/etc/profile.d/vte-2.91.sh` for an xterm TERM, and vte.sh wraps PS1 in
+  OSC 133 marks of its own (`\[\e]133;D;$?\e\\\e]133;A\e\\\]` before,
+  `\[\e]133;B\e\\\]` after) when nothing sets PS1 after it: a `.bashrc`
+  without a PS1, or the GUI checks' empty home. readline counts a wrapped
+  prompt's invisible bytes by row as it drew it, so after a width change
+  every redraw put the cursor as many columns off as the marks' bytes.
+  #285 kept a new view's first shell from drawing at 80 columns; this was
+  the same miscount at any later width change.
+- **Fix.** `linux/resources/mutible-bash-integration.bash` takes those two
+  marks out of PS1 after `~/.bashrc`, in vte.sh's exact text and only when
+  the integration is on (with the nonce). Ours print from PROMPT_COMMAND
+  and PS0 and were never in PS1, and the host believes no mark without
+  the nonce, so vte.sh's did nothing for mutible.
+- **Checks.** `make test`'s `bash:integration`: a `.bashrc` that leaves
+  vte.sh's PS1 comes out as the prompt alone, and without a nonce it is
+  left as it was. `shell_integration`: PS1 has no `133;`, and a prompt as
+  long as the line less six, drawn at font scale 1.5 (two rows) and then
+  at 1.0 (one row), takes `echo typed-intact` whole after its `$`. With
+  the old script that section fails both ways: PS1 has the marks, and the
+  last line reads `.../guitest-XXXX/echo typed-intact`, the typed text
+  over the prompt's end.

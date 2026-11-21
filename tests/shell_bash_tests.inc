@@ -103,6 +103,24 @@ void testShellBash() {
             if (e.kind == TermEvent::Directory) cwd = e.text;
         CHECK(!cwd.empty() && cwd[0] == '/');
 
+        // vte.sh's own OSC 133 marks around PS1 (as /etc/bash.bashrc leaves
+        // them when no .bashrc sets PS1 after it) come out, the prompt's own
+        // text stays; without a nonce they are left as they are.
+        writeFile(root / "home" / ".bashrc",
+                  "exec 2>&1\nPS1='\\[\\e]133;D;$?\\e\\\\\\e]133;A\\e\\\\\\]'"
+                  "'my-prompt\\$ ''\\[\\e]133;B\\e\\\\\\]'\n");
+        const std::string ps1Line = "printf 'ps1<%s>\\n' \"$PS1\"\n";
+        ZshRun vte = runZsh(root, {"--rcfile", (root / "script.bash").string(), "-i"}, env, ps1Line,
+                            "/bin/bash");
+        CHECK(vte.out.find("ps1<my-prompt\\$ >") != std::string::npos);
+        if (vte.out.find("ps1<my-prompt\\$ >") == std::string::npos)
+            std::printf("    vte prompt: %s\n", vte.out.c_str());
+        ZshRun vteNone = runZsh(root, {"--rcfile", (root / "script.bash").string(), "-i"},
+                                {env[0], env[1], env[2]}, ps1Line, "/bin/bash");
+        CHECK(vteNone.out.find("133;B") != std::string::npos);
+        writeFile(root / "home" / ".bashrc",
+                  "exec 2>&1\nPROMPT_COMMAND='echo \"user-pc:$?\"'\nalias hi='echo hi-alias'\n");
+
         // Without a nonce there are no hooks at all (and nothing printed).
         ZshRun none = runZsh(root, {"--rcfile", (root / "script.bash").string(), "-i"},
                              {env[0], env[1], env[2]}, "true\n", "/bin/bash");

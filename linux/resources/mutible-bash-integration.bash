@@ -42,6 +42,23 @@ if [[ -n $__mutible_nonce ]] &&
    (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then
   __mutible_x=0 __mutible_d=0 __mutible_rc=0 __mutible_h=0
 
+  # vte.sh (VTE's /etc/profile.d/vte-2.91.sh, which Debian's and Ubuntu's
+  # /etc/bash.bashrc reads for an xterm TERM) wraps PS1 in OSC 133 marks of
+  # its own when nothing set PS1 after it, as a .bashrc without a PS1 or
+  # the GUI checks' empty home leaves it. Ours are printed from
+  # PROMPT_COMMAND and PS0 with the nonce, and the host believes no mark
+  # without one, so vte.sh's only do harm here: readline counts a wrapped
+  # prompt's invisible bytes by line as it drew it, and once the terminal's
+  # width changes under a prompt longer than a line, every redraw puts the
+  # cursor that many columns off and a typed line is written over (the
+  # soak's agent_panel on CI's 92-column prompt, November 2026). They come
+  # out of PS1, in the exact text vte.sh puts in.
+  __mutible_vte='\[\e]133;D;$?\e\\\e]133;A\e\\\]'
+  PS1=${PS1#"$__mutible_vte"}
+  __mutible_vte='\[\e]133;B\e\\\]'
+  PS1=${PS1%"$__mutible_vte"}
+  builtin unset __mutible_vte
+
   # A mark, with the nonce the host checks.
   __mutible_mark() {
     builtin printf '\e]%s;mc=%s\a' "$1" "$__mutible_nonce"

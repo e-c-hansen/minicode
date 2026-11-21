@@ -654,7 +654,14 @@ SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
   off and `term --run 'echo hi'` was echoed early and written over: the
   prompt, then `hi`, and no `echo hi` (shell_integration). Waiting for
   the pty's size before typing does not help: the prompt is already
-  drawn.
+  drawn. **Trap** (2026-11-21): the same miscount comes back whenever
+  the width changes under a prompt that wraps at one width and fits at
+  the other (a font change, the panel resized, the soak's agent_panel
+  after another suite moved it), since its cause is the invisible bytes:
+  so the bash integration takes vte.sh's two marks out of PS1 (their
+  exact text, only with the nonce; ours print from PROMPT_COMMAND and PS0
+  and are never in PS1). A user's own `\[...\]` bytes in PS1 still go
+  wrong the same way; that is readline's.
 - **The GTK port's cursor and Control keys** (2026-11-18,
   linux/HANDOFF.md item 110). The cursor is the terminal's text color
   and the character under the block the background's, both opaque
@@ -769,4 +776,5 @@ text is in place in its section.
 - Terminals owned by the session's host (stage 5): **The host's screen answers no queries**: `takeReplies` is thrown away, since the renderer's emulator answers DA, DSR and the rest through its input, and two answers would reach the program.
 - Terminals owned by the session's host (stage 5): **Traps found by its fuzz** (`screen:replay`): a prompt mark makes the next wrap zsh's PROMPT_SP, so each written A is followed by a carriage return.
 - Terminals owned by the session's host (stage 5): **Trap** (2026-11-20): a new view's first shell must start at its grid, so `makeTerminal` waits for VTE's first layout (`spawnWhenLaidOut`: the first frame VTE has a width, a second at most).
+- Terminals owned by the session's host (stage 5): **Trap** (2026-11-21): the same miscount comes back whenever the width changes under a prompt that wraps at one width and fits at the other (a font change, the panel resized, the soak's agent_panel after another suite moved it), since its cause is the invisible bytes: so the bash integration takes vte.sh's two marks out of PS1 (their exact text, only with the nonce; ours print from PROMPT_COMMAND and PS0 and are never in PS1).
 - Terminals owned by the session's host (stage 5): **Trap**: `vte_terminal_set_colors` unsets the cursor, cursor text, highlight and bold colors; the port set the cursor once before it, and VTE, with only the cursor's text set, drew the block and the unfocused outline in the cell's background: no cursor showed on any theme until then.

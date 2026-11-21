@@ -38,6 +38,7 @@
 #include <functional>
 #include <memory>
 #include <unistd.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -154,6 +155,8 @@ int gOldPid = 0;
 int gAccepted = 0;   // marks believed (onShellStateChanged)
 ShellIntegration::ShellState gBefore;
 std::string gHome;
+long gCols = 0;        // the terminal's columns before its font changed
+long gPromptLen = 0;   // the prompt's length then
 
 // Starts the terminal's shell as `shell`: the terminal is made if need be,
 // else its shell is told to exit and the app starts the new one.
@@ -342,6 +345,65 @@ MC_GUI_SUITE(shell_integration) {
         GCHECK(sh().started == gBefore.started + 3 && sh().done == sh().started);
         GCHECK(sh().status == 0 && !sh().busy);
     });
+
+    // ---- A prompt that wraps at one width and fits at the other, the
+    // terminal's width changed under it: a line typed then is drawn whole.
+    // vte.sh's own OSC 133 marks in PS1 (/etc/bash.bashrc reads it for an
+    // xterm TERM, and this .bashrc sets no PS1) made readline put the cursor
+    // as many columns off as the marks' bytes after such a change, and the
+    // typed text was written over (the soak's agent_panel on CI's 92-column
+    // prompt, November 2026); the integration takes them out of PS1.
+    MCGuiStep("PS1 written to a file", [] {
+        gBefore = sh();
+        g_unlink((gHome + "/ps1.txt").c_str());
+        typeLine("printf '%s' \"$PS1\" > \"$HOME/ps1.txt\"");
+    });
+    MCGuiWait("written", 10, [] { return sh().atPrompt && sh().prompts > gBefore.prompts; });
+    MCGuiStep("no OSC 133 mark of vte.sh's in it", [] {
+        const std::string ps1 = MCGuiReadFile(gHome + "/ps1.txt");
+        MCGuiNote("PS1: %s (vte.sh %s)", ps1.c_str(),
+                  g_file_test("/etc/profile.d/vte-2.91.sh", G_FILE_TEST_EXISTS) ? "installed" : "not installed");
+        GCHECK(!ps1.empty() && ps1.find("133;") == std::string::npos);
+    });
+    MCGuiStep("a prompt as long as the line less six, the font half as large again", [] {
+        VteTerminal* vte = findVte(term()->widget());
+        if (!GCHECK(vte != nullptr)) return;
+        gCols = vte_terminal_get_column_count(vte);
+        gPromptLen = (long)lastLine(vteText()).size() + 1;   // the prompt's trailing space
+        const long pad = gCols - 6 - gPromptLen;
+        MCGuiNote("%ld columns, a prompt of %ld, %ld added", gCols, gPromptLen, pad);
+        GCHECK(pad > 0);
+        gBefore = sh();
+        typeLine("__mc_ps1=$PS1; PS1=" + std::string((size_t)std::max(pad, 1L), 'w') + "$PS1");
+        vte_terminal_set_font_scale(vte, 1.5);
+    });
+    MCGuiWait("the prompt drawn at the larger font, on two rows", 10, [] {
+        VteTerminal* vte = findVte(term()->widget());
+        return sh().atPrompt && sh().prompts > gBefore.prompts && vte_terminal_get_column_count(vte) < gCols - 6;
+    });
+    MCGuiStep("the font back: the prompt fits one row", [] {
+        vte_terminal_set_font_scale(findVte(term()->widget()), 1.0);
+    });
+    MCGuiWait("the columns as before", 10, [] { return vte_terminal_get_column_count(findVte(term()->widget())) == gCols; });
+    MCGuiWaitQuiet("bash redrew its prompt at the new width", 0.5, 10, [] {
+        long row = 0, col = 0;
+        vte_terminal_get_cursor_position(findVte(term()->widget()), &col, &row);
+        return row * 10000 + col;
+    });
+    MCGuiStep("a line typed at it", [] {
+        VteTerminal* vte = findVte(term()->widget());
+        const std::string bytes = "echo typed-intact";
+        vte_terminal_feed_child(vte, bytes.c_str(), (gssize)bytes.size());
+    });
+    MCGuiWait("drawn whole, after the prompt", 10, [] {
+        return lastLine(vteText()).find("$ echo typed-intact") != std::string::npos;
+    });
+    MCGuiStep("the line cleared, the prompt as it was", [] {
+        MCGuiNote("last line: %s", lastLine(vteText()).c_str());
+        gBefore = sh();
+        typeLine("PS1=$__mc_ps1");
+    });
+    MCGuiWait("back", 10, [] { return sh().atPrompt && sh().prompts > gBefore.prompts; });
 
     // ---- part two: term, term-output, Run File, onCommandFinished. Since the
     // terminal tabs (item 56) `mutible term` and Run File into a busy shell
