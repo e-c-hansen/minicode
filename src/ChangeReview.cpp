@@ -805,6 +805,18 @@ long fileRow(const Page& p, const std::vector<FileDiff>& files, const std::strin
     return -1;
 }
 
+long buttonRow(const Page& p, const std::vector<FileDiff>& files, const std::string& key, int block) {
+    const long header = fileRow(p, files, key);
+    if (header < 0 || block < 0) return header;
+    const size_t fi = p.rows[(size_t)header].file;
+    for (size_t r = (size_t)header + 1; r < p.rows.size() && p.rows[r].file == fi &&
+                                        p.rows[r].kind != RowKind::File &&
+                                        p.rows[r].kind != RowKind::Section;
+         r++)
+        if (p.rows[r].blockStart && p.rows[r].block == block) return (long)r;
+    return -1;
+}
+
 size_t rowFor(const Page& p, const std::vector<FileDiff>& files, const Anchor& a) {
     if (p.rows.empty() || !a.valid) return 0;
     const long header = fileRow(p, files, a.fileKey);

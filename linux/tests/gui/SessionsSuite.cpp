@@ -265,6 +265,7 @@ MC_GUI_SUITE(sessions) {
     MCGuiStep("the new window closes, the first staying", [] { MCGuiKey("ctrl+shift+w"); });
     MCGuiWait("one window again", 10, [] { return MCGuiAppWindows().size() == gWindows; });
     MCGuiStep("the session is the window that stayed: the other's file is out", [] {
+        MCGuiFocusKeyWindow();   // as a desktop gives the window left the X focus
         const TabSessions::Session s = SavedFor(MCGuiProject());
         MCGuiNote("saved: %s", Names(s).c_str());
         GCHECK_EQ_STR(Names(s), "ses-p1.txt >ses-p2.txt");

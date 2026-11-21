@@ -1326,8 +1326,13 @@ MC_GUI_SUITE(git_review) {
         GCHECK([p.textView accessibilityHitTest:NSMakePoint(NSMidX(screen), NSMidY(screen))] == stage2);
         loads = p.loads;
         actions = 0;
-        // Pressed as VoiceOver presses it: the middle block staged.
+        // Pressed as VoiceOver presses it: the middle block staged. The
+        // press runs a moment later, and a read of the same changes landing
+        // first (a panel refresh) must not lose it: CI on 2026-11-20 had
+        // one queued while this step ran, and the press went nowhere.
         GCHECK([stage2 accessibilityPerformPress]);
+        [p showReadAgain];
+        GCHECK(!NSIsEmptyRect([stage2 accessibilityFrame]));
     });
     MCGuiWait(@"the middle block staged, and read again", 15, ^BOOL {
         return actions == 1 && Review(c).loads > loads &&

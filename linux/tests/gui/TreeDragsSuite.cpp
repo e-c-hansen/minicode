@@ -149,5 +149,13 @@ MC_GUI_SUITE(tree_drags) {
         GCHECK(ed()->documentFor(F("folder")) == nullptr);
     });
 
-    MCGuiStep("the tabs closed", [] { ed()->closeAllTabs(); });
+    // Each drop above came from the app's own drag, whose XdndDrop carries
+    // no real time with GTK 4.22 (Input.cpp): GDK's user time may be left
+    // days ahead of the X server's, and every window presented after it
+    // came up without the keyboard (preview_tabs' and replace_in_folder's).
+    MCGuiStep("the tabs closed, and GDK's user time put back", [] {
+        ed()->closeAllTabs();
+        MCGuiPutBackUserTime();
+        GCHECK(!MCGuiUserTimeAhead());
+    });
 }

@@ -294,6 +294,12 @@ Anchor anchorAt(const Page& p, const std::vector<FileDiff>& files, size_t row);
 size_t rowFor(const Page& p, const std::vector<FileDiff>& files, const Anchor& a);
 // The header row of the file with this key, or -1.
 long fileRow(const Page& p, const std::vector<FileDiff>& files, const std::string& key);
+// Where a drawn button's row is in another layout of the same changes (a
+// read landing between a press and its action, a stretch opened above):
+// the header row of the file with this key for a file's button (`block`
+// -1), else the first row of its block `block` (a conflict's too); -1
+// when that layout has no such row.
+long buttonRow(const Page& p, const std::vector<FileDiff>& files, const std::string& key, int block);
 
 // Where the eye goes after Stage, Unstage or Discard on a block (or Stage
 // File, Discard File, ... on a file's header row), so the page does not

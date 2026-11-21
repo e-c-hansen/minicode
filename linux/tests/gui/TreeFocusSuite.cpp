@@ -380,7 +380,10 @@ void CloseRepoWindows(const std::string& what) {
             if (w.rootDir == gRepo) gtk_window_close(w.window);
     });
     MCGuiWait("gone", 10, [] { return Win().window == nullptr; });
-    MCGuiStep("the first window has the keyboard again", [] { MCGuiSetKeyWindow(nullptr); });
+    MCGuiStep("the first window has the keyboard again", [] {
+        MCGuiSetKeyWindow(nullptr);
+        MCGuiFocusKeyWindow();   // as a desktop gives the window left the X focus
+    });
 }
 
 }  // namespace
