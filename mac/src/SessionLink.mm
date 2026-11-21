@@ -125,6 +125,11 @@ void Start() {
             gClient->deliver(Wire(std::move(m)));
         },
         delayUs);
+    // The disk, for a browser's page of a window (its tree and Source
+    // Control follow it). The windows keep their own FSEvents streams and
+    // follow their tabs themselves: this client hears none of it (no Hello
+    // flag 32), and the host follows no document a window has open.
+    gHost->watchDisk(true);
     gId = gHost->connect();
     gClient->connect([](Shared::Message &&m) { gHost->post(gId, Wire(std::move(m))); });
     // The Welcome, with the base of this renderer's ids (Client::newId).

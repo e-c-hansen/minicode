@@ -92,6 +92,11 @@ void Document::markSavedAs(std::u16string saved) {
     comparedAt_ = text_.version();
 }
 
+void Document::confirmSaved(const FolderSearch::FileStamp& stamp) {
+    stamp_ = stamp;
+    gone_ = false;
+}
+
 bool Document::bytesToWrite(std::string* bytes, std::string* why) const {
     const std::u16string text = text_.str();
     if (hasLoneSurrogate(text)) {

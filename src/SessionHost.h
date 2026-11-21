@@ -81,6 +81,30 @@
 // an app's DocSaved), renderers that said they hear it get DocDirty. The
 // write is synchronous on the host's thread, as the host's backups are.
 //
+// The disk (stage 7, DiskWatch.h): a host told to watch (SessionHost::
+// watchDisk; `mutible host`, and the Mac's own host) watches its folder (a
+// headless host's) and the folders renderers' trees have open (FsRead's
+// "watch": each renderer's list replaces its last; an ignored folder or a
+// node_modules is watched only while a tree has it open), coalesces what
+// changed, and then (diskChanged):
+//   - sends each renderer that hears the disk (Hello flag 32) FsChanged with
+//     the listing again of every folder it has open that changed, and
+//     whether Source Control may have changed (a change outside .git's
+//     insides and outside what the ignore files ignore);
+//   - looks again at each document whose file's folder changed and that no
+//     app's window has open (an app follows its own tabs and tells the host,
+//     DocSaved): a clean one follows its file (the host's edit, one step,
+//     "Reload from Disk", sent to every renderer showing it), one with
+//     unsaved changes is marked changed on disk (never written over: its
+//     save is refused until a person says to overwrite), a deleted file's
+//     document is unsaved and gone until the file returns (SessionFiles.h's
+//     diskAction). Renderers that hear the disk get DocDisk when that state
+//     changes; the state's documents carry it ("disk").
+// DocReload (a guest may send it) puts the file's text in place of a
+// document no app's window has open, the same step. The reads are on the
+// host's thread, as the listings are (capped); the watching itself is on
+// the watcher's own thread or queue.
+//
 // Pure C++17 and POSIX: SessionHost's thread polls the ptys (poll(2)) and a
 // pipe that wakes it for messages; Host does the I/O only when the loop
 // calls it (readable, writable, tick).
@@ -99,6 +123,7 @@
 #include <vector>
 
 #include "Backups.h"
+#include "DiskWatch.h"
 #include "Document.h"
 #include "HostPty.h"
 #include "SavePlan.h"
@@ -108,6 +133,8 @@
 #include "UndoHistory.h"
 
 namespace Shared {
+
+struct DiskText;   // SessionFiles.h
 
 // One of the shell integration's events (a nonce-checked mark the
 // terminal's TerminalStream read) applied to what is known of the shell:
@@ -177,6 +204,23 @@ public:
     std::string backupId(DocId d) const;
     std::string backupPath(DocId d) const;
 
+    // ---- the disk (see the top of the file; SessionHost runs the watcher)
+    // Whether the host watches the disk: said in its Welcome (flag 4), so
+    // set before any renderer's Hello.
+    void setWatching(bool on);
+    bool watching() const { return watching_; }
+    // What to watch: the host's folder and the folders renderers' trees
+    // have open in it, and in each window's folder they named; none when
+    // not watching. The generation moves on whenever that changes.
+    std::vector<DiskWatch::Root> watchRoots() const;
+    std::uint64_t watchGeneration() const { return watchGen_; }
+    // A coalesced batch of changes (DiskWatch's, spelled under the roots
+    // watchRoots gave).
+    void diskChanged(const std::vector<DiskWatch::Change>& changes);
+    // For checks: a document's disk state (0 in step, 1 changed on disk,
+    // 2 gone).
+    int diskState(DocId d) const;
+
     // ---- terminals: what the loop polls, and what it calls when a pty is
     // ready. A terminal's renderers are the one that opened it and every
     // one that attached to it since; all of them hear of it.
@@ -214,6 +258,7 @@ private:
         bool keepsBackups = false;   // flag 4: an app that backs up what it has open
         bool hearsDirty = false;     // flag 8: told DocDirty
         bool savesThroughHost = false;   // flag 16 (with 4): an app whose saves are DocSave
+        bool hearsDisk = false;      // flag 32: told FsChanged and DocDisk
         std::uint64_t idBase = 0;   // its Welcome's: the ids it makes are above it
     };
     // One applied edit, as every renderer may need it again: by whom, in
@@ -259,7 +304,38 @@ private:
         } kept;
         // Its unsaved state as renderers that hear DocDirty were last told.
         bool toldDirty = false;
+        // Its file as the host last looked at it after the folder changed
+        // (diskChanged): 0 in step, 1 changed on disk under unsaved
+        // changes, 2 gone; what renderers that hear the disk were told; and
+        // the stamp then, so an event that changed nothing of it reads
+        // nothing.
+        int disk = 0, toldDisk = 0;
+        FolderSearch::FileStamp diskSeen;
+        bool diskLooked = false;
+        // Its file's folder by its real place, for a path spelled otherwise
+        // than the watched root (/tmp and /private/tmp); "" until needed.
+        std::string realDir;
     };
+    // The folders a renderer's trees have open (FsRead's "watch"): in whose
+    // folder, and the listings' dotfile rule.
+    struct WatchAsk {
+        std::uint64_t window = 0;
+        std::string root;
+        std::vector<std::string> open;
+        bool hidden = false;
+    };
+    std::map<ClientId, WatchAsk> watches_;
+    bool watching_ = false;
+    std::uint64_t watchGen_ = 0;
+    // A watch op answered (FsData's json), the ask kept.
+    Json onWatchAsk(ClientId c, std::uint64_t window, const Json& request);
+    void onReload(ClientId c, Message& m);
+    // The document's file looked at again: followed, marked, or left.
+    void lookAtDisk(DocId id, Doc& d);
+    // The file's text in place of the document's: one step of the host's
+    // ("Reload from Disk"), every seat told, counted saved as read.
+    void takeDiskText(DocId id, Doc& d, const DiskText& t);
+    void setDisk(DocId id, Doc& d, int disk);
 
     struct Term {
         // Renderers showing it: the pty is read while every one of them has
@@ -429,6 +505,17 @@ public:
     void disconnect(ClientId c);
     // The folder a headless host serves (Host::setFolder), on its thread.
     void setFolder(std::string folder);
+    // Watches the disk from now on (Host::setWatching; DiskWatch.h): the
+    // host's folder and the folders renderers' trees have open, through the
+    // system's watcher, changes coalesced, on the host's thread. Before any
+    // renderer connects (the Welcome says it). Where the system has no
+    // watcher, the host still says it watches and takes DocReload, but no
+    // change ever comes.
+    void watchDisk(bool on);
+    // For checks: waits (at most `timeoutMs`) until the watcher watches
+    // what the host asked of it last; false when it does not, or there is
+    // none. *folders: how many it watches (DiskWatch::Watcher::folders).
+    bool diskWatchSettled(int timeoutMs, std::size_t* folders = nullptr);
     // Backups of what no app's window shows (Host::keepBackups), on its
     // thread; before any renderer connects.
     void keepBackups(Host::BackupKeeping k);
@@ -453,6 +540,14 @@ private:
     int wake_[2] = {-1, -1};          // post() writes, the loop polls
     bool wakePending_ = false;        // under mu_: a byte is in the pipe
     std::thread thread_;
+    // The disk, on the host's thread: the system's watcher (made once there
+    // is something to watch), the batch it fills, and the roots it was
+    // last given.
+    bool watchDisk_ = false;
+    std::unique_ptr<DiskWatch::Watcher> watcher_;
+    DiskWatch::Coalescer coalesce_;
+    std::uint64_t watchSeen_ = 0;
+    void lookAtWatch();
     void wake();
     void loop();
 };

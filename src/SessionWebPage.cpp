@@ -206,8 +206,10 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #docbar { display: flex; align-items: center; gap: 8px; flex: none; padding: 3px 10px; }
 #docpath { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden;
            text-overflow: ellipsis; flex: 1; min-width: 0; }
-#modebtn, #savebtn { background: none; border: 1px solid var(--line); color: var(--fg); font: inherit;
+#modebtn, #savebtn, #reloadbtn { background: none; border: 1px solid var(--line); color: var(--fg); font: inherit;
            font-size: 12px; padding: 1px 8px; border-radius: 3px; cursor: pointer; flex: none; }
+#disknote { color: var(--gmod); font-size: 12px; white-space: nowrap; flex: none; }
+.strip button.disk { font-style: italic; }
 #savebtn:not(.dirty) { color: var(--muted); }
 #savebtn.dirty::before { content: "\25CF "; font-size: 9px; vertical-align: middle; }
 #code, #term { flex: 1; overflow: auto; min-height: 0;
@@ -333,7 +335,7 @@ body:not(.editable) #caret { display: none; }
  <div id="top">
   <section id="docsec">
     <div id="tabrow"><nav id="tabs" class="strip"></nav></div>
-    <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button><button id="savebtn" class="hidden" type="button" title="Save this file to disk">Save</button></div>
+    <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button><span id="disknote" class="hidden"></span><button id="reloadbtn" class="hidden" type="button" title="Put the file on disk in place of this text (undoable)">Reload</button><button id="savebtn" class="hidden" type="button" title="Save this file to disk">Save</button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
     <div id="tex" class="hidden"><p id="texnote" class="hidden"></p><iframe id="texframe" class="hidden" title="Typeset pages"></iframe><div id="texpages" class="hidden" tabindex="0" aria-label="Typeset pages"></div><pre id="texlog" class="hidden"></pre></div>
@@ -370,7 +372,7 @@ body:not(.editable) #caret { display: none; }
   if (location.search || location.pathname !== viewBase) history.replaceState(null, "", viewBase);
   const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
   let ws = null, palette = null, state = null, ended = false, folder = "", termNote = "";
-  let editable = false, canSave = false, canBrowse = false, canOpen = false, canClose = false;
+  let editable = false, canSave = false, canBrowse = false, canOpen = false, canClose = false, canReload = false;
   const want = { doc: 0, term: 0 };
   let followDoc = true, followTerm = true, termInfo = null;
   const kHist = 5000;
@@ -499,6 +501,7 @@ body:not(.editable) #caret { display: none; }
     drawSave();
     if (!state) return;
     const dirty = new Map(state.docs.map((d) => [d.id, d.dirty]));
+    const disk = new Map(state.docs.map((d) => [d.id, d.disk || ""]));
     const seen = new Set();
     const onShow = sessionDoc();
     const add = (id, path) => {
@@ -507,6 +510,7 @@ body:not(.editable) #caret { display: none; }
       let cls = id === want.doc && !L.on ? "shown" : "";
       if (id === onShow) cls += " onshow";
       if (dirty.get(id)) cls += " dirty";
+      if (disk.get(id)) cls += " disk";
       const name = base(path) || "untitled";
       // An editable page closes the window's tab as the window does; a
       // page that only reads leaves the window's tabs to the window.
@@ -1426,7 +1430,10 @@ body:not(.editable) #caret { display: none; }
   const kViewerKinds = new Set(["image", "video", "audio", "pdf", "database", "archive", "bookmark"]);
   const narrow = window.matchMedia("(max-width: 700px)");
   function listFolder(rel) { post({ t: "list", path: rel }); }
-  function refreshTree() { for (const rel of T.open) listFolder(rel); }
+  // The folders open in the tree, which the host watches: a changed one's
+  // listing comes again by itself (a `tree`), on a host that watches the disk.
+  function sendWatch() { post({ t: "watch", paths: [...T.open] }); }
+  function refreshTree() { sendWatch(); for (const rel of T.open) listFolder(rel); }
   function treeNote(text) {
     const n = $("treenote");
     n.textContent = text || "";
@@ -1502,6 +1509,7 @@ body:not(.editable) #caret { display: none; }
       if (m.path) {
         // Gone, or no longer the folder's: closed, with what was open in it.
         for (const k of [...T.open]) if (k === m.path || k.startsWith(m.path + "/")) T.open.delete(k);
+        sendWatch();
       } else {
         T.err.set("", m.error === "no folder to read in" ? "This window has no folder." : m.error);
       }
@@ -2040,6 +2048,7 @@ body:not(.editable) #caret { display: none; }
     if (!synced()) return;
     if (D.undo) { post({ t: "undo", doc: D.id, redo: D.undo === 2 }); D.undo = 0; D.moved = true; }
     if (D.save) { post({ t: "save", doc: D.id, overwrite: D.save === 2 }); D.save = 0; }
+    if (D.reload) { post({ t: "reload", doc: D.id }); D.reload = false; }
     if (D.switchTo) { const id = D.switchTo; D.switchTo = 0; showDoc(id); }
   }
   // An edit of this page's: made on its lines at once, then sent.
@@ -2161,11 +2170,33 @@ body:not(.editable) #caret { display: none; }
   }
   // The doc bar's Save, for a document this page edits: marked while the
   // host counts it unsaved.
+  function docDisk(id) {
+    const d = state && state.docs.find((x) => x.id === id);
+    return (d && d.disk) || "";
+  }
   function drawSave() {
     const b = $("savebtn");
     const on = editable && canSave && D.editable && D.id > 0 && D.kind !== "large" && !L.on;
     b.classList.toggle("hidden", !on);
     b.classList.toggle("dirty", on && docDirty(D.id));
+    // Changed on disk under unsaved changes, or deleted: said, never
+    // written over; Reload puts the file's text in (the host's step, which
+    // Undo takes back).
+    const disk = D.id > 0 && !L.on ? docDisk(D.id) : "";
+    const n = $("disknote");
+    n.textContent = disk === "gone" ? "Deleted on disk" : disk ? "Changed on disk" : "";
+    n.title = disk === "gone" ? "The file was deleted on disk: saving makes it again."
+            : disk ? "The file changed on disk since it was read: saving asks before writing over it." : "";
+    n.classList.toggle("hidden", !disk);
+    $("reloadbtn").classList.toggle("hidden", !(disk === "changed" && editable && canReload && D.editable));
+  }
+  function reload() {
+    if (!editable || !canReload || D.id <= 0) return;
+    D.reload = true;
+    afterSync();
+  }
+  function onReloaded(m) {
+    if (!m.ok) toast(m.why || "The file was not reloaded.");
   }
   function onSaved(m) {
     const name = base(m.path || "") || "The file";
@@ -2679,6 +2710,7 @@ body:not(.editable) #caret { display: none; }
           termNote = m.termNote || "";
           editable = !!m.editable;
           canSave = !!m.canSave;
+          canReload = !!m.canReload;
           canBrowse = !!m.canBrowse;
           canOpen = !!m.canOpen;
           canClose = !!m.canClose;
@@ -2713,6 +2745,7 @@ body:not(.editable) #caret { display: none; }
         case "refused": onRefused(m); break;
         case "note": toast(m.text); break;
         case "saved": onSaved(m); break;
+        case "reloaded": onReloaded(m); break;
         case "gone":
           if (m.id === want.doc) { D.id = 0; D.flight = null; D.queue = []; showNote("This document was closed."); }
           break;
@@ -2806,6 +2839,7 @@ body:not(.editable) #caret { display: none; }
     if (D.mode === "code") focusEditor();
   });
   $("savebtn").addEventListener("click", () => save(false));
+  $("reloadbtn").addEventListener("click", reload);
   // Command (Control) S anywhere on a page that edits the document on show
   // saves it, not the browser's Save Page As; the editor's own key handler
   // takes it first while it has the keyboard.
@@ -2824,6 +2858,7 @@ body:not(.editable) #caret { display: none; }
     if (e.dir) {
       if (T.open.has(rel)) T.open.delete(rel);
       else { T.open.add(rel); listFolder(rel); }   // read afresh as it opens
+      sendWatch();
       drawTree();
       return;
     }
@@ -2860,7 +2895,7 @@ body:not(.editable) #caret { display: none; }
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
     refreshTree();
-    if (gitWanted()) askGit();   // a host that watches nothing has not said
+    if (gitWanted()) askGit();   // a host that does not watch the disk has not said
     const page = reviewOn(), tab = page ? windowReviewTab(V.on) : null;
     if (tab && tab.kind === "worktree") askReview(page, true);   // a commit does not change
   });

@@ -38,6 +38,8 @@ const KindName kKinds[] = {
     {Kind::TermDetach, "term.detach"},
     {Kind::DocSave, "doc.save"},        {Kind::DocSaveDone, "doc.save-done"},
     {Kind::DocDirty, "doc.dirty"},
+    {Kind::FsChanged, "fs.changed"},    {Kind::DocDisk, "doc.disk"},
+    {Kind::DocReload, "doc.reload"},    {Kind::DocReloadDone, "doc.reload-done"},
 };
 
 // Terminal bytes are any bytes, which a JSON string cannot carry: base64.

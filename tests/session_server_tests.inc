@@ -25,6 +25,7 @@ struct ServerRig {
     std::thread thread;
     std::atomic<int> result{-1};   // run()'s answer: 1 the lifetime ended, 0 stopped
     double started = 0, ended = 0;
+    bool watch = false;   // HostOptions::watchDisk
 
     ServerRig() {
         proj = Shared::resolveFolder(scratchFolder());
@@ -37,6 +38,7 @@ struct ServerRig {
         o.folder = proj;
         o.socketDir = dir;
         o.idleMs = idleMs;
+        o.watchDisk = watch;
         std::string why;
         const Shared::HostServer::Start s = server->start(o, &why);
         if (error) *error = why;

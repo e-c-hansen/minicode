@@ -129,4 +129,45 @@ Json saveDoneJson(const std::string& path, const SaveDone& done);
 Json stampJson(const FolderSearch::FileStamp& s);
 FolderSearch::FileStamp stampFromJson(const Json& j);
 
+// ---- following the disk (the host watches it: SessionHost.h, "The disk")
+// A document's file looked at again after the folder holding it changed.
+// The rules are the Mac's for a tab (docs/notes/sessions.md, "The disk"):
+// a clean document follows its file, one with unsaved changes is never
+// written over (it is marked changed on disk, and a save asks first), a
+// file deleted leaves the document unsaved and gone until it returns, and
+// a document an app's window has open is that app's to follow (it reads
+// the file itself and tells the host, DocSaved).
+struct DiskLook {
+    bool appHasIt = false;     // an app's window has it open
+    bool hadFile = false;      // it was read from a file or written to one
+    bool exists = false;       // something is at its path now
+    bool text = false;         // a regular file that reads as text (not too large)
+    bool sameAsSaved = false;  // and holds the text the host counts saved
+    bool edited = false;       // the document's text is not its saved text
+    bool wasGone = false;      // marked gone already
+};
+enum class DiskAction {
+    Nothing,   // leave it as it is
+    Same,      // the file holds the saved text: its stamp taken, gone no longer
+    Follow,    // the file's text in place of the document's (one step, "Reload from Disk")
+    Changed,   // unsaved changes kept, marked changed on disk
+    Gone,      // deleted: kept, unsaved, marked gone
+};
+DiskAction diskAction(const DiskLook& look);
+
+// The most bytes of a file the host reads to follow it: past it, a clean
+// document is marked changed rather than followed.
+constexpr std::uintmax_t kMaxFollowed = std::uintmax_t(64) << 20;
+// A file read as the host follows it: the stamp taken before reading
+// (readFileStable), and its text when it is a regular file that reads as
+// text (decodeFileText) within kMaxFollowed.
+struct DiskText {
+    FolderSearch::FileStamp stamp;
+    bool exists = false, regular = false, text = false;
+    std::u16string body;
+    FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;
+};
+DiskText readDiskText(const std::string& path);
+
 }  // namespace Shared

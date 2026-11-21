@@ -534,6 +534,9 @@ int runHost(const Json &args) {
     const bool mac = false;
 #endif
     o.backupDir = Backups::defaultDir(getenv("MUTIBLE_BACKUP_DIR"), getenv("HOME"), getenv("XDG_DATA_HOME"), mac);
+    // The disk watched (DiskWatch.h): a page's tree and Source Control
+    // follow it, and a clean document no window shows follows its file.
+    o.watchDisk = true;
     takeStopSignals();
     Shared::HostServer server;
     std::string error;

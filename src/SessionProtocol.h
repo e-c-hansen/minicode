@@ -69,7 +69,17 @@
 // writes, the answer the file's stamp as written, and every other renderer
 // that hears DocDirty is told the host wrote the file (flag 2, with the
 // version written and the stamp), so a window shows a page's save as its
-// own. Pure C++17, no I/O.
+// own.
+//
+// The disk (stage 7, DiskWatch.h): a host that watches it (Welcome flag 4)
+// takes FsRead {"op": "watch", "paths": [the folders the renderer's trees
+// have open], "hidden"}, which replaces what that renderer said before, and
+// to a renderer whose Hello had flag 32 sends FsChanged with each of those
+// folders' listings again when it changed and whether Source Control may
+// have, and DocDisk when a document's file changed under unsaved changes,
+// went, or is in step again. A clean document no app's window has open
+// follows its file (an edit of the host's, one step). DocReload asks the
+// host to put the file's text in place of a document's. Pure C++17, no I/O.
 #pragma once
 
 #include <cstdint>
@@ -103,7 +113,8 @@ enum class Kind {
                  // DocDirty (a renderer from before it would drop the connection
                  // at a kind it does not know); flag 16, with 4: the app saves its
                  // documents through the host (DocSave), so a guest's save of one
-                 // its window shows is not refused
+                 // its window shows is not refused; flag 32: it hears the disk
+                 // (FsChanged, DocDisk)
     DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved.
                  // From a renderer that only reads, a view of the document as it is: it
                  // never makes one, and keeps none open (DocGone when there is none, or
@@ -134,7 +145,8 @@ enum class Kind {
     Welcome,     // client: the renderer's id; v: the base of the ids it makes (kIdRange);
                  // name: the folder; flag 1: the host saves documents (DocSave);
                  // flag 2: it saves for apps too (an app's encoding kept, the stamp
-                 // written in the answer, DocDirty flag 2 to the others)
+                 // written in the answer, DocDirty flag 2 to the others); flag 4: it
+                 // watches the disk (FsRead's "watch", DocReload)
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
     DocEdited,   // doc, v, by, seq, ops, ops16, flag (1 undo, 2 redo), select
     DocUndone,   // doc, req, outcome
@@ -179,6 +191,20 @@ enum class Kind {
                  // the host wrote the file (for another renderer, which had DocSaveDone),
                  // v the version written, json {path, encodingName, stamp}, sent
                  // whether or not the state flipped
+    // The disk (stage 7: the host watches it, DiskWatch.h). FsRead's "watch"
+    // op names the folders a renderer's trees have open; what follows goes
+    // only to renderers whose Hello had flag 32, and DocReload only to a
+    // host whose Welcome had flag 4.
+    FsChanged,   // host → renderer: window (whose folder), json {"root", "listings":
+                 // [a "list" answer for each open folder that changed, as FsData's],
+                 // "git": true when Source Control may have changed}
+    DocDisk,     // host → renderer: doc, flag (0 in step with its file again, 1 changed
+                 // on disk with unsaved changes kept, 2 deleted on disk), v
+    DocReload,   // renderer → host: doc, req: the file's text in place of the
+                 // document's, one undoable step ("Reload from Disk"), counted saved;
+                 // after the renderer's edits, in order. A guest may send it
+    DocReloadDone,  // host → renderer: doc, req, outcome (Done or Refused), v, json
+                    // {path, ok, reason, why}
 };
 
 const char* kindName(Kind k);

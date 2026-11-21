@@ -75,6 +75,10 @@ public:
     // buffer over a file changed on disk, and counts it unsaved against the
     // new file); the stamp is not known.
     void markSavedAs(std::u16string saved);
+    // The file was read again and still holds the saved text (a write that
+    // changed nothing, a touch, the file back after it went): its stamp now,
+    // and not gone; the text is not touched, so an edited one stays dirty.
+    void confirmSaved(const FolderSearch::FileStamp& stamp);
 
     // The bytes a save writes: the text in its encoding, with its mark.
     // False, with *why, when the text holds a lone surrogate, or a

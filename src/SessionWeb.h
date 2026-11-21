@@ -937,8 +937,10 @@ public:
     const Typesets& typesets() const { return typesets_; }
     // The folder changed on disk, or the window's git did something (any
     // thread): pages showing Source Control get a fresh read, at most one a
-    // second. A host that watches nothing never calls it; its pages read
-    // again when asked (the page's refresh, a reconnect).
+    // second. The Mac calls it from the window's FSEvents callback; the
+    // server calls it itself when a host that watches the disk says Source
+    // Control may have changed (FsChanged). With neither, pages read again
+    // when asked (the page's refresh, a reconnect).
     void gitChanged();
 
 private:
@@ -987,6 +989,13 @@ private:
     // The most cells a page may say its pane holds, either way.
     static constexpr int kMaxTermCells = 1000;
     void onList(Conn& c, const Json& j);
+    // The disk (a host that watches it, DiskWatch.h): the folders the
+    // pages' trees have open, told to the host when they change, and what
+    // it says changed handed to the pages.
+    void onWatch(Conn& c, const Json& j);
+    void updateWatch();
+    void takeDisk();
+    void onReload(Conn& c, const Json& j);
     void onOpen(Conn& c, const Json& j);
     void onReadFile(Conn& c, const Json& j);
     void onClose(Conn& c, const Json& j);

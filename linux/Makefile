@@ -28,7 +28,7 @@ CORE := ../src/SyntaxHighlighter.cpp ../src/MarkdownParser.cpp ../src/MarkdownEm
         ../src/Regex.cpp ../src/FindRules.cpp ../src/EditSpans.cpp ../src/Text.cpp ../src/Document.cpp ../src/UndoHistory.cpp \
         ../src/Ot.cpp ../src/SessionProtocol.cpp ../src/SessionHost.cpp ../src/SessionClient.cpp ../src/SessionServer.cpp \
         ../src/SessionWeb.cpp ../src/SessionWebPage.cpp ../src/SessionWebViewers.cpp ../src/SessionWebTypeset.cpp ../src/SessionWebGit.cpp ../src/SessionWebAccess.cpp ../src/SessionFiles.cpp ../src/SqliteRead.cpp \
-        ../src/HostPty.cpp ../src/TerminalStream.cpp ../src/TerminalScreen.cpp \
+        ../src/HostPty.cpp ../src/DiskWatch.cpp ../src/TerminalStream.cpp ../src/TerminalScreen.cpp \
         ../src/LatexDoc.cpp ../src/LatexLog.cpp ../src/LatexScratch.cpp ../src/SyncTex.cpp \
         ../src/Csv.cpp ../src/JsonOutline.cpp ../src/Notebook.cpp ../src/FileSniff.cpp ../src/HtmlPage.cpp ../src/Json.cpp ../src/LspClient.cpp ../src/TermLinks.cpp ../src/ControlProtocol.cpp ../src/IdeLink.cpp ../src/PageCheck.cpp ../src/ClaudeHooks.cpp ../src/ClaudeUsage.cpp ../src/ClaudeStatusLine.cpp ../src/AttentionBoard.cpp ../src/AgentIndex.cpp ../src/AgentTranscript.cpp ../src/ProcessTable.cpp ../src/RunFile.cpp ../src/Runnables.cpp ../src/ProcFs.cpp ../src/AgentEvidence.cpp ../src/AgentView.cpp ../src/InlineAgent.cpp \
         ../src/LspProtocol.cpp ../src/LspText.cpp ../src/LspServers.cpp \

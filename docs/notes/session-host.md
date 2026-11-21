@@ -192,6 +192,34 @@ top of a turn, never inside a text system callback.
 - **A tree listing runs on the host's thread**, between typing messages;
   hence `kMaxListed`. Stage 7's bigger reads belong on a worker, and so
   does the host's save (synchronous there, an F_FULLFSYNC each, for now).
+- **The host follows no document an app's window has open**
+  (`shownByApp`, stage 7's watching): the window follows its own tab and
+  sends its reload as an edit, then DocSaved; the host following it too
+  would apply the reload twice (the window's edit moved past the host's,
+  inserting the new text again). A page's Reload is refused the same
+  way.
+- **FSEvents names folders as the system spells them** (/private/tmp for
+  /tmp): each change is spelled again under the root as it was given, and
+  a document whose path is spelled otherwise than the watched root is
+  matched by its folder's real place (`Doc::realDir`). Its journal also
+  trails a little: a folder made just before a stream starts can still
+  come as a change after it (`diskwatch:system` lets it pass first).
+- **g++ cannot read CoreServices' headers** (blocks in MDItem.h, xpc's
+  attributes), so the Mac's FSEvents watcher is built only with clang;
+  under `make test CXX=g++-16` on the Mac `Watcher::make()` is null and
+  the `diskwatch:system`, `headless` and `page` groups say they were
+  skipped. The core links `-framework CoreServices` on the Mac
+  (`CORELIBS`: the tests and `mutible-cli`).
+- **inotify watches one folder at a time**: a folder made must be walked
+  as it comes (IN_CREATE with IN_ISDIR) or a file in it is never seen, and
+  a folder moved keeps its watches under the old name (IN_MOVE_SELF drops
+  them). A walk of a large folder takes a while, so it runs on the
+  watcher's thread, never the host's; `Watcher::settled()` says when the
+  last `watch()` was applied (`SessionHost::diskWatchSettled`, for checks).
+- **A watch is a read, not a new kind**: FsRead's "watch" to an older
+  host is answered "unknown op"; FsChanged and DocDisk go only to Hello
+  flag 32, DocReload only to a host whose Welcome has flag 4 (the trap
+  below).
 - **A message kind a peer does not know drops the connection**, both ways
   (`takeLines` takes a line that does not decode for one that is not a
   message): a new host sending DocDirty to an app from before it, or a
@@ -593,7 +621,8 @@ document, terminal (dying ones included) or window is held
   wraps (2026-11-18, "VTE pans").
 - Saving, dirty and the disk are the app's while one of its windows has
   the document open; the host saves what none has, for a browser's page
-  (stage 7's first write, "Saving through the host", below). Backups are
+  (stage 7's first write, "Saving through the host", below), and follows
+  the disk for what none has ("The host watches the disk", below). Backups are
   the app's while one of its windows has the document open, and the
   headless host's once none has (step 3, below).
 
@@ -1704,8 +1733,10 @@ viewers, Quick Open's list) as new ops, not new messages.
 - **The page** keeps the open folders (`T.open`), each folder's last
   listing and errors, lists a folder each time it is opened (so it is
   current when opened), lists every open folder again on ↻, on `hello`
-  (every reconnect) and when the page becomes visible again. There is no
-  watching: the host watches nothing yet (stage 7). On a page with
+  (every reconnect) and when the page becomes visible again, and says
+  which folders it has open (`watch`) whenever that changes: on a host
+  that watches the disk their listings come again by themselves when
+  they change ("The host watches the disk", below). On a page with
   `canOpen` (editable, with `Options::open`) a click on a file
   sends `open` (the second click of a double-click, or Command/Control,
   keeps the tab) and, once `opening` says ok, waits for a document with
@@ -2221,9 +2252,11 @@ every page, editable or not.
   the folder and .git inside it: an agent's edit, git in a terminal, the
   window's own panel. **A limit**: a folder below the repository's top
   level sees no .git events, so a commit made elsewhere shows at the next
-  change under the folder (as the tree's git colors). A headless host
-  watches nothing: its pages read again on ↻, `hello` (a reconnect) and
-  `visibilitychange`.
+  change under the folder (as the tree's git colors). A host that watches
+  the disk (`mutible host`, and the Mac's own since stage 7's watching:
+  "The host watches the disk", below) says so with FsChanged's `git`,
+  which calls `gitChanged` too; the page still reads again on ↻, `hello`
+  (a reconnect) and `visibilitychange`, for a host that does not.
 - **The page.** `#sidemodes` (Files, Source Control) swaps `#tree` for
   `#git` (`#gitsum` the branch and count, `#gitlist` the rows: name,
   folder, letter in the tree's git colors, `paletteJson`'s new `git`);
@@ -2777,19 +2810,158 @@ changed and deleted files, and auto-save through it. Not run here (no
 GUI on this machine for the builder): every GUI check above; the dot's
 look and timing on screen need the owner's eyes.
 
+### The host watches the disk (stage 7)
+
+Before this, a headless host's page read its tree and Source Control again
+only on ↻, on coming back to the page or on a reconnect, and a document on
+a headless host never followed its file. Now the host watches the disk:
+`src/DiskWatch.{h,cpp}` is the core's one platform interface for the
+system's notices, and `SessionHost.h`'s "The disk" says what the host does
+with them.
+
+- **Who watches.** `SessionHost::watchDisk(true)`, before any renderer
+  (the Welcome says it, flag 4): `mutible host` (`HostOptions::watchDisk`,
+  set by `runHost`; the checks choose, default off) and the Mac's own
+  in-process host (`SessionLink.mm`'s `Start`, for a window's page). GTK's
+  in-process host does not (it has no page server yet); a GTK window on a
+  headless host has the headless host's watching, as any renderer does.
+- **What it watches** (`Host::watchRoots`, handed to the watcher whenever
+  `watchGeneration` moves): the headless host's folder and every window
+  folder a renderer named in a watch (`readRoot(window)`, so the Mac's
+  page watches its window's folder), each with the folders open in some
+  tree (`FsRead {"op": "watch", "paths", "hidden"}`, a renderer's list
+  replacing its last, at most 4,096, each `cleanRelative`) and every held
+  document's folder (so a file opened from build output follows too).
+- **The filter** (`DiskWatch::Filter`, pure): not .git's insides but
+  .git, .git/refs and .git/refs/heads (an index or HEAD written through
+  its lock, a branch moved); not what the ignore files ignore
+  (`Ignore::Rules`, entered folder by folder, each folder's files read
+  once) nor a node_modules, unless open in a tree (then `OpenOnly`: its
+  listing follows, Source Control does not, and what is below it only
+  when open too).
+- **The systems** (`DiskWatch::Watcher`): inotify watches one folder at a
+  time, so the Linux watcher walks the filter's folders on a thread of its
+  own (at most `kMaxFolders`, 16,384, as GTK's LspWatcher), adds a watch
+  for each folder made (IN_CREATE with IN_ISDIR, reported `below`), drops
+  those that go or move, reads the filter again when a .gitignore or
+  .ignore changes, and turns IN_Q_OVERFLOW into each root `below`; it asks
+  for IN_CLOSE_WRITE, not IN_MODIFY, so a large write is one event. When
+  the open folders change it walks only the folders newly open and drops
+  only those no longer taken. FSEvents watches a whole tree: one stream a
+  root on a serial queue of the watcher's (`FSEventStreamSetDispatchQueue`,
+  latency 0.05 s, NoDefer), folder events only, MustScanSubDirs and
+  dropped events as `below`, and the host drops what the filter does not
+  take. Both hand changes over through a pipe the host's poll(2) waits on
+  (`Queued`: 65,536 waiting at most, then each root `below`). Elsewhere
+  (g++ on the Mac, Traps) `make()` is null and nothing comes.
+- **Bursts** (`DiskWatch::Coalescer`): a batch is due 0.15 s after its
+  last change or 1 s after its first, whichever is first; each folder
+  once, none under one changed `below`; past 4,096 folders, each root
+  `below`. The host's loop folds the batch's wait into its poll timeout.
+- **The trees** (`Host::diskChanged`): every renderer that hears the disk
+  (Hello flag 32, `Client::hearDisk`) gets FsChanged {window, json: {root,
+  listings, git}} with the "list" answer again of each folder it has open
+  that changed (read once a batch per root and dotfile rule; at most 256
+  a batch), so a folder that went comes as its error and the page closes
+  it. The web server keeps each page's open folders (`Conn::watched`,
+  from the page's `watch`, which the page sends with every open, close,
+  ↻, `hello` and return to the page), tells the host their union
+  (`updateWatch`, again when a page goes), and sends each listing as
+  `tree` to the pages that have that folder open (`takeDisk`).
+- **Source Control**: `git` is true when a counted change was in a folder
+  not ignored; the server calls `gitChanged()`, whose read waits out its
+  second as before. A folder below the repository's top level sees no
+  .git events, as the Mac's window's stream does not.
+- **Documents** (`lookAtDisk`, `SessionFiles.h`'s `diskAction` and
+  `readDiskText`): a document with a path whose folder changed, and that
+  no app's window has open, is looked at: its stamp first (the host's own
+  write or read, or the stamp the last look saw, reads nothing), then the
+  file (64 MB at most). The file still holds the saved text: its stamp
+  taken (`Document::confirmSaved`), gone no longer. Changed and the
+  document clean: followed, the one range that differs as the host's own
+  step, "Reload from Disk" (by 0, sent to every seat as any edit is,
+  undoable), counted saved with the stamp read. Changed under unsaved
+  changes, or no longer text: marked changed on disk (`Doc::disk` 1),
+  never written over; its save is refused "changed" until a person says to
+  overwrite, as before. Deleted: gone (2), unsaved, its text kept; back
+  with the saved text, in step; back with other text and nothing typed,
+  followed. Renderers that hear the disk get DocDisk {doc, flag 0, 1 or 2}
+  when that moves, and the state's documents say `"disk": "changed"` or
+  `"gone"`. A host save, an app's DocSaved and a reset put it back to 0.
+- **Reload** (DocReload {doc, req}, answered DocReloadDone {outcome, v,
+  json {path, ok, reason, why}}; a guest may send it, and only to a host
+  whose Welcome has flag 4, `Client::requestReload`): the file's text in
+  place of the document's, the same step, undoable (the Mac's Reload by
+  choice forgets the history; here a page's mistake is one Undo away).
+  Refused for a document an app's window has open ("reload it there"),
+  with no file, gone, or not text.
+- **The page**: `#disknote` in the doc bar says "Changed on disk" or
+  "Deleted on disk" (its title says what a save does), the tab is in
+  italics, and an editable page on a host that reloads (`canReload` in the
+  hello) shows Reload beside Save for a changed document, sent once the
+  page's edits are confirmed (`afterSync`); `reloaded` says why when it
+  was refused.
+- **On the Mac's own host the windows keep their own watching**: the
+  window's FSEvents stream still refreshes its tree, its git colors and
+  the page's `gitChanged` (`sessionFolderChangedOnDisk`), and its clean
+  tabs follow the disk themselves (`followCleanTabInBackground:`), telling
+  the host with DocSaved; the Mac's client does not hear the disk (no
+  Hello flag 32), and the host follows no document a window has open. The
+  host's stream serves only the page's tree and Source Control. **What
+  could move later**: the window's tree refresh (`TreeRefresh::plan`'s
+  batches), its git colors' trigger, the page's `gitChanged` hook and a
+  clean tab's following could all hear the host's notices instead (one
+  stream for both, the filter shared), once the window is a renderer that
+  hears the disk; GTK's tree and LspWatcher monitors likewise.
+
+#### Checks
+
+`make test`'s `diskwatch:*` (tests/session_disk_tests.inc): `paths`
+(`under`, `relativeTo`, `cleanRelative` over seven bad paths); `coalesce`
+(the quiet time and the most, a trailing slash, below folding what is
+under it, the cap folding into each root); `filter` (a scratch folder with
+.gitignore files at two levels: .git's insides, ignored folders, a
+node_modules at two depths, a subfolder's own file, the same opened in a
+tree, malformed open folders); `reload-rules` (`diskAction`'s table, and
+`readDiskText` over UTF-16, a missing file, a folder, bytes); `host` (a
+Host over the encoding with a guest that hears the disk, a reader, an
+older page that does not, an editor: the watch's answer and
+`watchRoots`, bad paths left out, a file made in an open folder listed to
+the trees that have it and to no other, an ignored open folder listed
+with no git, .git's insides and node_modules nothing, .git itself git
+only, a `below` listing every open folder, a folder gone listed as its
+error; a clean document following as "Reload from Disk", and no edit when
+nothing changed; unsaved changes marked, DocDisk to those that hear, the
+state's `disk`, a save refused; the guest's Reload, Undo taking it back;
+deleted, Reload refused, back in step; gone and back with other text
+followed; an app's window holding it, the host leaving it, Reload refused
+with its sentence, followed once the app lets go; a document's ignored
+folder watched but listed to no tree; a renderer going moving the
+generation; a host that does not watch; the four kinds through the
+encoding); `system` (the real watcher: a node_modules write counting for
+nothing, a file's folder, a folder made after the watch began and a file
+in it, node_modules once open, no roots); `headless` (`mutible host`'s
+HostServer with watching, over its socket: a file made reaching the
+renderer as its folder's listing with git, a document following its
+file, marked under typing, Reload, deleted); `page` (a page of that host:
+its tree following a file made with nobody asking, the page's watch list
+replaced, a document changed under the page's typing marked in the state,
+Reload with the file's text in the page and the mark gone). Not run here:
+the page's look (the note, Reload, the italic tab) needs the owner's eyes,
+and no GUI suite checks the Mac's own host watching for its page.
+
 ### Still to do
 
-- **Stage 7, after the Mac's saves** (in order of value): GTK's tabs
+- **Stage 7, after the watching** (in order of value): GTK's tabs
   saving through the host the same way (its Hello's flag 16, its writer
-  asking the host), so a page may save what a GTK window shows; Save As
-  through the host (the Mac's Save As writes its new path through the
-  host now, but the page cannot name a file); Reload from Disk and a
-  clean document following the disk on the host (it watches nothing
-  yet; the Mac tells it with DocSaved after following); watching the folder, so the page's tree and a headless host's
-  Source Control follow the disk (FSEvents on the Mac, inotify on Linux,
-  in the host); Save As and a new file's name from the page; Quick Open's
-  list and Find in Folder as host reads; the heavier reads and the write
-  on a worker rather than the host's thread.
+  asking the host), so a page may save what a GTK window shows; the
+  windows hearing the host's watching instead of their own streams
+  ("The host watches the disk", what could move); Save As and a new
+  file's name from the page (the Mac's Save As writes its new path
+  through the host now, but the page cannot name a file); Quick Open's
+  list and Find in Folder as host reads; the heavier reads, the listings
+  FsChanged carries, and the write on a worker rather than the host's
+  thread.
 - Lines are re-sent whole per edit; a long line typed into from a browser
   wants character splices.
 - No snapshot or patch messages exist yet: the view polls the host's state
@@ -2802,9 +2974,7 @@ look and timing on screen need the owner's eyes.
 - Mac terminals opened before the setting is on are the app's own.
 - Typing the session had not confirmed when the connection drops is lost
   (the page says so); it is not resent on reconnecting.
-- The tree does not follow the disk by itself: the host watches nothing
-  yet. Stage 7's watching should send the page a folder's listing when it
-  changes. A headless host's page cannot open text files (no window
+- A headless host's page cannot open text files (no window
   decides tabs); it shows pictures, PDFs, media, HTML, tables, notebooks
   and databases (R3), and a LaTeX document's text, saying the window's
   own page shows its pages (it typesets nothing). Source Control, the

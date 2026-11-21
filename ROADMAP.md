@@ -37,7 +37,7 @@ says what each built and what is left.
 | 5 | Terminals in the host | Done |
 | 6 | `mutible host`, attach, reattach, the host's own backups | Done on both; the default flips later |
 | 6b, 8b | The browser's view, read-only and editable | Done (R3 to R7) |
-| 7 | Workspace I/O in the host | Started: the tree's listings and file reads (2026-11-18), saving from a headless host's page with the host's dirty state (2026-11-21), and the Mac's tabs saving through the host, so a page may save what a Mac window shows (2026-11-21). Next: GTK's tabs saving through the host, Reload and watching the disk in the host, Quick Open and Find in Folder as host reads |
+| 7 | Workspace I/O in the host | Started: the tree's listings and file reads (2026-11-18), saving from a headless host's page with the host's dirty state (2026-11-21), the Mac's tabs saving through the host, so a page may save what a Mac window shows (2026-11-21), and the host watching the disk (inotify, FSEvents): a page's tree and Source Control follow it, and a clean document no window has open follows its file, one with unsaved changes marked changed on disk with Reload (2026-11-21). Next: GTK's tabs saving through the host, the windows hearing the host's watching instead of their own, Quick Open and Find in Folder as host reads |
 | 8 | The Mac over SSH | Not started |
 | 9 | Git, language servers, formatters, agents and LaTeX into the host | Not started |
 
