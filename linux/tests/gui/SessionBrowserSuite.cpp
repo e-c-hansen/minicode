@@ -27,6 +27,11 @@
 //     documents keep four typesets, the oldest dropped;
 //   - the page's Source Control (`git` watch) reads again after a commit
 //     made in the folder;
+//   - the host watches the disk for the page (a `watch` of the root, the host's
+//     watcher settled on more than no folder): a file
+//     made in the folder reaches it as a new `tree` listing and the file
+//     removed as another, a tracked file changed as a newer `git` message,
+//     none asked for;
 //   - a worktree's review page open in the window is listed in the state's
 //     `reviews` (kind, title, on show), `review` with its `page` gives its
 //     files, and closing the tab drops it from the list; so is a commit's
@@ -44,6 +49,7 @@
 #include "Latex.h"
 #include "Json.h"
 #include "SessionBrowser.h"
+#include "SessionHost.h"   // diskWatchSettled, for the watch checks
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -887,6 +893,50 @@ MC_GUI_SUITE(session_browser) {
     MCGuiWait("a newer git message without it", 20, [] {
         if (!gWs3.latest("git", &gMsg)) return false;
         return gMsg["version"].asInt() > gVersion && gMsg.dump().find("sbt_new.txt") == std::string::npos;
+    });
+
+    // ---- 6b. The in-process host watches the disk for the page
+    MCGuiStep("the page watches the folder's root and lists it, as the real page does", [] {
+        Json o = Json::object();
+        o.set("t", Json("watch"));
+        Json paths = Json::array();
+        paths.push(Json(""));
+        o.set("paths", std::move(paths));
+        gWs3.sendJson(o);
+        Json l = Json::object();
+        l.set("t", Json("list"));
+        l.set("path", Json(""));
+        gWs3.sendJson(l);
+    });
+    MCGuiWait("the listing, without the file", 20, [] {
+        return gWs3.latest("tree", &gMsg) && gMsg["path"].asString().empty() && gMsg["entries"].isArray();
+    });
+    // The watcher walks the folders on a thread of its own: a file made
+    // before it watches them would have no notice, so wait until it watches
+    // what the host asked of it last (SessionHost::diskWatchSettled).
+    MCGuiWait("the in-process host's watcher watching the folder", 20, [] {
+        // The window the page serves (W(0), not the second window's link).
+        SessionLink::Link* l = W(0).editor ? W(0).editor->sessionLink() : nullptr;
+        Shared::SessionHost* h = l ? l->inProcessHost() : nullptr;
+        std::size_t folders = 0;
+        // A short wait for the host's thread to answer (0 never sees it).
+        return h && h->diskWatchSettled(300, &folders) && folders > 0;
+    });
+    MCGuiStep("a file made on disk", [] { MCGuiWriteFile(MCGuiProjectFile("sbt_watch.txt"), "made\n"); });
+    MCGuiWait("a new listing of the root that has it, no refresh sent", 20, [] {
+        return gWs3.latest("tree", &gMsg) && gMsg.dump().find("sbt_watch.txt") != std::string::npos;
+    });
+    MCGuiStep("the file removed", [] { unlink(MCGuiProjectFile("sbt_watch.txt").c_str()); });
+    MCGuiWait("a new listing without it", 30, [] {
+        return gWs3.latest("tree", &gMsg) && gMsg.dump().find("sbt_watch.txt") == std::string::npos;
+    });
+    MCGuiStep("a tracked file changed in the repository", [] {
+        gVersion = gWs3.latest("git", &gMsg) ? gMsg["version"].asInt() : 0;
+        MCGuiWriteFile(MCGuiProjectFile("sbt_base.txt"), "changed on disk\n");
+    });
+    MCGuiWait("a newer git message that lists it", 30, [] {
+        if (!gWs3.latest("git", &gMsg)) return false;
+        return gMsg["version"].asInt() > gVersion && gMsg.dump().find("sbt_base.txt") != std::string::npos;
     });
 
     // ---- 7. A worktree's review page
