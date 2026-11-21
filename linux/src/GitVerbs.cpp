@@ -695,6 +695,7 @@ void GitPanel::finishSync(GitUi::SyncOp op, const GitUi::SyncPlan& plan, const G
     updateSyncButton();
     // The counts, the graph and the lists as they are now.
     if (ran && (active_ || reviewOpen_)) runRefresh();
+    if (ran && onSynced) onSynced();
 }
 
 // git.autofetch: called every 30 seconds by the panel's timer (and by the

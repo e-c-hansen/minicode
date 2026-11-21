@@ -74,6 +74,12 @@ public:
     // sidebar's badge.
     std::function<void()> onChange;
 
+    // The status bar's branch item (StatusBranchItem.h) from the same
+    // status, as the core's Git::statusBranch words; not shown outside a
+    // repository. onBranchChange runs on the main loop when it changed.
+    const Git::StatusBranch& statusBranch() const { return branch_; }
+    std::function<void()> onBranchChange;
+
     // For the checks.
     unsigned runs() const { return runs_; }   // statuses applied
     bool inRepository() const { return !top_.empty(); }
@@ -94,6 +100,7 @@ private:
     std::string gitDir_;
     bool looked_ = false;    // a look finished for this root
     std::shared_ptr<const Git::Decorations> decorations_;
+    Git::StatusBranch branch_;
     unsigned generation_ = 0;
     bool running_ = false, again_ = false;
     guint timer_ = 0;

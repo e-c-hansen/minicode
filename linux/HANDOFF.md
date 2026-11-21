@@ -8870,3 +8870,31 @@ show; the file shown last is shown meanwhile).
   the checks. A reload from an edit keeps the choice. The header's names
   have no letter tooltip. The guess leaves a first row with an empty field
   alone (the core's rule), so the reader turns it on. Suite `csv_header`.
+
+### 140. The status bar's branch (the Mac's 03e1c61d; November 2026)
+
+- **What.** The left end of the status bar shows the branch, as VS Code's
+  bottom left: `StatusBranchItem.{h,cpp}`, a box of two flat buttons, the
+  name (the short hash when detached, `*` with uncommitted changes) and the
+  counts (`↑2 ↓1`, hidden without an upstream). The words are the core's
+  `Git::statusBranch`; the tooltip is its `tip`; the item hides outside a
+  repository. No glyph before the name (the Mac draws an SF Symbol; the
+  icon themes have no branch name to count on).
+- **Where it reads.** `TreeGitColors` already runs `git status
+  --branch` for the tree's colors (`decorationArgs`), so it now also keeps
+  `Git::statusBranch` of that status and calls `onBranchChange` on the main
+  loop when it changed (to not shown too, when the folder leaves a
+  repository). The item runs no git of its own.
+- **After a sync.** A fetch, pull or push moves only refs, which the
+  tree's watches miss (and the panel does not refresh while hidden), so
+  `GitPanel::onSynced` (end of `finishSync`) makes `TreeGitColors` look
+  again; without it the counts stayed `↑1 ↓0` after the item's own Sync.
+- **The clicks.** The name calls `GitPanel::chooseBranch()` (the branch
+  picker in the palette), the counts `GitPanel::sync()`, the panel's own
+  Switch Branch and Sync Changes.
+- **Checks.** `status_branch` (`StatusBranchSuite.cpp`): hidden in a
+  folder outside git; `main` and `↑0 ↓0` in a clone of a bare remote; `*`
+  after an edit once the status is read again; `↑1 ↓0` after a local
+  commit; a click on the counts syncs (level again, the bare remote has the
+  commit); a click on the name opens the picker; detached HEAD shows the
+  short hash.

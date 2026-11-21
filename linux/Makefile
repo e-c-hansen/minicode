@@ -77,7 +77,7 @@ GUI := src/main.cpp src/ClickCount.cpp src/FileTree.cpp src/TreeFollow.cpp src/T
        src/LargeFileView.cpp src/LaunchOptions.cpp src/Detach.cpp \
        src/Bench.cpp src/StartupLog.cpp src/WhenDrawn.cpp \
        src/Zoom.cpp src/NavHistoryUi.cpp \
-       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/mutible-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/UsageView.cpp src/StatusLineOffer.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/ChangeReviewPage.cpp
+       src/ControlServer.cpp src/IdeLinkServer.cpp src/ControlCommands.cpp src/ProcessMonitor.cpp src/ProcessesPanel.cpp ../tools/mutible-cli.cpp src/AgentModel.cpp src/AgentsPanel.cpp src/UsageView.cpp src/StatusLineOffer.cpp src/StatusBranchItem.cpp src/EvidencePage.cpp src/AgentWorktrees.cpp src/ChangeReviewPage.cpp
 
 SRCS := $(GUI) $(CORE)
 

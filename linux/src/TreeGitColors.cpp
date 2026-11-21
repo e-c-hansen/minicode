@@ -93,6 +93,10 @@ void TreeGitColors::setRoot(const std::string& root) {
     const bool had = decorations_ && !decorations_->empty();
     decorations_.reset();
     if (had && onChange) onChange();
+    if (branch_ != Git::StatusBranch()) {
+        branch_ = Git::StatusBranch();
+        if (onBranchChange) onBranchChange();
+    }
     if (!root_.empty()) look();
 }
 
@@ -169,11 +173,14 @@ void TreeGitColors::look() {
             }
         }
         std::shared_ptr<const Git::Decorations> decorations;
+        Git::StatusBranch branch;
         if (!top.empty()) {
             GitResult st = runGit(top, Git::decorationArgs());
             if (st.ok()) {
+                const Git::Status status = Git::parseStatus(st.out);
                 decorations = std::make_shared<const Git::Decorations>(
-                    Git::Decorations::fromStatus(Git::parseStatus(st.out)));
+                    Git::Decorations::fromStatus(status));
+                branch = Git::statusBranch(status);
             } else {
                 // The repository went (or status failed): look again next time.
                 top.clear();
@@ -182,7 +189,7 @@ void TreeGitColors::look() {
             }
         }
         const bool changed = (bool)decorations != (bool)old || (decorations && *decorations != *old);
-        deliver(alive, [this, gen, top, prefix, gitDir, decorations, changed] {
+        deliver(alive, [this, gen, top, prefix, gitDir, decorations, changed, branch] {
             running_ = false;
             if (gen != generation_) {
                 if (!root_.empty()) look();   // a new folder came while this ran
@@ -196,6 +203,10 @@ void TreeGitColors::look() {
             decorations_ = decorations;
             watchGitDir(gitDir);
             if (changed && onChange) onChange();
+            if (branch != branch_) {
+                branch_ = branch;
+                if (onBranchChange) onBranchChange();
+            }
             if (again_) {
                 again_ = false;
                 schedule();
