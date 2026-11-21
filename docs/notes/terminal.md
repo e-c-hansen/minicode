@@ -358,7 +358,16 @@ for full-screen programs. Both can be open at once.
   (asked under "always") is "Paste 1 line" with Paste as One Line. The question is a
   sheet on the grid's window (2026-11-16; a free dialog sat mid-screen
   where the window had been), the paste sent from its handler;
-  `askingPaste` while it is up, when another paste beeps. Secure keyboard entry: TerminalView polls termios
+  `askingPaste` while it is up, when another paste beeps. **Trap**
+  (2026-11-21): a check that pastes into a command it has just run must
+  wait for the screen's `bracketedPaste()` to go off, not only for
+  `busy`, which is YES as soon as `runCommand:` types (or queues) the
+  line, before zsh has read it and turned bracketed paste off as ZLE
+  ends: the paste went in markers, `wc` got the closing `ESC[201~` as
+  text, and the Ctrl+D after it landed mid-line, so it only flushed the
+  line and wc never ended (paste's flake on CI). Wait first for the
+  prompt with `zleReady` and bracketed paste on, since before ZLE starts
+  it is off too and a merely queued command would pass the wait. Secure keyboard entry: TerminalView polls termios
   (after output, and four times a second while a command runs) and sets
   the grid's `hiddenInput` for ECHO off with ICANON on (ZLE and full-screen
   programs turn ICANON off); the grid calls Enable/DisableSecureEventInput
@@ -769,6 +778,7 @@ text is in place in its section.
 - The terminal: **Trap** (2026-11-18): Ctrl+C typed while ZLE reads left the old B believed until zsh's SIGINT was handled, and a command typed in that moment lost its `ESC [` to the dying line editor and ran as `[9999~read ...` (terminal_paste's flake on CI).
 - The terminal: **Trap** (2026-11-20, zsh 5.9): a Ctrl+C that reaches zsh while ZLE is still reading and drawing a paste is lost: ZLE takes it while busy, then blocks in read() for the next key as if none had come, so no new prompt comes, and the next byte typed wakes ZLE only to abort the line and throw that input away (terminal_paste's flake on CI).
 - The terminal: Trap: the harness can run zsh; an agent's own shell may be refused it by the worktree guard.
+- The terminal: **Trap** (2026-11-21): a check that pastes into a command it has just run must wait for the screen's `bracketedPaste()` to go off, not only for `busy`, which is YES as soon as `runCommand:` types (or queues) the line, before zsh has read it and turned bracketed paste off as ZLE ends: the paste went in markers, `wc` got the closing `ESC[201~` as text, and the Ctrl+D after it landed mid-line, so it only flushed the line and wc never ended (paste's flake on CI).
 - The terminal: Trap: quote dropped paths with backslashes, never single quotes.
 - The terminal: **Trap** (round 9, 2026-11-19): until then the hint was the view's `toolTip`, and the checks read that property, so they passed while no user ever saw it.
 - The terminal: Trap: a CGColor taken from a temporary NSColor can be freed before it is retained; hold the NSColor with `objc_precise_lifetime` until then.
