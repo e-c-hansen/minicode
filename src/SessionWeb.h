@@ -13,7 +13,8 @@
 // folders, and reads a file of the folder to show on the page alone
 // (`readfile`): the window's tabs are the window's. Editable
 // (Options::editable), it also types into the document on show and its
-// terminal, undoes through the host's history, asks for a save, opens a
+// terminal, undoes through the host's history, saves (through the app that
+// owns the disk, or a headless host's own write), opens a
 // file as a tab in the window and closes the window's tabs as the window
 // does, and asks the window's browser pane to open an http or https
 // address. Either way the page lists the window's browser tabs in a pane
@@ -131,6 +132,9 @@
 //   refused {id, seq, why}: an edit not made (the page drops what it has
 //           not had confirmed; a `doc` follows when it fell out of step)
 //   note    {text}: something to say (nothing to undo, a save not possible)
+//   saved   {doc, ok, version, path, reason, why, note, encoding}: how a
+//           save the host made for this page went (reason "changed" or
+//           "gone": the page may ask again with `overwrite`)
 //   gone    {id}: the document closed
 //   term    {id, cols, rows, base, hist, screen, cursor, alt, title}: a
 //           terminal whole: `hist` the newest scrollback lines (oldest
@@ -216,7 +220,10 @@
 //           cmd, at}: an edit of the document on show; cmd "newline", "tab",
 //           "backtab" or "backspace" with `at` the selection it acted on
 //   undo    {doc, redo}
-//   save    {doc}: Options::save (the app that owns the disk), else a note
+//   save    {doc, overwrite}: Options::save (the app that owns the disk),
+//           else the host writes it (Client::requestSave, a headless
+//           host's: SessionFiles.h's saveDocument), answered `saved`;
+//           `overwrite` after a refusal for a file changed or gone on disk
 //   tkey    {term, key, mods}, ttext {term, text, mods}, tpaste {term, text}:
 //           keys for the terminal on show, encoded as its screen's modes ask
 //           (TerminalScreen::encodeKey, encodeChar, encodePaste)
@@ -790,8 +797,10 @@ struct Options {
     bool editable = false;
     // Saves a document the way the app that owns the disk does (the Mac's
     // Cmd+S, its questions included), called on the server's thread once
-    // the host has every edit the pages made; false when it cannot. Unset:
-    // a page's save is answered with a note.
+    // the host has every edit the pages made; false when it cannot. Unset
+    // (a headless host): the host writes the file itself (DocSave), and
+    // the page hears how it went (`saved`); a host from before saving
+    // (its Welcome says) gets nothing, and the page a note.
     std::function<bool(DocId)> save;
     // Opens a file of the folder (the path held inside it, spelled under
     // `folder`) as a click in the window's own tree does: `keep` for a kept

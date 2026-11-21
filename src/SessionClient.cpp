@@ -19,6 +19,7 @@ void Client::connect(Send send) {
     if (readOnly_) h.flag = 1;
     else if (guest_) h.flag = 2;
     else if (keepsBackups_) h.flag = 4;
+    if (hearsDirty_) h.flag |= 8;
     send_(std::move(h));
 }
 
@@ -292,6 +293,33 @@ void Client::saved(DocId id) {
     pump();
 }
 
+std::uint64_t Client::requestSave(DocId id, std::uint64_t window, bool overwrite) {
+    if (!doc(id) || !(hostFlags_ & 1)) return 0;
+    Message m;
+    m.kind = Kind::DocSave;
+    m.doc = id;
+    m.window = window;
+    m.flag = overwrite ? 1 : 0;
+    m.req = ++nextReq_;
+    const std::uint64_t req = m.req;
+    // Behind this renderer's edits, so what is written holds them.
+    queue(std::move(m));
+    pump();
+    return req;
+}
+
+bool Client::saveAnswer(std::uint64_t req, SaveAnswer* out) {
+    auto it = replies_.find(req);
+    if (it == replies_.end() || it->second.kind != Kind::DocSaveDone) return false;
+    if (out) {
+        out->ok = it->second.outcome == Outcome::Done;
+        out->version = it->second.v;
+        out->json = std::move(it->second.json);
+    }
+    replies_.erase(it);
+    return true;
+}
+
 // ---------------------------------------------------------------- receiving
 
 void Client::setWake(std::function<void()> wake) {
@@ -340,6 +368,7 @@ void Client::process(Message&& m) {
     switch (m.kind) {
     case Kind::Welcome:
         id_ = m.client;
+        hostFlags_ = m.flag;
         if (m.v != idBase_) {
             idBase_ = m.v;
             idsUsed_ = 0;
@@ -360,9 +389,13 @@ void Client::process(Message&& m) {
         if (Doc* d = doc(m.doc)) d->broken = true;
         if (!abandoned_.erase(m.req)) replies_[m.req] = std::move(m);
         break;
+    case Kind::DocDirty:
+        if (dirtyListener_) dirtyListener_(m.doc, (m.flag & 1) != 0);
+        break;
     case Kind::DocText:
     case Kind::State:
     case Kind::FsData:
+    case Kind::DocSaveDone:
     case Kind::Pong: {
         const std::uint64_t req = m.req;
         if (!abandoned_.erase(req)) replies_[req] = std::move(m);

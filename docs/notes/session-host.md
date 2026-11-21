@@ -70,8 +70,11 @@ before the setting changed keeps the way it was opened until it closes.
   (an edit of the host's waiting to go in) is sent whole. The watch is let
   go when the document leaves the view and at shutdown.
 - **Saving** tells the host (`MCSessionDoc saved`) when the text written is
-  the tab's; dirty, the disk, backups and auto-save stay the Mac's (stage
-  7 moves them).
+  the tab's; dirty, the disk, backups and auto-save stay the Mac's. The
+  host can write a file itself since stage 7's first write (below,
+  "Saving through the host"), for a browser's page on a headless host;
+  the Mac's tabs do not use it yet, and the host never saves a document
+  an app's window has open.
 
 ## Undo is the host's
 
@@ -185,7 +188,26 @@ top of a turn, never inside a text system callback.
   tell why and reconnects every 2 s for ever. Only a socket with no
   credential cookie at all is refused (403).
 - **A tree listing runs on the host's thread**, between typing messages;
-  hence `kMaxListed`. Stage 7's bigger reads belong on a worker.
+  hence `kMaxListed`. Stage 7's bigger reads belong on a worker, and so
+  does the host's save (synchronous there, an F_FULLFSYNC each, for now).
+- **A message kind a peer does not know drops the connection**, both ways
+  (`takeLines` takes a line that does not decode for one that is not a
+  message): a new host sending DocDirty to an app from before it, or a
+  renderer sending DocSave to an older host, would cut the link mid
+  session. New host-to-renderer kinds go only to renderers whose Hello
+  asked (DocDirty: flag 8), and new renderer-to-host kinds only to a host
+  whose Welcome offers them (DocSave: flag 1, `Client::hostSaves`).
+- **The host's saved text is not proof of the disk.** DocOpen's text
+  counts saved with no stamp, and an app's DocSaved resets the stamp to
+  none, so the host never assumes the file holds its saved text: with no
+  stamp of its own write, `saveDocument` reads the file and compares
+  before writing (and takes the encoding from it, since the host's
+  `Model::Document` defaults to UTF-8 for a file an app read as
+  Windows-1252).
+- **Dirty is a whole-text compare when the lengths match**, so the host
+  compares for DocDirty only while some renderer hears it (`tellDirty`):
+  an app typing over a selection in a 25 MB file would otherwise compare
+  25 MB a keystroke on the host's thread with nobody listening.
 - **GtkStack moves the keyboard to a tab's first pane** when it shows
   another tab with the keyboard in the one going ("Terminal splits in the
   record"): `TerminalDock::activate` hands it to the tab's active pane.
@@ -521,7 +543,9 @@ document, terminal (dying ones included) or window is held
   below): clipped when larger, panned to the cursor since step 3, and at
   the pty's own grid when smaller, so plain output wraps where the pty
   wraps (2026-11-18, "VTE pans").
-- Saving, dirty and the disk are still the app's (stage 7). Backups are
+- Saving, dirty and the disk are the app's while one of its windows has
+  the document open; the host saves what none has, for a browser's page
+  (stage 7's first write, "Saving through the host", below). Backups are
   the app's while one of its windows has the document open, and the
   headless host's once none has (step 3, below).
 
@@ -639,7 +663,9 @@ it after the app quits; an in-process one while the app runs.
   link settles (what was typed goes before a headless link can be let
   go of). An explicit close of a tab or terminal still closes it on the
   host.
-- **The question.** Kept, since saving stays the app's until stage 7. On
+- **The question.** Kept, since an app's window still saves its own files
+  (the host saves only what no app's window has open: "Saving through the
+  host", below). On
   a headless host it has a fourth answer, Keep Unsaved: the unsaved files
   stay unsaved on the host for the folder's next window (and keep the
   host alive by its lifetime rule). In process the answers stay Save,
@@ -1500,9 +1526,10 @@ terminal on show. Read-only stays the default for the command line.
   queue, dispatches the app's client (so the tab has every edit), and
   saves the tab as `saveCurrentFile:` with a sender does for the tab on
   show (format and organize on save, the disk questions) or `saveTab:`
-  for one behind. A headless host has no `save`: the page says to save
-  from a window. The tabs' dirty dots are the host's dirty flags in the
-  state, polled every half second.
+  for one behind. Without `Options::save` (a headless host) the host
+  writes the file itself (below, "Saving through the host"). The tabs'
+  dirty dots are the host's dirty flags in the state, polled every half
+  second, and looked at again at once when one flips (DocDirty).
 - **Terminal keys** (`tkey {key, mods}`, `ttext {text, mods}`, `tpaste
   {text}`) are encoded on the server by the view's own screen, which saw
   the same modes as the host's (`TerminalScreen::encodeKey` with
@@ -2487,8 +2514,134 @@ then a read-only page whose tree click opens a tab of its own (the
 window's tabs unchanged, no × on them) that its × closes. The look of the
 panes and the ×s needs the owner's eyes.
 
+### Saving through the host (stage 7's first write)
+
+Stage 7 is the workspace's I/O in the host. Its first write: an editable
+page on a headless `mutible host` saves the document on show, and the
+host, not an app, writes the file and keeps its unsaved state against the
+disk. Before this the page said to save from a window, which a headless
+host does not have.
+
+- **The protocol** (additive, SessionProtocol.h): `DocSave {doc, req,
+  window, flag 1: overwrite}` (renderer to host) and `DocSaveDone {doc,
+  req, outcome, v, json}` (the answer: Done with the version written, or
+  Refused with `saveDoneJson`'s `{path, ok, reason, why, note, encoding,
+  created}`); `DocDirty {doc, flag 1: dirty, v}` to each renderer whose
+  Hello had flag 8 (`Client::hearDirty`), whenever a document's dirty flag
+  flips, whoever flipped it (an edit, an undo, a reset, a host save, an
+  app's DocSaved). The host's Welcome now carries flag 1 ("this host
+  saves", `Client::hostSaves`), and `Client::requestSave` sends nothing
+  (returns 0) to a host without it. DocSave goes through the client's
+  outbox, so it reaches the host after every edit the renderer sent before
+  it; the answer is `saveAnswer(req)` after a dispatch.
+- **The rules** are the core's `Shared::saveDocument` (SessionFiles.h),
+  the Mac's save as `docs/notes/sessions.md` gives it: `FolderSearch::
+  writeFileAtomically` (a link stays a link, hard links and other owners
+  in place, fsync'd), the file's own encoding and mark (UTF-16, a UTF-8
+  mark, Windows-1252, Utf8Raw round-trip byte for byte), the text's own
+  line endings, and a Windows-1252 file whose text now holds a character
+  it lacks written as UTF-8 with a note ("Saved x as UTF-8: Windows-1252
+  cannot store “→”", the Mac's words). **The disk check**: unchanged when
+  the file's stamp is the one the host wrote it with (`Model::Document`'s
+  stamp, set by `markSaved(written)` after a host save); with no stamp
+  (the host never wrote it: an app read it, or an app's DocSaved, which
+  resets the stamp), the file is read (`readFileStable`, 512 MB at most)
+  and decoded, and is unchanged when its text is the host's saved text,
+  which also gives the encoding. Otherwise `changed` (or `gone`, when the
+  file went and the document had text from it) is refused with a
+  sentence, and only `overwrite` writes: in the encoding the host last
+  wrote the file in when it has a stamp (as the Mac's Keep Mine writes
+  the tab's), else the file's own as it is now. A path the document
+  never had a file at (no stamp, saved text "") is made.
+- **Who may save what.** A guest's save (the page's server) is held to the
+  session's folder (`readRoot(window)`: a headless host's own): the
+  file's folder by its real place, and the file's own real place when it
+  is there, so a link out is refused (`outside`) and a link to nothing too
+  (`notfile`). And while an app's window has the document open (a seat of
+  a renderer whose Hello had flag 4, `shownByApp`), the guest's save is
+  refused (`app`, "x is open in a mutible window: save it there"): two
+  writers would each keep a stamp the other's write moves, and the app
+  has its own questions. A renderer that is neither guest nor reader (an
+  app, later) is not held to the folder. A reader's DocSave is refused
+  by `refusedFromViewer`, as every change is.
+- **After a save** the host's document takes the encoding written and the
+  stamp (`markSaved`), so its next save needs no read; the backups' rule
+  runs (`backupsChanged`: a saved document needs none) and `tellDirty`.
+  The write is synchronous on the host's thread, as the host's backups
+  are (an F_FULLFSYNC each); a larger file would want a worker, with
+  stage 7's bigger reads.
+- **The web server** (`Server::onSave`): with `Options::save` (the Mac)
+  nothing changed, but the document must be the window's (`allowed`).
+  Without it, `requestSave(doc, Options::window, overwrite)`, kept in
+  `Session::saveAsks` and answered to the asking page in `takeOutcomes`
+  as `saved {doc, ok, version, path, reason, why, note, encoding}`. The
+  hello's `canSave` is `editable && (Options::save || hostSaves())`. The
+  server's client hears DocDirty (`hearDirty`), which makes the loop look
+  at the state at once (`Session::dirtyCame`), so every page's dot
+  follows within a turn rather than the half-second poll.
+- **The page**: a Save button in the doc bar (`#savebtn`, on an editable
+  page with `canSave` for a document it edits; marked with a dot while
+  the host counts it unsaved, `drawSave` from `drawTabs` and
+  `drawSelection`), ⌘S (Ctrl+S elsewhere) in the editor as before and
+  now anywhere on the page but the terminal and fields (a document
+  keydown, so the browser's Save Page As never opens). The save waits
+  for the page's edits to be confirmed (`afterSync`), as before, and
+  sends `overwrite`. `saved`: ok shows "Saved x" (or the encoding note) as
+  a toast; `changed` or `gone` asks with `confirm()` ("…\n\nSave
+  anyway?") and saves again with overwrite; anything else is the toast of
+  `why`.
+- **The Mac is unchanged**: its page still saves through the window
+  (`Options::save`, the disk questions on its screen), and its tabs still
+  write with `writeText:toTab:interactive:` and tell the host
+  `DocSaved`. GTK is unchanged too.
+
+#### Checks
+
+`host:save-rules` (tests/session_save_tests.inc, `saveDocument` over real
+files): UTF-8 with CRLF kept and the written stamp the file's;
+Windows-1252 written back in it, then a character it lacks written as
+UTF-8 with the Mac's note; UTF-16 LE with its mark unedited byte for
+byte, UTF-8's mark kept, a UTF-8 file with a stray byte kept edited and
+not; changed on disk refused with the file as it was, then overwritten,
+in the encoding the host last wrote (Windows-1252 over an agent's UTF-8);
+deleted refused with nothing made, then made with overwrite; a new file
+made; the host's stamp trusted, then a writer since refused; held to a
+folder: a subfolder and a link inside written (still a link), five ways
+out refused with the outside file unchanged, a link to nothing and a
+folder refused; no path, a lone surrogate; the answer's JSON. `host:save`
+(a host over the encoding: an editor, a guest and a reader that hear
+DocDirty, an app): typing tells the hearers once, the guest's save
+writes CRLF and the version and tells them clean, a second save by the
+stamp, an agent's write refused with the sentence and then overwritten,
+an app's window holding it refused with its sentence, the app's own
+write and DocSaved clean and the host's next save comparing the file and
+writing, a document outside the folder refused to the guest and written
+by the editor, no file yet, a reader refused by the host with nothing
+written, a host from before saving (no Welcome flag) never sent DocSave,
+the messages through the encoding. `sessionweb:save` (a headless host
+over its socket, the page a scripted WebSocket, the state polled once a
+minute): `canSave`, the page's typing marking it dirty at once, `saved`
+ok with Windows-1252 and CRLF on disk and the dot gone, an agent's write
+refused as `changed` with nothing written and then `overwrite`, at least
+five states (each flip sent at once), a read-only page's `canSave` false
+and its save a note. Not run: the page's Save button, its dot and the
+`confirm()` in a real browser (no GUI suite drives a headless host's
+page saving; `session_web` loads a headless page but does not save), so
+the look and the question need the owner's eyes.
+
 ### Still to do
 
+- **Stage 7, after saving** (in order of value): the Mac's tabs (then
+  GTK's) saving through the host when it is one that saves, so the host
+  is the one writer and the page may save what a window shows (the
+  window then follows the host's `DocSaveDone` and DocDirty, and its
+  disk questions become the host's refusals); Reload from Disk and a
+  clean document following the disk on the host (it watches nothing
+  yet); watching the folder, so the page's tree and a headless host's
+  Source Control follow the disk (FSEvents on the Mac, inotify on Linux,
+  in the host); Save As and a new file's name from the page; Quick Open's
+  list and Find in Folder as host reads; the heavier reads and the write
+  on a worker rather than the host's thread.
 - Lines are re-sent whole per edit; a long line typed into from a browser
   wants character splices.
 - No snapshot or patch messages exist yet: the view polls the host's state
@@ -2498,8 +2651,7 @@ panes and the ×s needs the owner's eyes.
   are the Mac's and GTK's, not the page's; so is reordering tabs, which
   waits for the host to decide tabs (stage 6's note). Closing goes to the
   window (R7), not the host.
-- Saving from a headless host waits for stage 7; Mac terminals are the
-  app's own until they move into the host.
+- Mac terminals opened before the setting is on are the app's own.
 - Typing the session had not confirmed when the connection drops is lost
   (the page says so); it is not resent on reconnecting.
 - The tree does not follow the disk by itself: the host watches nothing

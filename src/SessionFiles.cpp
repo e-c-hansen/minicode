@@ -13,8 +13,10 @@
 #include <unistd.h>
 #include <vector>
 
+#include "Document.h"
 #include "FileDetails.h"
 #include "FolderSearch.h"
+#include "Text.h"
 
 namespace Shared {
 
@@ -231,6 +233,147 @@ Json readWorkspace(const std::string& root, const Json& request, std::string* by
     if (op == "list") return listFolder(root, path, request["hidden"].asBool());
     if (op == "read") return readFile(root, request, bytes);
     return failed(op, path, "the host has no read \"" + op + "\"");
+}
+
+// ---------------------------------------------------------------- saving
+
+namespace {
+
+std::string fileName(const std::string& path) {
+    const std::size_t slash = path.rfind('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+// The largest file read to see whether it changed on disk (as the host's
+// backups read one for their base).
+constexpr std::uintmax_t kMaxCompared = std::uintmax_t(512) << 20;
+
+}  // namespace
+
+SaveDone saveDocument(const SaveAsk& a) {
+    SaveDone d;
+    const std::string name = fileName(a.path);
+    auto refuse = [&](const char* reason, std::string why) {
+        d.reason = reason;
+        d.why = std::move(why);
+        return d;
+    };
+    if (a.path.empty() || a.path[0] != '/')
+        return refuse("nofile", "This document has no file yet: save it from a mutible window, which asks "
+                                "for its name.");
+    if (!a.root.empty()) {
+        // Its folder inside the session's, and the file too when it is
+        // there: a link out of the folder is never written through.
+        const std::string realRoot = realPlace(a.root);
+        const std::size_t slash = a.path.rfind('/');
+        const std::string realDir = realPlace(slash == 0 ? std::string("/") : a.path.substr(0, slash));
+        bool in = !realRoot.empty() && !realDir.empty() && inside(realRoot, realDir);
+        struct stat st;
+        if (in && ::lstat(a.path.c_str(), &st) == 0) {
+            const std::string real = realPlace(a.path);
+            if (real.empty())
+                return refuse("notfile", name + " is a link to a file that is not there: it was not written.");
+            in = inside(realRoot, real);
+        }
+        if (!in)
+            return refuse("outside", name + " is outside the session's folder: save it from a mutible window.");
+    }
+    if (Model::hasLoneSurrogate(a.text))
+        return refuse("encoding", name + " could not be saved: the text holds a character UTF-8 cannot store.");
+
+    // Unchanged on disk since the text the host counts saved? By the stamp
+    // the host wrote it with, else by its text.
+    FolderSearch::TextEncoding enc = a.encoding;
+    bool bom = a.bom;
+    const FolderSearch::FileStamp now = FolderSearch::stampOf(a.path);
+    const bool sameStamp = a.stamp.exists && now == a.stamp;
+    // Nothing there: a file not made yet (nothing was ever read from it or
+    // written to it), or one deleted since, which only `overwrite` makes
+    // again. False when refused.
+    auto missing = [&]() -> bool {
+        if (!a.stamp.exists && a.saved.empty()) {
+            d.created = true;
+            return true;
+        }
+        if (!a.overwrite) {
+            refuse("gone", name + " was deleted on disk since it was read: saving would make it again.");
+            return false;
+        }
+        d.created = true;
+        return true;
+    };
+    if (!sameStamp) {
+        if (!now.exists) {
+            if (!missing()) return d;
+        } else if (!now.regular) {
+            return refuse("notfile", name + " is not a regular file on disk: it was not written.");
+        } else {
+            std::string bytes;
+            FolderSearch::FileStamp st;
+            const FolderSearch::ReadStatus r = FolderSearch::readFileStable(a.path, kMaxCompared, &bytes, &st);
+            if (r == FolderSearch::ReadStatus::Missing) {
+                if (!missing()) return d;
+            } else if (r == FolderSearch::ReadStatus::NotRegular) {
+                return refuse("notfile", name + " is not a regular file on disk: it was not written.");
+            } else if (r != FolderSearch::ReadStatus::Ok) {
+                if (!a.overwrite)
+                    return refuse("unreadable", name + " could not be read to see whether it changed on disk: "
+                                                       "it was not written.");
+            } else {
+                std::u16string disk;
+                FolderSearch::TextEncoding de = FolderSearch::TextEncoding::Utf8;
+                bool db = false;
+                const bool text = Model::decodeFileText(std::move(bytes), &disk, &de, &db);
+                if (text && disk == a.saved) {
+                    enc = de;
+                    bom = db;
+                } else if (!a.overwrite) {
+                    return refuse("changed", name + " changed on disk since it was read: saving would write "
+                                                    "over that change.");
+                } else if (text && !a.stamp.exists) {
+                    // Written over: in the encoding the host last wrote it
+                    // in when it has one (as Keep Mine writes the tab's),
+                    // else the best guess there is, the file's own now.
+                    enc = de;
+                    bom = db;
+                }
+            }
+        }
+    }
+
+    // The file's own encoding, unless the text now holds what it cannot
+    // store: then UTF-8, said so, as the Mac's save does (never a '?').
+    const std::string utf8 = Model::utf8FromUtf16(a.text);
+    std::string unheld;
+    if (!FolderSearch::canEncode(utf8, enc, &unheld)) {
+        d.note = "Saved " + name + " as UTF-8: " + FolderSearch::encodingLabel(enc, bom) + " cannot store “" +
+                 unheld + "”";
+        enc = FolderSearch::TextEncoding::Utf8;
+        bom = false;
+    }
+    std::string error;
+    if (!FolderSearch::writeFileAtomically(a.path, FolderSearch::encodeFileText(utf8, enc, bom), &error,
+                                           &d.written)) {
+        d.created = false;
+        d.note.clear();
+        return refuse("write", name + " could not be saved: " + error + ".");
+    }
+    d.ok = true;
+    d.encoding = enc;
+    d.bom = bom;
+    return d;
+}
+
+Json saveDoneJson(const std::string& path, const SaveDone& done) {
+    Json j = Json::object();
+    j.set("path", Json(path));
+    j.set("ok", Json(done.ok));
+    if (!done.reason.empty()) j.set("reason", Json(done.reason));
+    if (!done.why.empty()) j.set("why", Json(done.why));
+    if (!done.note.empty()) j.set("note", Json(done.note));
+    if (done.ok) j.set("encoding", Json(std::string(FolderSearch::encodingLabel(done.encoding, done.bom))));
+    if (done.created) j.set("created", Json(true));
+    return j;
 }
 
 }  // namespace Shared

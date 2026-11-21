@@ -1684,6 +1684,125 @@ static void testSessionWeb() {
         roThread.join();
     }
 
+    // Saving from a page on a headless host (stage 7): no app owns the
+    // disk, so the host writes the file itself, in the file's encoding and
+    // line endings; the page's dirty dot follows the host's flag at once
+    // (DocDirty; the state is polled only once a minute here); a file
+    // changed on disk since is refused until the page asks to overwrite;
+    // a read-only page cannot save.
+    GROUP("sessionweb:save");
+    {
+        ServerRig rig;
+        CHECK(rig.start(60000) == Shared::HostServer::Start::Ok);
+        SocketRenderer a;
+        CHECK(a.attach(rig.path(), "editor"));
+        const std::string file = rig.proj + "/notes.txt";
+        fsWrite(file, "caf\xE9\r\n");   // Windows-1252, CRLF
+        Web::Server web;
+        Web::Options o;
+        o.hostSocket = rig.path();
+        o.folder = rig.proj;
+        o.pollMs = 60000;
+        o.editable = true;
+        std::string error;
+        CHECK(web.start(o, &error));
+        std::thread webThread([&] { web.run(); });
+        Web::Server ro;
+        Web::Options ro_o = o;
+        ro_o.editable = false;
+        CHECK(ro.start(ro_o, &error));
+        std::thread roThread([&] { ro.run(); });
+        if (a.client && web.port() > 0) {
+            a.mirror.doc = 1;
+            a.mirror.text = u"café\r\n";
+            a.client->open(1, file, Model::utf8FromUtf16(a.mirror.text), &a.mirror);
+            CHECK(a.client->settle());
+
+            PageClient p;
+            CHECK(p.open(web));
+            PageEditor page;
+            page.p = &p;
+            page.id = 1;
+            Json hello, state;
+            std::vector<Json> saves;
+            int states = 0;
+            auto take = [&](const Json& m) {
+                const std::string t = m["t"].asString();
+                if (t == "hello") hello = m;
+                else if (t == "state") {
+                    state = m;
+                    states++;
+                } else if (t == "saved") saves.push_back(m);
+                page.take(m);
+            };
+            auto dirty = [&] {
+                for (const Json& d : state["docs"].elements())
+                    if (d["id"].asInt() == 1) return d["dirty"].asBool();
+                return false;
+            };
+            auto hostText = [&] { return a.client->hostDocument(1).text; };
+            CHECK(p.pump(take, [&] { return state.isObject(); }));
+            CHECK(hello["editable"].asBool() && hello["canSave"].asBool() && !dirty());
+            p.sendText("{\"t\":\"show\",\"doc\":1}");
+            CHECK(p.pump(take, [&] { return page.docs == 1; }));
+
+            // Typed in the page: unsaved, and the page told so at once.
+            page.edit(Ot::Ops{Ot::Op{page.text().size(), 0, u"naïve\r\n"}});
+            CHECK(p.pump(take, [&] { return page.synced() && dirty(); }, 4000));
+            CHECK(hostText() == u"café\r\nnaïve\r\n");
+
+            // Saved by the host: Windows-1252 and CRLF as the file had them,
+            // and the dot gone.
+            p.sendText("{\"t\":\"save\",\"doc\":1}");
+            CHECK(p.pump(take, [&] { return saves.size() == 1 && !dirty(); }, 4000));
+            CHECK(saves.size() == 1 && saves[0]["ok"].asBool() && saves[0]["encoding"].asString() == "Windows-1252" &&
+                  saves[0]["path"].asString() == file && saves[0]["doc"].asInt() == 1);
+            CHECK(readFile(file.c_str()) == "caf\xE9\r\nna\xEFve\r\n");
+            CHECK(!a.client->hostDocument(1).dirty);
+
+            // Changed on disk since: refused with why, nothing written; the
+            // page's overwrite writes it.
+            fsWrite(file, "an agent's edit\n");
+            page.edit(Ot::Ops{Ot::Op{0, 0, u"# "}});
+            CHECK(p.pump(take, [&] { return page.synced() && dirty(); }, 4000));
+            p.sendText("{\"t\":\"save\",\"doc\":1}");
+            CHECK(p.pump(take, [&] { return saves.size() == 2; }, 4000));
+            CHECK(saves.size() == 2 && !saves[1]["ok"].asBool() && saves[1]["reason"].asString() == "changed" &&
+                  saves[1]["why"].asString().find("notes.txt changed on disk") == 0);
+            CHECK(readFile(file.c_str()) == "an agent's edit\n" && dirty());
+            p.sendText("{\"t\":\"save\",\"doc\":1,\"overwrite\":true}");
+            CHECK(p.pump(take, [&] { return saves.size() == 3 && !dirty(); }, 4000));
+            CHECK(saves.size() == 3 && saves[2]["ok"].asBool());
+            CHECK(readFile(file.c_str()) == "# caf\xE9\r\nna\xEFve\r\n");
+            CHECK(states >= 5);   // each flip sent, not waited for
+
+            // A read-only page of the same host cannot save.
+            PageClient q;
+            CHECK(q.open(ro));
+            PageEditor rpage;
+            rpage.p = &q;
+            Json rhello, rstate;
+            auto rtake = [&](const Json& m) {
+                if (m["t"].asString() == "hello") rhello = m;
+                if (m["t"].asString() == "state") rstate = m;
+                rpage.take(m);
+            };
+            CHECK(q.pump(rtake, [&] { return rstate.isObject(); }));
+            CHECK(!rhello["canSave"].asBool());
+            q.sendText("{\"t\":\"show\",\"doc\":1}");
+            q.sendText("{\"t\":\"save\",\"doc\":1}");
+            CHECK(q.pump(rtake, [&] { return !rpage.notes.empty(); }));
+            CHECK(readFile(file.c_str()) == "# caf\xE9\r\nna\xEFve\r\n");
+            q.close();
+            p.close();
+            CHECK(waitUntil([&] { return web.browsers() == 0 && ro.browsers() == 0; }));
+        }
+        web.stop();
+        webThread.join();
+        ro.stop();
+        roThread.join();
+    }
+
     // A terminal's size follows the page that types (tmux's `window-size
     // latest`, Host::sizer): the server is one renderer for every page, so
     // it tells the host the size of the page that typed last. A narrow page

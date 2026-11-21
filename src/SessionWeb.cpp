@@ -1412,6 +1412,12 @@ struct Server::Session : Client::Listener, Client::TermListener {
         pending = true;
     }
     bool exited = false;   // a terminal went since the last look
+    // A document's unsaved state flipped on the host (DocDirty): the pages'
+    // dirty dots follow at once, not at the next look.
+    bool dirtyCame = false;
+    // Saves asked of the host for pages (DocSave, a headless host's): the
+    // request's page and document.
+    std::map<std::uint64_t, std::pair<int, DocId>> saveAsks;
     // The pty's size follows whoever typed last (Host::sizer); TermShell
     // says it where the host's screen reflowed, so the view reflows there
     // too, and the pages get the terminal whole at the new size.
@@ -1540,7 +1546,10 @@ std::string Server::helloText() const {
     hello.set("palette", palette_);
     hello.set("termNote", Json(opt_.termNote));
     hello.set("editable", Json(opt_.editable));
-    hello.set("canSave", Json(opt_.editable && (bool)opt_.save));
+    // The app saves (its Cmd+S, the Mac's), else the host itself (a
+    // headless host, SessionFiles.h's saveDocument) when it is one that
+    // saves.
+    hello.set("canSave", Json(opt_.editable && ((bool)opt_.save || (session_ && session_->client->hostSaves()))));
     hello.set("canBrowse", Json(opt_.editable && (bool)opt_.browse));
     // Opening a file as a window's tab, and closing one, change the
     // window: only a page that may edit. A page that only reads shows
@@ -2045,18 +2054,46 @@ void Server::takeOutcomes() {
                                                    : "The undo was refused: the text changed under it.");
         it = s.undoAsks.erase(it);
     }
+    // The host's saves: the page that asked hears how it went, with what to
+    // say; "changed" and "gone" it may answer by asking again to overwrite.
+    for (auto it = s.saveAsks.begin(); it != s.saveAsks.end();) {
+        Client::SaveAnswer a;
+        if (!s.client->saveAnswer(it->first, &a)) {
+            ++it;
+            continue;
+        }
+        Json m = Json::object();
+        m.set("t", Json("saved"));
+        m.set("doc", Json((int64_t)it->second.second));
+        m.set("ok", Json(a.ok));
+        m.set("version", Json((int64_t)a.version));
+        for (const char* k : {"path", "reason", "why", "note", "encoding"})
+            if (a.json.has(k)) m.set(k, a.json[k]);
+        for (auto& c : conns_)
+            if (c->id == it->second.first && c->welcomed) sendJson(*c, m);
+        it = s.saveAsks.erase(it);
+    }
 }
 
 void Server::onSave(Conn& c, const Json& j) {
     const DocId id = (DocId)std::max<int64_t>(0, j["doc"].asInt());
     if (!opt_.editable) return note(c, "This page only reads: it cannot save.");
     if (!session_ || !id || !session_->docs.count(id)) return;
-    if (!opt_.save)
-        return note(c, "Nothing here saves to disk yet: save from the mutible window that has this "
-                       "file open.");
-    // The host has every edit first, and has passed it on.
-    session_->client->settle();
-    if (!opt_.save(id)) note(c, "That document could not be saved from here.");
+    if (opt_.window && !session_->allowed.count(id)) return;
+    if (opt_.save) {
+        // The app that owns the disk saves it (the Mac's Cmd+S, its
+        // questions on its own screen). The host has every edit first, and
+        // has passed it on.
+        session_->client->settle();
+        if (!opt_.save(id)) note(c, "That document could not be saved from here.");
+        return;
+    }
+    // Else the host writes it (a headless host), behind every edit this
+    // view sent; the answer comes in takeOutcomes.
+    const std::uint64_t req = session_->client->requestSave(id, opt_.window, j["overwrite"].asBool());
+    if (!req)
+        return note(c, "This host does not save files: save from the mutible window that has this file open.");
+    session_->saveAsks[req] = {c.id, id};
 }
 
 void Server::onTermInput(Conn& c, const std::string& type, const Json& j) {
@@ -2898,6 +2935,8 @@ bool Server::attach() {
     if (opt_.editable) s->client->setGuest(true);
     else s->client->setReadOnly(true);
     s->client->setWake([this] { wake(); });
+    Session* self = s.get();
+    s->client->hearDirty([self](DocId, bool) { self->dirtyCame = true; });
     Client* client = s->client.get();
     if (opt_.connect) {
         // A host in this process: it delivers to the client itself.
@@ -3033,6 +3072,7 @@ void Server::lookAtState() {
     // it, or the host closed it): nobody here shows it, and the view keeps
     // no copy of its screen.
     s.exited = false;
+    s.dirtyCame = false;
     for (auto& c : conns_)
         if (c->term && !listed.count(c->term)) c->term = 0;
     for (auto it = s.terms.begin(); it != s.terms.end();) {
@@ -3285,7 +3325,8 @@ bool Server::run() {
                 detach();
                 return true;
             }
-            if (look_.exchange(false) || session_->exited || msSince(session_->lastLook) >= opt_.pollMs)
+            if (look_.exchange(false) || session_->exited || session_->dirtyCame ||
+                msSince(session_->lastLook) >= opt_.pollMs)
                 lookAtState();
             if (session_->pending && msSince(session_->lastTermFlush) >= 30) flush();
         } else if (!opt_.connect && msSince(lastSocketLook) >= 1000) {

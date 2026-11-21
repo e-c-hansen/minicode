@@ -23,6 +23,24 @@ up to date with 1.5.15 and the round-7 fixes on 2026-11-08.
 - **Branch protection on main**, with the six CI jobs required, so a branch
   is checked before it lands rather than after.
 
+## Shared sessions (the session host)
+
+SESSION-DESIGN.md's stages (in `.grades/`); `docs/notes/session-host.md`
+says what each built and what is left.
+
+| Stage | What | State |
+|---|---|---|
+| 1 | `Text` and `Document` in the core | Done |
+| 2 | `UndoHistory`, on both ports | Done |
+| 3 | The session's tabs, sessions and save planner as data | Done |
+| 4 | The host in the app's process (4a GTK, 4b the Mac) | Done, behind `editor.session-host` (off by default) |
+| 5 | Terminals in the host | Done |
+| 6 | `mutible host`, attach, reattach, the host's own backups | Done on both; the default flips later |
+| 6b, 8b | The browser's view, read-only and editable | Done (R3 to R7) |
+| 7 | Workspace I/O in the host | Started: the tree's listings and file reads (2026-11-18), and saving from a headless host's page with the host's dirty state (2026-11-21). Next: the apps saving through the host, Reload and watching the disk in the host, Quick Open and Find in Folder as host reads |
+| 8 | The Mac over SSH | Not started |
+| 9 | Git, language servers, formatters, agents and LaTeX into the host | Not started |
+
 ## For daily work on the Mac
 
 - **One text storage per tab** (M). The window has one text view and swaps
