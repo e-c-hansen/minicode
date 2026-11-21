@@ -133,6 +133,8 @@ public:
     // made `pdf`, or failed with `error`.
     void typesetOf(const std::string& path, GBytes* pdf, const std::string& error);
     void stop();
+    // For checks: how many typesets the server keeps for pages with no tab.
+    std::size_t hiddenTypesets() const { return hidden_.size(); }
 
     // The line the page shows where terminals would be.
     static const char* const kTermNote;

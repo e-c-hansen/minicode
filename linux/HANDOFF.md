@@ -8415,20 +8415,22 @@ to come.
   with poppler where the Mac uses CoreGraphics, so anti-aliasing differs by
   a few pixels. A tab's preview that was made but never typeset is
   typeset when a page asks (the Mac's is made already typesetting).
-- **Checks.** Bite 3 adds the checks. This bite was smoke-checked in the
-  harness's private Xvfb with a throwaway suite (removed) and a stand-in
-  tectonic that copies `tests/latex/fixtures/main.pdf`: a page's `latex`
-  for a file no tab holds got "ready" with its url and two 612 by 792
-  pages, the PDF fetched with the page's cookies was 200 and began with
-  `%PDF-`, a page picture (`p=1&w=400`) was 200 and a PNG, and a document
-  the stand-in fails on got "failed" with the engine's text; `gitChanged`
-  was called with no page watching (no crash). Not checked: a tab's own
-  preview forwarding to the page, the four-typeset limit, real tectonic,
-  and a Source Control page seeing a commit made in a terminal.
-  `session_browser` still passes. The whole suite list ran once: 7,192
-  passed; `large_file`'s "drawn" wait timed out, on main as well (the
-  caret's blink drawing the view every frame since #278 gave the window
-  the X focus; the harness turns the blink off in its own pull request),
-  and `bookmarks` failed once in the full run and passed alone.
+- **Checks.** `session_browser` (SessionBrowserSuite.cpp) now covers this
+  part with a stand-in tectonic (`MUTIBLE_TECTONIC`, a script that copies
+  `tests/latex/fixtures/main.pdf`, counts its runs in a file, and fails on
+  a marker in the .tex; the setting is put back). A `latex` for a file no tab
+  holds reaches "ready" with two 612 by 792 pages, its PDF is 200 and begins
+  with `%PDF-`, and `p=2&w=400` is a 200 PNG whose IHDR says 400 wide; a
+  file the engine fails on reaches the page as "failed" with the engine's
+  text; five untabbed files keep four typesets (`hiddenTypesets()`, added for
+  checks), a kept one asked again runs nothing and the oldest runs again; with
+  the .tex open in a tab the page's typeset is the tab's (no second run, no
+  hidden one) and `compileNow` on the tab's preview reaches the page as
+  "working" then a newer "ready"; and a commit made in the folder reaches a
+  page watching git as a newer `git` message. A page follows the one
+  document it last asked for, so the check asks for one file at a time (two
+  asked together left the first at "working"). Open a tab through window 0's
+  editor, not `MCGuiOpenFileKept`, while a second window exists. Not
+  checked: real tectonic, and a commit made in a terminal.
 - **Needs the owner's eyes**: a LaTeX document's page in a real browser
   with real tectonic, and the page's Source Control after a commit.
