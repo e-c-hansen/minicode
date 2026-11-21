@@ -8668,3 +8668,27 @@ on GTK: docs/notes/session-host.md, "GTK's tabs save through the host
   and the tab still unsaved; the host killed, then Ctrl+S written by the
   window itself. Not checked: an untitled buffer's Save As refused (its
   path put back), which needs the file chooser.
+
+### 133. The in-process host watches the disk for the page (stage 7; November 2026)
+
+- **What.** `Link::startInProcess` (linux/src/SessionLink.cpp) calls
+  `SessionHost::watchDisk(true)` before the first renderer connects, as
+  the Mac's `SessionLink.mm` does, so View > Session Browser's page sees
+  its tree and Source Control follow the disk (FsChanged) with no refresh.
+- **What it starts.** Nothing for a window with no page served: the
+  watcher's roots are a headless host's folder and the roots renderers
+  name in a `watch`, and the in-process host has no folder. The window
+  keeps its own tree and LspWatcher monitors and follows its tabs itself;
+  its client asks for no Hello flag 32. A window on a headless host is
+  unchanged (that host decides its own watching).
+- **Checks.** `session_browser`, section 6b: the page's `watch` of the
+  root and a `list`; a file made in the folder arrives as a new `tree`
+  listing, the file removed as another, a tracked file changed in the
+  repository as a newer `git` message, none asked for. The made file is
+  made only after `diskWatchSettled` reports the watcher on more than
+  no folder (`Link::inProcessHost`, check-only), since its first walk is
+  asynchronous. The page's notice may also come from the window's own
+  monitors (since #283 they call `SessionBrowser::gitChanged`), so the
+  check proves the host's watcher is live, not that its notice was the
+  one heard. A probe that read the wrong window's link (the second
+  window, not the page's) once showed "0 folders".

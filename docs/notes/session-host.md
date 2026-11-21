@@ -2948,9 +2948,11 @@ with them.
 - **Who watches.** `SessionHost::watchDisk(true)`, before any renderer
   (the Welcome says it, flag 4): `mutible host` (`HostOptions::watchDisk`,
   set by `runHost`; the checks choose, default off) and the Mac's own
-  in-process host (`SessionLink.mm`'s `Start`, for a window's page). GTK's
-  in-process host does not yet, though it serves a page too
-  (linux/src/SessionBrowser.cpp); a GTK window on a
+  in-process host (`SessionLink.mm`'s `Start`, for a window's page), and
+  GTK's in-process host (`SessionLink.cpp`'s `startInProcess`, for the
+  page View > Session Browser serves; checked in `session_browser`). A
+  window with no page served starts no walk: roots come only from a
+  renderer's watch or a headless host's folder. A GTK window on a
   headless host has the headless host's watching, as any renderer does.
 - **What it watches** (`Host::watchRoots`, handed to the watcher whenever
   `watchGeneration` moves): the headless host's folder and every window
@@ -3080,8 +3082,7 @@ and no GUI suite checks the Mac's own host watching for its page.
 ### Still to do
 
 - **Stage 7, after the watching and the Mac's and GTK's saves** (in order
-  of value): GTK's in-process host watching the disk for its page, as the
-  Mac's does; the windows hearing the host's watching instead of
+  of value): the windows hearing the host's watching instead of
   their own streams ("The host watches the disk", what could move); Save
   As and a new file's name from the page (the Mac's Save As writes its new
   path through the host now, but the page cannot name a file); Quick

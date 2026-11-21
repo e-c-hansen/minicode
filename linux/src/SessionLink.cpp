@@ -218,6 +218,12 @@ void Link::startInProcess(bool loopback, unsigned delayUs) {
         },
         delayUs);
     Shared::SessionHost* h = host_.get();
+    // The disk, for the browser's page of this window (its tree and Source
+    // Control follow it), before any renderer. Only roots a page names in a
+    // watch are walked, so a window with no page served starts none; the
+    // window keeps its own monitors and follows its tabs itself (this
+    // client asks for no Hello flag 32).
+    h->watchDisk(true);
     hostId_ = h->connect();
     const Shared::ClientId id = hostId_;
     client_->connect([h, id, wire](Shared::Message&& m) { h->post(id, wire(std::move(m))); });

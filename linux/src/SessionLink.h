@@ -98,6 +98,9 @@ public:
     pid_t startedHost() const { return startedHost_; }
     // The headless host went away.
     bool lost() const { return client_->lost(); }
+    // For checks: the in-process host, null on a headless one
+    // (SessionHost::diskWatchSettled).
+    Shared::SessionHost* inProcessHost() const { return host_.get(); }
 
     // The host's notices about one document of this link's (stage 7): its
     // count of it as unsaved flipped (DocDirty), and it wrote the file for
