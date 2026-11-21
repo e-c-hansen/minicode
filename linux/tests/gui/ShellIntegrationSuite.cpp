@@ -371,6 +371,16 @@ MC_GUI_SUITE(shell_integration) {
     MCGuiStep("its own marks: one command, status 0, finished once; term-output shows it", [] {
         GCHECK(sh().started == 1 && sh().done == 1 && sh().status == 0);
         GCHECK(gFinished >= 1);   // from the finishing mark of that tab
+        // Its shell started at its view's columns, not at the 80 of a VTE not
+        // laid out yet: readline keeps where its first prompt wrapped, and
+        // resized after, it echoed a typed line off by the prompt's invisible
+        // bytes (Terminal::spawnWhenLaidOut). Columns only: the second tab's
+        // strip may take rows after.
+        VteTerminal* vte = findVte(term()->widget());
+        const long vteCols = vte ? vte_terminal_get_column_count(vte) : -1;
+        GCHECK(term()->startedCols() == vteCols);
+        if (term()->startedCols() != vteCols)
+            MCGuiNote("the shell started at %d columns; VTE has %ld", term()->startedCols(), vteCols);
         runCli({"term-output", std::to_string(term()->controlId()), "--lines", "20"});
     });
     MCGuiWait("term-output answered", 15, [] { return gCli->done; });
@@ -383,6 +393,10 @@ MC_GUI_SUITE(shell_integration) {
         const size_t at = gCli->out.find("echo hi\nhi");
         const std::string after = at == std::string::npos ? "" : gCli->out.substr(at + 10);
         GCHECK(after.find_first_not_of(" \n") != std::string::npos);
+        // What the terminal held, when it was not that (CI, November 2026:
+        // the prompt, then hi, and no echo hi; Terminal::spawnWhenLaidOut).
+        if (at == std::string::npos || after.find_first_not_of(" \n") == std::string::npos)
+            MCGuiNote("term-output said (exit %d): [%s] %s", gCli->exitCode, gCli->out.c_str(), gCli->err.c_str());
         backToOriginal();
         GCHECK(term() == gOrig && sameState(sh(), gBefore));   // the first terminal was not touched
     });

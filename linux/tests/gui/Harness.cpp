@@ -1329,6 +1329,11 @@ gboolean startWhenWindowIsUp(gpointer) {
     }
     // Windows closed by a suite must not end the application under the runner.
     g_application_hold(G_APPLICATION(MCGuiApplication()));
+    // No blinking caret: GTK 4's fades, drawing a focused text view every
+    // frame for ten seconds after each focus change or key, so a wait for a
+    // draw count to stand still never ended (large_file's "drawn") and a
+    // measure took the blink's CPU as the editor's (multicaret_perf).
+    g_object_set(gtk_settings_get_default(), "gtk-cursor-blink", FALSE, nullptr);
 
     gStartedMs = MCGuiNowMs();
     if (const char* s = getenv("MC_GUI_STEP_SECONDS")) gStepSeconds = atof(s);

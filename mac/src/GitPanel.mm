@@ -482,9 +482,44 @@ static NSColor *LaneColor(int i) { return GHex(GitUi::laneColor(i)); }
 @property(nonatomic, strong) MCGitGraph *graph;
 @property(nonatomic, assign) NSInteger index;     // == commits.size(): the "Show more" row
 @property(nonatomic, strong) NSColor *textColor, *panelColor;
+// An accessibility press: the commit's full hash, nil for "Show more".
+@property(nonatomic, copy) void (^onPress)(NSString *hash);
 @end
 @implementation MCGitGraphCell
 - (BOOL)isFlipped { return YES; }
+
+// ---- accessibility: the table wraps each row's view in a cell of its own
+// (AXRow, then an AXCell stand-in that reads this view's label and passes
+// AXPress on to it), so the view is not an element itself (a cell in a
+// cell otherwise). The label says the commit in words, its subject first
+// (GitUi::graphRowLabel), and a press opens it as a click does. Before
+// 2026-11-20 the rows were only drawn, and VoiceOver and the task
+// benchmark could not find a commit by its subject.
+- (BOOL)isAccessibilityElement { return NO; }
+- (NSString *)accessibilityLabel {
+    MCGitGraph *g = self.graph;
+    if (!g || self.index < 0) return nil;
+    return NSFromBytes(GitUi::graphRowLabel(g->g, (size_t)self.index, MCGitNow()));
+}
+- (NSString *)accessibilityHelp {
+    MCGitGraph *g = self.graph;
+    if (!g || self.index < 0) return nil;
+    return self.index < (NSInteger)g->g.commits.size() ? @"Opens the commit's changes"
+                                                        : @"Loads more commits";
+}
+// The press runs a turn later, out of the Accessibility API's call, and
+// finds its commit by hash then: a read of the graph may land first and
+// move the rows (the review page's trap, docs/notes/git.md).
+- (BOOL)accessibilityPerformPress {
+    MCGitGraph *g = self.graph;
+    void (^press)(NSString *) = self.onPress;
+    if (!g || !press || self.index < 0) return NO;
+    const NSInteger n = (NSInteger)g->g.commits.size();
+    if (self.index > n || (self.index == n && !g.hasMore)) return NO;
+    NSString *hash = self.index < n ? NSFromBytes(g->g.commits[(size_t)self.index].hash) : nil;
+    dispatch_async(dispatch_get_main_queue(), ^{ press(hash); });
+    return YES;
+}
 
 // A label: filled for HEAD's own branch (or a detached HEAD), outlined for
 // the rest, blue for local branches, purple for remote ones, amber for tags.
@@ -2753,6 +2788,28 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
     });
 }
 
+// An accessibility press on a graph row (MCGitGraphCell): the commit it
+// named, wherever it is now, selected and opened as a click opens it (the
+// preview tab, the keyboard left in the list); nil is "Show more". A
+// commit no longer listed beeps.
+- (void)pressedGraphCommit:(NSString *)hash {
+    if (!_graph) return;
+    if (!hash) {
+        if (_graph.hasMore) [self showMore];
+        return;
+    }
+    const std::string want = hash.UTF8String ?: "";
+    const auto &commits = _graph->g.commits;
+    for (size_t i = 0; i < commits.size(); i++) {
+        if (commits[i].hash != want) continue;
+        [_graphTable selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
+        [_graphTable scrollRowToVisible:(NSInteger)i];
+        [self showCommitAtRow:(NSInteger)i preview:YES];
+        return;
+    }
+    NSBeep();
+}
+
 - (NSArray<NSString *> *)graphDescriptions {
     NSMutableArray *out = [NSMutableArray array];
     if (!_graph) return out;
@@ -2786,6 +2843,8 @@ static const char *MCSyncOpName(GitUi::SyncOp op) {
         cell.textColor = _text;
         cell.panelColor = [[AppSettings shared] background:Surface::Sidebar];
         cell.toolTip = [self graphToolTip:row];
+        __weak MCGitPanel *weakSelf = self;
+        cell.onPress = ^(NSString *hash) { [weakSelf pressedGraphCommit:hash]; };
         [cell setNeedsDisplay:YES];
         return cell;
     }

@@ -37,8 +37,15 @@
 // closes, before the window's tabs leave the host's state (main.cpp's
 // detachWindow), or when the page's editable choice changes.
 //
-// Left for later: the LaTeX typesets, the review pages and the page's
-// Source Control (gitChanged), which the Mac's has.
+// A page showing a LaTeX document gets its typeset from the window: from the
+// open tab's preview when there is one (its last PDF, then working or
+// failed, and every later typeset), else from a preview of the server's own
+// made without a tab, at most four kept (the oldest stopped first). The
+// pages are drawn as pictures with poppler on the server's threads. The
+// window calls gitChanged when its git or the folder's changed, and the
+// page's Source Control reads again.
+//
+// Left for later: the review pages, which the Mac's has.
 #pragma once
 
 #include <cstdint>
@@ -49,6 +56,8 @@
 #include <vector>
 
 typedef struct _GtkWindow GtkWindow;
+typedef struct _GBytes GBytes;
+class LatexPreview;
 
 namespace SessionLink {
 class Link;
@@ -79,6 +88,12 @@ public:
         // Sends the window's record to the host now (only what changed):
         // its tabs, terminals, browser tabs and panes.
         std::function<void()> report;
+        // The window's LaTeX preview of the file at `path`, or null when no
+        // tab has one. Unset in a build without the PDF viewer.
+        std::function<LatexPreview*(const std::string& path)> previewOf;
+        // The text a typeset of `path` reads: the open tab's, else the
+        // file's; false when it cannot be read.
+        std::function<bool(const std::string& path, std::string* text)> source;
     };
 
     SessionBrowser(GtkWindow* window, Host host);
@@ -111,6 +126,12 @@ public:
     void reportTabs();
     // The settings file changed: the page's colors follow now.
     void reloadSettings();
+    // The window's git, or the folder's, changed: the page's Source Control
+    // reads again (at most once a second).
+    void gitChanged();
+    // A preview's typeset state, for the page: began (no `pdf`, no `error`),
+    // made `pdf`, or failed with `error`.
+    void typesetOf(const std::string& path, GBytes* pdf, const std::string& error);
     void stop();
 
     // The line the page shows where terminals would be.
@@ -146,6 +167,11 @@ public:
 
 private:
     struct Guard;
+    struct Hidden;
+    // The page asked for a typeset of `path` (on the main loop).
+    void typesetFor(const std::string& path);
+    void tellPreview(const std::string& path, LatexPreview* preview);
+    void stopHidden();
     void askAbout(std::uint64_t question, const std::string& browser, const std::string& browserId,
                   const std::string& from, const std::string& peer, unsigned generation);
 
@@ -160,4 +186,6 @@ private:
     unsigned timer_ = 0;        // the half-second report
     std::uint64_t windowId_ = 0, hostWindow_ = 0;
     std::string url_;
+    // Typesets for pages with no tab's preview, oldest first.
+    std::vector<std::shared_ptr<Hidden>> hidden_;
 };

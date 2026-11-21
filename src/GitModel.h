@@ -522,6 +522,12 @@ std::string dateText(long long t);
 std::string graphToolTip(const Graph& g, size_t row, long long now,
                          DateFormat date = dateText);
 
+// What VoiceOver and the Accessibility API read for a row of the graph,
+// the subject first so a commit is found by it: "Merge feature, commit
+// a1b2c3d, Ann, 2 hours ago, main (current), origin/main, tag v1.0, not
+// pushed yet"; the "Show more" row reads "Show 200 more commits".
+std::string graphRowLabel(const Graph& g, size_t row, long long now);
+
 // For tests and the debug log: "a1b2c3d lane=0 head out Subject [*main,v1]".
 std::vector<std::string> graphDescriptions(const Graph& g);
 

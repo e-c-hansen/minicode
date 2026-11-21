@@ -8370,3 +8370,65 @@ built into the GTK app; nothing started one.
   headless one (`MUTIBLE_HOST=socket`).
 - **Needs the owner's eyes**: the dialogs' look on the real desktop, Show
   opening the default browser, and a page from a real SSH tunnel.
+
+### 127. The session browser, second part: typesets, pages as pictures and Source Control refresh (the Mac's SessionBrowser; November 2026)
+
+The three things section 126 left out of the page that need no new core
+code: the LaTeX typesets, the pages drawn as pictures, and the page's
+Source Control reading again when git changes. The review pages are still
+to come.
+
+- **What a user meets.** A page showing a `.tex` file shows its typeset
+  PDF: from the window's own LaTeX preview when a tab has one (its last PDF
+  at once, then "working" or the failure, and each later typeset as the
+  preview makes it), else from a typeset the server makes for it in the
+  background from the tab's text or the file (at most four kept, the oldest
+  stopped first). With poppler the pages come as one picture each, so a new
+  typeset keeps the reader's place; without it (the `pdf` option off) the
+  page frames the PDF in the browser's viewer, and with no PDF viewer in
+  the build the page says the window's preview makes it. A page showing
+  Source Control reads again when a stage, commit or checkout happens in
+  the window or anywhere in the folder.
+- **Code.** `LatexPreview` (Latex.h) gained `setOnTypeset` (a callback for
+  began, made a PDF, failed, with the preview's path), `typesetPdf`,
+  `typesetFailure`, `typesetting` and `path`; Editor has a `typesetHook`
+  that every tab's preview reports to, set in main.cpp after the editor is
+  made (before that it crashed at startup: the editor does not exist while
+  the tree's callbacks are set). `SessionBrowser` sets `Options::typeset`
+  (carried to the main loop with the generation number, as every callback),
+  holds the hidden previews (`Hidden`, a text buffer and a LatexPreview
+  that is never shown) and has `typesetOf` and `gitChanged`; the Host has
+  `previewOf` and `source`. `Options::typesetPageSizes` and
+  `typesetPageRender` are poppler-glib functions in SessionBrowser.cpp
+  (guarded by `MUTIBLE_ENABLE_PDF`): each call opens its own
+  PopplerDocument from the bytes and draws with cairo on white to a PNG in
+  memory, no GTK, sizes in points as the page's crop box shows it, the
+  width and pixel limits the core's. `sessionGitChanged` in main.cpp is
+  called from the Source Control panel's refresh (it learns of its own
+  verbs there), the tree's activity callback and the tree's git colors
+  changing (a commit or stage made elsewhere).
+- **Differences from the Mac.** `Options::git` is left unset: GTK's
+  GitRun has no git-finding step the panel uses that the core's runGit (the
+  first git on PATH) lacks. The panel itself refreshes only while it or the
+  review shows, so the page's refresh comes from the tree's watchers and
+  the panel's refresh together, not from the panel alone. Pages are drawn
+  with poppler where the Mac uses CoreGraphics, so anti-aliasing differs by
+  a few pixels. A tab's preview that was made but never typeset is
+  typeset when a page asks (the Mac's is made already typesetting).
+- **Checks.** Bite 3 adds the checks. This bite was smoke-checked in the
+  harness's private Xvfb with a throwaway suite (removed) and a stand-in
+  tectonic that copies `tests/latex/fixtures/main.pdf`: a page's `latex`
+  for a file no tab holds got "ready" with its url and two 612 by 792
+  pages, the PDF fetched with the page's cookies was 200 and began with
+  `%PDF-`, a page picture (`p=1&w=400`) was 200 and a PNG, and a document
+  the stand-in fails on got "failed" with the engine's text; `gitChanged`
+  was called with no page watching (no crash). Not checked: a tab's own
+  preview forwarding to the page, the four-typeset limit, real tectonic,
+  and a Source Control page seeing a commit made in a terminal.
+  `session_browser` still passes. The whole suite list ran once: 7,192
+  passed; `large_file`'s "drawn" wait timed out, on main as well (the
+  caret's blink drawing the view every frame since #278 gave the window
+  the X focus; the harness turns the blink off in its own pull request),
+  and `bookmarks` failed once in the full run and passed alone.
+- **Needs the owner's eyes**: a LaTeX document's page in a real browser
+  with real tectonic, and the page's Source Control after a commit.

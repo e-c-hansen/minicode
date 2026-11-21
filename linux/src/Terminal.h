@@ -334,7 +334,10 @@ public:
     int panCol() const { return panCol_; }
     bool atPtySize() const { return ptyCols_ || ptyRows_; }
     GtkWidget* frameWidget() const { return frame_; }
+    // For checks: the columns its shell was last started at (spawnShell).
+    int startedCols() const { return startedCols_; }
 private:
+    int startedCols_ = 0;
     ShellIntegration::ShellState shell_;
     std::string finished_;   // finishedCommand()
     std::string nonce_;   // this shell's, "" when it runs without the integration
@@ -487,6 +490,10 @@ private:
     std::function<int(gint64, std::string*)> runAttempt_;
     std::function<void(const std::string&)> runDone_;
     void typePending();
+    // A new view's first shell waits for VTE's first layout, a second at
+    // most (spawnWhenLaidOut): the cap's timer and the frames' look.
+    guint  spawnWait_ = 0, spawnTick_ = 0;
+    void spawnWhenLaidOut();
     // The view to the newest row before the app types or clears (the Mac's
     // grid snaps back for typed, pasted and app-typed text).
     void scrollToEnd();
