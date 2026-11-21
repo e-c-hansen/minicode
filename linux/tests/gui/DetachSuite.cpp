@@ -943,5 +943,8 @@ MC_GUI_SUITE(detach) {
         for (const auto& t : {gVersion, gHelp, gDetached, gSecond, gRedirected, gNoDisplay, gHeld})
             if (t && t->master >= 0) close(t->master);
         reapRemembered();
+        // The real mutibles' windows took the X focus and went; a desktop
+        // gives it to the window left.
+        MCGuiFocusKeyWindow();
     });
 }

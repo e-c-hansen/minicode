@@ -344,6 +344,11 @@ void MCGuiDragWith(const std::string& modifiers, GtkWidget* widget, double x0, d
 // at the last: a hand that goes to an edge and comes back in one drag.
 void MCGuiDragThrough(GtkWidget* widget, const std::vector<std::pair<double, double>>& points);
 bool MCGuiInputPending();   // a drag still being played
+// GDK's latest user time (the one gtk_window_present asks the X focus with)
+// later than the X server's own time, as a drop from one of the app's own
+// drags leaves it with GTK 4.22 (Input.cpp); put back to the server's time.
+bool MCGuiUserTimeAhead();
+void MCGuiPutBackUserTime();
 // Wheel clicks: positive scrolls down, negative up.
 void MCGuiScroll(GtkWidget* widget, int clicks);
 

@@ -444,6 +444,17 @@ round's own still-open failure below; the second also failed
 `preview_tabs`' "gone" after Ctrl+W, the keyboard in the window's
 GtkPaned rather than the editor (seen once, not looked into).
 
+A fifth (2026-11-20, main at 33a81e09): run after `tree_drags`,
+`preview_tabs` failed "kept though GTK counted one" (the slow
+double-click on a Find in Folder result: its second press never reached
+the list) and `replace_in_folder` its editor window's being active, in
+about one run of four. A drop from one of the app's own drags leaves
+GDK's user time ahead of the X server's with GTK 4.22, and a window the
+app presents after it is raised without the keyboard. tree_drags puts
+the time back as it ends, and the harness says `LEFT` and puts it back
+after any suite that leaves it so (docs/notes/verification.md, "An
+in-app drop leaves GDK's user time days ahead").
+
 GTK `tree_edits`, "the tree kept its place; b_dir/f050b.txt selected"
 (2026-11-20, order; in about two runs of three after `maximize`,
 `hints_panel`, `preview_tabs` or a tree suite): the app's fault. When
