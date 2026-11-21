@@ -154,6 +154,35 @@ found through that list.
   Shift+Cmd+Space plays from any pane (Cmd+Return is the commit box's). `.ts`
   and `.mts` are TypeScript; `asset.playable` is checked first; WebM, mkv, ogv,
   wmv and flv get "Cannot display".
+  **Trap** (2026-11-20, the taskbench's MP4 at 750 to 1,100 ms, the step
+  after it as long again): the time was AVKit's, after the frame was up,
+  not ours (the main thread's own part is about 50 ms cold: the view, the
+  item, `playable`). Three things kept the app busy. (1) The transport bar
+  (SwiftUI on macOS 27) given an item still loading animated into its
+  ready state for about 600 ms at a tenth of a core; the bar is now put up
+  only once the item is ready (`controlsStyle` None in `showMediaAtPath:`,
+  Inline in `mediaItemChanged:`), and one made then starts in that state.
+  (2) Left on the hidden player view when another file showed, the bar
+  kept the app busy at the display's rate for another half second, which
+  was the "spill" into the next step; `stopMedia` sets the style to None.
+  (3) `allowsVideoFrameAnalysis` (macOS 13 on, default YES) runs VisionKit's
+  Live Text over a paused frame, and a file here opens paused, so every
+  video started an analysis (in the app and in mediaanalysisd), the PDF
+  trap's twin; `analyseFramesOncePlayed:` turns it off for each new player
+  and on at its first nonzero rate (`AVPlayerRateDidChangeNotification`),
+  so a frame paused while watching can still be read (its Live Text
+  button appears then). How it was found: `sample` showed a nearly idle
+  process, since the work came in bursts at the display's rate that a
+  1 ms sample mostly misses; the process's CPU per 50 ms
+  (`proc_pid_rusage`) showed the tails, and switching each part off
+  showed whose they were. Only a window on a visible screen does any of
+  this: with the screen locked the MP4 opened in about 370 ms before and
+  after, so measure on screen. `previews` opens `clip.mov`, checks Live
+  Text off and the open's main-thread CPU, waits for the bar once the
+  item is ready, plays it with Shift+Cmd+Space and waits for Live Text,
+  then shows a picture and checks the player and its bar are gone. The
+  Markdown page's player (MarkdownMedia.mm) is made on a click and plays
+  at once, so it keeps AVKit's defaults.
 - **Quick Look**: `MCQuickLookSlot` (`QLPreviewView`) in a tab;
   `MCQuickLookPanel` for Space in the tree, where `ClickOutline` is the panel's
   controller and keeps the keyboard. It follows arrows and clicks; Space closes
@@ -288,6 +317,7 @@ text is in place in its section.
 - HTML pages (GTK): **Trap** (the same defect, 2026-11-19): the GTK port let a page's own main-frame load run to `WEBKIT_LOAD_COMMITTED`, then loaded the file again and handed the address to the link handler (`openMarkdownLink`, which gives any scheme but http(s) and file to the desktop's handler), and loading the file again fired its refresh again, so the page went round for as long as it showed. WebKitGTK says which frame only at the response check (`webkit_response_policy_decision_is_main_frame_main_resource`); stop it there, or at `load-failed` (an unreachable address, a missing file, where the default handler would commit an error page at that address), and the page never leaves. A scheme no frame loads is refused at the policy check, before anything loads.
 - Viewers in the editor's slot (Mac): **Trap** (2026-11-19, after #249): a page whose scripts run can click its own link (`a.click()`) or send its own form (`form.submit()`), and WebKit reports those as `LinkActivated` and `FormSubmitted`, the user's, so such a page still sent `zoommtg://` (any app's scheme) to `openURL:` with no click.
 - PDFs: **Trap** (2026-11-20, the taskbench's PDF at 2,210 ms against VS Code's 1,451): a PDFView given a document runs PDFKit's page analysis, Vision's `VNRecognizeDocumentsRequest` (text, tables, forms) over every page it shows, on its own queues: an ML model compiled (Espresso) and a whole core busy for two seconds and more after even a two-page PDF of text had drawn in about 30 ms, again for every reload and every LaTeX typeset.
+- Video and audio: **Trap** (2026-11-20, the taskbench's MP4 at 750 to 1,100 ms, the step after it as long again): the time was AVKit's, after the frame was up, not ours (the main thread's own part is about 50 ms cold: the view, the item, `playable`).
 - CSV and TSV: **Trap (round 9)**: the grid's `validateMenuItem:` ended in `[super validateMenuItem:]`, which NSTableView does not have (it validates through `validateUserInterfaceItem:`), so validating any menu item the grid was the target of threw, AppKit dropped the key, and no menu key worked while the grid had the keyboard: Shift+Cmd+P "did nothing".
 - JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).
 - Viewers in the editor's slot (Mac): Trap: laying both panes out to size them took 1.5 s on the main thread for 50,000 lines a side; every row has one fixed height (a paragraph style), so sizes and row rects are arithmetic and layout is non-contiguous.
