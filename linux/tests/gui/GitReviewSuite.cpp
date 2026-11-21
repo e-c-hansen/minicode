@@ -134,6 +134,77 @@ bool OnShow(const std::string& title) {
     return p && p->title() == title;
 }
 
+// ------------------------------------------- a side by side's recipe
+// What a side by side opened from the page should carry and show.
+struct SideWant {
+    std::string leftRev, rightRev;   // "" is the disk, ":" the index
+    std::string leftText, rightText;
+};
+Document* gPageDoc = nullptr;   // the page's tab, to come back to
+Document* gCompareDoc = nullptr;
+Document* gRemadeDoc = nullptr;
+
+std::string Trimmed(std::string s) {
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    return s;
+}
+
+// A click on `file`'s Side by Side; its tab carries the recipe (both paths
+// the file's, these revs), and the tab made again from that recipe, off the
+// main thread, shows the same texts under the same labels. `want` is read
+// when the check runs, for revs that are only known then.
+void SideCheck(const std::string& file, bool staged, std::function<SideWant()> want) {
+    MCGuiStep("the page's tab noted", [] {
+        gPageDoc = Ed()->active();
+        gCompareDoc = gRemadeDoc = nullptr;
+    });
+    Press("Side by Side", [file, staged] { return Page()->rowOfFile(file, staged); });
+    MCGuiWait("the comparison of " + file + " opens", 20, [] { return Ed()->isComparison(); });
+    MCGuiStep("it carries its recipe, and the recipe makes it again", [file, want] {
+        gCompareDoc = Ed()->active();
+        const SideWant w = want();
+        const CompareData* c = gCompareDoc ? gCompareDoc->compare().get() : nullptr;
+        if (!GCHECK(c != nullptr)) return;
+        GCHECK(c->spec.left.path.size() >= file.size() &&
+               c->spec.left.path.compare(c->spec.left.path.size() - file.size(), file.size(), file) == 0);
+        GCHECK_EQ_STR(c->spec.left.path, c->spec.right.path);
+        GCHECK_EQ_STR(c->spec.left.rev, w.leftRev);
+        GCHECK_EQ_STR(c->spec.right.rev, w.rightRev);
+        GCHECK_EQ_STR(c->spec.leftText, w.leftText);
+        GCHECK_EQ_STR(c->spec.rightText, w.rightText);
+        TabSessions::PageTab page;
+        GCHECK(Editor::comparisonPage(gCompareDoc, &page));
+        GCHECK_EQ_STR(page.kind, "compare");
+        GCHECK_EQ_STR(page.left.rev, w.leftRev);
+        GCHECK_EQ_STR(page.right.rev, w.rightRev);
+        GCHECK_EQ_STR(page.left.label, c->spec.leftLabel);
+        GCHECK_EQ_STR(page.right.label, c->spec.rightLabel);
+        Ed()->remakeComparison(page, Ed()->tabCount(), false, [](Document* d) { gRemadeDoc = d; });
+    });
+    MCGuiWait("the tab is made again", 20, [] { return gRemadeDoc != nullptr; });
+    MCGuiStep("with the same texts, labels and title, and not on show", [want] {
+        const SideWant w = want();
+        const CompareData* a = gCompareDoc->compare().get();
+        const CompareData* b = gRemadeDoc->compare().get();
+        if (!GCHECK(b != nullptr)) return;
+        GCHECK(Ed()->active() == gCompareDoc);
+        GCHECK(gRemadeDoc != gCompareDoc);
+        GCHECK_EQ_STR(b->spec.leftText, w.leftText);
+        GCHECK_EQ_STR(b->spec.rightText, w.rightText);
+        GCHECK_EQ_STR(b->spec.leftLabel, a->spec.leftLabel);
+        GCHECK_EQ_STR(b->spec.rightLabel, a->spec.rightLabel);
+        GCHECK_EQ_STR(b->spec.title, a->spec.title);
+        GCHECK_EQ_STR(b->spec.fileName, a->spec.fileName);
+        GCHECK_EQ_STR(b->spec.left.rev, a->spec.left.rev);
+        GCHECK_EQ_STR(b->spec.right.rev, a->spec.right.rev);
+        GCHECK(b->changedRows == a->changedRows && b->rows.size() == a->rows.size());
+        Ed()->closeTab(gRemadeDoc);
+        Ed()->closeTab(gCompareDoc);
+        Ed()->activate(gPageDoc);
+    });
+    MCGuiWait("the page is on show again", 10, [] { return Page() != nullptr; });
+}
+
 // ------------------------------------------------- F7 and the right click
 std::string K() { return MCGuiScratch() + "/gitreviewkeys"; }
 // The open context menu: a mapped popover under the window showing `label`.
@@ -258,6 +329,13 @@ MC_GUI_SUITE(git_review) {
         GCHECK(p->rowTint((size_t)p->rowOfBlock(1)) == "removed");
         GCHECK(p->rowText((size_t)p->rowOfBlock(1)) == "b");
         MCGuiSnapshot(GTK_WIDGET(p->widget()), "git-review-page");
+    });
+
+    // ------------------------------- a side by side keeps its recipe
+    SideCheck("g.txt", true, [] { return SideWant{"HEAD", ":", "x\ny\n", "x\nY\n"}; });
+    SideCheck("f.txt", false, [] {
+        return SideWant{":", "", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\n",
+                        "a\nB\nc\nd\ne\nf\ng\nh\ni\nj\nk\nL\nm\n"};
     });
 
     // --------------------------------------------- Stage one block of two
@@ -690,6 +768,11 @@ MC_GUI_SUITE(git_review) {
             GCHECK(p->buttonsOfRow((size_t)p->rowOfBlock(b)).empty());
         GCHECK_EQ_STR(std::to_string(Ed()->tabCount()), "1");
     });
+    SideCheck("a.txt", false, [] {
+        // A commit against its first parent.
+        return SideWant{Trimmed(GitText({"rev-parse", "HEAD~2"})), Trimmed(GitText({"rev-parse", "HEAD~1"})),
+                        "one\n", "one\ntwo\n"};
+    });
 
     // ------------------------------------- the root commit replaces it
     ClickCommit("Root commit");
@@ -698,6 +781,11 @@ MC_GUI_SUITE(git_review) {
                Ed()->previewTab() != nullptr;
     });
     MCGuiStep("one commit tab", [] { GCHECK_EQ_STR(std::to_string(CommitTabs().size()), "1"); });
+    SideCheck("a.txt", false, [] {
+        // The root commit has no parent: its own hash and "^", a side git lacks.
+        return SideWant{Trimmed(GitText({"rev-parse", "HEAD~2"})) + "^", Trimmed(GitText({"rev-parse", "HEAD~2"})),
+                        "", "one\n"};
+    });
 
     // ---------------------------------------- a double-click keeps a page
     ClickCommit("Second commit", true);

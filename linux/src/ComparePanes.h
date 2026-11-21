@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "SideBySide.h"
+#include "TabSessions.h"
 
 // What is compared: two UTF-8 texts and what each one is.
 struct CompareSpec {
@@ -33,6 +34,12 @@ struct CompareSpec {
     // In the agents' preview tab for comparisons, replacing the last one
     // (`mutible diff` without --keep), as the Mac's.
     bool preview = false;
+    // How the comparison is made again from git and the disk (the Mac's
+    // MCComparison leftPath/leftRev/rightPath/rightRev): a side with an empty
+    // path has no recipe, and a comparison with none on either side is left
+    // out of the session. Set where git and the disk still hold both sides;
+    // never for a worktree's, a conflict's or an agent's proposed change.
+    TabSessions::ComparedSide left, right;
 };
 
 struct ComparePane {

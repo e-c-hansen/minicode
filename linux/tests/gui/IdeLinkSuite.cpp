@@ -446,6 +446,10 @@ MC_GUI_SUITE(idelink) {
     MCGuiStep("Accept is clicked for real", [] {
         Document* d = diffTab("c.txt (Claude Code)");
         GCHECK(d && d->decision() && d->decision()->decision() == 0);
+        // A change offered for the user's decision is not made again.
+        TabSessions::PageTab page;
+        GCHECK(d && !Editor::comparisonPage(d, &page));
+        GCHECK(d && d->compare() && d->compare()->spec.left.path.empty());
         GCHECK(cv()->barText().find("Claude Code wants to change c.txt.") != std::string::npos);
         GCHECK(!answered(30));   // nothing is said until the user decides
         clickBar("Accept");

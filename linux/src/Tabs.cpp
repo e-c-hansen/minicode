@@ -366,17 +366,119 @@ void Editor::showDiff(const std::string& title, const std::string& bytes, bool c
     activate(d);
 }
 
+namespace {
+// The largest side read back, as `mutible diff` reads.
+constexpr size_t kMaxSideBytes = 16u * 1024 * 1024;
+
+// One side's text: the file on disk (rev ""), or the file as the repository
+// has it at a revision or in the index (":"). A file not there (added since,
+// deleted, not in that commit), not text or over 16 MB reads as empty, as
+// the page showed it.
+std::string sideText(const TabSessions::ComparedSide& s) {
+    if (s.path.empty()) return "";
+    if (s.rev.empty()) {
+        struct stat st;
+        if (stat(s.path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) ||
+            (size_t)st.st_size > kMaxSideBytes)
+            return "";
+        std::string text;
+        if (FILE* f = fopen(s.path.c_str(), "rb")) {
+            char buf[65536];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof buf, f)) > 0 && text.size() <= kMaxSideBytes)
+                text.append(buf, n);
+            fclose(f);
+        }
+        if (text.size() > kMaxSideBytes || !g_utf8_validate(text.data(), (gssize)text.size(), nullptr))
+            return "";
+        return text;
+    }
+    // The path with its links resolved the way the repository names files; a
+    // file gone since is its folder's real path and its name.
+    char* resolved = realpath(s.path.c_str(), nullptr);
+    std::string real = resolved ? resolved : "";
+    free(resolved);
+    if (real.empty()) {
+        const size_t slash = s.path.rfind('/');
+        if (slash == std::string::npos) return "";
+        char* dir = realpath(s.path.substr(0, slash).c_str(), nullptr);
+        if (!dir) return "";
+        real = std::string(dir) + s.path.substr(slash);
+        free(dir);
+    }
+    const std::string dir = real.substr(0, real.rfind('/'));
+    GitResult top = runGit(dir.empty() ? "/" : dir, {"rev-parse", "--show-toplevel"});
+    if (!top.ok()) return "";
+    std::string root = top.out;
+    while (!root.empty() && (root.back() == '\n' || root.back() == '\r')) root.pop_back();
+    if (root.empty() || real.compare(0, root.size() + 1, root + "/") != 0) return "";
+    const std::string rel = real.substr(root.size() + 1);
+    GitResult show = runGit(root, {"show", (s.rev == ":" ? "" : s.rev) + ":" + rel});
+    if (!show.ok() || show.out.size() > kMaxSideBytes ||
+        !g_utf8_validate(show.out.data(), (gssize)show.out.size(), nullptr))
+        return "";
+    return show.out;
+}
+}  // namespace
+
+void Editor::showComparison(const CompareSpec& spec, std::function<void(Document*)> done) {
+    openComparison(spec, false, -1, true, std::move(done));
+}
+
+// The recipe a comparison tab is kept by in the session (the Mac's
+// pageTabOf:into:), or false when it has none.
+bool Editor::comparisonPage(const Document* d, TabSessions::PageTab* out) {
+    if (!d || !d->compare()) return false;
+    const CompareSpec& sp = d->compare()->spec;
+    if (sp.left.path.empty() || sp.right.path.empty() || !sp.decisionPrompt.empty() || sp.preview ||
+        d->decision() || !TabSessions::isComparedRev(sp.left.rev) ||
+        !TabSessions::isComparedRev(sp.right.rev))
+        return false;
+    TabSessions::PageTab p;
+    p.kind = "compare";
+    p.title = sp.title;
+    p.fileName = sp.fileName.empty() ? sp.path : sp.fileName;
+    p.left = sp.left;
+    p.left.label = sp.leftLabel;
+    p.right = sp.right;
+    p.right.label = sp.rightLabel;
+    *out = p;
+    return true;
+}
+
+// A comparison made again from its recipe (the Mac's remakeComparisonOfTab:).
+void Editor::remakeComparison(const TabSessions::PageTab& page, int at, bool show,
+                              std::function<void(Document*)> done) {
+    if (page.kind != "compare") return;
+    CompareSpec spec;
+    spec.title = page.title;
+    spec.fileName = page.fileName;
+    spec.leftLabel = page.left.label;
+    spec.rightLabel = page.right.label;
+    spec.left = page.left;
+    spec.right = page.right;
+    if (page.right.rev.empty()) spec.path = page.right.path;   // the file on the right, when it is one
+    openComparison(spec, true, at < 0 ? 0 : at, show, std::move(done));
+}
+
 // The texts are lined up, colored and diffed on a thread (the Mac's
 // MCComparison prepare); the tab opens on the main loop when that is done.
-void Editor::showComparison(const CompareSpec& spec, std::function<void(Document*)> done) {
+void Editor::openComparison(const CompareSpec& spec, bool remake, int at, bool show,
+                            std::function<void(Document*)> done) {
     struct Job {
         Editor* editor;
         std::shared_ptr<bool> alive;
         std::shared_ptr<const CompareData> data;
         std::function<void(Document*)> done;
+        int at;
+        bool show;
     };
-    Job* job = new Job{this, compareAlive_, nullptr, std::move(done)};
-    std::thread([job, spec] {
+    Job* job = new Job{this, compareAlive_, nullptr, std::move(done), at, show};
+    std::thread([job, spec = CompareSpec(spec), remake]() mutable {
+        if (remake) {
+            spec.leftText = sideText(spec.left);
+            spec.rightText = sideText(spec.right);
+        }
         job->data.reset(prepareComparison(spec));
         g_idle_add(
             [](gpointer p) -> gboolean {
@@ -387,20 +489,26 @@ void Editor::showComparison(const CompareSpec& spec, std::function<void(Document
                 const CompareSpec& sp = j->data->spec;
                 // In the agents' preview tab for comparisons when asked, in
                 // the last one's place; never the tab the user is typing in.
-                const Model::DocId old = e->win_->add(
-                    d->id(), "", sp.preview ? Model::Preview::AgentDiff : Model::Preview::None,
-                    [e](Model::DocId id) {
-                        Document* o = e->documentById(id);
-                        return o && o->dirty();
-                    },
-                    [e, quiet = sp.quiet](Model::DocId id) {
-                        return quiet && e->documentById(id) == e->active_;
-                    });
+                // A tab made again goes where it was.
+                Model::DocId old = 0;
+                if (j->at >= 0) {
+                    e->win_->insert(d->id(), "", j->at);
+                } else {
+                    old = e->win_->add(
+                        d->id(), "", sp.preview ? Model::Preview::AgentDiff : Model::Preview::None,
+                        [e](Model::DocId id) {
+                            Document* o = e->documentById(id);
+                            return o && o->dirty();
+                        },
+                        [e, quiet = sp.quiet](Model::DocId id) {
+                            return quiet && e->documentById(id) == e->active_;
+                        });
+                }
                 d->setCompare(sp.title, j->data);
                 if (!sp.decisionPrompt.empty())
                     d->setDecision(std::make_shared<CompareDecision>(
                         j->data, sp.decisionPrompt, sp.onDecision, sp.lastChoiceGrace));
-                if (sp.quiet) e->refreshStrip();
+                if ((j->at >= 0 && !j->show) || sp.quiet) e->refreshStrip();
                 else e->activate(d);
                 if (Document* o = e->documentById(old)) e->letGo(o);
                 if (j->done) j->done(d);

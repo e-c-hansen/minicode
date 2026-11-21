@@ -440,6 +440,18 @@ public:
     // given, is called then with the tab's document). `mutible diff`, Compare
     // with Main and the IDE link's openDiff come in later items.
     void showComparison(const CompareSpec& spec, std::function<void(Document*)> done = nullptr);
+    // The recipe of a comparison tab as the session keeps it ("compare", its
+    // title, colors' file name and both sides), or false when it has none: no
+    // recipe set, a proposed change, the agents' preview tab, or a revision
+    // TabSessions::isComparedRev refuses. `at` is left for the caller.
+    static bool comparisonPage(const Document* d, TabSessions::PageTab* out);
+    // A comparison made again from its recipe: both sides are read from git
+    // and the disk on a thread (a side git lacks is empty, at most 16 MB a
+    // side), then lined up as showComparison does. The tab is inserted at
+    // `at` among the window's tabs (clamped), and put on show only when
+    // `show` is set. A window gone meanwhile drops it; `done` gets the tab.
+    void remakeComparison(const TabSessions::PageTab& page, int at, bool show,
+                          std::function<void(Document*)> done = nullptr);
     // A page (EditorPage.h) in a tab of its own, reused by its key; with
     // `preview` (a single click in Source Control, as the tree opens a
     // file) in the group's preview tab, which it replaces, the page that
@@ -772,6 +784,11 @@ private:
     GitDiffView*   diff_     = nullptr;   // made on the first diff
     CompareView*   compare_  = nullptr;   // made on the first comparison
     std::shared_ptr<bool> compareAlive_ = std::make_shared<bool>(true);   // for the prepare thread
+    // showComparison's and remakeComparison's one path: with `remake` the
+    // thread reads the sides of spec.left and spec.right first; `at` >= 0
+    // inserts the tab there and `show` says whether it comes on show.
+    void openComparison(const CompareSpec& spec, bool remake, int at, bool show,
+                        std::function<void(Document*)> done);
     MediaView*     media_    = nullptr;
     CsvTable*      csv_      = nullptr;   // made on the first table
     SqliteView*    sqlite_   = nullptr;   // a SQLite tab's tables and rows
