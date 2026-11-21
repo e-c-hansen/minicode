@@ -34,6 +34,8 @@ void flatten(const Procs::Node& n, int depth, const Procs::Group& g,
     r.cpu = p.alive ? Procs::formatCpu(p.cpu) : std::string();
     std::string cmd = p.command.empty() ? p.name : p.command;
     r.detail = cmd + (p.cwd.empty() ? "" : "  " + p.cwd);
+    r.label = Procs::rowLabel(p, r.orphan);
+    r.stopLabel = p.alive ? Procs::stopLabel(p) : std::string();
     r.tooltip = "process " + std::to_string(p.key.pid) + "\n" + cmd +
                 (p.cwd.empty() ? "" : "\n" + p.cwd);
     if (!p.session.empty()) r.tooltip += "\nStarted by Claude Code session " + p.session;
@@ -203,6 +205,22 @@ void ProcessesPanel::rebuild() {
         }
         GtkWidget* row = gtk_list_box_row_new();
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+        if (!r.header) {
+            // What a screen reader reads for the row, as the Mac's (Procs::rowLabel), and
+            // its Stop named by what it stops (Procs::stopLabel) as the description: the
+            // Stop is a menu item with no widget of its own to label.
+            gtk_accessible_update_property(GTK_ACCESSIBLE(row), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                           r.label.c_str(), -1);
+            g_object_set_data_full(G_OBJECT(row), "mutible-a11y-label", g_strdup(r.label.c_str()),
+                                   g_free);
+            if (!r.stopLabel.empty()) {
+                gtk_accessible_update_property(GTK_ACCESSIBLE(row),
+                                               GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                               r.stopLabel.c_str(), -1);
+                g_object_set_data_full(G_OBJECT(row), "mutible-a11y-description",
+                                       g_strdup(r.stopLabel.c_str()), g_free);
+            }
+        }
         gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), !r.header);
         gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
         gtk_list_box_append(GTK_LIST_BOX(list_), row);
@@ -272,6 +290,26 @@ void ProcessesPanel::dropMenu() {
     menu_ = nullptr;
     gtk_popover_popdown(GTK_POPOVER(m));
     if (gtk_widget_get_parent(m)) gtk_widget_unparent(m);
+}
+
+static std::string rowData(GtkWidget* list, const std::vector<ProcessesPanel::RowInfo>& rows,
+                           int pid, const char* key) {
+    for (size_t i = 0; i < rows.size(); i++) {
+        if (rows[i].header || rows[i].pid != pid) continue;
+        GtkListBoxRow* row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list), (int)i);
+        const char* v = row ? static_cast<const char*>(g_object_get_data(G_OBJECT(row), key))
+                            : nullptr;
+        return v ? v : "";
+    }
+    return "";
+}
+
+std::string ProcessesPanel::rowAccessibleLabel(int pid) const {
+    return rowData(list_, rows_, pid, "mutible-a11y-label");
+}
+
+std::string ProcessesPanel::rowAccessibleDescription(int pid) const {
+    return rowData(list_, rows_, pid, "mutible-a11y-description");
 }
 
 void ProcessesPanel::openMenuFor(int pid) {
@@ -363,6 +401,10 @@ void ProcessesPanel::stopPid(int pid) {
         if (!rows_[i].header && rows_[i].pid == pid) at = (int)i;
     if (at < 0 || !rows_[at].alive) {
         gtk_widget_error_bell(root_);
+        // The Mac's note (331b3acf): a process that went while the menu was up.
+        if (onNote)
+            onNote((at >= 0 ? trimmedName(rows_[at].text) : std::string("The process")) +
+                   " (process " + std::to_string(pid) + ") has exited; nothing was stopped");
         return;
     }
     const RowInfo r = rows_[at];

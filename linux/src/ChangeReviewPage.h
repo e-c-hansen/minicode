@@ -183,6 +183,8 @@ public:
     bool openGap(size_t row);
     GtkWidget* undoButton() const { return undo_; }
     GtkWidget* buttonWidget(const std::string& title, size_t row) const;
+    // The accessible label set on a button (GTK has no getter; the checks read this).
+    std::string accessibleLabelOf(const std::string& title, size_t row) const;
     void scrollToRow(size_t row);
     // F7 (forward) or Shift+F7: the next or previous block; false with no
     // blocks. The block's row after a step, or -1.

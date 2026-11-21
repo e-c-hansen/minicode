@@ -54,6 +54,7 @@ public:
         std::string detail;    // command and folder line
         std::vector<int> portNumbers;
         std::string ports, memory, cpu, tooltip;
+        std::string label, stopLabel;   // for a screen reader: the row, and its Stop
         int pid = 0;
         bool orphan = false, outside = false, alive = true;
         int terminal = 0;
@@ -62,6 +63,10 @@ public:
     // The row's right click menu for `pid` (pops up); the check then
     // activates "procs.stop" on actionGroup(), as the menu item would.
     void openMenuFor(int pid);
+    // The label the row for `pid` carries for a screen reader, as set on its widget
+    // (GTK has no getter for it; "" when no row), and its description (the Stop).
+    std::string rowAccessibleLabel(int pid) const;
+    std::string rowAccessibleDescription(int pid) const;
     GActionGroup* actionGroup() const { return G_ACTION_GROUP(actions_); }
     std::string menuLabels() const { return menuLabels_; }
 
