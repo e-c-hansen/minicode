@@ -137,3 +137,4 @@ EditBoxesSuite.cpp
 GitPanelSuite.cpp
 SidebarIconsSuite.cpp
 TerminalLinksSuite.cpp
+SessionBrowserSuite.cpp
