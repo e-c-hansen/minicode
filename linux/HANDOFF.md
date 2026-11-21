@@ -8933,3 +8933,46 @@ show; the file shown last is shown meanwhile).
 - **What failed.** `MC_GUI_IN_ORDER=1 ... MC_GUI_SUITES="tree_stall tree_focus tree_drags"`: plain.txt never opened after its drop on the editor (the second drag; the first, onto the terminal, worked). Each suite alone, and tree_drags after either one, passed.
 - **Cause.** A test-harness bug, not the product. `pointOnRoot` (tests/gui/Input.cpp) took any negative coordinate as "the widget's middle". tree_focus leaves the tree scrolled, so plain.txt's row sat at root y 618, below the editor's middle (y 266); the target's point in the row's coordinates was y -352, became the row's own middle, and the pointer went across at y 619 and let go over the tree and the terminal's edge. A drop target on the window saw every motion at y 575 to 621 and the editor's target never an enter or an accept. In a fresh tree the row is above the editor and the point is positive.
 - **Fix.** Only exactly -1 means the middle (the click calls pass -1). Checked: the failing order three times, the seven tree suites in order and with `MC_GUI_SHUFFLE=67`, and the longer order with session_browser, tree_clicks and tree_icons before.
+
+### 143. The find bar in a large text, in stages (November 2026)
+
+- **What.** The Mac's 96a45e14 and 11d4221f: a text of 1M characters or
+  more is searched in stages through the core's `TextScan`, marks are drawn
+  only for the query and text as they are, and a word seeded in a file over
+  20 MB waits for a key. GTK had none of it: `FindRules::findAll` matched
+  every line on a worker, the old query's marks stayed until the new
+  results came, and the seed was always searched.
+- **Stages** (`FindBar::stagedWork`, `stagedArrived`). The lines on screen
+  (ASCII text only, where a character is a byte), the first match from the
+  caret (selected at once, "1 of …" when found from the top, else "? of
+  …", and "N of …" once a part of the count reaches it, with the Mac's
+  tooltip "N matches counted so far"), then the matches from the top, at most `kMatchLimit` kept and sent
+  every 100 ms. Each is a `Stage` message through `g_idle_add`; it applies
+  only when its job's cancel flag is clear and the query generation and text
+  version are those it was made for. An all-ASCII text (`Text::prepare`) is
+  scanned as bytes, else as UTF-16 in blocks with the matches turned to
+  characters once. A scope (Find in Selection) keeps the old whole-text
+  search. Find Next while counting (`navigate`) scans from the selection on
+  its own worker; typed before the first match it runs after it.
+  `resultsCurrent()` is false while `counting()`; `marksCurrent()` is what
+  painting reads. **Different from the Mac:** the count stops at 20,000
+  ("3 of 20000+", GTK's rule for every search), where the Mac counts all.
+  The buffer is still copied once per version on the main thread
+  (`currentText`); GTK has no held file bytes to search in place.
+- **Marks and the seed.** A staged search empties the held matches and
+  repaints at once; a small text keeps its marks until results come. The
+  seed (`holdSeed`, `seedPending()`, `releaseSeed`) puts the word in the
+  box, searches nothing, shows an empty count with a tooltip, and Return
+  (or a key, or an option) searches it, starting at the word's own
+  occurrence so Return lands on the next.
+- **Checked.** `large_file` gains a 22 MB log (the seed waits, Return lands
+  on line 3's "2026", "3 of 20000+", the old marks gone after a new query,
+  NEEDLE-4242 on the last line selected with its first match under
+  `GCHECK_TIME(max(150, 8 x a memchr pass))` of the worker's CPU, "1 of 1",
+  a match on every line with Find Next typed at once, main-thread stalls)
+  and a 1.3 MB text with accents (characters, not bytes). First match on the
+  last line 7 ms of worker CPU against a 1.3 ms memchr pass; 20,000 matches
+  counted 5 ms; longest main-thread stall 58 ms (the seed's search, which
+  copies the buffer), 12 to 14 ms after. `find_bar` 102 passed,
+  `large_file` 115 passed. Not checked: a file of 250 MB (the harness's
+  22 MB is the smallest over the seed's 20 MB), real keys and the look.
