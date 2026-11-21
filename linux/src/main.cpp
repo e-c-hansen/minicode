@@ -3857,6 +3857,13 @@ static void act_previous_problem(GSimpleAction*, GVariant*, gpointer userp) {
 // file from Quick Open opens as on the Mac (OpenFrom::QuickOpen, a kept tab
 // unless the settings say), and the tree follows it. The symbols come from
 // the window's language servers (LspSessionSymbols.cpp, PARITY.md 2.12).
+static std::string realPathOf(const std::string& p) {
+    char* r = realpath(p.c_str(), nullptr);
+    std::string out = r ? r : p;
+    free(r);
+    return out;
+}
+
 static void showPalette(App* app, const char* text) {
     PalettePanel::Context ctx;
     ctx.root = app->rootDir;
@@ -3868,6 +3875,11 @@ static void showPalette(App* app, const char* text) {
         // revealPath:open:); never widening a focus.
         if (isInside(path, app->rootDir)) app->tree->revealPath(path);
         openFileThen(app, path, EditorTabs::OpenFrom::QuickOpen, nullptr);
+        // Opened, the file takes the keyboard whatever had it before Ctrl+P
+        // (the tree, the terminal), as in VS Code and Zed and the Mac's
+        // openFileFromQuickOpen:; a web bookmark's page takes it itself.
+        const std::string cur = app->editor->currentPath();
+        if (cur == path || realPathOf(cur) == realPathOf(path)) app->editor->focusActiveDocument();
     };
     ctx.documentSymbols = [app](PalettePanel::Context::SymbolsDone done) {
         return !app->dead && app->lsp && app->lsp->documentSymbols(std::move(done));
@@ -3957,14 +3969,41 @@ static SearchPanel* findInFolderPanel(App* app) {
     return app->search;
 }
 
-static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
-    findInFolderPanel(static_cast<App*>(userp))->show();
+// The editor's selection on one line becomes the query, as the Mac's
+// seedSearchFromSelection; true when it did.
+static bool seedSearchFromSelection(App* app, SearchPanel* panel) {
+    GtkWidget* view = app->editor->textView();
+    Document* d = app->editor->active();
+    if (!d || gtk_window_get_focus(GTK_WINDOW(app->window)) != view || !gtk_widget_get_visible(view))
+        return false;
+    GtkTextBuffer* b = d->buffer();
+    GtkTextIter s, e;
+    if (!gtk_text_buffer_get_selection_bounds(b, &s, &e)) return false;
+    if (gtk_text_iter_get_offset(&e) - gtk_text_iter_get_offset(&s) > 1000) return false;
+    char* raw = gtk_text_buffer_get_text(b, &s, &e, FALSE);
+    const std::string text = raw ? raw : "";
+    g_free(raw);
+    if (text.empty() || text.find_first_of("\n\r") != std::string::npos) return false;
+    panel->seedQuery(text);
+    return true;
 }
 
-// Replace in Folder: the same window with its replace row, the keyboard in
-// the replacement (the Mac's Option+Shift+Cmd+F).
+static void act_find_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
+    App* app = static_cast<App*>(userp);
+    SearchPanel* p = findInFolderPanel(app);
+    seedSearchFromSelection(app, p);
+    p->show();
+}
+
+// Replace in Folder (the Mac's Option+Shift+Cmd+F), as VS Code's Replace in
+// Files opens it: the replace row, the keyboard in the replacement only
+// when the selection just became the query, else in the query (a first
+// press with nothing searched typed the search into the replacement).
 static void act_replace_in_folder(GSimpleAction*, GVariant*, gpointer userp) {
-    findInFolderPanel(static_cast<App*>(userp))->showReplace();
+    App* app = static_cast<App*>(userp);
+    SearchPanel* p = findInFolderPanel(app);
+    const bool seeded = seedSearchFromSelection(app, p);
+    p->showReplace(seeded);
 }
 
 // TODOs in Folder: the window, scoped as Find in Folder is, and scanned
