@@ -29,8 +29,8 @@
 //     made in the folder;
 //   - a worktree's review page open in the window is listed in the state's
 //     `reviews` (kind, title, on show), `review` with its `page` gives its
-//     files, and closing the tab drops it from the list (GTK has no commit
-//     page, so a commit's is not checked here);
+//     files, and closing the tab drops it from the list; so is a commit's
+//     page (kind commit, its hash (in the id) and title), whose `review` gives its files;
 //   - closing the window stops its server (the port refuses).
 // Nothing opens a real browser (SessionBrowser::opener), and the state file,
 // the files and the windows are put back.
@@ -392,6 +392,14 @@ Document* worktreeTab() {
     return nullptr;
 }
 std::string gWtPath, gWtId;
+std::string gCmHash, gCmId;
+Document* commitTab() {
+    for (Document* d : Ed()->documents())
+        if (d->editorPage())
+            if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get()))
+                if (r->isCommit()) return d;
+    return nullptr;
+}
 
 std::string gTectonicWas;
 bool gHadTectonic = false;
@@ -955,6 +963,82 @@ MC_GUI_SUITE(session_browser) {
         o.set("watch", Json(false));
         gWs3.sendJson(o);
         GCHECK(worktreeTab() == nullptr);
+    });
+
+    // ---- 7b. A commit's review page
+    MCGuiStep("a commit page open in the window (HEAD, the commit made in section 6)", [] {
+        const std::string cmd = "git -C '" + MCGuiProject() + "' rev-parse HEAD > '" + MCGuiScratch() + "/sbt_head.txt'";
+        GCHECK(system(cmd.c_str()) == 0);
+        gCmHash = MCGuiReadFile(MCGuiScratch() + "/sbt_head.txt");
+        while (!gCmHash.empty() && (gCmHash.back() == '\n' || gCmHash.back() == ' ')) gCmHash.pop_back();
+        unlink((MCGuiScratch() + "/sbt_head.txt").c_str());
+        GCHECK_EQ_STR(std::to_string(gCmHash.size()), "40");
+        gCmId = "commit:" + gCmHash;
+        GCHECK(MCGuiApp().git != nullptr);
+        auto page = std::make_shared<ChangeReviewPage>(MCGuiApp().git, MCGuiProject(), gCmHash, "new");
+        Ed()->showPage(page);
+    });
+    MCGuiWait("the state lists it, on show", 20, [] {
+        Json r;
+        return reviewListed(gWs3, gCmId, &r) && r["onShow"].asBool();
+    });
+    MCGuiStep("kind commit, its hash (in the id) and title; ask for its review", [] {
+        Json r;
+        if (!GCHECK(reviewListed(gWs3, gCmId, &r))) return;
+        GCHECK_EQ_STR(r["kind"].asString(), "commit");
+        GCHECK_EQ_STR(r["id"].asString(), "commit:" + gCmHash);   // the view carries the hash in the id
+        GCHECK_EQ_STR(r["title"].asString(), gCmHash.substr(0, 7) + " new");
+        GCHECK(reviewCount(gWs3) == 1);
+        gMark = gWs3.msgs.size();
+        Json o = Json::object();
+        o.set("t", Json("review"));
+        o.set("page", Json(gCmId));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("the read is done (pending, then reviewread)", 20, [] {
+        gWs3.pump();
+        for (size_t i = gMark; i < gWs3.msgs.size(); i++)
+            if (gWs3.msgs[i]["t"].asString() == "reviewread" && gWs3.msgs[i]["page"].asString() == gCmId) return true;
+        return false;
+    });
+    MCGuiStep("ask again, as the page does", [] {
+        gMark = gWs3.msgs.size();
+        Json o = Json::object();
+        o.set("t", Json("review"));
+        o.set("page", Json(gCmId));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("the review of that commit", 20, [] {
+        gWs3.pump();
+        for (size_t i = gMark; i < gWs3.msgs.size(); i++) {
+            const Json& m = gWs3.msgs[i];
+            if (m["t"].asString() == "review" && m["page"].asString() == gCmId && !m["pending"].asBool()) {
+                gMsg = m;
+                return true;
+            }
+        }
+        return false;
+    });
+    MCGuiStep("it has the commit's one file; the tab closes", [] {
+        MCGuiNote("commit review: %s", gMsg.dump().substr(0, 300).c_str());
+        GCHECK(gMsg["files"].size() == 1);
+        GCHECK(gMsg.dump().find("sbt_new.txt") != std::string::npos);
+        GCHECK(gMsg["error"].isNull());
+        Document* d = commitTab();
+        if (!GCHECK(d != nullptr)) return;
+        Ed()->closeTab(d);
+    });
+    MCGuiWait("the state no longer lists it", 20, [] {
+        Json r;
+        return !reviewListed(gWs3, gCmId, &r) && reviewCount(gWs3) == 0;
+    });
+    MCGuiStep("the page's watch is dropped", [] {
+        Json o = Json::object();
+        o.set("t", Json("review"));
+        o.set("page", Json(gCmId));
+        o.set("watch", Json(false));
+        gWs3.sendJson(o);
+        GCHECK(commitTab() == nullptr);
     });
 
     MCGuiStep("the stand-in, the repository and the files go back", [] {

@@ -1153,6 +1153,14 @@ GtkWidget* GitPanel::rowWidget(int row) const {
     return nullptr;
 }
 
+GtkWidget* GitPanel::graphRowWidget(int row) const {
+    for (GtkWidget* c = gtk_widget_get_first_child(graphList_); c; c = gtk_widget_get_next_sibling(c)) {
+        GtkWidget* da = gtk_widget_get_first_child(c);
+        if (da && GTK_IS_DRAWING_AREA(da) && positionOf(GTK_DRAWING_AREA(da)) == row) return da;
+    }
+    return nullptr;
+}
+
 bool GitPanel::graphHasRows() const { return graphShown_ && graphRowCount() > 0; }
 
 // Focus order: the change lists, the graph, the message box (Tab), and back

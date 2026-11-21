@@ -8506,7 +8506,18 @@ the diff tab.
 - **Not done.** GTK restores no review pages with the session (it restores
   none at all), so a kept commit page is not restored. GTK has no line
   history, so its show-commit has nothing to point at.
-- **Checks.** None added here; the next bite adds them to `git_review` and
-  `session_browser`. Smoke-checked with a throwaway suite: two commits, a
-  click on each graph row, the page's title and file count, a double-click
-  keeping it.
+- **Checks.** `git_review` (GitReviewSuite.cpp, last section): in a
+  repository of a root commit, a commit with a body that changes one file
+  and adds another, and an empty one, real clicks on the graph's rows
+  (`GitPanel::graphRowWidget`): a single click shows the page in the preview
+  tab (title "<short hash> <subject>", the subject, the byline with the
+  author and the short hash, the body, both files, no Stage or Discard); a
+  click on the root commit replaces it (same tab count, 1 file); a
+  double-click keeps a page and a click on another row then leaves two tabs;
+  a click on a kept commit shows its tab, no new one; Return keeps the page;
+  an empty commit says "This commit changes no files."; closing the pages
+  and the repository leaves nothing. `session_browser` (section 7b): an open
+  commit page is in the state's `reviews` (kind commit, its title, onShow;
+  the hash is in the id, `commit:<hash>`), `review` with that page answers
+  pending, reviewread, then its files, and closing it empties `reviews`.
+  The page's `headerTitle()` and `bodyText()` are for these checks.

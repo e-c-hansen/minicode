@@ -156,6 +156,8 @@ public:
     bool shows(const std::string& title) const;   // a header or section row with these words
     std::string pageText() const;
     std::string headerDetail() const;
+    std::string headerTitle() const;   // the header's first line: a commit's subject
+    std::string bodyText() const;      // a commit's message after its subject ("" on other pages)
     std::string messageText() const;
     bool messageOk() const { return messageOk_; }
     size_t blockCount() const;
