@@ -588,6 +588,12 @@ Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
         // of its own.
         if (r.codeBlock || r.code) applyTag(buffer, "md_code",  startOff, endOff);
         if (r.quote)               applyTag(buffer, "md_quote", startOff, endOff);
+        // An alert's text is body text, its title in the alert's color.
+        if (r.alert >= 1 && r.alert <= 5 && !r.code) {
+            char name[24];
+            g_snprintf(name, sizeof(name), r.alertTitle ? "md_alerttitle%d" : "md_alert%d", r.alert);
+            applyTag(buffer, name, startOff, endOff);
+        }
         if (r.rule)                applyTag(buffer, "md_rule",  startOff, endOff);
         if (r.link)                applyTag(buffer, "md_link",  startOff, endOff);
         if (r.bold)                applyTag(buffer, "md_bold",  startOff, endOff);

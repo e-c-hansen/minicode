@@ -485,6 +485,18 @@ void Editor::ensureTags() {
                                "foreground", pal::MdQuote,
                                "left-margin", 16,   // macOS headIndent
                                "style", PANGO_STYLE_ITALIC, NULL);
+    // GitHub's alerts (MdRun::alert, 1 to 5): a quote's text read as body
+    // text, upright, and its title bold in the alert's color. Created after
+    // md_quote so they win; applySettings sets the colors, the dark or the
+    // light page's shade.
+    for (int k = 1; k <= 5; ++k) {
+        char name[24];
+        g_snprintf(name, sizeof(name), "md_alert%d", k);
+        gtk_text_buffer_create_tag(b, name, "style", PANGO_STYLE_NORMAL, NULL);
+        g_snprintf(name, sizeof(name), "md_alerttitle%d", k);
+        gtk_text_buffer_create_tag(b, name, "style", PANGO_STYLE_NORMAL,
+                                   "weight", PANGO_WEIGHT_BOLD, NULL);
+    }
     gtk_text_buffer_create_tag(b, "md_rule",
                                "foreground", pal::MdRule, NULL);
     gtk_text_buffer_create_tag(b, "md_link",
@@ -1025,7 +1037,7 @@ void Editor::showTable(Document* d) {
     char* raw = gtk_text_buffer_get_text(b, &s, &e, TRUE);
     const std::string text = raw ? raw : "";
     g_free(raw);
-    csv_->show(text, d->csvDelimiter(text));
+    csv_->show(text, d->csvDelimiter(text), d->path());
     csvDoc_ = d;
     auto changed = +[](GtkTextBuffer* buf, gpointer p) {
         Editor* self = static_cast<Editor*>(p);
@@ -1752,6 +1764,17 @@ void Editor::applySettings(const Settings& s) {
     setTagColor(t, "md_code", "background-rgba", s.markdownCodeBackground());
     setTagColor(t, "md_quote", "foreground-rgba", s.markdown(MarkdownColor::Quote));
     setTagColor(t, "md_codelabel", "foreground-rgba", s.markdown(MarkdownColor::Quote));
+    // An alert's colors: GitHub's for its kind, in the light or the dark shade.
+    static const uint32_t kAlertLight[] = {0, 0x0969DA, 0x1A7F37, 0x8250DF, 0x9A6700, 0xD1242F};
+    static const uint32_t kAlertDark[] = {0, 0x4493F8, 0x3FB950, 0xAB7DF8, 0xD29922, 0xF85149};
+    for (int k = 1; k <= 5; ++k) {
+        char name[24];
+        g_snprintf(name, sizeof(name), "md_alert%d", k);
+        setTagColor(t, name, "foreground-rgba", s.text(Surface::Editor));
+        g_snprintf(name, sizeof(name), "md_alerttitle%d", k);
+        setTagColor(t, name, "foreground-rgba",
+                    Rgba::hex(s.isDark() ? kAlertDark[k] : kAlertLight[k]));
+    }
     setTagColor(t, "md_link", "foreground-rgba", s.markdown(MarkdownColor::Link));
     setTagColor(t, "md_done", "foreground-rgba", s.markdown(MarkdownColor::Done));
     // Swatch text contrast depends on the editor background.
