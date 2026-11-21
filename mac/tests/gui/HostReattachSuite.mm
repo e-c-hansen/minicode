@@ -37,7 +37,7 @@
 //     is) saves a file the window shows with typing unsaved in it: the host
 //     writes it (the rule that refused a page while an app's window had the
 //     file is gone for the Mac's, which saves through the host), and the
-//     window's tab is clean, its title too, and in step with the file's
+//     window's tab is clean, its dot in the strip gone, and in step with the file's
 //     stamp. The window types and saves: no question, the file written, and
 //     the guest hears that the host wrote it (DocDirty flag 2, its stamp
 //     the file's). A UTF-16 file saved from the window stays UTF-16 with
@@ -67,6 +67,7 @@
 #import "Terminal.h"
 #import "TerminalPanel.h"
 #import "EditorPanes.h"
+#import "TabStrip.h"
 
 #include <signal.h>
 #include <stdlib.h>
@@ -884,13 +885,20 @@ MC_GUI_SUITE(host_reattach) {
         GCHECK_EQ_STR([NSString stringWithContentsOfFile:gFileE encoding:NSUTF8StringEncoding error:nil],
                       @"epsilon\ntyped-e\n");
     });
-    MCGuiWait(@"the window's tab follows: clean, its title too", 10, ^BOOL {
+    // Its own dot in the strip, not the window's edited mark: c.txt and d.txt
+    // are still unsaved from the steps above, so the window stays edited.
+    MCGuiWait(@"the window's tab follows: clean, its dot in the strip gone", 10, ^BOOL {
         MCTab *e = TabFor(gC, gFileE);
-        return e && !e.dirty && !gC.window.documentEdited && [e.savedText isEqualToString:@"epsilon\ntyped-e\n"];
+        MCTabStrip *strip = [gC valueForKey:@"tabStrip"];
+        BOOL dot = YES;
+        for (MCTabStripItem *item in strip.items)
+            if (e.currentPath && [item.toolTip hasPrefix:e.currentPath]) dot = item.dirty;
+        return e && !e.dirty && !dot && [e.savedText isEqualToString:@"epsilon\ntyped-e\n"];
     });
     MCGuiStep(@"in step with the file as the host wrote it; the host counts it saved", ^{
         MCTab *e = TabFor(gC, gFileE);
         GCHECK(![gC tab:e changedOnDisk:MCStampOfFile(gFileE)]);
+        GCHECK(gC.window.documentEdited == gC.hasUnsavedChanges);   // c.txt and d.txt still unsaved
         if (gGuest) GCHECK(!HostDirty(*gGuest, gDocE));
     });
     MCGuiStep(@"the window types and saves: no question, and the host wrote it", ^{

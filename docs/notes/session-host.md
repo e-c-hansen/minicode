@@ -251,6 +251,11 @@ top of a turn, never inside a text system callback.
   the file's text now: DocSaved flag 1 with that text (`savedAs:`), sent
   only to a host whose Welcome has flag 2, since an older host would take
   it for "the buffer was written".
+- **The window's edited mark is every tab's** (`documentEdited` is
+  `hasUnsavedChanges`): a check that one tab became clean reads that
+  tab's `dirty` and its strip item's dot, never the window's mark, which
+  stays set while any other tab is unsaved (host_reattach's first CI run
+  of stage 7 waited 15 s on it with two other tabs unsaved).
 - **GtkStack moves the keyboard to a tab's first pane** when it shows
   another tab with the keyboard in the one going ("Terminal splits in the
   record"): `TerminalDock::activate` hands it to the tab's active pane.
@@ -2760,7 +2765,7 @@ inode past 2^53), a DocSave's encoding through the wire; a host with only
 flag 1 sent no encoding and no `savedAs`. `host:save` and the
 `sessionweb:*` groups unchanged. GUI: `host_reattach`'s stage 7 part on a
 headless host (its header): a page's guest over the socket saves a file
-the window shows with typing in it, the window's tab and title clean and
+the window shows with typing in it, the window's tab and its strip dot clean and
 in step with the file's stamp, the host counting it saved; the window
 types and saves with no question and the guest hears the host's write
 with the file's stamp; a UTF-16 file saved from the window byte for byte
