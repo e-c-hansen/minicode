@@ -8842,3 +8842,31 @@ show; the file shown last is shown meanwhile).
   tree_focus tree_drags ...` fails `tree_drags` "plain.txt opens in the
   editor" with main's `tree_clicks` too (no one suite before it does it
   alone); that is a separate order dependence, not this change's.
+
+### 139. Alerts in their colors and the CSV header row (November 2026)
+
+- **What.** The Mac's a85f1a85 put GitHub's alerts, emoji shortcodes, front
+  matter and the CSV header row in the core. Emoji and front matter come
+  from the core parser and needed nothing here. Two pieces were drawn on the
+  Mac only.
+- **Alerts.** `Editor::ensureTags` makes `md_alertN` (the text, upright, in
+  the editor's text color) and `md_alerttitleN` (bold, GitHub's color for
+  kind N = 1..5, note to caution) after `md_quote`, so they win over it;
+  `applySettings` colors them, light or dark by `isDark()`. `Markdown.cpp`
+  applies them from `MdRun::alert` and `alertTitle`. Not done: the left bar
+  (this port's quote has none) and the icon before the title (an icon in a
+  GtkTextView is a child widget on an anchor, and none of the symbolic
+  icons was checked to be in every build environment). Suite
+  `markdown_alerts`.
+- **CSV header.** `CsvTable::show(text, delimiter, path)` takes the file's
+  choice from `$XDG_STATE_HOME/mutible/csv-headers.txt` (one `1 /path` or
+  `0 /path` line a file, the 500 most recent), else
+  `Csv::looksLikeHeader`. The grid's model starts at row 1 under a header,
+  and `rowOf` is the file's row, so `rows()`, `cell()` and `setCell()` stay
+  the file's. The names are the column titles, bold by a CSS class on the
+  view (the letters of a column with an empty field are bold too, a
+  GtkColumnView title has no font of its own). A right click opens a
+  popover with a check, First Row Is Header; `headerMenuItem()` is it, for
+  the checks. A reload from an edit keeps the choice. The header's names
+  have no letter tooltip. The guess leaves a first row with an empty field
+  alone (the core's rule), so the reader turns it on. Suite `csv_header`.

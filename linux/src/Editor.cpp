@@ -1037,7 +1037,7 @@ void Editor::showTable(Document* d) {
     char* raw = gtk_text_buffer_get_text(b, &s, &e, TRUE);
     const std::string text = raw ? raw : "";
     g_free(raw);
-    csv_->show(text, d->csvDelimiter(text));
+    csv_->show(text, d->csvDelimiter(text), d->path());
     csvDoc_ = d;
     auto changed = +[](GtkTextBuffer* buf, gpointer p) {
         Editor* self = static_cast<Editor*>(p);
