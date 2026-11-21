@@ -14,6 +14,9 @@
 #   TASKS="review viewers ..."  the tasks to run (default: all, in the table's order)
 #   LOG_MB=500                  the huge log's size (made on demand, deleted after)
 #   KEEP=1                      keep the scratch folder (/private/tmp/mutible-taskbench)
+#   TASKBENCH_DIR=DIR           another scratch folder (its name must hold "taskbench")
+#   KEEP_APP=1                  leave the last task's app running, to look at
+#   TASKBENCH_TRACE=DIR         each step's CPU samples and every frame read from the screen
 #   MUTIBLE_APP, VSCODE_APP, ZED_APP   other copies of the apps (installed copies only)
 #
 # How it works: the script makes a fixture project under the scratch folder,
@@ -23,16 +26,21 @@
 # events, clicks on elements found through the Accessibility API, a file
 # opened with `open -a` as Finder opens it) and polls the step's result
 # condition every 10 ms: a window title, an element's text, the keyboard's
-# place, git's index, a port closing. Then the script stops the app (only
-# pids it started) and goes on.
+# place, git's index, a file on disk, a port closing, text or brightness
+# read from the screen. Then the script stops the app (only pids it
+# started) and goes on.
 #
 # Measures, per task and app:
-#   wall       the sum of each step's time from its input sent to its condition true
+#   wall       the sum of each step's time from its last input event to when its
+#              result happened: when a poll found it, or for a CPU-settled step
+#              when the app last worked, or for a screen read the first frame
+#              that showed it (the steps CSV says which: its observed column)
 #   inputs     clicks + key chords + typed keystrokes + Finder opens
 #   CPU        user + system time of the app's process tree during the steps
 #              (children it reaped included; helpers launchd started for it
 #              counted by responsible pid, as membench does)
-#   peak MB    the tree's largest physical footprint during the steps (100 ms samples)
+#   peak MB    the tree's largest physical footprint from launch through settle
+#              (a 10 ms sampler); the report fails if it is below the settled
 #   settled MB its footprint once the tree has been quiet for a second
 #   setup      inputs an app needs once before it can do the task (an
 #              extension, a trust prompt), counted apart and not timed
@@ -73,6 +81,7 @@ APPS="${APPS:-mutible vscode zed}"
 LOG_MB="${LOG_MB:-500}"
 BIGLOG="$WORK/big/huge.log"
 NEEDLE="NEEDLE-4242"
+CLAMP_LC="63:15"   # where app.py calls clamp (line:column); make_fixture sets it from the file
 SRV_PORT=18765    # task 3's server, left running
 PAGE_PORT=18766   # task 4's page
 PAGE_LOG="$WORK/page-server.log"
@@ -95,6 +104,12 @@ TASK_TABLE=(
 "page|no|Open the page the fixture serves on localhost inside the app|the fixture's server logs the request (and the page's title shows, where AX can read it)"
 "biglog|yes|Open a ${LOG_MB} MB log and find a string near its end|the find count reads 1 of 1"
 "finder|yes|Open one file from Finder (open -a) to a window with the keyboard in the text|the window is titled for the file and its focused element is a text area"
+"definition|no|Go to the definition of a function used in app.py and defined in util.py, with the app's Python language server|util.py is the window's file (its title; in mutible and VS Code also the keyboard in its text, which Zed's AX does not show)"
+"rename|no|Rename that function across the project with the language server, saved to disk|util.py, app.py, and report.py on disk call it bound_value, and clamp is gone"
+"replace|no|Replace a string in three files across the project, saved to disk|no file on disk holds warehouse-a, and three places hold warehouse-b"
+"history|no|Show app.py's git history and open its version from an older commit|a view shows the line only that commit had (TB_PAST_VERSION)"
+"theme|no|Change the color theme to a light one and see it applied|the window's mean brightness, read from the screen, passes the middle"
+"multicursor|no|Rename a variable used four times in one file with one cursor per use, saved to disk|orders.py on disk holds amount four times and qty nowhere"
 )
 
 task_field() {   # task_field <id> <n>: 2 cold, 3 title, 4 done-when
@@ -163,9 +178,14 @@ open_zed() {
 # `INPUT => CONDITION @TIMEOUT`, inputs `key`, `type`, `press`, `click`,
 # `menu`, `finder`, `sh`, `none`; `setup N:` counts N setup inputs; a
 # condition led by `?` is "unverified" rather than failed when it times out;
-# `quiet MS` (the app's CPU settled) stands in where AX cannot read a result,
-# and makes the result "unverified". A function that prints `cannot: why`
-# records the task as one the app cannot do.
+# `quiet MS` (the app's CPU settled, the step ending when it last worked)
+# stands in where neither AX nor the screen can read a result, and makes the
+# result "unverified"; `screen TEXT` and `luma>X` read the screen, ending
+# at the first frame that showed it; `sclick TEXT` clicks text read there;
+# `text TEXT` finds a file's text through AX; `settle MS` waits for the
+# whole tree after a launch. The observed column of the steps CSV says
+# which ended each step (an `sh` check naming git reads as git). A function
+# that prints `cannot: why` records the task as one the app cannot do.
 #
 # Docs cited: mutible's docs/REFERENCE.md; VS Code's keyboard shortcuts
 # reference (code.visualstudio.com/docs/reference/default-keybindings) and
@@ -192,7 +212,7 @@ steps_review_mutible() {
     # "Stage change 1 in app.py"; the page opens at its top, where it shows.
     echo "key cmd+shift+g => ax AXButton=Review Changes @10"
     echo "press AXButton=Review Changes => ax AXButton=Stage change 1 in app.py @15"
-    echo "press AXButton=Stage change 1 in app.py => sh $CHECKS/staged-one-only"
+    echo "press AXButton=Stage change 1 in app.py => sh $CHECKS/git-staged-one-only"
 }
 steps_review_vscode() {
     # Source control docs: Ctrl+Shift+G opens the Source Control view; a
@@ -205,7 +225,7 @@ steps_review_vscode() {
     # editorTextFocus) stages the change at the cursor.
     echo "key ctrl+shift+g => ax AXRow~app.py, Modified @15"
     echo "dclick AXRow~app.py, Modified => window~app.py && focus AXTextArea"
-    echo "key cmd+k cmd+alt+s => sh $CHECKS/staged-one-only"
+    echo "key cmd+k cmd+alt+s => sh $CHECKS/git-staged-one-only"
 }
 steps_review_zed() {
     # Git docs (zed.dev/docs/git): "git: diff" opens the Project Diff, every
@@ -221,7 +241,7 @@ steps_review_zed() {
     echo "type git: diff => ?quiet 150 @3"
     echo "key return => window~Uncommitted Changes || quiet 400 @15"
     echo "key cmd+y => ?quiet 150 @3"
-    echo "key cmd+y => sh $CHECKS/staged-one-only"
+    echo "key cmd+y => sh $CHECKS/git-staged-one-only"
 }
 
 # 2. viewers ---------------------------------------------------------------
@@ -382,6 +402,236 @@ steps_finder_zed() {
     echo "key return => [text shown; keyboard place unverified] !screen Unrecognized Project && screen print(\"lonely\" @60"
 }
 
+
+# The neutral tasks (2026-11-20, the owner's words: "tasks we did not
+# choose, where VS Code and Zed are expected to be strong"). Each app's
+# shortest documented path, with its own keys:
+#   VS Code: code.visualstudio.com/docs/reference/default-keybindings
+#     (F12 Go to Definition, F2 Rename Symbol, Ctrl+G Go to Line,
+#     Shift+Cmd+H Replace in Files, Cmd+K Cmd+T Color Theme, Shift+Cmd+L
+#     Select All Occurrences), docs/editing/refactoring ("Rename Symbol"),
+#     docs/sourcecontrol/overview ("Timeline view"), docs/editing/codebasics
+#     ("Multiple selections"); the Python extension
+#     (marketplace ms-python.python, which brings Pylance) is setup.
+#   Zed: its default keymap (assets/keymaps/default-macos.json: f12
+#     editor::GoToDefinition, f2 editor::Rename, ctrl-g go_to_line::Toggle,
+#     cmd-shift-h pane::DeploySearch with replace, cmd-enter
+#     search::ReplaceAll, cmd-alt-s workspace::SaveAll, cmd-k cmd-t
+#     theme_selector::Toggle, cmd-shift-l editor::SelectAllMatches) and
+#     zed.dev/docs/git ("File History ... use the Command Palette and search
+#     for file history"); Python is built in (basedpyright, downloaded by Zed
+#     the first time, in the template's setup).
+#   mutible: docs/REFERENCE.md (F12, F2, Ctrl+G, Option+Shift+Cmd+F Replace
+#     across the whole folder, Ctrl+Cmd+T Choose a color theme, Shift+Cmd+L
+#     Select every place, Option+Cmd+S Save every tab, Shift+Cmd+G Source
+#     Control and its commit graph); its Python server is basedpyright from
+#     the owner's install (~/.local/bin, found with nothing set up), the one Zed finds too.
+# A language server starts with the first Python file. F12 and F2 are
+# pressed as a person presses them, once the cursor is on the name, and the
+# step lasts until the result shows, so a server still starting is in the
+# task's time. Waiting for the tree to settle first was tried and dropped:
+# VS Code's stayed busy 30 to 90 s while Pylance indexed, which F12 does
+# not wait for.
+
+# Cursor to the call of clamp in app.py: Ctrl+G with line:column in all three.
+goto_clamp() {   # goto_clamp <app>
+    case "$1" in
+        mutible)
+            # Go to Line is the palette with ":" in its field, as VS Code's.
+            echo "key ctrl+g => focus AXTextField=: @5"
+            echo "type $CLAMP_LC => focus AXTextField=:$CLAMP_LC || ax AXTextField=:$CLAMP_LC @5"
+            echo "key return => focus AXTextArea @5" ;;
+        vscode)
+            # Go to Line is Quick Open with ":" in its field.
+            echo "key ctrl+g => ax AXTextField=: @5"
+            echo "type $CLAMP_LC => ax AXTextField=:$CLAMP_LC @5"
+            echo "key return => focus AXTextArea @5" ;;
+        zed)
+            # No AX tree: each step waits for the CPU to settle.
+            echo "key ctrl+g => ?quiet 150 @3"
+            echo "type $CLAMP_LC => ?quiet 150 @3"
+            echo "key return => ?quiet 150 @5" ;;
+    esac
+}
+
+open_py() {   # open_py <app> <file>: Cmd+P to a Python file with the keyboard in it
+    case "$1" in
+        # mutible 1.6.9 gives the keyboard back to the file tree when Quick
+        # Open closes (watched 2026-11-20, axdump: AXOutline focused), so its
+        # step ends on the window's title, as Zed's does.
+        mutible) open_by_name "$2" "window~$2" "focus AXTextField=$2" ;;
+        vscode) vscode_open_by_name "$2" "window~$2 && focus AXTextArea" ;;
+        zed) open_by_name "$2" "window~$2" ;;
+    esac
+}
+
+vscode_python() {
+    # Through the GUI: Shift+Cmd+X, "python" typed, Install: 1 + 6 + 1.
+    echo "setup 8: sh $(code_cli) --install-extension ms-python.python >/dev/null 2>&1 => none @600"
+}
+
+# 7. definition -------------------------------------------------------------
+
+steps_definition_mutible() {
+    open_py mutible app.py; goto_clamp mutible
+    echo "key f12 => window~util.py && focus AXTextArea @30"
+}
+steps_definition_vscode() {
+    vscode_python
+    open_py vscode app.py; goto_clamp vscode
+    echo "key f12 => window~util.py && focus AXTextArea @30"
+}
+steps_definition_zed() {
+    open_py zed app.py; goto_clamp zed
+    echo "key f12 => window~util.py @30"
+}
+
+# 8. rename -----------------------------------------------------------------
+
+steps_rename_mutible() {
+    open_py mutible app.py; goto_clamp mutible
+    echo "key f2 => focus AXTextField=clamp || ax AXTextField=clamp @15"
+    echo "type bound_value => focus AXTextField=bound_value || ax AXTextField=bound_value @5"
+    echo "key return => focus AXTextArea @15"
+    echo "key cmd+alt+s => sh $CHECKS/file-renamed @30"
+}
+steps_rename_vscode() {
+    vscode_python
+    open_py vscode app.py; goto_clamp vscode
+    # The rename box over the name, its text selected; files a rename
+    # changes are saved (files.refactoring.autoSave, on by default).
+    echo "key f2 => ax AXTextField=clamp @15"
+    echo "type bound_value => ax AXTextField=bound_value @5"
+    echo "key return => sh $CHECKS/file-renamed @30"
+}
+steps_rename_zed() {
+    open_py zed app.py; goto_clamp zed
+    echo "key f2 => ?quiet 150 @5"
+    echo "type bound_value => ?quiet 150 @5"
+    echo "key return => ?quiet 300 @15"
+    echo "key cmd+alt+s => sh $CHECKS/file-renamed @30"
+}
+
+# 9. replace ----------------------------------------------------------------
+
+steps_replace_mutible() {
+    # REFERENCE.md: Find in Folder (Shift+Cmd+F), then Option+Shift+Cmd+F
+    # "adds the replacement" with the keyboard in its field, and Option+Cmd+
+    # Return is Replace All, after its question ("Replace 3 matches in 3
+    # files?"). Option+Shift+Cmd+F alone, with nothing searched yet, opens
+    # with the keyboard in the replacement field (watched 2026-11-20), so the
+    # search comes first.
+    echo "key cmd+shift+f => focus AXTextField @10"
+    echo "type warehouse-a => ax AXTextField=warehouse-a @5"
+    echo "key cmd+alt+shift+f => focus AXTextField @5"
+    echo "type warehouse-b => ax AXTextField=warehouse-b @5"
+    echo "key cmd+alt+return => ax *~Replace 3 matches @15"
+    echo "press AXButton=Replace => sh $CHECKS/file-replaced @30"
+}
+steps_replace_vscode() {
+    # Replace in Files (Shift+Cmd+H) opens Search with the keyboard in its
+    # field; Tab goes on to the replace field; Option+Cmd+Return is Replace
+    # All, after its question; the files are saved. VS Code reports the
+    # keyboard's element wrongly (Traps), so the fields are read by value.
+    echo "key cmd+shift+h => ax AXTextArea~Search: Type Search Term @10"
+    echo "type warehouse-a => ax AXStaticText~3 results in 3 files @15"
+    echo "key tab => focus AXTextArea~Replace @5"
+    echo "type warehouse-b => text warehouse-b @5"
+    echo "key cmd+alt+return => ax AXButton=Replace @15"
+    echo "press AXButton=Replace => sh $CHECKS/file-replaced @30"
+}
+steps_replace_zed() {
+    # Shift+Cmd+H: project search with its replace field; Tab to it;
+    # Cmd+Return is Replace All, which leaves the files edited, unsaved;
+    # Option+Cmd+S saves them all.
+    echo "key cmd+shift+h => ?quiet 150 @5"
+    echo "type warehouse-a => ?quiet 300 @15"
+    echo "key tab => ?quiet 150 @5"
+    echo "type warehouse-b => ?quiet 150 @5"
+    echo "key cmd+return => ?quiet 300 @15"
+    echo "key cmd+alt+s => sh $CHECKS/file-replaced @30"
+}
+
+# 10. history ---------------------------------------------------------------
+
+steps_history_mutible() {
+    # The commit graph is the branch's history, not the file's (mutible has
+    # no history of one file); a click on a commit opens its page, every
+    # file it changed as it changed them. The graph's rows carry no AX text
+    # (1.6.9, found 2026-11-20), so the commit is found on the screen.
+    echo "key cmd+shift+g => screen Raise the limit @10"
+    echo "sclick Raise the limit => text TB_PAST_VERSION || screen TB_PAST_VERSION @15"
+}
+steps_history_vscode() {
+    open_py vscode app.py
+    # The Explorer's Timeline section (collapsed), then the commit's row:
+    # its diff against the commit before. Its editors show no text through
+    # AX until one has the keyboard, so the line is read from the screen.
+    echo "click AXButton~Timeline Section => ax AXRow~Raise the limit @15"
+    echo "click AXRow~Raise the limit => screen TB_PAST_VERSION @15"
+}
+steps_history_zed() {
+    # zed.dev/docs (its git page): File History from the command palette,
+    # for the open file; a commit opens its diff for that file.
+    open_py zed app.py
+    echo "key cmd+shift+p => ?quiet 150 @3"
+    echo "type file history => ?quiet 150 @3"
+    echo "key return => screen Raise the limit @15"
+    # A click selects the commit (its details beside the list); Return opens
+    # its diff (watched 2026-11-20).
+    echo "sclick Raise the limit => screen 1 Changed File @10"
+    echo "key return => screen TB_PAST_VERSION @15"
+}
+
+# 11. theme -----------------------------------------------------------------
+#
+# All three start dark (mutible and VS Code use Dark Modern whatever the
+# system, Zed follows the system, which is dark here); each is switched to
+# its own light theme. The result is read from the screen for all three:
+# the front window's mean brightness passes the middle.
+
+light_theme_check() { if [ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" = Dark ]; then echo dark; else echo light; fi; }
+
+steps_theme_mutible() {
+    echo "key ctrl+cmd+t => focus AXTextField @5"
+    echo "type light modern => focus AXTextField=light modern || ax AXTextField=light modern @5"
+    echo "key return => luma>0.5 @10"
+}
+steps_theme_vscode() {
+    echo "key cmd+k cmd+t => ax AXTextField~color theme @5"
+    echo "type light modern => ax AXTextField=light modern @5"
+    echo "key return => luma>0.5 @10"
+}
+steps_theme_zed() {
+    if [ "$(light_theme_check)" = light ]; then
+        echo "cannot: Zed follows the system's appearance, which is light here, so it starts light; run with the system dark"
+        return
+    fi
+    echo "key cmd+k cmd+t => ?quiet 150 @5"
+    echo "type one light => ?quiet 150 @5"
+    echo "key return => luma>0.5 @10"
+}
+
+# 12. multicursor -----------------------------------------------------------
+#
+# orders.py opens with the cursor at its start, on qty. Select every
+# occurrence of the word at the cursor (Shift+Cmd+L in all three), type the
+# new name, save. The chord and the typing wait for nothing: keys reach the
+# editor in order, and the saved file on disk is the result.
+
+multicursor_steps() {   # multicursor_steps <app>
+    open_py "$1" orders.py
+    # mutible leaves the keyboard in the file tree after Quick Open (above);
+    # Cmd+1 is its Focus the editor (REFERENCE.md), the cursor at the start.
+    if [ "$1" = mutible ]; then echo "key cmd+1 => focus AXTextArea @5"; fi
+    echo "key cmd+shift+l => none"
+    echo "type amount => none"
+    echo "key cmd+s => sh $CHECKS/file-multicursor @15"
+}
+steps_multicursor_mutible() { multicursor_steps mutible; }
+steps_multicursor_vscode() { multicursor_steps vscode; }
+steps_multicursor_zed() { multicursor_steps zed; }
+
 # ------------------------------------------------------------------ setup once per app
 #
 # Run on a template profile that every task then copies, so what an app asks
@@ -389,13 +639,13 @@ steps_finder_zed() {
 
 prep_mutible() {
     echo "launch $(open_mutible bg "$P") => window @60"
-    echo "setup 0: none => ?quiet 1000 @20"
+    echo "setup 0: none => ?settle 1000 @20"
 }
 prep_vscode() {
     echo "launch $(open_vscode bg "$P") => window @90"
     # "Do you trust the authors of the files in this folder?", once a folder.
     echo "setup 1: ?press AXButton~Yes, I trust => !ax AXButton~Yes, I trust @20"
-    echo "setup 0: none => ?quiet 1000 @20"
+    echo "setup 0: none => ?settle 1000 @20"
 }
 prep_zed() {
     # Zed opens an unknown folder behind a modal "Unrecognized Project"
@@ -405,7 +655,7 @@ prep_zed() {
     # copy (watched 2026-11-20 in a screenshot), so it is asked once, like
     # VS Code's folder trust.
     echo "launch $(open_zed bg "$P") => window @90"
-    echo "setup 0: none => ?quiet 1500 @30"
+    echo "setup 0: none => ?settle 1500 @30"
     echo "setup 1: key return => ?quiet 500 @10"
 }
 
@@ -413,7 +663,7 @@ prep_zed() {
 
 make_checks() {
     mkdir -p "$CHECKS"
-    cat >"$CHECKS/staged-one-only" <<EOF
+    cat >"$CHECKS/git-staged-one-only" <<EOF
 #!/bin/sh
 # Task 1 is done: app.py's first hunk is staged, and nothing else.
 d="\$(git -C "$P" diff --cached)"
@@ -421,7 +671,31 @@ echo "\$d" | grep -q TB_HUNK_ONE || exit 1
 echo "\$d" | grep -q -e TB_HUNK_TWO -e TB_HUNK_THREE -e TB_NEW_FILE && exit 1
 exit 0
 EOF
-    chmod +x "$CHECKS/staged-one-only"
+    chmod +x "$CHECKS/git-staged-one-only"
+    cat >"$CHECKS/file-renamed" <<EOF
+#!/bin/sh
+# Task rename is done: the function is bound_value in its file and both
+# callers' (one definition, two imports, two calls), on disk.
+cd "$P" || exit 1
+grep -qw clamp util.py app.py report.py && exit 1
+[ "\$(cat util.py app.py report.py | grep -o bound_value | wc -l | tr -d ' ')" = 5 ]
+EOF
+    cat >"$CHECKS/file-replaced" <<EOF
+#!/bin/sh
+# Task replace is done: warehouse-a is nowhere on disk, warehouse-b in its
+# three places.
+cd "$P" || exit 1
+grep -rq --exclude-dir=.git warehouse-a . && exit 1
+[ "\$(grep -ro --exclude-dir=.git warehouse-b . | wc -l | tr -d ' ')" = 3 ]
+EOF
+    cat >"$CHECKS/file-multicursor" <<EOF
+#!/bin/sh
+# Task multicursor is done: orders.py on disk says amount four times, qty never.
+cd "$P" || exit 1
+grep -qw qty orders.py && exit 1
+[ "\$(grep -o amount orders.py | wc -l | tr -d ' ')" = 4 ]
+EOF
+    chmod +x "$CHECKS"/file-*
 }
 
 make_fixture() {
@@ -431,7 +705,9 @@ make_fixture() {
         echo '"""Inventory service: the fixture for the task benchmark."""'
         echo 'import json'
         echo 'import sys'
+        echo 'from util import clamp'
         echo 'LIMIT = 10'
+        echo '# Stock for warehouse-a.'
         echo
         for i in $(seq 1 18); do
             echo "def item_$i(stock):"
@@ -439,10 +715,16 @@ make_fixture() {
             echo
         done
         echo 'if __name__ == "__main__":'
-        echo '    print(json.dumps({"limit": LIMIT}))'
+        echo '    level = clamp(LIMIT, 0, 5)'
+        echo '    print(json.dumps({"limit": LIMIT, "level": level}))'
     } >"$P/app.py"
+    # Where the call of clamp is, as Ctrl+G takes it (line:column, a column
+    # inside the name).
+    CLAMP_LC="$(awk '/level = clamp\(/ {print NR ":" index($0, "clamp") + 2; exit}' "$P/app.py")"
+    printf '"""Reports for the stock in warehouse-a."""\nfrom util import clamp\n\n\ndef report(level):\n    return clamp(level, 0, 100)\n' >"$P/report.py"
+    printf 'qty = 0\nqty += 3\nprint(qty)\ntotal = qty * 2\n' >"$P/orders.py"
     printf 'def clamp(x, lo, hi):\n    return max(lo, min(x, hi))\n\n\ndef total(xs):\n    return sum(xs)\n' >"$P/util.py"
-    printf '# Inventory\n\nA small service for the task benchmark.\n' >"$P/README.md"
+    printf '# Inventory\n\nA small service for the task benchmark. Stock is kept in warehouse-a.\n' >"$P/README.md"
     printf 'city,country,population,area\nOslo,Norway,709000,454\nLima,Peru,10092000,2672\nPerth,Australia,2192000,6418\nPune,India,7764000,331\nQuito,Ecuador,2011000,372\n' \
         >"$P/media/cities.csv"
     cat >"$P/media/analysis.ipynb" <<'EOF'
@@ -471,6 +753,17 @@ EOF
     GIT_CONFIG_GLOBAL=/dev/null "${g[@]}" add -A
     GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_DATE="2026-11-01T10:00:00" GIT_COMMITTER_DATE="2026-11-01T10:00:00" \
         "${g[@]}" commit -q -m "Inventory service"
+    # app.py's history (task history): a commit with a line only it had, one
+    # that touches another file, and one that takes the line back out.
+    sed -i '' 's/^LIMIT = 10$/LIMIT = 11  # TB_PAST_VERSION: a trial limit/' "$P/app.py"
+    GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_DATE="2026-11-02T10:00:00" GIT_COMMITTER_DATE="2026-11-02T10:00:00" \
+        "${g[@]}" commit -q -am "Raise the limit for the sale"
+    printf '\nRun it with python3 app.py.\n' >>"$P/README.md"
+    GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_DATE="2026-11-03T10:00:00" GIT_COMMITTER_DATE="2026-11-03T10:00:00" \
+        "${g[@]}" commit -q -am "Say how to run it"
+    sed -i '' 's/^LIMIT = 11  # TB_PAST_VERSION: a trial limit$/LIMIT = 10/' "$P/app.py"
+    GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_DATE="2026-11-04T10:00:00" GIT_COMMITTER_DATE="2026-11-04T10:00:00" \
+        "${g[@]}" commit -q -am "Put the limit back"
     # The uncommitted changes, as an agent might leave them: two hunks in
     # app.py far apart, one in util.py, and a new file.
     sed -i '' 's/^LIMIT = 10$/LIMIT = 12  # TB_HUNK_ONE: raised for the sale/' "$P/app.py"
@@ -496,6 +789,7 @@ STARTED_PIDS=()     # servers and caffeinate
 cleanup() {
     local e
     for e in "${STARTED_APPS[@]:-}"; do
+        [ "${KEEP_APP:-}" = 1 ] && break
         [ -n "$e" ] && "$TOOL" quit --exe "${e%|*}" "${e##*|}" >/dev/null 2>&1 || true
     done
     for e in "${STARTED_PIDS[@]:-}"; do [ -n "$e" ] && kill "$e" 2>/dev/null || true; done
@@ -542,7 +836,8 @@ run_steps() {   # run_steps <task> <app> <steps file>
     return $rc
 }
 
-quit_app() {   # quit_app <app> <pid>
+quit_app() {   # quit_app <app> <pid> (KEEP_APP=1 leaves the last task's app running, to look at)
+    if [ "${KEEP_APP:-}" = 1 ] && [ "${3:-}" != always ]; then return 0; fi
     [ -n "$2" ] && "$TOOL" quit --exe "$(app_exe "$1")" "$2" || true
 }
 
@@ -552,7 +847,8 @@ quit_app() {   # quit_app <app> <pid>
 new_run() {   # new_run <task> <app>: a fresh scratch profile for this run
     RUNID="$1-$2-$$"
     RUN="$WORK/run/$1-$2"
-    EXTDIR="$VSEXT"
+    EXTDIR="$VSEXT/$1"   # a task's own: only the extensions its setup installs
+    mkdir -p "$EXTDIR"
     rm -rf "$RUN"
     mkdir -p "$RUN/home" "$RUN/t" "$RUN/backups" "$RUN/claude" "$RUN/math"
     local tpl="$WORK/template-$2"
@@ -596,7 +892,8 @@ prep_app() {   # prep_app <app>: the one-time setup, on the template profile
     "telemetry.telemetryLevel": "off",
     "extensions.autoUpdate": false,
     "extensions.autoCheckUpdates": false,
-    "editor.accessibilitySupport": "on"
+    "editor.accessibilitySupport": "on",
+    "editor.cursorBlinking": "solid"
 }
 EOF
             ;;
@@ -604,14 +901,14 @@ EOF
             # Quiet only, in both places Zed may read it (with
             # --user-data-dir, and under the scratch HOME).
             mkdir -p "$RUN/data/config" "$RUN/home/.config/zed"
-            printf '{\n  "auto_update": false,\n  "telemetry": {"diagnostics": false, "metrics": false}\n}\n' \
+            printf '{\n  "auto_update": false,\n  "cursor_blink": false,\n  "telemetry": {"diagnostics": false, "metrics": false}\n}\n' \
                 | tee "$RUN/data/config/settings.json" >"$RUN/home/.config/zed/settings.json"
             ;;
     esac
     "prep_$app" >"$RUN/steps.txt"
     local rc=0
     run_steps setup "$app" "$RUN/steps.txt" || rc=$?
-    quit_app "$app" "$LAST_PID"
+    quit_app "$app" "$LAST_PID" always
     if [ "$rc" = 3 ]; then aborted; fi
     printf 'setup\t%s\t%s\t%s\n' "$app" "$([ $rc = 0 ] && echo ok || echo failed)" "$LAST_SUMMARY" >>"$RESULTS"
 }
@@ -636,7 +933,7 @@ run_task() {   # run_task <task> <app>
         # the launch, so the app starts with it.
         { grep '^setup[ 0-9]*: sh ' "$RUN/steps.txt" || true
           echo "launch $("open_$app" bg "$P") => window @90"
-          echo "setup 0: none => ?quiet 1000 @30"
+          echo "setup 0: none => ?settle 1000 @30"
           grep -v '^setup[ 0-9]*: sh ' "$RUN/steps.txt" || true; } >"$RUN/steps.full"
     else
         cp "$RUN/steps.txt" "$RUN/steps.full"
@@ -649,7 +946,7 @@ run_task() {   # run_task <task> <app>
     local status; status="$(field status "$LAST_SUMMARY")"
     [ -n "$status" ] || status="failed"
     if [ "$status" = failed ]; then
-        local why; why="$(awk -F'\t' '$1 == "step" && $8 != "ok" && $8 != "unverified" && $8 !~ /^skipped/ {print "step " $2 ": " $8 " (" $10 ")"}' "$RUN/out.txt" | head -1 || true)"
+        local why; why="$(awk -F'\t' '$1 == "step" && $10 != "ok" && $10 != "unverified" && $10 !~ /^skipped/ {print "step " $2 ": " $10 " (" $12 ")"}' "$RUN/out.txt" | head -1 || true)"
         LAST_SUMMARY="$LAST_SUMMARY	why=${why:-the tool failed: $(tail -1 "$RUN/run.log")}"
     fi
     printf '%s\t%s\t%s\t%s\n' "$task" "$app" "$status" "$LAST_SUMMARY" >>"$RESULTS"
@@ -665,16 +962,35 @@ aborted() {
 
 # ------------------------------------------------------------------ report
 
+# The footprint is sampled from the launch through the settle, so the peak
+# can never be below the settled footprint (the last sample). A row where it
+# is would be a measuring fault: the report says so and the run fails.
+check_peaks() {
+    awk -F'\t' '$3 != "cannot" {
+        peak = ""; set = ""
+        for (i = 4; i <= NF; i++) {
+            if ($i ~ /^peak_mb=/) peak = substr($i, 9) + 0
+            if ($i ~ /^settled_mb=/) set = substr($i, 12) + 0
+        }
+        if (peak != "" && set != "" && peak < set) { print $1 " on " $2 ": peak " peak " MB < settled " set " MB"; bad = 1 }
+    } END { exit bad }' "$RESULTS"
+}
+
 report() {
     [ -f "$RESULTS" ] || return 0
+    local peaks_bad=""
+    peaks_bad="$(check_peaks)" || true
     local apps_line="" a
     for a in $APPS; do apps_line="$apps_line${apps_line:+, }$(app_name "$a") $(app_version "$a")"; done
     {
         echo "mutible taskbench, $(date '+%Y-%m-%d %H:%M')"
         echo "$(sw_vers -productName) $(sw_vers -productVersion), $(sysctl -n machdep.cpu.brand_string), $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
         echo "$apps_line"
-        echo "wall: input sent to result, summed over the task's steps; inputs: clicks/chords/keys/opens;"
-        echo "CPU: the app's process tree during the steps; MB: physical footprint, peak and settled."
+        echo "wall: from each step's last input event to when its result happened (a CPU-settled step at its last busy"
+        echo "  sample, a screen read at the first frame that showed it), summed; inputs: clicks/chords/keys/opens;"
+        echo "CPU: the app's process tree during the steps; MB: physical footprint of the tree, peak (sampled every"
+        echo "  10 ms from launch through settle) and settled. Each step's end is observed by ax, file, git, port,"
+        echo "  cpu-quiet, or screen (the steps CSV's observed column)."
         echo "A result marked * could not be read from what the app shows (unverified: only its CPU settling, or part of it)."
         local row id
         echo
@@ -724,17 +1040,22 @@ report() {
         done <"$RESULTS"
     } >"$OUT_CSV"
     {
-        csv task app step kind inputs input_ms wall_ms poll_ms status seen step_text
+        csv task app step kind inputs input_ms wall_ms poll_ms res_ms observed status seen step_text
         # awk, since read would merge the empty fields between tabs
         touch "$WORK/steps.tsv"
         awk -F'\t' '
             function c(s) { gsub(/"/, "\"\"", s); return "\"" s "\"" }
-            { print c($1) "," c($2) "," c($4) "," c($5) "," c($6) "," c($7) "," c($8) "," c($9) "," c($10) "," c($11) "," c($12) }
+            { print c($1) "," c($2) "," c($4) "," c($5) "," c($6) "," c($7) "," c($8) "," c($9) "," c($10) "," c($11) "," c($12) "," c($13) "," c($14) }
         ' "$WORK/steps.tsv"
     } >"$OUT_STEPS"
+    if [ -n "$peaks_bad" ]; then
+        { echo; echo "MEASURING FAULT: a peak below its settled footprint (the peak is sampled from launch through settle):"
+          echo "$peaks_bad"; } >>"$OUT_TXT"
+    fi
     cat "$OUT_TXT"
     echo
     echo "Saved to build/taskbench-mac.txt, build/taskbench-mac.csv, and build/taskbench-mac-steps.csv"
+    if [ -n "$peaks_bad" ]; then echo "taskbench: peak below settled; see the report" >&2; return 5; fi
 }
 
 # ------------------------------------------------------------------ modes
@@ -808,7 +1129,7 @@ case "${1:-}" in
     --fixture)
         [ -x "$TOOL" ] || { echo "taskbench: make build/taskbench-mac first" >&2; exit 2; }
         mkdir -p "$WORK"; make_checks; make_fixture; echo "$F"; exit 0 ;;
-    --report) APPS="mutible vscode zed"; report; exit 0 ;;
+    --report) APPS="mutible vscode zed"; report; exit $? ;;
     --help|-h) sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; exit 0 ;;
     "") ;;
     *) echo "usage: $0 [--list | --show TASK | --check | --fixture | --report]" >&2; exit 2 ;;
@@ -870,4 +1191,4 @@ for task in $(selected_tasks); do
     if [ "$task" = biglog ]; then rm -f "$BIGLOG"; fi
 done
 echo
-report
+report || exit $?
