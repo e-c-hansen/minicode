@@ -38,11 +38,19 @@
 #include <sys/stat.h>
 
 #include <cmath>
+#include <unistd.h>
 
 namespace {
 
 std::string dir() { return MCGuiProjectFile("0-tree-clicks"); }
 std::string at(const std::string& name) { return dir() + "/" + name; }
+// Files at the folder's top level, enough to scroll the tree.
+std::string fill(int i) {
+    char name[32];
+    snprintf(name, sizeof name, "tc-fill-%02d.txt", i);
+    return MCGuiProjectFile(name);
+}
+constexpr int kFill = 80;
 
 GtkWidget* listView() {
     GtkWidget* w = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(MCGuiApp().tree->widget()));
@@ -149,16 +157,36 @@ long gPressedIndex = -1;
 }  // namespace
 
 MC_GUI_SUITE(tree_clicks) {
-    MCGuiStep("a folder of its own, first in the tree", [] {
+    MCGuiStep("a folder of its own, first in the tree; files enough to scroll it", [] {
         MCGuiWriteFile(at("b.txt"), "b\n");
         MCGuiWriteFile(at("d.txt"), "d\n");
+        for (int i = 0; i < kFill; i++) MCGuiWriteFile(fill(i), "x\n");
     });
-    MCGuiWait("listed", 20, [] { return rowObject(dir()) != nullptr; });
+    MCGuiWait("listed", 20, [] { return rowObject(dir()) && rowObject(fill(kFill - 1)); });
     // After earlier suites the tree may be scrolled, and a row put in above
     // the top one stays above the view (GTK keeps the rows on show still).
-    MCGuiStep("the tree at its top", [] {
-        if (GtkWidget* lv = listView())
-            gtk_list_view_scroll_to(GTK_LIST_VIEW(lv), 0, GTK_LIST_SCROLL_NONE, nullptr);
+    // Rows gone just before (session_browser's last step removes files at
+    // the folder's top level) leave the tree keeping its place for a moment
+    // (FileTree::keepRows: 300 ms and four layouts, up to 5 s on a loaded
+    // machine), and the keep undoes a scroll to the top the tree did not
+    // ask for: this suite scrolled the list itself and found its folder
+    // never on show (the soak, November 2026). The tree's own reveal ends
+    // the keep; a keep is made here on purpose to check that.
+    MCGuiStep("the tree scrolled to its end", [] {
+        GtkAdjustment* a = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(MCGuiApp().tree->widget()));
+        gtk_adjustment_set_value(a, gtk_adjustment_get_upper(a) - gtk_adjustment_get_page_size(a));
+    });
+    MCGuiWait("scrolled", 10, [] {
+        GtkAdjustment* a = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(MCGuiApp().tree->widget()));
+        return gtk_adjustment_get_value(a) > 100 && !row(dir());
+    });
+    MCGuiStep("four of the files go", [] {
+        for (int i = 0; i < 4; i++) unlink(fill(i).c_str());
+    });
+    MCGuiWait("the tree keeps its place; then it reveals the folder", 10, [] {
+        if (!MCGuiApp().tree->keeping()) return false;
+        MCGuiApp().tree->revealPath(dir());
+        return true;
     });
     MCGuiWait("its row on show", 20, [] { return row(dir()) != nullptr; });
     MCGuiStep("a click opens it", [] { MCGuiClick(row(dir())); });
@@ -227,10 +255,15 @@ MC_GUI_SUITE(tree_clicks) {
     MCGuiStep("an ordinary click on c.txt opens it", [] { MCGuiClick(row(at("c.txt"))); });
     MCGuiWait("c.txt opens", 10, [] { return MCGuiApp().editor->currentPath() == at("c.txt"); });
     MCGuiPause(0.5);   // the double-click interval
-    MCGuiStep("the tree at its top", [] {
-        gtk_list_view_scroll_to(GTK_LIST_VIEW(listView()), 0, GTK_LIST_SCROLL_NONE, nullptr);
-    });
+    MCGuiStep("the tree reveals the folder", [] { MCGuiApp().tree->revealPath(dir()); });
     MCGuiWait("the folder's row on show", 10, [] { return row(dir()) != nullptr; });
     MCGuiStep("the folder closes", [] { MCGuiClick(row(dir())); });
     MCGuiWait("closed", 10, [] { return rowIndex(at("b.txt")) < 0 && !row(at("b.txt")); });
+    MCGuiStep("the files made to scroll the tree go", [] {
+        for (int i = 4; i < kFill; i++) unlink(fill(i).c_str());
+    });
+    // Not left keeping its place for the next suite (see the top).
+    MCGuiWait("gone from the tree, which keeps no place", 20, [] {
+        return !rowObject(fill(kFill - 1)) && !MCGuiApp().tree->keeping();
+    });
 }

@@ -125,6 +125,9 @@ public:
     GtkWidget* focusBarRemove(size_t index) const;
     GtkWidget* focusBarAdd() const { return barAdd_; }
     GtkWidget* focusBarClose() const { return barClose_; }
+    // For the checks: whether the rows on show are being kept in place after
+    // rows went (keepRows).
+    bool keeping() const { return keepRow_ != nullptr; }
     // The breadcrumb's right click menu (Show Whole Folder in Tree), its
     // items naming window actions as the tree's own menu does.
     void setFocusBarMenu(GMenuModel* model);

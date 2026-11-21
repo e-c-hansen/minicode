@@ -8815,3 +8815,30 @@ show; the file shown last is shown meanwhile).
   the old script that section fails both ways: PS1 has the marks, and the
   last line reads `.../guitest-XXXX/echo typed-intact`, the typed text
   over the prompt's end.
+
+### 138. tree_clicks brings its folder on show through the tree, not over a keep (November 2026)
+
+- **What failed.** The soak's `tree_clicks` (run 44898401650, round 3,
+  seed 3448309052, right after `session_browser`) timed out in "its row on
+  show": the picture shows the tree scrolled near its end, though the step
+  before had scrolled the list to row 0.
+- **Cause.** `session_browser`'s last step removes four files at the
+  folder's top level; their rows go a moment later and `FileTree::keepRows`
+  keeps the tree's place (300 ms and four layouts, up to 5 s under load),
+  undoing any scroll to the top it did not ask for. Only the tree's own
+  scrolls and the user's wheel and keys end a keep; the suite's
+  `gtk_list_view_scroll_to` was neither.
+- **Fix.** `tree_clicks` reveals its folder with `FileTree::revealPath`
+  (which ends the keep), at its start and at its end. A check-only
+  `FileTree::keeping()` says whether a keep runs.
+- **Checks.** `tree_clicks` now makes a keep on purpose: eighty files at
+  the top level, the tree scrolled to its end, four removed, and once
+  `keeping()` is true the folder is revealed and must come on show. With
+  the old raw scroll there it fails every run ("its row on show"), with
+  the reveal it passes. It removes its files at the end and waits until
+  the tree keeps no place. Ran alone three times, after `session_browser`,
+  and with the tree suites in order and shuffled (`MC_GUI_SHUFFLE=59`).
+  The in-order list `session_browser tree_clicks tree_icons tree_stall
+  tree_focus tree_drags ...` fails `tree_drags` "plain.txt opens in the
+  editor" with main's `tree_clicks` too (no one suite before it does it
+  alone); that is a separate order dependence, not this change's.
