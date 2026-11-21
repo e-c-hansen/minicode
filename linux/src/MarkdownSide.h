@@ -13,6 +13,7 @@
 
 #include <gtk/gtk.h>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,6 +34,8 @@ public:
 
     // The source's text, asked when a render starts.
     std::function<std::string()> getText;
+    // The <details> blocks the reader opened or closed, by tag line.
+    std::function<std::map<int, bool>()> getDetails;
     // A link clicked in the page, as written.
     std::function<void(const std::string& url)> onLink;
     // A double-click on the page's block at source `line` (and table

@@ -140,4 +140,5 @@ SidebarIconsSuite.cpp
 TerminalLinksSuite.cpp
 SessionBrowserSuite.cpp
 MarkdownAlertsSuite.cpp
+MarkdownDetailsSuite.cpp
 CsvHeaderSuite.cpp

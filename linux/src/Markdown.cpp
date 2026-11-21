@@ -12,6 +12,7 @@
 
 #include <sys/stat.h>
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 
 namespace {
@@ -526,10 +527,29 @@ int Markdown::Page::offsetForLine(int line, int endOffset) const {
     return endOffset;
 }
 
+std::vector<MdRun> Markdown::foldedRuns(const std::string& source,
+                                        const std::map<int, bool>& detailsOpen) {
+    return MarkdownParser::fold(MarkdownParser::parse(source),
+                                [&detailsOpen](int line, bool open) {
+        const auto it = detailsOpen.find(line);
+        return it == detailsOpen.end() ? open : it->second;
+    });
+}
+
+bool Markdown::parseDetailsLink(const std::string& url, int* line, bool* open) {
+    static const std::string prefix = "mutible-details:";
+    if (url.compare(0, prefix.size(), prefix) != 0) return false;
+    int l = 0, o = 0;
+    if (sscanf(url.c_str() + prefix.size(), "%d:%d", &l, &o) != 2) return false;
+    *line = l;
+    *open = o != 0;
+    return true;
+}
+
 Markdown::Page Markdown::render(GtkTextView* view, GtkTextBuffer* buffer,
                                 const std::string& source, const Hooks& hooksIn) {
     gtk_text_buffer_set_text(buffer, "", 0);
-    std::vector<MdRun> runs = MarkdownParser::parse(source);
+    std::vector<MdRun> runs = foldedRuns(source, hooksIn.detailsOpen);
     return renderRuns(view, buffer, runs, 0, runs.size(), 0, std::make_shared<Hooks>(hooksIn));
 }
 
@@ -551,6 +571,10 @@ Markdown::Page Markdown::renderRuns(GtkTextView* view, GtkTextBuffer* buffer,
         sp.end = b;
         sp.line = r.line;
         if (r.link) sp.url = r.url;
+        // A <details> summary, its triangle included, opens and closes it.
+        else if (r.summary && r.detailsLine >= 0)
+            sp.url = "mutible-details:" + std::to_string(r.detailsLine) + ":" +
+                     (r.detailsOpen ? "1" : "0");
         page.spans.push_back(sp);
     };
     auto anchorWidget = [&](GtkWidget* w, const MdRun& r) {

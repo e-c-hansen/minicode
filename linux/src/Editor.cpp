@@ -964,6 +964,7 @@ void Editor::syncSide() {
         gtk_paned_set_end_child(GTK_PANED(outlinePaned_), side_->widget());
     gtk_widget_set_visible(side_->widget(), TRUE);
     side_->getText = [d] { return d->text(); };
+    side_->getDetails = [d] { return d->detailsOpen(); };
     char* dir = g_path_get_dirname(d->path().c_str());
     const bool moved = side_->setContext(dir ? dir : ".", settings_.webImages() && WebImages::available(),
                                          settings_.mermaid() && Mermaid::available(), settings_.isDark(),
@@ -2281,6 +2282,7 @@ void Editor::renderPreview() {
     hooks.math = settings_.math() && Math::available();
     hooks.mathMissing = settings_.math() && Math::built() && !Math::available();
     hooks.mathColor = mathColor();
+    hooks.detailsOpen = d->detailsOpen();
     std::weak_ptr<int> alive = alive_;
     hooks.link = [this, alive](const std::string& url) {
         if (!alive.expired()) openMarkdownLink(url);
@@ -2630,6 +2632,12 @@ std::function<void(const std::string& url)> Editor::launchUriHook;
 // the Markdown file (GitHub's "#L12" names a line), goes to the shell.
 void Editor::openMarkdownLink(const std::string& url) {
     if (url.empty() || !active_) return;
+    int detailsLine = 0;
+    bool detailsWasOpen = false;
+    if (Markdown::parseDetailsLink(url, &detailsLine, &detailsWasOpen)) {
+        toggleDetails(detailsLine, detailsWasOpen);
+        return;
+    }
     if (url[0] == '#') {
         if (!scrollToAnchor(url.substr(1))) gtk_widget_error_bell(view_);
         return;
@@ -2968,6 +2976,15 @@ void Editor::applySourceFromPane(const std::string& source) {
     gtk_text_buffer_get_iter_at_line_offset(buffer_, &n, line, col);
     if (gtk_text_iter_get_line(&n) == line) gtk_text_buffer_place_cursor(buffer_, &n);
     gtk_adjustment_set_value(v, keep);
+}
+
+// A <details> summary was clicked, in the page or in the side preview: the
+// block's state is the document's (by its tag's line), and both are drawn again.
+void Editor::toggleDetails(int line, bool wasOpen) {
+    if (!active_) return;
+    active_->detailsOpen()[line] = !wasOpen;
+    if (inMarkdownPage()) rerenderPreview();
+    if (side_ && sideDoc_ == active_) side_->schedule();
 }
 
 void Editor::toggleSideTask(int line) {

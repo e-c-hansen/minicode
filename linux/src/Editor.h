@@ -677,6 +677,7 @@ private:
     // `column` is not -1) in a popover pointing at `at` (view coordinates).
     void editMarkdownBlock(int line, int column, const GdkRectangle& at, bool inPane = false);
     void toggleSideTask(int line);
+    void toggleDetails(int line, bool wasOpen);
     void applySourceFromPane(const std::string& source);
     bool mdEditOnPane() const;
     void showMdPopover(const std::string& title, const std::string& text, bool allowsItem);
