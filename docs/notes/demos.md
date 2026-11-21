@@ -137,7 +137,11 @@ clicks, ScreenCaptureKit and Vision read the screen.
   writes each step's CPU samples and every frame Vision reads. The terminal
   it runs in needs Accessibility permission (`taskbench-mac check` says so
   when it is missing), and Screen Recording for results read from the
-  screen (without it they read as unverified). Report:
+  screen (without it they read as unverified). A locked screen keeps
+  every app from coming to the front (each task then fails "would not
+  come to the front"), so before each task the script waits while
+  `IOConsoleLocked` is Yes, then for 15 s of idle again (run 4,
+  2026-11-21, lost 22 of 36 rows to a lock partway through). Report:
   `build/taskbench-mac.txt` (a table per task), `build/taskbench-mac.csv`
   (a row per task and app), and `build/taskbench-mac-steps.csv` (every
   step's time, its resolution, and how its end was observed). Repetitions

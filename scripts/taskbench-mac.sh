@@ -912,8 +912,24 @@ EOF
     printf 'setup\t%s\t%s\t%s\n' "$app" "$([ $rc = 0 ] && echo ok || echo failed)" "$LAST_SUMMARY" >>"$RESULTS"
 }
 
+# A locked screen keeps every app from coming to the front, so each task
+# would fail with "would not come to the front" (2026-11-21, run 4 on
+# 1.6.10: the screen locked partway and 22 of 36 rows failed). Before each
+# task, wait while the console is locked, then for the owner to be idle again.
+screen_locked() {
+    ioreg -n Root -d1 2>/dev/null | grep -q '"IOConsoleLocked" = Yes'
+}
+wait_unlocked() {
+    if screen_locked; then
+        echo "   the screen is locked; waiting for it to be unlocked..."
+        while screen_locked; do sleep 5; done
+        "$TOOL" idle-wait 15 "$STATE"
+    fi
+}
+
 run_task() {   # run_task <task> <app>
     local task="$1" app="$2" reason
+    wait_unlocked
     new_run "$task" "$app"
     "steps_${task}_$app" >"$RUN/steps.txt"
     if reason="$(sed -n 's/^cannot: //p' "$RUN/steps.txt")" && [ -n "$reason" ]; then
@@ -1170,6 +1186,7 @@ caffeinate -d -i -w $$ &
 STARTED_PIDS+=("$!")
 
 for a in $APPS; do
+    wait_unlocked
     echo "== setup: $(app_name "$a")"
     make_fixture
     prep_app "$a"
