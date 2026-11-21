@@ -397,6 +397,24 @@ MC_GUI_SUITE(palette) {
     MCGuiStep("Escape", [] { MCGuiKey("escape"); });
     MCGuiWait("closed", 10, [] { return !pal()->isOpen(); });
 
+    // Opened, the file takes the keyboard whatever had it before Ctrl+P (the
+    // Mac's 3c02cbe0): the tree, as in a fresh window.
+    MCGuiStep("the tree has the keyboard, on another file", [] {
+        MCGuiOpenFileKept(F("big.txt"));
+        MCGuiFocusKeyWindow();
+        MCGuiApp().tree->focus();
+    });
+    MCGuiWait("it has", 10, [] { return treeHasKeyboard() && ed()->currentPath() == F("big.txt"); });
+    MCGuiStep("Ctrl+P, the file's name", [] { MCGuiKey("ctrl+p"); });
+    MCGuiWait("open", 10, [] { return pal()->isOpen() && pal()->filesListed(); });
+    MCGuiStep("qot", [] { MCGuiType("qot"); });
+    MCGuiWait("found", 10, [] { return selectedLabel() == "pal/deeper/quick-open-target.md"; });
+    MCGuiStep("Return", [] { MCGuiKey("enter"); });
+    MCGuiWait("opened, the text holding the keyboard", 10, [] {
+        return !pal()->isOpen() && ed()->currentPath() == F("pal/deeper/quick-open-target.md") &&
+               editorHasKeyboard();
+    });
+
     MCGuiStep("with no tab open, Quick Open's own picks come first", [] {
         ed()->closeAllTabs();
         MCGuiKey("ctrl+p");

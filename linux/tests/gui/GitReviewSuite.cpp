@@ -815,6 +815,31 @@ MC_GUI_SUITE(git_review) {
     MCGuiWait("kept: no preview tab, still two tabs", 15, [] {
         return OnShow(gShort[2] + " Nothing here") && Ed()->previewTab() == nullptr && Ed()->tabCount() == 2;
     });
+    // ------------- graph rows read as their commits; an activate opens one
+    // (the Mac's 3c02cbe0: the label is GitUi::graphRowLabel, the subject first)
+    MCGuiWait("Root commit's row on screen, labelled by its commit", 15, [] {
+        const int row = GraphRowOf("Root commit");
+        if (row < 0 || !Panel()->graphRowWidget(row)) return false;
+        const std::string l = Panel()->graphRowAccessibleLabel(row);
+        return l.rfind("Root commit, commit " + gShort[0], 0) == 0;
+    });
+    MCGuiStep("the label names the commit's hash, and its branch", [] {
+        const std::string l = Panel()->graphRowAccessibleLabel(GraphRowOf("Nothing here"));
+        MCGuiNote("label: %s", l.c_str());
+        GCHECK(l.rfind("Nothing here, commit " + gShort[2] + ", ", 0) == 0);
+        GCHECK(l.find("main (current)") != std::string::npos);
+    });
+    MCGuiPause(0.8);   // time is the condition: a pointer's press within 600 ms is not an assistive activate
+    MCGuiStep("an accessibility activate on Root commit's row", [] {
+        GtkWidget* list = Panel()->graphRowWidget(GraphRowOf("Root commit"));
+        while (list && !GTK_IS_LIST_VIEW(list)) list = gtk_widget_get_parent(list);
+        if (!GCHECK(list != nullptr)) return;
+        g_signal_emit_by_name(list, "activate", (guint)GraphRowOf("Root commit"));
+    });
+    MCGuiWait("its page opens in the preview tab, its row selected", 20, [] {
+        return OnShow(gShort[0] + " Root commit") && Panel()->selectedGraphRow() == GraphRowOf("Root commit");
+    });
+
     MCGuiStep("the pages close", [] { Ed()->closeAllTabs(); });
     MCGuiWait("no tabs", 10, [] { return Ed()->tabCount() == 0 && CommitTabs().empty(); });
     Shell("the repository goes", "rm -rf '" + C() + "'");

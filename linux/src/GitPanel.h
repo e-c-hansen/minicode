@@ -228,6 +228,7 @@ public:
     void setMessage(const std::string& text);
     std::vector<int> chosenRows() const;   // the change lists' selected rows
     int selectedRow() const;               // the row the keyboard is on
+    int selectedGraphRow() const;          // the commit row selected, or -1
     GtkWidget* list() const { return list_; }
     GtkWidget* messageView() const { return message_; }
     GtkWidget* branchLabel() const { return branchLabel_; }
@@ -235,6 +236,10 @@ public:
     GtkWidget* commitButton() const { return commitButton_; }
     // A row's widget while it is on screen, for a click; null otherwise.
     GtkWidget* rowWidget(int row) const;
+    std::string graphRowAccessibleLabel(int row) const;   // its accessible label
+    // A graph row's accessibility activate, a turn later: the commit by its
+    // hash (`more`: the "Show more" row). Public for the checks.
+    void pressedGraphCommit(const std::string& hash, bool more);
     GtkWidget* graphRowWidget(int row) const;   // a commit's row in the graph, or null
     GtkWidget* menu() const { return menu_; }   // a right click menu, while it is up
 
@@ -274,7 +279,6 @@ private:
     // Rows and keys.
     void reloadList();
     void reloadGraph();
-    int  selectedGraphRow() const;
     void selectRow(int row, bool focus);
     void selectGraphRow(int row, bool focus);
     void chooseRange(int from, int to);   // Shift with an arrow or a click
@@ -417,6 +421,7 @@ private:
     GtkStringList* graphModel_ = nullptr;
     GtkSingleSelection* graphSel_ = nullptr;
     int pressRow_ = -1;                  // where a click began, in its list
+    gint64 lastPointerUs_ = -1000000000;  // the graph's last pointer press
     ClickCount listClicks_, graphClicks_;  // double-clicks by the presses' times
     int lastClickRow_ = -1;              // the row the click before was released on
     GtkWidget* lastClickView_ = nullptr; // and its list

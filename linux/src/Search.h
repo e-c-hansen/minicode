@@ -118,8 +118,12 @@ public:
     // Present the window with the query field focused. The TODOs window
     // scans its scope again.
     void show();
-    // The same with the replace row shown and the keyboard in it.
-    void showReplace();
+    // The same with the replace row shown; the keyboard in the replacement
+    // when `focusReplace` (the query was just taken from the editor's
+    // selection), else in the query with its text selected.
+    void showReplace(bool focusReplace = false);
+    // The query set to `text`, escaped when the regex option is on.
+    void seedQuery(const std::string& text);
 
     // Replace All: count, ask, then replace (see above).
     void replaceAll();

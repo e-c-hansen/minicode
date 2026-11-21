@@ -10,6 +10,7 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <tuple>
 #include <cmath>
 #include <cstdint>
 #include <ctime>
@@ -467,7 +468,10 @@ void GitPanel::build() {
                 new std::shared_ptr<GitPanel*>(static_cast<GitPanel*>(selfp)->ref_),
                 [](gpointer h) { delete static_cast<std::shared_ptr<GitPanel*>*>(h); });
             g_object_set_data(G_OBJECT(da), "minicode-list-item", item);
-            gtk_list_item_set_activatable(item, FALSE);
+            // Activatable for the accessibility API's activate (a screen
+            // reader's press); Return is the key controller's, a click the
+            // gestures'.
+            gtk_list_item_set_activatable(item, TRUE);
             gtk_list_item_set_child(item, da);
         }),
         G_CALLBACK(+[](GtkSignalListItemFactory*, GObject* obj, gpointer selfp) {
@@ -476,8 +480,15 @@ void GitPanel::build() {
             GtkWidget* da = gtk_list_item_get_child(item);
             const guint pos = gtk_list_item_get_position(item);
             std::string tip;
-            if (self->graph_) tip = GitUi::graphToolTip(*self->graph_, pos, (long long)time(nullptr));
+            std::string label;
+            const long long now = (long long)time(nullptr);
+            if (self->graph_) {
+                tip = GitUi::graphToolTip(*self->graph_, pos, now);
+                label = GitUi::graphRowLabel(*self->graph_, pos, now);
+            }
             gtk_widget_set_tooltip_text(da, tip.empty() ? nullptr : tip.c_str());
+            // The row reads as its commit, the subject first, not as a picture.
+            gtk_list_item_set_accessible_label(item, label.empty() ? nullptr : label.c_str());
             gtk_widget_queue_draw(da);
         }));
     graphScroll_ = gtk_scrolled_window_new();
@@ -496,6 +507,37 @@ void GitPanel::build() {
     gtk_event_controller_set_propagation_phase(gkeys, GTK_PHASE_CAPTURE);
     g_signal_connect(gkeys, "key-pressed", G_CALLBACK(onGraphKey), this);
     gtk_widget_add_controller(graphList_, gkeys);
+    // A pointer's press, noted before the rows see it, so that the activate
+    // a double-click also emits is told from an accessibility press.
+    GtkGesture* pointer = gtk_gesture_click_new();
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(pointer), GTK_PHASE_CAPTURE);
+    g_signal_connect(pointer, "pressed", G_CALLBACK(+[](GtkGestureClick*, int, double, double,
+                                                        gpointer selfp) {
+        static_cast<GitPanel*>(selfp)->lastPointerUs_ = g_get_monotonic_time();
+    }), this);
+    gtk_widget_add_controller(graphList_, GTK_EVENT_CONTROLLER(pointer));
+    // An accessibility activate on a row (the commit's full hash is kept: a
+    // refresh may land before the action and move the rows, the Mac's
+    // pressedGraphCommit:).
+    g_signal_connect(graphList_, "activate", G_CALLBACK(+[](GtkListView*, guint pos, gpointer selfp) {
+        GitPanel* self = static_cast<GitPanel*>(selfp);
+        if (g_get_monotonic_time() - self->lastPointerUs_ < 600000) {
+            // A double-click: an activatable row takes the second press for
+            // itself, and the view's gesture then never sees its release.
+            if (self->graph_ && (int)pos < (int)self->graph_->commits.size())
+                self->clickedRow((int)pos, true, 2, true, (GdkModifierType)0);
+            return;
+        }
+        if (!self->graph_) return;
+        const bool more = (int)pos >= (int)self->graph_->commits.size();
+        const std::string hash = more ? "" : self->graph_->commits[pos].hash;
+        struct Press { std::shared_ptr<bool> alive; GitPanel* panel; std::string hash; bool more; };
+        g_idle_add_once(+[](gpointer d) {
+            Press* t = static_cast<Press*>(d);
+            if (*t->alive) t->panel->pressedGraphCommit(t->hash, t->more);
+            delete t;
+        }, new Press{self->alive_, self, hash, more});
+    }), this);
 
     // A click opens the file's review or shows the commit, as the Mac's
     // mouseDown and clickedRow:graph:... do; the rows' own handling (bubble
@@ -1408,6 +1450,33 @@ void GitPanel::showCommit(int row, bool preview) {
             if (p->onShowCommit) p->onShowCommit(title, res->out);
         });
     });
+}
+
+// An accessibility activate on a graph row: the commit it named, wherever
+// it is now, selected and opened as a click opens it (the preview tab);
+// `more` is the "Show more" row. A commit no longer listed rings the bell.
+void GitPanel::pressedGraphCommit(const std::string& hash, bool more) {
+    if (!graph_) return;
+    if (more) {
+        if (graph_->hasMore) showMore();
+        return;
+    }
+    for (size_t i = 0; i < graph_->commits.size(); i++) {
+        if (graph_->commits[i].hash != hash) continue;
+        selectGraphRow((int)i, true);
+        showCommit((int)i, true);
+        return;
+    }
+    gtk_widget_error_bell(graphList_);
+}
+
+// What the row on show says to an assistive technology ("" when none).
+std::string GitPanel::graphRowAccessibleLabel(int row) const {
+    GtkWidget* da = graphRowWidget(row);
+    GtkListItem* item = da ? GTK_LIST_ITEM(g_object_get_data(G_OBJECT(da), "minicode-list-item"))
+                           : nullptr;
+    const char* l = item ? gtk_list_item_get_accessible_label(item) : nullptr;
+    return l ? l : "";
 }
 
 // "Show more" raises the limit and loads the whole window again: topological

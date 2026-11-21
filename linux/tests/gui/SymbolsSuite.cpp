@@ -13,6 +13,7 @@
 
 #include "DocumentView.h"
 #include "Editor.h"
+#include "FileTree.h"
 #include "PalettePanel.h"
 
 #include <string>
@@ -201,6 +202,24 @@ MC_GUI_SUITE(symbols) {
         const auto main = wordOnLine(80, "main");
         return !pal()->isOpen() && selection() == main && onScreen(main.first) &&
                editorHasKeyboard();
+    });
+
+    // From the tree too: the text takes the keyboard (the Mac's 3c02cbe0).
+    MCGuiStep("the tree has the keyboard; Go to Symbol", [] {
+        MCGuiFocusKeyWindow();
+        MCGuiApp().tree->focus();
+    });
+    MCGuiWait("it has", 10, [] {
+        GtkWidget* f = gtk_window_get_focus(GTK_WINDOW(MCGuiApp().window));
+        return f && gtk_widget_is_ancestor(f, MCGuiApp().tree->widget());
+    });
+    MCGuiStep("Go to Symbol", [] { MCGuiKey("ctrl+shift+o"); });
+    MCGuiWait("the symbols arrive", 10, [] { return pal()->isOpen() && pal()->labels().size() == 7; });
+    MCGuiStep("\"mai\", Return", [] { MCGuiType("mai"); });
+    MCGuiWait("main selected", 10, [] { return pal()->text() == "@mai" && selectedLabel() == "main"; });
+    MCGuiStep("Return", [] { MCGuiKey("enter"); });
+    MCGuiWait("at main, the keyboard in the text, not the tree", 10, [] {
+        return !pal()->isOpen() && selection() == wordOnLine(80, "main") && editorHasKeyboard();
     });
 
     MCGuiStep("\"@:\" groups by kind", [] {

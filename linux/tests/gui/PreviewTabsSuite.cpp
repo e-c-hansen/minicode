@@ -276,10 +276,17 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiStep("the setting back on", [] { MCGuiSetSettings("lsp.enabled = false\n"); });
 
     // ---- Find in Folder
+    // The tree holds the keyboard, as in a fresh window: a result opened
+    // kept must leave it in the text (the Mac's 3c02cbe0), checked below.
     MCGuiStep("Find in Folder for a word in two files", [] {
-        MCGuiClick(ed()->textView());
-        MCGuiKey("ctrl+shift+f");
+        MCGuiFocusKeyWindow();
+        MCGuiApp().tree->focus();
     });
+    MCGuiWait("it has", 10, [] {
+        GtkWidget* f = gtk_window_get_focus(GTK_WINDOW(MCGuiApp().window));
+        return f && gtk_widget_is_ancestor(f, MCGuiApp().tree->widget());
+    });
+    MCGuiStep("Find in Folder", [] { MCGuiKey("ctrl+shift+f"); });
     MCGuiWait("its window", 10, [] { return MCGuiTopWindow() != MCGuiApp().window; });
     // The window may be the one earlier suites searched in, and keeps their
     // scope, files to include and options (replace_in_folder's rif and
@@ -319,6 +326,9 @@ MC_GUI_SUITE(preview_tabs) {
     MCGuiPause(0.5);   // the double-click interval
     MCGuiStep("a double-click on it keeps it", [] { clickResult("needle two", true); });
     MCGuiWait("kept", 10, [] { return row() == "p-b.txt p-e.txt p-a.txt two.txt p-c.txt p-d.txt"; });
+    MCGuiWait("the app window's keyboard, which the tree held, is in the text", 10, [] {
+        return gtk_window_get_focus(GTK_WINDOW(MCGuiApp().window)) == ed()->textView();
+    });
     // The same with a slow first click: GTK's timer has reset by the second.
     MCGuiPause(0.5);   // the double-click interval
     MCGuiStep("a slow first click on a result, then the second", [] {

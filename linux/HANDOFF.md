@@ -8976,3 +8976,47 @@ show; the file shown last is shown meanwhile).
   copies the buffer), 12 to 14 ms after. `find_bar` 102 passed,
   `large_file` 115 passed. Not checked: a file of 250 MB (the harness's
   22 MB is the smallest over the seed's 20 MB), real keys and the look.
+
+### 144. Keyboard and accessibility: Quick Open, Replace in Folder, graph rows (November 2026)
+
+- **What.** The Mac's 3c02cbe0, from the task benchmark, in three parts.
+- **Quick Open.** Not already right on GTK: with the tree holding the
+  keyboard before Ctrl+P, the pick opened and typing still went to the tree
+  (the palette closes first, giving the keyboard back to what had it).
+  `showPalette`'s `openFile` now calls `Editor::focusActiveDocument` once
+  the file is the active one (path or its realpath; a web bookmark's page
+  takes the keyboard itself). Go to Symbol (`goToSymbol`) and opening a Find
+  in Folder result kept (double-click, Enter) already left the text with the
+  keyboard; `symbols` and `preview_tabs` now start from the tree (waiting
+  for it to have the keyboard first) and say so. `palette` checks Quick
+  Open from the tree.
+- **Replace in Folder.** `Ctrl+Alt+Shift+F` put the keyboard in the
+  replacement always. Now as VS Code's findOrReplaceInFiles:
+  `seedSearchFromSelection` (main.cpp) makes the editor's one-line
+  selection (at most 1,000 characters, the text view holding the keyboard)
+  the query (`SearchPanel::seedQuery`, escaped by the core's `FindRules::escapeRegex` while the
+  regex option is on; Find in Folder seeds the same way, which GTK did not
+  do before), and `showReplace(focusReplace)` gives the replacement the
+  keyboard only then; otherwise the query, its text selected. Tab in the
+  query now goes straight to the replacement while its row shows (it went
+  through the option toggles). `replace_in_folder` checks all three cases.
+- **Graph rows.** Each row's list item has `GitUi::graphRowLabel` as its
+  accessible label (`gtk_list_item_set_accessible_label`, set on bind;
+  `GitPanel::graphRowAccessibleLabel` reads it back). Items are now
+  activatable, for an assistive technology's activate: the list view's
+  `activate` keeps the commit's full hash, and a turn later
+  `pressedGraphCommit` finds it in the graph then (a refresh may have moved
+  the rows), selects it and shows it as a click does, ringing the bell when
+  it is gone ("Show more" loads more). Return is still the key controller's.
+  `git_review` checks two labels and an activate (the signal the item's
+  accessible action emits).
+- **Trap.** An activatable list item takes the second press of a
+  double-click for itself and emits `activate`, so the view's click gesture
+  never sees its release: the `activate` handler in the constructor
+  tells a pointer's activate from an assistive one by a capture-phase press
+  stamp within 600 ms and runs `clickedRow(row, true, 2, true, 0)` for the
+  pointer's. Another trap in the checks: `MCGuiClick` is a real X click that
+  lands after the step, so a selection made in the same step is collapsed by
+  it; click, wait for the text to have the keyboard, then select.
+- **Not verified.** Orca reading the label or pressing the row: only the
+  label property and the `activate` signal are checked, not a screen reader.

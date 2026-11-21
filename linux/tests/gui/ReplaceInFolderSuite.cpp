@@ -38,6 +38,7 @@ namespace {
 
 Editor* ed() { return MCGuiApp().editor; }
 SearchPanel* panel() { return MCGuiApp().search; }
+std::string queryText() { return gtk_editable_get_text(GTK_EDITABLE(panel()->queryEntry())); }
 GtkWindow* panelWindow() { return panel() ? GTK_WINDOW(panel()->window()) : nullptr; }
 
 std::string dir() { return MCGuiProjectFile("rif"); }
@@ -153,9 +154,9 @@ MC_GUI_SUITE(replace_in_folder) {
     // its widgets at once and places them at its first frame, and a click
     // in between found nothing to point at (a loaded full run, after which
     // every later step of the suite failed).
-    MCGuiWait("its window, the replace row shown, the keyboard in the replacement", 10, [] {
+    MCGuiWait("its window, the replace row shown, the keyboard in the query (nothing selected)", 10, [] {
         return panel() && gtk_widget_get_mapped(panel()->window()) && panel()->replaceShown() &&
-               focusIn(panel()->replaceEntry()) && MCGuiOnScreen(panel()->queryEntry());
+               focusIn(panel()->queryEntry()) && MCGuiOnScreen(panel()->queryEntry());
     });
     MCGuiStep("the folder; \"cat\" typed in the query", [] {
         panel()->setScope(dir());
@@ -542,4 +543,72 @@ MC_GUI_SUITE(replace_in_folder) {
         MCGuiResetFolderSearch();
     });
     MCGuiWait("active", 10, [] { return gtk_window_is_active(MCGuiApp().window); });
+
+    // ------------------------------- where the keyboard starts (VS Code's
+    // findOrReplaceInFiles, the Mac's 3c02cbe0)
+    MCGuiStep("two.txt shown; \"cat\" selected in it, the text holding the keyboard", [] {
+        MCGuiOpenFileKept(two());
+    });
+    MCGuiWait("it shows", 10, [] { return ed()->currentPath() == two(); });
+    MCGuiStep("a click in the text", [] {
+        MCGuiFocusKeyWindow();
+        MCGuiClick(ed()->textView());
+    });
+    MCGuiWait("the text has the keyboard", 10, [] {
+        return gtk_window_get_focus(GTK_WINDOW(MCGuiApp().window)) == ed()->textView();
+    });
+    MCGuiStep("\"cat\" selected, on one line; Ctrl+Alt+Shift+F", [] {
+        GtkTextBuffer* b = ed()->active()->buffer();
+        GtkTextIter s, e;
+        gtk_text_buffer_get_iter_at_offset(b, &s, 2);
+        gtk_text_buffer_get_iter_at_offset(b, &e, 5);
+        gtk_text_buffer_select_range(b, &s, &e);
+        MCGuiKey("ctrl+alt+shift+f");
+    });
+    MCGuiWait("the selection is the query, the keyboard in the replacement", 10, [] {
+        return panel() && gtk_widget_get_mapped(panel()->window()) && panel()->replaceShown() &&
+               focusIn(panel()->replaceEntry()) && queryText() == "cat";
+    });
+    MCGuiStep("put away", [] {
+        MCGuiSetKeyWindow(panelWindow());
+        MCGuiKey("escape");
+    });
+    MCGuiWait("closed", 10, [] { return !gtk_widget_get_mapped(panel()->window()); });
+    MCGuiStep("a click in the text", [] {
+        MCGuiFocusKeyWindow();
+        MCGuiClick(ed()->textView());
+    });
+    MCGuiWait("the text has the keyboard", 10, [] {
+        return gtk_window_get_focus(GTK_WINDOW(MCGuiApp().window)) == ed()->textView();
+    });
+    MCGuiStep("the caret alone; Ctrl+Alt+Shift+F again", [] {
+        GtkTextBuffer* b = ed()->active()->buffer();
+        GtkTextIter s;
+        gtk_text_buffer_get_iter_at_offset(b, &s, 1);
+        gtk_text_buffer_place_cursor(b, &s);
+        MCGuiKey("ctrl+alt+shift+f");
+    });
+    MCGuiWait("the query holding the earlier search, all of it selected, has the keyboard", 10, [] {
+        int a = 0, e = 0;
+        return panel() && gtk_widget_get_mapped(panel()->window()) &&
+               focusIn(panel()->queryEntry()) && queryText() == "cat" &&
+               gtk_editable_get_selection_bounds(GTK_EDITABLE(panel()->queryEntry()), &a, &e) &&
+               a == 0 && e == 3;
+    });
+    MCGuiStep("Tab goes on to the replacement", [] {
+        MCGuiSetKeyWindow(panelWindow());
+        MCGuiKey("tab");
+    });
+    MCGuiWait("it has the keyboard", 10, [] { return focusIn(panel()->replaceEntry()); });
+    MCGuiStep("put away", [] {
+        MCGuiSetKeyWindow(panelWindow());
+        MCGuiKey("escape");
+        MCGuiSetKeyWindow(nullptr);
+    });
+    MCGuiWait("closed again", 10, [] { return !gtk_widget_get_mapped(panel()->window()); });
+    MCGuiStep("the keyboard back in the app's window", [] {
+        MCGuiFocusKeyWindow();
+        MCGuiResetFolderSearch();
+    });
+    MCGuiWait("active again", 10, [] { return gtk_window_is_active(MCGuiApp().window); });
 }

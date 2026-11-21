@@ -7,6 +7,7 @@
 #include "DocumentView.h"
 #include "EditSpans.h"
 #include "Editor.h"
+#include "FindRules.h"
 #include "Keys.h"
 #include "ListKeyboard.h"
 #include "MultiEdit.h"
@@ -582,15 +583,28 @@ void SearchPanel::show() {
     gtk_editable_select_region(GTK_EDITABLE(entry_), 0, -1);
 }
 
-void SearchPanel::showReplace() {
+// The query becomes `text` (regex metacharacters escaped while the regular
+// expression option is on); the search runs as for any typed query.
+void SearchPanel::seedQuery(const std::string& text) {
+    const bool re = regex_ && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(regex_));
+    const std::string q = re ? utf16::toUtf8(FindRules::escapeRegex(utf16::fromUtf8(text))) : text;
+    gtk_editable_set_text(GTK_EDITABLE(entry_), q.c_str());
+}
+
+// As VS Code's Replace in Files opens it (findOrReplaceInFiles): the
+// keyboard in the replacement only when the editor's selection has just
+// become the query, else in the query, its text selected, so a first
+// Ctrl+Alt+Shift+F types the search and Tab goes on to the replacement.
+void SearchPanel::showReplace(bool focusReplace) {
     if (mode_ != Mode::Find) {
         show();
         return;
     }
     gtk_window_present(GTK_WINDOW(window_));
     setReplaceShown(true);
-    gtk_widget_grab_focus(replaceEntry_);
-    gtk_editable_select_region(GTK_EDITABLE(replaceEntry_), 0, -1);
+    GtkWidget* target = focusReplace ? replaceEntry_ : entry_;
+    gtk_widget_grab_focus(target);
+    gtk_editable_select_region(GTK_EDITABLE(target), 0, -1);
 }
 
 void SearchPanel::setReplaceShown(bool on) {
@@ -1367,8 +1381,16 @@ void SearchPanel::onStopSearch(GtkSearchEntry*, gpointer selfp) {
 
 // Down arrow from the query field goes to the first result.
 gboolean SearchPanel::onQueryKey(GtkEventControllerKey*, guint keyval, guint,
-                                 GdkModifierType, gpointer selfp) {
+                                 GdkModifierType mods, gpointer selfp) {
     SearchPanel* self = static_cast<SearchPanel*>(selfp);
+    // Tab goes on to the replacement while its row shows (not through the
+    // option toggles), as on the Mac and in VS Code.
+    if (keyval == GDK_KEY_Tab && !(mods & (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_ALT_MASK)) &&
+        self->replaceEntry_ && self->replaceShown_) {
+        gtk_widget_grab_focus(self->replaceEntry_);
+        gtk_editable_select_region(GTK_EDITABLE(self->replaceEntry_), 0, -1);
+        return TRUE;
+    }
     if (keyval != GDK_KEY_Down || self->hits_.empty()) return FALSE;
     self->focusFirstResult();
     return TRUE;
