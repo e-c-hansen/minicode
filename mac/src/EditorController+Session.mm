@@ -178,6 +178,8 @@ static char kSessionWindowKey;
            dirty:![saved isEqualToString:t.currentText ?: @""]];
 }
 
+NSUInteger MCDirtyFromHostMarks = 0;
+
 // The host's count of the tab as unsaved flipped while the tab's text was
 // the host's (MCSessionDoc checks): the window's dot is the host's, as the
 // page's is. Never for a tab whose unsaved state is more than its text
@@ -185,6 +187,7 @@ static char kSessionWindowKey;
 // yet.
 - (void)tab:(MCTab *)t dirtyFromHost:(BOOL)dirty {
     if (![self holdsTab:t] || !t.loaded || t.heldFromHost || t.untitled || t.gone || t.dirty == dirty) return;
+    if (dirty) MCDirtyFromHostMarks++;
     t.dirty = dirty;
     [self updateTitle];
 }

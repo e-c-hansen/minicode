@@ -970,6 +970,10 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
     return [self client].savedAs(_docId, U16(text));
 }
 
+- (BOOL)savePending {
+    return self.open && [self client].dirtyFenced(_docId);
+}
+
 // ---- saving through the host (stage 7)
 
 - (BOOL)hostSavesFile {
@@ -1013,10 +1017,10 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
 }
 
 // Whether the tab's text is the host's at the version last heard: nothing
-// of this window's waits for the host, and nothing of the host's waits for
-// the storage.
+// of this tab's waits for the host (another tab's edits do not count),
+// and nothing of the host's waits for the storage.
 - (BOOL)mirrorInStep {
-    return self.open && [self client].unconfirmed() == 0 && _deferred.empty();
+    return self.open && [self client].unconfirmed(_docId) == 0 && _deferred.empty();
 }
 
 - (void)hostDirty:(BOOL)dirty {

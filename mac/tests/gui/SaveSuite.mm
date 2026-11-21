@@ -12,12 +12,16 @@
 #import "EditorController+Private.h"
 #import "AppSettings.h"
 #import "CsvTable.h"
+#import "SessionLink.h"
 #include <sqlite3.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 
 namespace {
+
+// MCDirtyFromHostMarks before a clean tab's reload (it must not move).
+NSUInteger gMarksBefore = 0;
 
 NSString *Dir(void) { return [MCGuiProject() stringByAppendingPathComponent:@"save"]; }
 NSString *F(NSString *name) { return [Dir() stringByAppendingPathComponent:name]; }
@@ -237,14 +241,29 @@ MC_GUI_SUITE(save) {
         Type(c, @"x", 0);
         [c saveCurrentFile:nil];
         MCGuiWriteFile(F(@"reload.txt"), @"xone\nTWO\nthree\n");
+        gMarksBefore = MCDirtyFromHostMarks;
         [c checkTabsOnDisk];
     });
     MCGuiWait(@"the new text, read off the main thread", 5, ^BOOL {
         return [TV(MCGuiController()).string isEqualToString:@"xone\nTWO\nthree\n"];
     });
+    // With the session's host on, the reload reaches it as an edit and then
+    // a DocSaved; the host acknowledges the edit before telling its
+    // "unsaved", and the window marked the clean tab unsaved until the
+    // DocSaved's "saved" came back (CI's session-host pass, 2026-11-21).
+    // Waits for the host to have taken it all; the next step looks a turn
+    // later, once anything heard has reached the tab.
+    MCGuiWait(@"the host has taken the reload", 5, ^BOOL {
+        MCTab *t = Active(MCGuiController());
+        return !t.session || (!t.session.savePending && !t.session.deferredEdits);
+    });
     MCGuiStep(@"the reload is one undo step, and the typing before it stays", ^{
         EditorController *c = MCGuiController();
         GCHECK(!c.dirty);
+        // Never marked unsaved by the host on the way.
+        GCHECK(MCDirtyFromHostMarks == gMarksBefore);
+        if (MCDirtyFromHostMarks != gMarksBefore)
+            MCGuiNote(@"marked unsaved by the host %lu times", (unsigned long)(MCDirtyFromHostMarks - gMarksBefore));
         GCHECK_EQ_STR(TV(c).undoManager.undoActionName, @"Reload from Disk");
         Undo(c);
         GCHECK_EQ_STR(TV(c).string, @"xone\ntwo\n");

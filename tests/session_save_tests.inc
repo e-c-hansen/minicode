@@ -567,4 +567,99 @@ static void testSessionSave() {
         std::error_code ec;
         fs::remove_all(root, ec);
     }
+
+    // A reload's edit and its DocSaved, with the host's messages taken in
+    // the order that let the edit's "unsaved" come after the renderer
+    // counted the document clean: the ack comes before the DocDirty the
+    // edit caused, and lets the DocSaved out (the save suite's reload in
+    // CI's session-host pass, 2026-11-21). The listener is never told
+    // "unsaved" for it, and hears the host's state once the DocSaved is
+    // taken.
+    GROUP("host:dirty-fence");
+    {
+        Net net(true, false);
+        Net::Link& app = net.add(Unit::Utf16, "mac", 4 | 8 | 16);
+        auto up = [&] {   // the host takes everything the app sent
+            while (!app.up.empty()) {
+                Message m = std::move(app.up.front());
+                app.up.pop_front();
+                net.host.handle(app.id, std::move(m));
+            }
+        };
+        auto down = [&] {   // the app takes everything the host sent, one dispatch
+            while (!app.down.empty()) {
+                app.client->deliver(std::move(app.down.front()));
+                app.down.pop_front();
+            }
+            app.client->dispatch();
+        };
+        up();
+        down();
+        TestMirror& m = net.open(app, 1, u"one\n");
+        up();
+        down();
+        CHECK(!net.host.dirty(1) && app.dirties.empty());
+
+        // The reload: an edit, then saved().
+        m.type(u"x");
+        app.client->saved(1);
+        CHECK(app.client->dirtyFenced(1));
+        up();     // the edit only: the DocSaved waits behind it
+        CHECK(net.host.dirty(1));
+        down();   // the ack (the DocSaved goes now) and the edit's DocDirty
+        CHECK(app.dirties.empty());
+        if (!app.dirties.empty()) std::printf("  host:dirty-fence: told %d first\n", (int)app.dirties[0].second);
+        up();     // the DocSaved and the Ping behind it
+        CHECK(!net.host.dirty(1));
+        down();
+        CHECK(app.dirties.size() == 1 && !app.dirties.back().second);
+        CHECK(!app.client->dirtyFenced(1));
+
+        // Unfenced again: typing is told at once.
+        m.type(u"y");
+        up();
+        down();
+        CHECK(app.dirties.size() == 2 && app.dirties.back().second);
+
+        // A DocSaved that flips nothing (the buffer kept over a changed
+        // file, Keep Mine): the fence ends with nothing to tell.
+        CHECK(app.client->savedAs(1, u"other\n"));
+        up();
+        down();
+        CHECK(app.dirties.size() == 2 && !app.client->dirtyFenced(1));
+
+        // Two saves out at once: held until the last is taken.
+        app.client->saved(1);
+        app.client->savedAs(1, u"other\n");
+        up();
+        CHECK(app.down.size() == 4);   // clean, Pong, unsaved, Pong
+        app.client->deliver(std::move(app.down.front()));
+        app.down.pop_front();
+        app.client->deliver(std::move(app.down.front()));
+        app.down.pop_front();
+        app.client->dispatch();
+        CHECK(app.dirties.size() == 2 && app.client->dirtyFenced(1));
+        down();
+        CHECK(app.dirties.size() == 3 && app.dirties.back().second && !app.client->dirtyFenced(1));
+
+        // Another document's edit in flight leaves this one in step (the
+        // Mac's tab takes the host's count by unconfirmed(doc)).
+        TestMirror& other = net.open(app, 3, u"three\n");
+        up();
+        down();
+        other.type(u"z");
+        CHECK(app.client->unconfirmed(3) == 1 && app.client->unconfirmed(1) == 0);
+        CHECK(app.client->unconfirmed() == 1);
+        up();
+        down();
+        CHECK(app.client->unconfirmed(3) == 0 && app.client->unconfirmed() == 0);
+
+        // A renderer that does not hear dirty states sends no Ping.
+        Net::Link& plain = net.add(Unit::Utf16, "gtk", 4);
+        net.open(plain, 2, u"two\n");
+        plain.up.clear();
+        plain.client->saved(2);
+        CHECK(!plain.client->dirtyFenced(2));
+        CHECK(plain.up.size() == 1 && plain.up.back().kind == Shared::Kind::DocSaved);
+    }
 }
