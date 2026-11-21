@@ -25,6 +25,8 @@
 
 @interface MCSessionWindow : NSObject
 - (instancetype)initWithFolder:(NSString *)folder;
+// On a link given (a window over SSH, stage 8: the remote host's).
+- (instancetype)initWithLink:(MCSessionLinkRef *)link folder:(NSString *)folder;
 @property(nonatomic, readonly, copy) NSString *folder;
 @property(nonatomic, readonly) MCSessionLinkRef *link;
 // The window's id on its host (Client::windowTabs), the record's once it

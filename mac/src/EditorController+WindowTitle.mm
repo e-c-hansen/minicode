@@ -122,6 +122,14 @@ static NSString *MCFormatDuration(double seconds) {
     in.focus = [self windowTitleFocus];
     in.folder = TitlePath(_root.path);
     in.home = TitlePath(NSHomeDirectory());
+    // A window over SSH (stage 8): its host and folder, and whether the
+    // connection is there.
+    const BOOL remote = self.sessionIsRemote;
+    if (remote) {
+        in.home.clear();   // this Mac's home names nothing there
+        in.remote = Utf8String(self.sessionRemoteLabel);
+        if (self.sessionHostLost) in.remote += " (disconnected)";
+    }
     const BOOL document = in.focus == WindowTitle::Focus::Document;
     if (in.focus == WindowTitle::Focus::Terminal)
         in.pane = Utf8String([self windowTitleFocusedTerminal].title);
@@ -139,7 +147,7 @@ static NSString *MCFormatDuration(double seconds) {
             in.path = TitlePath(self.currentPath);
             in.untitled = _activeTab.untitled;
             in.gone = _activeTab.gone;
-            if (!in.untitled && !in.gone) represented = [NSURL fileURLWithPath:self.currentPath];
+            if (!in.untitled && !in.gone && !remote) represented = [NSURL fileURLWithPath:self.currentPath];
         }
         in.dirty = self.dirty;
         in.detail = Utf8String([self windowTitleDetail]);

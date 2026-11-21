@@ -97,6 +97,22 @@
 // stay on the session's host for the folder's next window, but those the
 // close question's Don't Save dropped (stage 6).
 - (void)detachFromSessionHost;
+// A window over SSH (stage 8, `mutible ssh://host/path`): before
+// showWindow, the window is put on the remote host's link (an
+// MCSessionLinkRef whose link is MCSession::forRemote's), so its files are
+// read and saved there and its terminals run there.
+- (void)useRemoteSessionLink:(id)link;
+// Whether the window is on another machine's host, and its "host:path".
+@property(nonatomic, readonly) BOOL sessionIsRemote;
+@property(nonatomic, readonly) NSString *sessionRemoteLabel;
+// The remote link's address (ssh://...), nil for a window on this Mac.
+@property(nonatomic, readonly) NSString *sessionRemoteAddress;
+// Which host it is on: the machine's ssh:// and the folder there (the
+// link's key()), nil for a window on this Mac.
+@property(nonatomic, readonly) NSString *sessionRemoteKey;
+// Whether the window's host went (a headless one killed, a connection over
+// SSH dropped) and Reconnect has not found it again.
+@property(nonatomic, readonly) BOOL sessionHostLost;
 @end
 
 // EditorController+SessionBrowser.mm (SessionBrowser.h)

@@ -162,7 +162,9 @@ enum class Kind {
                  // watches the disk (FsRead's "watch", DocReload); flag 8: it lists
                  // files and searches on workers (FsRead's "files", "search",
                  // "cancel": SessionSearch.h); flag 16: it writes for a page (DocOpen
-                 // flag 2, DocSave's "saveAs", FsRead's "replace")
+                 // flag 2, DocSave's "saveAs", FsRead's "replace"); flag 32: it runs a
+                 // terminal in its own machine's login shell and environment
+                 // (TermSpec's hostShell), what a window over SSH needs (stage 8)
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
     DocEdited,   // doc, v, by, seq, ops, ops16, flag (1 undo, 2 redo), select
     DocUndone,   // doc, req, outcome
@@ -284,6 +286,13 @@ struct TermSpec {
     int cols = 80, rows = 24;
     int scrollback = 10000;           // the host's screen's, as the renderer's
     std::string nonce;                // the integration's marks carry it
+    // The host's own login shell and environment rather than `program`,
+    // `argv` and `env`, which then only add to (and override) the host's
+    // environment: a renderer on another machine (the Mac over SSH, stage
+    // 8) cannot know the remote's shell, paths or variables. Sent only to
+    // a host whose Welcome has flag 32 (Client::hostRunsOwnShell); an older
+    // host would run `program` "" and the shell would never start.
+    bool hostShell = false;
 };
 Json termSpecJson(const TermSpec& s);
 TermSpec termSpecFrom(const Json& j);

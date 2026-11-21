@@ -562,24 +562,28 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     _activeTab.pendingSort = nil;
     if (!held) [self forgetHistoryOf:_activeTab];   // the text is read afresh
     [self resetViewMode];
+    // A window over SSH (stage 8): the file is on the other machine, read
+    // through its host as text; the viewers that read the disk themselves
+    // (pictures, PDFs, players, Quick Look) are not offered for it yet.
+    const BOOL remote = [self sessionIsRemote];
     // Images are routed by extension before any attempt to read them as text.
-    if ([EditorController isImagePath:path] && [self showImageAtPath:path]) {
+    if (!remote && [EditorController isImagePath:path] && [self showImageAtPath:path]) {
         [self recordModDate];
         return;
     }
-    if ([path.pathExtension.lowercaseString isEqualToString:@"pdf"] &&
+    if (!remote && [path.pathExtension.lowercaseString isEqualToString:@"pdf"] &&
         [self showPDFAtPath:path]) {
         [self recordModDate];
         return;
     }
-    if ([EditorController isMediaPath:path] && [self showMediaAtPath:path]) {
+    if (!remote && [EditorController isMediaPath:path] && [self showMediaAtPath:path]) {
         [self recordModDate];
         return;
     }
     // Binary by its content (or a document only Quick Look shows) is never
     // opened as text; a backup, being text, still is, and in the viewer its
     // kind of file has over its text (a CSV's table, a JSON outline).
-    MCViewerKind viewer = MCViewerKindForFile(path);
+    MCViewerKind viewer = remote ? MCViewerNone : MCViewerKindForFile(path);
     if ((restored || held) && MCViewerKindWithoutText(viewer)) viewer = MCViewerNone;
     if (MCViewerKindWithoutText(viewer) && [self showViewer:viewer]) {
         [self recordModDate];
@@ -587,14 +591,14 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     }
     // Stat'ed before it is read, so a file still being written when it is
     // read never counts as matching the disk (FolderSearch::readFileStable).
-    MCDiskText *disk = MCReadDiskText(path, ULLONG_MAX);
+    MCDiskText *disk = remote ? [self sessionRemoteTextOf:_activeTab] : MCReadDiskText(path, ULLONG_MAX);
     NSString *content = disk.text;
     // The file is gone, or no longer reads as text: the backup (or the
     // host's text) is all there is.
     if (!content && (restored || held)) content = @"";
     // Not UTF-8, nor UTF-16 that decodes exactly: Quick Look shows what
     // it can (text in another encoding, or the file's icon).
-    if (!content && [[NSFileManager defaultManager] fileExistsAtPath:path] &&
+    if (!content && !remote && [[NSFileManager defaultManager] fileExistsAtPath:path] &&
         [self showViewer:MCViewerQuickLook]) {
         [self recordModDate];
         return;
@@ -656,7 +660,8 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     [self refreshDisplay];
     // Previews show rendered text, which no language server should see, nor
     // does a file in large-file mode.
-    [self.lsp documentOpened:self.previewMode ? nil : [self languageServerPath:path]];
+    // Nor does a file on another machine: its servers are stage 9's.
+    [self.lsp documentOpened:self.previewMode || remote ? nil : [self languageServerPath:path]];
     [self updateTitle];
     [self applySessionPlaceOf:_activeTab];   // brought back with its window: where it was
 }
@@ -674,6 +679,11 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
 }
 - (void)recordStamp:(MCDiskStamp *)s ofTab:(MCTab *)t {
     if (!t) return;
+    // A window over SSH keeps no stamps: its files are on the other machine,
+    // and a stamp of this Mac's file at that path would be another file's.
+    // With none, the disk checks pass it by (checkExternalChange, the
+    // questions before a save).
+    if ([self sessionIsRemote]) s = nil;
     t.fileModDate = s.modDate;
     t.fileID = s.fileID;
     t.fileSize = s ? (int64_t)s.size : -1;

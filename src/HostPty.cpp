@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <mutex>
+#include <pwd.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -65,6 +66,40 @@ void setNonBlocking(int fd) {
 }
 
 }  // namespace
+
+PtySpec ownShellSpec(const std::string& shell, const std::vector<std::string>& hostEnv,
+                     const std::vector<std::string>& extra, const std::string& cwd, int cols,
+                     int rows) {
+    PtySpec p;
+    p.program = shell;
+    if (p.program.empty()) p.program = envValue(hostEnv, "SHELL");
+    if (p.program.empty()) {
+        struct passwd pw, *found = nullptr;
+        char buf[4096];
+        if (getpwuid_r(getuid(), &pw, buf, sizeof buf, &found) == 0 && found && found->pw_shell &&
+            *found->pw_shell)
+            p.program = found->pw_shell;
+    }
+    if (p.program.empty()) p.program = "/bin/sh";
+    const std::size_t slash = p.program.rfind('/');
+    p.argv = {"-" + (slash == std::string::npos ? p.program : p.program.substr(slash + 1))};
+    auto nameOf = [](const std::string& e) { return e.substr(0, e.find('=')); };
+    std::vector<std::string> names;
+    for (const std::string& e : extra) names.push_back(nameOf(e));
+    for (const std::string& e : hostEnv) {
+        if (e.find('=') == std::string::npos) continue;
+        const std::string n = nameOf(e);
+        bool replaced = false;
+        for (const std::string& x : names) replaced = replaced || x == n;
+        if (!replaced) p.env.push_back(e);
+    }
+    for (const std::string& e : extra)
+        if (e.find('=') != std::string::npos) p.env.push_back(e);
+    p.cwd = cwd;
+    p.cols = cols;
+    p.rows = rows;
+    return p;
+}
 
 std::unique_ptr<Pty> Pty::spawn(const PtySpec& spec, std::string* error) {
     auto fail = [&](const char* what) -> std::unique_ptr<Pty> {

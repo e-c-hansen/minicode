@@ -296,14 +296,17 @@
                                                  name:NSViewFrameDidChangeNotification
                                                object:treeScroll];
 
-    [self startWatching:_root.path];   // live tree updates
+    // A window over SSH (stage 8) watches no folder of this Mac's and
+    // brings back no session of one: its folder is on the other machine.
+    const BOOL remote = self.sessionIsRemote;
+    if (!remote) [self startWatching:_root.path];   // live tree updates
     [self ensureGitPanel];             // autofetch, before the panel is shown
     [self ensureTestGutter];           // the ▶ beside each test
     [self ensureLineHistory];          // who last changed each line
     [self attachSessionHeld];          // what the session's host kept of a closed window
     [self restoreWindowLayout];        // a window brought back: its panels and sizes first,
                                        // so its text is laid out at its width
-    [self restoreSession];             // the files open here last time
+    if (!remote) [self restoreSession];   // the files open here last time
     [self restoreBrowserFromSession];  // and the browser, where it was
     [self finishRestoringWindow];      // a window brought back: its tree and keyboard
     [self finishSessionAttach];        // the host's tab on show, and its terminals

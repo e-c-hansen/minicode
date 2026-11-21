@@ -20,6 +20,11 @@ Opens folders and files in mutible. With no path, opens the current folder.
                         window, the window on your bookmark folder
                         (~/Bookmarks, or browser.bookmarks in settings);
                         several addresses open as several tabs
+  mutible ssh://thinkpad/~/proj
+                        open a folder (or a file) on another machine: its
+                        files, terminals and saving are that machine's,
+                        through your own ssh and a mutible installed there
+                        (ssh://[user@]host[:port]/path; /~ is its home)
 
 These are VS Code's rules for `code`: a file joins a window you already
 have, and a folder gets its own window unless you ask for the one in front.
@@ -161,18 +166,21 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# Web addresses go to the browser window, as a request of their own below.
+# Web addresses go to the browser window, and ssh:// addresses to windows
+# on other machines, each as a request of their own below.
 urls=()
+remote=()
 rest=()
 for p in "${paths[@]}"; do
   case "$p" in
     [Hh][Tt][Tt][Pp]://*|[Hh][Tt][Tt][Pp][Ss]://*) urls+=("$p") ;;
+    [Ss][Ss][Hh]://*) remote+=("$p") ;;
     *) rest+=("$p") ;;
   esac
 done
 paths=()
 [ ${#rest[@]} -gt 0 ] && paths=("${rest[@]}")
-[ ${#paths[@]} -eq 0 ] && [ ${#urls[@]} -eq 0 ] && paths=("$PWD")
+[ ${#paths[@]} -eq 0 ] && [ ${#urls[@]} -eq 0 ] && [ ${#remote[@]} -eq 0 ] && paths=("$PWD")
 
 # The app's own output is discarded below, so say here if a path or an
 # address is wrong.
@@ -187,6 +195,15 @@ for u in "${urls[@]}"; do
     *) web+=("$u") ;;
   esac
 done
+ssh=()
+for u in "${remote[@]}"; do
+  case "$u" in
+    *[[:space:][:cntrl:]]*|[Ss][Ss][Hh]://|[Ss][Ss][Hh]://[/?#]*)
+      echo "mutible: $u: not an ssh:// address (ssh://[user@]host[:port]/path)" >&2
+      status=1 ;;
+    *) ssh+=("$u") ;;
+  esac
+done
 for p in "${paths[@]}"; do
   if [ ! -e "$p" ]; then
     echo "mutible: $p: no such file or directory" >&2
@@ -196,7 +213,7 @@ for p in "${paths[@]}"; do
   case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
   found+=("$p")
 done
-[ ${#found[@]} -eq 0 ] && [ ${#web[@]} -eq 0 ] && exit 1
+[ ${#found[@]} -eq 0 ] && [ ${#web[@]} -eq 0 ] && [ ${#ssh[@]} -eq 0 ] && exit 1
 
 # For tests: print what would run instead of running it.
 run() {
@@ -212,7 +229,8 @@ fi
 # Launch Services passes only paths, so -r goes as a request file the app
 # reads and deletes: "mutible-open-1", "reuse", the paths, each ended by a
 # NUL, in $TMPDIR/Mutible-open (the app reads that folder only). Web
-# addresses go the same way, as "web" and the addresses.
+# addresses go the same way, as "web" and the addresses, and ssh://
+# addresses as "ssh" and the addresses.
 request() {
   local mode="$1"; shift
   req_dir="${TMPDIR:-/tmp}"
@@ -228,6 +246,10 @@ if [ $new_window = 1 ] && [ ${#web[@]} -gt 0 ]; then
   echo "mutible: --new-window opens a path, not a web address" >&2
   exit 2
 fi
+if [ $new_window = 1 ] && [ ${#ssh[@]} -gt 0 ]; then
+  echo "mutible: --new-window opens a path, not an ssh:// address" >&2
+  exit 2
+fi
 
 if [ $reuse = 1 ] && [ ${#found[@]} -gt 0 ]; then
   request reuse "${found[@]}"
@@ -235,6 +257,10 @@ if [ $reuse = 1 ] && [ ${#found[@]} -gt 0 ]; then
 fi
 if [ ${#web[@]} -gt 0 ]; then
   request web "${web[@]}"
+  found+=("$req")
+fi
+if [ ${#ssh[@]} -gt 0 ]; then
+  request ssh "${ssh[@]}"
   found+=("$req")
 fi
 

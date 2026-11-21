@@ -3426,8 +3426,181 @@ the GUI checks above; the dialog's and the boxes' look, real keys in
 Safari and Chrome (which keep <kbd>⌘N</kbd>), and a phone need the
 owner's eyes.
 
+### The Mac over SSH (stage 8)
+
+`mutible ssh://thinkpad/~/proj` opens a Mac window whose files,
+terminals, saving (and, later, git, search and language servers) live on
+the remote machine, which runs a headless mutible host; the Mac only
+draws and drives. Since stage 7 a window's documents and terminals go
+through its host, so this is mostly a transport.
+
+#### The design
+
+- **Starting the remote host.** The Mac runs the user's own ssh, so
+  ~/.ssh/config (aliases, ProxyJump, ControlMaster), keys and the agent
+  all apply: `ssh -T -o BatchMode=yes -o ConnectTimeout=20 -o
+  ServerAliveInterval=15 -o ServerAliveCountMax=3 -e none [-p PORT] [-l
+  USER] -- HOST 'mutible host --stdio <path>'` (`Shared::sshCommand`; the
+  path single-quoted for the remote shell, which ssh hands the command
+  to, and `~` expanded by the remote mutible, not the shell). No pty, and
+  BatchMode, because nobody sees the pty ssh would ask on: a password, a
+  key's passphrase or an unknown host key fails at once instead of
+  hanging, and the window's alert says to run `ssh HOST` once in a
+  terminal (and `ssh-add` for a passphrase), then open the address again
+  (`Shared::explainSshFailure`, from ssh's exit status and its stderr).
+  `$MUTIBLE_SSH` names another program (the GUI check's stand-in).
+- **What the remote needs.** mutible installed (the PPA's `mutible`, whose
+  binary hands `host` to the same `mutibleCliMain`; or a build; a Mac's
+  launcher does the same) and on the PATH a non-interactive ssh command
+  gets (~/.profile is not read for it). The handshake is the version
+  check: the host's Welcome must offer flags 1, 2 (it saves for apps) and
+  32 (it runs its own shell, TermSpec's hostShell, new here) and name its
+  folder. ssh's 127 or "command not found" says mutible is not installed
+  there; "unknown option --stdio" (or "unknown command host"), or a
+  Welcome without those flags, says it is too old there.
+- **What runs where.** The remote: the documents' text and undo (the
+  host), every save (the host's write, stage 7), terminals (the remote
+  user's login shell in the remote's environment), and, as stage 9 moves
+  them into the host, git, language servers, formatters and Claude Code.
+  The Mac: drawing, keys, its own settings and theme (colors, fonts, the
+  terminal's palette), the undo menu's asking, and its backups of what it
+  shows.
+- **A dropped connection.** The window keeps every tab's text and stays
+  editable; the title says "(disconnected)", the status bar says why and
+  shows Reconnect. Reconnect runs ssh again and reattaches through the
+  stage 6 path (`moveToSessionLink:`): each document opened on the new
+  host from the window's text, the file's text as the host's saved text,
+  so unsaved text is never lost (undo starts again), and each terminal a
+  new shell. A save while disconnected says to reconnect; the window
+  never writes the Mac's file at that path.
+- **Left out of this stage.** Port forwarding for the browser pane (a
+  dev server on the remote's localhost), dragging a file from Finder to
+  the remote, the Mac's Quick Look (and its image, PDF and media viewers)
+  on remote files.
+
+#### As built (2026-11-21)
+
+- **`mutible host --stdio PATH`** (`HostServer::startStdio`, `runHostStdio`
+  in tools/mutible-cli.cpp): the headless host serving one renderer on its
+  stdin and stdout, no socket and no lock (another host of the folder may
+  run beside it), ending as soon as its input closes (`run()` returns
+  true when the one connection goes). PATH is a folder, or a file whose
+  folder it serves; the Welcome then names the file (`json {"file"}`,
+  `Client::welcomeJson`), so the window shows it. The CLI moves fd 1 off
+  the protocol's pipe (stdout becomes stderr, stdin /dev/null) before any
+  thread starts, so nothing a library or child prints can corrupt the
+  stream; the protocol goes on the dups. It passes its own environment as
+  the shells' (`HostOptions::shellEnv`). No disk watching and no backups
+  of its own yet: the one renderer is the window, which keeps them.
+- **The host's own shell** (TermSpec's `hostShell`, Welcome flag 32): the
+  host runs its login shell (`SHELL` in its environment, else the
+  password database, else /bin/sh) as a login shell, in its environment
+  with the renderer's few variables laid over it (`ownShellSpec`,
+  HostPty.h). The Mac's remote terminals send only TERM, COLORTERM and
+  TERM_PROGRAM, no nonce and no ZDOTDIR: the integration is a file of the
+  Mac's, so a remote shell has no marks (TerminalView's `_remote`, which
+  also keeps local pid lookups away: `proc_name`, background jobs, the
+  Claude check and `shellPid` for the Processes panel, since a remote pid
+  names some other process here).
+- **The transport** (`HostLink::spawn`, SessionServer.h): a command
+  started with `posix_spawn` in a session of its own (no other descriptor
+  of the app's, signals at their defaults), spoken to over its stdin and
+  stdout, its stderr kept (8 KB) and its exit status reaped by the reader
+  before the client hears the host is gone. Writes never raise SIGPIPE
+  (F_SETNOSIGPIPE on the Mac). `close()` closes the command's input (the
+  remote host ends, then ssh), then hangs up and kills its group if it
+  stays.
+- **The address** (`Shared::parseSshUrl`): ssh://[user@]host[:port][/path],
+  `/~` and `/~/x` the remote home's, no path the home, %XX decoded; a host
+  or user starting with '-' (an option to ssh), a host with what no host
+  name holds, a bad port or a line break in the path is refused. The
+  launcher sends `ssh://` arguments as a request file of mode "ssh" (as
+  "web"); `application:openURLs:` takes those and ssh:// URLs and calls
+  `openRemoteAddress:` (main.mm).
+- **The Mac's link** (`MCSession::forRemote`, Link::Kind::Remote): one per
+  machine and path as addressed, its client attached through the same
+  `attachClient` as a folder's socket link, waiting at most 30 s for the
+  Welcome on the main thread. `key()` (the machine's ssh:// and the
+  folder) is what Reconnect moves windows by, so a remote folder spelled
+  as a local one is never confused with it.
+- **The window** is an ordinary EditorController on the remote folder's
+  path, put on the link before `showWindow` (`useRemoteSessionLink:`, an
+  MCSessionWindow `initWithLink:folder:`), so the stage 6 window code is
+  shared, not forked. Every tab of it has a document on the remote host
+  whatever editor.session-host says (MCTabOwner's `tabNeedsSession:`).
+  Its files are read through the host (`Link::readText`: FsRead "read" in
+  4 MB pieces, 64 MB at most, decoded as `MCReadDiskText` decodes) in
+  `loadActiveTab`, and saved by it (stage 7's `writeTextThroughHost:`).
+  Nothing of its folder is looked for on the Mac: no stamps
+  (`recordStamp:ofTab:` keeps none, so `checkExternalChange` and the
+  questions before a save pass it by), no FSEvents stream, no restored
+  session, no local language server, no viewer that reads the disk, the
+  auto-save loop's disk check skipped, and the window's own write refused
+  (`writeText:toTab:`). Its title is "file — host:path — mutible"
+  (WindowTitle's `remote`, with " (disconnected)" while the link is lost).
+  Closing it detaches as stage 6 does and then lets the link go
+  (`Link::detach`), which ends the remote host.
+
+#### Checks
+
+- `make test`: `hostserver:stdio` (a host on two pipes: its Welcome's
+  flags, folder and file; a document typed into and saved by the host; a
+  hostShell terminal with the host's environment under the renderer's and
+  the host as its parent; the input closing ends the host and its shell),
+  `hostserver:spawn` (a command's pipes as a link, its exit status and
+  stderr; one that outlives its input hung up by close; a program not
+  there), `hostserver:ssh-url`, `hostserver:ssh-command` (the argv, the
+  quoting, each failure's sentence), `hostserver:own-shell`,
+  `hostserver:command-line` (`--stdio`), `window-title:remote`.
+- `make guitest SUITES=remote_ssh` (RemoteSshSuite.mm, its header): the
+  real path through `application:openURLs:` with a stand-in for ssh that
+  runs this checkout's mutible-cli as `mutible`: the window, its title,
+  ssh's arguments, the file's tab, a save written by the host, a terminal
+  whose parent is the host and whose environment is the stand-in's, the
+  connection killed (disconnected, the text kept and typed into),
+  Reconnect (a new host with everything typed, saved there, a new shell),
+  and the host ending with the window. Not run here (the builder had no
+  screen to use): CI runs it.
+
+#### Traps
+
+- **A stand-in that serves the Mac's own disk hides local reads.** The
+  GUI check's "remote" folder is a scratch folder of this Mac's, so any
+  code that reads or stamps the tab's path locally passes there and fails
+  on a real remote. Every local look in a remote window goes through
+  `sessionIsRemote`; a new one must too.
+- **A remote pid is not a process here.** `proc_name`, `KERN_PROC_*` and
+  `proc_pidpath` of a remote terminal's pids name whatever local process
+  has that number; TerminalView's `_remote` guards each.
+- **`exec /bin/sh -c` in a stand-in may fork rather than exec**, leaving
+  the host a grandchild; kill the stand-in's process group (it is a
+  session leader: `HostLink::spawn`), never its pid alone.
+- **`MCGuiAlertsShown()` is the whole run's**, every suite's before this
+  one's too: "no question was asked" counts from the suite's start (#314's
+  first CI run failed on fourteen alerts of earlier suites, and passed
+  alone on retry).
+- **A wait counted in naps is not a wait in time.** `HostLink`'s waits
+  (`reap`, `close`'s grace before the hang-up) use steady_clock deadlines;
+  and no core check bounds `close()` by the wall clock (#314's first CI
+  run): `hostserver:spawn` checks it hung the command up instead.
+- **A line that is not a message ends `--stdio` silently** (the connection
+  is dropped, as any peer's is), so a hand test must send real kinds
+  (`session.hello`, not `Hello`).
+
 ### Still to do
 
+- **Stage 8, after this first slice** (in order of value): a lasting host
+  behind the stdio end (`--stdio` bridging to the folder's socket host on
+  the remote, so terminals, undo and unsaved text survive a drop there,
+  and the window reconnects by itself); the window's tree, Quick Open and
+  Find in Folder through the host's reads (FsRead "list", "files",
+  "search"), and its disk watching (Hello flag 32: FsChanged, DocDisk);
+  connecting off the main thread with a progress line; the shell
+  integration's marks on the remote (the remote mutible's own integration
+  file, a nonce from the Mac); viewers for remote pictures, PDFs and media
+  through FsRead "read"; then stage 9 (git, servers, formatters, agents)
+  and the parts left out above (ports for the browser pane, Finder drags,
+  Quick Look).
 - **Stage 7, after the watching, the Mac's and GTK's saves, Quick Open and
   Find in Folder, and the page's New File, Save As and Replace** (in order
   of value): the windows hearing the host's watching instead of their own

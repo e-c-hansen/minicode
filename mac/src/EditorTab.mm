@@ -375,7 +375,8 @@ NSString *MCEncodingStatusLabel(MCTextEncoding encoding, BOOL bom) {
     // The session's host follows every change it did not make itself.
     if (_session) {
         if (!_session.applying) [_session textWillChangeFrom:self.currentText to:copy];
-    } else if (copy && MCSessionHostEnabled()) {
+    } else if (copy && (MCSessionHostEnabled() || ([(id)_owner respondsToSelector:@selector(tabNeedsSession:)] &&
+                                                    [_owner tabNeedsSession:self]))) {
         _session = [[MCSessionDoc alloc] initWithTab:self text:copy];
     }
     const BOOL same = !_live && copy == _sourceText;

@@ -30,6 +30,14 @@
     return self;
 }
 
+- (instancetype)initWithLink:(MCSessionLinkRef *)link folder:(NSString *)folder {
+    if ((self = [super init])) {
+        _dropOnClose = [NSMutableSet set];
+        [self useLink:link folder:folder];
+    }
+    return self;
+}
+
 - (void)dealloc {
     [_timer invalidate];
     if (_l) _l->removeLostListener(_lostToken);

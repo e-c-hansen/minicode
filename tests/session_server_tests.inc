@@ -146,6 +146,79 @@ Shared::TermSpec shellSpec(const std::string& cwd, std::vector<std::string> argv
     return s;
 }
 
+// A renderer over two pipes, as a window over SSH is to `mutible host
+// --stdio` (stage 8): what it sends is written to the host's input, and a
+// reader thread of its own delivers what the host writes, then hears the
+// host is gone when that ends.
+struct PipeRenderer : Shared::Client::TermListener {
+    int toHost = -1, fromHost = -1;
+    std::thread reader;
+    std::unique_ptr<Shared::Client> client;
+    TestMirror mirror;
+    TerminalScreen screen{80, 24};
+    std::atomic<int> pid{0};
+
+    void connect(int write, int read) {
+        toHost = write;
+        fromHost = read;
+        client = std::make_unique<Shared::Client>(Model::Unit::Utf16, "mac");
+        client->setKeepsBackups(true);
+        client->setSavesThroughHost(true);
+        mirror.client = client.get();
+        reader = std::thread([this] {
+            std::string in;
+            char buf[65536];
+            for (;;) {
+                const ssize_t n = ::read(fromHost, buf, sizeof buf);
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) break;
+                in.append(buf, (std::size_t)n);
+                std::size_t nl;
+                while ((nl = in.find('\n')) != std::string::npos) {
+                    Shared::Message m;
+                    if (Shared::decode(in.substr(0, nl), &m)) client->deliver(std::move(m));
+                    in.erase(0, nl + 1);
+                }
+            }
+            client->hostLost();
+        });
+        client->connect([this](Shared::Message&& m) {
+            if (toHost < 0) return;
+            const std::string line = Shared::encode(m) + "\n";
+            std::size_t at = 0;
+            while (at < line.size()) {
+                const ssize_t n = ::write(toHost, line.data() + at, line.size() - at);
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) return;
+                at += (std::size_t)n;
+            }
+        });
+    }
+    void closeInput() {
+        if (toHost >= 0) ::close(toHost);
+        toHost = -1;
+    }
+    ~PipeRenderer() {
+        closeInput();
+        if (reader.joinable()) reader.join();
+        if (fromHost >= 0) ::close(fromHost);
+    }
+    void termOpened(Shared::TermId, int p) override { pid = p; }
+    void termOutput(Shared::TermId t, const std::string& b, long long, bool, bool) override {
+        screen.feed(b);
+        client->ackTerminal(t, b.size());
+    }
+    bool wait(const std::function<bool()>& done, int ms = 8000) {
+        const double end = nowMs() + ms;
+        for (;;) {
+            client->dispatch();
+            if (done()) return true;
+            if (nowMs() > end) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+};
+
 }  // namespace
 
 static void testSessionServer() {
@@ -516,7 +589,17 @@ static void testSessionServer() {
         CliCommand c = parseCommandLine({"host", "--folder", "proj", "--idle-minutes", "0.5"}, cwd, home, exists);
         CHECK(c.error.empty() && c.cmd == "host");
         CHECK(c.args["folder"].asString() == "/work/proj" && c.args["idle_minutes"].asNumber() == 0.5);
-        CHECK(parseCommandLine({"host"}, cwd, home, exists).error == "host needs --folder");
+        CHECK(parseCommandLine({"host"}, cwd, home, exists).error == "host needs --folder or --stdio");
+        // Over stdio (stage 8): a folder or a file, ~ this machine's home.
+        c = parseCommandLine({"host", "--stdio", "~/proj"}, cwd, home, exists);
+        CHECK(c.error.empty() && c.cmd == "host" && c.args["stdio"].asString() == "/home/me/proj");
+        CHECK(parseCommandLine({"host", "--stdio", "~"}, cwd, home, exists).args["stdio"].asString() == "/home/me");
+        CHECK(parseCommandLine({"host", "--stdio", "/srv/a.c"}, cwd, home, exists).args["stdio"].asString() == "/srv/a.c");
+        CHECK(!parseCommandLine({"host", "--stdio", "p", "--folder", "q"}, cwd, home, exists).error.empty());
+        CHECK(!parseCommandLine({"host", "--stdio", "p", "--web", "8080"}, cwd, home, exists).error.empty());
+        CHECK(!parseCommandLine({"host", "--stdio"}, cwd, home, exists).error.empty());
+        CHECK(!parseCommandLine({"attach", "--stdio", "p"}, cwd, home, exists).error.empty());
+        CHECK(usageText("host").find("--stdio") != std::string::npos);
         CHECK(!parseCommandLine({"host", "--folder", "x", "--idle-minutes", "soon"}, cwd, home, exists)
                    .error.empty());
         CHECK(!parseCommandLine({"host", "--folder", "x", "--dump"}, cwd, home, exists).error.empty());
@@ -527,5 +610,244 @@ static void testSessionServer() {
         CHECK(parseCommandLine({"attach", "-h"}, cwd, home, exists).help);
         CHECK(!usageText("host").empty() && !usageText("attach").empty());
         CHECK(isSubcommand("host") && isSubcommand("attach"));
+    }
+
+    GROUP("hostserver:stdio");
+    {
+        // `mutible host --stdio` (stage 8): one renderer on two pipes, no
+        // socket. Its Welcome offers what a window on another machine needs
+        // (saves for apps, its own shell); a file typed into is written by
+        // the host; a terminal asking for the host's own shell gets the
+        // host's environment with the renderer's laid over it, and is the
+        // host's child; the renderer's input closing ends the host, its
+        // shell with it.
+        signal(SIGPIPE, SIG_IGN);   // a write to a pipe nobody reads is EPIPE (Linux)
+        const std::string proj = Shared::resolveFolder(scratchFolder());
+        {
+            std::ofstream f(proj + "/notes.txt");
+            f << "one\n";
+        }
+        int toHost[2], fromHost[2];
+        CHECK(pipe(toHost) == 0 && pipe(fromHost) == 0);
+        auto server = std::make_unique<Shared::HostServer>();
+        Shared::HostOptions o;
+        o.folder = proj;
+        o.shellEnv = {"PATH=/usr/bin:/bin", "HOME=" + proj, "PS1=$ ", "ENV=", "LANG=C",
+                      "SHELL=/bin/sh", "MARK=host-env", "EXTRA=host-value"};
+        o.askedFile = proj + "/notes.txt";
+        std::string error;
+        CHECK(server->startStdio(o, toHost[0], fromHost[1], &error) == Shared::HostServer::Start::Ok);
+        std::atomic<int> result{-1};
+        std::thread run([&] { result = server->run() ? 1 : 0; });
+        PipeRenderer r;
+        r.connect(toHost[1], fromHost[0]);
+        CHECK(r.client->settle(5000));
+        CHECK(r.client->idBase() != 0);
+        CHECK(r.client->hostSavesForApps() && r.client->hostRunsOwnShell());
+        CHECK(r.client->hostFolder() == proj);
+        CHECK(r.client->welcomeJson()["file"].asString() == proj + "/notes.txt");
+        const Json st = r.client->sessionState();
+        CHECK(st["folder"].asString() == proj);
+
+        // A file opened with the text the renderer read through the host,
+        // typed into, and saved by the host.
+        const Shared::DocId d = r.client->newId();
+        r.mirror.doc = d;
+        r.mirror.text = u"one\n";
+        r.client->open(d, proj + "/notes.txt", "one\n", &r.mirror);
+        r.mirror.caret = r.mirror.length();
+        r.mirror.type(u"two\n");
+        CHECK(r.client->settle());
+        const std::uint64_t req = r.client->requestSave(d, 0, true, "utf8");
+        Shared::Client::SaveAnswer a;
+        CHECK(req != 0 && r.wait([&] { return r.client->saveAnswer(req, &a); }));
+        CHECK(a.ok);
+        {
+            std::ifstream f(proj + "/notes.txt");
+            std::stringstream ss;
+            ss << f.rdbuf();
+            CHECK(ss.str() == "one\ntwo\n");
+        }
+
+        // The host's own shell, its environment under the renderer's.
+        Shared::TermSpec spec;
+        spec.hostShell = true;
+        spec.env = {"EXTRA=from-renderer", "TERM=xterm-256color"};
+        spec.cwd = proj;
+        spec.scrollback = 1000;
+        r.client->openTerminal(5, spec, &r);
+        CHECK(r.wait([&] { return r.pid.load() > 0; }));
+        r.client->terminalInput(5, "echo \"got-$MARK-$EXTRA-$PPID\"\n");
+        const std::string want = "got-host-env-from-renderer-" + std::to_string((int)getpid());
+        CHECK(r.wait([&] { return r.screen.text().find(want) != std::string::npos; }));
+        if (r.screen.text().find(want) == std::string::npos) std::printf("  screen: %s\n", r.screen.text().c_str());
+        const int shell = r.pid.load();
+        CHECK(!gone(shell));
+
+        // The renderer's input closes (the connection went): the host ends.
+        r.closeInput();
+        CHECK(waitUntil([&] { return result.load() != -1; }, 5000));
+        CHECK(result.load() == 1);
+        if (run.joinable()) run.join();
+        server.reset();   // the host's end: its shells hung up, its output closed
+        CHECK(waitUntil([&] { return gone(shell); }, 5000));
+        CHECK(waitUntil([&] { return r.client->lost(); }, 5000));
+    }
+
+    GROUP("hostserver:spawn");
+    {
+        // A command's pipes as a link (HostLink::spawn, what carries a host
+        // over ssh): a line sent is a line its output brings back, and once
+        // it ends its exit status and standard error are there to say why.
+        Shared::Message ping;
+        ping.kind = Shared::Kind::Ping;
+        ping.req = 42;
+        std::string error;
+        std::unique_ptr<Shared::HostLink> link = Shared::HostLink::spawn(
+            {"sh", "-c", "IFS= read -r l; printf '%s\\n' \"$l\"; echo \"it said: $X\" >&2; exit 3"},
+            {"PATH=/usr/bin:/bin", "X=hi"}, &error);
+        CHECK(link != nullptr);
+        if (link) {
+            CHECK(link->pid() > 0 && link->exitStatus() == -1);
+            std::mutex mu;
+            std::vector<Shared::Message> got;
+            std::atomic<bool> ended{false};
+            link->start(
+                [&](Shared::Message&& m) {
+                    std::lock_guard<std::mutex> lk(mu);
+                    got.push_back(std::move(m));
+                },
+                [&] { ended = true; });
+            CHECK(link->send(ping));
+            CHECK(waitUntil([&] { return ended.load(); }, 5000));
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                CHECK(got.size() == 1 && got[0].kind == Shared::Kind::Ping && got[0].req == 42);
+            }
+            const int st = link->exitStatus();
+            CHECK(st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 3);
+            CHECK(link->stderrText().find("it said: hi") != std::string::npos);
+            CHECK(link->closed() && !link->send(ping));
+            link->close();
+        }
+        // A command that outlives its input closing is hung up by close().
+        link = Shared::HostLink::spawn({"sleep", "30"}, {"PATH=/usr/bin:/bin"}, &error);
+        CHECK(link != nullptr);
+        if (link) {
+            link->start([](Shared::Message&&) {});
+            const int pid = link->pid();
+            link->close();
+            CHECK(gone(pid));
+            // Hung up (or, when that did not end it in time, killed), never
+            // left to end by itself 30 s on: a check of what close() did,
+            // not of how long a loaded machine took to do it.
+            const int st = link->exitStatus();
+            CHECK(st != -1 && WIFSIGNALED(st) && (WTERMSIG(st) == SIGHUP || WTERMSIG(st) == SIGKILL));
+            if (!(st != -1 && WIFSIGNALED(st))) std::printf("  sleep's status: %d\n", st);
+        }
+        // A program that is not there: no link, or one that ends at once
+        // with 127 (a libc that reports exec's failure only so).
+        link = Shared::HostLink::spawn({"/nonexistent/ssh-stand-in"}, {}, &error);
+        if (link) {
+            std::atomic<bool> ended{false};
+            link->start([](Shared::Message&&) {}, [&] { ended = true; });
+            CHECK(waitUntil([&] { return ended.load(); }, 5000));
+            const int st = link->exitStatus();
+            CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 127);
+        } else {
+            CHECK(error.find("could not run /nonexistent/ssh-stand-in") != std::string::npos);
+        }
+    }
+
+    GROUP("hostserver:ssh-url");
+    {
+        Shared::SshTarget t;
+        std::string why;
+        CHECK(Shared::parseSshUrl("ssh://thinkpad/~/proj", &t, &why));
+        CHECK(t.user.empty() && t.host == "thinkpad" && t.port == 0 && t.path == "~/proj");
+        CHECK(Shared::sshLabel(t) == "thinkpad:~/proj" && Shared::sshMachineKey(t) == "ssh://thinkpad");
+        CHECK(Shared::parseSshUrl("SSH://eric@pi.local:2222/srv/www/", &t, &why));
+        CHECK(t.user == "eric" && t.host == "pi.local" && t.port == 2222 && t.path == "/srv/www");
+        CHECK(Shared::sshLabel(t) == "eric@pi.local:/srv/www");
+        CHECK(Shared::sshMachineKey(t) == "ssh://eric@pi.local:2222");
+        CHECK(Shared::parseSshUrl("ssh://box", &t, &why) && t.path == "~");
+        CHECK(Shared::parseSshUrl("ssh://box/", &t, &why) && t.path == "~");
+        CHECK(Shared::parseSshUrl("ssh://box/~", &t, &why) && t.path == "~");
+        CHECK(Shared::parseSshUrl("ssh://box/my%20notes/a%27b.txt", &t, &why) && t.path == "/my notes/a'b.txt");
+        CHECK(Shared::parseSshUrl("ssh://[fe80::1%25en0]:22/x", &t, &why));
+        CHECK(t.host == "fe80::1%25en0" && t.port == 22 && t.path == "/x");
+        CHECK(Shared::sshMachineKey(t) == "ssh://[fe80::1%25en0]:22");
+        // Refused: not ssh, no host, an option in disguise, a bad port, a
+        // host name with what no host name holds, a line break in the path.
+        for (const char* bad :
+             {"http://box/x", "ssh://", "ssh:///x", "ssh://-oProxyCommand=touch%20x/x", "ssh://-x/y",
+              "ssh://-l@box/x", "ssh://box:0/x", "ssh://box:65536/x", "ssh://box:22a/x", "ssh://box:/x",
+              "ssh://bo x/y", "ssh://box;rm/x", "ssh://box/a%0Ab", "ssh://box/a%2", "ssh://@box/x",
+              "ssh://[::1/x"}) {
+            why.clear();
+            const bool ok = Shared::parseSshUrl(bad, &t, &why);
+            if (ok) std::printf("  taken: %s\n", bad);
+            CHECK(!ok && !why.empty());
+        }
+    }
+
+    GROUP("hostserver:ssh-command");
+    {
+        Shared::SshTarget t;
+        CHECK(Shared::parseSshUrl("ssh://eric@pi:2222/~/it's here", &t, nullptr));
+        const std::vector<std::string> a = Shared::sshCommand(t, "/usr/bin/ssh");
+        const std::vector<std::string> want = {
+            "/usr/bin/ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o",
+            "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-e", "none", "-p", "2222", "-l",
+            "eric", "--", "pi", "mutible host --stdio '~/it'\\''s here'"};
+        CHECK(a == want);
+        CHECK(Shared::shellQuote("") == "''" && Shared::shellQuote("a b") == "'a b'");
+        CHECK(Shared::shellQuote("$(x)`y`") == "'$(x)`y`'");
+        CHECK(Shared::parseSshUrl("ssh://box/p", &t, nullptr));
+        CHECK(Shared::sshCommand(t, "")[0] == "ssh");
+        CHECK(Shared::sshCommand(t, "").size() == 15);   // no -p, no -l
+
+        // Why it never answered, in the window's words.
+        auto exited = [](int code) { return code << 8; };   // as waitpid gives it
+        std::string s = Shared::explainSshFailure(t, exited(255), "eric@box: Permission denied (publickey).\n");
+        CHECK(s.find("password or a key's passphrase") != std::string::npos && s.find("`ssh box`") != std::string::npos);
+        s = Shared::explainSshFailure(t, exited(255), "Host key verification failed.\n");
+        CHECK(s.find("host key") != std::string::npos && s.find("`ssh box` once in a terminal") != std::string::npos);
+        s = Shared::explainSshFailure(t, exited(127), "bash: line 1: mutible: command not found\n");
+        CHECK(s.find("mutible is not installed on box") != std::string::npos && s.find("PPA") != std::string::npos);
+        s = Shared::explainSshFailure(t, exited(2), "mutible: unknown option --stdio for host\n");
+        CHECK(s.find("too old") != std::string::npos);
+        s = Shared::explainSshFailure(t, exited(255), "ssh: connect to host box port 22: Connection refused\n\n");
+        CHECK(s == "ssh to box failed: ssh: connect to host box port 22: Connection refused");
+        s = Shared::explainSshFailure(t, exited(1), "mutible: /home/x/p: no such file or folder\n");
+        CHECK(s == "The host on box ended: mutible: /home/x/p: no such file or folder");
+        CHECK(Shared::explainSshFailure(t, -1, "") == "The connection to box closed.");
+        CHECK(Shared::parseSshUrl("ssh://eric@box:2200/p", &t, nullptr));
+        s = Shared::explainSshFailure(t, exited(255), "Permission denied\n");
+        CHECK(s.find("`ssh -p 2200 eric@box`") != std::string::npos);
+    }
+
+    GROUP("hostserver:own-shell");
+    {
+        // TermSpec's hostShell: the host's login shell as a login shell, in
+        // the host's environment with the renderer's laid over it.
+        Shared::PtySpec p = Shared::ownShellSpec(
+            "", {"SHELL=/usr/bin/zsh", "PATH=/remote/bin", "TERM=dumb", "HOME=/home/e", "junk"},
+            {"TERM=xterm-256color", "COLORTERM=truecolor"}, "/home/e/proj", 100, 30);
+        CHECK(p.program == "/usr/bin/zsh" && p.argv == std::vector<std::string>{"-zsh"});
+        CHECK(p.cwd == "/home/e/proj" && p.cols == 100 && p.rows == 30);
+        const std::vector<std::string> env = {"SHELL=/usr/bin/zsh", "PATH=/remote/bin", "HOME=/home/e",
+                                              "TERM=xterm-256color", "COLORTERM=truecolor"};
+        CHECK(p.env == env);
+        p = Shared::ownShellSpec("/bin/bash", {"SHELL=/usr/bin/zsh"}, {}, "/", 80, 24);
+        CHECK(p.program == "/bin/bash" && p.argv == std::vector<std::string>{"-bash"});
+        p = Shared::ownShellSpec("", {}, {}, "/", 80, 24);   // the password database's, or sh
+        CHECK(!p.program.empty() && p.program[0] == '/' && p.argv.size() == 1 && p.argv[0][0] == '-');
+        // Through the protocol: the flag is kept, and an older spec has none.
+        Shared::TermSpec s;
+        s.hostShell = true;
+        CHECK(Shared::termSpecFrom(Shared::termSpecJson(s)).hostShell);
+        CHECK(!Shared::termSpecFrom(Shared::termSpecJson(Shared::TermSpec())).hostShell);
+        CHECK(!Shared::termSpecJson(Shared::TermSpec()).has("hostShell"));
     }
 }

@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <fcntl.h>
 #include <fstream>
 #ifdef __APPLE__
 #include <libproc.h>
@@ -515,7 +516,10 @@ bool startWeb(Shared::Web::Server &web, const std::string &socket, const std::st
 // folder, with no window (SessionServer.h), in the foreground until its
 // lifetime ends or a signal stops it; with --web, also its view for a
 // browser, a renderer of it attached while a browser looks.
+int runHostStdio(const Json &args);
+
 int runHost(const Json &args) {
+    if (args.has("stdio")) return runHostStdio(args);
     const std::string asked = args["folder"].asString();
     const std::string folder = Shared::resolveFolder(asked);
     if (folder.empty()) {
@@ -577,6 +581,61 @@ int runHost(const Json &args) {
     if (webThread.joinable()) {
         web.stop();
         webThread.join();
+    }
+    return kExitOK;
+}
+
+// `mutible host --stdio PATH`: the session's host for one renderer on this
+// process's standard input and output (SessionServer.h, startStdio), which
+// is what a Mac window over SSH runs here (stage 8). PATH is a folder, or a
+// file whose folder it serves. Ends when its input closes. Nothing but the
+// protocol goes to standard output: what a library or a child might print
+// there goes to standard error instead (fd 1 is moved off the protocol's
+// pipe), and children read /dev/null.
+int runHostStdio(const Json &args) {
+    const std::string asked = args["stdio"].asString();
+    struct stat st;
+    if (stat(asked.c_str(), &st) != 0) {
+        std::fprintf(stderr, "mutible: %s: no such file or folder\n", asked.c_str());
+        return kExitFailed;
+    }
+    const std::string folder = Shared::resolveFolder(
+        S_ISDIR(st.st_mode) ? asked : asked.substr(0, std::max<size_t>(1, asked.rfind('/'))));
+    if (folder.empty()) {
+        std::fprintf(stderr, "mutible: %s is not in a folder\n", asked.c_str());
+        return kExitFailed;
+    }
+    const int in = dup(0), out = dup(1);
+    const int null = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (in < 0 || out < 0 || null < 0) {
+        std::fprintf(stderr, "mutible: no standard input or output: %s\n", std::strerror(errno));
+        return kExitFailed;
+    }
+    dup2(null, 0);
+    dup2(2, 1);
+    ::close(null);
+    Shared::HostOptions o;
+    o.folder = folder;
+    // A file: named in the Welcome, spelled under the folder as resolved.
+    if (!S_ISDIR(st.st_mode)) o.askedFile = folder + "/" + asked.substr(asked.rfind('/') + 1);
+    // The terminals a renderer on another machine asks for: this machine's
+    // login shell (SHELL, as sshd sets it) in this process's environment.
+    for (char **e = environ; e && *e; e++) o.shellEnv.push_back(*e);
+    takeStopSignals();
+    Shared::HostServer server;
+    std::string error;
+    if (server.startStdio(o, in, out, &error) != Shared::HostServer::Start::Ok) {
+        std::fprintf(stderr, "mutible: %s\n", error.c_str());
+        return kExitFailed;
+    }
+    {
+        std::lock_guard<std::mutex> lk(gStopMu);
+        gHost = &server;
+    }
+    server.run();
+    {
+        std::lock_guard<std::mutex> lk(gStopMu);
+        gHost = nullptr;
     }
     return kExitOK;
 }
