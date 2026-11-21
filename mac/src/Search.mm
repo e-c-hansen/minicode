@@ -33,6 +33,9 @@ static NSString *SFromU16(const std::u16string &u) {
 
 // The most lines a search shows, as VS Code's (search.maxResults).
 static const std::size_t kMaxResults = 20000;
+static NSString *const kNoReplaceOverSsh =
+    @"Replace in Folder does not work in a window over SSH yet: its files are on the other machine. "
+    @"Replace in each file's tab, or in the terminal there.";
 
 static NSString *MCGrouped(unsigned long n) {
     return [NSNumberFormatter localizedStringFromNumber:@(n)
@@ -370,6 +373,7 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     BOOL _todos;                    // the TODO list, not a text search
     NSArray<SearchHit *> *_allTodos;   // the last scan, before the filter
     std::shared_ptr<std::atomic<bool>> _cancel;   // the search or scan in flight
+    uint64_t _hostReq;              // over SSH: the host's search in flight (hostSearch)
     MCFindStyle *_style;
     MCSearchContent *_content;
     MCFindInput *_queryInput, *_replaceInput, *_includeInput, *_excludeInput;
@@ -427,6 +431,7 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
 
 - (void)dealloc {
     if (_cancel) _cancel->store(true);
+    if (_hostReq && _cancelHostSearch) _cancelHostSearch(_hostReq);
     if (_settingsObserver) [[NSNotificationCenter defaultCenter] removeObserver:_settingsObserver];
 }
 
@@ -737,8 +742,10 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     else if (a == @selector(toggleFindPreserveCase:)) on = self.preserveCase;
     else if (a == @selector(toggleFindInSelection:)) return NO;
     else if (a == @selector(replaceSelectedMatch:))
-        return !_replacing && [self hitForAction] != nil;
-    else if (a == @selector(replaceSelectedFile:) || a == @selector(dismissSelected:))
+        return !_replacing && !self.hostSearch && [self hitForAction] != nil;
+    else if (a == @selector(replaceSelectedFile:))
+        return !_replacing && !self.hostSearch && [self.outline itemAtRow:[self rowForAction]] != nil;
+    else if (a == @selector(dismissSelected:))
         return !_replacing && [self.outline itemAtRow:[self rowForAction]] != nil;
     else return YES;
     item.state = on ? NSControlStateValueOn : NSControlStateValueOff;
@@ -841,7 +848,7 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     [self replaceAll:nil];
 }
 
-- (BOOL)busy { return _replacing || _cancel != nullptr; }
+- (BOOL)busy { return _replacing || _cancel != nullptr || _hostReq != 0; }
 
 - (void)setStatus:(NSString *)text error:(BOOL)error {
     self.status.stringValue = text ?: @"";
@@ -891,7 +898,8 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     }
     [self.outline reloadData];
     [self.outline expandItem:nil expandChildren:YES];
-    _replaceAll.enabled = _hits.count > 0 && !_todos;
+    _replaceAll.enabled = _hits.count > 0 && !_todos && !self.hostSearch;
+    if (self.hostSearch) _replaceAll.toolTip = kNoReplaceOverSsh;
 }
 
 - (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item {
@@ -1112,6 +1120,8 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
     ++_searchGeneration;
     if (_cancel) _cancel->store(true);
     _cancel = nullptr;
+    if (_hostReq && self.cancelHostSearch) self.cancelHostSearch(_hostReq);
+    _hostReq = 0;
     NSString *query = self.field.stringValue;
     const FolderSearchOptions options = [self options];
     [self setResults:@[]];
@@ -1126,6 +1136,10 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
 
     [self setStatus:@"Searching…" error:NO];
     NSUInteger gen = _searchGeneration;
+    if (self.hostSearch) {
+        [self runHostSearch:query options:options generation:gen];
+        return;
+    }
     const std::string root = _scope.fileSystemRepresentation;
     const std::string q = SStd(query);
     auto cancel = std::make_shared<std::atomic<bool>>(false);
@@ -1159,40 +1173,120 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
             s->_cancel = nullptr;
             [s setResults:found];
             [s setSkippedNote:skipped tooltip:skipTip];
-            if (error) {
-                [s setStatus:error error:YES];
-                return;
-            }
-            // A pattern std::regex took too long over: what came before it.
-            NSString *slow = @"This pattern takes too long; the search stopped";
-            if (tooSlow && !found.count) {
-                [s setStatus:slow error:YES];
-                return;
-            }
-            // Every match, as Replace All counts them, not the rows (lines).
-            NSString *counts = [NSString stringWithFormat:@"%@ %@ in %@ %@%@",
-                MCGrouped(total), total == 1 ? @"match" : @"matches",
-                MCGrouped(files.count), files.count == 1 ? @"file" : @"files",
-                tooSlow ? [@". " stringByAppendingString:slow]
-                : truncated ? [NSString stringWithFormat:@". Stopped at %@ results",
-                                                         MCGrouped(kMaxResults)]
-                            : @""];
-            if (tooSlow) {
-                [s setStatus:counts error:YES];
-                return;
-            }
-            if (note) {
-                [s setStatus:[NSString stringWithFormat:@"%@. Now %@", note,
-                                  found.count ? counts : @"no matches"]
-                       error:noteError];
-                return;
-            }
-            [s setStatus:found.count ? counts : @"No results found. Review your settings for "
-                                                 "configured exclusions and check your "
-                                                 "files to include."
-                   error:NO];
+            [s showFound:found.count files:files.count total:total truncated:truncated
+                 tooSlow:tooSlow stopped:nil error:error note:note noteError:noteError];
         });
     });
+}
+
+// The line under the query once a search is done: its counts, or why it
+// stopped.
+- (void)showFound:(NSUInteger)rows
+            files:(NSUInteger)files
+            total:(unsigned long)total
+        truncated:(BOOL)truncated
+          tooSlow:(BOOL)tooSlow
+          stopped:(NSString *)stopped
+            error:(NSString *)error
+             note:(NSString *)note
+        noteError:(BOOL)noteError {
+    if (error) {
+        [self setStatus:error error:YES];
+        return;
+    }
+    // A pattern std::regex took too long over: what came before it.
+    NSString *slow = @"This pattern takes too long; the search stopped";
+    if (tooSlow && !rows) {
+        [self setStatus:slow error:YES];
+        return;
+    }
+    // Every match, as Replace All counts them, not the rows (lines).
+    NSString *counts = [NSString stringWithFormat:@"%@ %@ in %@ %@%@",
+        MCGrouped(total), total == 1 ? @"match" : @"matches",
+        MCGrouped(files), files == 1 ? @"file" : @"files",
+        tooSlow ? [@". " stringByAppendingString:slow]
+        : truncated ? [NSString stringWithFormat:@". Stopped at %@ results",
+                                                 MCGrouped(kMaxResults)]
+        : stopped ? [@". " stringByAppendingString:stopped]
+                    : @""];
+    if (tooSlow) {
+        [self setStatus:counts error:YES];
+        return;
+    }
+    if (note) {
+        [self setStatus:[NSString stringWithFormat:@"%@. Now %@", note,
+                          rows ? counts : @"no matches"]
+               error:noteError];
+        return;
+    }
+    [self setStatus:rows ? counts : @"No results found. Review your settings for "
+                                     "configured exclusions and check your "
+                                     "files to include."
+           error:NO];
+}
+
+// Over SSH: the host searches its folder (SessionSearch.h's "search", the
+// Mac's options) and its rows come in batches as it goes, each shown as it
+// arrives; the last says what it counted and whether it stopped.
+- (void)runHostSearch:(NSString *)query options:(const FolderSearchOptions &)o generation:(NSUInteger)gen {
+    Json ask = Json::object();
+    ask.set("query", Json(SStd(query)));
+    ask.set("caseSensitive", Json(o.caseSensitive));
+    ask.set("wholeWord", Json(o.wholeWord));
+    ask.set("regex", Json(o.regex));
+    ask.set("include", Json(o.include));
+    ask.set("exclude", Json(o.exclude));
+    ask.set("hidden", Json(true));   // dotfiles searched, as the Mac's own search does
+    NSString *root = _root;
+    NSMutableArray<SearchHit *> *found = [NSMutableArray array];
+    __weak SearchPanel *weakSelf = self;
+    _hostReq = self.hostSearch(ask, ^(const std::vector<Json> &answers, BOOL done) {
+        SearchPanel *s = weakSelf;
+        if (!s || s->_searchGeneration != gen) return;   // superseded
+        const Json *last = nullptr;
+        for (const Json &a : answers) {
+            for (const Json &row : a["rows"].elements()) {
+                NSString *rel = SNS(row["path"].asString());
+                if (!rel.length) continue;
+                SearchHit *h = [SearchHit new];
+                h.path = [root stringByAppendingPathComponent:rel];
+                h.line = (NSInteger)row["line"].asInt();
+                h.text = SNS(row["text"].asString());
+                h.count = (NSUInteger)std::max<int64_t>(1, row["count"].asInt(1));
+                NSMutableArray<NSString *> *before = [NSMutableArray array], *after = [NSMutableArray array];
+                for (const Json &l : row["before"].elements()) [before addObject:SNS(l.asString())];
+                for (const Json &l : row["after"].elements()) [after addObject:SNS(l.asString())];
+                h.before = before;
+                h.after = after;
+                [found addObject:h];
+            }
+            if (a["done"].asBool()) last = &a;
+        }
+        if (!answers.empty()) [s setResults:found];
+        NSMutableSet<NSString *> *files = [NSMutableSet set];
+        for (SearchHit *h in found) [files addObject:h.path];
+        if (!done) {
+            [s setStatus:[NSString stringWithFormat:@"Searching… %@ in %@ %@", MCGrouped(found.count),
+                                                    MCGrouped(files.count), files.count == 1 ? @"file" : @"files"]
+                   error:NO];
+            return;
+        }
+        s->_hostReq = 0;
+        if (!last) {
+            [s showFound:found.count files:files.count total:found.count truncated:NO tooSlow:NO stopped:nil
+                   error:@"The connection to the other machine was lost before the search ended" note:nil
+               noteError:NO];
+            return;
+        }
+        const std::string error = (*last)["error"].asString();
+        unsigned long total = (unsigned long)(*last)["totalMatches"].asInt(0);
+        if (!total) for (SearchHit *h in found) total += h.count;
+        [s showFound:found.count files:files.count total:total truncated:(*last)["truncated"].asBool()
+             tooSlow:(*last)["tooSlow"].asBool()
+             stopped:(*last)["timedOut"].asBool() ? @"The other machine stopped searching after 30 seconds" : nil
+               error:error.empty() ? nil : SNS(error) note:nil noteError:NO];
+    });
+    if (!_hostReq) [self setStatus:@"The other machine cannot be asked: Reconnect, then search again" error:YES];
 }
 
 - (void)refresh:(id)sender { (void)sender; [self runSearch:nil]; }
@@ -1433,6 +1527,13 @@ static NSArray<NSString *> *MCLines(const std::vector<std::string> &lines) {
 - (BOOL)readyToReplace {
     if (_todos || _replacing) {
         NSBeep();
+        return NO;
+    }
+    // Over SSH the files are the other machine's, and this window does not
+    // replace in them yet (docs/notes/session-host.md).
+    if (self.hostSearch) {
+        NSBeep();
+        [self setStatus:kNoReplaceOverSsh error:YES];
         return NO;
     }
     const FolderSearchOptions o = [self options];

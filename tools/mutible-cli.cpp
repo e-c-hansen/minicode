@@ -587,24 +587,24 @@ int runHost(const Json &args) {
 
 // `mutible host --stdio PATH`: the session's host for one renderer on this
 // process's standard input and output (SessionServer.h, startStdio), which
-// is what a Mac window over SSH runs here (stage 8). PATH is a folder, or a
-// file whose folder it serves. Ends when its input closes. Nothing but the
+// is what a Mac window over SSH runs here (stage 8). PATH is a folder, a
+// file whose folder it serves, or a new file's name in a folder that is
+// there (Shared::stdioTarget). It watches the disk, so the window's tree
+// follows it. Ends when its input closes. Nothing but the
 // protocol goes to standard output: what a library or a child might print
 // there goes to standard error instead (fd 1 is moved off the protocol's
 // pipe), and children read /dev/null.
 int runHostStdio(const Json &args) {
     const std::string asked = args["stdio"].asString();
-    struct stat st;
-    if (stat(asked.c_str(), &st) != 0) {
-        std::fprintf(stderr, "mutible: %s: no such file or folder\n", asked.c_str());
+    // A folder, a file, or a file not there yet in a folder that is (the
+    // window opens it empty and its first save makes it).
+    Shared::StdioTarget target;
+    std::string why;
+    if (!Shared::stdioTarget(asked, &target, &why)) {
+        std::fprintf(stderr, "mutible: %s\n", why.c_str());
         return kExitFailed;
     }
-    const std::string folder = Shared::resolveFolder(
-        S_ISDIR(st.st_mode) ? asked : asked.substr(0, std::max<size_t>(1, asked.rfind('/'))));
-    if (folder.empty()) {
-        std::fprintf(stderr, "mutible: %s is not in a folder\n", asked.c_str());
-        return kExitFailed;
-    }
+    const std::string &folder = target.folder;
     const int in = dup(0), out = dup(1);
     const int null = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (in < 0 || out < 0 || null < 0) {
@@ -617,7 +617,11 @@ int runHostStdio(const Json &args) {
     Shared::HostOptions o;
     o.folder = folder;
     // A file: named in the Welcome, spelled under the folder as resolved.
-    if (!S_ISDIR(st.st_mode)) o.askedFile = folder + "/" + asked.substr(asked.rfind('/') + 1);
+    o.askedFile = target.file;
+    o.askedFileNew = target.isNew;
+    // The disk watched (DiskWatch.h): the window's tree follows the folders
+    // it has open (FsChanged), as `mutible host` does for a page.
+    o.watchDisk = true;
     // The terminals a renderer on another machine asks for: this machine's
     // login shell (SHELL, as sshd sets it) in this process's environment.
     for (char **e = environ; e && *e; e++) o.shellEnv.push_back(*e);

@@ -76,6 +76,9 @@ BOOL TextIsLarge(NSString *text) {
 // PDFs, media, databases, large CSV tables and Quick Look's documents
 // open as before.
 - (BOOL)confirmOpeningLargeFile:(NSString *)path {
+    // Over SSH the file is the other machine's (its host's read stops at
+    // 64 MB); this Mac's file at that path says nothing about it.
+    if ([self sessionIsRemote]) return YES;
     struct stat st;
     if (!path || stat(path.fileSystemRepresentation, &st) != 0 || !S_ISREG(st.st_mode) ||
         LargeFile::openingFor((uint64_t)st.st_size, UINT64_MAX,

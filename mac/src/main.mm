@@ -497,13 +497,18 @@ static NSArray<NSString *> *MCTakeOpenRequest(NSURL *url, BOOL *reuse,
     for (EditorController *x in self.controllers)
         if (x.sessionIsRemote && [x.sessionRemoteKey isEqualToString:key] && !x.sessionHostLost) c = x;
     if (!c) {
-        c = [[EditorController alloc] initWithRootPath:folder];
+        // Its tree lists through the host, never this Mac's disk at that path.
+        c = [[EditorController alloc] initWithRootPath:folder listTree:NO];
         [c useRemoteSessionLink:[[MCSessionLinkRef alloc] initWithLink:link]];
         [self.controllers addObject:c];
         [c showWindow];
     }
     [c.window makeKeyAndOrderFront:nil];
-    if (!link->askedFile().empty() && [c showFile:@(link->askedFile().c_str())]) [c focusActiveDocument];
+    // A file not there yet opens empty, made by its first save (the window
+    // may be one already open, on another link to the same folder).
+    if (!link->askedFile().empty() &&
+        [c showRemoteFile:@(link->askedFile().c_str()) isNew:link->askedFileNew()])
+        [c focusActiveDocument];
     return c;
 }
 
@@ -995,6 +1000,7 @@ static BOOL MCWindowTabAction(SEL a) {
             [weak goToLine:(int)line column:(int)column];
         };
     [c addSymbolsToPaletteContext:ctx];
+    [c addRemoteFilesToPaletteContext:ctx];   // a window over SSH: the host's list
     MCShowPalette(c.window, text, ctx);
 }
 - (void)showCommandPalette:(id)sender { (void)sender; [self showPaletteWithText:@">"]; }

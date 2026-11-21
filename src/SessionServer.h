@@ -53,6 +53,19 @@ namespace Shared {
 
 // The folder's resolved path (realpath), "" when it is not a folder.
 std::string resolveFolder(const std::string& dir);
+// What `mutible host --stdio PATH` serves (stage 8): PATH a folder; a file,
+// whose folder it serves and which its Welcome names; or a file not there
+// yet in a folder that is (`isNew`: the window opens it empty, and its
+// first save makes it, as `mutible new.txt` does on the Mac). `file` is
+// spelled under `folder` as resolved, "" for a folder. False, with why in
+// the CLI's words, when PATH is none of these (no such folder, a name
+// that is not one).
+struct StdioTarget {
+    std::string folder;
+    std::string file;
+    bool isNew = false;
+};
+bool stdioTarget(const std::string& path, StdioTarget* out, std::string* why);
 // The host socket's file name for a resolved folder: host-<16 hex>.sock.
 std::string hostSocketName(const std::string& folder);
 // A folder the server made: a real folder (not a link) of this user's that
@@ -86,8 +99,10 @@ struct HostOptions {
     std::vector<std::string> shellEnv;
     std::string loginShell;
     // `mutible host --stdio` given a file: its path (spelled under `folder`),
-    // which the Welcome names so the renderer shows it.
+    // which the Welcome names so the renderer shows it; `askedFileNew` when
+    // there is no file there yet (the Welcome says "new").
     std::string askedFile;
+    bool askedFileNew = false;
 };
 
 class HostServer {

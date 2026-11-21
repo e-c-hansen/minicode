@@ -16,6 +16,23 @@
 @property(nonatomic, assign) long long size;
 @property(nonatomic, assign) double modified;
 @property(nonatomic, assign) double created;
+// From a session's host (a window over SSH): what the folder's ignore
+// files ignore, drawn in tree.git-ignored's color, and a symbolic link
+// out of the folder, never listed into. Never set from this Mac's disk.
+@property(nonatomic, assign) BOOL ignored;
+@property(nonatomic, assign) BOOL outside;
+@end
+
+// ---------------------------------------------------------------------------
+// MCTreeSource: where a tree's listings come from. A window's own folder is
+// this Mac's disk (no source: MCTreeList, and FSEvents for what changes); a
+// window over SSH lists through its host (RemoteWorkspace.h), and hears the
+// host's notices instead. The tree's view code is the same either way.
+// ---------------------------------------------------------------------------
+@protocol MCTreeSource <NSObject>
+// A folder's entries as MCTreeList gives them (folders first, dotfiles
+// only with `hidden`), nil when it cannot be read. Main thread.
+- (NSArray<MCTreeEntry *> *)treeListFolder:(NSString *)path hidden:(BOOL)hidden;
 @end
 
 // The entry's kind, size and dates. A symbolic link shows what it points to
@@ -51,6 +68,11 @@ NSArray<NSString *> *MCTreeListedFolders(void);
 @property(nonatomic, assign) BOOL loaded;
 @property(nonatomic, strong) NSArray<FileItem *> *shown;   // children in the order on show
 @property(nonatomic, assign) NSUInteger shownGeneration;
+@property(nonatomic, assign) BOOL ignored;   // MCTreeEntry's, from a host
+@property(nonatomic, assign) BOOL outside;
+// Where its listings come from: nil for this Mac's disk; a node's children
+// take their folder's.
+@property(nonatomic, strong) id<MCTreeSource> source;
 // The rest of the file uses these (see FileTree.mm).
 - (NSString *)name;
 - (void)readStat;

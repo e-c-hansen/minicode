@@ -358,6 +358,7 @@ void Host::onHello(ClientId c, Message& m) {
     if (!askedFile_.empty()) {
         Json j = Json::object();
         j.set("file", Json(askedFile_));
+        if (askedFileNew_) j.set("new", Json(true));
         w.json = std::move(j);
     }
     send(c, std::move(w));
@@ -2233,10 +2234,10 @@ void SessionHost::lookAtWatch() {
     if (watcher_) watcher_->watch(roots);
 }
 
-void SessionHost::setAskedFile(std::string file) {
+void SessionHost::setAskedFile(std::string file, bool isNew) {
     {
         std::lock_guard<std::mutex> lk(mu_);
-        queue_.push_back(Item{0, Message(), [this, f = std::move(file)] { host_.setAskedFile(f); }});
+        queue_.push_back(Item{0, Message(), [this, f = std::move(file), isNew] { host_.setAskedFile(f, isNew); }});
     }
     wake();
 }

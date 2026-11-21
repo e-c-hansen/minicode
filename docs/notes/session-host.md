@@ -3490,8 +3490,10 @@ through its host, so this is mostly a transport.
   the protocol's pipe (stdout becomes stderr, stdin /dev/null) before any
   thread starts, so nothing a library or child prints can corrupt the
   stream; the protocol goes on the dups. It passes its own environment as
-  the shells' (`HostOptions::shellEnv`). No disk watching and no backups
-  of its own yet: the one renderer is the window, which keeps them.
+  the shells' (`HostOptions::shellEnv`). No backups of its own: the one
+  renderer is the window, which keeps them. It watches the disk (since the
+  second slice, below). PATH may also name a file not there yet in a folder
+  that is (`Shared::stdioTarget`): the Welcome says `"new": true`.
 - **The host's own shell** (TermSpec's `hostShell`, Welcome flag 32): the
   host runs its login shell (`SHELL` in its environment, else the
   password database, else /bin/sh) as a login shell, in its environment
@@ -3535,8 +3537,8 @@ through its host, so this is mostly a transport.
   (`recordStamp:ofTab:` keeps none, so `checkExternalChange` and the
   questions before a save pass it by), no FSEvents stream, no restored
   session, no local language server, no viewer that reads the disk, the
-  auto-save loop's disk check skipped, and the window's own write refused
-  (`writeText:toTab:`). Its title is "file — host:path — mutible"
+  auto-save loop's disk check skipped, the large-file question skipped,
+  and the window's own write refused (`writeText:toTab:`). Its title is "file — host:path — mutible"
   (WindowTitle's `remote`, with " (disconnected)" while the link is lost).
   Closing it detaches as stage 6 does and then lets the link go
   (`Link::detach`), which ends the remote host.
@@ -3562,6 +3564,127 @@ through its host, so this is mostly a transport.
   and the host ending with the window. Not run here (the builder had no
   screen to use): CI runs it.
 
+#### The window's tree, Quick Open and Find in Folder over SSH (2026-11-21, second slice)
+
+The owner on 1.6.15: `mutible ssh://thinkpad/~/minicode` opened a window
+whose tree was empty, since the first slice switched off everything that
+read the Mac's disk. Now the tree, Quick Open and Find in Folder are the
+remote folder's, all through the host's reads, and nothing of them looks
+at the Mac's disk at that path.
+
+- **The tree's source** (`MCTreeSource` in FileTree.h): a `FileItem` has a
+  `source`, nil for this Mac's disk (`MCTreeList` as before), which its
+  children take from it (`adoptListing:`); `loadChildren` and `refresh`
+  ask it. A remote window's root has an `MCRemoteWorkspace`
+  (RemoteWorkspace.{h,mm}), whose `treeListFolder:hidden:` is FsRead
+  "list" waited for on the main thread (20 s at most), as the Mac's own
+  tree lists a folder synchronously as it opens; nil (no answer, the
+  connection lost) keeps what the tree has, and a listing's error (a
+  folder gone) lists it empty. MCTreeEntry and FileItem gained `ignored`
+  and `outside` (only a host sets them): an ignored row is drawn in
+  `tree.git-ignored`'s color with the tip "Ignored", as the page's tree,
+  since no git runs for the window yet; a link out of the folder is dimmed
+  and never listed into. Sizes and dates are not in the host's listing, so
+  those columns are empty for its rows and no folder totals are counted.
+  The tree's view code is the same for both: only where the listings come
+  from differs. The window is made with `initWithRootPath:listTree:NO`
+  (main.mm), so its folder is never listed from the Mac's disk, and
+  `startRemoteWorkspace` (from `useRemoteSessionLink:`) lists the root
+  through the host. No Worktrees node (`withWorktreesNode:` reads the Mac's
+  disk); `revealPath:` and `treeOpenFoldersTo:` ask the host
+  (`treeHasFileAt:`, a refresh of the folder on the way) rather than
+  `fileExistsAtPath:`.
+- **Following the remote disk**: `mutible host --stdio` now watches
+  (`HostOptions::watchDisk`, Welcome flag 4), and a remote link's client
+  hears the disk (Hello flag 32, `Link::addDiskListener`, set in
+  `attachClient` for Kind::Remote only). The workspace tells the host which
+  folders to watch (`watchFolders:hidden:`, FsRead "watch" for window 0,
+  the headless host's own folder): every folder the tree has listed
+  (`loadedTreeFolders`), with Show Hidden Files' rule, sent once per main
+  queue turn after an expand, a reload, a listing taken in or a reveal
+  (`remoteTreeFoldersChanged`), only when it differs from the last sent,
+  and again on a new link. FsChanged's listings come back as MCTreeEntry
+  arrays and go through `applyTreeListings:stats:reshowRoot:`, the
+  FSEvents path's own, so the open folders, the selection and the scroll
+  stay. The disk listener runs inside the link's dispatch, which may be
+  inside a read's wait, so the workspace takes it on the next turn.
+- **Quick Open** (`MCPaletteContext listFiles`, set by
+  `addRemoteFilesToPaletteContext:`, one line in main.mm's
+  `showPaletteWithText:`): the palette calls it instead of walking the
+  disk; the workspace asks FsRead "files" with `hidden` true (the Mac's
+  Quick Open lists dotfiles) through `Link::stream`, and the palette ranks
+  the list as before.
+- **Find in Folder** (`SearchPanel hostSearch` and `cancelHostSearch`, set
+  by `searchOnHost:` in `makeSearchPanel`): `runSearch:` sends FsRead
+  "search" with the query, the three toggles, files to include and
+  exclude, and `hidden` true, and shows each batch of rows as it comes
+  (`Searching… N in M files`), then the last answer's counts through
+  `showFound:...`, the local search's own status line (a time limit on the
+  host says so). A row's path is the folder joined to the host's relative
+  path, so clicking opens it as any result, read through the host.
+  **Replace in Folder is refused** (`readyToReplace` says "Replace in
+  Folder does not work in a window over SSH yet…", Replace All disabled
+  with that tooltip, the context menu's replace items disabled): the
+  Mac's Replace edits open tabs through their buffers and writes the rest
+  itself, and the host's replace (#307) answers a page's rows with its
+  own rules (a page's documents edited on the host); joining the two
+  cleanly is its own change. The TODO list is refused too (it scans the
+  disk).
+- **`Link::stream`** (SessionLink.h): a heavier read's answers handed to a
+  handler after each dispatch (`pumpStreams`), done once the last came or
+  the host is gone; `cancelStream` sends FsRead "cancel".
+- **New files**: `mutible host --stdio` takes a file not there yet in a
+  folder that is (`Shared::stdioTarget`, also checked for a link in the
+  path and for what it refuses), its Welcome `{"file", "new": true}`
+  (`Link::askedFileNew`). The window marks the path new
+  (`showRemoteFile:isNew:`, from `openRemoteAddress:`, so a window already
+  open on the folder learns it too; a fresh window from
+  `startRemoteWorkspace`), and `loadActiveTab` opens a new path whose read
+  fails as an empty tab, `untitled` (unsaved, not "(deleted)", no
+  auto-save), clean until typed in; Cmd+S goes through
+  `writeTextThroughHost:`, which gives the host the path (DocPath) and the
+  host's save makes the file (`SaveDone::created`). **New File** in a
+  remote window's tree does the same (`openNewRemoteFile:`: a name the
+  folder's listing has already is refused, as on the Mac). The Mac's own
+  launcher still refuses `mutible new.txt` for a file that is not there.
+- **Refused in a remote window, with a status note** (`refuseOverSsh:`,
+  "X does not work in a window over SSH yet: the files are on host:path.
+  The terminal runs there."): New Folder, Rename, Move to Trash (the
+  tree's and the tab menu's, through `renamePath:` and `trashPath:`),
+  Reveal in Finder, a drop into the tree (`validateDrop:` refuses at once;
+  `acceptDrop:` says why), and the TODO list. No row drags out
+  (`pasteboardWriterForItem:` gives nothing: a remote path is no file URL
+  of the Mac's), and Quick Look (Space) passes over a host's rows. The
+  host has no operation for any of these yet; each would be an FsRead-like
+  write op of its own, and the terminal does them meanwhile.
+
+#### Checks (second slice)
+
+- `make test`: `hostserver:stdio-target` (a folder, a trailing slash, a
+  file, a new file, one through a link, a missing folder with its
+  sentence, `missing/..`, a file as a folder, an empty path);
+  `diskwatch:stdio` (`--stdio` with watching over two pipes: Welcome
+  flags 4 and 8, the file named new, the watch answered for two folders,
+  a listing through the host, a file made on disk reaching the renderer
+  as its folder's listing, an untitled document given its path and saved
+  by the host, which makes the file).
+- `make guitest SUITES=remote_ssh` (the stand-in's folder now holds src/,
+  a .gitignore and an ignored log): the tree's top level from the host
+  (folders first, the log marked ignored, its rows' source the
+  workspace) and no `MCTreeList` of the folder at any point; src opened
+  through the host; two files made on disk coming into the tree (the
+  workspace's notices counted); Return on a row opening its file through
+  the host; New Folder's note; Cmd+P through the menu key listing the
+  host's files without the ignored log and opening src/util.c; Find in
+  Folder's "2 matches in 2 files" (the log left out) from the host, a
+  row opening src/main.c, Replace All refused with its sentence and the
+  file untouched; `ssh://standin/<folder>/src/fresh.txt` opening an empty
+  untitled tab in the folder's window, typed into and made by Cmd+S; and,
+  after Reconnect, a file made on disk coming into the tree from the new
+  host. Not run here (the builder had no screen to use): CI runs it. The
+  look of the dimmed rows and the search's progress line need the owner's
+  eyes, as does a real ssh to the ThinkPad.
+
 #### Traps
 
 - **A stand-in that serves the Mac's own disk hides local reads.** The
@@ -3586,15 +3709,29 @@ through its host, so this is mostly a transport.
 - **A line that is not a message ends `--stdio` silently** (the connection
   is dropped, as any peer's is), so a hand test must send real kinds
   (`session.hello`, not `Hello`).
+- **A listener inside the link's dispatch may be inside a read's wait.**
+  `Client::read` (the tree's listing) processes every message that comes
+  meanwhile, FsChanged's included, so the disk listener only queues the
+  notice for the next main-queue turn; a tree changed inside a listing of
+  the same tree would lose rows.
+- **The tree's own checks see a remote folder only by its source.** The
+  stand-in's folder is on this Mac, so a listing from the Mac's disk would
+  look right; `remote_ssh` checks `MCTreeListedFolders()` never names it
+  and that the rows carry the host's `ignored` mark, which only a host
+  sets.
 
 ### Still to do
 
-- **Stage 8, after this first slice** (in order of value): a lasting host
+- **Stage 8, after the second slice** (in order of value): a lasting host
   behind the stdio end (`--stdio` bridging to the folder's socket host on
   the remote, so terminals, undo and unsaved text survive a drop there,
-  and the window reconnects by itself); the window's tree, Quick Open and
-  Find in Folder through the host's reads (FsRead "list", "files",
-  "search"), and its disk watching (Hello flag 32: FsChanged, DocDisk);
+  and the window reconnects by itself); the host's file operations for the
+  tree (a folder made, a rename, a delete, a move: refused over SSH now)
+  and its Replace in Folder for the window (#307's op, joined with the
+  Mac's way of editing open tabs); open clean tabs following the remote
+  disk (the host leaves a document an app's window holds to the window,
+  which has no stamps of a remote file); the host's listing carrying
+  sizes, dates and the execute bit for the tree's columns and icons;
   connecting off the main thread with a progress line; the shell
   integration's marks on the remote (the remote mutible's own integration
   file, a nonce from the Mac); viewers for remote pictures, PDFs and media

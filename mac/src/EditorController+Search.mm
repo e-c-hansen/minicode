@@ -101,6 +101,7 @@
             return [s.lsp applyEditsToPaths:paths ranges:ranges strings:strings
                                  actionName:@"Replace in Folder" failure:failure];
         };
+        [self searchOnHost:self.searchPanel];   // over SSH: the host searches its folder
     }
     // If a folder is selected in the tree, scope the search to it; otherwise
     // leave the scope as it is (the opened folder by default).
@@ -156,6 +157,7 @@
 // Shift+Cmd+D: every TODO comment and open task in the folder, scoped as
 // Find in Folder is.
 - (void)showTodos:(id)sender {
+    if ([self refuseOverSsh:@"The TODO list"]) return;   // it would scan this Mac's disk
     if (!self.todoPanel) {
         __weak EditorController *weakSelf = self;
         self.todoPanel = [[SearchPanel alloc]

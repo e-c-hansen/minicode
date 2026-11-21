@@ -49,6 +49,7 @@
 #include "TabSessions.h"
 #include "Backups.h"
 @class MCChangeReviewPage;
+@class MCRemoteWorkspace;
 #import "QuickLook.h"
 #import "MarkdownCode.h"
 #import "Keymap.h"
@@ -542,6 +543,8 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (void)treeFoldersChangedOnDisk:(NSArray<NSString *> *)paths subtree:(NSArray<NSNumber *> *)subtree;
 - (void)listChangedTreeFolders;
 - (NSMutableDictionary<NSString *, FileItem *> *)loadedTreeFolders;
+// A file (not a folder) at `path`, by this Mac's disk or over SSH the host.
+- (BOOL)treeHasFileAt:(NSString *)path;
 - (void)applyTreeListings:(NSDictionary<NSString *, NSArray<MCTreeEntry *> *> *)listings
                     stats:(NSDictionary<NSString *, MCTreeEntry *> *)stats
                reshowRoot:(BOOL)reshowRoot;
@@ -832,6 +835,32 @@ extern NSUInteger MCDirtyFromHostMarks;
 // (MCTabOwner: every tab of a remote window does).
 - (MCDiskText *)sessionRemoteTextOf:(MCTab *)t;
 - (BOOL)tabNeedsSession:(MCTab *)t;
+// The remote host's link of a window over SSH, nil for a window on this Mac.
+- (MCSessionLinkRef *)sessionRemoteLink;
+@end
+
+// EditorController+Remote.mm: a window over SSH's folder through its host
+// (docs/notes/session-host.md, "The window's tree, Quick Open and Find in
+// Folder over SSH"): the tree's listings and the host's notices, Quick
+// Open's list, Find in Folder, New File, and what is refused there. Every
+// method does nothing (or NO) in a window on this Mac.
+@interface EditorController (RemotePrivate)
+// From useRemoteSessionLink: and moveToSessionLink: (Reconnect).
+- (void)startRemoteWorkspace;
+- (void)remoteWorkspaceMovedToLink;
+// The window's MCRemoteWorkspace, nil on this Mac.
+- (MCRemoteWorkspace *)remoteWorkspace;
+// The tree listed, opened or closed folders: the host is told which to
+// watch (on the main queue's next turn, once).
+- (void)remoteTreeFoldersChanged;
+// YES, with a status note saying why, when `what` cannot be done in a
+// window over SSH (it would change or read this Mac's disk).
+- (BOOL)refuseOverSsh:(NSString *)what;
+// Find in Folder's window searches on the host.
+- (void)searchOnHost:(SearchPanel *)panel;
+// A file the window opened that is not on the host yet, and opening one.
+- (BOOL)remotePathIsNew:(NSString *)path;
+- (void)openNewRemoteFile:(NSString *)path;
 @end
 
 // EditorController+SessionBrowser.mm: what the window's record carries

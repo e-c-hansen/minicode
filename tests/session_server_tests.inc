@@ -158,12 +158,14 @@ struct PipeRenderer : Shared::Client::TermListener {
     TerminalScreen screen{80, 24};
     std::atomic<int> pid{0};
 
-    void connect(int write, int read) {
+    // `before`: what the client says in its Hello beyond an app's (hearDisk).
+    void connect(int write, int read, const std::function<void(Shared::Client&)>& before = nullptr) {
         toHost = write;
         fromHost = read;
         client = std::make_unique<Shared::Client>(Model::Unit::Utf16, "mac");
         client->setKeepsBackups(true);
         client->setSavesThroughHost(true);
+        if (before) before(*client);
         mirror.client = client.get();
         reader = std::thread([this] {
             std::string in;
@@ -692,6 +694,38 @@ static void testSessionServer() {
         server.reset();   // the host's end: its shells hung up, its output closed
         CHECK(waitUntil([&] { return gone(shell); }, 5000));
         CHECK(waitUntil([&] { return r.client->lost(); }, 5000));
+    }
+
+    GROUP("hostserver:stdio-target");
+    {
+        // What `mutible host --stdio PATH` serves (stage 8): a folder, a
+        // file (its folder, the file named), or a new file's name in a
+        // folder that is there (named, and new); nothing else.
+        namespace fs = std::filesystem;
+        const std::string proj = Shared::resolveFolder(scratchFolder());
+        fs::create_directories(proj + "/sub");
+        {
+            std::ofstream f(proj + "/notes.txt");
+            f << "one\n";
+        }
+        Shared::StdioTarget t;
+        std::string why;
+        CHECK(Shared::stdioTarget(proj, &t, &why) && t.folder == proj && t.file.empty() && !t.isNew);
+        CHECK(Shared::stdioTarget(proj + "/sub/", &t, &why) && t.folder == proj + "/sub" && t.file.empty());
+        CHECK(Shared::stdioTarget(proj + "/notes.txt", &t, &why) && t.folder == proj &&
+              t.file == proj + "/notes.txt" && !t.isNew);
+        CHECK(Shared::stdioTarget(proj + "/sub/new.txt", &t, &why) && t.folder == proj + "/sub" &&
+              t.file == proj + "/sub/new.txt" && t.isNew);
+        // Spelled through a link: the folder as resolved, the name as given.
+        fs::create_directory_symlink(proj + "/sub", proj + "/via");
+        CHECK(Shared::stdioTarget(proj + "/via/later.md", &t, &why) && t.folder == proj + "/sub" &&
+              t.file == proj + "/sub/later.md" && t.isNew);
+        why.clear();
+        CHECK(!Shared::stdioTarget(proj + "/missing/new.txt", &t, &why));
+        CHECK(why == proj + "/missing/new.txt: no such file or folder");
+        CHECK(!Shared::stdioTarget(proj + "/missing/..", &t, &why));
+        CHECK(!Shared::stdioTarget(proj + "/notes.txt/x", &t, &why));   // a file is no folder
+        CHECK(!Shared::stdioTarget("", &t, &why));
     }
 
     GROUP("hostserver:spawn");

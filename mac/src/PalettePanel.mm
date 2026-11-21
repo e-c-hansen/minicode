@@ -423,9 +423,19 @@ static void PNote(NSString *key, NSString *value, NSUInteger cap) {
         self.files = @[];
         return;
     }
+    __weak MCPaletteOverlay *weakSelf = self;
+    // The window lists them itself (over SSH: on its host).
+    if (self.context.listFiles) {
+        self.context.listFiles(^(NSArray<NSString *> *files, BOOL truncated) {
+            MCPaletteOverlay *me = weakSelf;
+            if (!me || me.closing) return;
+            me.filesTruncated = truncated;
+            [me setListedFiles:files ?: @[]];
+        });
+        return;
+    }
     auto cancel = std::make_shared<std::atomic<bool>>(false);
     _cancelListing = cancel;
-    __weak MCPaletteOverlay *weakSelf = self;
     const std::string rootUtf8 = root.fileSystemRepresentation;
     const bool useIgnore = [AppSettings shared].settings.searchUseIgnoreFiles();
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{

@@ -198,8 +198,12 @@ public:
     void setFolder(std::string folder) { folder_ = std::move(folder); }
     const std::string& folder() const { return folder_; }
     // The file `mutible host --stdio` was given (stage 8): its Welcome names
-    // it ({"file": path}), so the window over SSH shows it.
-    void setAskedFile(std::string file) { askedFile_ = std::move(file); }
+    // it ({"file": path}, with "new": true when it is not there yet), so the
+    // window over SSH shows it.
+    void setAskedFile(std::string file, bool isNew = false) {
+        askedFile_ = std::move(file);
+        askedFileNew_ = isNew;
+    }
     // Why the session must not end now, "" when nothing would be lost: a
     // document with unsaved changes, or a terminal running a program (a
     // command the integration marked running, or a foreground process group
@@ -385,6 +389,7 @@ private:
     std::vector<std::string> ownEnv_;   // setOwnShell's
     std::string ownShell_;
     std::string askedFile_;
+    bool askedFileNew_ = false;
     // A watch op answered (FsData's json), the ask kept.
     Json onWatchAsk(ClientId c, std::uint64_t window, const Json& request);
     void onReload(ClientId c, Message& m);
@@ -598,8 +603,9 @@ public:
     // The host's own shell and environment (Host::setOwnShell), on its
     // thread; before any renderer connects.
     void setOwnShell(std::vector<std::string> env, std::string shell);
-    // The file its Welcome names (Host::setAskedFile), on its thread.
-    void setAskedFile(std::string file);
+    // The file its Welcome names (Host::setAskedFile), on its thread; `isNew`
+    // when it is not there yet.
+    void setAskedFile(std::string file, bool isNew = false);
     // Runs `f` on the host's thread with the Host, after everything posted
     // before it, and waits for it, at most `timeoutMs`: false, and `f` never
     // run, when the thread did not come to it in time (a hang there fails

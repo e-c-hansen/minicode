@@ -472,6 +472,19 @@ found through that list.
   File) keeps its typing through an app switch (`PopoverKeep.h`, checked
   by `edit_boxes`).
 
+- **Where the listings come from** (2026-11-21, `MCTreeSource` in
+  FileTree.h): a `FileItem`'s `source` is nil for this Mac's disk
+  (`MCTreeList`, FSEvents) and, in a window over SSH, the window's
+  `MCRemoteWorkspace`, which lists through the remote host and hears its
+  notices in place of FSEvents (docs/notes/session-host.md, "The window's
+  tree, Quick Open and Find in Folder over SSH"). Children take their
+  folder's source. Code in the tree that looks at the disk itself
+  (`fileExistsAtPath:`, `MCTreeStat`, the folder sizer, the Worktrees
+  node, Quick Look, drags) must ask the source, or pass over a row that
+  has one: `treeHasFileAt:` is the reveal's question for both. The tree's
+  file operations other than New File say they do not work over SSH yet
+  (`refuseOverSsh:`).
+
 ## Traps
 
 Each trap's first sentence, in the order it appears above; the whole
@@ -489,3 +502,4 @@ text is in place in its section.
 - The file tree (GTK): Trap (GTK checks, 2026-11-21): a check that scrolls the list itself (`gtk_list_view_scroll_to` to row 0) while a keep runs is undone like GTK's jump, since only the tree's own scrolls and the user's wheel and keys end a keep.
 - The file tree (GTK): Trap: a popover on the list that has the keyboard as it closes gives it back only at the window's next after-paint, to the popover's parent, and when the idle that unparents the popover runs first GTK finds no parent and tabs into the window from its start, so the list focuses row 0 and scrolls to its top (GtkListBase's tab behavior "all", then `set_focus_child`'s `scroll_to_item`); the name box's "closed" gives the list the keyboard itself, before the idle (its focus row, the row asked about: no scroll).
 - The file tree (GTK): Trap: the 300 ms that `keepRows` undoes a jump to the top for counted wall time, and on a loaded machine (several builds, load 50) the frame clock may draw no layout in 300 ms, so the jump came after the keep ended and `tree_edits` failed "the tree kept its place" about one run in nine; the keep lasts at least `kKeepFrames` layouts as well, and at most `kKeepMostUs`.
+- The file tree (Mac): Trap: a remote window's rows are another machine's paths, so anything in the tree that reads this Mac's disk at a row's path (a stat, a file URL, Quick Look, the folder sizer) shows some other file or nothing; ask the row's `source` or pass over a row that has one.
