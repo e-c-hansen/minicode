@@ -8927,3 +8927,9 @@ show; the file shown last is shown meanwhile).
   dotfile `dotfile`, a new name writes the typed text, the tab names the
   path and is clean, and the page's state lists it under the new path; with
   `overwrite` another file is replaced and the first left as it was.
+
+### 142. tree_drags after tree_focus: a drag's target above its row (November 2026)
+
+- **What failed.** `MC_GUI_IN_ORDER=1 ... MC_GUI_SUITES="tree_stall tree_focus tree_drags"`: plain.txt never opened after its drop on the editor (the second drag; the first, onto the terminal, worked). Each suite alone, and tree_drags after either one, passed.
+- **Cause.** A test-harness bug, not the product. `pointOnRoot` (tests/gui/Input.cpp) took any negative coordinate as "the widget's middle". tree_focus leaves the tree scrolled, so plain.txt's row sat at root y 618, below the editor's middle (y 266); the target's point in the row's coordinates was y -352, became the row's own middle, and the pointer went across at y 619 and let go over the tree and the terminal's edge. A drop target on the window saw every motion at y 575 to 621 and the editor's target never an enter or an accept. In a fresh tree the row is above the editor and the point is positive.
+- **Fix.** Only exactly -1 means the middle (the click calls pass -1). Checked: the failing order three times, the seven tree suites in order and with `MC_GUI_SHUFFLE=67`, and the longer order with session_browser, tree_clicks and tree_icons before.
