@@ -766,6 +766,12 @@ void MCGuiRunChild(const std::string& suite, const std::string& folder,
     if (!folder.empty()) argv.push_back(folder);
     MCGuiRunProcess(argv, {{"MC_GUI_SUITES", suite}, {"MC_GUI_RESULTS", ""}, {"MC_GUI_SHUFFLE", ""}},
                     [done](int status, std::string out, std::string err) {
+                        // The child's windows have gone. With no window
+                        // manager the X focus stays on the last of them, and
+                        // no app window is active (the harness's LEFT line
+                        // after startup and sessions); a desktop gives it to
+                        // the window left, and so does this.
+                        MCGuiFocusKeyWindow();
                         done(status, out + err);
                     },
                     folder.empty() ? std::string(g_get_home_dir()) : std::string());

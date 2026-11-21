@@ -741,6 +741,7 @@ MC_GUI_SUITE(tabs) {
     MCGuiWait("the window closes", 10, [] { return MCGuiAppWindows().size() == gWindows; });
     MCGuiStep("and the files are as they were", [] {
         MCGuiSetKeyWindow(nullptr);
+        MCGuiFocusKeyWindow();   // as a desktop gives the window left the X focus
         GCHECK_EQ_STR(MCGuiReadFile(F("tab-a.txt")), "more A " + kA + "A typed");
         GCHECK_EQ_STR(MCGuiReadFile(F("tab-c.txt")), kC + "more C");
         // The first window kept its own tabs.

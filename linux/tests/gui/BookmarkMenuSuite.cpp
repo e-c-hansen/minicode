@@ -375,12 +375,13 @@ MC_GUI_SUITE(bookmark_menu) {
     });
     MCGuiWait("the page loads in the browser", 60, [] { return has(activeUrl(), "/three"); });
 
-    MCGuiStep("the server and the Trash are put away, the workspace's bookmarks removed", [] {
+    MCGuiStep("the server, the Trash and the shared folder setting are put away, the workspace's bookmarks removed", [] {
         removeWorkspaceBookmarks();
         GitTrash::useFolderForChecks("");
         if (gServer) g_socket_service_stop(gServer);
         if (gServer) g_object_unref(gServer);
         gServer = nullptr;
+        MCGuiSetSettings("lsp.enabled = false\n");   // browser.bookmarks goes with the scratch folder
     });
     // The browser pane hidden: left on show it takes the right side's width
     // from the editor of the suites after it (the harness's LEFT line).
