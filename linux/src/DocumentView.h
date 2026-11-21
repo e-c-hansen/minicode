@@ -24,6 +24,10 @@
 //     back (typed and deleted, undone) leaves nothing unsaved, as on the Mac;
 //   - a watch on its file: a clean document takes a change made elsewhere in
 //     place, on show or not; one with unsaved edits has its host ask;
+//   - its save: the session's host writes the file when it saves for apps
+//     (stage 7), after everything the window asks, else the document does;
+//     a write the host makes for another renderer (a page's save) is taken
+//     as this document's own save (hostWrote);
 //   - for Markdown, a buffer of its own for the rendered page (D3), so the
 //     preview never touches the source, its undo or its colors, and an edit
 //     made from the page is a splice into the source;
@@ -99,6 +103,10 @@ public:
     // the scroll position of the document on show.
     virtual void documentWillReload(Document*) {}
     virtual void documentReloaded(Document*) {}
+    // The session's host wrote its file for someone else (a page's save),
+    // and the document took that as its own save (stage 7): what a save
+    // leaves follows (a preview tab kept, the LaTeX preview, the title).
+    virtual void documentWrittenByHost(Document*) {}
     // A file read in the background (Document::beginLoading) is in its
     // buffer, or could not be read (`result`); `blank` when it holds only
     // white space.
@@ -124,7 +132,7 @@ struct DocumentFileEncoding {
     bool bom = false;
 };
 
-class Document : public Shared::Client::Listener {
+class Document : public Shared::Client::Listener, public SessionLink::Link::DocNotices {
 public:
     enum class Kind {
         Text,      // a file's text, editable
@@ -496,6 +504,16 @@ public:
     // (stage 6) another screen's typing. Applied as one user action that
     // is not reported back.
     void hostEdited(Shared::DocId doc, const Ot::Ops& ops, int flag, const Shared::Selection* select) override;
+    // The host's notices (stage 7, SessionLink::Link::DocNotices): its count
+    // of the document as unsaved flipped, and it wrote the file for another
+    // renderer. Each is taken at the top of the next turn, not inside the
+    // dispatch, which a wait can run anywhere.
+    void hostDirty(bool dirty) override;
+    void hostWrote(std::uint64_t version, const Json& json) override;
+    // Whether the session's host writes its file (Document::save): open on
+    // a host that saves for apps (its Welcome's flag 2), not lost, not
+    // detached.
+    bool hostSavesFile() const;
 
 private:
     struct Load;
@@ -574,7 +592,9 @@ private:
     // The disk.
     void watch();
     void stopWatching();
-    void rememberDisk(const std::string& content);
+    // `written`: the stamp the file was written with (the host's answer),
+    // else the file's now.
+    void rememberDisk(const std::string& content, const FolderSearch::FileStamp* written = nullptr);
     void applyDiskText(const std::string& content, const FileEncoding& encoding);
     static void onFileChanged(GFileMonitor* m, GFile* f, GFile* other, GFileMonitorEvent ev,
                               gpointer self);
@@ -588,6 +608,28 @@ private:
     std::string   hostPath_;          // the path the host was told (DocPath)
     bool          detached_ = false;  // detachFromHost: the host keeps it
     void hostSavedFromDisk(const std::string& now);
+    // Stage 7: the save the host writes, and its notices, each taken at the
+    // top of a turn (hostDirty, hostWrote).
+    bool saveThroughHost(const std::string& body, std::string* error, bool* lostMeanwhile);
+    void takeHostWrite();
+    void takeHostDirty();
+    void enrol();     // known to its link's notices by its id
+    void unenrol();
+    void tellHostSaved(const std::string* text);
+    uint64_t toldSavedAt_ = UINT64_MAX;   // edits_ when it last did
+    struct HostWrite {
+        bool knowsText = false;   // the text written: the buffer's then
+        std::string text;
+        std::string path;
+        bool knowsEncoding = false;
+        FileEncoding encoding;
+        FolderSearch::FileStamp stamp;
+    };
+    HostWrite hostWrite_;
+    guint     writeIdle_ = 0;
+    bool      hostDirty_ = false;
+    uint64_t  dirtyEdits_ = 0;    // edits_ when it was heard
+    guint     dirtyIdle_ = 0;
     Kind          kind_ = Kind::Text;
     std::string   path_, ext_;
     bool          markdown_ = false, latex_ = false;

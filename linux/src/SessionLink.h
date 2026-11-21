@@ -48,6 +48,15 @@
 // documents and terminals on the host and its record (windowDetached); a
 // window opening takes the latest record a closed window left, with what it
 // names, and what no record names (takeForWindow).
+//
+// Saving (stage 7, docs/notes/session-host.md, "GTK's tabs save through the
+// host"): every client says in its Hello that the windows save through the
+// host (flag 16), and on a host that saves for apps
+// (Client::hostSavesForApps) a tab's save is the host's write
+// (Document::save), after everything the window asks. The host's notices
+// about a document go to the document by its id (listen): its count of it
+// as unsaved flipping (DocDirty), and its writes for another renderer (a
+// page's save: DocDirty flag 2, Client::hearWrites).
 #pragma once
 
 #include <sys/types.h>
@@ -89,6 +98,24 @@ public:
     pid_t startedHost() const { return startedHost_; }
     // The headless host went away.
     bool lost() const { return client_->lost(); }
+
+    // The host's notices about one document of this link's (stage 7): its
+    // count of it as unsaved flipped (DocDirty), and it wrote the file for
+    // another renderer (DocDirty flag 2, with the host version written and
+    // {path, encodingName, stamp}). Called on the main loop inside a
+    // dispatch, which a wait (settle) can run in the middle of anything.
+    class DocNotices {
+    public:
+        virtual void hostDirty(bool dirty) = 0;
+        virtual void hostWrote(std::uint64_t version, const Json& json) = 0;
+
+    protected:
+        ~DocNotices() = default;
+    };
+    // `n` hears the notices about `doc` (its id on this link's host) until
+    // unlisten; unlisten takes it off only while it is `n`'s.
+    void listen(Shared::DocId doc, DocNotices* n) { notices_[doc] = n; }
+    void unlisten(Shared::DocId doc, DocNotices* n);
 
     // Told once, on the main loop, when the host goes, with a sentence
     // saying so; the number takes it off again.
@@ -176,6 +203,7 @@ private:
     std::unique_ptr<Shared::HostLink> socket_;    // headless
     Shared::ClientId hostId_ = 0;
     bool detached_ = false, lostTold_ = false;
+    std::map<Shared::DocId, DocNotices*> notices_;   // listen
     std::map<int, std::function<void(const std::string&)>> lostListeners_;
     int nextListener_ = 0;
     // What each window's tabs were last sent as, and each window's id on

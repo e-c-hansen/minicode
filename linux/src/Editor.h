@@ -314,6 +314,10 @@ public:
     // save (no tab, a picture, a message, a diff) writes nothing and is true.
     bool save(std::string* error = nullptr);
     bool saveDocument(Document* d, std::string* error);
+    // What a save leaves, whoever wrote the file (this window, or the
+    // session's host for a page, documentWrittenByHost): a preview tab kept,
+    // the LaTeX previews and the language server told, the strip and title.
+    void tookSave(Document* d);
     // The files a LaTeX preview reads (Latex.h, InputHost): a tab of the
     // file for an edit (made beside the active one when there is none), the
     // edit, what a save of a file does to the previews that read it, and
@@ -574,6 +578,7 @@ public:
     const std::string& settingsPath() const override { return settingsPath_; }
     void documentWillReload(Document* d) override;
     void documentReloaded(Document* d) override;
+    void documentWrittenByHost(Document* d) override { tookSave(d); }
     void documentLoaded(Document* d, int result, bool blank) override;   // LargeFileView.cpp
     Model::Preview documentPreview(const Document* d) const override;
     uint64_t documentLastUsed(const Document* d) const override;
