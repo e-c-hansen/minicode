@@ -1128,12 +1128,16 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 // byte order mark back in front. A Windows-1252 file whose text now holds
 // a character Windows-1252 cannot store (an arrow, an emoji) is written as
 // UTF-8 instead, and the status bar says so: never a '?' in its place,
-// never a question on every save (C3b, 2026-11-18). On success the tab is
+// never a question on every save (C3b, 2026-11-18). With
+// editor.session-host on a host that saves for apps, the host writes it by
+// the same rules, after the same questions (writeTextThroughHost:,
+// EditorController+Session.mm), so it is the file's one writer. On success the tab is
 // clean and in step with the file as written (its stamp taken from the write itself), and its
 // language servers hear of the save. `interactive` says a failure in an
 // alert, else in the status bar (auto-save never asks anything).
 - (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive {
     if (!t || !text || ![self tabHasTextToWrite:t]) return NO;
+    if ([self hostWritesText:text ofTab:t]) return [self writeTextThroughHost:text toTab:t interactive:interactive];
     NSString *name = t.currentPath.lastPathComponent;
     std::string bytes, error;
     NSString *unheld = nil;
@@ -1161,9 +1165,6 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
         t.encoding = encoding;
         t.bom = bom;
     }
-    t.savedText = text;
-    t.gone = NO;
-    t.dirty = NO;
     // An untitled buffer the session's host held has its file now: the host
     // is told its path, which it kept none of until then.
     if (t.untitled) {
@@ -1171,20 +1172,31 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
         [t.session pathChanged];
     }
     if (t.session && [text isEqualToString:t.currentText ?: @""]) [t.session saved];   // the host's too
+    [self tab:t tookSaveOf:text stamp:MCDiskStampFromFileStamp(written) dirty:NO];
+    return YES;
+}
+
+// What a save leaves, whoever wrote the file (this window, or the session's
+// host for it or for a page): the tab in step with the file as written
+// (`saved`, the text the file holds), its stamp taken from the write, so
+// the save never looks like a change made outside, and its servers and
+// previews told.
+- (void)tab:(MCTab *)t tookSaveOf:(NSString *)saved stamp:(MCDiskStamp *)stamp dirty:(BOOL)dirty {
+    t.savedText = saved;
+    t.gone = NO;
+    t.dirty = dirty;
     if (t.preview) [self keepPreviewTab:t];   // saved: kept, as in VS Code
-    // So our own save never looks like a change made outside.
-    [self recordStamp:MCDiskStampFromFileStamp(written) ofTab:t];
+    [self recordStamp:stamp ofTab:t];
     if (t == _activeTab) {
         [self.lsp documentSaved];
     } else {
         // A tab saved in the background (Save All, auto-save, closing):
         // didSave to every server that has the file open.
-        [self.lsp documentSavedAtPath:t.currentPath text:text];
+        [self.lsp documentSavedAtPath:t.currentPath text:saved];
     }
     [self latexFileSaved:t];   // previews that read it from disk typeset again
     [self pageSideSaved:t];    // the LaTeX page beside the source typesets the save
     [self updateTitle];
-    return YES;
 }
 
 - (void)saveCurrentFile:(id)sender {
@@ -1212,7 +1224,9 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
     NSString *text = self.textView.editable ? [self.textView.string copy]
                                             : (self.sourceText ?: @"");
     if ([self writeText:text toTab:_activeTab interactive:YES]) {
-        self.sourceText = text;
+        // Not when the session's host put another's edit in while it wrote
+        // (the tab follows the storage, which has it).
+        if ([text isEqualToString:_activeTab.currentText ?: @""]) self.sourceText = text;
         [self flashStatus:sortProblem];
         // Cmd+S in a project that sets up its formatter, with format on
         // save off: offer it (FormatOnSave.h).

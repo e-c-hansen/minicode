@@ -749,6 +749,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)saveTab:(MCTab *)t;
 - (BOOL)tabHasTextToWrite:(MCTab *)t;
 - (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive;
+// What every save leaves in the tab (writeText:, and the host's writes):
+// `saved` the file's text, `stamp` the file as written.
+- (void)tab:(MCTab *)t tookSaveOf:(NSString *)saved stamp:(MCDiskStamp *)stamp dirty:(BOOL)dirty;
 // Closes the tab in the editor group with the keyboard (in the other group
 // when only that one holds it). A file the other group also holds stays
 // open there, so nothing is asked.
@@ -782,8 +785,19 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // A backup restored into `t` (loadActiveTab): the host counts its text
 // unsaved against the file's, `saved` ("" for a file not on disk).
 - (void)sessionRestoredBackupOf:(MCTab *)t saved:(NSString *)saved;
+// The tab's file holds `saved` (nil: the tab's text as it is now), which
+// the window counts its text against: the host's count follows (DocSaved).
+- (void)sessionTab:(MCTab *)t savedAs:(NSString *)saved;
 - (CodeTextView *)textViewShowingSourceOf:(MCTab *)t;
 - (void)tabTextChangedByHost:(MCTab *)t;
+// Stage 7: saving through the host. Whether the host writes `text` for the
+// tab (its document on a host that saves for apps), and the write itself,
+// after the window's questions; the host's write for a page, and its count
+// of the tab as unsaved (MCTabOwner).
+- (BOOL)hostWritesText:(NSString *)text ofTab:(MCTab *)t;
+- (BOOL)writeTextThroughHost:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive;
+- (void)tab:(MCTab *)t writtenByHost:(id)write;
+- (void)tab:(MCTab *)t dirtyFromHost:(BOOL)dirty;
 // Stage 6: the window on its host (SessionWindow.h), nil with the setting
 // off; what a window opening takes (before the session restores the rest,
 // then after it); Open Folder moving it; a window closing detaching; the

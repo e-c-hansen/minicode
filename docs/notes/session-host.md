@@ -69,12 +69,14 @@ before the setting changed keeps the way it was opened until it closes.
   the `ChangeTracker`. A host text of another length than the storage's
   (an edit of the host's waiting to go in) is sent whole. The watch is let
   go when the document leaves the view and at shutdown.
-- **Saving** tells the host (`MCSessionDoc saved`) when the text written is
-  the tab's; dirty, the disk, backups and auto-save stay the Mac's. The
-  host can write a file itself since stage 7's first write (below,
-  "Saving through the host"), for a browser's page on a headless host;
-  the Mac's tabs do not use it yet, and the host never saves a document
-  an app's window has open.
+- **Saving** is the host's write since stage 7's second write (below,
+  "The Mac's tabs save through the host"): on a host that saves for apps
+  the window asks its questions and `MCSessionDoc saveOnHostEncoding:bom:`
+  has the host write the file; the window follows the host's writes for a
+  page and its count of the tab as unsaved. On a host that does not (one
+  lost, or from before), the window writes the file and tells the host
+  (`MCSessionDoc saved`), as before. The disk checks, backups and
+  auto-save's timing stay the Mac's.
 
 ## Undo is the host's
 
@@ -207,7 +209,48 @@ top of a turn, never inside a text system callback.
 - **Dirty is a whole-text compare when the lengths match**, so the host
   compares for DocDirty only while some renderer hears it (`tellDirty`):
   an app typing over a selection in a 25 MB file would otherwise compare
-  25 MB a keystroke on the host's thread with nobody listening.
+  25 MB a keystroke on the host's thread with nobody listening. Since the
+  Mac's tabs save through the host its clients always hear (they need the
+  writes, DocDirty flag 2), so the host compares for every edit of a
+  document the Mac shows; the Mac's own `noteEdited` makes the same
+  compare on the main thread, so this is a second thread's copy of a cost
+  the editor already pays, not a new one on the keystroke's path.
+- **Never DocSaved after the host's own write.** An app's DocSaved resets
+  the host's stamp to none, so the host's next save would read the file
+  to compare it; the Mac's host path takes the stamp from DocSaveDone and
+  sends nothing more (`writeTextThroughHost:`). DocSaved stays for the
+  window's own write (a host that does not save for apps) and for the
+  times the window's saved text moves without a save (below).
+- **The host writes its own text, not the one handed to the writer.**
+  `writeText:toTab:interactive:` is given a text; through the host, the
+  tab's text must be that text first. A tab behind with a keep-sorted
+  sort (`saveTab:`) takes the sorted text as one edit (`setSourceText:`,
+  so the sort is a host step, not a `pendingSort` waiting for the tab to
+  show); the storage is never set behind the view's back, and a tab on
+  show always writes what it holds (`hostWritesText:ofTab:`).
+- **A wait dispatches others' edits into the mirror.** The save's
+  `settle()` can put a page's typing into the storage while it waits, so
+  the callers' old `sourceText = text` after a save would send that edit
+  back undone (`saveCurrentFile:`, `writeTabForAutoSave:` now set it only
+  when it is still the tab's text), and the text the file holds is the
+  tab's only when the host wrote the version the mirror is at
+  (`MCHostSave inStep`), else it is read from the file.
+- **The host's count of the tab is taken only when the mirror is the
+  host's** (nothing of the window's unconfirmed, none of the host's edits
+  deferred: `mirrorInStep`), at the top of the next turn, the latest of
+  those heard before it, and not when the tab's text changed meanwhile
+  (`textGeneration`): a reload's edit and then its DocSaved would
+  otherwise flash the dot. Never for an untitled buffer, a deleted file,
+  a held tab not shown yet, or a tab not read: their unsaved state is more
+  than their text against the file.
+- **Where the window's saved text is not the mirror, the host is told.** A
+  clean tab following the disk (`takeDiskRead:intoCleanTab:`) sends its
+  reload as an edit, which the host would count unsaved against the old
+  text: DocSaved follows it. Keep Mine on focus (`checkExternalChange`)
+  and a held tab's first read (`loadActiveTab`) count the buffer against
+  the file's text now: DocSaved flag 1 with that text (`savedAs:`), sent
+  only to a host whose Welcome has flag 2, since an older host would take
+  it for "the buffer was written".
 - **GtkStack moves the keyboard to a tab's first pane** when it shows
   another tab with the keyboard in the one going ("Terminal splits in the
   record"): `TerminalDock::activate` hands it to the tab's active pane.
@@ -2557,12 +2600,14 @@ host does not have.
   session's folder (`readRoot(window)`: a headless host's own): the
   file's folder by its real place, and the file's own real place when it
   is there, so a link out is refused (`outside`) and a link to nothing too
-  (`notfile`). And while an app's window has the document open (a seat of
-  a renderer whose Hello had flag 4, `shownByApp`), the guest's save is
-  refused (`app`, "x is open in a mutible window: save it there"): two
-  writers would each keep a stamp the other's write moves, and the app
-  has its own questions. A renderer that is neither guest nor reader (an
-  app, later) is not held to the folder. A reader's DocSave is refused
+  (`notfile`). And while an app's window that saves by itself has the
+  document open (a seat of a renderer whose Hello had flag 4 and not 16,
+  `shownByAppSavingItself`: GTK's; the Mac's save through the host since
+  stage 7's second write), the guest's save is refused (`app`, "x is open
+  in a mutible window: save it there"): two writers would each keep a
+  stamp the other's write moves, and the app has its own questions. A
+  renderer that is neither guest nor reader (an app) is not held to the
+  folder. A reader's DocSave is refused
   by `refusedFromViewer`, as every change is.
 - **After a save** the host's document takes the encoding written and the
   stamp (`markSaved`), so its next save needs no read; the backups' rule
@@ -2590,10 +2635,11 @@ host does not have.
   a toast; `changed` or `gone` asks with `confirm()` ("…\n\nSave
   anyway?") and saves again with overwrite; anything else is the toast of
   `why`.
-- **The Mac is unchanged**: its page still saves through the window
-  (`Options::save`, the disk questions on its screen), and its tabs still
-  write with `writeText:toTab:interactive:` and tell the host
-  `DocSaved`. GTK is unchanged too.
+- **The Mac** (since stage 7's second write, below): its page still
+  saves through the window (`Options::save`, the disk questions on its
+  screen), and its tabs' saves are now the host's writes. GTK is
+  unchanged: it writes its files itself and tells the host `DocSaved`,
+  so a page's save of a file a GTK window shows is still refused.
 
 #### Checks
 
@@ -2629,15 +2675,112 @@ and its save a note. Not run: the page's Save button, its dot and the
 page saving; `session_web` loads a headless page but does not save), so
 the look and the question need the owner's eyes.
 
+### The Mac's tabs save through the host (stage 7's second write)
+
+With editor.session-host on (or headless), a Mac tab's save is the host's
+write, so the host is the file's one writer and a page may save a file a
+Mac window shows. With the setting off nothing changes: no tab has a
+document, and `writeText:toTab:interactive:` writes as before.
+
+- **The protocol** (additive, SessionProtocol.h). The host's Welcome adds
+  flag 2 ("saves for apps", `Client::hostSavesForApps`); the Mac saves
+  through a host only with it. The app's Hello adds flag 16 (with 4,
+  `Client::setSavesThroughHost`): its windows save through the host. An
+  app's DocSave carries `json {encoding: encodingName}`, the encoding the
+  tab writes (`SaveAsk::keepEncoding`: kept whatever the file holds, and
+  with overwrite the file is not read at all, since the window asked its
+  questions). DocSaveDone's json adds `encodingName` and `stamp`
+  (`stampJson`: exact, the device and inode as decimal strings). After
+  any host write, every other renderer that hears DocDirty gets it with
+  flag 2, the version written and `{path, encodingName, stamp}`, whether
+  or not the state flipped (`tellWritten`; the asker gets only the flip,
+  having DocSaveDone); `Client::hearWrites` hears them. DocSaved gains
+  flag 1 with `text16`: the file holds that text, not the host's (Keep
+  Mine), `Document::markSavedAs`.
+- **The rule for a guest's save** is now "refused while an app that saves
+  by itself has it open" (`shownByAppSavingItself`: a seat of a renderer
+  with flag 4 and not 16, GTK's today); the Mac's windows no longer hold
+  a page off.
+- **The write** (`EditorController+Session.mm`, `writeTextThroughHost:`):
+  everything before it is the window's as it was: Save As's name,
+  `mayWriteTab:` (Keep Mine, Reload, Cancel; gone asks), Save All's
+  questions first, format and organize on save and the formatter's
+  consent, keep-sorted. Then an untitled buffer's path goes first
+  (`pathChanged`, put back if the write fails), and
+  `saveOnHostEncoding:bom:` closes the turn's step, sends DocSave
+  (overwrite, the tab's encoding) behind every edit, and waits for the
+  answer (`settle`, 10 s). Refused or unanswered: the alert "“x” could
+  not be saved." with the host's sentence (the status bar for
+  auto-save). Written: the tab takes the encoding written (a
+  Windows-1252 file holding what it cannot store is UTF-8 now, and the
+  host's note, the Mac's words, goes to the status bar), the stamp from
+  the answer, and `tab:tookSaveOf:stamp:dirty:` (shared with the window's
+  own write: savedText, gone, dirty, Keep Open for a preview tab, didSave,
+  the LaTeX previews, the title). A lost host, or one without flag 2: the
+  window's own write, as before.
+- **A page's save** (or any write the host makes for another renderer):
+  DocDirty flag 2 reaches `MCSessionDoc hostWrote:json:` (the clients'
+  `hearWrites`, routed by client and id through `DocRegistry`), which
+  takes the tab's text as the text written when the mirror is at the
+  version written, and hands `MCSessionWrite` to the window next turn
+  (`tab:writtenByHost:`): the file's stamp must still be the one written
+  (else it is a change outside, for the disk checks), the encoding taken,
+  the text written (or the file's, read, when the tab was not in step),
+  and `tab:tookSaveOf:` with the host's stamp, so the next Cmd+S does
+  not ask about a change made outside.
+- **Dirty from the host** (`tab:dirtyFromHost:`, from `hostDirty:`): when
+  the host's count flips while the mirror is the host's, the window's
+  dot is the host's, as the page's is. The traps above say when it is
+  not taken, and where the window tells the host its saved text.
+- **Hot exit, backups, auto-save.** Quitting writes backups, not files,
+  so it is unchanged (a headless host keeps the documents as Keep Unsaved
+  leaves them). A save leaves the tab clean, so `updateTitle`'s
+  `scheduleBackups` drops its backup as before, and the host's own
+  backups follow DocSave (`backupsChanged`). Auto-save writes through the
+  host with no question (`writeTabForAutoSave:` checks the disk by hand
+  first, as before), failures in the status bar; its timer may now wait
+  for the host's answer, a round trip in one process.
+
+#### Checks
+
+`host:save-for-apps` (an app with flag 16 and a guest over the
+encoding): the app's save of a UTF-16 file an agent rewrote as UTF-8,
+with overwrite and its encoding, written UTF-16 with its mark, the answer's
+`encodingName` and stamp the file's; the guest told of the write (flag
+2, the version, the path, the stamp), the app only of the flip; the
+guest's save while the app has the file open written in the encoding last
+written, and the app told with the version it is at; a save with nothing
+changed told to the others and not the asker; a GTK-like app (no flag 16)
+holding it refusing the guest again, until it detaches; Windows-1252 with
+an arrow written as UTF-8 with the Mac's note, unedited Windows-1252 kept
+so though the host never read it, a deleted file made again; DocSaved
+flag 1 counting the document unsaved against another text and clean
+against its own; the stamp's JSON exact through the wire (a device and
+inode past 2^53), a DocSave's encoding through the wire; a host with only
+flag 1 sent no encoding and no `savedAs`. `host:save` and the
+`sessionweb:*` groups unchanged. GUI: `host_reattach`'s stage 7 part on a
+headless host (its header): a page's guest over the socket saves a file
+the window shows with typing in it, the window's tab and title clean and
+in step with the file's stamp, the host counting it saved; the window
+types and saves with no question and the guest hears the host's write
+with the file's stamp; a UTF-16 file saved from the window byte for byte
+with its mark; an agent's write then Keep Mine written over by the host.
+CI's pass with the host (`MUTIBLE_SESSION_HOST=on`, loopback) runs
+`save`, `backups`, `format` and the editing suites with every save going
+through the host, which is what checks the encodings, links, hard links,
+changed and deleted files, and auto-save through it. Not run here (no
+GUI on this machine for the builder): every GUI check above; the dot's
+look and timing on screen need the owner's eyes.
+
 ### Still to do
 
-- **Stage 7, after saving** (in order of value): the Mac's tabs (then
-  GTK's) saving through the host when it is one that saves, so the host
-  is the one writer and the page may save what a window shows (the
-  window then follows the host's `DocSaveDone` and DocDirty, and its
-  disk questions become the host's refusals); Reload from Disk and a
+- **Stage 7, after the Mac's saves** (in order of value): GTK's tabs
+  saving through the host the same way (its Hello's flag 16, its writer
+  asking the host), so a page may save what a GTK window shows; Save As
+  through the host (the Mac's Save As writes its new path through the
+  host now, but the page cannot name a file); Reload from Disk and a
   clean document following the disk on the host (it watches nothing
-  yet); watching the folder, so the page's tree and a headless host's
+  yet; the Mac tells it with DocSaved after following); watching the folder, so the page's tree and a headless host's
   Source Control follow the disk (FSEvents on the Mac, inotify on Linux,
   in the host); Save As and a new file's name from the page; Quick Open's
   list and Find in Folder as host reads; the heavier reads and the write

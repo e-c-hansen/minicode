@@ -70,8 +70,13 @@
 // text unless the renderer says to overwrite), then count it saved with
 // the stamp it wrote, so its next save knows the file without reading it.
 // A guest's save (a browser's page) is held to the session's folder, and is
-// refused while an app's window has the document open: that app saves it,
-// by its own rules and questions, and tells the host (DocSaved), as before.
+// refused while an app's window that saves by itself has the document open
+// (GTK's): that app saves it, by its own rules and questions, and tells the
+// host (DocSaved), as before. An app that saves through the host (the
+// Mac's, Hello flag 16) sends DocSave with its tab's encoding after asking
+// its own questions, so the host is the file's one writer; when the host
+// writes for anyone, the other renderers hear it (DocDirty flag 2) and
+// take the stamp written, so a window follows a page's save.
 // Whoever makes a document's unsaved state flip (an edit, an undo, a save,
 // an app's DocSaved), renderers that said they hear it get DocDirty. The
 // write is synchronous on the host's thread, as the host's backups are.
@@ -208,6 +213,7 @@ private:
         bool guest = false;      // flag 2: a view that may edit, undo and type
         bool keepsBackups = false;   // flag 4: an app that backs up what it has open
         bool hearsDirty = false;     // flag 8: told DocDirty
+        bool savesThroughHost = false;   // flag 16 (with 4): an app whose saves are DocSave
         std::uint64_t idBase = 0;   // its Welcome's: the ids it makes are above it
     };
     // One applied edit, as every renderer may need it again: by whom, in
@@ -336,6 +342,10 @@ private:
     // the host keeps no backup of it).
     static bool unsaved(const Doc& d);
     bool shownByApp(const Doc& d) const;
+    // Whether an app's window that saves by itself (its Hello without flag
+    // 16: GTK's, an older Mac's) has it open: then a guest's save is
+    // refused, since that app writes the file with its own stamp.
+    bool shownByAppSavingItself(const Doc& d) const;
     // The path its backup names: its own, or a name for one with none.
     std::string keptPath(DocId id, Doc& d);
     std::vector<SavePlan::Tab> keptTabs();
@@ -370,6 +380,11 @@ private:
     // state changed since they were last told (compared only while one
     // hears: a same-length edit compares the whole text).
     void tellDirty(DocId id);
+    // After the host wrote the document for `by`: DocDirty flag 2 (with the
+    // version written and {path, encodingName, stamp}) to every other
+    // renderer that hears it, whether or not its state flipped, and the
+    // plain flip to `by` when it did.
+    void tellWritten(DocId id, Doc& d, ClientId by, const Json& written);
 
     void onHello(ClientId c, Message& m);
     // Whether `m` from `c` would change the session while `c` only reads,

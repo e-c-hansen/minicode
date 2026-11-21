@@ -52,6 +52,15 @@
 // a host started here as --idle-minutes (checks). A host started here gets
 // MUTIBLE_BACKUP_DIR (MCSessionHostEnvironment), and every client of the
 // app's says in its Hello that its windows keep backups (stage 6, step 3).
+//
+// Saving (stage 7, docs/notes/session-host.md, "The Mac's tabs save through
+// the host"): on a host that saves for apps (Client::hostSavesForApps) a
+// tab's save is the host's write (saveOnHostEncoding:bom:), after the
+// window has asked every question it asks, and every client of the app's
+// says so in its Hello (flag 16), so a page's save of a file a window shows
+// is the host's to make too. The window hears when the host wrote the file
+// for someone else (MCTabOwner's tab:writtenByHost:) and when the host's
+// count of the tab as unsaved flips (tab:dirtyFromHost:).
 #pragma once
 #import <Cocoa/Cocoa.h>
 
@@ -66,6 +75,7 @@
 #include <string>
 #include <vector>
 
+#include "FolderSearch.h"
 #include "Json.h"
 #include "SessionClient.h"
 
@@ -221,6 +231,32 @@ NSDictionary<NSString *, NSString *> *MCSessionHostEnvironment(void);
 // forgets the renderer (any thread).
 std::function<void()> MCSessionConnectViewer(Shared::Client &client);
 
+// A host's save of a tab's document, as the window takes it.
+struct MCHostSave {
+    bool answered = false;   // the host answered in time
+    bool ok = false;
+    std::string reason, why, note;   // SessionFiles.h's SaveDone
+    FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;
+    FolderSearch::FileStamp written;
+    bool created = false;
+    // The text written is the tab's text now: the host wrote the version
+    // the mirror is at, with nothing of anyone's since.
+    bool inStep = false;
+};
+
+// The host wrote a tab's file for another renderer (a page's save): what is
+// on disk now. `text` is the text written when the tab's text was the
+// host's at that version (nil when it was not: the window reads the file).
+@interface MCSessionWrite : NSObject
+@property(nonatomic, copy) NSString *text;
+@property(nonatomic, copy) NSString *path;
+@property(nonatomic, assign) BOOL knowsEncoding;
+@property(nonatomic, assign) FolderSearch::TextEncoding encoding;
+@property(nonatomic, assign) BOOL bom;
+@property(nonatomic, assign) FolderSearch::FileStamp stamp;
+@end
+
 // One tab's document on the host (made by MCTab when its text is first set
 // with the setting on, closed with the tab). Its link is its window's
 // (the tab's owner's sessionLinkForTab:), else the one for its path.
@@ -287,6 +323,20 @@ std::function<void()> MCSessionConnectViewer(Shared::Client &client);
 - (void)forgetHistory;
 // The tab's text was written to its file.
 - (void)saved;
+// The file holds `text`, not the tab's text (Keep Mine over a file changed
+// on disk, a held tab's file read): the host counts the tab unsaved against
+// it, as the window does. NO, telling nothing, when the host would not
+// take it (Client::savedAs).
+- (BOOL)savedAs:(NSString *)text;
+// Whether the host writes this document's file: open on a host that saves
+// for apps (its Welcome's flag 2), not lost.
+@property(nonatomic, readonly) BOOL hostSavesFile;
+// The host writes the document's text as the tab has it (the turn's step
+// closed and every edit sent first) to its file, in `encoding` with `bom`,
+// over whatever is on disk: the window asked its questions about the disk
+// first. Waits for the answer (in one process a round trip through the
+// host's thread; a headless host's over its socket), at most 10 s.
+- (MCHostSave)saveOnHostEncoding:(FolderSearch::TextEncoding)encoding bom:(BOOL)bom;
 
 // ---- undo
 - (BOOL)canUndo:(BOOL)redo name:(NSString **)name;

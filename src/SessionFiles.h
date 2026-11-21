@@ -87,6 +87,11 @@ struct SaveAsk {
     FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
     bool bom = false;
     bool overwrite = false;     // write even when it changed on disk, or went
+    // `encoding` and `bom` are the renderer's own (an app's tab, which read
+    // the file and knows how it writes it): kept whatever the file holds on
+    // disk now, never the guess from reading it. With `overwrite` too (an
+    // app asks its own questions about the disk first) the file is not read.
+    bool keepEncoding = false;
 };
 struct SaveDone {
     bool ok = false;
@@ -114,7 +119,14 @@ struct SaveDone {
 // that a Windows-1252 file whose text now holds a character Windows-1252
 // lacks is written as UTF-8, with `note` saying so, as the Mac's save does.
 SaveDone saveDocument(const SaveAsk& ask);
-// DocSaveDone's json: {path, ok, reason, why, note, encoding (its label)}.
+// DocSaveDone's json: {path, ok, reason, why, note, encoding (its label),
+// and once written encodingName (FolderSearch::encodingName) and stamp
+// (stampJson), created}.
 Json saveDoneJson(const std::string& path, const SaveDone& done);
+// A file's stamp as JSON, exactly ({exists, regular, sec, nsec, dev, ino,
+// size}; the device and inode as decimal strings, which a double would
+// round), and back (a stamp that does not exist for anything else).
+Json stampJson(const FolderSearch::FileStamp& s);
+FolderSearch::FileStamp stampFromJson(const Json& j);
 
 }  // namespace Shared

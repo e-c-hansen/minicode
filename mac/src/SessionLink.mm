@@ -28,6 +28,7 @@
 
 #include "ControlPaths.h"
 #include "Ot.h"
+#include "SessionFiles.h"
 #include "SessionHost.h"
 #include "SessionProtocol.h"
 #include "SessionServer.h"
@@ -35,6 +36,37 @@
 static os_log_t SessionLog(void) {
     static os_log_t log = os_log_create("ai.ible.mutible", "session");
     return log;
+}
+
+@interface MCSessionDoc ()
+- (void)hostDirty:(BOOL)dirty;
+- (void)hostWrote:(uint64_t)version json:(const Json &)json;
+@end
+
+// ---------------------------------------------------------------- documents by id
+
+// Each open document by its client and id, for the host's notices that name
+// a document (DocDirty), which the client hands over by id. Main thread
+// only: the clients dispatch there.
+static NSMapTable<NSString *, MCSessionDoc *> *DocRegistry(void) {
+    static NSMapTable *table;
+    if (!table) table = [NSMapTable strongToWeakObjectsMapTable];
+    return table;
+}
+
+static NSString *DocKey(const Shared::Client *c, Shared::DocId doc) {
+    return [NSString stringWithFormat:@"%p/%llu", (const void *)c, (unsigned long long)doc];
+}
+
+// What every client of the app's says and hears (stage 7): its tabs save
+// through a host that saves for apps (Hello flag 16), and the host's
+// notices of a document's unsaved state and of its writes go to the tab.
+static void HearHostSaves(Shared::Client *c) {
+    c->setSavesThroughHost(true);
+    c->hearDirty([c](Shared::DocId doc, bool dirty) { [[DocRegistry() objectForKey:DocKey(c, doc)] hostDirty:dirty]; });
+    c->hearWrites([c](Shared::DocId doc, std::uint64_t v, const Json &json) {
+        [[DocRegistry() objectForKey:DocKey(c, doc)] hostWrote:v json:json];
+    });
 }
 
 // ---------------------------------------------------------------- the host
@@ -72,6 +104,7 @@ void Start() {
     // host keeps no backup of a document while one has it open (Hello flag
     // 4). A browser's view (MCSessionConnectViewer) says nothing of the kind.
     gClient->setKeepsBackups(true);
+    HearHostSaves(gClient);
     // The host's messages arrive on its thread; the main queue dispatches
     // them, once per batch, at the top of a run-loop turn (never inside a
     // text system callback; a wait that dispatches there defers the edits,
@@ -465,6 +498,7 @@ bool Link::startSocket(std::string *why) {
     kind_ = Kind::Socket;
     owned_ = std::make_unique<Shared::Client>(Model::Unit::Utf16, "mac");
     owned_->setKeepsBackups(true);   // as the process's client: the windows keep their own
+    HearHostSaves(owned_.get());
     client_ = owned_.get();
     // The host's messages arrive on the link's reader thread; the main queue
     // dispatches them, once per batch. The block holds the link weakly, so
@@ -585,6 +619,9 @@ void endDetached() {
 
 }  // namespace MCSession
 
+@implementation MCSessionWrite
+@end
+
 @implementation MCSessionLinkRef {
     std::shared_ptr<MCSession::Link> _link;
 }
@@ -684,6 +721,10 @@ struct DocListener : Shared::Client::Listener {
     Shared::Selection _deferredSelect;
     BOOL _deferredHasSelect;
     __weak CodeTextView *_view;   // the view the step's edits were made in
+    // The host's latest count of it as unsaved, waiting for the next turn
+    // (hostDirty:), with the tab's text generation it was heard at.
+    BOOL _dirtyQueued, _hostDirty;
+    uint64_t _dirtyGeneration;
 }
 
 // The path the host has the tab's document by: none for an untitled buffer
@@ -715,8 +756,19 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
         _hostPath = HostPathOf(tab);
         [self client].open(_docId, _hostPath, Utf8(text), _listener.get());
         _open = YES;
+        [self enrol];
     }
     return self;
+}
+
+// Known by its client and id to the host's notices (DocRegistry).
+- (void)enrol {
+    [DocRegistry() setObject:self forKey:DocKey(&[self client], _docId)];
+}
+
+- (void)unenrol {
+    NSString *key = DocKey(&[self client], _docId);
+    if ([DocRegistry() objectForKey:key] == self) [DocRegistry() removeObjectForKey:key];
 }
 
 - (instancetype)initWithTab:(MCTab *)tab held:(Shared::DocId)docId link:(MCSessionLinkRef *)link {
@@ -734,6 +786,7 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
         _captured = [NSMutableString string];
         [self client].open(_docId, _hostPath, "", _listener.get());
         _open = YES;
+        [self enrol];
         const BOOL answered = [self client].settle(5000);
         _capturing = NO;
         _heldText = answered ? [_captured copy] : nil;
@@ -750,6 +803,7 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
 
 - (void)close {
     if (!_open) return;
+    [self unenrol];
     _open = NO;
     _stepOpen = NO;
     if (_link && !_link->lost() && [self client].isOpen(_docId)) [self client].close(_docId);
@@ -758,6 +812,7 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
 - (void)detach {
     if (!_open) return;
     [self closeStep];   // what this turn recorded goes first
+    [self unenrol];
     _open = NO;
     _stepOpen = NO;
     if (!_link->lost() && [self client].isOpen(_docId)) [self client].detach(_docId);
@@ -774,6 +829,7 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
     if (!link || link.link == _link) return;
     // Nothing reaches a lost host; the client's entry goes.
     if ([self client].isOpen(_docId)) [self client].close(_docId);
+    [self unenrol];
     _stepOpen = NO;
     _explicit = _sealed = NO;
     _deferred.clear();
@@ -785,6 +841,7 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
     _hostPath = HostPathOf(_tab);
     [self client].open(_docId, _hostPath, Utf8(now), _listener.get());
     _open = YES;
+    [self enrol];
     [self hostSaved:saved];
 }
 
@@ -900,6 +957,105 @@ static MCSessionLinkRef *LinkForTab(MCTab *tab) {
         [self closeStep];
         [self client].saved(_docId);
     }
+}
+
+- (BOOL)savedAs:(NSString *)text {
+    if (!self.open || !text) return NO;
+    [self closeStep];
+    return [self client].savedAs(_docId, U16(text));
+}
+
+// ---- saving through the host (stage 7)
+
+- (BOOL)hostSavesFile {
+    return self.open && [self client].hostSavesForApps();
+}
+
+- (MCHostSave)saveOnHostEncoding:(FolderSearch::TextEncoding)encoding bom:(BOOL)bom {
+    MCHostSave out;
+    if (!self.hostSavesFile) return out;
+    Shared::Client &c = [self client];
+    // What this turn recorded goes first: the save follows every edit sent.
+    [self closeStep];
+    const std::uint64_t req = c.requestSave(_docId, 0, true, FolderSearch::encodingName(encoding, bom));
+    if (!req) return out;
+    Shared::Client::SaveAnswer a;
+    // The answer comes after every edit the host had before it, each of
+    // which settle() puts in the mirror (or defers, as any wait does).
+    if (!c.settle(10000) || !c.saveAnswer(req, &a)) {
+        os_log_error(SessionLog(), "the session's host did not answer a save of %{public}@",
+                     _tab.currentPath ?: @"a file");
+        return out;
+    }
+    out.answered = true;
+    out.ok = a.ok;
+    out.reason = a.json["reason"].asString();
+    out.why = a.json["why"].asString();
+    out.note = a.json["note"].asString();
+    out.created = a.json["created"].asBool();
+    bool b = false;
+    FolderSearch::TextEncoding e = encoding;
+    if (FolderSearch::parseEncodingName(a.json["encodingName"].asString(), &e, &b)) {
+        out.encoding = e;
+        out.bom = b;
+    } else {   // a host without the name: as asked
+        out.encoding = encoding;
+        out.bom = bom;
+    }
+    out.written = Shared::stampFromJson(a.json["stamp"]);
+    out.inStep = a.ok && c.version(_docId) == a.version && [self mirrorInStep];
+    return out;
+}
+
+// Whether the tab's text is the host's at the version last heard: nothing
+// of this window's waits for the host, and nothing of the host's waits for
+// the storage.
+- (BOOL)mirrorInStep {
+    return self.open && [self client].unconfirmed() == 0 && _deferred.empty();
+}
+
+- (void)hostDirty:(BOOL)dirty {
+    MCTab *tab = _tab;
+    if (!tab || ![self mirrorInStep]) return;
+    // Taken at the top of a turn, not inside the dispatch (which a wait can
+    // run anywhere), and only if the tab's text has not changed since; the
+    // latest of several heard before then (a reload's edit, then its save).
+    _hostDirty = dirty;
+    _dirtyGeneration = tab.textGeneration;
+    if (_dirtyQueued) return;
+    _dirtyQueued = YES;
+    __weak MCSessionDoc *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        MCSessionDoc *d = weakSelf;
+        if (!d) return;
+        d->_dirtyQueued = NO;
+        MCTab *t = d->_tab;
+        if (!t || !d.open || t.textGeneration != d->_dirtyGeneration) return;
+        id owner = t.owner;
+        if ([owner respondsToSelector:@selector(tab:dirtyFromHost:)]) [owner tab:t dirtyFromHost:d->_hostDirty];
+    });
+}
+
+- (void)hostWrote:(uint64_t)version json:(const Json &)json {
+    MCTab *tab = _tab;
+    if (!tab || !self.open) return;
+    MCSessionWrite *w = [MCSessionWrite new];
+    // The text written, when the tab's is the host's at that version.
+    if ([self mirrorInStep] && [self client].version(_docId) == version) w.text = [tab.currentText copy] ?: @"";
+    const std::string path = json["path"].asString();
+    w.path = path.empty() ? nil : @(path.c_str());
+    FolderSearch::TextEncoding e = FolderSearch::TextEncoding::Utf8;
+    bool b = false;
+    w.knowsEncoding = FolderSearch::parseEncodingName(json["encodingName"].asString(), &e, &b);
+    w.encoding = e;
+    w.bom = b;
+    w.stamp = Shared::stampFromJson(json["stamp"]);
+    __weak MCTab *weakTab = tab;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        MCTab *t = weakTab;
+        id owner = t.owner;
+        if (t && [owner respondsToSelector:@selector(tab:writtenByHost:)]) [owner tab:t writtenByHost:w];
+    });
 }
 
 // ---- recording

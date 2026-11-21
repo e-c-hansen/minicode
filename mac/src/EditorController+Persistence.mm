@@ -1076,7 +1076,8 @@ static NSString *MCTabEncodingName(MCTab *t) {
     NSString *text = shown && self.textView.editable && !t.showingMessage
                          ? [self.textView.string copy] : (t.sourceText ?: @"");
     if (![self writeText:text toTab:t interactive:NO]) return NO;
-    t.sourceText = text;
+    // Not over an edit the session's host put in while it wrote.
+    if ([text isEqualToString:t.currentText ?: @""]) t.sourceText = text;
     return YES;
 }
 
@@ -1170,6 +1171,9 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
     t.dirty = NO;
     t.pendingSort = nil;
     [self recordStamp:d.stamp ofTab:t];
+    // The session's host counts it saved too: the reload went to it as an
+    // edit, which it would count unsaved against the file's old text.
+    if ([fresh isEqualToString:t.currentText ?: @""]) [self sessionTab:t savedAs:nil];
     [self updateTitle];
 }
 
@@ -1268,6 +1272,7 @@ static const unsigned long long kFollowLiveBytes = 8ull * 1024 * 1024;
             self.savedText = fresh.text;
             t.bom = fresh.bom;
             t.encoding = fresh.encoding;
+            [self sessionTab:t savedAs:fresh.text];   // the host's count follows
         }
         [self recordStamp:fresh.stamp ?: disk ofTab:t];
         [self noteEdited];

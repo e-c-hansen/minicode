@@ -32,6 +32,18 @@
 //     untitled buffer as the unsaved tab of Untitled-1, a file not on disk;
 //     its own backups are written as it opens and the host's go. Cmd+S
 //     writes Untitled-1, and only then does the host have its path.
+//   - Stage 7, saving through the host, on that headless host: a page's
+//     guest (a script over the socket, as `attach --web --edit`'s server
+//     is) saves a file the window shows with typing unsaved in it: the host
+//     writes it (the rule that refused a page while an app's window had the
+//     file is gone for the Mac's, which saves through the host), and the
+//     window's tab is clean, its title too, and in step with the file's
+//     stamp. The window types and saves: no question, the file written, and
+//     the guest hears that the host wrote it (DocDirty flag 2, its stamp
+//     the file's). A UTF-16 file saved from the window stays UTF-16 with
+//     its mark. An agent's write, then the window's save: Keep Mine asked,
+//     and the host writes over it. The window's dot and the host's count
+//     agree throughout.
 //   - Terminal splits in the record (the record's "termLayout",
 //     TermDockRecord.h), with the process's host: two dock tabs, the first
 //     split right and then down in the new column, both bars dragged (the
@@ -67,6 +79,8 @@
 #include <vector>
 
 #include "Backups.h"
+#include "FolderSearch.h"
+#include "SessionFiles.h"
 #include "SessionServer.h"
 #include "TermDockRecord.h"
 
@@ -82,6 +96,13 @@ NSString *gHostEnv;   // MUTIBLE_HOST as the suite found it
 // untitled buffer's name, and what the host holds of them.
 NSString *gDirC, *gFileC, *gFileD, *gUntitled, *gBackupEnv;
 uint64_t gDocC, gDocD, gUntitledId, gOtherId;
+// Stage 7: a page's guest on the headless host, and what it heard.
+NSString *gFileE, *gFileF;
+uint64_t gDocE;
+std::unique_ptr<Shared::HostLink> gGuestLink;
+std::unique_ptr<Shared::Client> gGuest;
+std::vector<std::pair<uint64_t, Json>> gGuestWrites;   // DocDirty flag 2: doc, {path, stamp, ...}
+size_t gWritesBefore;
 pid_t gHost3;
 std::string gSocketC;
 
@@ -174,6 +195,16 @@ BOOL BackupOf(NSString *path, pid_t pid, NSString **text = nil) {
 struct Quiet : Shared::Client::Listener {
     void hostEdited(Shared::DocId, const Ot::Ops &, int, const Shared::Selection *) override {}
 };
+// The host's count of a document as unsaved, by its state (the guest's).
+bool HostDirty(Shared::Client &c, uint64_t doc) {
+    const Json st = c.sessionState();
+    for (const Json &d : st["documents"].elements())
+        if ((uint64_t)d["doc"].asInt() == doc) return d["dirty"].asBool();
+    return false;
+}
+
+NSData *Bytes(NSString *path) { return [NSData dataWithContentsOfFile:path] ?: [NSData data]; }
+
 uint64_t LeaveOnHost(const std::string &socket, const std::string &path, const std::string &text) {
     std::string error;
     std::unique_ptr<Shared::HostLink> link = Shared::HostLink::open(socket, &error);
@@ -817,6 +848,111 @@ MC_GUI_SUITE(host_reattach) {
         GCHECK([u containsString:@"saved)"] && ![u containsString:@"unsaved)"]);
         if (!u) MCGuiNote(@"the dump: %@", out);
     });
+
+    // ---------------------------------------------------- stage 7: saving through the host
+    MCGuiStep(@"a file typed into in the window; a page's guest connects over the host's socket", ^{
+        gFileE = [gDirC stringByAppendingPathComponent:@"e.txt"];
+        MCGuiWriteFile(gFileE, @"epsilon\n");
+        GCHECK([gC showFile:gFileE]);
+        TypeAtEnd(gC, @"typed-e\n");
+        MCTab *e = TabFor(gC, gFileE);
+        GCHECK(e.dirty && e.session.hostSavesFile);
+        gDocE = e.session.docId;
+        std::shared_ptr<MCSession::Link> l = LinkOf(gC);
+        GCHECK(l && l->client().settle());
+        std::string error;
+        gGuestLink = Shared::HostLink::open(gSocketC, &error);
+        GCHECK(gGuestLink != nullptr);
+        if (!gGuestLink) return;
+        gGuest = std::make_unique<Shared::Client>(Model::Unit::Utf16, "page");
+        gGuest->setGuest(true);
+        gGuest->hearWrites([](Shared::DocId doc, std::uint64_t, const Json &j) { gGuestWrites.push_back({doc, j}); });
+        gGuestLink->connect(*gGuest);
+        GCHECK(gGuest->settle() && gGuest->hostSaves());
+        static Quiet quiet;
+        gGuest->view(gDocE, &quiet);
+        GCHECK(gGuest->settle());
+        GCHECK(HostDirty(*gGuest, gDocE));   // the window's dot and the host's count agree
+    });
+    MCGuiStep(@"the page saves it: the host writes, though the window has the file open", ^{
+        if (!gGuest) return;
+        const std::uint64_t req = gGuest->requestSave(gDocE, 0, false);
+        GCHECK(req != 0 && gGuest->settle());
+        Shared::Client::SaveAnswer a;
+        GCHECK(gGuest->saveAnswer(req, &a) && a.ok);
+        if (!a.ok) MCGuiNote(@"the page's save: %s", a.json.dump().c_str());
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:gFileE encoding:NSUTF8StringEncoding error:nil],
+                      @"epsilon\ntyped-e\n");
+    });
+    MCGuiWait(@"the window's tab follows: clean, its title too", 10, ^BOOL {
+        MCTab *e = TabFor(gC, gFileE);
+        return e && !e.dirty && !gC.window.documentEdited && [e.savedText isEqualToString:@"epsilon\ntyped-e\n"];
+    });
+    MCGuiStep(@"in step with the file as the host wrote it; the host counts it saved", ^{
+        MCTab *e = TabFor(gC, gFileE);
+        GCHECK(![gC tab:e changedOnDisk:MCStampOfFile(gFileE)]);
+        if (gGuest) GCHECK(!HostDirty(*gGuest, gDocE));
+    });
+    MCGuiStep(@"the window types and saves: no question, and the host wrote it", ^{
+        TypeAtEnd(gC, @"more\n");
+        MCTab *e = TabFor(gC, gFileE);
+        GCHECK(e.dirty);
+        gWritesBefore = gGuestWrites.size();
+        const NSUInteger alerts = MCGuiAlertsShown().count;
+        [gC saveCurrentFile:nil];
+        GCHECK(MCGuiAlertsShown().count == alerts);
+        GCHECK(!e.dirty);
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:gFileE encoding:NSUTF8StringEncoding error:nil],
+                      @"epsilon\ntyped-e\nmore\n");
+    });
+    MCGuiWait(@"the page hears the host's write, with the file's stamp", 10, ^BOOL {
+        if (!gGuest) return YES;
+        gGuest->dispatch();
+        return gGuestWrites.size() > gWritesBefore;
+    });
+    MCGuiStep(@"its stamp is the file's; the host counts it saved", ^{
+        if (!gGuest || gGuestWrites.size() <= gWritesBefore) return;
+        const auto &w = gGuestWrites.back();
+        GCHECK(w.first == gDocE);
+        GCHECK(Shared::stampFromJson(w.second["stamp"]) == FolderSearch::stampOf(gFileE.fileSystemRepresentation));
+        GCHECK(!HostDirty(*gGuest, gDocE));
+    });
+    MCGuiStep(@"a UTF-16 file saved from the window stays UTF-16 with its mark", ^{
+        gFileF = [gDirC stringByAppendingPathComponent:@"f16.txt"];
+        const unsigned char le[] = {0xFF, 0xFE, 'f', 0, '\n', 0};
+        [[NSData dataWithBytes:le length:sizeof le] writeToFile:gFileF atomically:YES];
+        GCHECK([gC showFile:gFileF]);
+        TypeAtEnd(gC, @"g\n");
+        [gC saveCurrentFile:nil];
+        const unsigned char want[] = {0xFF, 0xFE, 'f', 0, '\n', 0, 'g', 0, '\n', 0};
+        GCHECK([Bytes(gFileF) isEqualToData:[NSData dataWithBytes:want length:sizeof want]]);
+        MCTab *f = TabFor(gC, gFileF);
+        GCHECK(f && !f.dirty && f.encoding == MCTextEncodingUtf16LE && f.bom);
+    });
+    MCGuiStep(@"an agent's write, then the window's save: Keep Mine, and the host writes over it", ^{
+        GCHECK([gC showFile:gFileE]);
+        MCTab *e = TabFor(gC, gFileE);
+        // Another size than the window's save left: changed, whatever the clock.
+        GCHECK([@"an agent's edit\n" writeToFile:gFileE atomically:NO encoding:NSUTF8StringEncoding error:nil]);
+        TypeAtEnd(gC, @"mine\n");
+        MCGuiAnswerAlerts(@[ @(NSAlertFirstButtonReturn) ]);   // Keep Mine
+        const NSUInteger alerts = MCGuiAlertsShown().count;
+        [gC saveCurrentFile:nil];
+        GCHECK(MCGuiAlertsShown().count == alerts + 1);
+        GCHECK_EQ_STR([NSString stringWithContentsOfFile:gFileE encoding:NSUTF8StringEncoding error:nil],
+                      @"epsilon\ntyped-e\nmore\nmine\n");
+        GCHECK(!e.dirty);
+        if (gGuest) GCHECK(!HostDirty(*gGuest, gDocE));
+    });
+    MCGuiStep(@"the page's guest goes", ^{
+        if (gGuestLink) gGuestLink->close();
+        gGuestLink.reset();
+        gGuest.reset();
+        // The window's tabs of the files saved here are clean: only the
+        // question's two unsaved files remain.
+        for (NSString *path in @[ gFileE, gFileF ]) GCHECK(!TabFor(gC, path).dirty);
+    });
+
     MCGuiStep(@"the window closes: Don't Save", ^{
         MCGuiAnswerAlerts(@[ @(NSAlertThirdButtonReturn) ]);
         [gC.window performClose:nil];

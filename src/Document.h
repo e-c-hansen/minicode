@@ -71,6 +71,10 @@ public:
     const std::u16string& savedText() const { return saved_; }
     // The text as it is now was written, and the file's stamp as written.
     void markSaved(const FolderSearch::FileStamp& written);
+    // The file holds `saved`, not the text as it is now (an app kept its
+    // buffer over a file changed on disk, and counts it unsaved against the
+    // new file); the stamp is not known.
+    void markSavedAs(std::u16string saved);
 
     // The bytes a save writes: the text in its encoding, with its mark.
     // False, with *why, when the text holds a lone surrogate, or a

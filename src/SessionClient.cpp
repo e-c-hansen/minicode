@@ -20,6 +20,7 @@ void Client::connect(Send send) {
     else if (guest_) h.flag = 2;
     else if (keepsBackups_) h.flag = 4;
     if (hearsDirty_) h.flag |= 8;
+    if (keepsBackups_ && !readOnly_ && !guest_ && savesThroughHost_) h.flag |= 16;
     send_(std::move(h));
 }
 
@@ -293,13 +294,29 @@ void Client::saved(DocId id) {
     pump();
 }
 
-std::uint64_t Client::requestSave(DocId id, std::uint64_t window, bool overwrite) {
+bool Client::savedAs(DocId id, std::u16string text) {
+    if (!doc(id) || !hostSavesForApps()) return false;
+    Message m;
+    m.kind = Kind::DocSaved;
+    m.doc = id;
+    m.flag = 1;
+    m.text16 = std::move(text);
+    queue(std::move(m));
+    pump();
+    return true;
+}
+
+std::uint64_t Client::requestSave(DocId id, std::uint64_t window, bool overwrite, const std::string& encoding) {
     if (!doc(id) || !(hostFlags_ & 1)) return 0;
     Message m;
     m.kind = Kind::DocSave;
     m.doc = id;
     m.window = window;
     m.flag = overwrite ? 1 : 0;
+    if (!encoding.empty() && hostSavesForApps()) {
+        m.json = Json::object();
+        m.json.set("encoding", Json(encoding));
+    }
     m.req = ++nextReq_;
     const std::uint64_t req = m.req;
     // Behind this renderer's edits, so what is written holds them.
@@ -390,6 +407,7 @@ void Client::process(Message&& m) {
         if (!abandoned_.erase(m.req)) replies_[m.req] = std::move(m);
         break;
     case Kind::DocDirty:
+        if ((m.flag & 2) && writtenListener_) writtenListener_(m.doc, m.v, m.json);
         if (dirtyListener_) dirtyListener_(m.doc, (m.flag & 1) != 0);
         break;
     case Kind::DocText:

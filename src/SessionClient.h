@@ -101,12 +101,30 @@ public:
     // renderer's thread, inside dispatch(). Before connect().
     void hearDirty(std::function<void(DocId doc, bool dirty)> f) {
         dirtyListener_ = std::move(f);
-        hearsDirty_ = (bool)dirtyListener_;
+        hearsDirty_ = dirtyListener_ || writtenListener_;
     }
+    // Told when the host wrote a document's file for another renderer (a
+    // page's save, another app's): DocDirty flag 2, with the host version
+    // written and {path, encodingName, stamp} (SessionFiles.h's stampJson).
+    // Hears DocDirty too (Hello flag 8). Called inside dispatch(), before
+    // the dirty listener. Before connect().
+    void hearWrites(std::function<void(DocId doc, std::uint64_t version, const Json& json)> f) {
+        writtenListener_ = std::move(f);
+        hearsDirty_ = dirtyListener_ || writtenListener_;
+    }
+    // An app that saves its documents through the host (requestSave, not a
+    // write of its own and saved()), said in its Hello (flag 16, with
+    // setKeepsBackups): a guest's save of a document its window shows is
+    // then the host's to make, as the app's are. Before connect().
+    void setSavesThroughHost(bool on) { savesThroughHost_ = on; }
     // Whether the host saves documents itself (its Welcome said so; a host
     // from before saving does not, and would drop a DocSave). Known once
     // the Welcome is taken (settle after connect()).
     bool hostSaves() const { return (hostFlags_ & 1) != 0; }
+    // Whether it saves for an app too (Welcome flag 2): keeps the encoding
+    // the app's DocSave names, answers with the stamp written, and tells the
+    // other renderers it wrote (hearWrites).
+    bool hostSavesForApps() const { return (hostFlags_ & 3) == 3; }
     Model::Unit unit() const { return unit_; }
 
     // ---- ids: what this renderer opens on the host (documents, terminals,
@@ -198,6 +216,12 @@ public:
     void noteSelection(DocId doc, const Selection& now);
     // The text as the mirror has it now was written to its file.
     void saved(DocId doc);
+    // The file holds `text`, which is not the mirror's (a Keep Mine kept the
+    // buffer over a file changed on disk): the host counts the document
+    // unsaved against it, as the window does (DocSaved flag 1). False,
+    // sending nothing, to a host that would take it for saved() (no
+    // hostSavesForApps).
+    bool savedAs(DocId doc, std::u16string text);
     // The host writes the document to its file itself (stage 7,
     // SessionFiles.h's saveDocument), after every edit this renderer sent
     // before: `window` names whose folder holds a guest's save (0 for a
@@ -205,11 +229,17 @@ public:
     // disk or went (a person's answer to the first refusal). 0, sending
     // nothing, when the document is not open here or the host does not
     // save (hostSaves). The answer as saveAnswer(req) once dispatched.
-    std::uint64_t requestSave(DocId doc, std::uint64_t window, bool overwrite);
+    // `encoding`, from an app (hostSavesForApps), is the encoding its tab
+    // writes (FolderSearch::encodingName), kept whatever the file holds now;
+    // "" lets the host choose by the file.
+    std::uint64_t requestSave(DocId doc, std::uint64_t window, bool overwrite,
+                              const std::string& encoding = std::string());
     struct SaveAnswer {
         bool ok = false;
         std::uint64_t version = 0;   // the host version written
-        Json json;                   // saveDoneJson's {path, ok, reason, why, note, encoding}
+        // saveDoneJson's {path, ok, reason, why, note, encoding, encodingName,
+        // stamp, created}
+        Json json;
     };
     bool saveAnswer(std::uint64_t req, SaveAnswer* out);
 
@@ -331,7 +361,9 @@ private:
     Model::Unit unit_;
     std::string name_;
     bool readOnly_ = false, guest_ = false, keepsBackups_ = false, hearsDirty_ = false;
+    bool savesThroughHost_ = false;
     std::function<void(DocId, bool)> dirtyListener_;
+    std::function<void(DocId, std::uint64_t, const Json&)> writtenListener_;
     int hostFlags_ = 0;   // the Welcome's
     Send send_;
     ClientId id_ = 0;
