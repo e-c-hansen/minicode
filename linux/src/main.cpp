@@ -3103,7 +3103,7 @@ static ChangeReviewPage* reviewPageOf(App* app) {
     for (Document* d : app->editor->documents())
         if (d->editorPage())
             if (auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get()))
-                if (!r->isWorktree()) return r;
+                if (!r->isWorktree() && !r->isCommit()) return r;
     return nullptr;
 }
 
@@ -3140,6 +3140,39 @@ static void showChangeReview(App* app, const std::string& rel, bool staged, bool
     app->editor->showPage(page, preview);
     if (!preview) app->editor->focusActiveDocument();
     page->revealFile(rel, staged);
+}
+
+// A commit's page (ChangeReviewPage.h, the Mac's showCommitReview:title:
+// preview:), one tab per commit by its key: shown when it is open (kept by
+// a kept open), else made, in the preview tab for a single click in the
+// graph (replacing what that tab held, a commit page before it too) and
+// kept for Return or a double-click.
+static void showCommitReview(App* app, const std::string& hash, const std::string& subject,
+                             bool preview) {
+    if (app->dead || !app->git || !Shared::Web::commitName(hash)) return;
+    auto page = std::make_shared<ChangeReviewPage>(app->git, app->rootDir, hash, subject);
+    page->onOpenFile = [app](const std::string& path, int line) {
+        openFileThen(app, path, EditorTabs::OpenFrom::Other, [app, path, line] {
+            if (app->editor->currentPath() != path || app->editor->isMedia()) return;
+            if (line > 0) app->editor->revealLineColumn(line, 0);
+        });
+    };
+    page->onShowComparison = [app](const CompareSpec& spec) {
+        if (!app->dead) app->editor->showComparison(spec);
+    };
+    page->hasUnsavedText = [app](const std::string& path) {
+        for (Document* d : app->editor->dirtyDocuments())
+            if (d->path() == path) return true;
+        return false;
+    };
+    page->syntaxColor = [](int style) { return g.settings->settings().syntax((TokenStyle)style); };
+    page->mergeColor = [](bool incoming) {
+        const Settings& st = g.settings->settings();
+        return incoming ? st.mergeIncomingColor() : st.mergeCurrentColor();
+    };
+    page->applySettings();
+    app->editor->showPage(page, preview);   // a commit already open shows its own tab
+    if (!preview) app->editor->focusActiveDocument();
 }
 
 // The ▶ beside each test (TestGutter.h), made with the window as the Mac's
@@ -3218,6 +3251,10 @@ static void makeGitPanel(App* app) {
     };
     app->git->onReview = [app](const std::string& rel, bool staged, bool preview) {
         showChangeReview(app, rel, staged, preview);
+    };
+    app->git->onReviewCommit = [app](const std::string& hash, const std::string& subject,
+                                     bool preview) {
+        showCommitReview(app, hash, subject, preview);
     };
     app->git->installActions(G_ACTION_MAP(app->window));
     app->editor->onDiffViewMade = [app](GitDiffView* view) {
@@ -4893,9 +4930,9 @@ static void reportSessionWindow(App* app) {
     terminalOpen = app->termDock && app->layout->terminalShown();
 #endif
     Json panes = Shared::Web::panesReportJson(browserOpen, terminalOpen, app->layout->state().browserFraction);
-    // The worktree pages in either group's strip (GTK has no commit page
-    // yet, and the uncommitted changes' page has its own under Source
-    // Control), and whether each is the tab on show in its group.
+    // The commit and worktree pages in either group's strip (the uncommitted
+    // changes' page has its own under Source Control), and whether each is
+    // the tab on show in its group.
     Json reviews;
     {
         std::vector<Shared::Web::ReviewPage> pages;
@@ -4903,10 +4940,15 @@ static void reportSessionWindow(App* app) {
             Document* shown = app->editor->groupActive(g);
             for (Document* d : app->editor->groupDocuments(g)) {
                 auto* r = d->editorPage() ? dynamic_cast<ChangeReviewPage*>(d->editorPage().get()) : nullptr;
-                if (!r || !r->isWorktree()) continue;
+                if (!r || !(r->isWorktree() || r->isCommit())) continue;
                 Shared::Web::ReviewPage p;
-                p.kind = "worktree";
-                p.path = r->worktree();
+                if (r->isCommit()) {
+                    p.kind = "commit";
+                    p.hash = r->commit();
+                } else {
+                    p.kind = "worktree";
+                    p.path = r->worktree();
+                }
                 p.title = r->title();
                 p.onShow = d == shown;
                 pages.push_back(std::move(p));

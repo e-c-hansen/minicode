@@ -881,7 +881,7 @@ void GitPanel::clickedRow(int row, bool graph, int count, bool sameRow, GdkModif
     const bool preview = from == EditorTabs::OpenFrom::TreeClick;
     if (graph) {
         selectGraphRow(row, true);
-        if (count == 1) showCommit(row);   // one diff tab: a double-click adds nothing
+        showCommit(row, preview);   // the second click of a pair keeps the page
         return;
     }
     reviewRow(row, preview);
@@ -1369,13 +1369,18 @@ void GitPanel::showDiffOf(const GitUi::Row& r, const std::string& top) {
 // A commit's header, message and diff (against its first parent for a
 // merge, which is what the merge brought in; git's default for a merge is a
 // combined diff that is usually empty).
-void GitPanel::showCommit(int row) {
+void GitPanel::showCommit(int row, bool preview) {
     if (!graph_ || row < 0 || topLevel_.empty()) return;
     if (row >= (int)graph_->commits.size()) {
         if (graph_->hasMore) showMore();
         return;
     }
     const Git::Commit& c = graph_->commits[row];
+    if (onReviewCommit) {
+        ++diffGeneration_;
+        onReviewCommit(c.hash, c.subject, preview);
+        return;
+    }
     const std::string title = GitUi::commitTitle(c);
     const std::vector<std::string> args = GitUi::showArgs(c.hash);
     const unsigned gen = ++diffGeneration_;
