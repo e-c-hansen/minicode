@@ -17,6 +17,16 @@
 //     file, close closes a clean tab and refuses a dirty one;
 //   - Show's Read-Only answer (the opener captures the address): save, open,
 //     close and edit do nothing to the window;
+//   - a LaTeX document's typeset on the page, with a stand-in tectonic
+//     (MUTIBLE_TECTONIC, a script that copies a committed PDF and counts its
+//     runs): one no tab holds reaches "ready" with its page count and sizes,
+//     its PDF is served and a page is drawn as a PNG of the width asked; one
+//     the engine fails on reaches the page as "failed" with its text; with
+//     a tab's own preview made the page's typeset is that one (no second
+//     run) and the tab's later typesets reach the page; five untabbed
+//     documents keep four typesets, the oldest dropped;
+//   - the page's Source Control (`git` watch) reads again after a commit
+//     made in the folder;
 //   - closing the window stops its server (the port refuses).
 // Nothing opens a real browser (SessionBrowser::opener), and the state file,
 // the files and the windows are put back.
@@ -25,6 +35,7 @@
 #include "Document.h"
 #include "Editor.h"
 #include "IdeLink.h"
+#include "Latex.h"
 #include "Json.h"
 #include "SessionBrowser.h"
 
@@ -33,6 +44,8 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <glib/gstdio.h>
 
 #include <cstring>
 #include <set>
@@ -296,6 +309,61 @@ bool pageDone(Conn& c) {
     c.pump();
     return c.closed && c.status() != 0;
 }
+
+#ifdef MUTIBLE_ENABLE_PDF
+// A GET of `target` (an address of the page, with its query) with a jar's cookies.
+void getTarget(Conn& c, const Link& l, const Jar& jar, const std::string& target) {
+    c = Conn();
+    GCHECK(c.dial(l.port));
+    c.sendRaw("GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(l.port) + "\r\n" + kAgent +
+              "Cookie: " + jar.header() + "\r\nConnection: close\r\n\r\n");
+}
+void askLatex(Conn& c, const std::string& path) {
+    Json o = Json::object();
+    o.set("t", Json("latex"));
+    o.set("path", Json(path));
+    c.sendJson(o);
+}
+// The first `latex` message for `path` in state `state` from message `from` on.
+bool latexFrom(Conn& c, size_t from, const std::string& path, const char* state, Json* out) {
+    c.pump();
+    for (size_t i = from; i < c.msgs.size(); i++) {
+        const Json& m = c.msgs[i];
+        if (m["t"].asString() == "latex" && m["path"].asString() == path && m["state"].asString() == state) {
+            *out = m;
+            return true;
+        }
+    }
+    return false;
+}
+// The last such message.
+bool latexLast(Conn& c, const std::string& path, Json* out) {
+    c.pump();
+    bool found = false;
+    for (const Json& m : c.msgs)
+        if (m["t"].asString() == "latex" && m["path"].asString() == path) { *out = m; found = true; }
+    return found;
+}
+std::string pngWidth(const std::string& body) {
+    if (body.size() < 24 || body.compare(1, 3, "PNG") != 0 || body.compare(12, 4, "IHDR") != 0) return "not a PNG";
+    const unsigned char* p = (const unsigned char*)body.data() + 16;
+    return std::to_string((unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]);
+}
+int tectonicRuns() { return (int)MCGuiReadFile(MCGuiScratch() + "/sb_tectonic/runs.txt").size(); }   // a byte a run
+void runGit(const std::vector<std::string>& args) {
+    std::string cmd = "git -C '" + MCGuiProject() + "' -c user.name=t -c user.email=t@example.com -c init.defaultBranch=main";
+    for (const std::string& a : args) cmd += " '" + a + "'";
+    cmd += " >/dev/null 2>&1";
+    GCHECK(system(cmd.c_str()) == 0);
+}
+
+std::string gTectonicWas;
+bool gHadTectonic = false;
+size_t gMark = 0;
+int gRuns = 0;
+int64_t gVersion = 0;
+Json gLatex;
+#endif
 
 }  // namespace
 
@@ -611,6 +679,186 @@ MC_GUI_SUITE(session_browser) {
         GCHECK(!fileHas(gFileC, "NO "));
         gWs3.shut();
     });
+
+#ifdef MUTIBLE_ENABLE_PDF
+    // ---- 5. LaTeX typesets and the page's Source Control (a stand-in tectonic)
+    MCGuiStep("a stand-in tectonic; the page's socket", [] {
+        const std::string dir = MCGuiScratch() + "/sb_tectonic";
+        MCGuiWriteFile(dir + "/main.pdf",
+                       MCGuiReadFile(MCGuiBuildDir() + "/../../tests/latex/fixtures/main.pdf"));
+        GCHECK(MCGuiReadFile(dir + "/main.pdf").compare(0, 5, "%PDF-") == 0);
+        MCGuiWriteFile(dir + "/tectonic",
+            "#!/bin/sh\n"
+            "while [ $# -gt 1 ]; do case \"$1\" in --outdir) out=$2; shift;; esac; shift; done\n"
+            "file=$1; case $file in /*) ;; *) file=$PWD/$file;; esac\n"
+            "stem=$(basename \"$file\" .tex)\n"
+            "d=$(dirname \"$0\")\n"
+            "printf x >> \"$d/runs.txt\"; sleep 0.3\n"
+            "if grep -q FAILMARK \"$file\"; then echo \"stand-in tectonic: the marker is here\" >&2; exit 1; fi\n"
+            "cp \"$d/main.pdf\" \"$out/$stem.pdf\"\n");
+        g_chmod((dir + "/tectonic").c_str(), 0755);
+        const char* was = g_getenv("MUTIBLE_TECTONIC");
+        gHadTectonic = was != nullptr;
+        gTectonicWas = was ? was : "";
+        EnvLock::envSet("MUTIBLE_TECTONIC", (dir + "/tectonic").c_str(), TRUE);
+        for (const char* n : {"sbt_nt1", "sbt_nt2", "sbt_nt3", "sbt_nt4", "sbt_tab"})
+            MCGuiWriteFile(MCGuiProjectFile(std::string(n) + ".tex"),
+                           std::string("\\documentclass{article}\\begin{document}") + n + "\\end{document}\n");
+        MCGuiWriteFile(MCGuiProjectFile("sbt_bad.tex"), "\\documentclass{article} FAILMARK\n");
+        openSocket(gWs3, gL1, gJar3);
+    });
+    MCGuiWait("hello", 10, [] { return gWs3.take("hello", &gMsg); });
+    MCGuiStep("ask for a typeset of a file no tab holds", [] {
+        GCHECK(SB()->hiddenTypesets() == 0);
+        gMark = gWs3.msgs.size();
+        askLatex(gWs3, "sbt_nt1.tex");
+    });
+    MCGuiWait("it is ready", 20, [] { return latexFrom(gWs3, gMark, "sbt_nt1.tex", "ready", &gLatex); });
+    MCGuiStep("two pages of 612 by 792, the PDF fetched", [] {
+        GCHECK_EQ_STR(std::to_string(gLatex["pages"].size()), "2");
+        if (gLatex["pages"].size() == 2) {
+            GCHECK_EQ_STR(std::to_string((int)gLatex["pages"][0][0].asNumber()), "612");
+            GCHECK_EQ_STR(std::to_string((int)gLatex["pages"][1][1].asNumber()), "792");
+        }
+        GCHECK(gLatex["url"].asString().find("/typeset/sbt_nt1.tex") != std::string::npos);
+        GCHECK_EQ_STR(std::to_string(tectonicRuns()), "1");
+        getTarget(gHttp, gL1, gJar3, gLatex["url"].asString());
+    });
+    MCGuiWait("the PDF", 10, [] { return pageDone(gHttp); });
+    MCGuiStep("200 and %PDF-; a page's picture 400 wide", [] {
+        GCHECK_EQ_STR(std::to_string(gHttp.status()), "200");
+        GCHECK_EQ_STR(gHttp.body.substr(0, 5), "%PDF-");
+        gHttp.shut();
+        getTarget(gHttp, gL1, gJar3, gLatex["pageUrl"].asString() + "&p=2&w=400");
+    });
+    MCGuiWait("the picture", 10, [] { return pageDone(gHttp); });
+    MCGuiStep("200, a PNG 400 wide", [] {
+        GCHECK_EQ_STR(std::to_string(gHttp.status()), "200");
+        GCHECK_EQ_STR(pngWidth(gHttp.body), "400");
+        gHttp.shut();
+    });
+
+    MCGuiStep("a typeset the engine fails on", [] {
+        gMark = gWs3.msgs.size();
+        askLatex(gWs3, "sbt_bad.tex");
+    });
+    MCGuiWait("it fails", 20, [] { return latexFrom(gWs3, gMark, "sbt_bad.tex", "failed", &gLatex); });
+    MCGuiStep("with the engine's text", [] {
+        GCHECK(gLatex["text"].asString().find("stand-in tectonic: the marker is here") != std::string::npos);
+        GCHECK(gLatex["url"].asString().empty());
+    });
+
+    // At most four untabbed typesets, the oldest dropped: nt1, bad, nt2, nt3
+    // are kept; nt4 drops nt1.
+    // One at a time: a page follows the one document it last asked for.
+    MCGuiStep("two more documents", [] {
+        GCHECK_EQ_STR(std::to_string(SB()->hiddenTypesets()), "2");
+        gMark = gWs3.msgs.size();
+        askLatex(gWs3, "sbt_nt2.tex");
+    });
+    MCGuiWait("nt2 ready", 8, [] { return latexFrom(gWs3, gMark, "sbt_nt2.tex", "ready", &gLatex); });
+    MCGuiStep("and nt3", [] {
+        gMark = gWs3.msgs.size();
+        askLatex(gWs3, "sbt_nt3.tex");
+    });
+    MCGuiWait("nt3 ready", 8, [] { return latexFrom(gWs3, gMark, "sbt_nt3.tex", "ready", &gLatex); });
+    MCGuiStep("four kept; the fifth", [] {
+        GCHECK_EQ_STR(std::to_string(SB()->hiddenTypesets()), "4");
+        gMark = gWs3.msgs.size();
+        gRuns = tectonicRuns();
+        askLatex(gWs3, "sbt_nt4.tex");
+    });
+    MCGuiWait("it is ready", 20, [] { return latexFrom(gWs3, gMark, "sbt_nt4.tex", "ready", &gLatex); });
+    MCGuiStep("still four; a kept one asked again", [] {
+        GCHECK_EQ_STR(std::to_string(SB()->hiddenTypesets()), "4");
+        GCHECK_EQ_STR(std::to_string(tectonicRuns()), std::to_string(gRuns + 1));
+        gMark = gWs3.msgs.size();
+        askLatex(gWs3, "sbt_nt2.tex");
+    });
+    MCGuiWait("answered from the kept typeset", 10, [] { return latexFrom(gWs3, gMark, "sbt_nt2.tex", "ready", &gLatex); });
+    MCGuiStep("no new run; the oldest (nt1) is gone, so it runs again", [] {
+        GCHECK_EQ_STR(std::to_string(tectonicRuns()), std::to_string(gRuns + 1));
+        gMark = gWs3.msgs.size();
+        askLatex(gWs3, "sbt_nt1.tex");
+    });
+    MCGuiWait("nt1 ready again", 20, [] {
+        return latexFrom(gWs3, gMark, "sbt_nt1.tex", "ready", &gLatex) && tectonicRuns() == gRuns + 2;
+    });
+    MCGuiStep("still four", [] { GCHECK_EQ_STR(std::to_string(SB()->hiddenTypesets()), "4"); });
+
+    // A tab's own preview: the page's typeset is the tab's.
+    MCGuiStep("open sbt_tab.tex in a tab (its preview typesets)", [] {
+        Ed()->closeAllTabs();
+        Ed()->openFile(MCGuiProjectFile("sbt_tab.tex"), EditorTabs::OpenFrom::Other);   // window 0's, not the newest window's
+    });
+    MCGuiWait("the tab shows", 10, [] { return Ed()->currentPath() == MCGuiProjectFile("sbt_tab.tex"); });
+    MCGuiWait("the tab's preview made its PDF", 20, [] {
+        return Ed()->latex() && Ed()->latex()->typesetPdf() && !Ed()->latex()->typesetting();
+    });
+    MCGuiStep("the page asks for it", [] {
+        gRuns = tectonicRuns();
+        gMark = gWs3.msgs.size();
+        askLatex(gWs3, "sbt_tab.tex");
+    });
+    MCGuiWait("it is ready", 20, [] { return latexFrom(gWs3, gMark, "sbt_tab.tex", "ready", &gLatex); });
+    MCGuiStep("from the tab's typeset: no second run, no hidden one made", [] {
+        GCHECK_EQ_STR(std::to_string(tectonicRuns()), std::to_string(gRuns));
+        GCHECK_EQ_STR(std::to_string(SB()->hiddenTypesets()), "4");
+        GCHECK_EQ_STR(std::to_string(gLatex["pages"].size()), "2");
+        gVersion = gLatex["version"].asInt();
+        gMark = gWs3.msgs.size();
+        GCHECK(Ed()->latex() != nullptr);
+        if (Ed()->latex()) Ed()->latex()->compileNow();   // a later typeset of the tab
+    });
+    MCGuiWait("the later typeset reaches the page", 20, [] {
+        Json j;
+        return latexFrom(gWs3, gMark, "sbt_tab.tex", "working", &j) && latexLast(gWs3, "sbt_tab.tex", &gLatex) &&
+               gLatex["state"].asString() == "ready" && gLatex["version"].asInt() > gVersion;
+    });
+    MCGuiStep("one more run, the tab's", [] {
+        GCHECK_EQ_STR(std::to_string(tectonicRuns()), std::to_string(gRuns + 1));
+        Ed()->closeAllTabs();
+    });
+
+    // ---- 6. Source Control after a commit
+    MCGuiStep("a repository with a file not yet committed; the page watches git", [] {
+        MCGuiWriteFile(MCGuiProjectFile("sbt_base.txt"), "base\n");
+        runGit({"init", "-q"});
+        runGit({"add", "sbt_base.txt"});
+        runGit({"commit", "-q", "-m", "base"});
+        MCGuiWriteFile(MCGuiProjectFile("sbt_new.txt"), "new\n");
+        Json o = Json::object();
+        o.set("t", Json("git"));
+        o.set("watch", Json(true));
+        gWs3.sendJson(o);
+    });
+    MCGuiWait("a git message that lists it", 20, [] {
+        return gWs3.latest("git", &gMsg) && gMsg.dump().find("sbt_new.txt") != std::string::npos;
+    });
+    MCGuiStep("commit it in the folder", [] {
+        gVersion = gMsg["version"].asInt();
+        runGit({"add", "sbt_new.txt"});
+        runGit({"commit", "-q", "-m", "new"});
+    });
+    MCGuiWait("a newer git message without it", 20, [] {
+        if (!gWs3.latest("git", &gMsg)) return false;
+        return gMsg["version"].asInt() > gVersion && gMsg.dump().find("sbt_new.txt") == std::string::npos;
+    });
+    MCGuiStep("the stand-in, the repository and the files go back", [] {
+        Json o = Json::object();
+        o.set("t", Json("git"));
+        o.set("watch", Json(false));
+        gWs3.sendJson(o);
+        gWs3.shut();
+        if (gHadTectonic) EnvLock::envSet("MUTIBLE_TECTONIC", gTectonicWas.c_str(), TRUE);
+        else EnvLock::envUnset("MUTIBLE_TECTONIC");
+        const std::string cmd = "rm -rf '" + MCGuiProject() + "/.git' '" + MCGuiScratch() + "/sb_tectonic'";
+        GCHECK(system(cmd.c_str()) == 0);
+        for (const char* n : {"sbt_nt1.tex", "sbt_nt2.tex", "sbt_nt3.tex", "sbt_nt4.tex", "sbt_tab.tex", "sbt_bad.tex",
+                              "sbt_base.txt", "sbt_new.txt"})
+            unlink(MCGuiProjectFile(n).c_str());
+    });
+#endif
 
     // ---- 4 (end). Remembered Browsers…, Forget All
     MCGuiStep("Remembered Browsers… lists it", [] { activate(W(0).window, "rememberedsessionbrowsers"); });
