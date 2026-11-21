@@ -213,6 +213,12 @@ public:
     // to `listener` as one insertion, then every edit. The host neither makes
     // the document nor keeps it open for this; hostGone when it goes.
     void view(DocId doc, Listener* listener);
+    // A guest's New File (a browser's page): an untitled document, empty,
+    // made on the host with this id (newId), this renderer's seat a view as
+    // its others; the host lets it go when nobody has it and nobody typed
+    // into it. False, sending nothing, to a host that does not write for
+    // pages (hostWritesForPages).
+    bool openUntitled(DocId doc, Listener* listener);
     bool isOpen(DocId doc) const { return docs_.count(doc) > 0; }
     // The host version this renderer has applied.
     std::uint64_t version(DocId doc) const;
@@ -279,6 +285,19 @@ public:
         Json json;
     };
     bool saveAnswer(std::uint64_t req, SaveAnswer* out);
+    // Whether the host writes for a browser's page (its Welcome's flag 16):
+    // Save As (requestSaveAs), a new untitled document (openUntitled), and
+    // Replace in Folder (requestReplace).
+    bool hostWritesForPages() const { return (hostFlags_ & 16) != 0; }
+    // A guest's Save As: the document written to `rel` ('/'-separated from
+    // `window`'s folder, which it must be held inside: SessionFiles.h's
+    // newFilePath, with dotfiles only when `hidden`), after every edit this
+    // renderer sent, and its path that file's for every view. A file there
+    // already is written over only with `overwrite` (the first answer is
+    // "exists"). Answered as a save (saveAnswer). 0, sending nothing, when
+    // the document is not open here or the host does not write for pages.
+    std::uint64_t requestSaveAs(DocId doc, std::uint64_t window, const std::string& rel, bool hidden,
+                                bool overwrite);
     // The host puts the file's text in place of the document's (Reload from
     // Disk: one step, undoable, counted saved), after every edit this
     // renderer sent before. 0, sending nothing, when the document is not
@@ -388,6 +407,11 @@ public:
     // Sends one: its answers come as takeStream(req) once dispatched. 0,
     // sending nothing, to a host that does not take them.
     std::uint64_t requestStream(std::uint64_t window, Json request);
+    // Replace in Folder from a page (SessionSearch.h's "replace"), sent
+    // behind every edit this renderer sent, its one answer a stream's
+    // (takeStream). 0, sending nothing, to a host that does not write for
+    // pages.
+    std::uint64_t requestReplace(std::uint64_t window, Json request);
     // The answers that came since the last take, appended to *out: true
     // once the last ("done") is among them, and the request is forgotten.
     bool takeStream(std::uint64_t req, std::vector<Json>* out);

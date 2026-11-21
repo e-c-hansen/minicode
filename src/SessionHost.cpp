@@ -38,7 +38,21 @@ void Host::disconnect(ClientId c) {
         d.seats.erase(c);
         trimLog(d);
     }
+    dropEmptyPageDocs();
     backupsChanged();   // an app gone: what it had unsaved is the host's to keep
+}
+
+void Host::dropEmptyPageDocs() {
+    for (auto it = docs_.begin(); it != docs_.end();) {
+        const Doc& d = it->second;
+        if (d.fromPage && d.seats.empty() && d.path.empty() && d.doc.text().size() == 0) {
+            discardBackup(it->second);
+            it = docs_.erase(it);
+            watchGen_++;
+        } else {
+            ++it;
+        }
+    }
 }
 
 void Host::send(ClientId to, Message&& m) {
@@ -258,6 +272,7 @@ void Host::onRead(ClientId c, Message& m) {
         send(c, std::move(r));
         return;
     }
+    if (op == "replace") return onReplace(c, m);
     if (isWorkerRead(op)) {
         // Quick Open's list and Find in Folder, on a worker: answered as it
         // goes (takeReads). A cancel stops the renderer's own read and has
@@ -334,6 +349,9 @@ void Host::onHello(ClientId c, Message& m) {
     w.flag = 1 | 2;   // this host saves (DocSave), for apps too
     if (watching_) w.flag |= 4;   // and watches the disk (FsRead's "watch", DocReload)
     w.flag |= 8;   // and lists files and searches on workers (FsRead's "files", "search", "cancel")
+    // And writes for a page: Save As (DocSave's "saveAs"), a new untitled
+    // document (DocOpen flag 2), Replace in Folder (FsRead's "replace").
+    w.flag |= 16;
     send(c, std::move(w));
 }
 
@@ -343,6 +361,22 @@ void Host::onOpen(ClientId c, Message& m) {
     r.kind = Kind::DocOpened;
     r.doc = m.doc;
     auto who = renderers_.find(c);
+    if (who != renderers_.end() && who->second.guest && (m.flag & 2)) {
+        // A page's New File: an untitled document the host holds, with no
+        // path and no text, the page's seat a view as any of its seats.
+        // Let go again when nobody has it and it is still empty.
+        if (it != docs_.end()) {
+            error(c, m.doc, "doc.open of a new document whose id is taken");
+            return;
+        }
+        Doc& d = docs_[m.doc];
+        d.fromPage = true;
+        d.seats[c].viewer = true;
+        r.v = 0;
+        send(c, std::move(r));
+        tellUndoState(m.doc, d);
+        return;
+    }
     if (who != renderers_.end() && (who->second.readOnly || who->second.guest)) {
         // A view: of the document as it is, never a new one.
         if (it == docs_.end()) {
@@ -424,8 +458,10 @@ void Host::onClose(ClientId c, Message& m) {
     if (seat != d.seats.end()) d.seats.erase(seat);
     if (viewer) {
         // A view going changes nothing, even when nobody else has it open
-        // (a renderer that detached leaves its documents for the next).
+        // (a renderer that detached leaves its documents for the next),
+        // but a page's new document that nobody typed into.
         trimLog(d);
+        dropEmptyPageDocs();
         return;
     }
     bool onlyViews = true;
@@ -701,7 +737,30 @@ void Host::onSaved(ClientId, Message& m) {
     setDisk(m.doc, it->second, 0);
 }
 
-void Host::onSave(ClientId c, Message& m) {
+namespace {
+
+// The real place of `path`, symlinks followed; "" when there is none.
+std::string realOf(const std::string& path) {
+    char buf[PATH_MAX];
+    if (path.empty() || !::realpath(path.c_str(), buf)) return std::string();
+    return buf;
+}
+
+std::string nameIn(const std::string& path) { return path.substr(path.rfind('/') + 1); }
+
+}  // namespace
+
+DocId Host::docAtPath(const std::string& abs, DocId except) const {
+    const std::string real = realOf(abs);
+    for (const auto& [id, d] : docs_) {
+        if (id == except || d.path.empty()) continue;
+        if (d.path == abs) return id;
+        if (!real.empty() && realOf(d.path) == real) return id;
+    }
+    return 0;
+}
+
+void Host::onSaveAs(ClientId c, Message& m) {
     Message r;
     r.kind = Kind::DocSaveDone;
     r.doc = m.doc;
@@ -710,8 +769,96 @@ void Host::onSave(ClientId c, Message& m) {
     SaveDone done;
     std::string path;
     auto it = docs_.find(m.doc);
+    if (it == docs_.end()) {
+        done.reason = "notopen";
+        done.why = "That document is no longer open.";
+    } else {
+        Doc& d = it->second;
+        const std::string was = d.path.empty() ? std::string("This document") : nameIn(d.path);
+        const std::string root = readRoot(m.window);
+        const NewPath np = newFilePath(root, m.json["saveAs"].asString(), m.json["hidden"].asBool());
+        path = np.abs;
+        const std::string name = np.ok ? nameIn(np.abs) : std::string();
+        if (!np.ok) {
+            done.reason = np.reason;
+            done.why = np.why;
+        } else if (shownByApp(d)) {
+            // The app's window names its own files (and asks its own
+            // questions); the document stays where it is.
+            done.reason = "app";
+            done.why = was + " is open in a mutible window: use Save As there.";
+        } else if (docAtPath(np.abs, m.doc)) {
+            // Never two documents of one path.
+            done.reason = "open";
+            done.why = name + " is open in this session already: close it first, or save under another name.";
+        } else if (np.exists && !(m.flag & 1)) {
+            done.reason = "exists";
+            done.why = name + " already exists: saving would replace it.";
+        } else {
+            // Written in the document's own encoding (a new file has none of
+            // its own), whatever is there now: the person answered for it.
+            SaveAsk a;
+            a.path = np.abs;
+            a.root = root;
+            a.text = d.doc.text().str();
+            a.encoding = d.doc.encoding();
+            a.bom = d.doc.bom();
+            a.keepEncoding = true;
+            a.overwrite = true;
+            done = saveDocument(a);
+            if (done.ok) {
+                // Its file is the new one for every view; the old file is
+                // left as it was on disk.
+                d.path = np.abs;
+                d.realDir.clear();
+                watchGen_++;
+                d.doc.setEncoding(done.encoding, done.bom);
+                d.doc.markSaved(done.written);
+                d.doc.setGone(false);
+                d.diskSeen = done.written;
+                d.diskLooked = true;
+                setDisk(m.doc, d, 0);
+                r.outcome = Outcome::Done;
+                r.v = d.v;
+            }
+        }
+    }
+    r.json = saveDoneJson(path, done);
+    if (done.ok) {
+        Json written = Json::object();
+        written.set("path", Json(path));
+        written.set("encodingName", r.json["encodingName"]);
+        written.set("stamp", r.json["stamp"]);
+        tellWritten(m.doc, it->second, c, written);
+    }
+    send(c, std::move(r));
+}
+
+void Host::onSave(ClientId c, Message& m) {
     auto who = renderers_.find(c);
     const bool guest = who != renderers_.end() && who->second.guest;
+    // A page's Save As (a name for an untitled document, or a new file for
+    // one with a file); one to the file it has already is a save.
+    if (guest && m.json.isObject() && m.json["saveAs"].isString()) {
+        auto d = docs_.find(m.doc);
+        std::string abs, why;
+        const std::string root = readRoot(m.window);
+        bool same = d != docs_.end() && !d->second.path.empty() &&
+                    confinedPath(root, m.json["saveAs"].asString(), &abs, &why);
+        if (same && abs != d->second.path) {
+            const std::string real = realOf(abs);
+            same = !real.empty() && real == realOf(d->second.path);
+        }
+        if (!same) return onSaveAs(c, m);
+    }
+    Message r;
+    r.kind = Kind::DocSaveDone;
+    r.doc = m.doc;
+    r.req = m.req;
+    r.outcome = Outcome::Refused;
+    SaveDone done;
+    std::string path;
+    auto it = docs_.find(m.doc);
     if (it == docs_.end()) {
         done.reason = "notopen";
         done.why = "That document is no longer open.";
@@ -1390,11 +1537,17 @@ void Host::lookAtDisk(DocId id, Doc& d) {
 }
 
 void Host::takeDiskText(DocId id, Doc& d, const DiskText& t) {
+    hostStep(id, d, t.body, "Reload from Disk");
+    d.doc.setEncoding(t.encoding, t.bom);
+    d.doc.markSaved(t.stamp);
+    tellDirty(id);
+}
+
+void Host::hostStep(DocId id, Doc& d, const std::u16string& next, const char* name) {
     closeStep(d);
     // The one range in which the two differ, never splitting a surrogate
     // pair, so the step keeps everything around it as it was.
     const std::u16string now = d.doc.text().str();
-    const std::u16string& next = t.body;
     std::size_t p = 0;
     const std::size_t most = std::min(now.size(), next.size());
     while (p < most && now[p] == next[p]) p++;
@@ -1404,7 +1557,7 @@ void Host::takeDiskText(DocId id, Doc& d, const DiskText& t) {
     if (s > 0 && isLow(now[now.size() - s])) s--;
     const Ot::Op op{p, now.size() - p - s, next.substr(p, next.size() - p - s)};
     if (op.del || !op.ins.empty()) {
-        d.stepInfo = {"Reload from Disk", false};
+        d.stepInfo = {name, false};
         d.history.breakCoalescing();
         const Selection before{{p, p}};
         d.history.open(d.stepInfo, before);
@@ -1421,9 +1574,103 @@ void Host::takeDiskText(DocId id, Doc& d, const DiskText& t) {
         trimLog(d);
         tellUndoState(id, d);
     }
-    d.doc.setEncoding(t.encoding, t.bom);
-    d.doc.markSaved(t.stamp);
-    tellDirty(id);
+}
+
+void Host::onReplace(ClientId c, Message& m) {
+    Message r;
+    r.kind = Kind::FsData;
+    r.req = m.req;
+    r.window = m.window;
+    auto answer = [&](Json a) {
+        a.set("op", Json("replace"));
+        a.set("done", Json(true));
+        r.json = std::move(a);
+        send(c, std::move(r));
+    };
+    auto fail = [&](const std::string& why) {
+        Json e = Json::object();
+        e.set("error", Json(why));
+        answer(std::move(e));
+    };
+    // It writes files: never from a renderer that only reads.
+    auto who = renderers_.find(c);
+    if (who == renderers_.end() || who->second.readOnly) return fail("A page that only reads cannot replace.");
+    const std::string root = readRoot(m.window);
+    if (root.empty()) return fail("no folder to read in");
+    const Json& q = m.json;
+    const std::string query = q["query"].asString(), replacement = q["replacement"].asString();
+    const bool hidden = q["hidden"].asBool();
+    const FolderSearchOptions options = searchOptions(q);
+    if (!FolderSearch::isSearchable(query, options)) return fail("Nothing to replace: search for something first.");
+    if (readWorkers().running() >= kMaxReadJobs) return fail("too many searches at once on this host; try again in a moment");
+    // The documents the host holds are edited here, each one step; the
+    // other files go to a worker.
+    Json rest = Json::array(), skipped = Json::array();
+    std::int64_t edited = 0, editedMatches = 0;
+    std::size_t taken = 0;
+    for (const Json& f : q["files"].elements()) {
+        if (!f.isObject() || !f["path"].isString() || taken >= kMaxReplaceRows) continue;
+        std::vector<ReplaceRow> rows;
+        if (!replaceRowsFrom(f["rows"], kMaxReplaceRows - taken, &rows) || rows.empty()) continue;
+        taken += rows.size();
+        const std::string rel = f["path"].asString();
+        std::string abs, why;
+        const DocId id = (!hidden && replaceHidesPath(rel)) || !confinedPath(root, rel, &abs, &why)
+                             ? 0 : docAtPath(abs, 0);
+        if (!id) {   // the worker names it, or rewrites it
+            Json g = Json::object();
+            g.set("path", Json(rel));
+            g.set("rows", f["rows"]);
+            rest.push(std::move(g));
+            continue;
+        }
+        Doc& d = docs_[id];
+        const std::string name = nameIn(rel);
+        auto skip = [&](const char* reason, const std::string& says) {
+            Json s = Json::object();
+            s.set("path", Json(rel));
+            s.set("reason", Json(reason));
+            s.set("why", Json(name + says));
+            skipped.push(std::move(s));
+        };
+        // Unsaved changes are the person's, as the windows' Replace in
+        // Folder leaves them.
+        if (d.doc.dirty()) {
+            skip("unsaved", " has unsaved changes: it was left alone.");
+            continue;
+        }
+        std::string out;
+        std::size_t n = 0;
+        const ReplaceCheck rc =
+            replaceRows(Model::utf8FromUtf16(d.doc.text().str()), rows, query, replacement, options, &out, &n);
+        if (rc == ReplaceCheck::Nothing) continue;
+        if (rc == ReplaceCheck::Changed) {
+            skip("changed", " changed since the search: it was left alone.");
+            continue;
+        }
+        hostStep(id, d, Model::utf16FromUtf8(out), "Replace in Folder");
+        tellDirty(id);
+        edited++;
+        editedMatches += (std::int64_t)n;
+    }
+    Json job = q;
+    job.set("files", std::move(rest));
+    Json ed = Json::object();
+    ed.set("edited", Json(edited));
+    ed.set("editedMatches", Json(editedMatches));
+    ed.set("skipped", skipped);
+    job.set("edited", std::move(ed));
+    std::string why;
+    if (readWorkers().start(c, m.req, m.window, root, job, &why, readSeconds_)) return;
+    // No worker after all: what was done here is said, and why the rest was not.
+    Json a = Json::object();
+    a.set("error", Json(why));
+    a.set("replaced", Json(editedMatches));
+    a.set("files", Json((std::int64_t)0));
+    a.set("edited", Json(edited));
+    a.set("editedMatches", Json(editedMatches));
+    a.set("skipped", std::move(skipped));
+    answer(std::move(a));
 }
 
 void Host::onReload(ClientId c, Message& m) {

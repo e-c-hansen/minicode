@@ -112,6 +112,16 @@
 // readsFd() and calls takeReads(), which sends what the workers answered.
 // The Welcome says the host takes them (flag 8).
 //
+// A page's writes (stage 7, Welcome flag 16): a guest's New File is an
+// untitled document the host keeps (DocOpen flag 2, Doc::fromPage, dropped
+// while empty once nobody has it); its Save As names the document's file
+// anew inside the session's folder (onSaveAs, SessionFiles.h's
+// newFilePath, then saveDocument), refused while an app's window has it
+// open; its Replace in Folder (FsRead's "replace", onReplace) edits each
+// clean document the host holds as one step of the host's ("Replace in
+// Folder"), leaves one with unsaved changes alone, and hands the other
+// files to a worker (SessionSearch.h). A reader's is refused.
+//
 // Pure C++17 and POSIX: SessionHost's thread polls the ptys (poll(2)) and a
 // pipe that wakes it for messages; Host does the I/O only when the loop
 // calls it (readable, writable, tick).
@@ -343,6 +353,9 @@ private:
         // Its file's folder by its real place, for a path spelled otherwise
         // than the watched root (/tmp and /private/tmp); "" until needed.
         std::string realDir;
+        // Made by a page's New File (DocOpen flag 2): let go when no
+        // renderer has it and it is still empty and untitled.
+        bool fromPage = false;
     };
     // The folders a renderer's trees have open (FsRead's "watch"): in whose
     // folder, and the listings' dotfile rule.
@@ -363,6 +376,20 @@ private:
     // The file's text in place of the document's: one step of the host's
     // ("Reload from Disk"), every seat told, counted saved as read.
     void takeDiskText(DocId id, Doc& d, const DiskText& t);
+    // `next` in place of the document's text as one step of the host's
+    // named `name`: the one range in which the two differ, every seat told.
+    void hostStep(DocId id, Doc& d, const std::u16string& next, const char* name);
+    // Replace in Folder from a page (FsRead's "replace", SessionSearch.h):
+    // the documents the host holds edited here, the other files on a worker.
+    void onReplace(ClientId c, Message& m);
+    // A page's Save As (DocSave with "saveAs"): the document's file named
+    // anew, inside the session's folder, written, and its path changed.
+    void onSaveAs(ClientId c, Message& m);
+    // The document whose file is `abs` (by its spelling, or its real
+    // place), other than `except`; 0 for none.
+    DocId docAtPath(const std::string& abs, DocId except) const;
+    // A page's new documents nobody has and nobody typed into, let go.
+    void dropEmptyPageDocs();
     void setDisk(DocId id, Doc& d, int disk);
 
     struct Term {

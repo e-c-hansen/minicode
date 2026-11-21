@@ -50,7 +50,12 @@
 // commit and worktree pages go with its tabs (`reviews`), and the page shows
 // each read-only, read by the server with git from what it checked (a
 // commit's hex name, a worktree its repository lists), with a review's
-// pictures served from the read (R3's last slice).
+// pictures served from the read (R3's last slice). An editable page's New
+// File makes an untitled tab in the window (`newFile`), and its Save As
+// (a path the core held inside the folder) has the window move the tab to
+// that file and write it through the host (`saveAs`), the answer going back
+// to the page; Replace in Folder is the host's own (stage 7's page-side
+// writes).
 #pragma once
 #import <Cocoa/Cocoa.h>
 
@@ -75,6 +80,14 @@
 // close does; run on the main thread for an editable page's close button.
 // The core has refused a tab with unsaved changes; the window checks again.
 @property(nonatomic, copy) void (^close)(uint64_t docId);
+// An editable page's New File: the window makes an untitled tab and shows
+// it; run on the main thread.
+@property(nonatomic, copy) void (^newFile)(void);
+// An editable page's Save As: the window writes its document with this id
+// to `path` (held inside the folder by the core, a file there already
+// only after the page's person said to replace it), and the tab is that
+// file from then on; it calls `done` with how it went, on the main thread.
+@property(nonatomic, copy) void (^saveAs)(uint64_t docId, NSString *path, void (^done)(BOOL ok, NSString *why));
 // Opens an http or https address in the window's browser pane (a tab
 // already at it shown again, else a new one); run on the main thread for an
 // editable page's address field. The core refuses every other scheme first.

@@ -1136,8 +1136,15 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
 // language servers hear of the save. `interactive` says a failure in an
 // alert, else in the status bar (auto-save never asks anything).
 - (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive {
+    return [self writeText:text toTab:t interactive:interactive failure:NULL];
+}
+
+// With `failure`, why it failed goes there rather than to an alert or the
+// status bar (a browser's page says it on its own screen).
+- (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive failure:(NSString **)failure {
     if (!t || !text || ![self tabHasTextToWrite:t]) return NO;
-    if ([self hostWritesText:text ofTab:t]) return [self writeTextThroughHost:text toTab:t interactive:interactive];
+    if ([self hostWritesText:text ofTab:t])
+        return [self writeTextThroughHost:text toTab:t interactive:interactive failure:failure];
     NSString *name = t.currentPath.lastPathComponent;
     std::string bytes, error;
     NSString *unheld = nil;
@@ -1148,7 +1155,9 @@ static const NSUInteger kCatchUpFrom = 1 << 15;
     if (!encoded || !FolderSearch::writeFileAtomically(t.currentPath.fileSystemRepresentation,
                                                        bytes, &error, &written)) {
         NSString *why = [NSString stringWithUTF8String:error.c_str()] ?: @"";
-        if (interactive) {
+        if (failure) {
+            *failure = [NSString stringWithFormat:@"%@ could not be saved: %@.", name, why];
+        } else if (interactive) {
             NSAlert *a = [NSAlert new];
             a.messageText = [NSString stringWithFormat:@"“%@” could not be saved.", name];
             a.informativeText = [NSString stringWithFormat:@"%@: %@.", t.currentPath, why];

@@ -71,6 +71,30 @@ bool confinedPath(const std::string& root, const std::string& rel, std::string* 
 // symlink there, so a link swapped in after the check is refused.
 Json readWorkspace(const std::string& root, const Json& request, std::string* bytes = nullptr);
 
+// ---- naming a file from a browser's page (Save As, a new file's name)
+// The path a page names for a file it saves as (`rel`, '/'-separated from
+// the folder), held inside `root` by the rules a read is held by, and more:
+// the folder it goes in must be there already (a page makes no folders),
+// inside the folder by its real place, and a folder; no name may start
+// with '.' unless `hidden` (the page's tree shows dotfiles only then); and
+// what is at the path already must be a regular file, by its real place
+// inside the folder (a link out of it, a link to nothing, a folder are
+// refused). `exists` says there is one, which only a person's answer
+// writes over (SaveAsk::overwrite).
+struct NewPath {
+    bool ok = false;
+    std::string abs;          // root + "/" + rel, spelled under root
+    bool exists = false;      // a regular file is there already
+    // Why not: "name" (none, or not a path from the folder: an absolute
+    // path, "." or "..", an empty name, a NUL, a name too long), "dotfile",
+    // "nofolder" (the folder it goes in is not there, or not a folder),
+    // "outside" (a link out of the folder), "notfile" (a folder, a FIFO, a
+    // link to nothing).
+    std::string reason;
+    std::string why;          // a sentence for the person
+};
+NewPath newFilePath(const std::string& root, const std::string& rel, bool hidden);
+
 // ---- saving (the host's DocSave; SessionHost.h)
 struct SaveAsk {
     std::string path;           // the document's file, absolute ("" for none yet)

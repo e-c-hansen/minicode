@@ -996,6 +996,25 @@ DocView::DocView(DocId id, std::string path) : id_(id), path_(std::move(path)) {
     hl_->reset(src, nullptr);
 }
 
+bool DocView::setPath(const std::string& path) {
+    if (path == path_) return false;
+    path_ = path;
+    const std::string ext = extensionOfPath(path_);
+    if (ext != ext_) {
+        ext_ = ext;
+        markdown_ = false;
+        for (const char* e : kMarkdownExtensions)
+            if (ext_ == e) markdown_ = true;
+        hl_ = std::make_unique<IncrementalHighlighter<char16_t>>(ext_);
+        StringSource<char16_t> src(text_);
+        hl_->reset(src, nullptr);
+        htmlStale_ = markdown_;
+    }
+    changed_ = true;   // every line again, in the new colors
+    commit(Ot::Ops{}, 0);
+    return true;
+}
+
 bool DocView::large() const {
     return text_.size() > kMaxUnits || (hl_ && hl_->lineCount() > kMaxLines);
 }
@@ -1437,6 +1456,11 @@ struct Server::Session : Client::Listener, Client::TermListener {
     std::map<std::uint64_t, std::pair<int, DocId>> saveAsks;
     // Reloads asked of the host for pages (DocReload), the same way.
     std::map<std::uint64_t, std::pair<int, DocId>> reloadAsks;
+    // Save As asked of the host for pages (DocSave with "saveAs"), the
+    // same way; and Replace in Folder (FsRead's "replace"): the page and
+    // its number for it.
+    std::map<std::uint64_t, std::pair<int, DocId>> saveAsAsks;
+    std::map<std::uint64_t, std::pair<int, std::int64_t>> replaces;
     // The disk (a host that watches it): the folders every page's tree has
     // open, as the host was last told, and what the host said changed
     // (FsChanged's json), not yet handed to the pages.
@@ -1599,6 +1623,14 @@ std::string Server::helloText() const {
     // files in tabs of its own (readfile).
     hello.set("canOpen", Json(opt_.editable && (bool)opt_.open));
     hello.set("canClose", Json(opt_.editable && (bool)opt_.close));
+    // Stage 7's page-side writes: New File and Save As by the app that
+    // owns the window (its own tab), else by the host (a headless one,
+    // whose Welcome says it writes for pages); Replace in Folder by the
+    // host, which edits the documents it holds and rewrites the rest.
+    const bool hostWrites = session_ && session_->client->hostWritesForPages();
+    hello.set("canNew", Json(opt_.editable && ((bool)opt_.newFile || (!opt_.save && !opt_.window && hostWrites))));
+    hello.set("canSaveAs", Json(opt_.editable && ((bool)opt_.saveAs || (!opt_.save && hostWrites))));
+    hello.set("canReplace", Json(opt_.editable && hostWrites && session_->client->hostSearches()));
     return hello.dump();
 }
 
@@ -1888,6 +1920,9 @@ void Server::handleMessage(Conn& c, const std::string& text) {
     else if (t == "edit") onEdit(c, j);
     else if (t == "undo") onUndo(c, j);
     else if (t == "save") onSave(c, j);
+    else if (t == "saveas") onSaveAs(c, j);
+    else if (t == "newfile") onNewFile(c, j);
+    else if (t == "replace") onReplace(c, j);
     else if (t == "reload") onReload(c, j);
     else if (t == "tkey" || t == "ttext" || t == "tpaste") onTermInput(c, t, j);
     else if (t == "tsize") onTermSize(c, j);
@@ -2086,6 +2121,22 @@ void Server::onUndo(Conn& c, const Json& j) {
     session_->undoFor[id] = c.id;
 }
 
+namespace {
+
+// A Save As's answer for the page that asked.
+Json savedAsJson(DocId doc, bool ok, const std::string& path, const std::string& reason, const std::string& why) {
+    Json m = Json::object();
+    m.set("t", Json("savedas"));
+    m.set("doc", Json((int64_t)doc));
+    m.set("ok", Json(ok));
+    m.set("path", Json(path));
+    if (!reason.empty()) m.set("reason", Json(reason));
+    if (!why.empty()) m.set("why", Json(why));
+    return m;
+}
+
+}  // namespace
+
 void Server::takeOutcomes() {
     if (!session_) return;
     Session& s = *session_;
@@ -2120,6 +2171,22 @@ void Server::takeOutcomes() {
         for (auto& c : conns_)
             if (c->id == it->second.first && c->welcomed) sendJson(*c, m);
         it = s.saveAsks.erase(it);
+    }
+    // The host's Save As: the same, as `savedas`; written, the state is
+    // looked at so the page's tab has its new name at once.
+    for (auto it = s.saveAsAsks.begin(); it != s.saveAsAsks.end();) {
+        Client::SaveAnswer a;
+        if (!s.client->saveAnswer(it->first, &a)) {
+            ++it;
+            continue;
+        }
+        Json m = savedAsJson(it->second.second, a.ok, a.json["path"].asString(), a.json["reason"].asString(),
+                             a.json["why"].asString());
+        if (a.json.has("note")) m.set("note", a.json["note"]);
+        for (auto& c : conns_)
+            if (c->id == it->second.first && c->welcomed) sendJson(*c, m);
+        if (a.ok) look_ = true;
+        it = s.saveAsAsks.erase(it);
     }
     for (auto it = s.reloadAsks.begin(); it != s.reloadAsks.end();) {
         Client::SaveAnswer a;
@@ -2170,6 +2237,187 @@ void Server::onSave(Conn& c, const Json& j) {
     if (!req)
         return note(c, "This host does not save files: save from the mutible window that has this file open.");
     session_->saveAsks[req] = {c.id, id};
+}
+
+// Save As from a page that may edit (`saveas {doc, path, overwrite}`, the
+// path from the folder): the app's window when it names its own tabs'
+// files (Options::saveAs), else the host. A path the page may not name, or
+// a file there already, is answered before anything is written.
+void Server::onSaveAs(Conn& c, const Json& j) {
+    const DocId id = (DocId)std::max<int64_t>(0, j["doc"].asInt());
+    const std::string rel = j["path"].asString();
+    const bool overwrite = j["overwrite"].asBool();
+    auto refuse = [&](const std::string& reason, const std::string& why) {
+        sendJson(c, savedAsJson(id, false, rel, reason, why));
+    };
+    if (!opt_.editable) return note(c, "This page only reads: it cannot save.");
+    if (!session_ || !id || !session_->docs.count(id)) return refuse("notopen", "That document is not open.");
+    if (opt_.window && !session_->allowed.count(id)) return refuse("notopen", "That document is not this window's.");
+    if (rel.size() > 4096) return refuse("name", "That name is too long.");
+    if (opt_.saveAs) {
+        const NewPath np = newFilePath(opt_.folder, rel, opt_.showHidden);
+        if (!np.ok) return refuse(np.reason, np.why);
+        const std::string name = baseName(np.abs);
+        // Never two tabs of one file: another document of the session's
+        // with that path is closed first, in the window.
+        for (const Json& d : session_->state["documents"].elements()) {
+            const std::string p = d["path"].asString();
+            if ((DocId)d["doc"].asInt() == id || p.empty()) continue;
+            if (p == np.abs) return refuse("open", name + " is open in the mutible window: close it there first.");
+        }
+        if (np.exists && !overwrite) return refuse("exists", name + " already exists: saving would replace it.");
+        // The host has every edit the pages made first, and has passed it on.
+        session_->client->settle();
+        std::uint64_t ask;
+        {
+            std::lock_guard<std::mutex> lk(saveAsMu_);
+            ask = ++lastSaveAs_;
+            appSaveAs_[ask] = {c.id, id, np.abs};
+        }
+        opt_.saveAs(id, np.abs, ask);
+        return;
+    }
+    if (opt_.save) return note(c, "Save As is the mutible window's here: use it there.");
+    const std::uint64_t req = session_->client->requestSaveAs(id, opt_.window, rel, opt_.showHidden, overwrite);
+    if (!req) return refuse("host", "This host does not save files under new names: use Save As in a mutible window.");
+    session_->saveAsAsks[req] = {c.id, id};
+}
+
+void Server::savedAs(std::uint64_t ask, bool ok, const std::string& why) {
+    {
+        std::lock_guard<std::mutex> lk(saveAsMu_);
+        saveAsAnswers_.push_back({ask, ok, why});
+    }
+    look_ = true;
+    wake();
+}
+
+void Server::takeSaveAsAnswers() {
+    std::vector<SaveAsAnswer> answers;
+    std::map<std::uint64_t, AppSaveAs> asks;
+    {
+        std::lock_guard<std::mutex> lk(saveAsMu_);
+        if (saveAsAnswers_.empty()) return;
+        answers.swap(saveAsAnswers_);
+        for (const SaveAsAnswer& a : answers) {
+            auto it = appSaveAs_.find(a.ask);
+            if (it == appSaveAs_.end()) continue;
+            asks[a.ask] = it->second;
+            appSaveAs_.erase(it);
+        }
+    }
+    for (const SaveAsAnswer& a : answers) {
+        auto it = asks.find(a.ask);
+        if (it == asks.end()) continue;
+        const AppSaveAs& s = it->second;
+        for (auto& c : conns_)
+            if (c->id == s.conn && c->welcomed)
+                sendJson(*c, savedAsJson(s.doc, a.ok, s.path, a.ok ? "" : "app", a.why));
+    }
+}
+
+// New File from a page that may edit: the window's untitled tab, else (a
+// headless host's page) an untitled document the host makes, which the
+// page is told to show.
+void Server::onNewFile(Conn& c, const Json&) {
+    if (!opt_.editable) return note(c, "This page only reads: it cannot make files.");
+    if (opt_.newFile) {
+        if (!opt_.newFile()) note(c, "The mutible window could not make a new file.");
+        return;
+    }
+    if (!session_ || opt_.save || opt_.window) return note(c, "New files are made in the mutible window here.");
+    Session& s = *session_;
+    if (!s.client->hostWritesForPages())
+        return note(c, "This host does not make files: make one in a mutible window.");
+    const DocId id = s.client->newId();
+    if (!id) return note(c, "The session's host did not answer.");
+    s.docs[id] = std::make_unique<DocView>(id, std::string());
+    s.client->openUntitled(id, &s);
+    s.client->settle();
+    lookAtState();
+    Json m = Json::object();
+    m.set("t", Json("newfile"));
+    m.set("doc", Json((int64_t)id));
+    sendJson(c, m);
+}
+
+// Replace in Folder from a page that may edit: the rows its search showed
+// (each with whether it is left in), the query and its toggles as searched,
+// and the replacement, to the host (SessionSearch.h's "replace"), behind
+// every edit this view sent.
+void Server::onReplace(Conn& c, const Json& j) {
+    auto fail = [&](const std::string& why) {
+        Json m = Json::object();
+        m.set("t", Json("replaced"));
+        m.set("seq", j["seq"]);
+        m.set("error", Json(why));
+        sendJson(c, m);
+    };
+    if (!opt_.editable) return fail("This page only reads: it cannot replace.");
+    if (!session_ || !session_->client->hostWritesForPages() || !session_->client->hostSearches())
+        return fail("This session's host cannot replace in its folder.");
+    std::string query = j["query"].asString();
+    if (query.size() > 4096) query.resize(4096);
+    Json req = Json::object();
+    req.set("query", Json(query));
+    req.set("caseSensitive", Json(j["caseSensitive"].asBool()));
+    req.set("wholeWord", Json(j["wholeWord"].asBool()));
+    req.set("regex", Json(j["regex"].asBool()));
+    req.set("include", Json(j["include"].asString().substr(0, 4096)));
+    req.set("exclude", Json(j["exclude"].asString().substr(0, 4096)));
+    req.set("replacement", Json(j["replacement"].asString().substr(0, 65536)));
+    req.set("hidden", Json(opt_.showHidden));
+    if (!FolderSearch::isSearchable(query, searchOptions(req))) return fail("Search for something to replace first.");
+    // The rows as the page has them, checked: a path and rows for each
+    // file, at most the search's own cap of rows in all.
+    Json files = Json::array();
+    std::size_t rows = 0;
+    for (const Json& f : j["files"].elements()) {
+        if (!f.isObject() || !f["path"].isString() || rows >= kMaxReplaceRows) continue;
+        std::vector<ReplaceRow> got;
+        if (!replaceRowsFrom(f["rows"], kMaxReplaceRows - rows, &got) || got.empty()) continue;
+        rows += got.size();
+        Json list = Json::array();
+        for (const ReplaceRow& r : got) {
+            Json row = Json::object();
+            row.set("line", Json((int64_t)r.line));
+            row.set("text", Json(r.text));
+            row.set("count", Json((int64_t)r.count));
+            row.set("on", Json(r.on));
+            list.push(std::move(row));
+        }
+        Json g = Json::object();
+        g.set("path", f["path"]);
+        g.set("rows", std::move(list));
+        files.push(std::move(g));
+    }
+    if (!rows) return fail("Nothing to replace.");
+    req.set("files", std::move(files));
+    const std::uint64_t r = session_->client->requestReplace(opt_.window, std::move(req));
+    if (!r) return fail("This session's host cannot replace in its folder.");
+    session_->replaces[r] = {c.id, j["seq"].asInt()};
+}
+
+void Server::takeReplaces() {
+    if (!session_) return;
+    Session& s = *session_;
+    for (auto it = s.replaces.begin(); it != s.replaces.end();) {
+        std::vector<Json> got;
+        if (!s.client->takeStream(it->first, &got)) {
+            ++it;
+            continue;
+        }
+        for (Json& a : got) {
+            if (!a["done"].asBool()) continue;
+            for (auto& c : conns_)
+                if (c->id == it->second.first && c->welcomed && !c->dead) {
+                    a.set("t", Json("replaced"));
+                    a.set("seq", Json((int64_t)it->second.second));
+                    sendJson(*c, a);
+                }
+        }
+        it = s.replaces.erase(it);
+    }
 }
 
 void Server::onTermInput(Conn& c, const std::string& type, const Json& j) {
@@ -3357,6 +3605,9 @@ void Server::lookAtState() {
     }
     Json docs = Json::array();
     for (const Json& d : st["documents"].elements()) {
+        // A file named anew (Save As): the view colors it by its new name.
+        auto view = s.docs.find((DocId)d["doc"].asInt());
+        if (view != s.docs.end() && view->second->setPath(d["path"].asString())) s.pending = true;
         if (opt_.window && !s.allowed.count((DocId)d["doc"].asInt())) continue;
         Json o = Json::object();
         o.set("id", d["doc"]);
@@ -3629,9 +3880,11 @@ bool Server::run() {
             }
         }
         lookAtAccess();
+        takeSaveAsAnswers();
         if (session_) {
             session_->client->dispatch();
             takeOutcomes();
+            takeReplaces();
             takeReads();
             takeDisk();
             pumpFiles();

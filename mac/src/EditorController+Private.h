@@ -749,6 +749,9 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 - (BOOL)saveTab:(MCTab *)t;
 - (BOOL)tabHasTextToWrite:(MCTab *)t;
 - (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive;
+// The same, why it failed in *failure (when given) rather than an alert or
+// the status bar: a browser's page's Save As says it on the page.
+- (BOOL)writeText:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive failure:(NSString **)failure;
 // What every save leaves in the tab (writeText:, and the host's writes):
 // `saved` the file's text, `stamp` the file as written.
 - (void)tab:(MCTab *)t tookSaveOf:(NSString *)saved stamp:(MCDiskStamp *)stamp dirty:(BOOL)dirty;
@@ -795,7 +798,14 @@ typedef NS_ENUM(NSInteger, MCPane) { MCPaneNone, MCPaneEditor, MCPaneBrowser, MC
 // after the window's questions; the host's write for a page, and its count
 // of the tab as unsaved (MCTabOwner).
 - (BOOL)hostWritesText:(NSString *)text ofTab:(MCTab *)t;
-- (BOOL)writeTextThroughHost:(NSString *)text toTab:(MCTab *)t interactive:(BOOL)interactive;
+- (BOOL)writeTextThroughHost:(NSString *)text
+                       toTab:(MCTab *)t
+                 interactive:(BOOL)interactive
+                     failure:(NSString **)failure;
+// A browser's page's New File: an untitled tab (Untitled-1, -2, ... in the
+// folder, a file not on disk yet) with a document on the host and no path
+// there, shown; nil when the window has no session.
+- (MCTab *)openUntitledSessionTab;
 - (void)tab:(MCTab *)t writtenByHost:(id)write;
 - (void)tab:(MCTab *)t dirtyFromHost:(BOOL)dirty;
 // How many times a tab was marked unsaved by the host's count (checks: a

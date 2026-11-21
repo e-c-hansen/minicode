@@ -203,6 +203,16 @@ top of a turn, never inside a text system callback.
   "cancel" has no answer: the client sends it with a request number it
   never waits on, and drops what still comes for the cancelled request,
   forgetting it at its last answer (always sent, saying "cancelled").
+- **Replace in Folder is an FsRead op, and FsRead passes
+  `refusedFromViewer`** (a reader may read): `Host::onReplace` refuses a
+  renderer that only reads itself. Any new op that writes must do the
+  same, and be offered by a Welcome flag (16 here), or an older host takes
+  it for a read it does not know (harmless) or, for DocSave's "saveAs",
+  for a plain save of the old file (not harmless).
+- **A page's untitled document is a view seat's only** (DocOpen flag 2):
+  nothing keeps it but the host, which drops it once no renderer has a
+  seat and it is still empty (`dropEmptyPageDocs`); with text it is an
+  untitled buffer the host keeps and backs up until it is saved.
 - **The host follows no document an app's window has open**
   (`shownByApp`, stage 7's watching): the window follows its own tab and
   sends its reload as an edit, then DocSaved; the host following it too
@@ -3226,17 +3236,197 @@ machine for the builder): the GUI checks above; the look of Quick Open
 and the search results, real keys in Safari and Chrome, and a phone need
 the owner's eyes.
 
+### New File, Save As and Replace in Folder from the page (stage 7's page-side writes)
+
+Before this a page could save a document under its own name only; an
+untitled tab's save opened the window's save panel on the Mac's screen,
+and Replace in Folder was the app's. Now an editable page makes files,
+names them, and replaces across the folder. A reader sees none of it.
+
+- **The protocol** (additive, gated by the host's Welcome flag 16,
+  `Client::hostWritesForPages`; a client sends none of these to a host
+  without it): DocOpen flag 2 from a guest makes an untitled document
+  (`Client::openUntitled`: no path, no text, the guest's seat a view as its
+  others); DocSave's json `{"saveAs": rel, "hidden"}` from a guest names
+  the file anew (`Client::requestSaveAs`, answered as a save, DocSaveDone);
+  FsRead's op "replace" (`Client::requestReplace`, sent behind the
+  renderer's edits through the outbox, its one answer a stream's) replaces
+  on the rows a search showed (SessionSearch.h has its shape). An older
+  host would have taken the saveAs json for a plain save, which is why
+  the flag gates it rather than the host ignoring what it does not know.
+- **The path** (`SessionFiles.h`'s `newFilePath`, pure but for stat and
+  realpath, both the host's and the server's): `rel` from the folder, its
+  names as a read's (no absolute path, ".", "..", empty name, NUL, a name
+  over 255), no dotfile unless `hidden`, the folder it goes in there
+  already, a folder, and inside the session's by its real place (a page
+  makes no folders), and what is at the path a regular file inside the
+  folder by its real place (`exists`), else refused: a link out
+  (`outside`), a link to nothing, a folder, a FIFO (`notfile`).
+- **The host's Save As** (`Host::onSaveAs`, a guest only; a DocSave whose
+  saveAs names the document's own file is a plain save): refused for a
+  document an app's window has open ("use Save As there": the window
+  names its own files), for a path another document has
+  (`docAtPath`, by spelling or real place: never two documents of one
+  path), and for a file there already unless flag 1 (`exists`, "x
+  already exists: saving would replace it."). Then `saveDocument` with
+  the new path, the folder as root, the document's own encoding kept and
+  overwrite (the questions are asked), and on success the document's path
+  is the new one (`watchGen_` moves, `realDir` cleared), counted saved
+  with the stamp written, its disk state in step, every hearer told the
+  write (`tellWritten` with the new path). The old file is left as it was.
+- **New documents** (`Host::onOpen`, guest and flag 2): `Doc::fromPage`;
+  `dropEmptyPageDocs` lets one go when no renderer has a seat on it and it
+  is still empty and pathless (a view's close, a renderer's disconnect),
+  so a page's New File it never typed into leaves nothing. With text it is
+  an untitled buffer as any other: `busyReason` keeps the host for it and
+  the host's backups keep it (`Backups::untitledPath`).
+- **Replace** (`Host::onReplace`): refused for a renderer that only reads
+  (FsRead itself passes `refusedFromViewer`, so the op checks), for no
+  folder, for a query too short, and up front when the workers are full
+  (so nothing is half done). On the host's thread, each file a document
+  holds (`docAtPath`) and that is clean is checked and replaced by
+  `replaceRows` on the document's text and goes in as one step of the
+  host's ("Replace in Folder", `hostStep`, shared with Reload from Disk),
+  every seat told, the document left unsaved (as the Mac's Replace in
+  Folder edits a clean tab and leaves the saving to the person); one with
+  unsaved changes is skipped (`unsaved`), as the Mac leaves a dirty tab.
+  The other files go to a worker (`runReplace`): confined again, read
+  with `readFileStable` (64 MB at most, `kMaxReplaceBytes`), decoded with
+  `decodeFileText` (UTF-8, UTF-16 with its mark, Windows-1252, stray
+  bytes), checked and replaced by `replaceRows`, refused when the
+  encoding cannot store the result (`canEncode`: never written as UTF-8
+  behind the person's back, unlike a save) or when the file's stamp moved
+  while it was read, and written with `writeFileAtomically` in its own
+  encoding and mark. The answer counts what was replaced, written and
+  edited, and names each file left alone with its sentence.
+- **Changed since the search** (`replaceRows`): every row's line must
+  still read as the row showed it (`displayText`), and the text must hold
+  as many matches as the rows counted (a match added on a line no row
+  shows is a change too), else the file is left alone whole
+  (`changed`). A row the page took out ("on" false) keeps every match on
+  its line (`replaceInText`'s skip lines). The page cannot take out one
+  match of several on a line: a row is a line, as Dismiss is in the
+  app's Find in Folder (#210).
+- **The server** (`SessionWeb.cpp`): the hello's `canNew` (an app's
+  `Options::newFile`, or a headless view with no `save`, no window and a
+  host that writes for pages), `canSaveAs` (an app's `Options::saveAs`, or
+  no `save` and such a host; GTK's page, with `save` and no `saveAs`, has
+  neither), `canReplace` (editable, such a host, and one that searches).
+  `newfile` calls `Options::newFile` (the Mac: `openUntitledSessionTab`,
+  the window's untitled tab, Untitled-1, -2, ... as a restored buffer is
+  named, which the page then follows as the window's tab on show) or has
+  the host make one (`openUntitled`, a `DocView` made for it at once) and
+  tells the page `newfile {doc}` to show it. `saveas {doc, path,
+  overwrite}`: for an app, `newFilePath` against `Options::folder`,
+  another document of the state at that path, and `exists` are answered
+  at once, then `Options::saveAs(doc, abs, ask)` after a settle, and the
+  app answers `Server::savedAs(ask, ok, why)` from any thread (queued
+  under `saveAsMu_`, taken at the loop's top); else `requestSaveAs`,
+  answered in `takeOutcomes`. Both reach the page as `savedas {doc, ok,
+  path, reason, why}`. `replace {seq, query, toggles, replacement, files}`
+  is checked (rows as `replaceRowsFrom` takes them, at most
+  `kMaxReplaceRows` in all) and sent; its answer comes as `replaced` with
+  the page's seq (`takeReplaces`). A `DocView` whose state path changed
+  (Save As) is colored again by its new name and sends every line as a
+  version of no text change (`DocView::setPath`), so a page with typing in
+  flight keeps it.
+- **The Mac** (`EditorController+SessionBrowser.mm`, `MCSessionBrowser
+  newFile` and `saveAs`): Save As from the page moves the tab to the new
+  path (`currentPath`, which sends DocPath) and writes through the host
+  with no question (`writeText:toTab:interactive:failure:`, the failure
+  going back to the page rather than an alert); a failure puts the old
+  path back. A tab already on that file is refused ("close it there
+  first"). Then the language servers, the colors (by the new extension),
+  the strip, the session and the title follow, as for a file moved. The
+  answer goes through `answerSaveAs:`, which drops it for a server
+  stopped meanwhile. Unlike the Mac's own Save As (a new tab on the new
+  file, the old tab closed) the tab and its document stay, so every page
+  keeps showing it.
+- **The page**: New File in the header (`#newbtn`) and <kbd>⌘N</kbd>
+  where the browser gives it to the page (most keep it); Save As… in the
+  doc bar (`#saveasbtn`) and <kbd>⇧⌘S</kbd>; Save on a document the state
+  lists with no path opens Save As instead. The dialog (`#sa`) starts on
+  the document's path from the folder (an untitled tab's name, from the
+  window's tab), the name without its extension selected; under the field
+  the typed folder's entries that start as the typed name does, from the
+  tree's own listings (`T.kids`, a folder the page has none of listed once
+  as the dialog asks), arrows and Tab or a click to complete; Return or
+  Save sends `saveas` once the page's edits are confirmed (`afterSync`);
+  `exists` asks with `confirm()` ("…\n\nSave anyway?", #293's words) and
+  sends again with overwrite; any other refusal is the dialog's note. Find
+  in Folder on an editable page with `canReplace` has a replace field and
+  Replace All under the query (`#rbox`); each row's hit line and each
+  file's header have a box (`.rpick`), a row taken out dimmed; while the
+  field holds text each match is struck through with its replacement after
+  it (`ins`, the text as typed, or for a regex the browser's own replace of
+  the match, JavaScript's engine as TextFind's). Replace All is enabled
+  only for a search that ended whole (not cut short, timed out, too slow,
+  cancelled, or an error) with a row left in; it asks with `confirm()`
+  naming the matches and files and what replaces them, and sends once the
+  page's edits are confirmed. Return in the replace field searches again
+  (#210: never a write on Return). `replaced` is a toast of the counts and
+  each file's sentence, then the search runs again. `mcSessionView.writes()`
+  says what the GUI checks read.
+
+#### Checks
+
+`host:new-path` (`newFilePath` over a scratch folder: a name, a
+subfolder, a file there, a link inside; fifteen refusals each for its
+reason, a NUL, a long name, a dotfile with `hidden`, no folder);
+`search:replace-rows` (all rows, one taken out, all taken out, three
+changes since the search, a regex with a group, CRLF kept, rows from a
+page checked and capped, `replaceHidesPath`); `host:save-as` (a Host over
+the encoding with an editor, a guest that hears DocDirty and a reader: a
+guest's Save As written into a subfolder, the path the state's, clean, the
+old file as it was, the next save by the stamp; `exists` then overwrite;
+`name`, `nofolder`, `dotfile`, a dotfile with `hidden`, its own file a
+save; another document at the path `open`; an app holding it `app`; New
+File's document, a plain save `nofile`, typing, Save As naming it; an
+empty one dropped when the guest goes and one with text kept; a reader's
+DocOpen flag 2 a view of nothing, its Save As refused; the two through the
+encoding); `host:replace` (an app with a clean and a dirty document, a
+guest, a reader: rows from a real search, a file changed after it, a row
+taken out, a crafted dotfile row; the open document edited as one step
+named Replace in Folder and its mirror with it, the file on disk as it
+was; a closed file written but for the row out; UTF-16 written back with
+its mark, Windows-1252 kept; dirty, changed and dotfile named; Undo on the
+host; a replacement Windows-1252 cannot store left alone; a reader and a
+short query refused); `sessionweb:writes` (a headless host's editable and
+read-only pages over the wire: the three flags; New File's document shown,
+typed into, saved as hello.txt, the state's path following; `exists`, then
+overwrite; `../` refused; a search, then a replace with a row out written;
+the read-only page with none of them and its replace refused);
+`sessionweb:writes-app` (an in-process host and an app's page with
+`Options::saveAs` and `newFile`: `exists` answered before the window hears,
+the window handed the path and its refusal reaching the page, a second
+and an unknown answer dropped, `../` never reaching the window; a page
+without them having neither). GUI: `session_browser` on the editable page:
+New File makes the window's untitled tab, which the page shows and types
+into; <kbd>⇧⌘S</kbd> opens on its name, the folder's files complete
+`pkg/`, a file there already asks and Cancel writes nothing, made.py is
+written through the host and the window's tab is that file, the page's tab
+named so; Find in Folder for "made" with a file the window has not open,
+the previews and boxes, Return in the replace field searching again and
+writing nothing, Replace All with a row out (asked first) editing the
+window's tab as one step and writing the other file, Undo in the window
+taking it back. Not run here (no GUI on this machine for the builder):
+the GUI checks above; the dialog's and the boxes' look, real keys in
+Safari and Chrome (which keep <kbd>⌘N</kbd>), and a phone need the
+owner's eyes.
+
 ### Still to do
 
-- **Stage 7, after the watching, the Mac's and GTK's saves, and Quick
-  Open and Find in Folder** (in order of value): the windows hearing
-  the host's watching instead of their own streams ("The host watches the
-  disk", what could move); Save As and a new file's name from the page
-  (the Mac's Save As writes its new path through the host now, but the
-  page cannot name a file); Replace in Folder from the page (the host's
-  `planReplace` and writes, with the app's questions); the listings
-  FsChanged carries, a file's read and the write on a worker rather than
-  the host's thread.
+- **Stage 7, after the watching, the Mac's and GTK's saves, Quick Open and
+  Find in Folder, and the page's New File, Save As and Replace** (in order
+  of value): the windows hearing the host's watching instead of their own
+  streams ("The host watches the disk", what could move); GTK's page
+  without New File and Save As (its `SessionBrowser.cpp` would give
+  `Options::newFile` and `saveAs` as the Mac's do; Replace already works
+  there, on the host); the page closing a headless host's documents (a
+  page's untitled document with text stays until it is saved or the host
+  ends); a page's Replace taking out one match of several on a line; the
+  listings FsChanged carries, a file's read and the write (a save's, a
+  replace's open documents) on a worker rather than the host's thread.
 - Lines are re-sent whole per edit; a long line typed into from a browser
   wants character splices.
 - No snapshot or patch messages exist yet: the view polls the host's state

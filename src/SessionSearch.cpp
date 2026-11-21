@@ -3,11 +3,15 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <climits>
+#include <cstdint>
+#include <set>
 #include <chrono>
 #include <fcntl.h>
 #include <unistd.h>
 
 #include "CommandPalette.h"
+#include "SessionFiles.h"
 #include "Text.h"
 
 namespace Shared {
@@ -158,9 +162,169 @@ void runSearch(const std::string& root, const Json& request, std::atomic<bool>& 
     emit(std::move(a));
 }
 
+std::string nameOf(const std::string& rel) {
+    const std::size_t slash = rel.rfind('/');
+    return slash == std::string::npos ? rel : rel.substr(slash + 1);
+}
+
+Json skippedJson(const std::string& path, const char* reason, const std::string& why) {
+    Json j = Json::object();
+    j.set("path", Json(path));
+    j.set("reason", Json(reason));
+    j.set("why", Json(why));
+    return j;
+}
+
+// The files no document holds, rewritten one by one with the save rules,
+// after what the host did to the documents it holds ("edited").
+void runReplace(const std::string& root, const Json& request, std::atomic<bool>& cancel,
+                const std::function<void(Json&&)>& emit) {
+    const std::string query = request["query"].asString();
+    const std::string replacement = request["replacement"].asString();
+    const bool hidden = request["hidden"].asBool();
+    const FolderSearchOptions options = searchOptions(request);
+    const Json& edited = request["edited"];
+    Json skipped = Json::array();
+    for (const Json& s : edited["skipped"].elements()) skipped.push(s);
+    std::int64_t replaced = edited["editedMatches"].asInt(), files = 0;
+    bool cancelled = false;
+    for (const Json& f : request["files"].elements()) {
+        if (cancel.load()) {
+            cancelled = true;
+            break;
+        }
+        const std::string rel = f["path"].asString();
+        const std::string name = nameOf(rel);
+        std::string abs, why;
+        if (!hidden && replaceHidesPath(rel)) {
+            skipped.push(skippedJson(rel, "dotfile", name + " is hidden on this page: it was left alone."));
+            continue;
+        }
+        if (!confinedPath(root, rel, &abs, &why)) {
+            skipped.push(skippedJson(rel, "outside", name + " is not one of the session's files: it was left alone."));
+            continue;
+        }
+        std::vector<ReplaceRow> rows;
+        if (!replaceRowsFrom(f["rows"], kMaxReplaceRows, &rows)) continue;
+        std::string bytes;
+        FolderSearch::FileStamp stamp;
+        const FolderSearch::ReadStatus r = FolderSearch::readFileStable(abs, kMaxReplaceBytes, &bytes, &stamp);
+        if (r != FolderSearch::ReadStatus::Ok) {
+            const char* reason = r == FolderSearch::ReadStatus::Missing      ? "gone"
+                                 : r == FolderSearch::ReadStatus::NotRegular ? "notfile"
+                                 : r == FolderSearch::ReadStatus::TooLarge   ? "large"
+                                                                             : "unreadable";
+            const std::string says = r == FolderSearch::ReadStatus::Missing      ? " was deleted since the search"
+                                     : r == FolderSearch::ReadStatus::NotRegular ? " is not a regular file"
+                                     : r == FolderSearch::ReadStatus::TooLarge   ? " is too large to replace in here"
+                                                                                 : " could not be read";
+            skipped.push(skippedJson(rel, reason, name + says + ": it was left alone."));
+            continue;
+        }
+        FolderSearch::TextEncoding enc = FolderSearch::TextEncoding::Utf8;
+        bool bom = false;
+        if (!FolderSearch::decodeFileText(&bytes, &enc, &bom)) {
+            skipped.push(skippedJson(rel, "changed", name + " no longer reads as text: it was left alone."));
+            continue;
+        }
+        std::string out;
+        std::size_t n = 0;
+        const ReplaceCheck c = replaceRows(bytes, rows, query, replacement, options, &out, &n);
+        if (c == ReplaceCheck::Nothing) continue;
+        if (c == ReplaceCheck::Changed) {
+            skipped.push(skippedJson(rel, "changed", name + " changed since the search: it was left alone."));
+            continue;
+        }
+        std::string unheld;
+        if (!FolderSearch::canEncode(out, enc, &unheld)) {
+            skipped.push(skippedJson(rel, "encoding",
+                                     name + " is " + FolderSearch::encodingLabel(enc, bom) + ", which cannot store “" +
+                                         unheld + "”: it was left alone."));
+            continue;
+        }
+        // Written over while it was read: that change wins.
+        if (FolderSearch::stampOf(abs) != stamp) {
+            skipped.push(skippedJson(rel, "changed", name + " changed on disk while it was read: it was left alone."));
+            continue;
+        }
+        if (!FolderSearch::writeFileAtomically(abs, FolderSearch::encodeFileText(out, enc, bom), &why)) {
+            skipped.push(skippedJson(rel, "write", name + " could not be written: " + why + "."));
+            continue;
+        }
+        replaced += (std::int64_t)n;
+        files++;
+    }
+    Json a = answerFor("replace");
+    a.set("done", Json(true));
+    a.set("replaced", Json(replaced));
+    a.set("files", Json(files));
+    a.set("edited", Json(edited["edited"].asInt()));
+    a.set("editedMatches", Json(edited["editedMatches"].asInt()));
+    a.set("skipped", std::move(skipped));
+    if (cancelled) a.set("cancelled", Json(true));
+    emit(std::move(a));
+}
+
 }  // namespace
 
-bool isWorkerRead(const std::string& op) { return op == "files" || op == "search" || op == "cancel"; }
+bool isWorkerRead(const std::string& op) {
+    return op == "files" || op == "search" || op == "cancel" || op == "replace";
+}
+
+bool replaceHidesPath(const std::string& rel) {
+    std::size_t at = 0;
+    for (;;) {
+        if (at < rel.size() && rel[at] == '.') return true;
+        const std::size_t slash = rel.find('/', at);
+        if (slash == std::string::npos) return false;
+        at = slash + 1;
+    }
+}
+
+ReplaceCheck replaceRows(const std::string& content, const std::vector<ReplaceRow>& rows, const std::string& query,
+                         const std::string& replacement, const FolderSearchOptions& options, std::string* out,
+                         std::size_t* replaced) {
+    if (replaced) *replaced = 0;
+    std::size_t counted = 0;
+    std::set<int> skip;
+    bool any = false;
+    for (const ReplaceRow& r : rows) {
+        std::string now;
+        if (!FolderSearch::lineAt(content, r.line, &now) ||
+            FolderSearch::displayText(now, options.maxLineChars) != r.text)
+            return ReplaceCheck::Changed;
+        counted += r.count;
+        if (r.on) any = true;
+        else skip.insert(r.line);
+    }
+    // As many matches as the rows counted: one added or gone on a line no
+    // row shows is a change too.
+    std::size_t all = 0;
+    std::string every = FolderSearch::replaceInText(content, query, replacement, options, &all);
+    if (all != counted) return ReplaceCheck::Changed;
+    if (!any) return ReplaceCheck::Nothing;
+    std::size_t n = all;
+    if (skip.empty()) *out = std::move(every);
+    else *out = FolderSearch::replaceInText(content, query, replacement, options, &n, &skip);
+    if (replaced) *replaced = n;
+    return n ? ReplaceCheck::Replaced : ReplaceCheck::Nothing;
+}
+
+bool replaceRowsFrom(const Json& rows, std::size_t most, std::vector<ReplaceRow>* out) {
+    out->clear();
+    if (!rows.isArray()) return false;
+    for (const Json& r : rows.elements()) {
+        if (out->size() >= most) break;
+        if (!r.isObject() || !r["line"].isNumber() || !r["text"].isString() || r["line"].asInt() < 1) return false;
+        ReplaceRow row;
+        row.line = (int)std::min<std::int64_t>(r["line"].asInt(), INT32_MAX);
+        row.text = r["text"].asString();
+        row.count = (std::size_t)std::max<std::int64_t>(1, r["count"].asInt(1));
+        row.on = !r.has("on") || r["on"].asBool();
+        out->push_back(std::move(row));
+    }
+    return true;
+}
 
 FolderSearchOptions searchOptions(const Json& request) {
     FolderSearchOptions o;
@@ -204,6 +368,7 @@ void runWorkerRead(const std::string& root, const Json& request, std::atomic<boo
     const std::string op = request["op"].asString();
     if (op == "files") return runFiles(root, request, cancel, emit, seconds);
     if (op == "search") return runSearch(root, request, cancel, emit, seconds, eachFile);
+    if (op == "replace") return runReplace(root, request, cancel, emit);
     Json a = answerFor(op);
     a.set("error", Json("no read named " + op));
     a.set("done", Json(true));

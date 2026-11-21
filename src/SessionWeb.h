@@ -709,6 +709,10 @@ public:
     DocView(DocId id, std::string path);
     DocId id() const { return id_; }
     const std::string& path() const { return path_; }
+    // Its file is another now (Save As, a name for an untitled document):
+    // colored again by the new name, every line queued for the pages as a
+    // version of no text change. False when the path is the same.
+    bool setPath(const std::string& path);
     // "code", "markdown" or "large".
     std::string kind() const;
     // An edit (UTF-16 operations, in order). The lines it changed are kept
@@ -854,6 +858,23 @@ struct Options {
     // and a document of the window's with no unsaved changes; false when
     // it cannot. Unset: the hello's canClose is false.
     std::function<bool(DocId)> close;
+    // A page's New File: the window makes an untitled tab (with a document
+    // on the host, no path) and shows it, as the page then does. Called on
+    // the server's thread, only for a page that may edit; false when it
+    // cannot. Unset: a headless host's page has the host make an untitled
+    // document itself (Client::openUntitled) when the host writes for pages;
+    // an app's page without it has no New File (the hello's canNew).
+    std::function<bool()> newFile;
+    // A page's Save As (and the name of an untitled document): the window
+    // writes the tab's text to `path` (held inside `folder` by
+    // newFilePath, a file there already only after the page's person said
+    // to replace it) and its tab is that file from then on, its document's
+    // path on the host too (DocPath). Called on the server's thread, only
+    // for a page that may edit and a document of the window's; the app
+    // answers with Server::savedAs(ask, ...) from any thread. Unset with
+    // `save` unset: the host saves as (Client::requestSaveAs); unset with
+    // `save` set: the page has no Save As (the hello's canSaveAs).
+    std::function<void(DocId doc, const std::string& path, std::uint64_t ask)> saveAs;
     // Opens an http or https address (webAddress has held it) in the
     // window's browser pane, a tab already at it shown again, else a new
     // tab. Called on the server's thread, only for a page that may edit;
@@ -981,10 +1002,36 @@ public:
     // Control may have changed (FsChanged). With neither, pages read again
     // when asked (the page's refresh, a reconnect).
     void gitChanged();
+    // The app's answer to Options::saveAs's `ask` (any thread): the page
+    // that asked hears how it went (`savedas`), and the state is looked at.
+    void savedAs(std::uint64_t ask, bool ok, const std::string& why);
 
 private:
     struct Conn;
     struct Session;
+    // Save As handed to the app (Options::saveAs): the page and document
+    // by ask, and the answers that came, under their lock.
+    std::mutex saveAsMu_;
+    std::uint64_t lastSaveAs_ = 0;
+    struct AppSaveAs {
+        int conn = 0;
+        DocId doc = 0;
+        std::string path;
+    };
+    std::map<std::uint64_t, AppSaveAs> appSaveAs_;
+    struct SaveAsAnswer {
+        std::uint64_t ask = 0;
+        bool ok = false;
+        std::string why;
+    };
+    std::vector<SaveAsAnswer> saveAsAnswers_;
+    void takeSaveAsAnswers();
+    void onSaveAs(Conn& c, const Json& j);
+    void onNewFile(Conn& c, const Json& j);
+    // Replace in Folder (`replace`): the page's search's rows, back to the
+    // host, its answer (`replaced`) to the page.
+    void onReplace(Conn& c, const Json& j);
+    void takeReplaces();
     Options opt_;
     Access access_;
     std::uint64_t asked_ = 0;   // the last question handed to Options::ask

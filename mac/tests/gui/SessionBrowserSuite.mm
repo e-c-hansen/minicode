@@ -67,7 +67,17 @@
 // workers): Command P in the editable page lists the folder's files as the
 // host listed them, a query ranks them by the palette's matching with the
 // matched letters marked, and Return opens the file in the window, which
-// the page then shows; Shift Command F in the read-only page searches the
+// the page then shows. Then the page's writes (stage 7): New File makes an
+// untitled tab in the window, which the page shows and types into; Shift
+// Command S opens Save As on its name, completes a folder's files from the
+// host's listing, asks before writing over a file there (Cancel writes
+// nothing), and saves it as made.py through the host, the window's tab that
+// file; Find in Folder in the editable page shows each match struck
+// through beside its replacement and a box per row, Return in the replace
+// field only searches again, and Replace All (asked first, one row left
+// out) edits the window's open file as one step on the host and rewrites
+// the other file, and Undo in the window takes the edit back. Shift Command
+// F in the read-only page searches the
 // folder on the host, its rows grouped by file with a line of context
 // either side and the matches marked, and a row clicked opens its file in
 // a tab of the page's own at that line, the window opening nothing.
@@ -375,6 +385,8 @@ NSString *const kRead =
     @" review: window.mcSessionView ? window.mcSessionView.review() : null,"
     @" qo: window.mcSessionView && window.mcSessionView.quickOpen ? window.mcSessionView.quickOpen() : null,"
     @" search: window.mcSessionView && window.mcSessionView.search ? window.mcSessionView.search() : null,"
+    @" writes: window.mcSessionView && window.mcSessionView.writes ? window.mcSessionView.writes() : null,"
+    @" asked: window.__asked || '',"
     @" hit: window.mcSessionView && window.mcSessionView.hitLine ? window.mcSessionView.hitLine() : -1,"
     @" caret: window.mcSessionView && window.mcSessionView.caretLine ? window.mcSessionView.caretLine() : -1,"
     @" mdShown: !document.getElementById('md').classList.contains('hidden')})";
@@ -917,6 +929,140 @@ MC_GUI_SUITE(session_browser) {
     MCGuiWait(@"and the page shows it, Quick Open closed", 20, ^BOOL {
         Read();
         return [gSeen[@"text"] isEqualToString:TV(gC).string] && ![Seen(@"qo")[@"open"] boolValue];
+    });
+    // Stage 7's page-side writes, on the editable page: New File, Save As
+    // through the window, and Replace in Folder on the host.
+    __block NSUInteger tabsAtNew = 0;
+    NSString *madePath = [dir stringByAppendingPathComponent:@"made.py"];
+    NSString *notesPath = [dir stringByAppendingPathComponent:@"notes.txt"];
+    MCGuiStep(@"the editable page has New File, Save As and a replace field; New File clicked", ^{
+        NSDictionary *w = Seen(@"writes");
+        MCGuiNote(@"writes: %@", w);
+        GCHECK([w[@"newFile"] boolValue] && [w[@"saveAs"] boolValue] && [w[@"replace"] boolValue]);
+        tabsAtNew = [gC tabs].count;
+        Eval(@"(() => { document.getElementById('newbtn').click(); return 1; })()");
+    });
+    MCGuiWait(@"makes an untitled tab in the window, with a document on the host", 20, ^BOOL {
+        return [gC tabs].count == tabsAtNew + 1 && Active(gC).untitled && Active(gC).session != nil;
+    });
+    MCGuiWait(@"which the page shows, named as the window names it", 20, ^BOOL {
+        Read();
+        NSString *name = Active(gC).currentPath.lastPathComponent ?: @"?";
+        return [[gSeen[@"tabs"] componentsSeparatedByString:@"|"] containsObject:name] &&
+               [gSeen[@"text"] isEqualToString:@""] && [gSeen[@"shown"] boolValue];
+    });
+    MCGuiStep(@"text typed into it in the page", ^{
+        MCGuiNote(@"untitled tab: %@, page tabs: %@", Active(gC).currentPath, gSeen[@"tabs"]);
+        GCHECK(!Active(gC).dirty);
+        Keys([NSString stringWithFormat:@"[%@]", Typed(@"made = 1")]);
+    });
+    MCGuiWait(@"reaches the window's untitled tab", 20, ^BOOL {
+        return [TV(gC).string isEqualToString:@"made = 1"];
+    });
+    MCGuiStep(@"Shift Command S in the page: Save As", ^{ Keys(@"[[\"s\", {metaKey: true, shiftKey: true}]]"); });
+    MCGuiWait(@"opens on the untitled tab's name", 20, ^BOOL {
+        Read();
+        NSDictionary *w = Seen(@"writes");
+        NSString *name = Active(gC).currentPath.lastPathComponent ?: @"?";
+        return [w[@"dialog"] boolValue] && [w[@"value"] hasSuffix:name] && [name hasPrefix:@"Untitled"];
+    });
+    MCGuiStep(@"a folder typed: its names complete the path", ^{ FieldText(@"saq", @"pkg/", nil); });
+    MCGuiWait(@"from the host's listing", 20, ^BOOL {
+        Read();
+        return [[Seen(@"writes")[@"completions"] componentsJoinedByString:@"|"] isEqualToString:@"util.py"];
+    });
+    __block NSData *logoBefore = nil;
+    MCGuiStep(@"a file there already (one no tab has), then Return, answered Cancel", ^{
+        logoBefore = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"logo.png"]];
+        Eval(@"(() => { window.__asked = ''; window.confirm = (m) => { window.__asked = m; return false; }; return 1; })()");
+        FieldText(@"saq", @"logo.png", @"Enter");
+    });
+    MCGuiWait(@"asks before writing over it", 20, ^BOOL {
+        Read();
+        return [gSeen[@"asked"] hasPrefix:@"logo.png already exists"];
+    });
+    MCGuiStep(@"and wrote nothing; a new name, then Return", ^{
+        GCHECK([[NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"logo.png"]] isEqualToData:logoBefore]);
+        GCHECK(Active(gC).untitled);
+        FieldText(@"saq", @"made.py", @"Enter");
+    });
+    MCGuiWait(@"the window writes it through the host, and its tab is that file", 20, ^BOOL {
+        NSString *disk = [NSString stringWithContentsOfFile:madePath encoding:NSUTF8StringEncoding error:nil];
+        return [disk isEqualToString:@"made = 1"] && [Active(gC).currentPath isEqualToString:madePath] &&
+               !Active(gC).untitled && !Active(gC).dirty;
+    });
+    MCGuiWait(@"the page's tab has its name, the dialog closed", 20, ^BOOL {
+        Read();
+        return [[gSeen[@"tabs"] componentsSeparatedByString:@"|"] containsObject:@"made.py"] &&
+               ![Seen(@"writes")[@"dialog"] boolValue];
+    });
+    MCGuiStep(@"page, window and host on one text; a file the window has not open, and Find in Folder", ^{
+        GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
+        MCGuiWriteFile(notesPath, @"made here\nmade there\n");
+        PageKey(@"f", @"{metaKey: true, shiftKey: true}");
+    });
+    MCGuiStep(@"made searched for", ^{ FieldText(@"sq", @"made", @"Enter"); });
+    MCGuiWait(@"rows in both files, each with a box, Replace All ready", 20, ^BOOL {
+        Read();
+        NSDictionary *s = Seen(@"search"), *w = Seen(@"writes");
+        return [s[@"done"] boolValue] && [s[@"files"] count] == 2 && [w[@"picks"] count] == 3 &&
+               [w[@"replaceAll"] boolValue];
+    });
+    MCGuiStep(@"a replacement typed, and the last row left out", ^{
+        MCGuiNote(@"search: %@", Seen(@"search")[@"files"]);
+        FieldText(@"rq", @"built", nil);
+        Eval(@"(() => { const b = [...document.querySelectorAll('#slist .srow .rpick')].pop(); if (b) b.click();"
+             @" return !!b; })()");
+    });
+    MCGuiWait(@"each match shows what replaces it; two rows checked", 20, ^BOOL {
+        Read();
+        NSDictionary *w = Seen(@"writes");
+        return [[w[@"previews"] componentsJoinedByString:@"|"] isEqualToString:@"built|built|built"] &&
+               [[w[@"picks"] componentsJoinedByString:@","] isEqualToString:@"1,1,0"];
+    });
+    MCGuiStep(@"Return in the replace field", ^{ FieldText(@"rq", @"built", @"Enter"); });
+    MCGuiWait(@"searches again, every row checked", 20, ^BOOL {
+        Read();
+        NSDictionary *s = Seen(@"search"), *w = Seen(@"writes");
+        return [s[@"done"] boolValue] && [[w[@"picks"] componentsJoinedByString:@","] isEqualToString:@"1,1,1"];
+    });
+    MCGuiStep(@"and wrote nothing; the last row left out, then Replace All, answered Replace", ^{
+        NSString *notes = [NSString stringWithContentsOfFile:notesPath encoding:NSUTF8StringEncoding error:nil];
+        GCHECK_EQ_STR(notes, @"made here\nmade there\n");
+        GCHECK_EQ_STR(TV(gC).string, @"made = 1");
+        Eval(@"(() => { const b = [...document.querySelectorAll('#slist .srow .rpick')].pop(); if (b) b.click();"
+             @" window.__asked = ''; window.confirm = (m) => { window.__asked = m; return true; };"
+             @" document.getElementById('rall').click(); return !!b; })()");
+    });
+    MCGuiWait(@"the open file edited in the window, the other written but for the row left out", 20, ^BOOL {
+        NSString *notes = [NSString stringWithContentsOfFile:notesPath encoding:NSUTF8StringEncoding error:nil];
+        return [notes isEqualToString:@"built here\nmade there\n"] && [TV(gC).string isEqualToString:@"built = 1"];
+    });
+    MCGuiStep(@"it asked first; the window's tab is unsaved, made.py on disk as it was; Undo in the window", ^{
+        Read();
+        MCGuiNote(@"asked: %@; toast: %@", gSeen[@"asked"], gSeen[@"toast"]);
+        GCHECK([gSeen[@"asked"] hasPrefix:@"Replace 2 matches in 2 files with “built”?"]);
+        GCHECK(Active(gC).dirty);
+        NSString *made = [NSString stringWithContentsOfFile:madePath encoding:NSUTF8StringEncoding error:nil];
+        GCHECK_EQ_STR(made, @"made = 1");
+        GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
+        [Active(gC).undoManager undo];
+    });
+    MCGuiWait(@"takes the host's step back", 20, ^BOOL {
+        return [TV(gC).string isEqualToString:@"made = 1"];
+    });
+    MCGuiStep(@"made.py closed, both files gone again, and back to Files", ^{
+        GCHECK([Active(gC).currentPath isEqualToString:madePath]);
+        [gC closeTabEverywhere:Active(gC) prompt:NO];
+        [NSFileManager.defaultManager removeItemAtPath:madePath error:nil];
+        [NSFileManager.defaultManager removeItemAtPath:notesPath error:nil];
+        Eval(@"(() => { document.getElementById('filesbtn').click(); return 1; })()");
+        [gC openFileAtPath:gFile];
+    });
+    MCGuiWait(@"the page on the window's file again", 20, ^BOOL {
+        Read();
+        return [Active(gC).currentPath isEqualToString:gFile] && [gSeen[@"text"] isEqualToString:TV(gC).string] &&
+               ![Seen(@"search")[@"mode"] boolValue];
     });
     MCGuiStep(@"a picture in the page's tree", ^{
         GCHECK(MCSessionCheckTabs(@[ Active(gC) ]).length == 0);
