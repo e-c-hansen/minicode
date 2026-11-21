@@ -77,6 +77,16 @@ pid_t StandInPid() { return (pid_t)Read(gPidFile).intValue; }
 
 BOOL Gone(pid_t pid) { return pid > 0 && kill(pid, 0) != 0 && errno == ESRCH; }
 
+// The alerts shown since this suite began: MCGuiAlertsShown is every alert
+// of the run so far, the suites before this one's included (CI, #314's
+// first run: fourteen of theirs, none of this suite's).
+NSUInteger gAlertsBefore;
+NSArray<NSString *> *NewAlerts() {
+    NSArray<NSString *> *all = MCGuiAlertsShown();
+    return all.count > gAlertsBefore ? [all subarrayWithRange:NSMakeRange(gAlertsBefore, all.count - gAlertsBefore)]
+                                     : @[];
+}
+
 // `command` typed into the terminal until `expect` shows on its screen,
 // again every 3 s: a remote shell has no integration's marks to say its
 // line editor is ready, and one starting may drop what came before it.
@@ -96,6 +106,7 @@ void RunUntil(NSString *what, NSString *command, NSString *expect) {
 
 MC_GUI_SUITE(remote_ssh) {
     MCGuiStep(@"a folder for the remote, and a stand-in for ssh", ^{
+        gAlertsBefore = MCGuiAlertsShown().count;
         // The session-host setting stays off: a window over SSH needs none.
         MCGuiSetSettings(@"lsp.enabled = false\n");
         NSFileManager *fm = NSFileManager.defaultManager;
@@ -139,7 +150,7 @@ MC_GUI_SUITE(remote_ssh) {
         [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp openURLs:@[ url ]];
         gC = RemoteWindow();
         GCHECK(gC != nil);
-        if (MCGuiAlertsShown().count) MCGuiNote(@"alerts: %@ (%@)", MCGuiAlertsShown(), MCGuiLastAlertInformative());
+        if (NewAlerts().count) MCGuiNote(@"alerts in this suite: %@ (%@)", NewAlerts(), MCGuiLastAlertInformative());
         if (!gC) return;
         gHostA = StandInPid();
         GCHECK(gHostA > 0);
@@ -175,7 +186,8 @@ MC_GUI_SUITE(remote_ssh) {
     MCGuiStep(@"still no stamp, and no question was asked", ^{
         if (!gC) return;
         GCHECK(TabFor(gC, gFile).fileModDate == nil);
-        GCHECK(MCGuiAlertsShown().count == 0);
+        GCHECK(NewAlerts().count == 0);
+        if (NewAlerts().count) MCGuiNote(@"alerts in this suite: %@", NewAlerts());
         [gC newTerminal:nil];
         gTerm = [gC valueForKey:@"terminal"];
         GCHECK(gTerm != nil && gTerm.onSessionHost && gTerm.sessionTerminal != 0);
@@ -235,7 +247,8 @@ MC_GUI_SUITE(remote_ssh) {
     // before it.
     RunUntil(@"it runs a command on the new host", @"echo \"again-$SSH_STANDIN-$((7*8))\"", @"again-yes-56");
     MCGuiStep(@"the window closes", ^{
-        GCHECK(MCGuiAlertsShown().count == 0);
+        GCHECK(NewAlerts().count == 0);
+        if (NewAlerts().count) MCGuiNote(@"alerts in this suite: %@", NewAlerts());
         gTerm = nil;
         [gC.window performClose:nil];
         gC = nil;

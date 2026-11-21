@@ -627,7 +627,11 @@ std::string HostLink::stderrText() {
 // Waits up to `waitMs` for the command to end, taking its status.
 void HostLink::reap(int waitMs) {
     if (pid_ <= 0 || status_.load() != -1) return;
-    for (int waited = 0;; waited += 10) {
+    // A deadline by the clock, not a count of naps: on a loaded machine
+    // each nap can last far longer than asked, which stretched the waits
+    // counted that way well past what they say.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(waitMs);
+    for (;;) {
         int st = 0;
         const pid_t r = waitpid(pid_, &st, WNOHANG);
         if (r == pid_) {
@@ -638,7 +642,7 @@ void HostLink::reap(int waitMs) {
             status_ = 0;   // reaped elsewhere (a subreaper): nothing to say
             return;
         }
-        if (waited >= waitMs) return;
+        if (std::chrono::steady_clock::now() >= deadline) return;
         usleep(10 * 1000);
     }
 }
@@ -674,8 +678,10 @@ void HostLink::close() {
             if (out_ >= 0) ::close(out_);
             out_ = -1;
         }
+        // Deadlines by the clock (reap's note).
         auto ended = [this](int ms) {
-            for (int waited = 0; waited < ms && !closed_.load(); waited += 10) usleep(10 * 1000);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+            while (!closed_.load() && std::chrono::steady_clock::now() < deadline) usleep(10 * 1000);
             return closed_.load() || !reader_.joinable();
         };
         if (reader_.joinable() && !ended(1500)) {

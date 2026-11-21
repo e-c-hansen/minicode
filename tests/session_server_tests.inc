@@ -736,12 +736,14 @@ static void testSessionServer() {
         if (link) {
             link->start([](Shared::Message&&) {});
             const int pid = link->pid();
-            const double t0 = nowMs();
             link->close();
-            CHECK(nowMs() - t0 < 6000);
             CHECK(gone(pid));
+            // Hung up (or, when that did not end it in time, killed), never
+            // left to end by itself 30 s on: a check of what close() did,
+            // not of how long a loaded machine took to do it.
             const int st = link->exitStatus();
-            CHECK(st != -1 && WIFSIGNALED(st));
+            CHECK(st != -1 && WIFSIGNALED(st) && (WTERMSIG(st) == SIGHUP || WTERMSIG(st) == SIGKILL));
+            if (!(st != -1 && WIFSIGNALED(st))) std::printf("  sleep's status: %d\n", st);
         }
         // A program that is not there: no link, or one that ends at once
         // with 127 (a libc that reports exec's failure only so).

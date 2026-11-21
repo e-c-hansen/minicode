@@ -3563,6 +3563,14 @@ through its host, so this is mostly a transport.
 - **`exec /bin/sh -c` in a stand-in may fork rather than exec**, leaving
   the host a grandchild; kill the stand-in's process group (it is a
   session leader: `HostLink::spawn`), never its pid alone.
+- **`MCGuiAlertsShown()` is the whole run's**, every suite's before this
+  one's too: "no question was asked" counts from the suite's start (#314's
+  first CI run failed on fourteen alerts of earlier suites, and passed
+  alone on retry).
+- **A wait counted in naps is not a wait in time.** `HostLink`'s waits
+  (`reap`, `close`'s grace before the hang-up) use steady_clock deadlines;
+  and no core check bounds `close()` by the wall clock (#314's first CI
+  run): `hostserver:spawn` checks it hung the command up instead.
 - **A line that is not a message ends `--stdio` silently** (the connection
   is dropped, as any peer's is), so a hand test must send real kinds
   (`session.hello`, not `Hello`).
