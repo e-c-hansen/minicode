@@ -8570,3 +8570,37 @@ The last two items of PARITY 2.9's review page.
   Current resolves the file to the current side. Trap: a right click soon
   after another near it is a double-click to GTK and opens no menu, so the
   check waits 0.6 s before each (time is the condition).
+
+### 131. Animated GIFs on the review page (the last of PARITY 2.9; November 2026)
+
+- **What a user meets.** A GIF of more than one frame on the review page, in
+  Before or After, plays at its own delays, as on the Mac and in the
+  Markdown preview. It plays only while its picture is mapped and inside the
+  text view's window; scrolled away, or the tab hidden or closed, it stops.
+  A one-frame GIF and every other picture are drawn as before.
+- **Code.** The git thread still only decodes the first frame's texture and
+  keeps the bytes (`Data::read.extras`). On the main thread `pictureBox`
+  calls `animatePicture`, which asks `animationOf` (a `GIF8` header, then
+  `GdkPixbufLoader`'s animation, not `is_static_image`) and, for an animated
+  one, hangs a `PicAnim` (animation, iterator, timer, frame count) on the
+  `GtkPicture` with `g_object_set_data_full`: it is freed with the widget
+  when the page lays out again or closes. The picture's `map` starts a
+  `g_timeout_add` at the frame's delay (at least 20 ms) and `unmap` removes
+  it, as MdPicture does; each tick advances the iterator, and when the
+  picture is inside the view (`gtk_widget_compute_bounds` against the text
+  view) sets the new frame's texture, scaled to the size the still was drawn
+  at, with `gtk_picture_set_paintable`; off screen it waits 100 ms and steps
+  nothing. A last frame with no delay ends the timer. The deprecated
+  gdk-pixbuf animation calls are silenced as in MediaView.
+- **For the checks.** `imageFrames()` (frames stepped after the first per
+  picture, -1 for a still) and the static `runningAnimations()` (armed frame
+  timers in every page).
+- **Checks.** `git_review` has a section for it: a repository with a
+  two-frame GIF and a one-frame GIF committed and changed to others, the
+  GIFs written by the suite from bytes (GdkPixbuf cannot write GIFs; the
+  loader's own word that they do and do not animate is checked), the page
+  with four pictures, After of the animated one stepping to frame 1 and then
+  three more, the still ones at -1 with exactly two timers, and after the
+  tab closes no timer (one short pause, a negative check).
+- **Not done.** Pictures scrolled away keep a 100 ms wake-up timer while
+  the page is mapped, which does no drawing.
