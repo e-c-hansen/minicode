@@ -97,6 +97,7 @@
 #include "TreeFollow.h"
 #include "Lsp.h"
 #include "AgentNotes.h"
+#include "GitGraph.h"
 #include "GitGutter.h"
 #include "TestGutter.h"
 #include "EditorConflicts.h"
@@ -3107,16 +3108,9 @@ static ChangeReviewPage* reviewPageOf(App* app) {
     return nullptr;
 }
 
-static void showChangeReview(App* app, const std::string& rel, bool staged, bool preview) {
-    if (app->dead || !app->git) return;
-    if (ChangeReviewPage* open = reviewPageOf(app)) {
-        app->editor->showPage(std::shared_ptr<EditorPage>(
-            std::shared_ptr<EditorPage>(), open), preview);   // found by its key, the same page
-        if (!preview) app->editor->focusActiveDocument();
-        open->revealFile(rel, staged);   // reads again
-        return;
-    }
-    auto page = std::make_shared<ChangeReviewPage>(app->git, app->rootDir);
+// The window's hooks on a review or commit page: open a file, show a
+// comparison, the unsaved text a discard must leave alone, the colors.
+static void wireReviewPage(App* app, const std::shared_ptr<ChangeReviewPage>& page) {
     page->onOpenFile = [app](const std::string& path, int line) {
         openFileThen(app, path, EditorTabs::OpenFrom::Other, [app, path, line] {
             if (app->editor->currentPath() != path || app->editor->isMedia()) return;
@@ -3137,6 +3131,19 @@ static void showChangeReview(App* app, const std::string& rel, bool staged, bool
         return incoming ? st.mergeIncomingColor() : st.mergeCurrentColor();
     };
     page->applySettings();
+}
+
+static void showChangeReview(App* app, const std::string& rel, bool staged, bool preview) {
+    if (app->dead || !app->git) return;
+    if (ChangeReviewPage* open = reviewPageOf(app)) {
+        app->editor->showPage(std::shared_ptr<EditorPage>(
+            std::shared_ptr<EditorPage>(), open), preview);   // found by its key, the same page
+        if (!preview) app->editor->focusActiveDocument();
+        open->revealFile(rel, staged);   // reads again
+        return;
+    }
+    auto page = std::make_shared<ChangeReviewPage>(app->git, app->rootDir);
+    wireReviewPage(app, page);
     app->editor->showPage(page, preview);
     if (!preview) app->editor->focusActiveDocument();
     page->revealFile(rel, staged);
@@ -3151,28 +3158,51 @@ static void showCommitReview(App* app, const std::string& hash, const std::strin
                              bool preview) {
     if (app->dead || !app->git || !Shared::Web::commitName(hash)) return;
     auto page = std::make_shared<ChangeReviewPage>(app->git, app->rootDir, hash, subject);
-    page->onOpenFile = [app](const std::string& path, int line) {
-        openFileThen(app, path, EditorTabs::OpenFrom::Other, [app, path, line] {
-            if (app->editor->currentPath() != path || app->editor->isMedia()) return;
-            if (line > 0) app->editor->revealLineColumn(line, 0);
-        });
-    };
-    page->onShowComparison = [app](const CompareSpec& spec) {
-        if (!app->dead) app->editor->showComparison(spec);
-    };
-    page->hasUnsavedText = [app](const std::string& path) {
-        for (Document* d : app->editor->dirtyDocuments())
-            if (d->path() == path) return true;
-        return false;
-    };
-    page->syntaxColor = [](int style) { return g.settings->settings().syntax((TokenStyle)style); };
-    page->mergeColor = [](bool incoming) {
-        const Settings& st = g.settings->settings();
-        return incoming ? st.mergeIncomingColor() : st.mergeCurrentColor();
-    };
-    page->applySettings();
+    wireReviewPage(app, page);
     app->editor->showPage(page, preview);   // a commit already open shows its own tab
     if (!preview) app->editor->focusActiveDocument();
+}
+
+// A page of a saved session made again (Persistence::restoreSession): the
+// review or a commit's page at tab `at`, not on show and without the
+// keyboard. Null when the window has that page already (one review per
+// window, one page per commit: a second in the record is left out, and is
+// not made first, since a review page owns the panel's refresh) or the
+// record does not read.
+static Document* restoreReviewPage(App* app, const TabSessions::PageTab& p, int at) {
+    if (app->dead || !app->git) return nullptr;
+    const bool commit = p.kind == "commit";
+    if (!commit && p.kind != "review") return nullptr;
+    if (commit && !Shared::Web::commitName(p.ref)) return nullptr;
+    const std::string key = commit ? "commit:" + app->rootDir + ":" + p.ref : "review:" + app->rootDir;
+    for (Document* d : app->editor->documents())
+        if (d->editorPage() && d->editorPage()->key() == key) return nullptr;
+    // The record keeps the tab's title, as the Mac's does ("1a2b3c4 Fix
+    // the parser"); the page makes it from the hash and the subject.
+    std::string subject = p.title;
+    const std::string lead = Git::shortHash(p.ref);
+    if (subject == lead) subject.clear();
+    else if (subject.compare(0, lead.size() + 1, lead + " ") == 0) subject.erase(0, lead.size() + 1);
+    auto page = commit ? std::make_shared<ChangeReviewPage>(app->git, app->rootDir, p.ref, subject)
+                       : std::make_shared<ChangeReviewPage>(app->git, app->rootDir);
+    wireReviewPage(app, page);
+    return app->editor->addPageAt(page, at);
+}
+
+// What the session keeps of a tab that holds a page: the review, or a
+// commit's page. A worktree's page is never kept (the Mac's pageTabOf:into:).
+static bool reviewPageRecord(const Document* d, TabSessions::PageTab* out) {
+    if (!d->editorPage()) return false;
+    auto* r = dynamic_cast<ChangeReviewPage*>(d->editorPage().get());
+    if (!r || r->isWorktree()) return false;
+    if (r->isCommit()) {
+        out->kind = "commit";
+        out->ref = r->commit();
+        out->title = r->title();
+    } else {
+        out->kind = "review";
+    }
+    return true;
 }
 
 // The ▶ beside each test (TestGutter.h), made with the window as the Mac's
@@ -5624,7 +5654,9 @@ static App* newWindow(const std::string& root, const std::string& file,
             if (app->dead || !app->tree) return;
             app->tree->restoreFocus(saved);
             updateTreeFocusActions(app);
-        }});
+        },
+        reviewPageRecord,
+        [app](const TabSessions::PageTab& p, int at) { return restoreReviewPage(app, p, at); }});
     // A window brought back is the same window in the backups: its own
     // unsaved buffers come back to it (Persistence::backupKey).
     if (record) app->persist->setBackupKey(record->backupKey);

@@ -82,6 +82,11 @@ public:
         // folder).
         std::function<std::vector<std::string>()> treeFocus;
         std::function<void(const std::vector<std::string>&)> restoreTreeFocus;
+        // What a tab that holds a page (the review, a commit's) is in the
+        // session, false for any other tab; and a saved page made again at
+        // tab `at`, not on show (null: left out).
+        std::function<bool(const Document*, TabSessions::PageTab*)> pageRecord;
+        std::function<Document*(const TabSessions::PageTab&, int at)> restorePage;
     };
 
     Persistence(Editor* editor, const std::string& root, Host host);

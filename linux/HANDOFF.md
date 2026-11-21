@@ -8692,3 +8692,31 @@ on GTK: docs/notes/session-host.md, "GTK's tabs save through the host
   check proves the host's watcher is live, not that its notice was the
   one heard. A probe that read the wrong window's link (the second
   window, not the page's) once showed "0 folders".
+
+### 134. Sessions bring back the review and commit pages (November 2026)
+
+- **What.** The folder's session and a window's record carry `pages`
+  (`TabSessions::PageTab`, kinds "review" and "commit") and `activePage`,
+  as the Mac's `pageTabOf:into:` and `tabForRestoredPage:` do.
+  `Persistence::session()` asks the host's `pageRecord` hook about every
+  tab (main.cpp's `reviewPageRecord`: the review, or a commit with its
+  hash and the tab's title, as the Mac keeps it, from which
+  `restoreReviewPage` takes the short hash off again for the subject;
+  never a worktree's page) and sets `at` to the tab's
+  place counting files and pages. `restoreSession` makes the pages after
+  the files through `restorePage` (`restoreReviewPage`: the same
+  `wireReviewPage` hooks a click gets, `Editor::addPageAt` inserting at
+  `at` without taking focus), and the page that was on show is shown
+  instead of a file. A session with only pages is no longer dropped by
+  restoreSession's early return.
+- **Left out.** Comparisons (kind "compare"; another bite) and worktree
+  pages. A page already in the window (one review, one page per commit) is
+  left out before it is made: a second review page would clear the first's
+  `onReviewRefresh` as it is destroyed.
+- **Checks.** `sessions`, the last section and the children
+  `_pages_first` and `_pages_again`: a git folder with a commit and an
+  uncommitted change, a file, a kept commit page, a file and the review
+  page on show are saved with `at` 1 and 3 and the review as `activePage`;
+  with both pages written twice in the record the next launch has the four
+  tabs in the same order, the review on show and read, and the commit's
+  page read when shown.
