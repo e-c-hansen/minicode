@@ -94,6 +94,19 @@ public:
     // this renderer has it open, and takes it up again once it detaches.
     // Not for a renderer that only reads, nor a guest. Before connect().
     void setKeepsBackups(bool on) { keepsBackups_ = on; }
+    // Told whenever a document's unsaved state against the disk flips on
+    // the host (DocDirty), whoever made it flip, for every document the
+    // host holds, open here or not; said in its Hello (flag 8), so a host
+    // sends it only to a renderer that knows the message. Called on this
+    // renderer's thread, inside dispatch(). Before connect().
+    void hearDirty(std::function<void(DocId doc, bool dirty)> f) {
+        dirtyListener_ = std::move(f);
+        hearsDirty_ = (bool)dirtyListener_;
+    }
+    // Whether the host saves documents itself (its Welcome said so; a host
+    // from before saving does not, and would drop a DocSave). Known once
+    // the Welcome is taken (settle after connect()).
+    bool hostSaves() const { return (hostFlags_ & 1) != 0; }
     Model::Unit unit() const { return unit_; }
 
     // ---- ids: what this renderer opens on the host (documents, terminals,
@@ -185,6 +198,20 @@ public:
     void noteSelection(DocId doc, const Selection& now);
     // The text as the mirror has it now was written to its file.
     void saved(DocId doc);
+    // The host writes the document to its file itself (stage 7,
+    // SessionFiles.h's saveDocument), after every edit this renderer sent
+    // before: `window` names whose folder holds a guest's save (0 for a
+    // headless host's own), `overwrite` writes over a file that changed on
+    // disk or went (a person's answer to the first refusal). 0, sending
+    // nothing, when the document is not open here or the host does not
+    // save (hostSaves). The answer as saveAnswer(req) once dispatched.
+    std::uint64_t requestSave(DocId doc, std::uint64_t window, bool overwrite);
+    struct SaveAnswer {
+        bool ok = false;
+        std::uint64_t version = 0;   // the host version written
+        Json json;                   // saveDoneJson's {path, ok, reason, why, note, encoding}
+    };
+    bool saveAnswer(std::uint64_t req, SaveAnswer* out);
 
     // ---- undo (the host's)
     UndoInfo undoInfo(DocId doc);   // settles first
@@ -303,7 +330,9 @@ private:
 
     Model::Unit unit_;
     std::string name_;
-    bool readOnly_ = false, guest_ = false, keepsBackups_ = false;
+    bool readOnly_ = false, guest_ = false, keepsBackups_ = false, hearsDirty_ = false;
+    std::function<void(DocId, bool)> dirtyListener_;
+    int hostFlags_ = 0;   // the Welcome's
     Send send_;
     ClientId id_ = 0;
     std::uint64_t idBase_ = 0, idsUsed_ = 0;

@@ -76,6 +76,9 @@ bool Host::refusedFromViewer(ClientId c, const Message& m) const {
         return !m.ops.empty() || m.step.id || m.flag;
     case Kind::DocUndo:
     case Kind::TermInput:
+    // A guest's save: held to the session's folder, and never of a
+    // document an app's window has open (onSave).
+    case Kind::DocSave:
     // A guest's view size: the pty takes it only while the guest is the
     // one that typed last (Host::sizer), so a narrow page shrinks nothing
     // until someone types there.
@@ -99,6 +102,7 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::DocEdit: onEdit(from, m); break;
     case Kind::DocUndo: onUndo(from, m); break;
     case Kind::DocSaved: onSaved(from, m); break;
+    case Kind::DocSave: onSave(from, m); break;
     case Kind::DocForget: onForget(from, m); break;
     case Kind::DocWatch: onWatch(from, m); break;
     case Kind::DocQuery: onQuery(from, m); break;
@@ -184,8 +188,17 @@ void Host::handle(ClientId from, Message&& m) {
     case Kind::DocEdit:
     case Kind::DocUndo:
     case Kind::DocSaved:
+    case Kind::DocSave:
     case Kind::DocPath:
     case Kind::DocDetach: backupsChanged(); break;
+    default: break;
+    }
+    switch (m.kind) {
+    case Kind::DocReset:
+    case Kind::DocEdit:
+    case Kind::DocUndo:
+    case Kind::DocSaved:
+    case Kind::DocSave: tellDirty(m.doc); break;
     default: break;
     }
 }
@@ -247,6 +260,7 @@ void Host::onHello(ClientId c, Message& m) {
     r.readOnly = (m.flag & 1) != 0;
     r.guest = !r.readOnly && (m.flag & 2) != 0;
     r.keepsBackups = !r.readOnly && !r.guest && (m.flag & 4) != 0;
+    r.hearsDirty = (m.flag & 8) != 0;
     // Its id base, kept for a second Hello: what it made with it stays its.
     if (!r.idBase) r.idBase = chooseIdBase();
     Message w;
@@ -254,6 +268,7 @@ void Host::onHello(ClientId c, Message& m) {
     w.client = c;
     w.v = r.idBase;
     w.name = folder_;
+    w.flag = 1;   // this host saves (DocSave)
     send(c, std::move(w));
 }
 
@@ -601,8 +616,86 @@ void Host::onUndo(ClientId c, Message& m) {
 }
 
 void Host::onSaved(ClientId, Message& m) {
+    // An app wrote it: the host knows no stamp for the file now, so its own
+    // next save reads the file and compares it with this text.
     auto it = docs_.find(m.doc);
     if (it != docs_.end()) it->second.doc.markSaved(FolderSearch::FileStamp());
+}
+
+void Host::onSave(ClientId c, Message& m) {
+    Message r;
+    r.kind = Kind::DocSaveDone;
+    r.doc = m.doc;
+    r.req = m.req;
+    r.outcome = Outcome::Refused;
+    SaveDone done;
+    std::string path;
+    auto it = docs_.find(m.doc);
+    auto who = renderers_.find(c);
+    const bool guest = who != renderers_.end() && who->second.guest;
+    if (it == docs_.end()) {
+        done.reason = "notopen";
+        done.why = "That document is no longer open.";
+    } else {
+        Doc& d = it->second;
+        path = d.path;
+        const std::string name = path.substr(path.rfind('/') + 1);
+        if (guest && shownByApp(d)) {
+            // Two writers would each keep a stamp the other's write moves:
+            // the app's window saves what it shows, with its own questions.
+            done.reason = "app";
+            done.why = (name.empty() ? std::string("This document") : name) +
+                       " is open in a mutible window: save it there.";
+        } else {
+            SaveAsk a;
+            a.path = d.path;
+            if (guest) {
+                a.root = readRoot(m.window);
+                if (a.root.empty()) {
+                    done.reason = "outside";
+                    done.why = "The session has no folder to save in.";
+                }
+            }
+            if (done.reason.empty()) {
+                a.text = d.doc.text().str();
+                a.saved = d.doc.savedText();
+                a.stamp = d.doc.stamp();
+                a.encoding = d.doc.encoding();
+                a.bom = d.doc.bom();
+                a.overwrite = (m.flag & 1) != 0;
+                done = saveDocument(a);
+            }
+            if (done.ok) {
+                d.doc.setEncoding(done.encoding, done.bom);
+                d.doc.markSaved(done.written);
+                r.outcome = Outcome::Done;
+                r.v = d.v;
+            }
+        }
+    }
+    r.json = saveDoneJson(path, done);
+    send(c, std::move(r));
+}
+
+void Host::tellDirty(DocId id) {
+    auto it = docs_.find(id);
+    if (it == docs_.end()) return;
+    bool anyone = false;
+    for (const auto& [c, r] : renderers_) anyone = anyone || r.hearsDirty;
+    if (!anyone) return;
+    Doc& d = it->second;
+    const bool now = d.doc.dirty();
+    if (now == d.toldDirty) return;
+    d.toldDirty = now;
+    for (const auto& [c, r] : renderers_) {
+        if (!r.hearsDirty) continue;
+        Message m;
+        m.kind = Kind::DocDirty;
+        m.doc = id;
+        m.flag = now ? 1 : 0;
+        m.v = d.v;
+        send(c, std::move(m));
+    }
 }
 
 void Host::onForget(ClientId, Message& m) {

@@ -49,7 +49,20 @@
 // window, json: {"op", ...}} asks the host to read in the session's folder,
 // and FsData {req, json, bytes} answers; "list" lists one folder for a
 // tree, "read" gives a piece of a file's bytes (in `bytes`, base64 on the
-// wire) for a viewer. A new read is a new "op", not a new message. Pure C++17, no I/O.
+// wire) for a viewer. A new read is a new "op", not a new message.
+//
+// Saving (stage 7's first write): DocSave {doc, req, window, flag 1:
+// overwrite} asks the host to write a document's text to its file itself,
+// with the apps' rules (SessionFiles.h, saveDocument), and DocSaveDone
+// {doc, req, outcome, v, json} answers: Done with the version written, or
+// Refused with why (the file changed on disk since the host's saved text
+// was read or written, it went, it is outside the session's folder, an
+// app's window has it open and saves it). A renderer whose Hello says it
+// hears dirty states (flag 8) gets DocDirty {doc, flag 1: dirty, v}
+// whenever a document's unsaved state against the disk flips, whoever
+// made it flip. The host's Welcome says it saves (flag 1), so a renderer
+// never sends DocSave to a host from before it, which would take the line
+// for one that is not a message and drop the connection. Pure C++17, no I/O.
 #pragma once
 
 #include <cstdint>
@@ -79,7 +92,9 @@ enum class Kind {
                  // terminals and say its view's size (TermResize), nothing else that
                  // changes the session; flag 4: an app that keeps backups of the
                  // unsaved documents it has open (a headless host keeps none of
-                 // those while it has them: Host::keepBackups)
+                 // those while it has them: Host::keepBackups); flag 8: it hears
+                 // DocDirty (a renderer from before it would drop the connection
+                 // at a kind it does not know)
     DocOpen,     // doc, name (its path), text8 (UTF-8): the host's copy starts as it, saved.
                  // From a renderer that only reads, a view of the document as it is: it
                  // never makes one, and keeps none open (DocGone when there is none, or
@@ -107,7 +122,7 @@ enum class Kind {
     TermAttach,  // term: answered by TermReplay, TermShell and TermMarks
     // host → renderer
     Welcome,     // client: the renderer's id; v: the base of the ids it makes (kIdRange);
-                 // name: the folder
+                 // name: the folder; flag 1: the host saves documents (DocSave)
     DocOpened,   // doc, v (and text16 when it was open already: another renderer's)
     DocEdited,   // doc, v, by, seq, ops, ops16, flag (1 undo, 2 redo), select
     DocUndone,   // doc, req, outcome
@@ -139,6 +154,14 @@ enum class Kind {
                  // renderer's connection goes); a renderer reattaches with DocOpen
     TermDetach,  // term: the renderer no longer shows the terminal (it stops being one
                  // of its viewers, so its credit holds nothing back); the shell runs on
+    // Saving through the host (stage 7, SessionFiles.h's saveDocument).
+    DocSave,     // renderer → host: doc, req, window (whose folder holds a guest's save),
+                 // flag 1: write even though the file changed on disk or went since
+                 // the host's saved text; sent after the renderer's edits, in order
+    DocSaveDone, // host → renderer: doc, req, outcome (Done or Refused), v (the version
+                 // written), json: saveDoneJson's {path, ok, reason, why, note, encoding}
+    DocDirty,    // host → each renderer whose Hello had flag 8: doc, flag 1 (unsaved
+                 // against the disk), v: the document's unsaved state flipped
 };
 
 const char* kindName(Kind k);

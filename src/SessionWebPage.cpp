@@ -206,8 +206,10 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #docbar { display: flex; align-items: center; gap: 8px; flex: none; padding: 3px 10px; }
 #docpath { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden;
            text-overflow: ellipsis; flex: 1; min-width: 0; }
-#modebtn { background: none; border: 1px solid var(--line); color: var(--fg); font: inherit;
+#modebtn, #savebtn { background: none; border: 1px solid var(--line); color: var(--fg); font: inherit;
            font-size: 12px; padding: 1px 8px; border-radius: 3px; cursor: pointer; flex: none; }
+#savebtn:not(.dirty) { color: var(--muted); }
+#savebtn.dirty::before { content: "\25CF "; font-size: 9px; vertical-align: middle; }
 #code, #term { flex: 1; overflow: auto; min-height: 0;
                font: var(--efs)/var(--lh) ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
 #term { font-size: var(--tfs); }
@@ -331,7 +333,7 @@ body:not(.editable) #caret { display: none; }
  <div id="top">
   <section id="docsec">
     <div id="tabrow"><nav id="tabs" class="strip"></nav></div>
-    <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button></div>
+    <div id="docbar"><span id="docpath"></span><a id="fileopen" class="hidden" target="_blank" rel="noopener noreferrer">Open in a new tab</a><button id="modebtn" class="hidden" type="button"></button><button id="savebtn" class="hidden" type="button" title="Save this file to disk">Save</button></div>
     <div id="code"><div id="selection"></div><div id="lines"></div><div id="caret" class="hidden"></div><textarea id="input" aria-label="Editor" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" wrap="off"></textarea></div>
     <iframe id="md" class="hidden" sandbox="" title="Markdown page"></iframe>
     <div id="tex" class="hidden"><p id="texnote" class="hidden"></p><iframe id="texframe" class="hidden" title="Typeset pages"></iframe><div id="texpages" class="hidden" tabindex="0" aria-label="Typeset pages"></div><pre id="texlog" class="hidden"></pre></div>
@@ -494,6 +496,7 @@ body:not(.editable) #caret { display: none; }
   function drawTabs() {
     const strip = $("tabs");
     strip.textContent = "";
+    drawSave();
     if (!state) return;
     const dirty = new Map(state.docs.map((d) => [d.id, d.dirty]));
     const seen = new Set();
@@ -1949,6 +1952,7 @@ body:not(.editable) #caret { display: none; }
   // The selection and the caret, drawn over the lines in view.
   function drawSelection() {
     const layer = $("selection"), caret = $("caret"), code = $("code");
+    drawSave();
     layer.textContent = "";
     if (!D.id || D.kind === "large" || D.mode === "page" || !D.lines.length || code.classList.contains("hidden")) {
       caret.classList.add("hidden");
@@ -2035,7 +2039,7 @@ body:not(.editable) #caret { display: none; }
   function afterSync() {
     if (!synced()) return;
     if (D.undo) { post({ t: "undo", doc: D.id, redo: D.undo === 2 }); D.undo = 0; D.moved = true; }
-    if (D.save) { post({ t: "save", doc: D.id }); D.save = false; }
+    if (D.save) { post({ t: "save", doc: D.id, overwrite: D.save === 2 }); D.save = 0; }
     if (D.switchTo) { const id = D.switchTo; D.switchTo = 0; showDoc(id); }
   }
   // An edit of this page's: made on its lines at once, then sent.
@@ -2141,11 +2145,37 @@ body:not(.editable) #caret { display: none; }
     D.undo = redo ? 2 : 1;
     afterSync();
   }
-  function save() {
+  // A save waits until the session has every edit of this page's, then
+  // goes to the app that owns the disk, or the host (a headless one), which
+  // answers `saved`. 2: write over a file that changed or went on disk.
+  function save(overwrite) {
     if (!editable) return toast("This page only reads.");
     if (!canSave) return toast("Nothing here saves to disk yet: save from the mutible window.");
-    D.save = true;
+    if (!D.editable || D.id <= 0) return toast("This document cannot be saved from here.");
+    D.save = overwrite ? 2 : 1;
     afterSync();
+  }
+  function docDirty(id) {
+    const d = state && state.docs.find((x) => x.id === id);
+    return !!(d && d.dirty);
+  }
+  // The doc bar's Save, for a document this page edits: marked while the
+  // host counts it unsaved.
+  function drawSave() {
+    const b = $("savebtn");
+    const on = editable && canSave && D.editable && D.id > 0 && D.kind !== "large" && !L.on;
+    b.classList.toggle("hidden", !on);
+    b.classList.toggle("dirty", on && docDirty(D.id));
+  }
+  function onSaved(m) {
+    const name = base(m.path || "") || "The file";
+    if (m.ok) return toast(m.note || "Saved " + name);
+    // Changed or deleted on disk since it was read: the person decides.
+    if ((m.reason === "changed" || m.reason === "gone") && m.doc === D.id) {
+      if (window.confirm(m.why + "\n\nSave anyway?")) save(true);
+      return;
+    }
+    toast(m.why || name + " was not saved.");
   }
 
   // ---- moving the caret
@@ -2240,7 +2270,7 @@ body:not(.editable) #caret { display: none; }
           if (k === "a") { D.a = 0; D.h = total(); D.moved = true; drawSelection(); syncInput(); }
           else if (k === "z") undo(shift);
           else if (k === "y" && !mac) undo(true);
-          else if (k === "s") save();
+          else if (k === "s") save(false);
           else done = false;   // copy, cut and paste: the events below
         } else if (!e.ctrlKey && !e.metaKey && [...e.key].length === 1) {
           replaceSel(e.key, kTyping);
@@ -2682,6 +2712,7 @@ body:not(.editable) #caret { display: none; }
           break;
         case "refused": onRefused(m); break;
         case "note": toast(m.text); break;
+        case "saved": onSaved(m); break;
         case "gone":
           if (m.id === want.doc) { D.id = 0; D.flight = null; D.queue = []; showNote("This document was closed."); }
           break;
@@ -2773,6 +2804,17 @@ body:not(.editable) #caret { display: none; }
     D.mode = D.mode === "page" ? "code" : "page";
     showMode();
     if (D.mode === "code") focusEditor();
+  });
+  $("savebtn").addEventListener("click", () => save(false));
+  // Command (Control) S anywhere on a page that edits the document on show
+  // saves it, not the browser's Save Page As; the editor's own key handler
+  // takes it first while it has the keyboard.
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.altKey || e.shiftKey || !(mac ? e.metaKey : e.ctrlKey)) return;
+    if (e.key.toLowerCase() !== "s" || !editable || !D.editable || D.id <= 0) return;
+    if (e.target && e.target.closest && e.target.closest("#term, input")) return;   // the terminal's keys
+    e.preventDefault();
+    save(false);
   });
   $("tree").addEventListener("click", (ev) => {
     const row = ev.target.closest(".row");

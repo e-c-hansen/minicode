@@ -18,12 +18,24 @@
 // names as TreeSort orders them. What the folder's .gitignore and .ignore
 // files ignore (FolderSearch.h's Ignore, as Find in Folder reads them) is
 // listed and marked, as the apps' trees show it in tree.git-ignored's
-// color rather than leaving it out. Pure C++17 and POSIX.
+// color rather than leaving it out.
+//
+// And the first write, saving (saveDocument): the host writes a document's
+// text to its file with the rules the apps' saves keep (docs/notes/
+// sessions.md, "One writer" and "The disk"): atomically
+// (FolderSearch::writeFileAtomically: a link stays a link, hard links and
+// other owners written in place, fsync'd), in the file's own encoding with
+// its byte order mark (UTF-16, Windows-1252, UTF-8 with stray bytes; the
+// text's line endings are its own, never changed), and never over a file
+// that changed on disk since the text the host counts saved was read or
+// written, unless asked to (`overwrite`, a person's answer). Pure C++17 and
+// POSIX.
 #pragma once
 
 #include <cstddef>
 #include <string>
 
+#include "FolderSearch.h"
 #include "Json.h"
 
 namespace Shared {
@@ -58,5 +70,51 @@ bool confinedPath(const std::string& root, const std::string& rel, std::string* 
 // size alone). The file is opened at its real place, not following a
 // symlink there, so a link swapped in after the check is refused.
 Json readWorkspace(const std::string& root, const Json& request, std::string* bytes = nullptr);
+
+// ---- saving (the host's DocSave; SessionHost.h)
+struct SaveAsk {
+    std::string path;           // the document's file, absolute ("" for none yet)
+    // When not empty, the file must be inside this folder (a browser's
+    // save): its folder's real place, and its own when it is there (a
+    // symlink followed), inside the folder's real place.
+    std::string root;
+    std::u16string text;        // what to write
+    std::u16string saved;       // the text the host counts saved (as read, or last written)
+    // The file as the host last wrote it (exists false when it never has):
+    // a file whose stamp is still that is unchanged without being read,
+    // and is written in `encoding` with `bom`.
+    FolderSearch::FileStamp stamp;
+    FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;
+    bool overwrite = false;     // write even when it changed on disk, or went
+};
+struct SaveDone {
+    bool ok = false;
+    // Why not: "nofile" (no path yet), "outside" (not in `root`), "changed"
+    // (on disk since `saved`), "gone" (deleted since), "notfile" (a folder,
+    // a FIFO, a link to nothing), "unreadable" (it could not be read to
+    // compare), "encoding" (the text holds a lone surrogate), "write" (the
+    // write failed). "changed" and "gone" are the two a person may answer
+    // with `overwrite`.
+    std::string reason;
+    std::string why;            // a sentence for the person
+    std::string note;           // a sentence when it worked but differs (the encoding)
+    FolderSearch::FileStamp written;   // the file as written
+    FolderSearch::TextEncoding encoding = FolderSearch::TextEncoding::Utf8;
+    bool bom = false;
+    bool created = false;       // there was no file before
+};
+// Whether the file is unchanged is decided as the apps decide it, by the
+// stamp the host wrote it with; when the host has none (an app read the
+// file, or saved it last), by reading the file and comparing its text with
+// `saved`, which is the text it was read or written with. The encoding is
+// the one the file is in on disk (or that the host last wrote; written
+// over with `overwrite`, the one the host last wrote, else the file's
+// own as it is now), except
+// that a Windows-1252 file whose text now holds a character Windows-1252
+// lacks is written as UTF-8, with `note` saying so, as the Mac's save does.
+SaveDone saveDocument(const SaveAsk& ask);
+// DocSaveDone's json: {path, ok, reason, why, note, encoding (its label)}.
+Json saveDoneJson(const std::string& path, const SaveDone& done);
 
 }  // namespace Shared

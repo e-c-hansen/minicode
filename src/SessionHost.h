@@ -64,6 +64,18 @@
 // thread, so a listing is capped (kMaxListed) and a read too
 // (kMaxReadBytes).
 //
+// Stage 7's first write, saving: DocSave has the host write a document's
+// text to its file (SessionFiles.h's saveDocument: atomic, the file's own
+// encoding, refused when the file changed on disk since the host's saved
+// text unless the renderer says to overwrite), then count it saved with
+// the stamp it wrote, so its next save knows the file without reading it.
+// A guest's save (a browser's page) is held to the session's folder, and is
+// refused while an app's window has the document open: that app saves it,
+// by its own rules and questions, and tells the host (DocSaved), as before.
+// Whoever makes a document's unsaved state flip (an edit, an undo, a save,
+// an app's DocSaved), renderers that said they hear it get DocDirty. The
+// write is synchronous on the host's thread, as the host's backups are.
+//
 // Pure C++17 and POSIX: SessionHost's thread polls the ptys (poll(2)) and a
 // pipe that wakes it for messages; Host does the I/O only when the loop
 // calls it (readable, writable, tick).
@@ -195,6 +207,7 @@ private:
         bool readOnly = false;   // Hello's flag 1: a view, which changes nothing
         bool guest = false;      // flag 2: a view that may edit, undo and type
         bool keepsBackups = false;   // flag 4: an app that backs up what it has open
+        bool hearsDirty = false;     // flag 8: told DocDirty
         std::uint64_t idBase = 0;   // its Welcome's: the ids it makes are above it
     };
     // One applied edit, as every renderer may need it again: by whom, in
@@ -238,6 +251,8 @@ private:
             std::string untitled;
             bool wasShown = false;   // an app's window had it, as last looked
         } kept;
+        // Its unsaved state as renderers that hear DocDirty were last told.
+        bool toldDirty = false;
     };
 
     struct Term {
@@ -351,6 +366,10 @@ private:
     void broadcast(DocId id, Doc& d, const Entry& e, ClientId by, std::uint64_t seq, int flag,
                    ClientId selectFor, const Selection* select16);
     void tellUndoState(DocId id, Doc& d);
+    // DocDirty to every renderer that hears it, when the document's unsaved
+    // state changed since they were last told (compared only while one
+    // hears: a same-length edit compares the whole text).
+    void tellDirty(DocId id);
 
     void onHello(ClientId c, Message& m);
     // Whether `m` from `c` would change the session while `c` only reads,
@@ -367,6 +386,9 @@ private:
     void onForget(ClientId c, Message& m);
     void onWatch(ClientId c, Message& m);
     void onQuery(ClientId c, Message& m);
+    // DocSave: the document written to its file by the host
+    // (SessionFiles.h's saveDocument), answered DocSaveDone.
+    void onSave(ClientId c, Message& m);
     // The workspace (SessionFiles.h): a read in the folder of the session
     // (a headless host's own), else of the window the request names.
     void onRead(ClientId c, Message& m);

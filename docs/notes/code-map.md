@@ -89,7 +89,9 @@ goes here first, with tests; the GUI only displays it.
   `hostserver:*`; docs/notes/session-host.md), and `SessionFiles` (stage
   7's first read: `FsRead` lists one folder of the session's, confined to
   it by `confinedPath`, with the apps' trees' dotfile, order and ignore
-  rules, for the browser's tree; `host:fs-list`), `SessionWebViewers`
+  rules, for the browser's tree; `host:fs-list`; and its first write,
+  `saveDocument`, the host's DocSave by the apps' save rules;
+  `host:save-rules`, `host:save` in tests/session_save_tests.inc), `SessionWebViewers`
   (what the browser's page renders itself: a notebook as a page, a SQLite
   database's tables and rows; `sessionweb:viewers`), `SessionWebTypeset`
   (the LaTeX preview's typesets the app publishes, kept by the document's

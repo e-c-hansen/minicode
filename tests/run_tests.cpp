@@ -11926,6 +11926,7 @@ static void testMultiCaretOccurrences() {
 #include "undo_history_tests.inc"
 #include "session_model_tests.inc"
 #include "session_host_tests.inc"
+#include "session_save_tests.inc"
 #include "session_terminal_tests.inc"
 #include "session_server_tests.inc"
 #include "session_backups_tests.inc"
@@ -12139,6 +12140,7 @@ int main() {
     testTextModel();
     testUndoHistory();
     testSessionHost();
+    testSessionSave();
     testSessionTerminals();
     testSessionServer();
     testSessionBackups();
