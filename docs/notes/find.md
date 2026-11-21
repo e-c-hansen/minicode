@@ -185,6 +185,15 @@ found through that list.
   question (`FolderReplaceFile::outside`). Replace Match replaces only while
   the row's line still reads as searched. `replaceOneAt` maps a result's byte
   column to a tab's UTF-16.
+- **For the session's browser page** (2026-11-21, docs/notes/session-host.md,
+  "Quick Open and Find in Folder in the page"): the host runs
+  `FolderSearch::search` on a worker with the Mac's options and three
+  more, which the app's windows leave off: `skipDotfiles` (the page's
+  tree shows no dotfiles unless Show Hidden Files is on), `confine` (a
+  symlink whose real place is outside the folder is neither read nor
+  entered, `insideRoot`), and `onRows`, called on the merging thread with
+  each file's rows as they are taken (repeated context dropped between
+  them), so the rows go to the page as they are found.
 - **Where Option+Shift+Cmd+F puts the keyboard** (2026-11-20, found by
   `make taskbench-mac`: with nothing searched yet it went to the replace
   field, so the search typed first became the replacement): as VS Code's

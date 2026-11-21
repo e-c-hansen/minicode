@@ -22,8 +22,11 @@ namespace Shared {
 
 ClientId Host::connect() { return ++nextClient_; }
 
+Host::~Host() = default;
+
 void Host::disconnect(ClientId c) {
     renderers_.erase(c);
+    if (workers_) workers_->cancelAll(c);   // its searches answer no one now
     if (watches_.erase(c)) watchGen_++;   // its trees' folders are no one's now
     // Its terminals stay for the next renderer; one nobody shows keeps
     // running, its output going only into the host's screen, unthrottled.
@@ -249,8 +252,31 @@ void Host::onRead(ClientId c, Message& m) {
     r.kind = Kind::FsData;
     r.req = m.req;
     r.window = m.window;
-    if (m.json["op"].asString() == "watch") {
+    const std::string op = m.json["op"].asString();
+    if (op == "watch") {
         r.json = onWatchAsk(c, m.window, m.json);
+        send(c, std::move(r));
+        return;
+    }
+    if (isWorkerRead(op)) {
+        // Quick Open's list and Find in Folder, on a worker: answered as it
+        // goes (takeReads). A cancel stops the renderer's own read and has
+        // no answer of its own.
+        if (op == "cancel") {
+            if (workers_) workers_->cancel(c, (std::uint64_t)std::max<int64_t>(0, m.json["req"].asInt()));
+            return;
+        }
+        const std::string root = readRoot(m.window);
+        std::string why = "no folder to read in";
+        if (!root.empty()) {
+            if (!workers_) workers_ = std::make_unique<ReadWorkers>();
+            if (workers_->start(c, m.req, m.window, root, m.json, &why, readSeconds_)) return;
+        }
+        Json e = Json::object();
+        e.set("op", Json(op));
+        e.set("error", Json(why));
+        e.set("done", Json(true));
+        r.json = std::move(e);
         send(c, std::move(r));
         return;
     }
@@ -265,6 +291,26 @@ void Host::onRead(ClientId c, Message& m) {
         r.json = readWorkspace(root, m.json, &r.bytes);
     }
     send(c, std::move(r));
+}
+
+void Host::takeReads() {
+    if (!workers_) return;
+    for (ReadWorkers::Answer& a : workers_->take()) {
+        if (!renderers_.count(a.to)) continue;   // gone meanwhile
+        Message r;
+        r.kind = Kind::FsData;
+        r.req = a.req;
+        r.window = a.window;
+        r.json = std::move(a.json);
+        send(a.to, std::move(r));
+    }
+}
+
+bool Host::waitReads(int timeoutMs) {
+    if (!workers_) return false;
+    const bool came = workers_->wait(timeoutMs);
+    takeReads();
+    return came;
 }
 
 void Host::onHello(ClientId c, Message& m) {
@@ -287,6 +333,7 @@ void Host::onHello(ClientId c, Message& m) {
     w.name = folder_;
     w.flag = 1 | 2;   // this host saves (DocSave), for apps too
     if (watching_) w.flag |= 4;   // and watches the disk (FsRead's "watch", DocReload)
+    w.flag |= 8;   // and lists files and searches on workers (FsRead's "files", "search", "cancel")
     send(c, std::move(w));
 }
 
@@ -2010,6 +2057,8 @@ void SessionHost::loop() {
             watcher_.reset();
             return;
         }
+        // What the workers answered (Quick Open's list, a search's rows).
+        host_.takeReads();
         // The disk: what to watch, if that changed, and a batch that is due.
         lookAtWatch();
         if (coalesce_.due(monoSeconds())) host_.diskChanged(coalesce_.take());
@@ -2024,6 +2073,9 @@ void SessionHost::loop() {
         polls.assign(1, pollfd{wake_[0], POLLIN, 0});
         const int watchFd = watcher_ ? watcher_->fd() : -1;
         if (watchFd >= 0) polls.push_back(pollfd{watchFd, POLLIN, 0});
+        // The workers' answers wake the loop; takeReads at its top sends them.
+        const int readsFd = host_.readsFd();
+        if (readsFd >= 0) polls.push_back(pollfd{readsFd, POLLIN, 0});
         const std::size_t firstPty = polls.size();
         for (const Host::PollFd& f : fds)
             polls.push_back(pollfd{f.fd, (short)((f.read ? POLLIN : 0) | (f.write ? POLLOUT : 0)), 0});

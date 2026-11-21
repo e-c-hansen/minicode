@@ -797,6 +797,18 @@ struct Walker {
         return ignorePrefix.empty() ? rel : ignorePrefix + "/" + rel;
     }
 
+    // Whether `path`'s real place (symlinks followed) is the root's or
+    // under it (FolderSearchOptions::confine).
+    bool insideRoot(const std::string& path) const {
+        const std::string& top = matcher.rootCanon;
+        if (top.empty()) return false;
+        char resolved[PATH_MAX];
+        if (!::realpath(path.c_str(), resolved)) return false;
+        const std::string real = resolved;
+        return real == top || (real.size() > top.size() && real.compare(0, top.size(), top) == 0 &&
+                               (top.back() == '/' || real[top.size()] == '/'));
+    }
+
     // ---- listing a folder (any thread)
     void list(Node& n) {
         DIR* d = ::opendir(n.path.c_str());
@@ -824,6 +836,7 @@ struct Walker {
                 if (name == ".gitignore") hasGitignore = true;
                 else if (name == ".ignore") hasIgnore = true;
                 if (isSkippedFile(name)) continue;
+                if (opt.skipDotfiles && nm[0] == '.') continue;
                 entries.push_back({std::move(name), e->d_type});
             }
             ::closedir(d);
@@ -845,6 +858,9 @@ struct Walker {
                 if (::stat(full.c_str(), &st) != 0) continue;   // broken, vanished
                 isDir = S_ISDIR(st.st_mode);
                 isFile = S_ISREG(st.st_mode);
+                // Held to the folder: a link whose real place is outside
+                // it is neither read nor entered.
+                if (opt.confine && !insideRoot(full)) continue;
             }
             if (useIgnore && !rules.empty() && rules.ignored(ignorePath(childRel), isDir))
                 continue;
@@ -974,6 +990,12 @@ struct Walker {
             if (full()) { out.truncated = true; break; }
         }
         if (added) ++out.filesMatched;
+        if (added && opt.onRows) {
+            std::vector<FolderSearchMatch> rows(out.matches.end() - static_cast<std::ptrdiff_t>(added),
+                                                out.matches.end());
+            if (opt.contextLines) dropRepeatedContext(rows);
+            opt.onRows(rows);
+        }
         return !out.truncated;
     }
 
@@ -1534,6 +1556,11 @@ FolderSearchResult search(const std::string& root, const std::string& query,
         // Plain text matching case, or in ASCII (which only ASCII folds
         // to): the needle is the query.
         m.exact = m.useNeedle && !m.needle.never() && (options.caseSensitive || isAscii(q));
+    }
+    if (options.confine) {
+        const fs::path canon = fs::canonical(root, ec);
+        if (ec) return out;
+        m.rootCanon = canon.string();
     }
     Walker w(options, cancel, out, m);
     w.start(root);

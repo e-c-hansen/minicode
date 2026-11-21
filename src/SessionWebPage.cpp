@@ -36,6 +36,12 @@
 // worktree pages are tabs beside its documents, shown the same way with
 // their headers, and a review's pictures show before and after from the
 // server's /picture/ addresses (R3's last slice).
+// Quick Open (Command P, Control P elsewhere, or Go to File in the header)
+// lists the folder's files as the host listed them, ranked by the app's own
+// palette matching on the server; Find in Folder (Shift Command F, or the
+// sidebar's Search) shows the host's FolderSearch rows as they come,
+// grouped by file with a line of context either side. A file picked from
+// either opens as a click in the tree opens it, at the line (stage 7).
 // "{{NONCE}}" is the response's script nonce. Every
 // color and the font sizes come from the host's settings (paletteJson), and a
 // "palette" message recolors the page as it is.
@@ -197,6 +203,51 @@ body.sideclosed #side { display: none; }
                     background: repeating-conic-gradient(rgba(127, 127, 127, .18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
 #treenote { margin: 0; padding: 6px 10px; color: var(--muted); font-size: 12px; flex: none;
             border-top: 1px solid var(--line); }
+/* Find in Folder in the sidebar: the query with its toggles inside, a
+   summary, then each file's rows, a line of context either side. */
+#search { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#sbox { display: flex; align-items: center; margin: 0 6px 4px 8px; flex: none; background: var(--bg);
+        border: 1px solid var(--line); border-radius: 3px; }
+#sbox:focus-within { border-color: var(--accent); }
+#sq { flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--fg); background: none; border: 0;
+      outline: none; padding: 3px 6px; }
+.stog { flex: none; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); background: none;
+        border: 1px solid transparent; border-radius: 3px; padding: 0 3px; margin-right: 2px; cursor: pointer; }
+.stog[aria-pressed="true"] { color: var(--fg); border-color: var(--accent); background: rgba(78, 161, 247, .18); }
+#ssum { margin: 0; padding: 2px 10px 6px; color: var(--muted); font-size: 12px; flex: none; overflow-wrap: anywhere; }
+#slist { flex: 1; overflow: auto; min-height: 0; padding-bottom: 1em; }
+#slist .sfile { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; line-height: 22px;
+                padding: 0 8px 0 10px; font-weight: 600; position: sticky; top: 0; background: var(--sbg); }
+#slist .sname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#slist .sdir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted);
+               font-size: 12px; font-weight: normal; }
+#slist .scount { flex: none; font-size: 11px; font-weight: normal; padding: 0 6px; border-radius: 8px;
+                 background: rgba(127, 127, 127, .25); }
+#slist .srow { cursor: pointer; padding: 1px 0 3px; user-select: none;
+               font: 12px/18px ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace; }
+#slist .srow:hover { background: rgba(127, 127, 127, .12); }
+#slist .srow.current { background: rgba(127, 127, 127, .24); }
+#slist .sl { display: flex; white-space: pre; overflow: hidden; }
+#slist .sl.ctx { color: var(--muted); }
+#slist .sn { flex: none; min-width: 3.5em; padding-right: .8em; text-align: right; color: var(--ln); }
+#slist .st { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#slist mark { background: rgba(234, 92, 0, .33); color: inherit; border-radius: 2px; }
+#slist .smore { color: var(--muted); font-size: 12px; padding: 4px 10px; }
+#code .l.hit { background-color: rgba(234, 92, 0, .18); }
+/* Quick Open: a field and its list over the page, as the app's palette. */
+#qo { position: fixed; top: 44px; left: 50%; transform: translateX(-50%); width: min(620px, 94vw); z-index: 30;
+      background: var(--sbg); color: var(--sfg); border: 1px solid var(--line); border-radius: 6px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, .45); display: flex; flex-direction: column; max-height: 70vh; }
+#qoq { font: inherit; font-size: 14px; margin: 6px; padding: 5px 8px; color: var(--fg); background: var(--bg);
+       border: 1px solid var(--accent); border-radius: 3px; outline: none; flex: none; }
+#qolist { overflow: auto; min-height: 0; padding-bottom: 4px; }
+#qolist .qrow { display: flex; gap: 8px; align-items: baseline; padding: 0 10px; line-height: 24px; cursor: pointer;
+                white-space: nowrap; }
+#qolist .qrow.sel { background: rgba(78, 161, 247, .28); }
+#qolist .qname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#qolist .qdir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; }
+#qolist b { color: var(--accent); font-weight: 600; }
+#qonote { margin: 0; padding: 4px 10px 8px; color: var(--muted); font-size: 12px; }
 #work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #docsec { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -319,15 +370,16 @@ body:not(.editable) #caret { display: none; }
 </style>
 </head>
 <body>
-<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">mutible</span><span id="folder"></span><button id="webbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the browser on this page">Browser</button><button id="termbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the terminal on this page">Terminal</button><span id="status">connecting</span></header>
+<header><button id="sidebtn" class="iconbtn" type="button" title="Files" aria-label="Files" aria-expanded="true">&#9776;</button><span id="machine">mutible</span><span id="folder"></span><button id="qobtn" class="panebtn hidden" type="button" title="Go to a file of the folder by name">Go to File</button><button id="webbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the browser on this page">Browser</button><button id="termbtn" class="panebtn hidden" type="button" aria-pressed="false" title="Show or hide the terminal on this page">Terminal</button><span id="status">connecting</span></header>
 <div id="banner" class="hidden"></div>
 <div id="gate" class="hidden" role="status"></div>
 <div id="wrap">
 <aside id="side" aria-label="Files">
   <div id="sidebar"><span id="sidename">Files</span><button id="refresh" class="iconbtn" type="button" title="Refresh the tree" aria-label="Refresh the tree">&#8635;</button></div>
-  <div id="sidemodes"><button id="filesbtn" type="button" aria-pressed="true" title="The folder's files">Files</button><button id="scmbtn" type="button" aria-pressed="false" title="The folder's uncommitted changes, as the window's Source Control lists them (read-only)">Source Control</button></div>
+  <div id="sidemodes"><button id="filesbtn" type="button" aria-pressed="true" title="The folder's files">Files</button><button id="scmbtn" type="button" aria-pressed="false" title="The folder's uncommitted changes, as the window's Source Control lists them (read-only)">Source Control</button><button id="searchbtn" class="hidden" type="button" aria-pressed="false" title="Find in Folder">Search</button></div>
   <div id="tree" role="tree"></div>
   <div id="git" class="hidden"><p id="gitsum"></p><div id="gitlist" role="list"></div></div>
+  <div id="search" class="hidden"><div id="sbox"><input id="sq" type="text" placeholder="Search" aria-label="Find in Folder" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button id="scase" class="stog" type="button" aria-pressed="false" title="Match Case">Aa</button><button id="sword" class="stog" type="button" aria-pressed="false" title="Match Whole Word">ab</button><button id="sregex" class="stog" type="button" aria-pressed="false" title="Use Regular Expression">.*</button></div><p id="ssum"></p><div id="slist" role="list"></div></div>
   <p id="treenote" class="hidden"></p>
 </aside>
 <div id="work">
@@ -361,6 +413,7 @@ body:not(.editable) #caret { display: none; }
 </div>
 </div>
 <div id="toast" class="hidden" role="status"></div>
+<div id="qo" class="hidden" role="dialog" aria-label="Go to File"><input id="qoq" type="text" placeholder="Search files by name" aria-label="Go to File" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><div id="qolist" role="listbox"></div><p id="qonote" class="hidden"></p></div>
 <script nonce="{{NONCE}}">
 "use strict";
 (function () {
@@ -373,6 +426,7 @@ body:not(.editable) #caret { display: none; }
   const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
   let ws = null, palette = null, state = null, ended = false, folder = "", termNote = "";
   let editable = false, canSave = false, canBrowse = false, canOpen = false, canClose = false, canReload = false;
+  let canSearch = false;
   const want = { doc: 0, term: 0 };
   let followDoc = true, followTerm = true, termInfo = null;
   const kHist = 5000;
@@ -764,6 +818,7 @@ body:not(.editable) #caret { display: none; }
       D.shadow = (f.lines || []).map(lineOf);
       rebuild();
       showMode();
+      takeGoLine();
     }
     drawTabs();
     markCurrent();
@@ -1103,19 +1158,27 @@ body:not(.editable) #caret { display: none; }
     post({ t: "git", watch: true });
   }
   function watchGit() { if (!gitWanted()) post({ t: "git", watch: false }); }
-  function setSideMode(scm) {
+  // The sidebar's mode: "files" (the tree), "scm" (Source Control) or
+  // "search" (Find in Folder).
+  function setSideMode(mode) {
+    const scm = mode === "scm", search = mode === "search";
     G.mode = scm;
-    $("tree").classList.toggle("hidden", scm);
+    S.mode = search;
+    $("tree").classList.toggle("hidden", scm || search);
     $("git").classList.toggle("hidden", !scm);
+    $("search").classList.toggle("hidden", !search);
     $("treenote").classList.add("hidden");
-    $("filesbtn").setAttribute("aria-pressed", String(!scm));
+    $("filesbtn").setAttribute("aria-pressed", String(!scm && !search));
     $("scmbtn").setAttribute("aria-pressed", String(scm));
-    const r = $("refresh"), what = scm ? "Read the changes again" : "Refresh the tree";
+    $("searchbtn").setAttribute("aria-pressed", String(search));
+    const r = $("refresh"), what = scm ? "Read the changes again" : search ? "Search again" : "Refresh the tree";
     r.title = what; r.setAttribute("aria-label", what);
+    $("sidename").textContent = search ? "Search" : base(T.root) || "Files";
     // Back to Files: the open folders listed again, since files came and
     // went while the changes were on show (the tree does not follow the
     // disk by itself).
-    if (scm) askGit(); else { watchGit(); refreshTree(); }
+    if (scm) askGit();
+    else { watchGit(); if (!search) refreshTree(); }
   }
   function dirOf(p) { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
   function letterEl(letter) {
@@ -1518,7 +1581,7 @@ body:not(.editable) #caret { display: none; }
       if (m.root) T.root = m.root;
       T.kids.set(m.path, m.entries || []);
       if (m.more) T.more.set(m.path, m.more); else T.more.delete(m.path);
-      if (!m.path) $("sidename").textContent = base(T.root) || "Files";
+      if (!m.path && !S.mode) $("sidename").textContent = base(T.root) || "Files";
     }
     drawTree();
   }
@@ -1583,6 +1646,7 @@ body:not(.editable) #caret { display: none; }
     clearTimeout(T.timer);
     followDoc = d.id === sessionDoc();
     showDoc(d.id);
+    takeGoLine();   // already on show: the line now
   }
   function sideOpen() {
     return narrow.matches ? document.body.classList.contains("sideopen")
@@ -1594,6 +1658,259 @@ body:not(.editable) #caret { display: none; }
     else document.body.classList.toggle("sideclosed", !open);
     $("sidebtn").setAttribute("aria-expanded", open ? "true" : "false");
     drawSelection();
+  }
+
+  // ---- a file opened at a line (a search's row): once the file is on
+  // show, from the window's tab or a tab of this page's own, its line is
+  // shown and marked, and the caret put at the match.
+  let GL = null;   // {rel, line, col, at}
+  function openAt(rel, line, col) {
+    GL = { rel: rel, line: line, col: col || 1, at: Date.now() };
+    openFile(rel, { kind: "text" }, false);
+    takeGoLine();
+  }
+  function markHit(i) {
+    for (const el of $("lines").querySelectorAll(".l.hit")) el.classList.remove("hit");
+    const el = $("lines").children[i];
+    if (el) el.classList.add("hit");
+  }
+  function takeGoLine() {
+    if (!GL) return;
+    if (Date.now() - GL.at > 15000) { GL = null; return; }
+    if (!D.kind || D.kind === "large") return;
+    const abs = T.root ? T.root + "/" + GL.rel : "";
+    if (!(L.on ? L.on === GL.rel : abs && D.path === abs)) return;
+    const g = GL;
+    GL = null;
+    if (D.mode === "page") { D.mode = "code"; showMode(); }
+    const i = Math.max(0, Math.min(g.line - 1, D.lines.length - 1));
+    const text = D.lines[i] ? D.lines[i].t : "";
+    // The column counts code points; the lines count UTF-16 units.
+    let u = 0;
+    for (let cp = 1; cp < g.col && u < text.length; cp++) u += text.codePointAt(u) > 0xffff ? 2 : 1;
+    D.a = D.h = (D.starts[i] || 0) + u;
+    D.goal = null; D.moved = true;
+    markHit(i);
+    const el = $("lines").children[i], code = $("code");
+    if (el) code.scrollTop = Math.max(0, el.offsetTop - code.clientHeight / 3);
+    drawSelection();
+    if (D.editable) focusEditor();
+  }
+
+  // ---- Quick Open (Command P, Control P elsewhere): the folder's files as
+  // the host listed them, ranked on the server by the app's own palette
+  // matching for each query typed; the one picked opens as a click in the
+  // tree opens it.
+  const QO = { open: false, seq: 0, rows: [], sel: 0, m: null, back: null, recent: [] };
+  function noteRecent(rel) {
+    QO.recent = [rel].concat(QO.recent.filter((x) => x !== rel)).slice(0, 20);
+  }
+  function askFiles(fresh) {
+    post({ t: "files", seq: ++QO.seq, query: $("qoq").value, recent: QO.recent, fresh: !!fresh });
+  }
+  function openQuickOpen() {
+    if (!canSearch) return;
+    if (!QO.open) QO.back = document.activeElement;
+    QO.open = true;
+    $("qo").classList.remove("hidden");
+    const q = $("qoq");
+    q.value = "";
+    QO.rows = []; QO.sel = 0; QO.m = null;
+    drawQuickOpen();
+    q.focus();
+    askFiles(true);
+  }
+  function closeQuickOpen(restore) {
+    if (!QO.open) return;
+    QO.open = false;
+    $("qo").classList.add("hidden");
+    const back = QO.back;
+    QO.back = null;
+    if (restore && back && back.focus && document.contains(back)) back.focus({ preventScroll: true });
+  }
+  // A name or folder with the matched units bold (`pos`, offsets into the
+  // whole path; `from` where this part starts in it).
+  function marked(text, from, pos) {
+    const f = document.createDocumentFragment();
+    let run = "", bold = false;
+    const put = () => {
+      if (!run) return;
+      if (bold) { const b = document.createElement("b"); b.textContent = run; f.appendChild(b); }
+      else f.appendChild(document.createTextNode(run));
+      run = "";
+    };
+    const set = new Set(pos);
+    for (let i = 0; i < text.length; i++) {
+      const on = set.has(from + i);
+      if (on !== bold) { put(); bold = on; }
+      run += text[i];
+    }
+    put();
+    return f;
+  }
+  function drawQuickOpen() {
+    const list = $("qolist"), m = QO.m;
+    list.textContent = "";
+    QO.rows.forEach((r, i) => {
+      const row = document.createElement("div");
+      row.className = "qrow" + (i === QO.sel ? " sel" : "");
+      row.setAttribute("role", "option");
+      row.dataset.i = i;
+      row.dataset.path = r.path;
+      row.title = r.path;
+      const cut = r.path.lastIndexOf("/") + 1;
+      const name = document.createElement("span"), dir = document.createElement("span");
+      name.className = "qname"; dir.className = "qdir";
+      name.appendChild(marked(r.path.slice(cut), cut, r.pos || []));
+      dir.appendChild(marked(r.path.slice(0, Math.max(0, cut - 1)), 0, r.pos || []));
+      row.append(name, dir);
+      list.appendChild(row);
+    });
+    let note = "";
+    if (m && m.error) note = m.error;
+    else if (!m) note = "Listing the folder…";
+    else if (!QO.rows.length) note = m.listing ? "Listing the folder…" : "No file matches.";
+    else if (m.truncated) note = "The folder has more files than Quick Open lists; the nearest are listed.";
+    const n = $("qonote");
+    n.textContent = note;
+    n.classList.toggle("hidden", !note);
+    const sel = list.children[QO.sel];
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+  function onFiles(m) {
+    if (!QO.open || m.seq !== QO.seq) return;
+    QO.m = m;
+    QO.rows = m.rows || [];
+    QO.sel = 0;
+    drawQuickOpen();
+  }
+  function pickQuickOpen(i) {
+    const r = QO.rows[i];
+    if (!r) return;
+    closeQuickOpen(false);
+    noteRecent(r.path);
+    openFile(r.path, { kind: r.kind || "text", view: r.view }, true);
+  }
+
+  // ---- Find in Folder (Shift Command F, or the sidebar's Search): the
+  // host's FolderSearch, its rows shown as they come, each file's under its
+  // name with a line of context either side; a row clicked opens its file
+  // at its line. A new query cancels the search before it.
+  const S = { mode: false, seq: 0, timer: 0, done: true, last: null, rows: 0, matches: 0, files: 0,
+              group: null, sum: null, query: "", cur: null };
+  function pressed(id) { return $(id).getAttribute("aria-pressed") === "true"; }
+  function openSearch() {
+    if (!canSearch) return;
+    if (!sideOpen()) setSide(true);
+    const q = $("sq");
+    // A selection on one line is what to look for, as the app seeds it.
+    if (D.id && D.a !== D.h && D.kind && D.mode === "code") {
+      const [a, b] = selRange();
+      const t = textOf(a, b);
+      if (t && t.indexOf("\n") < 0 && t.indexOf("\r") < 0 && t.length <= 200) q.value = t;
+    }
+    if (!S.mode) setSideMode("search");
+    q.focus();
+    q.select();
+    if (q.value && q.value !== S.query) runSearch();
+  }
+  function runSearch() {
+    clearTimeout(S.timer);
+    S.timer = 0;
+    const q = $("sq").value;
+    S.seq++;
+    S.query = q;
+    S.done = !q; S.sum = null; S.rows = 0; S.matches = 0; S.files = 0; S.last = null; S.group = null; S.cur = null;
+    $("slist").textContent = "";
+    if (!q) post({ t: "search", seq: S.seq, cancel: true });
+    else post({ t: "search", seq: S.seq, query: q, caseSensitive: pressed("scase"), wholeWord: pressed("sword"),
+                regex: pressed("sregex") });
+    drawSearchSum();
+  }
+  function searchSoon() {
+    clearTimeout(S.timer);
+    S.timer = setTimeout(runSearch, 250);
+  }
+  function plural(n, one, many) { return n.toLocaleString() + " " + (n === 1 ? one : many); }
+  function drawSearchSum() {
+    const sum = $("ssum"), m = S.sum;
+    let text = "";
+    if (!S.query) text = "";
+    else if (m && m.error) text = m.error;
+    else if (m && m.short) text = pressed("sregex") ? "Type a pattern to search for." : "Type at least two characters.";
+    else if (!S.done) text = S.rows ? "Searching… " + plural(S.matches, "result", "results") + " in " + plural(S.files, "file", "files")
+                                    : "Searching…";
+    else if (!S.rows) text = m && m.cancelled ? "Stopped." : "No results.";
+    else text = plural(S.matches, "result", "results") + " in " + plural(S.files, "file", "files");
+    if (m && S.rows) {
+      if (m.truncated) text += ". The search stopped at " + plural(S.rows, "line", "lines") + ".";
+      if (m.timedOut) text += ". The search stopped after 30 seconds; the results so far are shown.";
+    }
+    if (m && m.tooSlow) text += (text ? ". " : "") + "The regular expression took too long on a line, and the search stopped there.";
+    if (m && m.skippedCount) text += (text ? ". " : "") + plural(m.skippedCount, "file", "files") + " left out (too large).";
+    sum.textContent = text;
+  }
+  function searchLine(cls, n, text, hl) {
+    const l = document.createElement("div");
+    l.className = "sl" + cls;
+    const num = document.createElement("span"), t = document.createElement("span");
+    num.className = "sn"; num.textContent = n;
+    t.className = "st";
+    let at = 0;
+    for (const h of hl || []) {
+      if (h[0] < at || h[0] + h[1] > text.length) continue;
+      if (h[0] > at) t.appendChild(document.createTextNode(text.slice(at, h[0])));
+      const mk = document.createElement("mark");
+      mk.textContent = text.slice(h[0], h[0] + h[1]);
+      t.appendChild(mk);
+      at = h[0] + h[1];
+    }
+    if (at < text.length) t.appendChild(document.createTextNode(text.slice(at)));
+    l.append(num, t);
+    return l;
+  }
+  function addSearchRows(rows) {
+    const list = $("slist"), frag = document.createDocumentFragment();
+    for (const r of rows) {
+      if (!S.group || S.group.path !== r.path) {
+        const head = document.createElement("div");
+        head.className = "sfile";
+        head.dataset.path = r.path;
+        head.title = r.path;
+        const cut = r.path.lastIndexOf("/");
+        const name = document.createElement("span"), dir = document.createElement("span"), count = document.createElement("span");
+        name.className = "sname"; name.textContent = cut < 0 ? r.path : r.path.slice(cut + 1);
+        dir.className = "sdir"; dir.textContent = cut < 0 ? "" : r.path.slice(0, cut);
+        count.className = "scount";
+        head.append(name, dir, count);
+        frag.appendChild(head);
+        S.group = { path: r.path, count: count, n: 0 };
+        S.files++;
+      }
+      const row = document.createElement("div");
+      row.className = "srow";
+      row.setAttribute("role", "listitem");
+      row.dataset.path = r.path;
+      row.dataset.line = r.line;
+      row.dataset.col = r.column || 1;
+      row.title = r.path + ":" + r.line;
+      const before = r.before || [], after = r.after || [];
+      before.forEach((t, k) => row.appendChild(searchLine(" ctx", r.line - before.length + k, t)));
+      row.appendChild(searchLine(" hit", r.line, r.text, r.hl));
+      after.forEach((t, k) => row.appendChild(searchLine(" ctx", r.line + 1 + k, t)));
+      frag.appendChild(row);
+      S.group.n += r.count || 1;
+      S.group.count.textContent = S.group.n;
+      S.rows++;
+      S.matches += r.count || 1;
+    }
+    list.appendChild(frag);
+  }
+  function onFound(m) {
+    if (m.seq !== S.seq) return;
+    if (m.rows && m.rows.length) addSearchRows(m.rows);
+    if (m.done) { S.done = true; S.sum = m; }
+    drawSearchSum();
   }
 
   function onState(m) {
@@ -2522,6 +2839,7 @@ body:not(.editable) #caret { display: none; }
     rebuild();
     D.a = clampOff(D.a); D.h = clampOff(D.h);
     showMode();
+    takeGoLine();
   }
   function onLines(m) {
     if (m.id !== D.id || D.kind === "large" || !D.kind) return;
@@ -2714,7 +3032,15 @@ body:not(.editable) #caret { display: none; }
           canBrowse = !!m.canBrowse;
           canOpen = !!m.canOpen;
           canClose = !!m.canClose;
+          canSearch = !!m.canSearch;
           $("browse").classList.toggle("hidden", !canBrowse);
+          $("qobtn").classList.toggle("hidden", !canSearch);
+          $("searchbtn").classList.toggle("hidden", !canSearch);
+          if (!canSearch) { closeQuickOpen(false); if (S.mode) setSideMode("files"); }
+          // A search or Quick Open on show: asked again on the new
+          // connection, which knows nothing of the last one's.
+          if (canSearch && S.mode && S.query) runSearch();
+          if (canSearch && QO.open) askFiles(true);
           setStatus(editable ? "live, editing" : "live, read-only", true);
           document.body.classList.toggle("editable", editable);
           // Marks keep the path's slashes where they belong in a field
@@ -2765,6 +3091,8 @@ body:not(.editable) #caret { display: none; }
         case "reviewfile": onReviewFile(m); break;
         case "reviewread": onReviewRead(m); break;
         case "closing": if (!m.ok) toast(m.why || "That tab was not closed."); break;
+        case "files": onFiles(m); break;
+        case "found": onFound(m); break;
       }
     };
     ws.onclose = () => {
@@ -2869,10 +3197,66 @@ body:not(.editable) #caret { display: none; }
   $("refresh").addEventListener("click", () => {
     const page = reviewOn();
     if (page) askReview(page, true);   // a window review page on show: read again
-    if (G.mode) askGit(); else refreshTree();
+    if (G.mode) askGit(); else if (S.mode) runSearch(); else refreshTree();
   });
-  $("filesbtn").addEventListener("click", () => setSideMode(false));
-  $("scmbtn").addEventListener("click", () => setSideMode(true));
+  $("filesbtn").addEventListener("click", () => setSideMode("files"));
+  $("scmbtn").addEventListener("click", () => setSideMode("scm"));
+  $("searchbtn").addEventListener("click", () => { setSideMode("search"); $("sq").focus(); });
+  // Find in Folder: as typed (a quarter second after the last key), at
+  // once on Return and on a toggle.
+  $("sq").addEventListener("input", searchSoon);
+  $("sq").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); runSearch(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.target.blur(); }
+  });
+  for (const id of ["scase", "sword", "sregex"])
+    $(id).addEventListener("click", () => {
+      $(id).setAttribute("aria-pressed", String(!pressed(id)));
+      if ($("sq").value) runSearch();
+    });
+  $("slist").addEventListener("click", (ev) => {
+    const row = ev.target.closest(".srow");
+    if (!row) return;
+    if (S.cur) S.cur.classList.remove("current");
+    S.cur = row;
+    row.classList.add("current");
+    openAt(row.dataset.path, parseInt(row.dataset.line, 10) || 1, parseInt(row.dataset.col, 10) || 1);
+  });
+  // Quick Open's field and list.
+  $("qobtn").addEventListener("click", openQuickOpen);
+  $("qoq").addEventListener("input", () => askFiles(false));
+  $("qoq").addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    const move = (d) => {
+      if (!QO.rows.length) return;
+      QO.sel = (QO.sel + d + QO.rows.length) % QO.rows.length;
+      drawQuickOpen();
+    };
+    if (e.key === "ArrowDown") move(1);
+    else if (e.key === "ArrowUp") move(-1);
+    else if (e.key === "Enter") pickQuickOpen(QO.sel);
+    else if (e.key === "Escape") closeQuickOpen(true);
+    else return;
+    e.preventDefault();
+  });
+  $("qolist").addEventListener("mousedown", (e) => e.preventDefault());   // the field keeps the keyboard
+  $("qolist").addEventListener("click", (ev) => {
+    const row = ev.target.closest(".qrow");
+    if (row) pickQuickOpen(parseInt(row.dataset.i, 10));
+  });
+  document.addEventListener("pointerdown", (e) => {
+    if (QO.open && !(e.target && e.target.closest && e.target.closest("#qo, #qobtn"))) closeQuickOpen(false);
+  }, true);
+  // Command P and Shift Command F (Control elsewhere) anywhere on the page;
+  // in the terminal off a Mac, Control P and Control Shift F are the
+  // shell's.
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.altKey || !canSearch || !(mac ? e.metaKey : e.ctrlKey)) return;
+    if (!mac && e.target && e.target.closest && e.target.closest("#term")) return;
+    const k = (e.key || "").toLowerCase();
+    if (k === "p" && !e.shiftKey) { e.preventDefault(); openQuickOpen(); }
+    else if (k === "f" && e.shiftKey) { e.preventDefault(); closeQuickOpen(false); openSearch(); }
+  });
   $("gitlist").addEventListener("click", (ev) => {
     const row = ev.target.closest(".row");
     if (row && row.dataset.key) openReview(row.dataset.key);
@@ -2989,6 +3373,23 @@ body:not(.editable) #caret { display: none; }
                          [...r.querySelectorAll("td")].map((c) => c.textContent).join("|")) })) : [] };
     },
     windowPanes: () => windowPanes(),
+    // Quick Open and Find in Folder as drawn: the rows, the one selected,
+    // the note; the summary, each file's name and count, each row's lines.
+    quickOpen: () => ({ open: QO.open, query: $("qoq").value, sel: QO.sel, note: $("qonote").textContent,
+                        rows: [...$("qolist").querySelectorAll(".qrow")].map((r) => r.dataset.path),
+                        marked: [...$("qolist").querySelectorAll(".qrow")].map((r) =>
+                          [...r.querySelectorAll("b")].map((b) => b.textContent).join("")) }),
+    search: () => ({ mode: S.mode, query: $("sq").value, done: S.done, summary: $("ssum").textContent,
+                     files: [...$("slist").querySelectorAll(".sfile")].map((f) => f.dataset.path + " " +
+                                                                               f.querySelector(".scount").textContent),
+                     rows: [...$("slist").querySelectorAll(".srow")].map((r) => [...r.querySelectorAll(".sl")].map((l) =>
+                             (l.classList.contains("hit") ? ">" : " ") + l.querySelector(".sn").textContent + " " +
+                             l.querySelector(".st").textContent).join("\n")),
+                     marks: [...$("slist").querySelectorAll("mark")].map((m) => m.textContent) }),
+    // The line a search's row opened at (from 0, -1 for none), and the
+    // caret's line.
+    hitLine: () => [...$("lines").children].findIndex((l) => l.classList.contains("hit")),
+    caretLine: () => (D.kind ? lineAt(D.h) : -1),
     gate: () => ($("gate").classList.contains("hidden") ? "" : $("gate").textContent),
   };
   connect();

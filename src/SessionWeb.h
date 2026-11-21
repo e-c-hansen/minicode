@@ -58,6 +58,16 @@
 // versions are served from the read at /v/ID/picture/PAGE/VERSION/FILE/SIDE
 // (pictureTarget), under the same rules as /file/.
 //
+// Quick Open and Find in Folder (stage 7, SessionSearch.h): any page, a
+// reader's too, since both only read. The folder's files are listed by the
+// host on a worker of its own (FsRead's "files": Quick Open's walk, the
+// ignore files' rules, held to the folder, the page's dotfile rule), kept
+// here, and ranked for each query a page types by the app's own palette
+// matching (CommandPalette::rankFiles, quickOpenJson); a search is the
+// core's FolderSearch run by the host on a worker (FsRead's "search"), its
+// rows passed on to the page in batches as they come, the page's last
+// search cancelled when it searches again or goes.
+//
 // Access (SessionWebAccess.h): every address is under the view's own path,
 // /v/ID/. A link, http://127.0.0.1:PORT/v/ID/?t=TOKEN with a random token
 // of 48 hex digits, is good for one exchange: the page's first load trades
@@ -181,6 +191,15 @@
 //           error | pending}
 //   reviewread {page, version}: a read of that review page that the page
 //           has not had (it asks for the review again)
+//   files   {seq, query, rows: [{path, pos, kind, view}], more, truncated,
+//           listing, error}: Quick Open's answer to a `files` (quickOpenJson:
+//           `pos` the path's matched UTF-16 units), again when a listing
+//           that was under way comes
+//   found   {seq, rows, done, ...}: a batch of a `search`'s rows as the host
+//           finds them (SessionSearch.h's rows: path, line, column, text,
+//           hl, before, after, count); the last says done, with the
+//           counts, truncated, timedOut, tooSlow, cancelled, error,
+//           skipped; `short` when the query is too short to search
 // and from the browser:
 //   show    {doc, term}: what it is looking at (0 for nothing)
 //   alive   {}: someone is using the page (sent at most once a minute
@@ -201,6 +220,13 @@
 //   git     {watch}: the folder's uncommitted changes read now and sent,
 //           then again as they change while `watch` (false: no more); any
 //           page, since git only reads
+//   files   {seq, query, recent, fresh}: Quick Open's files for a query (any
+//           page), ranked here from the host's listing; `fresh` (the
+//           palette opening) lists the folder again, at most once a second;
+//           `recent` the page's recently opened paths, first among equals
+//   search  {seq, query, caseSensitive, wholeWord, regex, include, exclude}
+//           or {seq, cancel}: Find in Folder (any page): this page's last
+//           search cancelled, and the new one run by the host
 //   review  {opened, side, file}: the review of the last read (every file,
 //           or the one whose key `file` names), `opened` the gaps shown
 //           whole by file key ({key: [id]}; for `file`, [id]), `side` the
@@ -335,6 +361,19 @@ Answer answer(const Request& r, Access& access, const std::string& page, const C
 extern const char* const kExpiredText;
 extern const char* const kDeniedText;
 extern const char* const kWaitingText;
+
+// ---- Quick Open (SessionSearch.h)
+// The most rows a `files` answer gives.
+constexpr std::size_t kQuickOpenRows = 100;
+// The files of `paths` (the host's listing, and the same as UTF-16) that
+// match `query`, best first, as the app's Quick Open ranks them
+// (CommandPalette::rankFiles, `recent` first among equals): {rows: [{path,
+// pos: the matched UTF-16 units of the path, kind: FileIcon's, view:
+// fileType's when the page shows it itself}], more: true when cut at
+// `limit`}.
+Json quickOpenJson(const std::vector<std::string>& paths, const std::vector<std::u16string>& paths16,
+                   const std::string& query, const std::vector<std::string>& recent,
+                   std::size_t limit = kQuickOpenRows);
 
 // ---- files for the page's viewers
 // How the page shows a file, by its name's extension (any case): `view`
@@ -1001,6 +1040,16 @@ private:
     void onClose(Conn& c, const Json& j);
     void onBrowse(Conn& c, const Json& j);
     void onFile(Conn& c, const Json& j);
+    // Quick Open (`files`): the host's listing (asked for when there is
+    // none, or `fresh`), and a page's query ranked against it.
+    void onFiles(Conn& c, const Json& j);
+    void answerFiles(Conn& c);
+    // Find in Folder (`search`): one search on the host per page, its rows
+    // passed on as they come (takeStreams), stopped when the page searches
+    // again or goes.
+    void onSearch(Conn& c, const Json& j);
+    void cancelSearch(Conn& c);
+    void takeStreams();
     // A page shows a LaTeX document (`latex {path}`): what is published of
     // it now, the app asked for a typeset, and every change after.
     void onLatex(Conn& c, const Json& j);

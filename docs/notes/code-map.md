@@ -92,7 +92,11 @@ goes here first, with tests; the GUI only displays it.
   rules, for the browser's tree; `host:fs-list`; and its first write,
   `saveDocument`, the host's DocSave by the apps' save rules;
   `host:save-rules`, `host:save` in tests/session_save_tests.inc; and
-  following the disk, `diskAction` and `readDiskText`), `DiskWatch`
+  following the disk, `diskAction` and `readDiskText`), `SessionSearch`
+  (stage 7's heavier reads on the host's own worker threads,
+  `ReadWorkers`: FsRead's "files", Quick Open's list, and "search", Find
+  in Folder, answered as they go and cancelled by "cancel", for the
+  browser's page; `search:*`), `DiskWatch`
   (stage 7's watching: the core's one platform interface for the disk's
   notices, inotify on Linux and FSEvents on the Mac, each on a thread or
   queue of its own behind a pipe the host polls, with the pure `Filter`,
@@ -160,7 +164,9 @@ goes here first, with tests; the GUI only displays it.
   (the review view's rows, and what staging, unstaging or discarding one
   block or a few lines makes of the file), `MergeConflicts` (git's
   conflict blocks, and what keeping a side or both makes of the text).
-- `CommandPalette` (matching, modes, Quick Open, symbol rows), `FolderPicker`
+- `CommandPalette` (matching, modes, Quick Open; symbol rows in
+  `CommandPaletteSymbols.cpp`, apart so `mutible-cli` links the rest
+  without the language servers' names), `FolderPicker`
   (the folder picker's paths, rows and completion), `ThemePicker` (the
   theme picker's list and its preview, choose and cancel), `HintsSearch.h`
   (the shortcut hints' search, header only), `WindowTitle.h` (the
