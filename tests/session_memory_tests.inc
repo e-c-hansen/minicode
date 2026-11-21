@@ -8,7 +8,8 @@
 // of the reset's UTF-8 kept in the message in flight). The host now keeps
 // one UTF-16 copy, whose chunks the saved text shares (Text.h's Frozen),
 // and the client nothing of it. MC_HOST_MEMORY_MB sizes the file (4 MB by
-// default; the numbers print). Included there, after session_host_tests.inc.
+// default; the numbers print). Skipped under the sanitizers (AllocCount.h).
+// Included there, after session_host_tests.inc.
 
 namespace {
 
@@ -41,7 +42,10 @@ double mb(long long bytes) { return (double)bytes / (1 << 20); }
 
 static void testSessionMemory() {
     GROUP("host:memory");
-    {
+    if (!kAllocCounted) {
+        // A sanitizer's runtime has the operator new (AllocCount.h).
+        std::printf("  host:memory: skipped under a sanitizer, which counts no bytes here\n");
+    } else {
         std::size_t size = 4u << 20;
         if (const char* s = std::getenv("MC_HOST_MEMORY_MB"))
             if (std::atoi(s) > 0) size = (std::size_t)std::atoi(s) << 20;

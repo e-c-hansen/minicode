@@ -2,16 +2,38 @@
 // the bytes the program holds (asked for, not what the allocator rounds them
 // up to) and the most it held since allocMarkPeak(), so a check can bound
 // what a structure keeps (host:memory) without the allocator's own
-// statistics, which the sanitizers' allocators do not keep. Each block
-// carries its size in a 16-byte header in front of it. The aligned forms
-// (std::align_val_t) are the library's own, which pair with each other and
-// are not counted. Included once, by run_tests.cpp, at file scope.
+// statistics. Each block carries its size in a 16-byte header in front of
+// it. The aligned forms (std::align_val_t) are the library's own, which
+// pair with each other and are not counted. Included once, by
+// run_tests.cpp, at file scope.
+//
+// Not in a sanitizer's build (kAllocCounted false, host:memory skipped):
+// their runtimes define operator new and delete themselves, which Linux's
+// static runtime then defines twice (CI's TSan job failed to link,
+// 2026-11-21; the Mac's dynamic one let ours win).
 #pragma once
 
 #include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <new>
+
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define MC_ALLOC_SANITIZED 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+    __has_feature(memory_sanitizer) || __has_feature(hwaddress_sanitizer)
+#define MC_ALLOC_SANITIZED 1
+#endif
+#endif
+
+#ifdef MC_ALLOC_SANITIZED
+constexpr bool kAllocCounted = false;
+static long long allocLive() { return 0; }
+static long long allocPeak() { return 0; }
+static void allocMarkPeak() {}
+#else
+constexpr bool kAllocCounted = true;
 
 namespace AllocCount {
 inline std::atomic<long long> live{0}, peak{0};
@@ -69,3 +91,4 @@ void operator delete(void* p, std::size_t) noexcept { AllocCount::give(p); }
 void operator delete[](void* p, std::size_t) noexcept { AllocCount::give(p); }
 void operator delete(void* p, const std::nothrow_t&) noexcept { AllocCount::give(p); }
 void operator delete[](void* p, const std::nothrow_t&) noexcept { AllocCount::give(p); }
+#endif  // MC_ALLOC_SANITIZED

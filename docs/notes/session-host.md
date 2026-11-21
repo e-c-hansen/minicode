@@ -408,7 +408,8 @@ top of a turn, never inside a text system callback.
   sender sent no seq; the sender's base becomes the reset's version, its
   next edit going only after the acknowledgement. The client keeps no copy
   of a reset's text in its message in flight. `host:memory` counts it
-  (AllocCount.h, the test binary's operator new; MC_HOST_MEMORY_MB): for a
+  (AllocCount.h, the test binary's operator new, not under the
+  sanitizers, whose runtimes have their own; MC_HOST_MEMORY_MB): for a
   24 MB file of 80-byte lines the host went from 99.6 MB (Mac's DocOpen)
   and 195.6 MB (GTK's empty DocOpen then DocReset, two copies in the log
   until the next edit) to 52.9 MB, with 76.8 MB at most while opening
