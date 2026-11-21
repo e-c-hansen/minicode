@@ -630,7 +630,19 @@ SESSION-DESIGN.md's stage 5, core half (2026-11-17; `HostPty.{h,cpp}`,
   minus the host's cursor line (`rowOfLine`), both counting every line
   from the first. The waiting dot goes when a key's commit reaches the
   shell (a key counts for 200 ms, an input method's commit coming late),
-  so Ctrl+Shift+C and Ctrl+Up leave it.
+  so Ctrl+Shift+C and Ctrl+Up leave it. **Trap** (2026-11-20): a new
+  view's first shell must start at its grid, so `makeTerminal` waits for
+  VTE's first layout (`spawnWhenLaidOut`: the first frame VTE has a
+  width, a second at most). It spawned at once, at the 80x24 of a VTE not
+  yet laid out, and was told its size a frame or more later; on CI's
+  slower runs bash drew its first prompt (91 columns there, wrapped at 80)
+  before that, and readline keeps where a prompt wraps and which of its
+  invisible bytes (vte.sh's OSC 133 marks in PS1) fall on which row from
+  when it drew it, so at 105 columns every redraw put the cursor 9 columns
+  off and `term --run 'echo hi'` was echoed early and written over: the
+  prompt, then `hi`, and no `echo hi` (shell_integration). Waiting for
+  the pty's size before typing does not help: the prompt is already
+  drawn.
 - **The GTK port's cursor and Control keys** (2026-11-18,
   linux/HANDOFF.md item 110). The cursor is the terminal's text color
   and the character under the block the background's, both opaque
@@ -743,4 +755,5 @@ text is in place in its section.
 - The terminal: **Trap**: the panel's `closeTerminal:` and `renameTerminal:` share their selectors with the menu's actions, so with the keyboard in a terminal the panel received Ctrl+Shift+W as `closeTerminal:(NSMenuItem *)` and closed nothing (until 2026-11-08); both take a non-terminal argument as "the active one".
 - Terminals owned by the session's host (stage 5): **The host's screen answers no queries**: `takeReplies` is thrown away, since the renderer's emulator answers DA, DSR and the rest through its input, and two answers would reach the program.
 - Terminals owned by the session's host (stage 5): **Traps found by its fuzz** (`screen:replay`): a prompt mark makes the next wrap zsh's PROMPT_SP, so each written A is followed by a carriage return.
+- Terminals owned by the session's host (stage 5): **Trap** (2026-11-20): a new view's first shell must start at its grid, so `makeTerminal` waits for VTE's first layout (`spawnWhenLaidOut`: the first frame VTE has a width, a second at most).
 - Terminals owned by the session's host (stage 5): **Trap**: `vte_terminal_set_colors` unsets the cursor, cursor text, highlight and bold colors; the port set the cursor once before it, and VTE, with only the cursor's text set, drew the block and the unfocused outline in the cell's background: no cursor showed on any theme until then.

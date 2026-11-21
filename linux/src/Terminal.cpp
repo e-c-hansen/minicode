@@ -613,7 +613,35 @@ void Terminal::makeTerminal() {
     // (followPtySize).
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_EXTERNAL, GTK_POLICY_AUTOMATIC);
     if (heldTerm_) attachShell();
-    else spawnShell();
+    else spawnWhenLaidOut();
+}
+
+// A new view's first shell starts at its grid, in the first frame after VTE
+// is laid out, not at the 80x24 of a VTE not laid out yet. Started there and
+// told its size a frame or more later (CI's slower runs), bash had drawn its
+// first prompt for 80 columns, and readline keeps where that prompt wraps,
+// and which of its invisible bytes (vte.sh's OSC 133 marks in PS1) fall on
+// which row, from when it was drawn; at the new width every redraw put the
+// cursor that many columns off, so a line typed at that prompt was echoed
+// in the wrong place and written over by the next redraw (`term --run 'echo
+// hi'` left the prompt, then `hi`, and no `echo hi`: shell_integration,
+// November 2026). A second at most: a terminal not laid out by then (not on
+// show) starts at VTE's own grid.
+void Terminal::spawnWhenLaidOut() {
+    if (spawnWait_) return;
+    spawnWait_ = g_timeout_add(1000, [](gpointer p) -> gboolean {
+        Terminal* self = static_cast<Terminal*>(p);
+        self->spawnWait_ = 0;
+        self->spawnShell();
+        return G_SOURCE_REMOVE;
+    }, this);
+    spawnTick_ = gtk_widget_add_tick_callback(vte_, [](GtkWidget* w, GdkFrameClock*, gpointer p) -> gboolean {
+        if (gtk_widget_get_width(w) <= 0) return G_SOURCE_CONTINUE;
+        Terminal* self = static_cast<Terminal*>(p);
+        self->spawnTick_ = 0;   // removed by returning so
+        self->spawnShell();
+        return G_SOURCE_REMOVE;
+    }, this, nullptr);
 }
 
 void Terminal::attachHeld(Shared::TermId id, int pid, const Shared::TermShell& shell) {
@@ -849,6 +877,8 @@ Terminal::~Terminal() {
     if (ackIdle_) g_source_remove(ackIdle_);
     if (catchUpTimer_) g_source_remove(catchUpTimer_);
     if (exitIdle_) g_source_remove(exitIdle_);
+    if (spawnWait_) g_source_remove(spawnWait_);
+    if (spawnTick_ && vte_) gtk_widget_remove_tick_callback(vte_, spawnTick_);
     if (sizeTick_ && vte_) gtk_widget_remove_tick_callback(vte_, sizeTick_);
     if (userInputIdle_) g_source_remove(userInputIdle_);
     g_signal_handlers_disconnect_by_data(root_, this);
@@ -1889,6 +1919,14 @@ bool Terminal::moveToCommand(int direction) {
 }
 
 void Terminal::spawnShell() {
+    if (spawnWait_) {   // the first shell, waiting for VTE's layout: this is it
+        g_source_remove(spawnWait_);
+        spawnWait_ = 0;
+    }
+    if (spawnTick_) {
+        gtk_widget_remove_tick_callback(vte_, spawnTick_);
+        spawnTick_ = 0;
+    }
     if (hostGone_ || link_->lost()) {
         hostGone_ = true;
         feedNotice("[the session's host went away: no shell can start here]");
@@ -2021,6 +2059,7 @@ void Terminal::spawnShell() {
     }
     VteTerminal* t = VTE_TERMINAL(vte_);
     spec.cols = std::max(2, (int)vte_terminal_get_column_count(t));
+    startedCols_ = spec.cols;
     spec.rows = std::max(1, (int)vte_terminal_get_row_count(t));
     spec.scrollback = (int)vte_terminal_get_scrollback_lines(t);
     spec.nonce = nonce_;
