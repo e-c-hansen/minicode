@@ -39,6 +39,9 @@ found through that list.
   (`showFirstPageTop`, now and again on the next turn, unless a forward
   search placed it; the PDF view's inner scroll view takes no automatic
   insets): PDFView alone left it part way down, the title under the bar.
+  Each typeset's document goes through `MCPDFAnalyseOnlyScans` first, so
+  PDFKit's Vision pass over the pages (a core busy for seconds after every
+  typeset) stays off for tectonic's output (viewers.md, PDFs).
 - **Unknown commands are looked through, not skipped**: `LatexDoc` skips only
   known machinery (`\label`, `\includegraphics`, `\setlength`, ...) and enters
   the first braced argument `looksLikeProse` accepts (not `{0.5em}`, `{l}`,

@@ -918,6 +918,7 @@ static const CGFloat kStatusHeight = 26;
     BOOL autoScales = self.pdf.autoScales;
     BOOL hadDoc = self.pdf.document != nil;
 
+    MCPDFAnalyseOnlyScans(self.pdf, doc);   // a typeset has text: no Vision pass on each one
     self.pdf.document = doc;
     if (!hadDoc) {
         // The first document opens at the top of its first page, margin and

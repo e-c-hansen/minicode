@@ -2,6 +2,7 @@
 #import "PageZoom.h"
 #import "Browser.h"
 #import "Latex.h"
+#import <objc/message.h>
 
 const double kMCZoomFitMin = 0.25;
 
@@ -148,6 +149,19 @@ void MCPDFUseOverlayScrollers(PDFView *v) {
         sv.scrollerStyle = NSScrollerStyleOverlay;
         if (v.autoScales) [v layoutDocumentView];
     }
+}
+
+BOOL MCPDFAnalysesPages(PDFDocument *doc) {
+    PDFPage *first = doc.pageCount ? [doc pageAtIndex:0] : nil;
+    return first && first.numberOfCharacters == 0;
+}
+
+void MCPDFAnalyseOnlyScans(PDFView *v, PDFDocument *doc) {
+    // PDFView's own switch, undocumented, on by default; where a macOS
+    // lacks it nothing is changed.
+    static const SEL set = NSSelectorFromString(@"setDocumentAnalysisEnabled:");
+    if (!doc || ![v respondsToSelector:set]) return;
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(v, set, MCPDFAnalysesPages(doc));
 }
 
 void MCPDFShowFirstPageTop(PDFView *v) {

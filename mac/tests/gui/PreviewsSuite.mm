@@ -18,6 +18,7 @@
 #import "CompareView.h"
 #import "ChangeReviewPage.h"
 #import "PalettePanel.h"
+#import "PageZoom.h"
 #import <Carbon/Carbon.h>
 #import <WebKit/WebKit.h>
 #include <sqlite3.h>
@@ -26,6 +27,7 @@
 #import <Quartz/Quartz.h>
 #import <objc/runtime.h>
 #include <zlib.h>
+#include <sys/resource.h>
 #include <string>
 
 namespace {
@@ -96,6 +98,44 @@ BOOL WriteTallPDF(NSString *path) {
     PDFDocument *doc = [PDFDocument new];
     [doc insertPage:[[PDFPage alloc] initWithImage:img] atIndex:0];
     return [doc writeToFile:path];
+}
+
+// Two letter pages of real text, as a word processor or tectonic writes
+// them (the taskbench's report.pdf).
+BOOL WriteTextPDF(NSString *path) {
+    CGRect box = CGRectMake(0, 0, 612, 792);
+    CGContextRef ctx = CGPDFContextCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], &box, NULL);
+    if (!ctx) return NO;
+    for (int page = 1; page <= 2; page++) {
+        CGPDFContextBeginPage(ctx, NULL);
+        [NSGraphicsContext saveGraphicsState];
+        NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithCGContext:ctx flipped:NO];
+        NSString *s = [NSString stringWithFormat:@"A report, page %d\n\nQuarterly numbers for the fixture.", page];
+        [s drawInRect:NSMakeRect(72, 72, 468, 648)
+            withAttributes:@{NSFontAttributeName : [NSFont systemFontOfSize:18]}];
+        [NSGraphicsContext restoreGraphicsState];
+        CGPDFContextEndPage(ctx);
+    }
+    CGPDFContextClose(ctx);
+    CGContextRelease(ctx);
+    return YES;
+}
+
+// PDFKit's page analysis (Vision) on the editor's PDF view: 1 on, 0 off,
+// -1 where this macOS has no such switch.
+int PdfAnalysisOn(EditorController *c) {
+    PDFView *pdf = [c valueForKey:@"pdfView"];
+    if (![pdf respondsToSelector:NSSelectorFromString(@"isDocumentAnalysisEnabled")]) return -1;
+    return [[pdf valueForKey:@"documentAnalysisEnabled"] boolValue] ? 1 : 0;
+}
+
+// CPU time of the whole process, every thread: PDFKit's analysis runs on
+// Vision's queues, not the main thread.
+double ProcessCpuMs() {
+    struct rusage r;
+    getrusage(RUSAGE_SELF, &r);
+    return (r.ru_utime.tv_sec + r.ru_stime.tv_sec) * 1000.0 +
+           (r.ru_utime.tv_usec + r.ru_stime.tv_usec) / 1000.0;
 }
 
 // Whether the first page's top edge is inside the editor's PDF view: a PDF
@@ -290,6 +330,7 @@ MC_GUI_SUITE(previews) {
         if (!haveHeic) MCGuiNote(@"no HEIC encoder here: the .heic check is skipped");
         GCHECK(WritePDF(Fixture(@"paper.pdf")));
         GCHECK(WriteTallPDF(Fixture(@"tall.pdf")));
+        GCHECK(WriteTextPDF(Fixture(@"report.pdf")));
         GCHECK(WriteDocx(Fixture(@"letter.docx")));
         const char elf[] = "\x7f" "ELF\x02\x01\x01\0\0\0\0\0int main() { return 0; }\n";
         WriteBytes(Fixture(@"program.c"), elf, sizeof elf - 1);
@@ -369,6 +410,46 @@ MC_GUI_SUITE(previews) {
         GCHECK(!Viewers(c).quickLook.hidden);
         MCGuiSnapshot(c.window.contentView, @"previews-docx");
     });
+    // A PDF of text opens with no Vision pass over its pages (2026-11-20:
+    // PDFKit's page analysis kept a core busy for two seconds and more
+    // after a two-page PDF had drawn, which the taskbench timed as the PDF
+    // taking 2.2 s to open). Before the scans below, whose analysis stays.
+    // Its pass used a few hundred ms in the first half second, then a whole
+    // core from about 1.5 s on, so the window is 3 s. The process's CPU in
+    // it is compared with 1.5 s before, doubled, so work an earlier suite
+    // left (another suite's scan, say) is not counted against it.
+    __block double pdfCpu0 = 0, idleCpu0 = 0, idleUsed = 0;
+    MCGuiStep(@"(the process's CPU before the PDF of text)", ^{ idleCpu0 = ProcessCpuMs(); });
+    // Time is the condition: the baseline's window.
+    MCGuiPause(1.5);
+    MCGuiStep(@"a PDF of text from Finder opens, PDFKit's page analysis off", ^{
+        idleUsed = ProcessCpuMs() - idleCpu0;
+        EditorController *c = MCGuiController();
+        const double c0 = MCGuiThreadCpuMs();
+        [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
+                                                      openURLs:@[[NSURL fileURLWithPath:Fixture(@"report.pdf")]]];
+        const double opened = MCGuiThreadCpuMs() - c0;
+        GCHECK_EQ_STR(ActiveName(c), @"report.pdf");
+        GCHECK_EQ_STR(ActiveKind(c), @"pdf");
+        PDFView *pdf = [c valueForKey:@"pdfView"];
+        GCHECK(pdf.document.pageCount == 2);
+        GCHECK(!MCPDFAnalysesPages(pdf.document));
+        const int on = PdfAnalysisOn(c);
+        if (on < 0) MCGuiNote(@"PDFView has no documentAnalysisEnabled on this macOS");
+        else GCHECK(on == 0);
+        MCGuiNote(@"main-thread CPU to open it: %.0f ms", opened);
+        GCHECK_TIME(opened, 400, @"main-thread CPU to open a two-page PDF of text");
+        pdfCpu0 = ProcessCpuMs();
+    });
+    // Time is the condition: nothing may keep the process busy meanwhile.
+    MCGuiPause(3);
+    MCGuiStep(@"and the process stays quiet for the next 3 s", ^{
+        const double used = ProcessCpuMs() - pdfCpu0;
+        MCGuiNote(@"process CPU in the 3 s after it opened: %.0f ms (%.0f ms in 1.5 s before)", used, idleUsed);
+        // PDFKit's analysis came to about 1,800 ms here.
+        GCHECK_TIME(used - 2 * idleUsed, 450,
+                    @"process CPU, all threads, in the 3 s after a PDF of text opened, over the time before");
+    });
     MCGuiStep(@"a PDF from Finder opens as a preview tab", ^{
         EditorController *c = MCGuiController();
         [(id<NSApplicationDelegate>)NSApp.delegate application:NSApp
@@ -376,6 +457,10 @@ MC_GUI_SUITE(previews) {
         GCHECK_EQ_STR(ActiveName(c), @"paper.pdf");
         GCHECK_EQ_STR(ActiveKind(c), @"pdf");
         GCHECK(Viewers(c).quickLook.hidden);
+        // Pictures only, a scan's pages: PDFKit may find their text.
+        PDFView *pdf = [c valueForKey:@"pdfView"];
+        GCHECK(MCPDFAnalysesPages(pdf.document));
+        GCHECK(PdfAnalysisOn(c) != 0);
     });
     MCGuiStep(@"a letter-size PDF opens", ^{
         EditorController *c = MCGuiController();

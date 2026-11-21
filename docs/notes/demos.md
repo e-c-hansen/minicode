@@ -282,3 +282,9 @@ clicks.
 - **A magic that the viewer itself prints**: Zed's image viewer shows
   "PNG" in its size line, which read as "opens as text"; the PNG's magic is
   its IHDR chunk name.
+- **A view's time runs until the app is quiet**: `view` waits for the
+  window title, then for the tree to use under 5% of a core for 300 ms
+  (or 3 s), so work an app does after drawing counts. mutible's PDF at
+  2,210 ms (1.6.9) was drawn in about 30 ms; the rest was PDFKit's
+  Vision pass over the pages (viewers.md, PDFs). `sample PID` during the
+  step says what keeps it busy.

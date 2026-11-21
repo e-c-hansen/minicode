@@ -126,6 +126,28 @@ found through that list.
   opens at the top of its first page (`MCPDFShowFirstPageTop`, PageZoom.mm,
   the LaTeX preview's too; until 2026-11-17 a tall page opened scrolled to
   its foot, which read as a blank page), and a tab shown again its own place.
+  **Trap** (2026-11-20, the taskbench's PDF at 2,210 ms against VS Code's
+  1,451): a PDFView given a document runs PDFKit's page analysis, Vision's
+  `VNRecognizeDocumentsRequest` (text, tables, forms) over every page it
+  shows, on its own queues: an ML model compiled (Espresso) and a whole
+  core busy for two seconds and more after even a two-page PDF of text had
+  drawn in about 30 ms, again for every reload and every LaTeX typeset.
+  The page was on screen at once; the benchmark's view waits for the app
+  to go quiet, and `sample` showed the time was that analysis. It only
+  gives selectable text to a page with none, so `MCPDFAnalyseOnlyScans`
+  (PageZoom.mm, both PDF views, before the document is handed over) turns
+  PDFView's undocumented `documentAnalysisEnabled` off unless the first
+  page has no characters (`MCPDFAnalysesPages`: a scan keeps it), and
+  does nothing on a macOS without the selector. `previews` opens a PDF of
+  text, checks the switch is off, and bounds the process's CPU (every
+  thread, `getrusage`) over the next 3 s against 1.5 s before it (the
+  pass used a few hundred ms at once, then a whole core from about 1.5 s
+  on, so a shorter window missed most of it); the image-only `paper.pdf`
+  keeps it on. Taskbench after: the PDF step 392 to 436 ms (300 of it the
+  quiet wait) over five runs, the viewers task's CPU 3,166 to about
+  1,500 ms. The MP4 step, next but one, then shows CoreMedia's own work
+  after the player is up (750 to 970 ms, about 500 ms of it carried into
+  the step after), which the PDF's 2 s had covered.
 - **Video and audio** (`+isMediaPath:`): `AVPlayerView`, paused on the first
   frame; `stopMedia` (from `resetViewMode`, window close, dealloc) drops the
   player so sound stops; size (rotation applied) and length arrive by KVO;
@@ -265,6 +287,7 @@ text is in place in its section.
 - Viewers in the editor's slot (Mac): **Trap** (round 10's documents defect 2, 2026-11-19): a `<meta http-equiv="refresh">` to `zoommtg://` (any app's scheme) went to `openURL:` with no click, and an https one loaded in the browser pane; `html.scripts` never applied, since a meta refresh is not a script.
 - HTML pages (GTK): **Trap** (the same defect, 2026-11-19): the GTK port let a page's own main-frame load run to `WEBKIT_LOAD_COMMITTED`, then loaded the file again and handed the address to the link handler (`openMarkdownLink`, which gives any scheme but http(s) and file to the desktop's handler), and loading the file again fired its refresh again, so the page went round for as long as it showed. WebKitGTK says which frame only at the response check (`webkit_response_policy_decision_is_main_frame_main_resource`); stop it there, or at `load-failed` (an unreachable address, a missing file, where the default handler would commit an error page at that address), and the page never leaves. A scheme no frame loads is refused at the policy check, before anything loads.
 - Viewers in the editor's slot (Mac): **Trap** (2026-11-19, after #249): a page whose scripts run can click its own link (`a.click()`) or send its own form (`form.submit()`), and WebKit reports those as `LinkActivated` and `FormSubmitted`, the user's, so such a page still sent `zoommtg://` (any app's scheme) to `openURL:` with no click.
+- PDFs: **Trap** (2026-11-20, the taskbench's PDF at 2,210 ms against VS Code's 1,451): a PDFView given a document runs PDFKit's page analysis, Vision's `VNRecognizeDocumentsRequest` (text, tables, forms) over every page it shows, on its own queues: an ML model compiled (Espresso) and a whole core busy for two seconds and more after even a two-page PDF of text had drawn in about 30 ms, again for every reload and every LaTeX typeset.
 - CSV and TSV: **Trap (round 9)**: the grid's `validateMenuItem:` ended in `[super validateMenuItem:]`, which NSTableView does not have (it validates through `validateUserInterfaceItem:`), so validating any menu item the grid was the target of threw, AppKit dropped the key, and no menu key worked while the grid had the keyboard: Shift+Cmd+P "did nothing".
 - JSON outline: Trap: an attributed string's own default paragraph style word-wraps and overrides the field's `lineBreakMode`, so a long value (or one with line breaks) wrapped inside its fixed-height row and drew over the rows below; `previews` checks every row's field sits in its row and needs one line (`cellSizeForBounds:`).
 - Viewers in the editor's slot (Mac): Trap: laying both panes out to size them took 1.5 s on the main thread for 50,000 lines a side; every row has one fixed height (a paragraph style), so sizes and row rects are arithmetic and layout is non-contiguous.
