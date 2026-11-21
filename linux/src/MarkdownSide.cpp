@@ -26,6 +26,7 @@ struct MarkdownSide::Job {
     std::weak_ptr<int> alive;
     uint64_t generation = 0;
     std::string text;
+    std::map<int, bool> details;
     std::vector<MarkdownPage::Piece> old;
     std::vector<bool> keep;
     bool whole = false;
@@ -203,6 +204,7 @@ void MarkdownSide::start() {
     job->alive = alive_;
     job->generation = ++generation_;
     job->text = getText();
+    if (getDetails) job->details = getDetails();
     job->whole = stale_;
     if (!job->whole) {
         for (const Info& i : infos_) {
@@ -228,7 +230,11 @@ void MarkdownSide::start() {
     g_task_run_in_thread(task, [](GTask* t, gpointer, gpointer data, GCancellable*) {
         Job* j = static_cast<Job*>(data);
         const double c0 = threadCpuMs();
-        j->runs = MarkdownParser::parse(j->text);
+        j->runs = MarkdownParser::fold(MarkdownParser::parse(j->text),
+                                       [j](int line, bool open) {
+            const auto it = j->details.find(line);
+            return it == j->details.end() ? open : it->second;
+        });
         j->pieces = MarkdownPage::split(j->runs);
         j->match = MarkdownPage::match(j->old, j->keep, j->pieces);
         j->workerMs = threadCpuMs() - c0;

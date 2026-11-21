@@ -44,6 +44,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -324,6 +325,8 @@ public:
     // The rendered Markdown page, made on first use; never undone into.
     GtkTextBuffer* page();
     Markdown::Page& pageInfo() { return page_; }
+    // The <details> blocks the reader opened or closed, by tag line.
+    std::map<int, bool>& detailsOpen() { return detailsOpen_; }
     // The whole source as UTF-8: the highlighter's mirror when it is in
     // step, else a copy out of the buffer.
     std::string text() const;
@@ -647,6 +650,7 @@ private:
     bool           filling_ = false;
     GtkTextBuffer* pageBuffer_ = nullptr;
     Markdown::Page page_;
+    std::map<int, bool> detailsOpen_;
     GtkTextView*   shownIn_ = nullptr;
 
     std::string diffTitle_, diffBytes_;

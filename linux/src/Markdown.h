@@ -93,7 +93,18 @@ struct Hooks {
     // A click on a task's box ("- [ ] x"): the item's source line. Called
     // from an idle once the click is over, so the page may be rendered again.
     std::function<void(int line)> taskToggle;
+    // <details> blocks the reader opened (true) or closed (false), by tag
+    // line; render() folds with it (foldedRuns).
+    std::map<int, bool> detailsOpen;
 };
+
+// A <details> block's summary links to "mutible-details:<tag line>:<open>"
+// (the Mac's, less the run line): a click opens or closes the block. What
+// the reader left open or closed is `detailsOpen` (Hooks); a block not in it
+// shows as its tag says.
+std::vector<MdRun> foldedRuns(const std::string& source, const std::map<int, bool>& detailsOpen);
+// The link's tag line and whether the block was open, false when `url` is not one.
+bool parseDetailsLink(const std::string& url, int* line, bool* open);
 
 // The page's pieces moved `delta` lines in the source: the lines the tables'
 // cells and task boxes report follow.

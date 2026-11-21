@@ -9083,3 +9083,28 @@ show; the file shown last is shown meanwhile).
   (GDK's clipboard read is asynchronous): the buffer and the status text are.
   The `\input` file path's rebase has no committed check. The checks were
   not run against the old code to see them fail.
+
+### 147. <details> folds in the Markdown preview (November 2026)
+
+- **What.** The page and the side preview fold `<details>` as the Mac does,
+  over the core's `MarkdownParser::fold`: the summary behind a triangle
+  (the core's glyphs), the body hidden until a click, `open` honoured.
+  `Markdown::foldedRuns` folds with `Hooks::detailsOpen`; the side's worker
+  folds before `MarkdownPage::split`, with `MarkdownSide::getDetails`. State is
+  `Document::detailsOpen()`, by tag line like the Mac's, so it survives
+  re-renders while editing and lives as long as the tab. A summary's span
+  carries `mutible-details:<tag line>:<open>`, which `Editor::openMarkdownLink`
+  turns into `toggleDetails` (the page re-rendered at its scroll, the side
+  scheduled). Click only, as on the Mac.
+- **Checked.** `markdown_details` (new): closed body hidden, open shown, real
+  clicks open and close, triangles follow, raw tags never show; the markdown_*
+  suites and `meson test` pass.
+- **Not verified.** The look (triangle and cursor); the side preview's click
+  has no check of its own (same link path, folded in its worker).
+- **Trap.** A check that clicks the same summary twice must wait out GTK's
+  double-click time between the clicks: `Editor::onPressed` follows a page
+  link only on `n == 1`, so a quick second press on the same spot is a
+  double-click and toggles nothing. The suite passed under load and failed
+  on a quiet machine until it paused for `gtk-double-click-time` plus 0.1 s.
+  The Mac's summary also has a "Click to open" / "Click to close" tooltip;
+  GTK's page spans have none.

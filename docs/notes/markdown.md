@@ -31,7 +31,7 @@ found through that list.
   run's `details` depth, `detailsLine` (its tag's line, the block's name),
   `summary` and the tag's `open`; the break before `</summary>` ends a
   paragraph, so a summary is a line of its own. `MarkdownParser::fold`
-  (Mac only so far) drops what closed blocks hide, adds the triangle run
+  (the Mac and, since 2026-11-21, Linux) drops what closed blocks hide, adds the triangle run
   and a "Details" summary where there is none, and gives a gap the
   visibility of the block after it; the Mac folds before rendering and
   before the side page's split (`MCFoldedRuns`), so a click changes the
@@ -39,6 +39,12 @@ found through that list.
   `MCTab detailsOpen` by tag line; the summary's link is
   `mutible-details:<tag line>:<run line>:<open>`, the run line giving a
   kept side piece's shift (`toggleMarkdownDetails:atIndex:inPage:`).
+  GTK (2026-11-21, `markdown_details`): `Markdown::foldedRuns` folds with
+  `Hooks::detailsOpen` (the document's `Document::detailsOpen()`, by tag
+  line, as the Mac's), the side's worker folds before `split`, and a
+  summary's span carries `mutible-details:<tag line>:<open>`, which
+  `Editor::openMarkdownLink` turns into `toggleDetails` (page and side drawn
+  again). A click only; the Mac has no key for it either.
   Quotes carry `quoteDepth` and, inside a list item, `quoteIndent`; a quote
   keeps its own list stack (`quoteList`), and a fence in an item its depth.
   **Container edges** (2026-11-19, round 10's documents grade;
