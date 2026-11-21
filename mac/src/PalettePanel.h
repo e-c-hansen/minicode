@@ -79,6 +79,10 @@ void MCShowFolderPicker(NSWindow *window, MCFolderPick *pick);
 // The folder Quick Open lists, nil for none. Paths are joined to it as
 // spelled, so they match the tree's.
 @property(nonatomic, copy) NSString *root;
+// Lists root's files itself instead of the palette's walk of this Mac's
+// disk (a window over SSH: its host's list), calling `done` once on the
+// main thread with paths from root. nil: the palette walks root.
+@property(nonatomic, copy) void (^listFiles)(void (^done)(NSArray<NSString *> *files, BOOL truncated));
 // Files the window opened lately, most recent first (its tabs), listed
 // first in Quick Open, ahead of those opened from Quick Open before.
 @property(nonatomic, copy) NSArray<NSString *> *recentFiles;

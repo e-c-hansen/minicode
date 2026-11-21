@@ -16,7 +16,10 @@
 @property(nonatomic, readonly, strong) NSWindow *window;
 @property(nonatomic, readonly, copy) NSString *rootPath;
 - (instancetype)initWithRootPath:(NSString *)path;
-- (void)undo:(id)sender;              // Cmd+Z; the text view handles its own
+// `list` NO: the tree is not listed yet (a window over SSH lists through
+// its host, from useRemoteSessionLink:).
+- (instancetype)initWithRootPath:(NSString *)path listTree:(BOOL)list;
+- (void)undo:(id)sender;             // Cmd+Z; the text view handles its own
 - (void)redo:(id)sender;              // Shift+Cmd+Z
 // Commands still running in this window's terminals (empty when every shell
 // is idle), for the question asked before quitting.
@@ -113,6 +116,17 @@
 // Whether the window's host went (a headless one killed, a connection over
 // SSH dropped) and Reconnect has not found it again.
 @property(nonatomic, readonly) BOOL sessionHostLost;
+@end
+
+// EditorController+Remote.mm: a window over SSH's folder through its host.
+@class MCPaletteContext;
+@interface EditorController (Remote)
+// Quick Open lists the host's files; nothing changes for a window on this
+// Mac.
+- (void)addRemoteFilesToPaletteContext:(MCPaletteContext *)context;
+// The file an ssh:// address named, shown (showFile:); `isNew` when it is
+// not there yet: its tab opens empty, and its first save makes it there.
+- (BOOL)showRemoteFile:(NSString *)path isNew:(BOOL)isNew;
 @end
 
 // EditorController+SessionBrowser.mm (SessionBrowser.h)
@@ -389,7 +403,7 @@
 // what the file on show and the window's language servers offer, and how
 // the editor shows a symbol while the list moves.
 - (void)addSymbolsToPaletteContext:(MCPaletteContext *)context;
-- (void)navigateBack:(id)sender;       // Ctrl+-: the place before the last jump
+- (void)navigateBack:(id)sender;     // Ctrl+-: the place before the last jump
 - (void)navigateForward:(id)sender;    // Ctrl+Shift+-
 @end
 

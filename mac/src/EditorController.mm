@@ -33,10 +33,17 @@ static Model::Session &MCTabWindows() {
 @implementation EditorController
 
 - (instancetype)initWithRootPath:(NSString *)path {
+    return [self initWithRootPath:path listTree:YES];
+}
+
+// `list` NO: the tree lists its folder later, from where it comes from (a
+// window over SSH lists through its host once it has its link:
+// useRemoteSessionLink:, never this Mac's disk at that path).
+- (instancetype)initWithRootPath:(NSString *)path listTree:(BOOL)list {
     if ((self = [super init])) {
         _root = [FileItem new];
         _root.path = path; _root.isDir = YES;
-        [_root loadChildren];
+        if (list) [_root loadChildren];
         _terminalHeight = 220;
         _browserFraction = 0.5;
         _winId = MCTabWindows().addWindow();

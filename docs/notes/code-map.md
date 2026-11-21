@@ -261,7 +261,10 @@ goes here first, with tests; the GUI only displays it.
   headless one, and each tab's document on them and its saves through
   them, editor.session-host;
   `docs/notes/session-host.md`), `SessionWindow` (a window's link, record
-  and what it took from a closed window's, stage 6), `TypesetPages`
+  and what it took from a closed window's, stage 6), `RemoteWorkspace`
+  (a window over SSH's folder through its host: the tree's `MCTreeSource`,
+  the host's disk notices, Quick Open's list, Find in Folder, new files;
+  stage 8), `TypesetPages`
   (the session web page's LaTeX pages drawn as PNGs with CoreGraphics,
   off the main thread; `docs/notes/session-host.md`),
   `PalettePanel`, `Navigation`, `HintsSearchBox` (the hints panel's search box),
@@ -290,7 +293,7 @@ goes here first, with tests; the GUI only displays it.
 `validateMenuItem:`, undo and redo, and the forwarding accessors of the active
 tab. The rest is in `EditorController+<Concern>.mm`: Layout, StatusBar, Panels
 (terminal dock, browser, keyboard between panes), Search, Tree, TreeDetails,
-Tabs (tabs, closed tabs, saving), Session (the session host's hooks), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
+Tabs (tabs, closed tabs, saving), Session (the session host's hooks), Remote (a window over SSH's tree, Quick Open, Find in Folder and new files through its host, and what it refuses there), Groups (the split editor, and the window's Model::Window behind both), Persistence (sessions, backups, auto-save,
 files changed outside), PageTabs (the review, commit and comparison tabs
 as sessions keep them, made again on restore), TreeFocus (Focus on Folder and Add to Focus), TreeReveal (the tree following the active tab), WindowTitle (the window's title and representedURL, by who has the keyboard), Rendering (what the editor's slot shows), Highlighting,
 Settings, Format, EditorView (line numbers, brackets, zoom, comments, tasks,

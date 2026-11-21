@@ -139,6 +139,9 @@ static NSString *const kShowHiddenFilesKey = @"MCShowHiddenFiles";
 // ---------------------------------------------------- tree drag and drop
 - (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)ov
                pasteboardWriterForItem:(id)item {
+    // Over SSH a row is a file of the other machine: no file URL of this
+    // Mac's to drag (+Remote).
+    if ([self remoteWorkspace]) return nil;
     return [NSURL fileURLWithPath:((FileItem *)item).path];
 }
 
@@ -196,6 +199,8 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
     // Always a drop onto a folder: a file stands for its folder, the space
     // between rows for the folder they are in, the empty space for the root
     // (none with several focused folders: it is in none of them).
+    // Over SSH nothing is moved or copied into the other machine's folder.
+    if ([self remoteWorkspace]) return NSDragOperationNone;
     FileItem *target = item;
     if (target && !target.isDir) target = [ov parentForItem:target];
     [ov setDropItem:target dropChildIndex:NSOutlineViewDropOnItemIndex];
@@ -211,6 +216,7 @@ static BOOL MCCanDropPath(NSString *src, NSString *dir) {
 
 - (BOOL)outlineView:(NSOutlineView *)ov acceptDrop:(id<NSDraggingInfo>)info
                item:(id)item childIndex:(NSInteger)index {
+    if ([self refuseOverSsh:@"Moving and copying files in the tree"]) return NO;
     FileItem *target = item;   // a folder or nil, as validateDrop set it
     NSString *dir = target ? target.path : [self treeTop].path;
     if (!dir) return NO;
@@ -582,6 +588,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         }
     }
     [self refreshTreeCells];   // the rows on show: new sizes, dates and colors
+    [self remoteTreeFoldersChanged];
 }
 
 // The paths of the expanded folders at or below `node` (the Worktrees node
@@ -664,6 +671,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         [clip scrollToPoint:[clip constrainBoundsRect:want].origin];
         [self.sidebarScroll reflectScrolledClipView:clip];
     }
+    [self remoteTreeFoldersChanged];   // over SSH: what the host watches (hidden files too)
 }
 
 - (void)reExpand:(FileItem *)node usingSet:(NSSet<NSString *> *)expanded {
@@ -684,7 +692,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 - (NSArray<FileItem *> *)withWorktreesNode:(NSArray<FileItem *> *)shown of:(FileItem *)node {
     NSString *dir = [self worktreesFolder];
-    if (!dir) return shown;
+    if (!dir || _root.source) return shown;   // over SSH: no worktrees read here
     if (node == _root) {
         BOOL any = NO;
         for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil]) {
@@ -822,6 +830,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 - (void)outlineViewItemDidExpand:(NSNotification *)note {
     if (note.userInfo[@"NSObject"] == _worktreesItem) [_agents.model refreshWorktrees];
+    [self remoteTreeFoldersChanged];   // over SSH: the host watches it now
 }
 
 // -------------------------------------------------- file operations (tree)
@@ -862,6 +871,12 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
     NSString *name = [self promptForName:@"New file name:" default:@""];
     if (!name) return;
     NSString *path = [[self targetDirectory] stringByAppendingPathComponent:name];
+    // Over SSH: a tab on the new file, which its first save makes there
+    // (+Remote); nothing is made on this Mac.
+    if ([self remoteWorkspace]) {
+        [self openNewRemoteFile:path];
+        return;
+    }
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([fm fileExistsAtPath:path]) { [self warn:@"A file with that name already exists."]; return; }
     if (![fm createFileAtPath:path contents:[NSData data] attributes:nil]) {
@@ -872,6 +887,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 - (void)newFolder:(id)sender {
+    if ([self refuseOverSsh:@"New Folder"]) return;
     NSString *name = [self promptForName:@"New folder name:" default:@""];
     if (!name) return;
     NSString *path = [[self targetDirectory] stringByAppendingPathComponent:name];
@@ -893,6 +909,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 // Rename… from the tree and from a tab's menu.
 - (void)renamePath:(NSString *)path {
+    if ([self refuseOverSsh:@"Rename"]) return;
     NSString *name = [self promptForName:@"Rename to:"
                                  default:path.lastPathComponent];
     if (!name) return;
@@ -917,6 +934,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 
 // Move to Trash from the tree and from a tab's menu, after asking.
 - (void)trashPath:(NSString *)path {
+    if ([self refuseOverSsh:@"Move to Trash"]) return;
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = [NSString stringWithFormat:@"Move “%@” to the Trash?",
                      path.lastPathComponent];
@@ -947,6 +965,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
 }
 
 - (void)revealPathInFinder:(NSString *)path {
+    if ([self refuseOverSsh:@"Reveal in Finder"]) return;
     [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:
         @[[NSURL fileURLWithPath:path]]];
 }
@@ -1000,9 +1019,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
              widen:(BOOL)widen {
     FileItem *node = [self treeOpenFoldersTo:path widen:widen];
     if (!node) {   // left out of the tree: a file is only opened
-        BOOL isDir = NO;
-        if (open && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
-            [self openFileAtPath:path from:from];
+        if (open && [self treeHasFileAt:path]) [self openFileAtPath:path from:from];
         return;
     }
     NSInteger row = [self.outline rowForItem:node];
@@ -1015,9 +1032,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         [self openFileAtPath:node.path from:from];
     } else if (open && ![node.path isEqualToString:path]) {
         // Not in the tree (a dotfile it hides): a file is opened anyway.
-        BOOL isDir = NO;
-        if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
-            [self openFileAtPath:path from:from];
+        if ([self treeHasFileAt:path]) [self openFileAtPath:path from:from];
     }
 }
 
@@ -1057,7 +1072,7 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         // a language server): list the folder again rather than wait for
         // FSEvents. A Problems row or a Quick Open file opened nothing until
         // the tree refreshed.
-        if (!next && node.loaded && [[NSFileManager defaultManager] fileExistsAtPath:acc]) {
+        if (!next && node.loaded && (node.source || [[NSFileManager defaultManager] fileExistsAtPath:acc])) {
             [node refresh];
             [self.outline reloadItem:node == top ? nil : node reloadChildren:YES];
             for (FileItem *c in node.children)
@@ -1067,7 +1082,21 @@ static void FSCallback(ConstFSEventStreamRef stream, void *info, size_t n,
         if (next.isDir && i < parts.count - 1) [self.outline expandItem:next];
         node = next;
     }
+    [self remoteTreeFoldersChanged];
     return node;
+}
+
+// A file (not a folder) at `path`: this Mac's disk's answer, or over SSH
+// the host's (its folder's listing there, dotfiles included).
+- (BOOL)treeHasFileAt:(NSString *)path {
+    if (_root.source) {
+        NSString *dir = path.stringByDeletingLastPathComponent;
+        for (MCTreeEntry *e in [_root.source treeListFolder:dir hidden:YES] ?: @[])
+            if ([e.path isEqualToString:path]) return !e.isDir && !e.outside;
+        return NO;
+    }
+    BOOL isDir = NO;
+    return [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir;
 }
 
 // revealPath: opens only what the tree lists, and the tree leaves dotfiles

@@ -33,6 +33,10 @@
 // searched again afterwards.
 #import <Cocoa/Cocoa.h>
 
+#include <vector>
+
+#include "Json.h"
+
 // How a file is open in the editor windows, for Replace in Folder.
 typedef NS_ENUM(NSInteger, MCOpenFileState) {
     MCOpenFileNone,       // in no tab, or in tabs that hold the disk's text in other windows
@@ -75,6 +79,17 @@ typedef NS_ENUM(NSInteger, MCOpenFileState) {
                                                  NSString **failure);
 // The text a tab of this window holds for a path (MCOpenFileHere files).
 @property(nonatomic, copy) NSString *(^tabText)(NSString *path);
+
+// A window over SSH (stage 8): the search runs on its host (FsRead
+// "search", SessionSearch.h) instead of over this Mac's disk. `hostSearch`
+// sends the request (the query, its toggles, files to include and
+// exclude) and hands back each batch of answers as it comes, the last with
+// `done`; it returns the number `cancelHostSearch` stops (0: not sent).
+// Its rows are shown as the Mac's own search shows them. Replace in Folder
+// is not offered with it (the replace row says why).
+@property(nonatomic, copy) uint64_t (^hostSearch)(Json request,
+                                                  void (^answers)(const std::vector<Json> &answers, BOOL done));
+@property(nonatomic, copy) void (^cancelHostSearch)(uint64_t req);
 
 // The query, from the editor's selection (Find in Folder with text
 // selected); searched at once.

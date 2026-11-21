@@ -242,11 +242,16 @@ NSUInteger MCDirtyFromHostMarks = 0;
     objc_setAssociatedObject(self, &kSessionWindowKey, w, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [self wireSessionWindow:w];
     [w start];
+    [self startRemoteWorkspace];   // the tree, Quick Open and Find in Folder through the host
 }
 
 - (BOOL)sessionIsRemote {
     MCSessionWindow *w = [self existingSessionWindow];
     return w && w.link.link && w.link.link->kind() == MCSession::Link::Kind::Remote;
+}
+
+- (MCSessionLinkRef *)sessionRemoteLink {
+    return [self sessionIsRemote] ? [self existingSessionWindow].link : nil;
 }
 
 - (NSString *)sessionRemoteLabel {
@@ -633,6 +638,7 @@ NSUInteger MCDirtyFromHostMarks = 0;
     }
     for (TerminalView *t in self.terminalPanel.terminals)
         if (t.sessionLink && t.sessionLink.link->lost() && t.sessionLink.link->key() == folder) [t rehostOn:link];
+    [self remoteWorkspaceMovedToLink];   // over SSH: the tree listed and watched on the new host
     [self showReconnectButton:NO];
     [w report];
     [self refreshWindowTitle];

@@ -596,6 +596,94 @@ static void testSessionDisk() {
         rig.stop();
     }
 
+    // `mutible host --stdio` as a window over SSH runs it (stage 8): it
+    // watches the disk, so the window's tree (an app that hears the disk,
+    // Hello flag 32) gets the folders it has open listed again as they
+    // change there; and the address's new file is named "new" in the
+    // Welcome and made by the window's first save through the host.
+    GROUP("diskwatch:stdio");
+    {
+        signal(SIGPIPE, SIG_IGN);
+        const std::string proj = realScratch();
+        fs::create_directories(proj + "/src");
+        fsWrite(proj + "/src/a.c", "int a;\n");
+        int toHost[2], fromHost[2];
+        CHECK(pipe(toHost) == 0 && pipe(fromHost) == 0);
+        auto server = std::make_unique<Shared::HostServer>();
+        Shared::HostOptions o;
+        o.folder = proj;
+        o.watchDisk = true;
+        o.askedFile = proj + "/src/new.txt";
+        o.askedFileNew = true;
+        std::string error;
+        CHECK(server->startStdio(o, toHost[0], fromHost[1], &error) == Shared::HostServer::Start::Ok);
+        std::atomic<int> result{-1};
+        std::thread run([&] { result = server->run() ? 1 : 0; });
+        std::mutex mu;
+        std::vector<Json> changed;
+        PipeRenderer r;
+        r.connect(toHost[1], fromHost[0], [&](Shared::Client& c) {
+            c.hearDisk(
+                [&](std::uint64_t, const Json& j) {
+                    std::lock_guard<std::mutex> lk(mu);
+                    changed.push_back(j);
+                },
+                [](Shared::DocId, int) {});
+        });
+        CHECK(r.client->settle(5000));
+        CHECK(r.client->hostWatches() && r.client->hostSearches());
+        CHECK(r.client->welcomeJson()["file"].asString() == proj + "/src/new.txt");
+        CHECK(r.client->welcomeJson()["new"].asBool());
+
+        // The tree's folders, as the window says them (its root and src).
+        const std::uint64_t req = r.client->watchFolders(0, {"", "src"}, false);
+        Json a;
+        CHECK(req != 0 && r.wait([&] { return r.client->readAnswer(req, &a); }));
+        CHECK(a["watching"].asInt() == 2);
+        // Listed through the host as the window's tree lists a folder.
+        Json ask = Json::object();
+        ask.set("op", Json("list"));
+        ask.set("path", Json("src"));
+        CHECK(fsNames(r.client->read(0, ask, 5000)) == "a.c");
+        if (DiskWatch::Watcher::make()) {
+            CHECK(server->host().diskWatchSettled(10000));
+            fsWrite(proj + "/src/b.c", "int b;\n");
+            CHECK(r.wait([&] {
+                std::lock_guard<std::mutex> lk(mu);
+                for (const Json& c : changed)
+                    if (changedNames(c, "src") == "a.c b.c") return true;
+                return false;
+            }, 10000));
+        } else {
+            std::printf("  diskwatch:stdio: no watcher on this system, its notices not checked\n");
+        }
+
+        // The new file: an untitled document, given its path, saved by the
+        // host, which makes it.
+        const Shared::DocId d = r.client->newId();
+        r.mirror.doc = d;
+        r.mirror.text = u"";
+        r.client->open(d, "", "", &r.mirror);
+        r.mirror.type(u"made over ssh\n");
+        CHECK(r.client->settle());
+        r.client->setPath(d, proj + "/src/new.txt");
+        const std::uint64_t save = r.client->requestSave(d, 0, true, "utf8");
+        Shared::Client::SaveAnswer s;
+        CHECK(save != 0 && r.wait([&] { return r.client->saveAnswer(save, &s); }));
+        CHECK(s.ok);
+        {
+            std::ifstream f(proj + "/src/new.txt");
+            std::stringstream ss;
+            ss << f.rdbuf();
+            CHECK(ss.str() == "made over ssh\n");
+        }
+
+        r.closeInput();
+        CHECK(waitUntil([&] { return result.load() != -1; }, 5000));
+        if (run.joinable()) run.join();
+        server.reset();
+    }
+
     // A browser's page of a headless host that watches the disk: its tree
     // follows the disk with no ask, a document changed on disk under the
     // page's typing is marked in the state, and the page's Reload.

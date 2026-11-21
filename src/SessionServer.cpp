@@ -153,6 +153,34 @@ std::string resolveFolder(const std::string& dir) {
     return buf;
 }
 
+bool stdioTarget(const std::string& path, StdioTarget* out, std::string* why) {
+    *out = StdioTarget();
+    std::string p = path;
+    while (p.size() > 1 && p.back() == '/') p.pop_back();
+    struct stat st;
+    const bool there = !p.empty() && stat(p.c_str(), &st) == 0;
+    if (there && S_ISDIR(st.st_mode)) {
+        out->folder = resolveFolder(p);
+        if (out->folder.empty() && why) *why = path + " is not a folder";
+        return !out->folder.empty();
+    }
+    const std::size_t slash = p.rfind('/');
+    const std::string dir = slash == std::string::npos ? "." : slash == 0 ? "/" : p.substr(0, slash);
+    const std::string name = slash == std::string::npos ? p : p.substr(slash + 1);
+    if (name.empty() || name == "." || name == "..") {
+        if (why) *why = path + ": no such file or folder";
+        return false;
+    }
+    out->folder = resolveFolder(dir);
+    if (out->folder.empty()) {
+        if (why) *why = path + (there ? " is not in a folder" : ": no such file or folder");
+        return false;
+    }
+    out->file = (out->folder == "/" ? "" : out->folder) + "/" + name;
+    out->isNew = !there;
+    return true;
+}
+
 std::string hostSocketName(const std::string& folder) {
     // FNV-1a, 64 bits: a name, not a secret. Two folders sharing one would
     // find each other's host, which says which folder it serves (Welcome).
@@ -314,7 +342,7 @@ bool HostServer::makeHost(const HostOptions& o) {
         host_->keepBackups(std::move(k));
     }
     if (!o.shellEnv.empty() || !o.loginShell.empty()) host_->setOwnShell(o.shellEnv, o.loginShell);
-    if (!o.askedFile.empty()) host_->setAskedFile(o.askedFile);
+    if (!o.askedFile.empty()) host_->setAskedFile(o.askedFile, o.askedFileNew);
     return true;
 }
 

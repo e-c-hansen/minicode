@@ -61,7 +61,7 @@
             if (bySize) {
                 FolderSizes::Total t;
                 BOOL stale = NO;
-                if (it.isLink) e.size = 0;   // not counted, as in the totals
+                if (it.isLink || it.source) e.size = 0;   // not counted, as in the totals (or over SSH)
                 else if ([_sizer totalFor:it.path total:&t stale:&stale]) {
                     e.size = t.bytes;
                     if (stale) [_sizer request:it.path];
@@ -96,6 +96,13 @@ static NSString *MCGroupedCount(long long n) {
     // In a git folder the name takes its status's color (tree.git-*).
     NSString *gitTip = nil;
     NSColor *gitColor = [self gitColorOf:node tip:&gitTip];
+    // Over SSH there is no git here yet: what the host's listing marks as
+    // ignored (the ignore files) is drawn as git's ignored, as the page's
+    // tree draws it; a link out of the folder is dimmed the same way.
+    if (!gitColor && (node.ignored || node.outside)) {
+        gitColor = MCColor([[AppSettings shared] settings].treeGitColor(TreeGitColor::Ignored));
+        gitTip = node.outside ? @"A link out of the folder" : @"Ignored";
+    }
     cell.textField.textColor = gitColor ?: text;
     cell.textField.font = rootLabel ? [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium]
                                     : [NSFont systemFontOfSize:12.5];
@@ -145,6 +152,8 @@ static NSString *MCGroupedCount(long long n) {
     } else if (node.isDir && node.isLink) {
         size = @"—";
         sizeTip = @"A symbolic link: what it points to is not counted.";
+    } else if (node.isDir && node.source) {
+        size = @"";   // over SSH: no totals counted (they would be this Mac's disk's)
     } else if (node.isDir) {
         FolderSizes::Total t;
         BOOL stale = NO;

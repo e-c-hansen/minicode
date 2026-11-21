@@ -77,6 +77,8 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
 
 - (void)takeStat:(MCTreeEntry *)e {
     self.isLink = e.isLink;
+    self.ignored = e.ignored;
+    self.outside = e.outside;
     self.executable = e.executable;
     self.size = e.size;
     self.modified = e.modified;
@@ -97,6 +99,7 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
         }
         [item takeStat:e];
         item.parent = self;
+        item.source = self.source;
         item.nameRank = rank++;
         [children addObject:item];
     }
@@ -105,9 +108,19 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
     self.shown = nil;
 }
 
+// The folder's entries from where the tree's listings come from: nil only
+// when a host did not answer (the connection lost), and then what the tree
+// has stays and the folder is listed again when next asked.
+- (NSArray<MCTreeEntry *> *)listing {
+    if (self.outside) return @[];   // a link out of a host's folder is never listed into
+    if (self.source) return [self.source treeListFolder:self.path hidden:gShowHidden];
+    return MCTreeList(self.path, gShowHidden) ?: @[];
+}
+
 - (void)loadChildren {
     if (self.loaded || !self.isDir) return;
-    [self adoptListing:MCTreeList(self.path, gShowHidden) ?: @[]];
+    NSArray<MCTreeEntry *> *entries = [self listing];
+    if (entries) [self adoptListing:entries];
 }
 
 // Re-scan this directory, reusing existing child objects for paths that still
@@ -115,7 +128,8 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
 // any subdirectory that was already loaded.
 - (void)refresh {
     if (!self.isDir || !self.loaded) return;
-    [self adoptListing:MCTreeList(self.path, gShowHidden) ?: @[]];
+    NSArray<MCTreeEntry *> *entries = [self listing];
+    if (entries) [self adoptListing:entries];
     for (FileItem *c in self.children)           // recurse into open subdirs
         if (c.isDir && c.loaded) [c refresh];
 }
@@ -215,7 +229,9 @@ NSArray<MCTreeEntry *> *MCTreeList(NSString *path, BOOL showHidden) {
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
     [self.selectedRowIndexes enumerateIndexesUsingBlock:^(NSUInteger row, BOOL *) {
         FileItem *item = [self itemAtRow:(NSInteger)row];
-        if ([item isKindOfClass:FileItem.class] && item.path)
+        // A host's row (over SSH) is a file of the other machine: Quick
+        // Look would show this Mac's file at that path, if any.
+        if ([item isKindOfClass:FileItem.class] && item.path && !item.source)
             [urls addObject:[NSURL fileURLWithPath:item.path]];
     }];
     return urls;

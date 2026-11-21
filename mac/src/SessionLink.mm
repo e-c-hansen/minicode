@@ -317,6 +317,7 @@ void Link::detach() {
 
 void Link::dispatch() {
     client_->dispatch();
+    pumpStreams();
     for (const std::string &e : client_->takeErrors())
         os_log_error(SessionLog(), "the session's host%{public}s%{public}s: %{public}s",
                      folder_.empty() ? "" : " for ", folder_.c_str(), e.c_str());
@@ -341,6 +342,44 @@ int Link::addLostListener(std::function<void()> f) {
 }
 
 void Link::removeLostListener(int token) { lostListeners_.erase(token); }
+
+int Link::addDiskListener(std::function<void(const Json &)> f) {
+    const int token = ++nextListener_;
+    diskListeners_[token] = std::move(f);
+    return token;
+}
+
+void Link::removeDiskListener(int token) { diskListeners_.erase(token); }
+
+std::uint64_t Link::stream(Json request, std::function<void(std::vector<Json> &&, bool)> answers) {
+    if (!client_ || lost() || !client_->hostSearches()) return 0;
+    const std::uint64_t req = client_->requestStream(0, std::move(request));
+    if (req) streams_[req] = std::move(answers);
+    return req;
+}
+
+void Link::cancelStream(std::uint64_t req) {
+    if (!streams_.erase(req) || !client_) return;
+    client_->cancelStream(req, 0);
+}
+
+// Each stream's answers since the last dispatch, to its handler; one that
+// is done is forgotten first, so its handler may start another.
+void Link::pumpStreams() {
+    if (streams_.empty()) return;
+    std::vector<std::uint64_t> reqs;
+    for (const auto &[req, f] : streams_) reqs.push_back(req);
+    for (std::uint64_t req : reqs) {
+        auto it = streams_.find(req);
+        if (it == streams_.end()) continue;   // cancelled by a handler before it
+        std::vector<Json> got;
+        const bool done = client_->takeStream(req, &got) || client_->lost();
+        if (got.empty() && !done) continue;
+        auto f = done ? std::move(it->second) : it->second;
+        if (done) streams_.erase(it);
+        if (f) f(std::move(got), done);
+    }
+}
 
 std::uint64_t Link::newWindow() {
     const std::uint64_t id = client_->newId();
@@ -522,6 +561,18 @@ bool Link::attachClient(std::unique_ptr<Shared::HostLink> link, std::weak_ptr<Li
     owned_ = std::make_unique<Shared::Client>(Model::Unit::Utf16, "mac");
     owned_->setKeepsBackups(true);   // as the process's client: the windows keep their own
     HearHostSaves(owned_.get());
+    // A window over SSH hears the remote disk (Hello flag 32): its tree's
+    // folders listed again as they change there (FsChanged).
+    if (kind_ == Kind::Remote)
+        owned_->hearDisk(
+            [weak](std::uint64_t, const Json &changed) {
+                std::shared_ptr<Link> l = weak.lock();
+                if (!l) return;
+                const auto listeners = l->diskListeners_;   // a listener may take itself off
+                for (const auto &[token, f] : listeners)
+                    if (l->diskListeners_.count(token)) f(changed);
+            },
+            [](Shared::DocId, int) {});
     client_ = owned_.get();
     // The host's messages arrive on the link's reader thread; the main queue
     // dispatches them, once per batch. The block holds the link weakly, so
@@ -587,6 +638,7 @@ bool Link::startRemote(std::weak_ptr<Link> self, std::string *why) {
     }
     folder_ = client_->hostFolder();
     askedFile_ = client_->welcomeJson()["file"].asString();
+    askedFileNew_ = !askedFile_.empty() && client_->welcomeJson()["new"].asBool();
     return true;
 }
 

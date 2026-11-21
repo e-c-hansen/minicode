@@ -29,6 +29,7 @@ static BOOL gOpenBookmarkAsText = NO;
 // ---------------------------------------------------------------- opening
 - (BOOL)openBookmarkAtPath:(NSString *)path focusPage:(BOOL)focus {
     if (gOpenBookmarkAsText || !MCIsBookmarkFile(path)) return NO;
+    if ([self sessionIsRemote]) return NO;   // the other machine's file: shown as text (not read here)
     NSString *url = MCBookmarkAddress(path);
     if (!url) return NO;   // no address it may open: shown as text instead
     [self showWebAddresses:@[url] focusPage:focus];

@@ -40,7 +40,10 @@
 //   - a remote link (stage 8, `mutible ssh://host/path`, forRemote): `mutible
 //     host --stdio` on another machine through the user's own ssh, attached
 //     to over ssh's pipes; its window's files are read (readText) and saved
-//     there, its terminals run there, and closing the window ends it.
+//     there, its terminals run there, its tree, Quick Open and Find in
+//     Folder read there (the window's MCRemoteWorkspace: the disk's notices
+//     through addDiskListener, the heavier reads through stream), and
+//     closing the window ends it.
 // Each document and terminal keeps the link it was opened on. A window
 // closing detaches: its documents, terminals and its record (its tabs)
 // stay on the host, and a window opening on the folder takes the latest
@@ -157,6 +160,22 @@ public:
     // or does not read as text (MCDiskText's rules), tooLarge past 64 MB.
     // Never a stamp: the file is on the other machine. Waits on the host.
     MCDiskText *readText(const std::string &path);
+    // The address named a file not there yet (the Welcome's "new"): the
+    // window opens it empty, and its first save makes it.
+    bool askedFileNew() const { return askedFileNew_; }
+    // What the remote host saw change on disk (FsChanged's json: {root,
+    // listings, git}, for the folders Client::watchFolders named), told on
+    // the main queue inside dispatch() (perhaps inside a wait: a listener
+    // that reads the host again defers itself). The number takes it off.
+    int addDiskListener(std::function<void(const Json &changed)> f);
+    void removeDiskListener(int token);
+    // A heavier read on the host's workers (SessionSearch.h: "files",
+    // "search"): `answers` gets each batch of answers as they are
+    // dispatched, `done` once the last came (and never again). 0, calling
+    // nothing, when the host does not take them or is gone.
+    std::uint64_t stream(Json request, std::function<void(std::vector<Json> &&answers, bool done)> answers);
+    // Stops one: nothing more is told for it.
+    void cancelStream(std::uint64_t req);
 
     // Told once, on the main queue, when the host goes; the number takes it
     // off again.
@@ -207,9 +226,12 @@ private:
     std::unique_ptr<Shared::Client> owned_;
     std::unique_ptr<Shared::HostLink> socket_;
     std::shared_ptr<std::atomic<bool>> queued_;
-    bool detached_ = false, lostTold_ = false;
+    bool detached_ = false, lostTold_ = false, askedFileNew_ = false;
     std::map<int, std::function<void()>> lostListeners_;
+    std::map<int, std::function<void(const Json &)>> diskListeners_;
+    std::map<std::uint64_t, std::function<void(std::vector<Json> &&, bool)>> streams_;
     int nextListener_ = 0;
+    void pumpStreams();
     std::set<std::uint64_t> live_;                 // open windows' ids
     std::map<std::uint64_t, std::string> sent_;   // each one's record as sent
 };

@@ -593,6 +593,13 @@ static void MCTextSplice(NSString *a, NSString *b, NSRange *inA, NSRange *inB) {
     // read never counts as matching the disk (FolderSearch::readFileStable).
     MCDiskText *disk = remote ? [self sessionRemoteTextOf:_activeTab] : MCReadDiskText(path, ULLONG_MAX);
     NSString *content = disk.text;
+    // Over SSH, a file not there yet (the address named a new one, or New
+    // File made its tab): empty, untitled at its path, and made there by
+    // its first save, through the host (+Remote).
+    if (!content && remote && !restored && !held && [self remotePathIsNew:path]) {
+        content = @"";
+        _activeTab.untitled = YES;
+    }
     // The file is gone, or no longer reads as text: the backup (or the
     // host's text) is all there is.
     if (!content && (restored || held)) content = @"";
