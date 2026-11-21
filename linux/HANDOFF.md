@@ -9020,3 +9020,31 @@ show; the file shown last is shown meanwhile).
   it; click, wait for the text to have the keyboard, then select.
 - **Not verified.** Orca reading the label or pressing the row: only the
   label property and the `activate` signal are checked, not a screen reader.
+
+### 145. Accessibility: review buttons and Processes rows (November 2026)
+
+- **What.** The Mac's f112b53d and the note of 331b3acf. Each review-page
+  button (`ChangeReviewPage`) gets the core's `ChangeReview::buttonLabel`
+  ("Stage change 1 in app.py", "Keep Current for conflict 2 in a.py",
+  "Stage File app.py") as its accessible label
+  (`gtk_accessible_update_property`, LABEL); its visible title and tooltip
+  are unchanged. Each Processes row (`ProcessesPanel`) gets
+  `Procs::rowLabel(p, orphan)` as its label and, while alive,
+  `Procs::stopLabel(p)` ("Stop python3 on port 8123") as its accessible
+  description: the Stop is a GMenu item with no widget to label, so the
+  description is where a screen reader finds it. `stopPid` on a process
+  that has gone still rings the bell and now says "<name> (process N) has
+  exited; nothing was stopped" through `onNote` (the panel's note; "The
+  process" when the row is gone from the list, since GTK keeps no captured
+  item as the Mac does).
+- **Why.** The audit found a screen reader heard only "Stage" for every
+  change, and no row-level text in Processes.
+- **Checks.** GTK has no getter for the label property and the checks run
+  with `GTK_A11Y=none`, so each label is also kept on the widget with
+  `g_object_set_data` ("mutible-a11y-label", "mutible-a11y-description"),
+  read by `ChangeReviewPage::accessibleLabelOf` and
+  `ProcessesPanel::rowAccessibleLabel/Description`, used only by the
+  checks. `git_review` reads four buttons (two files, an Unstage, a Discard,
+  a Stage File); `processes` reads the server row's label and its Stop.
+- **Not verified.** Orca reading either; the exited-process note has no
+  committed check.

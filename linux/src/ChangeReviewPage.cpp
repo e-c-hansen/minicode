@@ -947,6 +947,24 @@ void ChangeReviewPage::fill() {
                 gtk_widget_set_tooltip_text(
                     b, "Stage the file, which tells git its conflicts are resolved");
             }
+            {
+                // The full name for a screen reader, as the Mac's: "Stage change 1 in
+                // app.py". GTK has no getter for the label, so it is kept on the button
+                // for the checks (accessibleLabelOf).
+                const PageRow& r = p.rows[i];
+                const bool onBlock = a == Act::Stage || a == Act::Unstage || a == Act::Discard ||
+                                     a == Act::KeepCurrent || a == Act::KeepIncoming ||
+                                     a == Act::KeepBoth;
+                const bool conflict = a == Act::KeepCurrent || a == Act::KeepIncoming ||
+                                      a == Act::KeepBoth;
+                const std::string label = ChangeReview::buttonLabel(
+                    titleOf(a), data_->read.diffs[r.file].file.path, onBlock ? r.block : -1,
+                    conflict);
+                gtk_accessible_update_property(GTK_ACCESSIBLE(b), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                               label.c_str(), -1);
+                g_object_set_data_full(G_OBJECT(b), "mutible-a11y-label", g_strdup(label.c_str()),
+                                       g_free);
+            }
             struct Press {
                 ChangeReviewPage* page;
                 std::shared_ptr<bool> alive;
@@ -1204,6 +1222,13 @@ bool ChangeReviewPage::press(const std::string& title, size_t row) {
             return true;
         }
     return false;
+}
+
+std::string ChangeReviewPage::accessibleLabelOf(const std::string& title, size_t row) const {
+    GtkWidget* w = buttonWidget(title, row);
+    const char* l = w ? static_cast<const char*>(g_object_get_data(G_OBJECT(w), "mutible-a11y-label"))
+                      : nullptr;
+    return l ? l : "";
 }
 
 GtkWidget* ChangeReviewPage::buttonWidget(const std::string& title, size_t row) const {

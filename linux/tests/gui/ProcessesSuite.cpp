@@ -306,6 +306,14 @@ MC_GUI_SUITE(processes) {
         GCHECK(!r.memory.empty() && r.memory != "exited" && !r.cpu.empty());
         GCHECK(r.tooltip.find("python3 -m http.server 0 --bind 127.0.0.1") != std::string::npos);
         GCHECK(r.tooltip.find("Started by Claude Code session r74-session") != std::string::npos);
+        // The row's name for a screen reader (the core's Procs::rowLabel) and
+        // its Stop named by port (Procs::stopLabel), read back from the row widget.
+        const std::string label = gFirst.procs->rowAccessibleLabel(gServerPid);
+        GCHECK_EQ_STR(label, r.label);
+        GCHECK(label.find("python3, port " + std::to_string(gServerPort) + ", running, ") == 0);
+        GCHECK(label.find("process " + std::to_string(gServerPid)) != std::string::npos);
+        GCHECK_EQ_STR(gFirst.procs->rowAccessibleDescription(gServerPid),
+                      "Stop python3 on port " + std::to_string(gServerPort));
         std::string g1, g2;
         GCHECK(panelRow(gFirst.procs, gSleepPid, nullptr, &g1) && g1 == "outside");
         GCHECK(panelRow(gFirst.procs, gStubbornPid, nullptr, &g2) && g2 == "outside");

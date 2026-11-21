@@ -326,6 +326,15 @@ MC_GUI_SUITE(git_review) {
         GCHECK(p->buttonsOfRow((size_t)p->rowOfBlock(3)).empty());
         GCHECK((p->buttonsOfRow((size_t)p->rowOfFile("n.txt", false)) ==
                 std::vector<std::string>{"Side by Side", "Open", "Discard File", "Stage File"}));
+        // Each button's full name for a screen reader, the core's buttonLabel.
+        GCHECK_EQ_STR(p->accessibleLabelOf("Unstage", (size_t)p->rowOfBlock(0)),
+                      "Unstage change 1 in g.txt");
+        GCHECK_EQ_STR(p->accessibleLabelOf("Stage", (size_t)p->rowOfBlock(1)),
+                      "Stage change 1 in f.txt");
+        GCHECK_EQ_STR(p->accessibleLabelOf("Discard", (size_t)p->rowOfBlock(2)),
+                      "Discard change 2 in f.txt");
+        GCHECK_EQ_STR(p->accessibleLabelOf("Stage File", (size_t)p->rowOfFile("n.txt", false)),
+                      "Stage File n.txt");
         GCHECK(p->rowTint((size_t)p->rowOfBlock(1)) == "removed");
         GCHECK(p->rowText((size_t)p->rowOfBlock(1)) == "b");
         MCGuiSnapshot(GTK_WIDGET(p->widget()), "git-review-page");
